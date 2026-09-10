@@ -1,7 +1,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { ensureStatePaths, resolveRepoIdentity, resolveStatePaths, shortKey, statePathsFromRoot } from '../../src/state/paths.ts';
 import { cleanup, tmpDir } from './helpers.ts';
@@ -69,12 +69,12 @@ describe('state/paths (MS1 canonical state location)', () => {
     const linked = resolveRepoIdentity(wt);
     assert.equal(main.isGit, true);
     assert.equal(linked.isGit, true);
-    assert.equal(main.mainRoot.toLowerCase(), path.resolve(repo).toLowerCase());
+    assert.equal(main.mainRoot.toLowerCase(), realpathSync.native(repo).toLowerCase());
     assert.equal(linked.mainRoot.toLowerCase(), main.mainRoot.toLowerCase());
-    assert.equal(linked.worktreeRoot.toLowerCase(), path.resolve(wt).toLowerCase());
+    assert.equal(linked.worktreeRoot.toLowerCase(), realpathSync.native(wt).toLowerCase());
     assert.equal(linked.key, main.key);
     // both sessions share one .aidlc directory
     assert.equal(resolveStatePaths(wt, {}).root.toLowerCase(), resolveStatePaths(repo, {}).root.toLowerCase());
-    assert.equal(resolveStatePaths(repo, {}).root.toLowerCase(), path.join(path.resolve(repo), '.aidlc').toLowerCase());
+    assert.equal(resolveStatePaths(repo, {}).root.toLowerCase(), path.join(realpathSync.native(repo), '.aidlc').toLowerCase());
   });
 });

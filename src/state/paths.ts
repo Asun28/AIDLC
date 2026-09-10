@@ -8,7 +8,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -49,10 +49,19 @@ export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
     const abs = path.resolve(cwd);
     return { mainRoot: abs, worktreeRoot: abs, isGit: false, key: shortKey(abs) };
   }
-  const commonAbs = path.resolve(cwd, common);
-  const mainRoot = path.resolve(commonAbs, '..');
-  const worktreeRoot = path.resolve(top);
+  const commonAbs = canonical(path.resolve(cwd, common));
+  const mainRoot = canonical(path.resolve(commonAbs, '..'));
+  const worktreeRoot = canonical(path.resolve(top));
   return { mainRoot, worktreeRoot, isGit: true, key: shortKey(mainRoot) };
+}
+
+/** Canonical filesystem path (resolves 8.3 short names, symlinks and drive-letter case) when it exists. */
+export function canonical(p: string): string {
+  try {
+    return realpathSync.native(p);
+  } catch {
+    return path.resolve(p);
+  }
 }
 
 export function shortKey(input: string): string {

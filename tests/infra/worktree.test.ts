@@ -7,14 +7,17 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import type { Lease } from '../../src/core/types.ts';
 import { actor, iso } from './helpers.ts';
 
-const MAIN = 'C:/repo';
-const WT_ROOT = 'C:/wt';
+// Drive-neutral fixture paths: Windows keeps a drive letter, POSIX runners use an absolute root.
+const D = process.platform === 'win32' ? 'C:' : '';
+
+const MAIN = `${D}/repo`;
+const WT_ROOT = `${D}/wt`;
 
 function porcelain(entries: Array<{ path: string; branch?: string }>): string {
   return entries.map((e) => `worktree ${e.path}\nHEAD 1234567890abcdef1234567890abcdef12345678\n${e.branch ? `branch refs/heads/${e.branch}\n` : 'detached\n'}`).join('\n') + '\n';
 }
 
-function probeWith(list: string, commonDir = 'C:/repo/.git'): GitProbe {
+function probeWith(list: string, commonDir = `${D}/repo/.git`): GitProbe {
   return new GitProbe(
     scriptedRunner({
       'git worktree list --porcelain': { stdout: list },
@@ -61,7 +64,7 @@ describe('delivery/worktree (safe start-or-attach, R14-R16)', () => {
   });
 
   it('stops with ownership when the branch is checked out at an unexpected path', () => {
-    const probe = probeWith(porcelain([{ path: MAIN, branch: 'main' }, { path: 'C:/elsewhere/T1-FOO', branch: 'T1-FOO' }]));
+    const probe = probeWith(porcelain([{ path: MAIN, branch: 'main' }, { path: `${D}/elsewhere/T1-FOO`, branch: 'T1-FOO' }]));
     const d = decideWorktree(probe, base);
     assert.equal(d.action, 'stop');
     if (d.action === 'stop') {
