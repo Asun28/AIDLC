@@ -10,6 +10,7 @@ Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before ->
 - `npm run typecheck`: one `tsc` pass over src + tests. ~6.7 s -> ~4.0 s. Full suite (414 tests) ~6.9 s -> ~4.1 s.
 - New bin `aidlc-hook`; `runHook` accepts a preloaded config.
 - Card lease heartbeat (T0-LEASE-HEARTBEAT, bugfix): `CardRunner.next` renews the card lease when the acting session owns it at the run's generation, so a BUILD longer than the 10-minute TTL no longer fences the ship as STOP/ownership; a stop caused only by the owner's own expiry is revalidated on the next call. A lease held by another session still stops. Found by the loop itself while shipping T0-LOOP-SPEED.
+- WAIT resumption (T0-WAIT-VERIFY, bugfix): a goal polled with `aidlc next` while its cards were running parks in WAIT; once every required card closed, `nextInRun` attempted WAIT -> VERIFY_ARC, which the goal diagram forbids, so `next`, `report` and `card report` threw GoalTransitionError and the goal could never finish. It now resumes WAIT -> RUN (journaled) and then derives VERIFY_ARC. Found by the loop itself while closing T0-LOOP-SPEED.
 
 ## 0.1.0 - 2026-09-11
 

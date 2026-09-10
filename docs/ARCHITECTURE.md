@@ -31,6 +31,8 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 ## Goal state machine
 
+A goal parked in `WAIT` (polled while its cards were still running) resumes to `RUN`, journaled as `GOAL_STATE WAIT->RUN`, before `VERIFY_ARC` is derived once every required card is closed; the diagram has no `WAIT -> VERIFY_ARC` edge.
+
 Source: `GOAL_TRANSITIONS` and guards in `src/core/goal-machine.ts`.
 
 ```mermaid
