@@ -15,6 +15,7 @@
   "maxWorkers": 2,
   "family": "claude",
   "provider": "mock",
+  "repository": "Asun28/AIDLC",
   "hooks": {
     "frozenPaths": [],
     "testPathPatterns": [
