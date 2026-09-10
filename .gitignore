@@ -1,0 +1,31 @@
+# build
+dist/
+*.tsbuildinfo
+
+# dependencies
+node_modules/
+
+# aidlc runtime state (shared across worktrees, never committed)
+.aidlc/
+_local/
+
+# planning-with-files working memory (session scratch)
+task_plan.md
+findings.md
+progress.md
+
+# secrets
+.env
+.env.*
+!.env.example
+.secrets/
+
+# editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# test output
+coverage/
+*.log

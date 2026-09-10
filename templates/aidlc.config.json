@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "cardsDir": "specs/tasks",
+  "archiveDir": "specs/archive/tasks",
+  "intentDir": "intent",
+  "specsDir": "specs",
+  "plansDir": "plans",
+  "worktreeRoot": "",
+  "base": "main",
+  "mode": "remote",
+  "shipPath": "dry-run",
+  "reviewPool": "default",
+  "reviewPolicyVersion": "REVIEW.md@1",
+  "reviewer": "reviewer",
+  "maxWorkers": 2,
+  "family": "claude",
+  "provider": "mock",
+  "hooks": {
+    "frozenPaths": [],
+    "testPathPatterns": [
+      "(^|/)tests?/",
+      "\\.test\\.[cm]?[jt]sx?$",
+      "\\.spec\\.[cm]?[jt]sx?$",
+      "_test\\.(py|go|kt)$",
+      "(^|/)src/test/"
+    ],
+    "productionPatterns": [
+      "\\b(deploy|release|rollout|promote|apply)\\b[^\\n]*\\b(prod|production|live)\\b",
+      "\\b(prod|production)\\b[^\\n]*\\b(deploy|release|rollout|promote|apply)\\b"
+    ]
+  },
+  "tierPaths": {
+    "tierS": [],
+    "tier0": [],
+    "frozen": []
+  }
+}

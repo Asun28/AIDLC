@@ -1,0 +1,122 @@
+import assert from 'node:assert/strict';
+import { test } from 'node:test';
+import { makeFixture, writeCard, driveCardToDone, goalForCards, T0 } from './_harness.ts';
+
+function threeCards(fx: ReturnType<typeof makeFixture>, resources?: string[]) {
+  writeCard(fx, { id: 'T1-A', title: 'freeze the interface', freeze: true, allowPaths: ['src/a.ts'] });
+  writeCard(fx, { id: 'T1-B', title: 'implement b', dependsOn: ['T1-A'], allowPaths: ['src/b.ts'], resources });
+  writeCard(fx, { id: 'T1-C', title: 'implement c', dependsOn: ['T1-A'], allowPaths: ['src/c.ts'], resources });
+}
+
+test('Q3/Q9: a T1 arc runs the freeze card alone, then two disjoint cards in one wave with cap two', () => {
+  const fx = makeFixture();
+  try {
+    threeCards(fx);
+    const goal = goalForCards(fx, ['T1-A', 'T1-B', 'T1-C'], { size: 'T1' });
+    assert.equal(goal.state, 'RUN');
+    assert.equal(goal.routing.size, 'T1');
+    assert.equal(goal.deadlines.goalDeadline, '2026-09-11T12:00:00.000Z', 'multi-card arc has the 12h limit');
+
+    const d0 = fx.controller.next(goal.id);
+    assert.equal(d0.kind, 'run-card');
+    if (d0.kind === 'run-card') {
+      assert.equal(d0.cardId, 'T1-A');
+      assert.deepEqual(d0.context['wave'], ['T1-A'], 'freeze card runs alone');
+    }
+    driveCardToDone(fx, goal.id, 'T1-A');
+
+    const d1 = fx.controller.next(goal.id);
+    assert.equal(d1.kind, 'run-card');
+    if (d1.kind === 'run-card') {
+      assert.ok(['T1-B', 'T1-C'].includes(d1.cardId));
+      assert.deepEqual([...(d1.context['wave'] as string[])].sort(), ['T1-B', 'T1-C']);
+      assert.equal(d1.context['workers'], 2);
+    }
+    driveCardToDone(fx, goal.id, 'T1-B');
+    driveCardToDone(fx, goal.id, 'T1-C');
+
+    const d2 = fx.controller.next(goal.id);
+    assert.equal(d2.kind, 'verify-arc');
+    if (d2.kind === 'verify-arc') {
+      assert.deepEqual(d2.cards, ['T1-A', 'T1-B', 'T1-C']);
+      assert.equal(d2.repairCyclesLeft, 1);
+      assert.ok(d2.integratedChecks.some((c) => /cross-card/.test(c)));
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('Q9: cards sharing a declared resource serialise even with disjoint allow_paths', () => {
+  const fx = makeFixture();
+  try {
+    threeCards(fx, ['db:main']);
+    const goal = goalForCards(fx, ['T1-A', 'T1-B', 'T1-C'], { size: 'T1' });
+    driveCardToDone(fx, goal.id, 'T1-A');
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'run-card');
+    if (d.kind === 'run-card') {
+      assert.equal((d.context['wave'] as string[]).length, 1, 'shared db resource keeps the wave at one card');
+      assert.ok((d.context['arcReasons'] as string[]).some((r) => /serialised: shares resources/.test(r)));
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('Q10: integrated acceptance failure opens one bounded repair cycle; a second failure is STOP/arc-verify', () => {
+  const fx = makeFixture();
+  try {
+    threeCards(fx);
+    writeCard(fx, { id: 'T1-FIX', title: 'repair the combined workflow', allowPaths: ['src/fix.ts'] });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B', 'T1-C'], { size: 'T1' });
+    for (const id of ['T1-A', 'T1-B', 'T1-C']) driveCardToDone(fx, goal.id, id);
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+
+    const failed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-failed', data: { repairCards: ['T1-FIX'], detail: 'combined workflow broken' } });
+    const g1 = fx.goal(goal.id);
+    assert.equal(g1.counters.integrationRepairCycles, 1);
+    assert.ok(g1.cards.includes('T1-FIX'));
+    assert.equal(g1.stages.development, 'fail');
+    assert.equal(failed.directive.kind, 'run-card');
+    if (failed.directive.kind === 'run-card') assert.equal(failed.directive.cardId, 'T1-FIX');
+    assert.equal(fx.goal(goal.id).state, 'RUN');
+
+    driveCardToDone(fx, goal.id, 'T1-FIX');
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+
+    const second = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-failed', data: { repairCards: ['T1-FIX'], detail: 'still broken' } });
+    assert.equal(second.directive.kind, 'stop');
+    const g2 = fx.goal(goal.id);
+    assert.equal(g2.state, 'STOP');
+    assert.equal(g2.terminal, true);
+    assert.equal(g2.stop?.reason, 'arc-verify');
+    assert.equal(g2.counters.integrationRepairCycles, 1, 'no second cycle is opened');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('Q9: a child STOP blocks its dependents and the goal stops with the child reason when nothing else is ready', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-X', title: 'x', allowPaths: ['src/x.ts'] });
+    writeCard(fx, { id: 'T1-Y', title: 'y', dependsOn: ['T1-X'], allowPaths: ['src/y.ts'] });
+    const goal = goalForCards(fx, ['T1-X', 'T1-Y'], { size: 'T1' });
+    fx.controller.ensureCardRun(goal, 'T1-X');
+    const r = fx.controller.report({
+      goalId: goal.id,
+      generation: 0,
+      result: 'card-result',
+      cardId: 'T1-X',
+      data: { state: 'STOP', stop: { reason: 'capability', detail: 'no reviewer backend', nextAction: 'configure the reviewer', global: false, at: T0 } },
+    });
+    assert.equal(r.directive.kind, 'stop');
+    const g = fx.goal(goal.id);
+    assert.equal(g.state, 'STOP');
+    assert.equal(g.stop?.reason, 'capability');
+    assert.ok(/blocked by stopped dependencies: T1-Y/.test(g.stop?.detail ?? ''), g.stop?.detail);
+  } finally {
+    fx.cleanup();
+  }
+});
