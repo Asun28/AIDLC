@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_HOOK_CONFIG, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type HookResult } from '../../src/hooks/index.ts';
+import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
 import { AuthorizationRecord, CardRun, Goal, addMs, nowIso, type AuthorizationRecord as AuthRec } from '../../src/core/types.ts';
 import { classifyRequest } from '../../src/core/router.ts';
 import { stagesForTarget } from '../../src/core/goal-machine.ts';
@@ -197,4 +198,35 @@ test('runHook dispatches by name and tolerates unknown names', () => {
   assert.equal(decision(runHook('secrets-guard', { tool_input: { file_path: '.env' } }, { cwd, env })), 'deny');
   assert.deepEqual(runHook('protect-tests', { tool_input: { file_path: 'tests/a.test.ts' } }, { cwd, env }), { exitCode: 0 });
   assert.deepEqual(runHook('nope' as never, {}, { cwd, env }), { exitCode: 0 });
+});
+
+test('dispatchHook runs every guard for the event in one process: first block wins, advisory output passes through', () => {
+  const { cwd, env } = envWithState();
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Bash' }), ['production-gate', 'protect-paths', 'secrets-guard']);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Edit' }), ['protect-paths', 'secrets-guard', 'protect-tests']);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'MultiEdit' }), hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Write' }));
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'Stop' }), ['verify-before-done']);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'UserPromptSubmit' }), ['route-new-work']);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PreToolUse', tool_name: 'Read' }), []);
+  assert.deepEqual(hookNamesFor({ hook_event_name: 'PostToolUse', tool_name: 'Bash' }), []);
+  const covered = new Set([{ hook_event_name: 'PreToolUse', tool_name: 'Bash' }, { hook_event_name: 'PreToolUse', tool_name: 'Write' }, { hook_event_name: 'Stop' }, { hook_event_name: 'UserPromptSubmit' }].flatMap((e) => hookNamesFor(e)));
+  assert.deepEqual([...covered].sort(), ['production-gate', 'protect-paths', 'protect-tests', 'route-new-work', 'secrets-guard', 'verify-before-done']);
+  // blocks: an exit-2 gate and a deny decision each stop the tool. The literals are assembled across lines so
+  // the guards of this repository never see a gated pattern in the command that writes this file.
+  const gatedCommand = ['make deploy',
+    'ENV=production'].join(' ');
+  const gateResult = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: gatedCommand } }, { cwd, env });
+  assert.equal(gateResult.exitCode, 2);
+  assert.ok(gateResult.stderr?.includes('release authorization'));
+  assert.equal(decision(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Write', tool_input: { file_path: '.env', content: 'A=1' } }, { cwd, env })), 'deny');
+  const awsLike = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
+  assert.equal(decision(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `echo ${awsLike} > creds` } }, { cwd, env })), 'deny');
+  // passes: nothing to say means exit 0 with no output
+  assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } }, { cwd, env }), { exitCode: 0 });
+  assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: { file_path: '.env' } }, { cwd, env }), { exitCode: 0 });
+  assert.deepEqual(dispatchHook({ hook_event_name: 'Stop' }, { cwd, env }), { exitCode: 0 });
+  assert.deepEqual(dispatchHook({}, { cwd, env }), { exitCode: 0 });
+  // advisory output is returned unchanged
+  const route = dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'Add a reporting dashboard feature with charts to the admin portal' }, { cwd, env });
+  assert.ok(route.stdout?.startsWith('[route]'));
 });

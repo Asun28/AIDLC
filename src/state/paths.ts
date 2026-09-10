@@ -42,17 +42,35 @@ function gitOut(args: string[], cwd: string): string | undefined {
   return res.stdout.trim();
 }
 
+/**
+ * Repository identity is asked for several times per CLI call (context, state paths, session id, hooks);
+ * it costs one `git rev-parse` per process and cwd. The cache is per process, so a long-lived test can
+ * reset it after creating a repository in a directory it already resolved.
+ */
+const identityCache = new Map<string, RepoIdentity>();
+
 export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
-  const common = gitOut(['rev-parse', '--git-common-dir'], cwd);
-  const top = gitOut(['rev-parse', '--show-toplevel'], cwd);
+  const key = path.resolve(cwd);
+  const cached = identityCache.get(key);
+  if (cached) return cached;
+  // One spawn for both refs: git prints them in argument order.
+  const out = gitOut(['rev-parse', '--git-common-dir', '--show-toplevel'], cwd);
+  const [common, top] = out ? out.split(/\r?\n/).map((line) => line.trim()) : [];
+  let identity: RepoIdentity;
   if (!common || !top) {
-    const abs = path.resolve(cwd);
-    return { mainRoot: abs, worktreeRoot: abs, isGit: false, key: shortKey(abs) };
+    identity = { mainRoot: key, worktreeRoot: key, isGit: false, key: shortKey(key) };
+  } else {
+    const commonAbs = canonical(path.resolve(cwd, common));
+    const mainRoot = canonical(path.resolve(commonAbs, '..'));
+    const worktreeRoot = canonical(path.resolve(top));
+    identity = { mainRoot, worktreeRoot, isGit: true, key: shortKey(mainRoot) };
   }
-  const commonAbs = canonical(path.resolve(cwd, common));
-  const mainRoot = canonical(path.resolve(commonAbs, '..'));
-  const worktreeRoot = canonical(path.resolve(top));
-  return { mainRoot, worktreeRoot, isGit: true, key: shortKey(mainRoot) };
+  identityCache.set(key, identity);
+  return identity;
+}
+
+export function resetRepoIdentityCache(): void {
+  identityCache.clear();
 }
 
 /** Canonical filesystem path (resolves 8.3 short names, symlinks and drive-letter case) when it exists. */

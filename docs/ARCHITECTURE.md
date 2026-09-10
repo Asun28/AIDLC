@@ -27,7 +27,7 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 `src/audit/` provides the evidence manifest with sealing (`manifest.ts`) and the independent verifier (`verifier.ts`).
 
-`src/hooks/index.ts` implements the six Claude Code hooks. `src/loop/` contains the directive contract, the goal controller, the card runner and the release runner. `src/scaffold/init.ts` copies `templates/` over a repository. `src/cli/main.ts` wires everything with commander.
+`src/hooks/index.ts` implements the six Claude Code guards; `src/hooks/entry.ts` runs every guard that applies to an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`), so a tool call costs one node start. `src/loop/` contains the directive contract, the goal controller, the card runner and the release runner. `src/scaffold/init.ts` copies `templates/` over a repository. `src/cli/main.ts` wires everything with commander.
 
 ## Goal state machine
 

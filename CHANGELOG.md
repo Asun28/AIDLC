@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before -> after:
+
+- Claude Code hooks: one process per event instead of three `npx` starts per tool call. `src/hooks/entry.ts` (`dispatchHook`, `hookNamesFor`) runs every guard that applies to the event; `bin/aidlc-hook.js` loads only the hook modules; `aidlc hook auto` is the CLI form. Per Bash/Edit call: ~4.5 s -> ~0.2 s (direct entry) or ~1.4 s (npx fallback). `aidlc init` wires the fastest entry it can see and replaces 0.1.0 per-guard hooks on re-run.
+- Repository identity: `resolveRepoIdentity` is memoised per process and asks git once (`rev-parse --git-common-dir --show-toplevel`) instead of six spawns per CLI call. `aidlc goal list` ~0.8 s -> ~0.3 s; `aidlc next` ~0.4 s.
+- `aidlc doctor`: toolchain probes run concurrently (`pwsh -v`). ~1.2 s -> ~0.5 s.
+- `npm run typecheck`: one `tsc` pass over src + tests. ~6.7 s -> ~4.0 s. Full suite (414 tests) ~6.9 s -> ~4.1 s.
+- New bin `aidlc-hook`; `runHook` accepts a preloaded config.
+
 ## 0.1.0 - 2026-09-11
 
 First implementation of the v5 aidlc-loop plan as a TypeScript library and CLI.

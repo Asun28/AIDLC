@@ -25,36 +25,32 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash",
+        "matcher": "Bash|Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "npx --no-install aidlc hook production-gate" }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit|Bash",
-        "hooks": [
-          { "type": "command", "command": "npx --no-install aidlc hook protect-paths" },
-          { "type": "command", "command": "npx --no-install aidlc hook secrets-guard" }
-        ]
-      },
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [
-          { "type": "command", "command": "npx --no-install aidlc hook protect-tests" }
+          {
+            "type": "command",
+            "command": "npx --no-install aidlc hook auto"
+          }
         ]
       }
     ],
     "Stop": [
       {
         "hooks": [
-          { "type": "command", "command": "npx --no-install aidlc hook verify-before-done" }
+          {
+            "type": "command",
+            "command": "npx --no-install aidlc hook auto"
+          }
         ]
       }
     ],
     "UserPromptSubmit": [
       {
         "hooks": [
-          { "type": "command", "command": "npx --no-install aidlc hook route-new-work" }
+          {
+            "type": "command",
+            "command": "npx --no-install aidlc hook auto"
+          }
         ]
       }
     ]
