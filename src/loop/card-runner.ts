@@ -109,8 +109,22 @@ export class CardRunner {
   next(goal: Goal, card: Card, run: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
-    const lease = this.leases.read(key);
     const me = currentActor();
+    let lease = this.leases.read(key);
+    // Heartbeat: the owner's own `card next` renews the card lease, as the controller renews the goal
+    // lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
+    // that case still fails the fence in ship(). A stop caused only by the owner's own expiry is
+    // revalidated by the renewal.
+    if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) {
+      const wasExpired = Date.parse(lease.expiresAt) < Date.parse(now);
+      const renewal = this.leases.claim(key, { operation: lease.operation, now });
+      if (renewal.status === 'renewed') {
+        lease = renewal.lease;
+        const revalidated = run.stop?.reason === 'ownership';
+        if (wasExpired || revalidated) this.journal(goal.id).append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated } });
+        if (revalidated) run = { ...run, stop: undefined, blocker: undefined };
+      }
+    }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');

@@ -188,5 +188,5 @@ aidlc audit verify --goal <id> --claim-full [--capture-boundary]
 | `migration` | migration state UNKNOWN or phase order violated | reconcile migration versions/checkpoints before dependent steps |
 | `rollback-auth` | recovery needed but no applicable recovery authorization or procedure | record the recovery pre-authorization or hand off to the owner |
 | `audit` | capture or persistence failure after a mutation | reconcile unknown effects; do not repeat the mutation |
-| `ownership` | stale generation, foreign lease, or worktree/branch mismatch | revalidate; attach read-only or `goal takeover` after reconciliation |
+| `ownership` | stale generation, foreign lease, or worktree/branch mismatch | the owner's own `card next` renews its lease and clears a stop caused only by expiry (journal `LEASE_RENEWED` with `revalidated`); otherwise attach read-only or `goal takeover` after reconciliation |
 | `cancelled` | user cancellation | none; evidence retained; `goal resume` links a new generation |

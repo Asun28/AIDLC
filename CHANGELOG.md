@@ -9,6 +9,7 @@ Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before ->
 - `aidlc doctor`: toolchain probes run concurrently (`pwsh -v`). ~1.2 s -> ~0.5 s.
 - `npm run typecheck`: one `tsc` pass over src + tests. ~6.7 s -> ~4.0 s. Full suite (414 tests) ~6.9 s -> ~4.1 s.
 - New bin `aidlc-hook`; `runHook` accepts a preloaded config.
+- Card lease heartbeat (T0-LEASE-HEARTBEAT, bugfix): `CardRunner.next` renews the card lease when the acting session owns it at the run's generation, so a BUILD longer than the 10-minute TTL no longer fences the ship as STOP/ownership; a stop caused only by the owner's own expiry is revalidated on the next call. A lease held by another session still stops. Found by the loop itself while shipping T0-LOOP-SPEED.
 
 ## 0.1.0 - 2026-09-11
 
