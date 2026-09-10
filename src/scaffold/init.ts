@@ -109,9 +109,45 @@ export function initProject(options: InitOptions): InitReport {
   return report;
 }
 
+type HookEntry = { matcher?: string; hooks: Array<{ type: string; command: string }> };
+type Settings = { permissions?: { deny?: string[]; allow?: string[] }; hooks?: Record<string, HookEntry[]> };
+
+/** The template's portable dispatcher command; `init` swaps in a direct `node` entry when it can see one. */
+const TEMPLATE_HOOK_COMMAND = 'npx --no-install aidlc hook auto';
+/** Per-guard wiring from 0.1.0: three `npx` starts per tool call. Replaced by the one-process dispatcher. */
+const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect-tests|secrets-guard|verify-before-done|route-new-work)$/;
+
+/**
+ * Fastest hook command available in the target: a direct `node` start of the hook entry (no npx
+ * resolution, no CLI module graph) when the package is installed locally or the target is aidlc itself;
+ * otherwise the portable `npx --no-install` form.
+ */
+export function resolveHookCommand(target: string): string {
+  if (existsSync(path.join(target, 'node_modules', 'aidlc', 'bin', 'aidlc-hook.js'))) return 'node node_modules/aidlc/bin/aidlc-hook.js';
+  if (existsSync(path.join(target, 'bin', 'aidlc-hook.js'))) {
+    try {
+      const pkg = JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) as { name?: string };
+      if (pkg.name === 'aidlc') return 'node bin/aidlc-hook.js';
+    } catch {
+      /* not the aidlc package */
+    }
+  }
+  return TEMPLATE_HOOK_COMMAND;
+}
+
+/** Drop 0.1.0 per-guard hooks (superseded by the dispatcher) and any entry left empty by that. */
+export function stripLegacyHooks(hooks: Record<string, HookEntry[]>): void {
+  for (const [event, entries] of Object.entries(hooks)) {
+    for (const entry of entries) entry.hooks = entry.hooks.filter((h) => !LEGACY_HOOK_COMMAND.test(h.command));
+    hooks[event] = entries.filter((e) => e.hooks.length > 0);
+  }
+}
+
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
   const dest = path.join(target, '.claude', 'settings.json');
-  const incoming = JSON.parse(readFileSync(src, 'utf8')) as { permissions?: { deny?: string[]; allow?: string[] }; hooks?: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>> };
+  const incoming = JSON.parse(readFileSync(src, 'utf8')) as Settings;
+  const hookCommand = resolveHookCommand(target);
+  for (const entries of Object.values(incoming.hooks ?? {})) for (const entry of entries) for (const h of entry.hooks) if (h.command === TEMPLATE_HOOK_COMMAND) h.command = hookCommand;
   if (!existsSync(dest)) {
     if (!options.dryRun) {
       mkdirSync(path.dirname(dest), { recursive: true });
@@ -120,10 +156,11 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
     report.created.push('.claude/settings.json');
     return;
   }
-  const existing = JSON.parse(readFileSync(dest, 'utf8')) as typeof incoming & Record<string, unknown>;
+  const existing = JSON.parse(readFileSync(dest, 'utf8')) as Settings & Record<string, unknown>;
   const deny = new Set([...(existing.permissions?.deny ?? []), ...(incoming.permissions?.deny ?? [])]);
   existing.permissions = { ...(existing.permissions ?? {}), deny: [...deny] };
   existing.hooks = existing.hooks ?? {};
+  stripLegacyHooks(existing.hooks);
   for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
     const list = existing.hooks[event] ?? [];
     for (const entry of entries) {

@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
@@ -36,6 +36,7 @@ import { verifyAudit } from '../audit/verifier.ts';
 import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
+import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
 import { Goal, type DeliveryTarget, type RequestSize } from '../core/types.ts';
 import { renderBoard } from '../state/board.ts';
@@ -129,21 +130,27 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('check toolchain, configuration, state directory and providers')
     .action(async () => {
       const c = ctx(g());
-      const which = (cmd: string, args: string[]) => {
-        const r = spawnSync(cmd, args, { encoding: 'utf8', windowsHide: true });
-        return r.status === 0 ? (r.stdout || r.stderr).trim().split(/\r?\n/)[0] : undefined;
-      };
+      // Toolchain probes run concurrently: doctor is the entry check of every route and wakeup.
+      const probe = (cmd: string, args: string[]) =>
+        new Promise<string | undefined>((resolve) => {
+          let out = '';
+          const child = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+          child.stdout.on('data', (d: Buffer) => (out += d.toString()));
+          child.stderr.on('data', (d: Buffer) => (out += d.toString()));
+          child.on('error', () => resolve(undefined));
+          child.on('close', (code) => resolve(code === 0 ? out.trim().split(/\r?\n/)[0] : undefined));
+        });
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
       const validation = validateRegistry(registry, c.config.tierPaths);
       const blocking = [...validation.values()].flat().filter((f) => f.severity === 'block').length;
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
-      const avail = await provider.available();
+      const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
       const checks = {
         node: process.version,
-        git: which('git', ['--version']) ?? 'MISSING',
-        gh: which('gh', ['--version']) ?? 'MISSING (needed for remote ship)',
-        pwsh: which('pwsh', ['-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']) ?? 'MISSING (needed for scaffold ship path)',
+        git: gitVersion ?? 'MISSING',
+        gh: ghVersion ?? 'MISSING (needed for remote ship)',
+        pwsh: pwshVersion ?? 'MISSING (needed for scaffold ship path)',
         repository: c.repo.isGit ? c.repo.mainRoot : `${c.root} (not a git repository)`,
         config: c.configFound ? 'aidlc.config.json' : 'defaults (run aidlc init)',
         shipPath: c.config.shipPath,
@@ -856,18 +863,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   // ------------------------------------------------------------------ hooks
   program
     .command('hook <name>')
-    .description('Claude Code hook entry (reads the event JSON from stdin)')
+    .description('Claude Code hook entry (reads the event JSON from stdin); `auto` runs every guard for the event in this one process')
     .action(async (name: string) => {
-      const chunks: Buffer[] = [];
-      const stdinText = await new Promise<string>((resolve) => {
-        if (process.stdin.isTTY) return resolve('{}');
-        process.stdin.on('data', (d: Buffer) => chunks.push(d));
-        process.stdin.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
-        process.stdin.on('error', () => resolve('{}'));
-        setTimeout(() => resolve(Buffer.concat(chunks).toString('utf8') || '{}'), 2000).unref();
-      });
-      const event = readStdinJson(stdinText);
-      const result = runHook(name as HookName, event, { cwd: g().cwd ?? event.cwd ?? process.cwd() });
+      const event = readStdinJson(await readStdin());
+      const cwd = g().cwd ?? event.cwd ?? process.cwd();
+      const result = name === 'auto' ? dispatchHook(event, { cwd }) : runHook(name as HookName, event, { cwd });
       if (result.stdout) process.stdout.write(result.stdout + '\n');
       if (result.stderr) process.stderr.write(result.stderr + '\n');
       process.exit(result.exitCode);

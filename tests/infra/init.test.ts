@@ -37,7 +37,7 @@ describe('aidlc init (scaffold)', () => {
     const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
     dirs.push(target);
     mkdirSync(path.join(target, '.claude'), { recursive: true });
-    writeFileSync(path.join(target, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(./secret.txt)'], allow: ['Bash(git *)'] }, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-gate' }] }] } }));
+    writeFileSync(path.join(target, '.claude', 'settings.json'), JSON.stringify({ permissions: { deny: ['Read(./secret.txt)'], allow: ['Bash(git *)'] }, hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'my-existing-gate' }, { type: 'command', command: 'npx --no-install aidlc hook production-gate' }] }] } }));
     writeFileSync(path.join(target, 'CLAUDE.md'), '# my project\n\n## Commands\n- make test\n');
     const report = initProject({ target, cardsDir: 'cards' });
     assert.ok(report.merged.includes('.claude/settings.json'));
@@ -46,9 +46,11 @@ describe('aidlc init (scaffold)', () => {
     assert.ok(settings.permissions.deny.includes('Read(./secret.txt)'));
     assert.ok(settings.permissions.deny.some((d) => d.includes('.env')));
     assert.deepEqual(settings.permissions.allow, ['Bash(git *)']);
-    const bash = settings.hooks['PreToolUse']!.find((h) => h.matcher === 'Bash')!;
-    assert.ok(bash.hooks.some((h) => h.command === 'my-existing-gate'));
-    assert.ok(bash.hooks.some((h) => h.command.includes('production-gate')));
+    const pre = settings.hooks['PreToolUse']!;
+    const all = pre.flatMap((h) => h.hooks.map((x) => x.command));
+    assert.ok(all.includes('my-existing-gate'), 'foreign hook must survive the merge');
+    assert.equal(all.filter((c) => /aidlc hook auto$/.test(c)).length, 1, `dispatcher wired once: ${all.join(', ')}`);
+    assert.ok(!all.some((c) => /aidlc hook production-gate$/.test(c)), 'legacy per-guard hook must be replaced by the dispatcher');
     const claude = readFileSync(path.join(target, 'CLAUDE.md'), 'utf8');
     assert.match(claude, /^# my project/);
     assert.match(claude, /## AI-native SDLC \(aidlc\)/);

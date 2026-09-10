@@ -132,9 +132,9 @@ Rules: commands are argv arrays, never shell strings; `async: true` means exit z
 
 ## Hooks
 
-`templates/claude/settings.json` (merged by `init`) wires `npx --no-install aidlc hook <name>`:
+One hook process per event. `templates/claude/settings.json` (merged by `init`) wires a single command for `PreToolUse` (matcher `Bash|Edit|Write|MultiEdit`), `Stop` and `UserPromptSubmit`; that process runs every guard that applies to the event (`src/hooks/entry.ts`, `dispatchHook`) and returns the first block, else the first advisory output. `init` picks the fastest entry it can see: `node node_modules/aidlc/bin/aidlc-hook.js` when the package is installed locally, `node bin/aidlc-hook.js` inside the aidlc repository itself, otherwise the portable `npx --no-install aidlc hook auto`. Measured on Windows: about 0.2 s per tool call for the direct entry, about 1.4 s for the npx form, against about 4.5 s for the 0.1.0 wiring that started three npx processes per tool call. Re-running `aidlc init` on a repository with the 0.1.0 per-guard hooks replaces them with the dispatcher and keeps any foreign hooks. `aidlc hook <name>` still runs one guard for debugging.
 
-| Hook | Event / matcher | Blocks when |
+| Guard | Runs on | Blocks when |
 |---|---|---|
 | `production-gate` | PreToolUse Bash | the command matches a deploy/release verb together with `prod|production|live` and `RELEASE_APPROVAL` (or `AIDLC_RELEASE_APPROVAL`) is unset or does not name a recorded production authorization; exit 2 with the reason |
 | `protect-paths` | PreToolUse Edit, Write, MultiEdit, Bash | the file path or a write-verb command matches `hooks.frozenPaths`; a read-only command is deferred with a note |

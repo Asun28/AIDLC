@@ -63,12 +63,15 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(!/Edit|Write|Bash/.test(tools), `reviewer must not have write tools: ${tools}`);
   });
 
-  test('settings.json wires every hook the CLI implements and denies secret reads', () => {
+  test('settings.json wires one dispatcher process per event (PreToolUse, Stop, UserPromptSubmit) and denies secret reads', () => {
     const settings = JSON.parse(readFileSync(path.join(tpl, 'claude', 'settings.json'), 'utf8')) as { permissions: { deny: string[] }; hooks: Record<string, Array<{ matcher?: string; hooks: Array<{ type: string; command: string }> }>> };
-    const commands = Object.values(settings.hooks).flat().flatMap((h) => h.hooks.map((x) => x.command));
-    for (const name of ['production-gate', 'protect-paths', 'protect-tests', 'secrets-guard', 'verify-before-done', 'route-new-work']) {
-      assert.ok(commands.some((c) => c.includes(`hook ${name}`)), `hook ${name} not wired`);
+    for (const event of ['PreToolUse', 'Stop', 'UserPromptSubmit']) {
+      const commands = (settings.hooks[event] ?? []).flatMap((h) => h.hooks.map((x) => x.command));
+      assert.equal(commands.length, 1, `${event} must run exactly one hook process per call: ${commands.join(', ') || 'none'}`);
+      assert.match(commands[0]!, /aidlc hook auto$/, `${event} must call the dispatcher`);
     }
+    const matcher = settings.hooks['PreToolUse']![0]!.matcher ?? '';
+    for (const tool of ['Bash', 'Edit', 'Write', 'MultiEdit']) assert.ok(matcher.split('|').includes(tool), `PreToolUse matcher must include ${tool}: ${matcher}`);
     assert.ok(settings.permissions.deny.length >= 18);
     assert.ok(settings.permissions.deny.some((d) => d.includes('.env')));
     assert.ok(settings.hooks['Stop']?.length, 'Stop hook missing');

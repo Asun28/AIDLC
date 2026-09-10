@@ -13,6 +13,8 @@
  *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
  *  - verify-before-done(Stop): an active card without a fresh DoD receipt is not done.
  *  - route-new-work    (UserPromptSubmit): print the routing result for a new request.
+ *
+ * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -244,10 +246,10 @@ export function readStdinJson(text: string): HookEvent {
 
 export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | 'secrets-guard' | 'verify-before-done' | 'route-new-work';
 
-export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv } = {}): HookResult {
+export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: Required<HookConfig> } = {}): HookResult {
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const config = loadHookConfig(cwd);
+  const config = options.config ?? loadHookConfig(cwd);
   switch (name) {
     case 'production-gate':
       return productionGate(event, env, config, cwd);
