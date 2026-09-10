@@ -293,6 +293,14 @@ export class GoalController {
     const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers, singleReviewerSlot: poolBusy && goal.maxWorkers > 1 ? false : undefined });
     this.writeBoard(goal, cards, runs);
     if (arc.verdict === 'done') {
+      // A goal parked in WAIT (polled while its cards were running) resumes to RUN first: the diagram
+      // derives VERIFY_ARC from RUN only, never from WAIT.
+      if (goal.state === 'WAIT') {
+        const resumed = transitionGoal(goal, 'RUN', now);
+        this.store.saveGoal(resumed);
+        this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'WAIT', to: 'RUN', reason: 'required cards closed' } });
+        goal = resumed;
+      }
       const next = transitionGoal(goal, 'VERIFY_ARC', now, { requiredCardsClosed: true });
       this.store.saveGoal(next);
       this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: goal.state, to: 'VERIFY_ARC' } });

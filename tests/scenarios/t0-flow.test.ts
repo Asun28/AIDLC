@@ -164,3 +164,42 @@ test('owner heartbeat: a BUILD longer than the lease TTL still ships, and a same
     fx.cleanup();
   }
 });
+
+test('WAIT resumes: a goal polled while its only card was running parks in WAIT and still reaches verify-arc once the card closes', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-PARK', title: 'parked while running' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-PARK', source: 'card', ref: 'T1-PARK', affectedSurfaces: [] }, { cards: ['T1-PARK'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-PARK'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-PARK');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PARK'));
+    assert.equal(r.directive.kind, 'prepare');
+    assert.equal(r.run.state, 'BUILD');
+
+    // Polling the goal while the card is in BUILD parks the goal in WAIT (the common operator path).
+    const parked = fx.controller.next(goal.id);
+    assert.equal(parked.kind, 'wait');
+    assert.equal(fx.goal(goal.id).state, 'WAIT');
+
+    // The card finishes normally.
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-PARK') });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'close');
+    r = runner.next(fx.goal(goal.id), card, runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true }));
+    assert.equal(r.directive.kind, 'done');
+
+    // The parked goal must resume: WAIT -> RUN -> VERIFY_ARC, never an illegal WAIT -> VERIFY_ARC throw.
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'verify-arc');
+    assert.equal(fx.goal(goal.id).state, 'VERIFY_ARC');
+    const states = fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE').map((e) => `${String(e.data?.['from'])}->${String(e.data?.['to'])}`);
+    assert.ok(states.includes('WAIT->RUN'), `resumption must be journaled: ${states.join(', ')}`);
+    assert.ok(states.includes('RUN->VERIFY_ARC'), `verify-arc must be derived from RUN: ${states.join(', ')}`);
+    const done = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: 'integrated checks green' } });
+    assert.equal(done.directive.kind, 'done');
+  } finally {
+    fx.cleanup();
+  }
+});
