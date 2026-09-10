@@ -1,0 +1,8 @@
+# Keep line endings stable: the plan's skill-file caps are measured in bytes and the
+# journal/evidence digests must not change between checkouts.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.pdf binary
+*.apk binary
+*.zip binary
