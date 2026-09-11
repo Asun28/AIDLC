@@ -217,6 +217,8 @@ export function citedReason(reason: string, changedPaths?: string[]): boolean {
 export function enforceCitations(verdict: Verdict, changedPaths?: string[]): { verdict: Verdict; advisory: string[]; inconsistent: boolean } {
   const axisBlock = verdict.axes?.spec?.verdict === 'block' || verdict.axes?.standards?.verdict === 'block';
   if (verdict.verdict === 'pass') return { verdict, advisory: [], inconsistent: axisBlock };
+  // A block whose axes both pass contradicts itself as much as a pass with a blocking axis.
+  if (verdict.axes && verdict.axes.spec?.verdict === 'pass' && verdict.axes.standards?.verdict === 'pass') return { verdict, advisory: [], inconsistent: true };
   const cited = (r: string) => citedReason(r, changedPaths);
   const root = verdict.reasons;
   const spec = verdict.axes?.spec?.reasons ?? [];
@@ -260,8 +262,9 @@ export interface CandidateDiff {
 }
 
 /** `git diff <base>...HEAD` of the committed candidate, capped so the prompt stays within budget. */
-export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: string, maxBytes: number): CandidateDiff {
-  const range = `${baseRef}...HEAD`;
+export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: string, maxBytes: number, head = 'HEAD'): CandidateDiff {
+  // Diff the pinned candidate, not whatever HEAD is by the time git runs.
+  const range = `${baseRef}...${head}`;
   // NUL-separated names: git never quotes or escapes them, so non-ASCII paths compare exactly.
   const names = runner('git', ['diff', '--name-only', '-z', range], { cwd });
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);

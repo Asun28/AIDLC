@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { aggregateVerdicts, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
 function fixtureCard() {
@@ -160,6 +160,13 @@ test('panel: perspectives run concurrently with their own prompt section and fil
   assert.deepEqual(seen.map((a) => a[1]).sort(), ['bugs', 'compliance', 'security']);
   assert.ok(panel.reasons[0]?.endsWith('(security)'), panel.reasons.join(' | '));
   for (const p of ['bugs', 'security', 'compliance']) assert.ok(existsSync(path.join(reviewDir, `T1-GATE.pre.0.1.${p}.log`)), `${p} log retained`);
+  for (const p of panel.perspectives) assert.ok(p.verdictRef && existsSync(p.verdictRef), `${p.perspective} verdict retained`);
+  // a quota hold on one angle holds the round; the aggregate document is still written
+  const heldPanel = await runReviewPanel({ runner: async (c, a, o) => (a.includes('security') ? scriptedRunner({ 'fake-panel': { stdout: '429 Too Many Requests, retry after 30 seconds\n', exitCode: 1 } })(c, a, o) : sync(c, a, o)), command: ['fake-panel', '--focus', '{perspective}'], perspectives: ['bugs', 'security'], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.pre.0.8', head: 'def456', reviewer: 'fake' });
+  assert.equal(heldPanel.outcome, 'quota-hold');
+  assert.equal(heldPanel.retryAfterMs, 30_000);
+  assert.ok(heldPanel.verdictRef && existsSync(heldPanel.verdictRef), 'held round document retained');
+  assert.equal((JSON.parse(readFileSync(heldPanel.verdictRef!, 'utf8')) as { outcome: string }).outcome, 'quota-hold');
   assert.ok(panel.verdictRef && existsSync(panel.verdictRef), 'aggregated round verdict written');
   const round = JSON.parse(readFileSync(panel.verdictRef!, 'utf8')) as { verdict: string; perspectives: Array<{ name: string; outcome: string }> };
   assert.equal(round.verdict, 'block');
@@ -247,6 +254,8 @@ test('citation rule: a block reason without an axis tag and a diff location is a
   assert.equal(axisOnly.verdict.reasons.length, 1);
   // a document whose top-level verdict contradicts its axes is malformed, never merged
   assert.equal(enforceCitations({ verdict: 'pass', reasons: [], axes: { spec: { verdict: 'block', reasons: ['[spec] 1 scope @ src/a.ts:1: x -> y'] }, standards: { verdict: 'pass', reasons: [] } } }).inconsistent, true);
+  // a block whose axes both pass contradicts itself too
+  assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 1 scope @ src/a.ts:1: x -> y'], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } } }).inconsistent, true);
   // dot-leading and non-ASCII paths are locations too; bare punctuation is not
   assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 14 scope @ .claude/skills/aidlc-loop/card-loop.md:70: x -> y'] }, ['.claude/skills/aidlc-loop/card-loop.md']).verdict.verdict, 'block');
   assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 1 scope @ src/测试.ts:3: x -> y'] }, ['src/测试.ts']).verdict.verdict, 'block');
@@ -255,4 +264,19 @@ test('citation rule: a block reason without an axis tag and a diff location is a
   const r = runPreReview({ runner: scriptedRunner({ 'fake-reviewer': { stdout: '{"verdict":"block","reasons":["I would refactor this module"]}\n' } }), command: ['fake-reviewer'], cwd: fixtureCard().dir, prompt: 'P', timeoutMs: 1000, shell: false, reviewDir: path.join(fixtureCard().dir, '.review'), fileStem: 'T1-GATE.pre.0.9', head: 'def456', reviewer: 'fake' });
   assert.equal(r.outcome, 'pass');
   assert.deepEqual(r.advisory, ['I would refactor this module']);
+});
+
+test('the async runner survives a child that exits before reading its input, and this repository configures the review stages as the card states', async () => {
+  const receipt = await run(process.execPath, ['-e', 'process.exit(3)'], { input: 'x'.repeat(2_000_000), timeoutMs: 20_000 });
+  assert.equal(receipt.exitCode, 3, 'the receipt carries the exit code instead of an uncaught EPIPE');
+  assert.equal(receipt.timedOut, false);
+  const cfg = JSON.parse(readFileSync(path.resolve('aidlc.config.json'), 'utf8')) as { preReview: { perspectives: string[] }; formalReview: Record<string, unknown>; gateRequired: boolean };
+  assert.deepEqual(cfg.preReview.perspectives, ['ac-coverage', 'spec-deviations', 'edge-cases']);
+  assert.equal('perspectives' in cfg.formalReview, false, 'the formal review is never fanned out');
+  assert.equal(cfg.gateRequired, true);
+  const tpl = JSON.parse(readFileSync(path.resolve('templates/aidlc.config.json'), 'utf8')) as { preReview: { perspectives: string[]; command: string[] }; formalReview: { command: string[] } };
+  assert.deepEqual(tpl.preReview.perspectives, []);
+  assert.deepEqual(tpl.preReview.command, []);
+  assert.deepEqual(tpl.formalReview.command, []);
+  for (const id of ['T0-R3-COMMAND', 'T0-R2-PANEL']) assert.match(readFileSync(path.resolve(`specs/tasks/${id}.md`), 'utf8'), /^status: in-progress$/m, `${id} is not pre-set to merged`);
 });
