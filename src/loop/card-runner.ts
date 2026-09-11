@@ -467,6 +467,9 @@ export class CardRunner {
     const last = [...run.review.invocations].reverse().find((i) => i.reviewer === cfg.reviewer && i.candidateDigest === digest);
     if (last?.outcome === 'pass') return undefined;
     if (last?.outcome === 'block') {
+      // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar.
+      const blocking = run.review.lastVerdict ? classifyVerdict(run.review.lastVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking : true;
+      if (!blocking) return undefined;
       const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined });
       return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.` } };
     }
@@ -474,6 +477,12 @@ export class CardRunner {
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(last.holdUntil) - Date.parse(now)) / 1000));
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `Formal reviewer ${cfg.reviewer} reported a quota/rate limit; holding until ${last.holdUntil} (not a decision). Then run \`aidlc card next ${card.id}\`.` } };
+    }
+    // R3 policy: a further required review beyond the two-decision allowance is STOP/review, never a third run.
+    if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
+      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the two-decision allowance (${run.review.substantiveDecisions} used)`, 'return the retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+      const stopped = this.save({ ...run, state: 'STOP', stop });
+      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     const decision = run.review.substantiveDecisions + 1;
     const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : '';
@@ -499,6 +508,13 @@ export class CardRunner {
     if (this.config.preReview.command.length && !run.preReview.rounds.some((r) => r.cycle === cycle && r.candidateDigest === candidateDigest && r.outcome === 'pass')) {
       throw new Error(`pre-review pass required first: run \`aidlc review pre ${card.id}\` on candidate ${candidateSha.slice(0, 12)} before the formal review`);
     }
+    const lastForCandidate = [...run.review.invocations].reverse().find((i) => i.reviewer === cfg.reviewer && i.candidateDigest === candidateDigest);
+    if (lastForCandidate?.outcome === 'quota-hold' && lastForCandidate.holdUntil && Date.parse(lastForCandidate.holdUntil) > Date.parse(now)) {
+      throw new Error(`formal reviewer ${cfg.reviewer} is on a quota hold until ${lastForCandidate.holdUntil}; do not re-run before it clears`);
+    }
+    if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS && lastForCandidate?.outcome !== 'pass') {
+      throw new Error(`the two-decision review allowance is used (${run.review.substantiveDecisions}); a further required review is STOP/review, not another run`);
+    }
     const reviewDir = path.join(cwd, '.review');
     const schema = materialiseVerdictSchema(reviewDir);
     const policyFile = path.join(this.repo.mainRoot, 'REVIEW.md');
@@ -513,9 +529,10 @@ export class CardRunner {
     const n = run.review.invocations.filter((i) => i.reviewer === cfg.reviewer).length + 1;
     const fileStem = `${card.id}.r3.${n}`;
     const result = runPreReview({ runner: this.runner, command: cfg.command, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id, instructions: prompt }, cwd, prompt, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer });
-    const verdict: Verdict | undefined = result.verdict ? { ...result.verdict, sha: candidateSha, branch: card.id, run_status: result.runStatus } : undefined;
-    if (verdict) writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...verdict, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
+    // Keep the reviewer's own binding: an explicit sha that is not this candidate is a stale verdict, never a pass.
+    const verdict: Verdict | undefined = result.verdict ? { ...result.verdict, sha: result.verdict.sha ?? candidateSha, branch: result.verdict.branch ?? card.id, run_status: result.runStatus } : undefined;
     const classified = classifyVerdict(verdict, { candidateSha, tier: card.tier, gateRequired: this.config.gateRequired, rawOutput: `${result.receipt.stdout}\n${result.receipt.stderr}` });
+    if (verdict && !classified.stale) writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...verdict, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
     const holdUntil = classified.outcome === 'quota-hold' ? addMs(now, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const invocationId = `r3:${fileStem}`;
     const rec = recordReviewOutcome(run.review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: result.verdictRef, holdUntil }, classified, verdict);
@@ -555,6 +572,10 @@ export class CardRunner {
     const candidateDigest = run.candidate?.digest ?? candidateSha;
     const cycle = run.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle);
+    const lastRound = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
+    if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
+      throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
+    }
     const round = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + 1;
     const policyFile = path.join(this.repo.mainRoot, 'REVIEW.md');
     const reviewPolicy = existsSync(policyFile)

@@ -3,11 +3,12 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
-import { CardRun } from '../../src/core/types.ts';
+import { CardRun, addMs } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
 import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 
@@ -390,6 +391,76 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
     assert.equal(r.directive.kind, 'close', r.directive.narration);
     assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 1);
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length, 4, 'no-verdict, quota hold, block and pass are all journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('formal review guards: an advisory block proceeds, a hold blocks the command, a stale sha never passes, and a third decision is refused', () => {
+  const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const r3: string[] = [];
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-guard.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-guard.ts b/src/t1-guard.ts\n+export const guard = 1;\n' },
+      'fake-r2': { stdout: PASS },
+      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-GUARD', title: 'review guards' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-GUARD', source: 'card', ref: 'T1-GUARD', affectedSurfaces: [] }, { cards: ['T1-GUARD'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-GUARD'] } });
+    const card = fx.card('T1-GUARD');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GUARD'));
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    const ledgerBase = { base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3' };
+
+    // (1) A standards-only block without a required gate is advisory: the decision counts, the ship proceeds.
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'review');
+    r3.push('{"verdict":"block","reasons":["[standards] 16 slop @ src/t1-guard.ts:1: dead helper -> remove"],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"block","reasons":["dead helper"]}}}\n');
+    let f = runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'block-advisory');
+    assert.equal(f.run.state, 'SHIP');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', `advisory findings never become a silent merge bar: ${r.directive.narration}`);
+
+    // (2) An active quota hold blocks the command itself, for R3 and for R2 alike.
+    const held = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', review: { ...r.run.review, invocations: [...r.run.review.invocations, { ...ledgerBase, invocationId: 'r3:hold', candidateDigest: 'sha-2', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: addMs(fx.now(), 60_000) }] }, updatedAt: fx.now() }));
+    assert.throws(() => runner.formalReview(fx.goal(goal.id), card, held), /hold/);
+    const r2Runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, command: ['fake-r2'], reviewer: 'fake-r2' } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const heldR2 = { ...held, preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-2', requestedAt: fx.now(), durationMs: 0, outcome: 'quota-hold' as const, reasons: [], holdUntil: addMs(fx.now(), 60_000) }] } };
+    assert.throws(() => r2Runner.preReview(fx.goal(goal.id), card, heldR2), /hold/);
+    fx.advance(61_000);
+
+    // (3) A verdict that names another sha is stale: never a pass, not a decision, and it never overwrites the candidate-bound verdict file.
+    r = runner.next(fx.goal(goal.id), card, held);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    r3.push('{"verdict":"pass","reasons":[],"sha":"sha-1","axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    f = runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.stale, true);
+    assert.equal(f.classified.outcome, 'no-verdict');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    const verdictFile = JSON.parse(readFileSync(path.join(fx.repo.mainRoot, '.review', 'T1-GUARD.json'), 'utf8')) as { sha: string; verdict: string };
+    assert.equal(verdictFile.sha, 'sha-1', 'the stale verdict must not be stamped onto the current candidate');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'review', 'the single no-verdict retry');
+    r3.push(PASS);
+    f = runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.substantiveDecisions, 2);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+
+    // (4) The two-decision allowance is enforced before a third review is issued or run.
+    const third = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', updatedAt: fx.now() }));
+    r = runner.next(fx.goal(goal.id), card, third);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
+    assert.throws(() => runner.formalReview(fx.goal(goal.id), card, third), /allowance/);
   } finally {
     fx.cleanup();
   }
