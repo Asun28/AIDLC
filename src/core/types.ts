@@ -233,6 +233,8 @@ export const ReviewInvocation = z.object({
   outcome: z.enum(['pass', 'block', 'no-verdict', 'quota-hold', 'pending']),
   runStatus: RunStatus.optional(),
   verdictRef: z.string().optional(),
+  /** Quota hold reported by a command-run reviewer: no new decision before this time. */
+  holdUntil: IsoTimestamp.optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
@@ -250,7 +252,7 @@ export const ReviewLedger = z.object({
 export type ReviewLedger = z.infer<typeof ReviewLedger>;
 
 // Pre-review (R2): a bounded second-model review before the ship. Rounds are counted per R3 cycle
-// (the number of substantive R3 decisions at the time), so an R3 block restarts the cycle.
+// (the number of substantive R3 blocks at the time), so an R3 block restarts the cycle and a pass does not.
 export const PreReviewOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold']);
 export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
 

@@ -12,7 +12,7 @@ node bin/aidlc.js doctor
 
 `init` copies `templates/` into the repository: `.claude/skills/aidlc-loop/*`, `.claude/skills/secure-api-review`, `.claude/agents/*`, a merged `.claude/settings.json`, `REVIEW.md`, `bands.yaml`, `intent/`, `specs/README.md` and `specs/_SPEC-TEMPLATE.md`, `plans/`, `<cardsDir>/_TEMPLATE.md`, `evals/`, `.github/workflows/agent-evals.yml` and `aidlc-ci.yml`, `docs/DELIVERY-OPS.md`, `aidlc.config.json`, `aidlc.ops.example.json`, an appended `## AI-native SDLC (aidlc)` section in `CLAUDE.md`, and `.aidlc/` plus `_local/` in `.gitignore`. Existing files are skipped unless `--force`.
 
-`aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review).
+`aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review), `formalReview.command|reviewer|timeoutMs|shell|maxDiffBytes` (see Formal review as a command).
 
 ## Running a goal
 
@@ -156,6 +156,17 @@ A bounded second-model review in front of the ship, so the formal PR review (R3,
 `command` is argv (the prompt arrives on stdin; on Windows it runs through a shell unless `shell` is set); an empty command disables the stage. `aidlc review pre <card>` builds the prompt from `REVIEW.md`, the card (acceptance, allow_paths, non_goals, forbid, tier, diagnosis), the committed diff against the base and the findings still to verify (the previous round's block, or the R3 reasons after an R3 block), runs the command with a receipt, takes the last JSON line as the verdict, writes `.review/<card>.pre.<cycle>.<round>.json` and `.log` next to the candidate, records the round in the card run and journals `PRE_REVIEW_DECIDED`.
 
 The gate lives inside SHIP: `aidlc card next` returns a `pre-review` directive until a `pass` exists for the current candidate. A `block` moves the run back to BUILD as a counted repair attempt (the DoD receipt is cleared; the reasons are carried into the next prompt), so the effort ladder (baseline + 2 repairs + 1 justified escalation) still bounds the total work. Rounds are capped per R3 cycle by `rounds`; a third block with `onExhausted: "stop"` is STOP/review with the retained verdicts, `"ship"` hands the residual findings to R3 instead. A missing or malformed verdict gets one retry, a reported quota hold is retried after the hold and never counts as a decision. An R3 block starts a new cycle: the repaired candidate needs a fresh pre-review pass before it ships again. R3 itself (`reviewer`, `gateRequired`, the PR review) is unchanged.
+
+### Formal review (R3) as a command
+
+The same mechanism runs the formal review when `formalReview.command` is set; otherwise the R3 verdict comes from the ship path (scaffold ReviewGate) as before. In this repository R3 is Codex:
+
+```json
+"gateRequired": true,
+"formalReview": { "command": ["codex", "exec", "--sandbox", "read-only", "--output-schema", "{schema}"], "reviewer": "codex", "timeoutMs": 1200000 }
+```
+
+Placeholders in argv: `{instructions}` (the prompt; when absent the prompt goes to stdin, which avoids shell quoting of a multi-line prompt on Windows), `{base}`, `{head}`, `{card}`, `{schema}` (a materialised `verdict.schema.json` for reviewers that enforce structured output), `{cwd}`. `aidlc review r3 <card>` refuses to run before the pre-review pass when R2 is configured, runs the command with a receipt, writes the candidate-bound verdict to `.review/<card>.json` (the file the ship paths read; a ship path re-reading a pass is not a second decision) and records the decision through the existing R3 ledger: two substantive decisions, one no-verdict retry, quota hold as WAIT with `holdUntil`, second substantive block as STOP/review. With `gateRequired: true` every block is merge-blocking: the card returns to REVIEW_FIX, the repair is the next counted attempt, and the repaired candidate restarts the pre-review cycle (R2 round 1) before `review r3` runs again. `aidlc card next` in SHIP returns `pre-review`, then `review`, then ships.
 
 ## Evals
 

@@ -73,6 +73,7 @@ rebase or amend receipt-bound or published history; recheck tests and
 review; no stale approval.
 
 ## Review (R3)
+R3 command when `formalReview.command` is set: `aidlc review r3 <id>`.
 Allowance: one initial decision + one for a repaired candidate. A second
 substantive block => STOP/review. Missing, malformed or stale verdict never
 passes; dispatch + one retry TOTAL across script and driver (a script

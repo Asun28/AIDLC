@@ -45,5 +45,18 @@
     "rounds": 3,
     "timeoutMs": 1200000,
     "onExhausted": "stop"
+  },
+  "gateRequired": true,
+  "formalReview": {
+    "command": [
+      "codex",
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      "{schema}"
+    ],
+    "reviewer": "codex",
+    "timeoutMs": 1200000
   }
 }

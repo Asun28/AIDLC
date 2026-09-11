@@ -21,6 +21,20 @@ export const PreReviewConfig = z.object({
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 
+/**
+ * Formal review (R3) as a command before the ship. Placeholders in argv: {instructions} {base} {head}
+ * {card} {schema} {cwd}; without {instructions} the prompt goes to stdin. Empty command = the R3
+ * verdict comes from the ship path (scaffold ReviewGate) or nowhere.
+ */
+export const FormalReviewConfig = z.object({
+  command: z.array(z.string()).default([]),
+  reviewer: z.string().default('codex'),
+  timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
+  shell: z.boolean().optional(),
+  maxDiffBytes: z.number().int().positive().default(300_000),
+});
+export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
+
 export const ProjectConfig = z.object({
   schemaVersion: z.literal(1).default(1),
   cardsDir: z.string().default('specs/tasks'),
@@ -53,6 +67,7 @@ export const ProjectConfig = z.object({
     .default({ frozenPaths: [] }),
   tierPaths: z.object({ tierS: z.array(z.string()).default([]), tier0: z.array(z.string()).default([]), frozen: z.array(z.string()).default([]) }).default({ tierS: [], tier0: [], frozen: [] }),
   preReview: PreReviewConfig.prefault({}),
+  formalReview: FormalReviewConfig.prefault({}),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 

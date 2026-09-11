@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { buildPreReviewPrompt, classifyPreReview, collectCandidateDiff, extractVerdict, runPreReview } from '../../src/review/pre-review.ts';
+import { buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview } from '../../src/review/pre-review.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -67,4 +67,40 @@ test('runPreReview classifies pass, block, malformed and quota output and writes
   assert.deepEqual(diff.changedPaths, ['src/gate.ts', 'src/x.ts']);
   assert.equal(diff.truncated, true);
   assert.ok(diff.diff.length < 60);
+});
+
+test('formal review (R3) command: placeholders expand, the prompt rides in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const schema = materialiseVerdictSchema(reviewDir);
+  assert.ok(existsSync(schema) && schema.endsWith('verdict.schema.json'));
+  const parsed = JSON.parse(readFileSync(schema, 'utf8')) as { required: string[]; properties: { verdict: { enum: string[] } } };
+  assert.deepEqual(parsed.properties.verdict.enum, ['pass', 'block']);
+  assert.ok(parsed.required.includes('axes'));
+
+  const expanded = expandCommand(['codex', 'exec', '--output-schema', '{schema}', '-C', '{cwd}', '{instructions}'], { schema, cwd: dir, instructions: 'REVIEW THIS', base: 'main', head: 'abc', card: 'T1-GATE' });
+  assert.deepEqual(expanded.argv, ['codex', 'exec', '--output-schema', schema, '-C', dir, 'REVIEW THIS']);
+  assert.equal(expanded.promptInArgv, true);
+  assert.equal(expandCommand(['deepseek', '--model', 'x'], { instructions: 'p' }).promptInArgv, false);
+
+  // argv mode: the scripted reviewer sees the instructions as an argument and an empty stdin
+  const seen: Array<{ args: string[]; input?: string }> = [];
+  const argvRunner: typeof scriptedRunner extends (s: infer S) => infer R ? R : never = (command, args, options = {}) => {
+    seen.push({ args, input: options.input });
+    const base = scriptedRunner({ [command]: { stdout: '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n' } });
+    return base(command, args, options);
+  };
+  const r = runPreReview({ runner: argvRunner, command: ['fake-r3', '--output-schema', '{schema}', '{instructions}'], vars: { schema, instructions: 'INSTRUCTIONS' }, cwd: dir, prompt: 'INSTRUCTIONS', timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.1', head: 'def456', reviewer: 'fake-r3' });
+  assert.equal(r.outcome, 'pass');
+  assert.deepEqual(seen[0]?.args, ['--output-schema', schema, 'INSTRUCTIONS']);
+  assert.equal(seen[0]?.input, '', 'argv mode closes stdin');
+  // stdin mode: no {instructions} placeholder, the prompt arrives on stdin
+  runPreReview({ runner: argvRunner, command: ['fake-r3', '--model', 'x'], cwd: dir, prompt: 'STDIN PROMPT', timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.r3.0.2', head: 'def456', reviewer: 'fake-r3' });
+  assert.equal(seen[1]?.input, 'STDIN PROMPT');
+
+  // the formal prompt without an embedded diff tells the reviewer where to look instead
+  const formal = buildReviewPrompt({ stage: 'formal', includeDiff: false, reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: 'SHOULD NOT APPEAR', truncated: false, priorFindings: [], round: 1, maxRounds: 2 });
+  assert.ok(formal.includes('formal reviewer (R3)'));
+  assert.ok(formal.includes('git diff main...HEAD'));
+  assert.ok(!formal.includes('SHOULD NOT APPEAR'));
 });

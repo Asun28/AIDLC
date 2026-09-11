@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Formal review (R3) as a command, card T0-R3-COMMAND: `aidlc review r3 <card>` runs `formalReview.command` (Codex `exec` with a materialised verdict schema in this repository; argv placeholders `{instructions} {base} {head} {card} {schema} {cwd}`, prompt on stdin when `{instructions}` is absent), writes the candidate-bound `.review/<card>.json` and records the decision through the existing R3 ledger. SHIP now requires R2 pass, then R3 pass; a merge-blocking block (`gateRequired: true` here) is REVIEW_FIX and the repaired candidate restarts the pre-review cycle; quota hold is WAIT (`holdUntil` on the invocation); no-verdict keeps the single retry. Template ships R3-as-command disabled.
+
 - Pre-review (R2), card T0-PRE-REVIEW: a bounded second-model review before the ship. `aidlc review pre <card>` runs the configured command (DeepSeek V4 Pro in this repository) on the committed candidate against REVIEW.md, receipted and journaled (`PRE_REVIEW_DECIDED`); the ship requires a fresh `pass` per candidate, a `block` is a counted repair with the reasons carried forward, rounds are capped per R3 cycle (`preReview.rounds`, 3 here, exhaustion is STOP/review unless `onExhausted: "ship"`), and an R3 block restarts the cycle. New config block `preReview` (opt-in; empty command = off); `.review/` ignored by git.
 
 Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before -> after:

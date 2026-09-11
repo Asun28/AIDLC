@@ -40,5 +40,10 @@
     "rounds": 2,
     "timeoutMs": 600000,
     "onExhausted": "stop"
+  },
+  "formalReview": {
+    "command": [],
+    "reviewer": "codex",
+    "timeoutMs": 1200000
   }
 }
