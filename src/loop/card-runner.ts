@@ -17,7 +17,7 @@ import { createEpisode, finishAttempt, nextEffortAction, startAttempt } from '..
 import { classifyVerdict, recordReviewOutcome, reviewRequestKey } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord } from '../core/types.ts';
+import { CardRun, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -421,8 +421,16 @@ export class CardRunner {
       const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined });
       return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
     }
-    if (last?.outcome === 'no-verdict' && run.preReview.noVerdictRetriesUsed > 1) {
-      const stop = makeStop('tool', `pre-reviewer ${cfg.reviewer} produced no usable verdict twice (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+    // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
+    if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
+      const next = this.save({ ...run, state: 'WAIT' });
+      const pollSeconds = Math.max(60, Math.ceil((Date.parse(last.holdUntil) - Date.parse(now)) / 1000));
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'pre-review-quota', pollSeconds, narration: `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit; holding until ${last.holdUntil} (no round consumed). Continue independent work within limits, then run \`aidlc card next ${card.id}\`.` } };
+    }
+    // One no-verdict retry per cycle (initial run plus one retry), like R3.
+    const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
+    if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
+      const stop = makeStop('tool', `pre-reviewer ${cfg.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -465,9 +473,10 @@ export class CardRunner {
     const prompt = buildPreReviewPrompt({ reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round, maxRounds: cfg.rounds });
     const fileStem = `${card.id}.pre.${cycle}.${round}`;
     const result = runPreReview({ runner: this.runner, command: cfg.command, cwd, prompt, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: path.join(cwd, '.review'), fileStem, head: candidateSha, reviewer: cfg.reviewer });
-    const record: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: Math.max(0, Math.round(result.receipt.durationMs)), outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256 };
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256, durationMs: record.durationMs } });
-    const ledger = { rounds: [...run.preReview.rounds, record], noVerdictRetriesUsed: run.preReview.noVerdictRetriesUsed + (result.outcome === 'no-verdict' ? 1 : 0) };
+    const holdUntil = result.outcome === 'quota-hold' ? addMs(now, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    const record: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: Math.max(0, Math.round(result.receipt.durationMs)), outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256, holdUntil };
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256, durationMs: record.durationMs, holdUntil } });
+    const ledger = { rounds: [...run.preReview.rounds, record] };
     const evidence = [...run.evidence, { id: `pre-review-${cycle}-${round}`, kind: 'artifact' as const, createdAt: now, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) }];
     let next: CardRun = { ...run, preReview: ledger, evidence };
     if (result.outcome === 'block') {

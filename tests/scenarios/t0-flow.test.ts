@@ -253,6 +253,25 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     r = runner.next(fx.goal(goal.id), card, run);
     assert.equal(r.directive.kind, 'pre-review');
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
+    // A quota hold is WAIT, never a decision: the gate parks the card until the hold clears, then asks again.
+    verdicts.push('Error: 429 Too Many Requests, retry after 60 seconds\n');
+    const held = runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(held.result.outcome, 'quota-hold');
+    r = runner.next(fx.goal(goal.id), card, held.run);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') assert.equal(r.directive.on, 'pre-review-quota');
+    assert.equal(r.run.state, 'WAIT');
+    fx.advance(61_000);
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2, 'a hold consumes no round');
+    // A malformed verdict gets one retry within the cycle; it consumes no round either.
+    verdicts.push('I cannot decide.\n');
+    const noVerdict = runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(noVerdict.result.outcome, 'no-verdict');
+    r = runner.next(fx.goal(goal.id), card, noVerdict.run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     verdicts.push('{"verdict":"pass","reasons":[]}\n');
     const round2 = runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(round2.result.outcome, 'pass');
@@ -262,11 +281,18 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     r = runner.next(fx.goal(goal.id), card, round2.run);
     assert.equal(r.directive.kind, 'close', r.directive.narration);
     assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 1);
-    assert.equal(fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED').length, 2);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED').length, 4, 'block, quota hold, no-verdict and pass are all journaled');
 
     // An R3 block starts a new cycle: the repaired candidate needs a fresh pass, counted from round 1.
     const cycled = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, review: { ...r.run.review, substantiveDecisions: 1, substantiveBlocks: 1 }, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:ok3', updatedAt: fx.now() }));
     r = runner.next(fx.goal(goal.id), card, cycled);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
+    // The no-verdict retry is per cycle: the earlier cycle's retry does not exhaust this one.
+    verdicts.push('garbage\n');
+    const noVerdict2 = runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(noVerdict2.result.outcome, 'no-verdict');
+    r = runner.next(fx.goal(goal.id), card, noVerdict2.run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
 

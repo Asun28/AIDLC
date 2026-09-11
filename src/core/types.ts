@@ -267,12 +267,13 @@ export const PreReviewRound = z.object({
   reasons: z.array(z.string()).default([]),
   verdictRef: z.string().optional(),
   receiptSha256: z.string().optional(),
+  /** Quota hold: no new round before this time; the hold never counts as a decision. */
+  holdUntil: IsoTimestamp.optional(),
 });
 export type PreReviewRound = z.infer<typeof PreReviewRound>;
 
 export const PreReviewLedger = z.object({
   rounds: z.array(PreReviewRound).default([]),
-  noVerdictRetriesUsed: z.number().int().nonnegative().default(0),
 });
 export type PreReviewLedger = z.infer<typeof PreReviewLedger>;
 

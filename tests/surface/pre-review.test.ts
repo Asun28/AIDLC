@@ -62,6 +62,7 @@ test('runPreReview classifies pass, block, malformed and quota output and writes
     }
   }
   assert.equal(classifyPreReview(undefined, { exitCode: 0, timedOut: true, stdout: '', stderr: '' }).runStatus, 'timeout');
+  assert.equal(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: 'Error: 429 Too Many Requests, retry after 30 seconds', stderr: '' }).retryAfterMs, 30_000);
   const diff = collectCandidateDiff(scriptedRunner({ 'git diff --name-only': { stdout: 'src/gate.ts\nsrc/x.ts\n' }, 'git diff': { stdout: 'x'.repeat(50) } }), dir, 'main', 20);
   assert.deepEqual(diff.changedPaths, ['src/gate.ts', 'src/x.ts']);
   assert.equal(diff.truncated, true);

@@ -76,6 +76,8 @@ export interface PreReviewClassification {
   outcome: PreReviewOutcome;
   runStatus: RunStatus;
   reasons: string[];
+  /** Present on a quota hold when the reviewer named a retry delay. */
+  retryAfterMs?: number;
 }
 
 export function classifyPreReview(verdict: Verdict | undefined, receipt: Pick<ExecReceipt, 'exitCode' | 'timedOut' | 'stdout' | 'stderr'>): PreReviewClassification {
@@ -84,7 +86,8 @@ export function classifyPreReview(verdict: Verdict | undefined, receipt: Pick<Ex
     const reasons = verdict.reasons.length ? verdict.reasons : [...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])];
     return { outcome: verdict.verdict, runStatus: 'success', reasons };
   }
-  if (detectQuotaHold(`${receipt.stdout}\n${receipt.stderr}`).hold) return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [] };
+  const quota = detectQuotaHold(`${receipt.stdout}\n${receipt.stderr}`);
+  if (quota.hold) return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: quota.retryAfterMs };
   if (receipt.exitCode !== 0) return { outcome: 'no-verdict', runStatus: 'tool_error', reasons: [] };
   return { outcome: 'no-verdict', runStatus: receipt.stdout.trim() ? 'malformed' : 'no_output', reasons: [] };
 }
