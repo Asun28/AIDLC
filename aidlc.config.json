@@ -44,7 +44,12 @@
     "reviewer": "deepseek-v4-pro",
     "rounds": 3,
     "timeoutMs": 1200000,
-    "onExhausted": "stop"
+    "onExhausted": "stop",
+    "perspectives": [
+      "bugs",
+      "security",
+      "compliance"
+    ]
   },
   "gateRequired": true,
   "formalReview": {
@@ -57,6 +62,11 @@
       "{schema}"
     ],
     "reviewer": "codex",
-    "timeoutMs": 1200000
+    "timeoutMs": 1200000,
+    "perspectives": [
+      "bugs",
+      "security",
+      "compliance"
+    ]
   }
 }

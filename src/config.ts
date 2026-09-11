@@ -11,6 +11,8 @@ export const PreReviewConfig = z.object({
   /** argv of the reviewer; the prompt arrives on stdin and the verdict JSON must be the last stdout line. */
   command: z.array(z.string()).default([]),
   reviewer: z.string().default('deepseek-v4-pro'),
+  /** Concurrent angles per round (bugs, security, compliance); empty = one full pass. */
+  perspectives: z.array(z.string()).default([]),
   /** Blocks allowed per R3 cycle before onExhausted applies. */
   rounds: z.number().int().min(1).max(3).default(2),
   timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
@@ -29,6 +31,8 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 export const FormalReviewConfig = z.object({
   command: z.array(z.string()).default([]),
   reviewer: z.string().default('codex'),
+  /** Concurrent angles per decision; empty = one full pass. A panel is one decision. */
+  perspectives: z.array(z.string()).default([]),
   timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),

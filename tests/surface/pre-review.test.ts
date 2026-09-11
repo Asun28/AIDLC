@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview } from '../../src/review/pre-review.ts';
+import { aggregateVerdicts, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -103,4 +103,71 @@ test('formal review (R3) command: placeholders expand, the prompt rides in argv 
   assert.ok(formal.includes('formal reviewer (R3)'));
   assert.ok(formal.includes('git diff main...HEAD'));
   assert.ok(!formal.includes('SHOULD NOT APPEAR'));
+});
+
+test('panel: perspectives run concurrently with their own prompt section and files, the round verdict aggregates quota > block > no-verdict > pass, and a non-zero exit never passes', async () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const base = { reviewPolicy: 'policy', card, base: 'main', head: 'h', changedPaths: [] as string[], diff: 'd', truncated: false, priorFindings: [] as string[] };
+  const secPrompt = buildReviewPrompt({ ...base, stage: 'pre', includeDiff: true, perspective: 'security', round: 1, maxRounds: 3 });
+  assert.ok(secPrompt.includes('## This pass: security'), 'perspective section');
+  assert.ok(/injection|credential|PII/i.test(secPrompt), 'security guidance');
+  const formal = buildReviewPrompt({ ...base, stage: 'formal', includeDiff: false, round: 1, maxRounds: 2 });
+  assert.ok(/every material finding/i.test(formal) && /do not stop/i.test(formal), 'the formal pass demands exhaustiveness');
+  assert.ok(!/Think briefly/.test(formal));
+
+  const v = (verdict: 'pass' | 'block', reasons: string[] = [], axis: 'spec' | 'standards' = 'spec') => ({ verdict, reasons, axes: { spec: { verdict: verdict === 'block' && axis === 'spec' ? ('block' as const) : ('pass' as const), reasons: axis === 'spec' ? reasons : [] }, standards: { verdict: verdict === 'block' && axis === 'standards' ? ('block' as const) : ('pass' as const), reasons: axis === 'standards' ? reasons : [] } } });
+  const agg = aggregateVerdicts([
+    { perspective: 'bugs', outcome: 'pass', runStatus: 'success', reasons: [], verdict: v('pass') },
+    { perspective: 'security', outcome: 'block', runStatus: 'success', reasons: ['[spec] 2 boundary @ a:1: leak -> fix'], verdict: v('block', ['[spec] 2 boundary @ a:1: leak -> fix']) },
+    { perspective: 'compliance', outcome: 'no-verdict', runStatus: 'malformed', reasons: [] },
+  ]);
+  assert.equal(agg.outcome, 'block', 'a block outranks a missing verdict');
+  assert.deepEqual(agg.reasons, ['[spec] 2 boundary @ a:1: leak -> fix (security)']);
+  assert.equal(agg.verdict?.axes?.spec?.verdict, 'block');
+  assert.equal(agg.verdict?.axes?.standards?.verdict, 'pass');
+  assert.equal(aggregateVerdicts([{ perspective: 'a', outcome: 'pass', runStatus: 'success', reasons: [], verdict: v('pass') }, { perspective: 'b', outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 5000 }]).outcome, 'quota-hold');
+  assert.equal(aggregateVerdicts([{ perspective: 'a', outcome: 'pass', runStatus: 'success', reasons: [], verdict: v('pass') }, { perspective: 'b', outcome: 'no-verdict', runStatus: 'malformed', reasons: [] }]).outcome, 'no-verdict');
+  const allPass = aggregateVerdicts([{ perspective: 'a', outcome: 'pass', runStatus: 'success', reasons: [], verdict: v('pass') }, { perspective: 'b', outcome: 'pass', runStatus: 'success', reasons: [], verdict: v('pass') }]);
+  assert.equal(allPass.outcome, 'pass');
+  assert.equal(allPass.verdict?.verdict, 'pass');
+  const inconsistent = aggregateVerdicts([{ perspective: 'a', outcome: 'pass', runStatus: 'success', reasons: [], verdict: { ...v('pass'), sha: 'x' } }, { perspective: 'b', outcome: 'pass', runStatus: 'success', reasons: [], verdict: { ...v('pass'), sha: 'y' } }]);
+  assert.equal(inconsistent.outcome, 'no-verdict', 'perspectives that bind different candidates never pass');
+
+  // one process per perspective, per-perspective files plus the aggregated round file
+  const seen: string[][] = [];
+  const sync = scriptedRunner({
+    'fake-panel --focus security': { stdout: '{"verdict":"block","reasons":["[spec] 2 boundary @ src/gate.ts:1: token in log -> redact"],"axes":{"spec":{"verdict":"block","reasons":["token"]},"standards":{"verdict":"pass","reasons":[]}}}\n' },
+    'fake-panel': { stdout: '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n' },
+  });
+  const panel = await runReviewPanel({ runner: async (c, a, o) => { seen.push(a); return sync(c, a, o); }, command: ['fake-panel', '--focus', '{perspective}'], perspectives: ['bugs', 'security', 'compliance'], promptFor: (p) => `PROMPT ${p ?? 'single'}`, vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.pre.0.1', head: 'def456', reviewer: 'fake' });
+  assert.equal(panel.outcome, 'block');
+  assert.equal(panel.perspectives.length, 3);
+  assert.deepEqual(seen.map((a) => a[1]).sort(), ['bugs', 'compliance', 'security']);
+  assert.ok(panel.reasons[0]?.endsWith('(security)'), panel.reasons.join(' | '));
+  for (const p of ['bugs', 'security', 'compliance']) assert.ok(existsSync(path.join(reviewDir, `T1-GATE.pre.0.1.${p}.log`)), `${p} log retained`);
+  assert.ok(panel.verdictRef && existsSync(panel.verdictRef), 'aggregated round verdict written');
+  const round = JSON.parse(readFileSync(panel.verdictRef!, 'utf8')) as { verdict: string; perspectives: Array<{ name: string; outcome: string }> };
+  assert.equal(round.verdict, 'block');
+  assert.equal(round.perspectives.find((p) => p.name === 'security')?.outcome, 'block');
+  // single mode is a panel of one
+  const single = await runReviewPanel({ runner: async (c, a, o) => sync(c, a, o), command: ['fake-panel'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.pre.0.2', head: 'def456', reviewer: 'fake' });
+  assert.equal(single.outcome, 'pass');
+  assert.equal(single.perspectives.length, 1);
+
+  // fail-closed: a reviewer that exits non-zero never passes, even with a pass document on stdout
+  const bad = classifyPreReview({ verdict: 'pass', reasons: [] }, { exitCode: 1, timedOut: false, stdout: '{"verdict":"pass","reasons":[]}', stderr: 'boom' });
+  assert.equal(bad.outcome, 'no-verdict');
+  assert.equal(bad.runStatus, 'tool_error');
+});
+
+test('scope gate: allow_paths match exact paths, directory prefixes and globs, nothing else', () => {
+  assert.equal(pathAllowed('src/a.ts', ['src/a.ts']), true);
+  assert.equal(pathAllowed('src/b.ts', ['src/a.ts']), false);
+  assert.equal(pathAllowed('docs/adr/0001.md', ['docs/']), true);
+  assert.equal(pathAllowed('docs/adr/0001.md', ['docs/...']), true);
+  assert.equal(pathAllowed('tests/x/y.test.ts', ['tests/**/*.test.ts']), true);
+  assert.equal(pathAllowed('tests/x/y.ts', ['tests/**/*.test.ts']), false);
+  assert.equal(pathAllowed('src/loop/a.ts', ['src/*.ts']), false);
+  assert.equal(pathAllowed(String.raw`src\loop\a.ts`, ['src/loop/a.ts']), true);
 });

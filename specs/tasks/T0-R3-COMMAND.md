@@ -1,7 +1,7 @@
 ---
 id: T0-R3-COMMAND
 title: Formal review (R3) as a configured command before the ship (Codex exec with a verdict schema); a block is REVIEW_FIX and restarts the pre-review cycle; a pass opens the ship
-status: merged
+status: in-progress
 branch: T0-R3-COMMAND
 worktree: C:\wt\T0-R3-COMMAND
 allow_paths:

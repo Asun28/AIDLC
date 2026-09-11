@@ -147,7 +147,7 @@ The scaffold's 18 secret-file `Read(...)` denials are merged into `permissions.d
 
 ## Pre-review (R2)
 
-A bounded second-model review in front of the ship, so the formal PR review (R3, two substantive decisions) sees candidates that already survived a cheaper pass. Configure it in `aidlc.config.json`:
+A bounded second-model review in front of the ship, so the formal PR review (R3, two substantive decisions) sees candidates that already passed a cheaper review. Configure it in `aidlc.config.json`:
 
 ```json
 "preReview": { "command": ["deepseek", "--model", "deepseek-v4-pro"], "reviewer": "deepseek-v4-pro", "rounds": 3, "timeoutMs": 600000, "onExhausted": "stop" }
@@ -156,6 +156,10 @@ A bounded second-model review in front of the ship, so the formal PR review (R3,
 `command` is argv (the prompt arrives on stdin; on Windows it runs through a shell unless `shell` is set); an empty command disables the stage. `aidlc review pre <card>` builds the prompt from `REVIEW.md`, the card (acceptance, allow_paths, non_goals, forbid, tier, diagnosis), the committed diff against the base and the findings still to verify (the previous round's block, or the R3 reasons after an R3 block), runs the command with a receipt, takes the last JSON line as the verdict, writes `.review/<card>.pre.<cycle>.<round>.json` and `.log` next to the candidate, records the round in the card run and journals `PRE_REVIEW_DECIDED`.
 
 The gate lives inside SHIP: `aidlc card next` returns a `pre-review` directive until a `pass` exists for the current candidate. A `block` moves the run back to BUILD as a counted repair attempt (the DoD receipt is cleared; the reasons are carried into the next prompt), so the effort ladder (baseline + 2 repairs + 1 justified escalation) still bounds the total work. Rounds are capped per R3 cycle by `rounds`; a third block with `onExhausted: "stop"` is STOP/review with the retained verdicts, `"ship"` hands the residual findings to R3 instead. A missing or malformed verdict gets one retry, a reported quota hold is retried after the hold and never counts as a decision. An R3 block starts a new cycle: the repaired candidate needs a fresh pre-review pass before it ships again. R3 itself (`reviewer`, `gateRequired`, the PR review) is unchanged.
+
+### Review panel
+
+With `preReview.perspectives` (and `formalReview.perspectives`) set, one round runs one reviewer process per perspective concurrently, each with a perspective section in its prompt (built-in guidance for `bugs`, `security` and `compliance`, the three passes in REVIEW.md; any other name is a custom focus). The round verdict is aggregated: quota-hold > block > no-verdict > pass, so a round passes only when every angle passes; block reasons are unioned and tagged with their perspective; axes take the worse verdict; angles that bind different candidates never aggregate into a pass. Per-perspective verdict and log files are retained as `.review/<card>.pre.<cycle>.<round>.<perspective>.*` next to the aggregated round file, and the round record lists every angle with its outcome and duration. An R3 panel is one decision. Reason: native reviewers cap findings per pass (Codex `/review` reports 1-3 by design, openai/codex#4710, #5547), so breadth per decision replaces repeated decisions. A deterministic scope gate runs before any model call: changed paths outside `allow_paths` block the round (R2) or refuse the dispatch (R3) with no tokens spent.
 
 ### Formal review (R3) as a command
 

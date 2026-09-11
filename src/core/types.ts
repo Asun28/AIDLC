@@ -223,6 +223,21 @@ export const Verdict = z.object({
 });
 export type Verdict = z.infer<typeof Verdict>;
 
+export const PreReviewOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold']);
+export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
+
+/** One angle of a concurrent review panel (bugs, security, compliance, or a custom focus). */
+export const PerspectiveRecord = z.object({
+  name: z.string().min(1),
+  outcome: PreReviewOutcome,
+  runStatus: RunStatus.optional(),
+  reasons: z.array(z.string()).default([]),
+  durationMs: z.number().int().nonnegative().default(0),
+  verdictRef: z.string().optional(),
+  receiptSha256: z.string().optional(),
+});
+export type PerspectiveRecord = z.infer<typeof PerspectiveRecord>;
+
 export const ReviewInvocation = z.object({
   invocationId: z.string().min(1),
   candidateDigest: z.string().min(1),
@@ -235,6 +250,8 @@ export const ReviewInvocation = z.object({
   verdictRef: z.string().optional(),
   /** Quota hold reported by a command-run reviewer: no new decision before this time. */
   holdUntil: IsoTimestamp.optional(),
+  /** Concurrent angles of a command-run panel that produced this single decision. */
+  perspectives: z.array(PerspectiveRecord).optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
@@ -253,9 +270,6 @@ export type ReviewLedger = z.infer<typeof ReviewLedger>;
 
 // Pre-review (R2): a bounded second-model review before the ship. Rounds are counted per R3 cycle
 // (the number of substantive R3 blocks at the time), so an R3 block restarts the cycle and a pass does not.
-export const PreReviewOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold']);
-export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
-
 export const PreReviewRound = z.object({
   round: z.number().int().positive(),
   cycle: z.number().int().nonnegative(),
@@ -271,6 +285,8 @@ export const PreReviewRound = z.object({
   receiptSha256: z.string().optional(),
   /** Quota hold: no new round before this time; the hold never counts as a decision. */
   holdUntil: IsoTimestamp.optional(),
+  /** Concurrent angles of a panel round. */
+  perspectives: z.array(PerspectiveRecord).optional(),
 });
 export type PreReviewRound = z.infer<typeof PreReviewRound>;
 
