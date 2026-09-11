@@ -34,5 +34,16 @@
     "tierS": [],
     "tier0": [],
     "frozen": []
+  },
+  "preReview": {
+    "command": [
+      "deepseek",
+      "--model",
+      "deepseek-v4-pro"
+    ],
+    "reviewer": "deepseek-v4-pro",
+    "rounds": 3,
+    "timeoutMs": 600000,
+    "onExhausted": "stop"
   }
 }

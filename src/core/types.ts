@@ -249,6 +249,34 @@ export const ReviewLedger = z.object({
 });
 export type ReviewLedger = z.infer<typeof ReviewLedger>;
 
+// Pre-review (R2): a bounded second-model review before the ship. Rounds are counted per R3 cycle
+// (the number of substantive R3 decisions at the time), so an R3 block restarts the cycle.
+export const PreReviewOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold']);
+export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
+
+export const PreReviewRound = z.object({
+  round: z.number().int().positive(),
+  cycle: z.number().int().nonnegative(),
+  reviewer: z.string().min(1),
+  candidateDigest: z.string().min(1),
+  candidateSha: z.string().optional(),
+  requestedAt: IsoTimestamp,
+  durationMs: z.number().int().nonnegative().default(0),
+  outcome: PreReviewOutcome,
+  runStatus: RunStatus.optional(),
+  reasons: z.array(z.string()).default([]),
+  verdictRef: z.string().optional(),
+  receiptSha256: z.string().optional(),
+  /** Quota hold: no new round before this time; the hold never counts as a decision. */
+  holdUntil: IsoTimestamp.optional(),
+});
+export type PreReviewRound = z.infer<typeof PreReviewRound>;
+
+export const PreReviewLedger = z.object({
+  rounds: z.array(PreReviewRound).default([]),
+});
+export type PreReviewLedger = z.infer<typeof PreReviewLedger>;
+
 // ---------------------------------------------------------------------------
 // CI
 // ---------------------------------------------------------------------------
@@ -505,6 +533,7 @@ export const CardRun = z.object({
   candidate: CandidateInfo.optional(),
   pr: PrInfo.optional(),
   review: ReviewLedger.prefault({}),
+  preReview: PreReviewLedger.prefault({}),
   ci: CiLedger.prefault({}),
   effort: EffortEpisode.optional(),
   redReceipt: z.string().optional(),
@@ -659,6 +688,7 @@ export const JournalEventType = z.enum([
   'REVIEW_ADMITTED',
   'REVIEW_DECIDED',
   'REVIEW_HOLD',
+  'PRE_REVIEW_DECIDED',
   'CI_CLASSIFIED',
   'CI_RERUN',
   'OPERATION_INTENT',

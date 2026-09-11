@@ -8,6 +8,7 @@ node_modules/
 # aidlc runtime state (shared across worktrees, never committed)
 .aidlc/
 _local/
+.review/
 
 # planning-with-files working memory (session scratch)
 task_plan.md

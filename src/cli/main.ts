@@ -579,9 +579,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
 
   // ------------------------------------------------------------------ review / ci / ops
-  program
-    .command('review')
-    .description('shared review admission queue')
+  const review = program.command('review').description('shared review admission queue and the pre-review (R2) stage');
+  review
     .command('status')
     .option('--pool <name>')
     .action((o: { pool?: string }) => {
@@ -589,6 +588,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const q = new ReviewQueue(c.paths.reviewQueue);
       const pool = o.pool ?? c.config.reviewPool;
       out(c, { pool: q.pool(pool), requests: q.list(pool) }, () => `pool ${pool}: active=${q.pool(pool).active.length}/${q.pool(pool).maxConcurrent} resetAt=${q.pool(pool).resetAt ?? '-'}\n${q.list(pool).map((r) => `  ${r.seq} ${r.state.padEnd(11)} ${r.candidateDigest.slice(0, 12)} ${r.requesters.join('+')}`).join('\n') || '  (empty)'}`);
+    });
+  review
+    .command('pre <cardId>')
+    .description('run the configured pre-reviewer (R2) on the committed candidate: pass opens the ship, block returns the card to BUILD')
+    .option('--goal <id>')
+    .action((cardId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const r = runnerFor(c).preReview(goalRec, parsed.card, run);
+      c.controller.writeBoard(goalRec);
+      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.receipt.durationMs, reasons: r.result.reasons, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
+      out(c, summary, () => `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms)\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
   program
     .command('ci')
