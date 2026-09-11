@@ -72,11 +72,11 @@ Test files are under `tests/core`, `tests/infra` and `tests/surface`; the suite 
 | Q5 amendments | `src/core/amendments.ts`, `src/loop/controller.ts` (`revision`) | `tests/core/amendments.test.ts` | implemented |
 | Q6 review: defect blocks merge, missing/stale never passes, one retry | `src/core/review-policy.ts`, `src/core/card-machine.ts` | `tests/core/review-policy.test.ts`, `tests/core/card-machine.test.ts` | implemented |
 | Q7 CI: repair code, rerun transient once, never duplicate | `src/core/ci-policy.ts`, `src/loop/card-runner.ts` (`ciReconcile`) | `tests/core/ci-policy.test.ts` | implemented |
-| Q8 recovery: deadlines/counters/owner survive; terminal wakeup does no work | `src/core/deadlines.ts`, `src/core/card-machine.ts`, `src/loop/controller.ts` (terminal directives) | `tests/core/deadlines.test.ts`, `tests/core/card-machine.test.ts` | implemented: `tests/scenarios/deadline.test.ts`, `tests/scenarios/t0-flow.test.ts` (no work after DONE) |
+| Q8 recovery: deadlines/counters/owner persist; terminal wakeup does no work | `src/core/deadlines.ts`, `src/core/card-machine.ts`, `src/loop/controller.ts` (terminal directives) | `tests/core/deadlines.test.ts`, `tests/core/card-machine.test.ts` | implemented: `tests/scenarios/deadline.test.ts`, `tests/scenarios/t0-flow.test.ts` (no work after DONE) |
 | Q9 isolation: cap two, serialisation, no third writer | `src/core/arc.ts` | `tests/core/arc.test.ts` | implemented |
 | Q10 integration: green cards with a broken workflow fail; one repair cycle | `src/core/goal-machine.ts`, `src/core/arc.ts` (`canOpenIntegrationRepair`) | `tests/core/goal-machine.test.ts`, `tests/core/arc.test.ts` | implemented |
 | Q11 lifecycle: required UI/security/data/package proof cannot be omitted | `src/core/goal-machine.ts` (`goalDoneEvidence`) | `tests/core/goal-machine.test.ts` | partial: stage gating only; UI/security proof binding is project-specific |
-| Q12 evidence survives cleanup; tampering and stale candidates fail | `src/audit/*`, `src/state/journal.ts` | `tests/surface/verifier.test.ts`, `tests/surface/manifest.test.ts`, `tests/infra/journal.test.ts` | implemented |
+| Q12 evidence persists after cleanup; tampering and stale candidates fail | `src/audit/*`, `src/state/journal.ts` | `tests/surface/verifier.test.ts`, `tests/surface/manifest.test.ts`, `tests/infra/journal.test.ts` | implemented |
 | Q13 local/docs: non-TDD evidence, no invented RED, no automatic deployment | `src/core/types.ts` (`Card.tdd`), `src/loop/card-runner.ts` | `tests/surface/card.test.ts` | partial: non-TDD flag honoured; local ship mode untested |
 | Q14 packaging: measured caps, copied modules, matching indexes | `templates/`, `src/scaffold/init.ts` | none | partial: caps measured at authoring, no automated check; `init` has no test |
 | Q15 optional stages: development-only finishes without cloud | `src/core/goal-machine.ts`, `src/core/router.ts` | `tests/core/goal-machine.test.ts`, `tests/core/router.test.ts` | implemented |
@@ -89,7 +89,7 @@ Test files are under `tests/core`, `tests/infra` and `tests/surface`; the suite 
 | Q22 incident loop: recovery is not delivery; repair deduplicated | `src/core/release-machine.ts` (dispositions), `src/maintain/incident.ts` | `tests/core/release-machine.test.ts`, `tests/surface/incident.test.ts` | implemented |
 | Q23 shared sessions: one writer per card, takeover reconciles first | `src/coordination/lease.ts`, `src/core/card-machine.ts` | `tests/infra/lease.test.ts`, `tests/core/card-machine.test.ts` | implemented in-process; two real windows on one repo need a live qualification run |
 | Q24 review congestion: one provider request, queueing at capacity | `src/coordination/review-queue.ts` | `tests/infra/review-queue.test.ts`, `tests/core/review-policy.test.ts` | implemented in-process; live provider admission pending |
-| Q25 model policy: task baseline independent of coordinator; single escalation; counters survive | `src/core/effort.ts`, `src/core/roles.ts` | `tests/core/effort.test.ts`, `tests/core/deadlines.test.ts` | implemented |
+| Q25 model policy: task baseline independent of coordinator; single escalation; counters persist | `src/core/effort.ts`, `src/core/roles.ts` | `tests/core/effort.test.ts`, `tests/core/deadlines.test.ts` | implemented |
 
 ## Known gaps
 
