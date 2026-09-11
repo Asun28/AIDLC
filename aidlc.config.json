@@ -43,7 +43,7 @@
     ],
     "reviewer": "deepseek-v4-pro",
     "rounds": 3,
-    "timeoutMs": 600000,
+    "timeoutMs": 1200000,
     "onExhausted": "stop"
   }
 }
