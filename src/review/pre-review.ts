@@ -194,15 +194,17 @@ export interface PreReviewClassification {
   advisory?: string[];
 }
 
-const LOCATION = /@\s*([A-Za-z0-9_][A-Za-z0-9_.\/\\-]*)(?::\d+(?:-\d+)?)?/;
+/** `@ <path>[:line[-line]]`: the path is any run of non-space characters (dot-leading and non-ASCII included) up to an optional `:line`. */
+const LOCATION = /@\s*([^\s@:]+)(?::\d+(?:-\d+)?)?/u;
 
 /** A reason is cited when it carries an axis tag and a location that names a file, one of the changed paths when they are known. */
 export function citedReason(reason: string, changedPaths?: string[]): boolean {
   if (!/^\s*\[(spec|standards)\]/i.test(reason)) return false;
   const m = LOCATION.exec(reason);
   if (!m) return false;
-  if (!changedPaths) return true;
   const file = m[1]!.replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!/[\p{L}\p{N}]/u.test(file)) return false; // punctuation such as "->" is not a file
+  if (!changedPaths) return true;
   return changedPaths.some((p) => p.replace(/\\/g, '/').replace(/^\.\//, '') === file);
 }
 
@@ -263,7 +265,8 @@ export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: s
   // NUL-separated names: git never quotes or escapes them, so non-ASCII paths compare exactly.
   const names = runner('git', ['diff', '--name-only', '-z', range], { cwd });
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);
-  const full = runner('git', ['diff', range], { cwd });
+  // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer.
+  const full = runner('git', ['diff', '--text', range], { cwd });
   if (full.exitCode !== 0) throw new Error(`git diff ${range} failed in ${cwd}: ${full.stderr.trim() || `exit ${full.exitCode}`}`);
   const changedPaths = names.stdout
     .split(/\u0000|\r?\n/)
@@ -442,8 +445,17 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
       const { argv, promptInArgv } = expandCommand(o.command, { ...o.vars, instructions: prompt, perspective: p ?? 'review' });
       const [cmd, ...args] = argv;
       if (!cmd) throw new Error('review command is empty');
-      // Dynamic text never goes through a shell: argv instructions force a direct spawn.
-      const receipt = await o.runner(cmd, args, { cwd: o.cwd, input: promptInArgv ? '' : prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
+      // Dynamic text never goes through a shell: argv instructions force a direct spawn. A runner that throws
+      // (spawn failure, stdin closed early) is a failed receipt for this angle, not an aborted round.
+      let receipt: ExecReceipt;
+      const startedAt = new Date().toISOString();
+      try {
+        receipt = await o.runner(cmd, args, { cwd: o.cwd, input: promptInArgv ? '' : prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
+      } catch (err) {
+        const finishedAt = new Date().toISOString();
+        const stderr = `[spawn error] ${(err as Error).message}`;
+        receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
+      }
       const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths });
       return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
     }),

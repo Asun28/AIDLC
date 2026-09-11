@@ -564,18 +564,27 @@ export class CardRunner {
     const candidateDigest = run.candidate?.digest ?? candidateSha;
     const eligibility = this.preReviewEligibility(run, candidateDigest);
     if (!eligibility.eligible) throw new Error(`pre-review pass required first (${eligibility.reason}): run \`aidlc review pre ${card.id}\` on candidate ${candidateSha.slice(0, 12)} before the formal review`);
-    const forCandidate = run.review.invocations.filter((i) => i.reviewer === cfg.reviewer && i.candidateDigest === candidateDigest);
+    // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
+    const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    const ledger = persisted.review;
+    const forCandidate = ledger.invocations.filter((i) => i.reviewer === cfg.reviewer && i.candidateDigest === candidateDigest);
     const pendingReservation = forCandidate.find((i) => i.outcome === 'pending');
     if (pendingReservation) throw new Error(`a formal review of this candidate is already pending (${pendingReservation.invocationId}, requested ${pendingReservation.requestedAt}); join it, do not dispatch another`);
     const lastForCandidate = forCandidate[forCandidate.length - 1];
     if (lastForCandidate?.outcome === 'quota-hold' && lastForCandidate.holdUntil && Date.parse(lastForCandidate.holdUntil) > Date.parse(now)) {
       throw new Error(`formal reviewer ${cfg.reviewer} is on a quota hold until ${lastForCandidate.holdUntil}; do not re-run before it clears`);
     }
-    if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
-      throw new Error(`the two-decision review allowance is used (${run.review.substantiveDecisions}); ${lastForCandidate?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+    if (ledger.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
+      throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions}); ${lastForCandidate?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
-    if (run.review.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
-      throw new Error(`no verdict after the single retry (${run.review.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
+    if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
+      throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
+    }
+    // Only the lease owner at the run's generation may reserve a decision.
+    if (persisted.ownerGeneration !== undefined) {
+      this.renewOwnLease(card.id, persisted, now);
+      this.leases.fence(resourceKeys.card(this.repo.key, card.id), persisted.ownerGeneration, currentActor(), now);
     }
     const reviewDir = path.join(cwd, '.review');
     const schema = materialiseVerdictSchema(reviewDir);
@@ -591,17 +600,23 @@ export class CardRunner {
     let enq = this.queue.enqueue({ pool: goal.reviewPool, repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requester: `${goal.id}:${card.id}`, deadline: run.deadline, now });
     if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
     if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${goal.reviewPool}; join it, do not dispatch another`);
-    const admit = this.queue.admit(goal.reviewPool, currentActor(), now);
-    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${goal.reviewPool} is ${admit.status}; the formal review waits for admission (aidlc review status)`);
+    // Admission is in queue order; a stale request of this same card (an earlier candidate that never ran) is superseded, another requester's is waited for.
+    const requester = `${goal.id}:${card.id}`;
+    let admit = this.queue.admit(goal.reviewPool, currentActor(), now);
+    for (let guard = 0; admit.status === 'admitted' && admit.request.key !== key && admit.request.requesters.every((r) => r === requester) && guard < 10; guard += 1) {
+      this.queue.complete(admit.request.key, 'superseded by a newer candidate of the same card', now);
+      admit = this.queue.admit(goal.reviewPool, currentActor(), now);
+    }
+    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${goal.reviewPool} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status)`);
     this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq, reviewer: cfg.reviewer } });
-    // Reserve the invocation before dispatch so a concurrent call cannot spend the same decision.
-    const n = run.review.invocations.filter((i) => i.reviewer === cfg.reviewer).length + 1;
+    // Reserve the invocation on the persisted run before dispatch so a concurrent call cannot spend the same decision.
+    const n = ledger.invocations.filter((i) => i.reviewer === cfg.reviewer).length + 1;
     const fileStem = `${card.id}.r3.${n}.${randomUUID().slice(0, 8)}`;
     const invocationId = `r3:${fileStem}`;
     const reservation = { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending' as const };
-    this.save({ ...run, review: { ...run.review, invocations: [...run.review.invocations, reservation] } });
+    this.save({ ...persisted, review: { ...ledger, invocations: [...ledger.invocations, reservation] } });
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round: run.review.substantiveDecisions + 1, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round: ledger.substantiveDecisions + 1, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
     let panel: PanelResult;
     try {
       // The formal review is never fanned out: one exhaustive pass per decision.
@@ -624,7 +639,11 @@ export class CardRunner {
     // advisory block is published as a pass with the findings retained under `advisory`.
     const publishable = verdict !== undefined && !classified.stale && classified.runStatus === 'success' && (classified.outcome === 'pass' || classified.outcome === 'block-defect' || classified.outcome === 'block-advisory');
     if (publishable && verdict) {
-      const canonical = classified.outcome === 'block-advisory' ? { ...verdict, verdict: 'pass' as const, reasons: [], advisory: verdict.reasons } : verdict;
+      // An advisory block is published as a consistent pass: both axes pass, every finding kept under `advisory`.
+      const canonical =
+        classified.outcome === 'block-advisory'
+          ? { ...verdict, verdict: 'pass' as const, reasons: [], axes: { spec: { verdict: 'pass' as const, reasons: [] }, standards: { verdict: 'pass' as const, reasons: [] } }, advisory: [...new Set([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])])] }
+          : verdict;
       writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...canonical, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
     }
     // Timed from the clock after the run: a review can outlast the hold it reports.

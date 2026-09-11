@@ -274,6 +274,10 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     verdicts.push('I cannot decide.\n');
     const noVerdict = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(noVerdict.result.outcome, 'no-verdict');
+    // Retried rounds keep every attempt's evidence: distinct files, the earlier round document still present.
+    assert.ok(held.round.verdictRef && existsSync(held.round.verdictRef), 'the held round retained its document');
+    assert.ok(noVerdict.round.verdictRef && existsSync(noVerdict.round.verdictRef), 'the retried round retained its document');
+    assert.notEqual(held.round.verdictRef, noVerdict.round.verdictRef, 'a retry never overwrites an earlier attempt');
     r = runner.next(fx.goal(goal.id), card, noVerdict.run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
@@ -408,12 +412,14 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
   const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const r3: string[] = [];
+    let r3Calls = 0;
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const script = scriptedRunner({
       'git diff --name-only': { stdout: 'src/t1-guard.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-guard.ts b/src/t1-guard.ts\n+export const guard = 1;\n' },
       'fake-r2': { stdout: PASS },
       'fake-r3': () => {
+        r3Calls += 1;
         const out = r3.shift() ?? PASS;
         if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
         return { stdout: out };
@@ -441,6 +447,22 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     r = runner.next(fx.goal(goal.id), card, f.run);
     assert.equal(r.directive.kind, 'close', `advisory findings never become a silent merge bar: ${r.directive.narration}`);
     assert.equal(r.run.review.substantiveDecisions, 1, 'a ship-path re-read of the command verdict is not a second decision');
+    const canonical = JSON.parse(readFileSync(path.join(fx.repo.mainRoot, '.review', 'T1-GUARD.json'), 'utf8')) as { verdict: string; axes: { spec: { verdict: string }; standards: { verdict: string } }; advisory: string[] };
+    assert.equal(canonical.verdict, 'pass');
+    assert.equal(canonical.axes.standards.verdict, 'pass', 'the published advisory document does not contradict itself');
+    assert.equal(canonical.advisory.length, 1, 'the findings are retained under advisory');
+
+    // Guards that refuse before any dispatch: a review pool that does not admit, and a checkout not at the pinned candidate.
+    const spawnsBefore = r3Calls;
+    fx.queue.setPoolLimit(fx.config.reviewPool, 1, 'test: one slot');
+    const occupant = fx.queue.enqueue({ pool: fx.config.reviewPool, repository: 'other/repo', candidateDigest: 'other', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() });
+    fx.queue.admit(fx.config.reviewPool, actorB, fx.now());
+    const busy = CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-1b', dirty: false, untracked: [], digest: 'sha-1b' }, dodReceipt: 'dod:1b', updatedAt: fx.now() });
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, busy), /pool/);
+    fx.queue.complete(occupant.request.key, 'other-verdict', fx.now());
+    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
+    await assert.rejects(() => gitRunner.formalReview(fx.goal(goal.id), card, busy), /pinned candidate/);
+    assert.equal(r3Calls, spawnsBefore, 'neither guard dispatched the reviewer');
 
     // (2) An active quota hold blocks the command itself, for R3 and for R2 alike.
     const held = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', review: { ...r.run.review, invocations: [...r.run.review.invocations, { ...ledgerBase, invocationId: 'r3:hold', candidateDigest: 'sha-2', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: addMs(fx.now(), 60_000) }] }, updatedAt: fx.now() }));
@@ -472,10 +494,10 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, f.run), /allowance/, 'no further run once the allowance is used, even with a current-candidate pass');
     // (4) The two-decision allowance is enforced before a third review is issued or run.
     const third = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', updatedAt: fx.now() }));
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, third), /allowance/);
     r = runner.next(fx.goal(goal.id), card, third);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
-    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, third), /allowance/);
     const stoppedRun = CardRun.parse({ ...third, state: 'STOP', stop: makeStop('review', 'second substantive block', 'human ruling', { at: fx.now(), global: false }), review: { ...third.review, substantiveDecisions: 1, substantiveBlocks: 1 }, updatedAt: fx.now() });
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, stoppedRun), /stopped/, 'a stopped card run never dispatches a review');
   } finally {
@@ -563,8 +585,20 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     assert.equal(f.run.state, 'STOP', 'a stop saved meanwhile survives the review');
     assert.equal(f.run.review.substantiveDecisions, 1, 'no decision is recorded on a stopped run');
     assert.ok(!f.run.review.invocations.some((i) => i.outcome === 'pending'));
+    // The scope gate blocks an R2 round and refuses an R3 dispatch with no reviewer process at all.
+    let spawns = 0;
+    const scoped = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-panel.ts\nsrc/outside.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } }) });
+    const outside = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'BUILD', stop: undefined, candidate: { sha: 'sha-4', dirty: false, untracked: [], digest: 'sha-4' }, dodReceipt: 'dod:4', updatedAt: fx.now() }));
+    const gated = await scoped.preReview(fx.goal(goal.id), card, outside);
+    assert.equal(gated.result.outcome, 'block');
+    assert.ok(gated.result.reasons[0]?.includes('src/outside.ts'), gated.result.reasons.join(' | '));
+    assert.equal(gated.round.perspectives?.[0]?.name, 'scope-gate');
+    const outsideWithR2 = fx.store.saveCardRun(CardRun.parse({ ...outside, preReview: { rounds: [...outside.preReview.rounds, { round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-4', requestedAt: fx.now(), durationMs: 0, outcome: 'pass' as const, reasons: [] }] }, updatedAt: fx.now() }));
+    await assert.rejects(() => scoped.formalReview(fx.goal(goal.id), card, outsideWithR2), /out of scope/);
+    assert.equal(spawns, 0, 'the scope gate spends no tokens');
+
     // A pending reservation for the same candidate refuses a second dispatch.
-    const pendingRun = CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() });
+    const pendingRun = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, pendingRun), /pending/);
   } finally {
     fx.cleanup();

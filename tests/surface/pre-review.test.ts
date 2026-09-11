@@ -184,6 +184,23 @@ test('panel: perspectives run concurrently with their own prompt section and fil
   runPreReview({ runner: (c, a, o = {}) => { shells.push(o.shell); return sync(c, a, o); }, command: ['fake-panel', '{instructions}'], cwd: dir, prompt: 'P `rm -rf` $(x)', timeoutMs: 1000, shell: true, reviewDir, fileStem: 'T1-GATE.pre.0.6', head: 'def456', reviewer: 'fake' });
   assert.equal(shells[0], false, 'argv instructions force shell=false');
 
+  // a reviewer that fails to spawn or dies on stdin is a failed receipt for that angle; the round still aggregates
+  const crashing = async (c: string, a: string[], o: Parameters<typeof sync>[2] = {}) => {
+    if (a.includes('security')) throw new Error('spawn EPIPE');
+    return sync(c, a, o);
+  };
+  const partial = await runReviewPanel({ runner: crashing, command: ['fake-panel', '--focus', '{perspective}'], perspectives: ['bugs', 'security'], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.pre.0.7', head: 'def456', reviewer: 'fake' });
+  assert.equal(partial.outcome, 'no-verdict');
+  const crashed = partial.perspectives.find((p) => p.perspective === 'security');
+  assert.equal(crashed?.runStatus, 'tool_error');
+  assert.ok(crashed?.logRef && existsSync(crashed.logRef), 'the failed angle still has a retained receipt');
+  assert.equal(partial.perspectives.find((p) => p.perspective === 'bugs')?.outcome, 'pass');
+
+  // the candidate diff is collected as text so a file that was binary on the base still shows its hunks
+  const diffArgs: string[][] = [];
+  collectCandidateDiff((c, a, o = {}) => { diffArgs.push(a); return scriptedRunner({ 'git diff --name-only': { stdout: 'src/a.ts' }, 'git diff': { stdout: 'x' } })(c, a, o); }, dir, 'main', 100);
+  assert.ok(diffArgs.some((a) => a.includes('--text')), 'git diff runs with --text');
+
   // fail-closed: a reviewer that exits non-zero never passes, even with a pass document on stdout
   const bad = classifyPreReview({ verdict: 'pass', reasons: [] }, { exitCode: 1, timedOut: false, stdout: '{"verdict":"pass","reasons":[]}', stderr: 'boom' });
   assert.equal(bad.outcome, 'no-verdict');
@@ -230,6 +247,10 @@ test('citation rule: a block reason without an axis tag and a diff location is a
   assert.equal(axisOnly.verdict.reasons.length, 1);
   // a document whose top-level verdict contradicts its axes is malformed, never merged
   assert.equal(enforceCitations({ verdict: 'pass', reasons: [], axes: { spec: { verdict: 'block', reasons: ['[spec] 1 scope @ src/a.ts:1: x -> y'] }, standards: { verdict: 'pass', reasons: [] } } }).inconsistent, true);
+  // dot-leading and non-ASCII paths are locations too; bare punctuation is not
+  assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 14 scope @ .claude/skills/aidlc-loop/card-loop.md:70: x -> y'] }, ['.claude/skills/aidlc-loop/card-loop.md']).verdict.verdict, 'block');
+  assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 1 scope @ src/测试.ts:3: x -> y'] }, ['src/测试.ts']).verdict.verdict, 'block');
+  assert.equal(enforceCitations({ verdict: 'block', reasons: ['[spec] 6 tests @ -> add'] }).verdict.verdict, 'pass');
   // enforced where the verdict is classified, not in the prompt
   const r = runPreReview({ runner: scriptedRunner({ 'fake-reviewer': { stdout: '{"verdict":"block","reasons":["I would refactor this module"]}\n' } }), command: ['fake-reviewer'], cwd: fixtureCard().dir, prompt: 'P', timeoutMs: 1000, shell: false, reviewDir: path.join(fixtureCard().dir, '.review'), fileStem: 'T1-GATE.pre.0.9', head: 'def456', reviewer: 'fake' });
   assert.equal(r.outcome, 'pass');
