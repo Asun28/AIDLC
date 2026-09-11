@@ -549,7 +549,8 @@ export class CardRunner {
     else classified = classifyVerdict(verdict, { candidateSha, tier: card.tier, gateRequired: this.config.gateRequired });
     if (verdict && verdict.branch !== card.id) classified = { outcome: 'no-verdict', mergeBlocking: false, runStatus: 'malformed', reasons: [`stale verdict branch ${verdict.branch}`], stale: true };
     if (verdict && !classified.stale) writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...verdict, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
-    const holdUntil = classified.outcome === 'quota-hold' ? addMs(now, panel.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    // Timed from the clock after the run: a review can outlast the hold it reports.
+    const holdUntil = classified.outcome === 'quota-hold' ? addMs(this.clock(), panel.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = panel.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
     const invocationId = `r3:${fileStem}`;
     const rec = recordReviewOutcome(run.review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil, perspectives }, classified, verdict);
@@ -617,7 +618,8 @@ export class CardRunner {
       const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round, maxRounds: cfg.rounds });
       result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer });
     }
-    const holdUntil = result.outcome === 'quota-hold' ? addMs(now, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    // Timed from the clock after the run: a review can outlast the hold it reports.
+    const holdUntil = result.outcome === 'quota-hold' ? addMs(this.clock(), result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
     const record: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives };
     this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`) } });

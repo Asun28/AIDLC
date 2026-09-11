@@ -215,7 +215,11 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     const script = scriptedRunner({
       'git diff --name-only': { stdout: 'src/t1-gate.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
-      'fake-reviewer': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
+      'fake-reviewer': () => {
+        const out = verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n';
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
     });
     const mk = (rounds: number, onExhausted: 'stop' | 'ship' = 'stop') =>
       new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, rounds, onExhausted } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged']), now: fx.now, runner: script });
@@ -328,7 +332,11 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
       'git diff --name-only': { stdout: 'src/t1-r3.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-r3.ts b/src/t1-r3.ts\n+export const r3 = 1;\n' },
       'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
-      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+      'fake-r3': () => {
+        const out = r3.shift() ?? PASS;
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
     });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged']), now: fx.now, runner: script });
     writeCard(fx, { id: 'T1-R3', title: 'formal review command' });
@@ -405,7 +413,11 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
       'git diff --name-only': { stdout: 'src/t1-guard.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-guard.ts b/src/t1-guard.ts\n+export const guard = 1;\n' },
       'fake-r2': { stdout: PASS },
-      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+      'fake-r3': () => {
+        const out = r3.shift() ?? PASS;
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
     });
     const ADVISORY: Verdict = { verdict: 'block', reasons: ['[standards] 16 slop @ src/t1-guard.ts:1: dead helper -> remove'], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: ['dead helper'] } }, sha: 'sha-1', run_status: 'success' };
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged'], ADVISORY), now: fx.now, runner: script });
