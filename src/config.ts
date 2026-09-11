@@ -6,6 +6,21 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 
+/** Pre-review (R2): a second-model review before the ship. An empty command disables the stage. */
+export const PreReviewConfig = z.object({
+  /** argv of the reviewer; the prompt arrives on stdin and the verdict JSON must be the last stdout line. */
+  command: z.array(z.string()).default([]),
+  reviewer: z.string().default('deepseek-v4-pro'),
+  /** Blocks allowed per R3 cycle before onExhausted applies. */
+  rounds: z.number().int().min(1).max(3).default(2),
+  timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+  onExhausted: z.enum(['stop', 'ship']).default('stop'),
+  /** Run through a shell (script wrappers on Windows); default: win32 only. */
+  shell: z.boolean().optional(),
+  maxDiffBytes: z.number().int().positive().default(300_000),
+});
+export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
+
 export const ProjectConfig = z.object({
   schemaVersion: z.literal(1).default(1),
   cardsDir: z.string().default('specs/tasks'),
@@ -37,6 +52,7 @@ export const ProjectConfig = z.object({
     })
     .default({ frozenPaths: [] }),
   tierPaths: z.object({ tierS: z.array(z.string()).default([]), tier0: z.array(z.string()).default([]), frozen: z.array(z.string()).default([]) }).default({ tierS: [], tier0: [], frozen: [] }),
+  preReview: PreReviewConfig.prefault({}),
 });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 

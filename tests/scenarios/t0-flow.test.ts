@@ -7,6 +7,9 @@ import { CardRun } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
+import { existsSync } from 'node:fs';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
 
 test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE and the goal finishes development-only', () => {
   const fx = makeFixture();
@@ -199,6 +202,90 @@ test('WAIT resumes: a goal polled while its only card was running parks in WAIT 
     assert.ok(states.includes('RUN->VERIFY_ARC'), `verify-arc must be derived from RUN: ${states.join(', ')}`);
     const done = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: 'integrated checks green' } });
     assert.equal(done.directive.kind, 'done');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('pre-review gate: a block returns to BUILD as a counted repair, a pass opens the ship, an R3 block restarts the cycle, and exhaustion is STOP/review unless onExhausted is ship', () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-reviewer'], reviewer: 'fake', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    const verdicts: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-gate.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
+      'fake-reviewer': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
+    });
+    const mk = (rounds: number, onExhausted: 'stop' | 'ship' = 'stop') =>
+      new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, rounds, onExhausted } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-GATE', title: 'gate the ship' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-GATE', source: 'card', ref: 'T1-GATE', affectedSurfaces: [] }, { cards: ['T1-GATE'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-GATE'] } });
+    const runner = mk(2);
+    const card = fx.card('T1-GATE');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GATE'));
+    assert.equal(r.directive.kind, 'prepare');
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: 'sha-1' });
+
+    // Round 1: the gate asks for a pre-review before any ship is issued.
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') {
+      assert.equal(r.directive.round, 1);
+      assert.equal(r.directive.maxRounds, 2);
+    }
+    assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 0, 'nothing ships before the pre-review');
+    verdicts.push('=== answer ===\n{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-gate.ts:1: no RED -> add a failing test first"]}\n');
+    const round1 = runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(round1.result.outcome, 'block');
+    assert.equal(round1.run.state, 'BUILD');
+    assert.equal(round1.run.dodReceipt, undefined, 'a block clears the DoD receipt');
+    assert.equal(round1.run.effort?.attempts.at(-1)?.outcome, 'fail', 'the blocked attempt becomes a counted failure');
+    assert.equal(round1.run.preReview.rounds.length, 1);
+    assert.ok(round1.result.verdictRef && existsSync(round1.result.verdictRef), 'verdict retained next to the candidate');
+
+    // The repair is the next counted attempt; the new candidate needs a fresh round.
+    r = runner.next(fx.goal(goal.id), card, round1.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok2', redReceipt: 'red:ok', candidateSha: 'sha-2' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
+    verdicts.push('{"verdict":"pass","reasons":[]}\n');
+    const round2 = runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(round2.result.outcome, 'pass');
+    assert.equal(round2.run.state, 'SHIP');
+
+    // A pass opens the ship (dry-run merged -> CLOSE); both rounds are journaled.
+    r = runner.next(fx.goal(goal.id), card, round2.run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 1);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED').length, 2);
+
+    // An R3 block starts a new cycle: the repaired candidate needs a fresh pass, counted from round 1.
+    const cycled = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, review: { ...r.run.review, substantiveDecisions: 1, substantiveBlocks: 1 }, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:ok3', updatedAt: fx.now() }));
+    r = runner.next(fx.goal(goal.id), card, cycled);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
+
+    // Exhaustion: with one round per cycle, a block followed by a fix has no round left -> STOP/review.
+    const strict = mk(1);
+    verdicts.push('{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-gate.ts:2: swallowed error -> rethrow"]}\n');
+    const round3 = strict.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(round3.run.state, 'BUILD');
+    r = strict.next(fx.goal(goal.id), card, round3.run);
+    assert.equal(r.directive.kind, 'build');
+    run = strict.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok4', redReceipt: 'red:ok', candidateSha: 'sha-4' });
+    r = strict.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
+
+    // ... unless the policy hands the residual findings to R3.
+    const lenient = mk(1, 'ship');
+    r = lenient.next(fx.goal(goal.id), card, { ...run, state: 'SHIP', stop: undefined });
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
   } finally {
     fx.cleanup();
   }

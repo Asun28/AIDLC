@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Pre-review (R2), card T0-PRE-REVIEW: a bounded second-model review before the ship. `aidlc review pre <card>` runs the configured command (DeepSeek V4 Pro in this repository) on the committed candidate against REVIEW.md, receipted and journaled (`PRE_REVIEW_DECIDED`); the ship requires a fresh `pass` per candidate, a `block` is a counted repair with the reasons carried forward, rounds are capped per R3 cycle (`preReview.rounds`, 3 here, exhaustion is STOP/review unless `onExhausted: "ship"`), and an R3 block restarts the cycle. New config block `preReview` (opt-in; empty command = off); `.review/` ignored by git.
+
 Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before -> after:
 
 - Claude Code hooks: one process per event instead of three `npx` starts per tool call. `src/hooks/entry.ts` (`dispatchHook`, `hookNamesFor`) runs every guard that applies to the event; `bin/aidlc-hook.js` loads only the hook modules; `aidlc hook auto` is the CLI form. Per Bash/Edit call: ~4.5 s -> ~0.2 s (direct entry) or ~1.4 s (npx fallback). `aidlc init` wires the fastest entry it can see and replaces 0.1.0 per-guard hooks on re-run.
