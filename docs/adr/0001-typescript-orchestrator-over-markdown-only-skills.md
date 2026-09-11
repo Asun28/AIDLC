@@ -20,7 +20,7 @@ The owner then asked for the whole system to be refactored to TypeScript, with d
 
 ## Consequences
 
-- Positive: deadlines, attempt counters, review allowances and ownership generations survive compaction, restarts and window changes; two windows on one machine coordinate through atomic leases and a persisted review queue; every external mutation has a recorded intent and a reconciled result.
+- Positive: deadlines, attempt counters, review allowances and ownership generations persist across compaction, restarts and window changes; two windows on one machine coordinate through atomic leases and a persisted review queue; every external mutation has a recorded intent and a reconciled result.
 - Negative: a Node >= 22.18 runtime is now a dependency of the delivery loop; the scaffold and GitHub ship paths still need live qualification (plan Q3/Q4/Q23/Q24) before the loop is advertised as run-verified.
 - Neutral: skill-file caps from plan v5 are kept and asserted by a test; the character budgets are ASCII bytes.
 

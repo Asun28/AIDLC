@@ -174,7 +174,7 @@ while an active card lacks a fresh DoD receipt.
 - Maker/checker deadlock: after two rounds of mutual non-acceptance, stop
   for a human ruling; do not fan out reviewers or switch accounts.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
-- Deadlines (3h/card, 12h/arc) and attempt limits survive session changes.
+- Deadlines (3h/card, 12h/arc) and attempt limits persist across session changes.
 
 ### Writing density (all text, at all times)
 Applies to everything written in or about this repository: chat output,

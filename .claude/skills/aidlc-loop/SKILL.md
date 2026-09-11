@@ -67,7 +67,7 @@ at that baseline; coordinator effort is irrelevant. At most 4 counted
 attempts: baseline + 2 repairs + 1 justified escalation to the next
 supported level. Same cause twice with no progress => stop early. Quota,
 expected RED, tool outage and env setup do not count. `aidlc card attempt`
-records every attempt; limits survive session changes.
+records every attempt; limits persist across session changes.
 
 ## Output
 Concise progress: state, evidence refs, blocker, next action. STOP always
