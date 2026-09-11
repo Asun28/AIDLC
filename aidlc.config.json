@@ -46,9 +46,9 @@
     "timeoutMs": 1200000,
     "onExhausted": "stop",
     "perspectives": [
-      "bugs",
-      "security",
-      "compliance"
+      "ac-coverage",
+      "spec-deviations",
+      "edge-cases"
     ]
   },
   "gateRequired": true,
@@ -63,10 +63,6 @@
     ],
     "reviewer": "codex",
     "timeoutMs": 1200000,
-    "perspectives": [
-      "bugs",
-      "security",
-      "compliance"
-    ]
+    "perspectives": []
   }
 }

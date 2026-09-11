@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { aggregateVerdicts, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
+import { aggregateVerdicts, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -69,7 +69,7 @@ test('runPreReview classifies pass, block, malformed and quota output and writes
   assert.ok(diff.diff.length < 60);
 });
 
-test('formal review (R3) command: placeholders expand, the prompt rides in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', () => {
+test('formal review (R3) command: placeholders expand, the prompt is passed in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', () => {
   const { dir, card } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
   const schema = materialiseVerdictSchema(reviewDir);
@@ -170,4 +170,22 @@ test('scope gate: allow_paths match exact paths, directory prefixes and globs, n
   assert.equal(pathAllowed('tests/x/y.ts', ['tests/**/*.test.ts']), false);
   assert.equal(pathAllowed('src/loop/a.ts', ['src/*.ts']), false);
   assert.equal(pathAllowed(String.raw`src\loop\a.ts`, ['src/loop/a.ts']), true);
+});
+
+test('citation rule: a block reason without an axis tag and a diff location is advisory and never blocks', () => {
+  const cited = '[spec] 6 tests @ src/a.ts:1: no RED -> add a failing test first';
+  const mixed = enforceCitations({ verdict: 'block', reasons: [cited, 'this feels risky', '[standards] vague concern without a location'], axes: { spec: { verdict: 'block', reasons: ['tests'] }, standards: { verdict: 'block', reasons: ['vague'] } } });
+  assert.equal(mixed.verdict.verdict, 'block');
+  assert.deepEqual(mixed.verdict.reasons, [cited]);
+  assert.equal(mixed.verdict.axes?.spec?.verdict, 'block');
+  assert.equal(mixed.verdict.axes?.standards?.verdict, 'pass', 'an axis with no cited reason left does not block');
+  assert.deepEqual(mixed.advisory, ['this feels risky', '[standards] vague concern without a location']);
+  const downgraded = enforceCitations({ verdict: 'block', reasons: ['the design could be cleaner'], axes: { spec: { verdict: 'block', reasons: [] }, standards: { verdict: 'pass', reasons: [] } } });
+  assert.equal(downgraded.verdict.verdict, 'pass');
+  assert.deepEqual(downgraded.advisory, ['the design could be cleaner']);
+  assert.deepEqual(enforceCitations({ verdict: 'pass', reasons: [] }).advisory, []);
+  // enforced where the verdict is classified, not in the prompt
+  const r = runPreReview({ runner: scriptedRunner({ 'fake-reviewer': { stdout: '{"verdict":"block","reasons":["I would refactor this module"]}\n' } }), command: ['fake-reviewer'], cwd: fixtureCard().dir, prompt: 'P', timeoutMs: 1000, shell: false, reviewDir: path.join(fixtureCard().dir, '.review'), fileStem: 'T1-GATE.pre.0.9', head: 'def456', reviewer: 'fake' });
+  assert.equal(r.outcome, 'pass');
+  assert.deepEqual(r.advisory, ['I would refactor this module']);
 });
