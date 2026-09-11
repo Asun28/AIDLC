@@ -250,8 +250,6 @@ export const ReviewInvocation = z.object({
   verdictRef: z.string().optional(),
   /** Quota hold reported by a command-run reviewer: no new decision before this time. */
   holdUntil: IsoTimestamp.optional(),
-  /** Concurrent angles of a command-run panel that produced this single decision. */
-  perspectives: z.array(PerspectiveRecord).optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 

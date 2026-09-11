@@ -45,7 +45,6 @@
   "formalReview": {
     "command": [],
     "reviewer": "codex",
-    "timeoutMs": 1200000,
-    "perspectives": []
+    "timeoutMs": 1200000
   }
 }

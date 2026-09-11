@@ -31,8 +31,6 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 export const FormalReviewConfig = z.object({
   command: z.array(z.string()).default([]),
   reviewer: z.string().default('codex'),
-  /** Concurrent angles per decision; empty = one full pass. A panel is one decision. */
-  perspectives: z.array(z.string()).default([]),
   timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),

@@ -610,9 +610,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const r = await runnerFor(c).formalReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
-      const last = r.run.review.invocations[r.run.review.invocations.length - 1];
-      const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: c.config.formalReview.reviewer, durationMs: r.durationMs, perspectives: (last?.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.classified.reasons, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
-      out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]; decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+      const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: c.config.formalReview.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
+      out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
   program
     .command('ci')
