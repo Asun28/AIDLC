@@ -362,7 +362,9 @@ export class CardRunner {
     let redReceipt = run.redReceipt;
     if (!redReceipt && this.shipPath instanceof ScaffoldShipPath) {
       const red = this.shipPath.readRedReceipt(card.id);
-      if (red) redReceipt = `${red.sha}:${red.dodExit}`;
+      const id = red ? `${red.sha}:${red.dodExit}` : undefined;
+      // A receipt the ship path already rejected is never reloaded as proof; RED has to be established again.
+      if (id && id !== run.pendingRepair?.rejectedReceipt) redReceipt = id;
     }
     const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${run.pendingRepair.detail} ` : '';
     const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt });
@@ -916,14 +918,20 @@ export class CardRunner {
       case 'red-missing': {
         // The ship path rejected the RED receipt: not a code fault, so a succeeded episode is reopened rather than counted,
         // provided the episode can still admit an attempt; the rejected receipt is never reused as proof.
+        const admission = checkAdmission(run.deadline, now);
+        if (admission.phase !== 'open') {
+          const stop = makeStop('time', `RED receipt rejected (${result.detail}) after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false });
+          const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+          return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        }
         const reopened = reopenEpisode(run.effort);
-        const inadmissible = reopened ? nextEffortAction(reopened) : undefined;
+        const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
         if (inadmissible && inadmissible.action !== 'attempt') {
           const stop = makeStop('card', `RED receipt rejected (${result.detail}) but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false });
           const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
           return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         }
-        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, redReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'red-missing', detail: result.detail, at: now } });
+        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, redReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'red-missing', detail: result.detail, at: now, rejectedReceipt: run.redReceipt } });
         return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: undefined, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Establish the RED receipt again within scope and re-run the DoD.` } };
       }
       case 'auth-failed': {
@@ -947,10 +955,15 @@ export class CardRunner {
         // Only a real conflict returns to BUILD, and only on an affirmative diagnostic in the ship output: git's CONFLICT
         // markers or GitHub's clean-merge failure. A policy or status-check refusal, or the word inside a card id or a
         // resume command, never counts.
-        const conflictOutput = [result.receipt.stdout, result.receipt.stderr].join(' ');
-        if (result.outcome === 'merge-failed' && /CONFLICT [(]|Merge conflict in |fix conflicts and then commit|cannot be cleanly created/.test(conflictOutput)) {
+        if (result.outcome === 'merge-failed' && hasConflictDiagnostic(result.receipt)) {
+          const admission = checkAdmission(run.deadline, now);
+          if (admission.phase !== 'open') {
+            const stop = makeStop('time', `merge conflict on the base sync after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false });
+            const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+            return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+          }
           const reopened = reopenEpisode(run.effort);
-          const inadmissible = reopened ? nextEffortAction(reopened) : undefined;
+          const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
           if (inadmissible && inadmissible.action !== 'attempt') {
             const stop = makeStop('card', `merge conflict on the base sync but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false });
             const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
@@ -1024,6 +1037,13 @@ export class CardRunner {
 
 /** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
 /** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
+/** True only when the ship output carries git's or GitHub's own merge-conflict diagnostic on a line of its own; a resume command or a quoted message never counts. */
+export function hasConflictDiagnostic(receipt: { stdout: string; stderr: string }): boolean {
+  const lines = `${receipt.stdout}\n${receipt.stderr}`.split(/\r?\n/).map((l) => l.trim());
+  const diagnostic = [/^CONFLICT \(/, /^Automatic merge failed; fix conflicts and then commit the result\.$/, /^Merge conflict in /, /is not mergeable: the merge commit cannot be cleanly created/];
+  return lines.some((line) => !/resume|\[SAGA-RESUME\]/i.test(line) && diagnostic.some((re) => re.test(line)));
+}
+
 export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {
   if (!episode || episode.terminal !== 'succeeded') return episode;
   return { ...episode, terminal: undefined };

@@ -93,6 +93,13 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
     assert.ok(dp.narration.includes('Constraints'), dp.narration);
     assert.ok(!dp.narration.includes('no open questions'), 'never read as an empty question list');
 
+    writeFileSync(path.join(fx.tmp, 'intent', 'leaky.md'), ['---', 'slug: leaky', 'title: [unterminated', 'api_key: CANARY-hunter2-SECRET', '---', '# Intent: leaky', '## Problem', 'x', '## Proposed outcome', 'y', '## Affected users and systems', 'z', '## Constraints', 'w', '## Open questions', '- (none)', ''].join('\n'));
+    const leakyGoal = fx.controller.createGoal({ text: 'Add a claims status self-service feature to the portal', source: 'natural-language', affectedSurfaces: [] }, { intentRef: 'intent/leaky.md' });
+    const dl = fx.controller.next(leakyGoal.id);
+    assert.ok(dl.narration.includes('does not validate'), dl.narration);
+    assert.ok(!dl.narration.includes('CANARY'), `front-matter values never reach the narration: ${dl.narration}`);
+    assert.ok(!dl.narration.includes('hunter2'), dl.narration);
+
     const t0 = fx.controller.createGoal({ text: 'Fix a typo in the README', source: 'natural-language', affectedSurfaces: [] });
     assert.equal(t0.routing.size, 'T0');
     assert.deepEqual(t0.routing.skills, ['tdd']);

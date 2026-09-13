@@ -38,7 +38,7 @@ acceptance:
   - 6. From R3 decision 1 on T1-LOOP-SKILLS: conflict detection needs an affirmative diagnostic in the ship output (a card id or resume text never matches); the pending repair is persisted on the run until the next recorded attempt so a second `next()` still names `merge-conflicts`; reopening an episode that cannot admit another attempt stops the card with reason `card`; `red-missing` clears the rejected RED receipt (t0-flow.test.ts). [R4] [dod arm 1]
   - 7. From R3 decision 1 on T1-LOOP-SKILLS: skills follow the finalized size as well as the kind (explicit T0-bugfix card routes name `diagnose`, explicit T1/T2 card routes name `grilling`); the review-fix build directive names the skills; an intent file that does not validate is narrated as such, never as an empty question list (router.test.ts, t0-flow.test.ts, t1-plan.test.ts). [R1] [R2] [R3] [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-budget: 600
+budget: 700
 tdd: true
 sweep: "grep -rn 'Directive.parse\|formatRouting\|applyShipResult\|kind: .build.\|routing.modules' src tests: controller.ts baseOf plus the inline base, card-runner.ts CardDirective sites, router.test.ts anchored [route] regex, hooks.test.ts route line, _fixtures.ts RoutingResult literal"
 non_goals: [a hard PLAN gate that refuses to advance on open questions, a new directive kind, scaffold ship path changes, the lessons closure predicate, the security CI class]
@@ -49,6 +49,7 @@ doc_sync: docs/ARCHITECTURE.md (directive contract, ship outcome map), docs/OPER
 
 ## Deliverable
 Replacement for T1-LOOP-SKILLS after its effort episode ended (three R2 blocks and one R3 block, each repaired with failing tests first); the branch carries every repair and this card adds the R3 findings as acceptance items 6 and 7.
+Budget 700: raised from 600 after R3 decision 1 on this card (six findings: sanitized validation narration, line-anchored conflict diagnostics, rejected RED receipt never reloaded, admissibility with the justification BUILD grants, deadline stop, release-only exclusion on diagnose), each fixed with a failing test first.
 
 The router computes `skills` next to `modules` and the list travels with the routing result into the goal, the journal, the route line and every directive. The plan directive for T1 and T2 goals names `grilling` and lists the open questions of the intent file recorded on the goal. The build directive names `tdd` and, on bugfix evidence, `diagnose`; the prepare directive points at `docs/LESSONS.md`. A merge conflict reported by the ship path returns the card to BUILD naming `merge-conflicts`, with the DoD receipt cleared and the effort episode reopened; other merge failures keep the tool stop.
 

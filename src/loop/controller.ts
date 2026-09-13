@@ -72,6 +72,11 @@ export interface CreateGoalOptions {
   intentRef?: string;
 }
 
+/** Validation problems are narrated by category only: a YAML parser message quotes the offending source, which may be a private front-matter value. */
+function sanitizeIntentProblem(problem: string): string {
+  return problem.startsWith('front matter:') ? 'front matter does not parse' : problem;
+}
+
 export class GoalController {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -609,7 +614,7 @@ export class GoalController {
       const questions = parsed.intent?.openQuestions ?? [];
       const listed = questions.length ? ` Open questions to settle first: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.` : '';
       // Any validation failure is narrated as such: an invalid file is never read as an empty question list.
-      if (!parsed.ok || !parsed.intent) return ` Intake: intent file ${ref} does not validate (${parsed.problems.join('; ')}); fix the file and settle its open questions with the grilling skill before the spec.${listed}`;
+      if (!parsed.ok || !parsed.intent) return ` Intake: intent file ${ref} does not validate (${parsed.problems.map(sanitizeIntentProblem).join('; ')}); fix the file and settle its open questions with the grilling skill before the spec.${listed}`;
       if (!questions.length) return ` Intake: ${ref} lists no open questions; write the spec.`;
       return ` Intake: ${ref} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.`;
     } catch (err) {

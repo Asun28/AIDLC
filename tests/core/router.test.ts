@@ -46,6 +46,7 @@ describe('router (Q2)', () => {
     assert.equal(rel.kind, 'release');
     assert.ok(!rel.modules.includes('card-loop'));
     assert.deepEqual(rel.skills, []);
+    assert.deepEqual(classifyRequest({ text: 'Deploy the current build to staging for online testing', explicitSize: 'T0-bugfix' }).skills, [], 'the release-only exclusion applies to diagnose as well');
   });
 
   test('Q2: a short authentication bug escalates to T1 with a reported reason', () => {

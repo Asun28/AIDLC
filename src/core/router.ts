@@ -184,7 +184,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   // --- companion skills (names the directives carry; the loop's gates still decide) ------
   const skills: string[] = [];
   const releaseOnly = kind === 'release' || kind === 'migration';
-  if (size === 'T0-bugfix' || kind === 'bugfix' || kind === 'incident') skills.push('diagnose');
+  if (!releaseOnly && (size === 'T0-bugfix' || kind === 'bugfix' || kind === 'incident')) skills.push('diagnose');
   if ((size === 'T1' || size === 'T2') && !releaseOnly) skills.push('grilling');
   if (modules.includes('card-loop')) skills.push('tdd');
 
