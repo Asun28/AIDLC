@@ -14,20 +14,20 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, startAttempt } from '../core/effort.ts';
-import { classifyVerdict, recordReviewOutcome, reviewRequestKey } from '../core/review-policy.ts';
+import { classifyVerdict, recordReviewOutcome, reviewRequestKey, type ClassifiedVerdict } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord } from '../core/types.ts';
+import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
-import { runSync, type SyncRunner } from '../probes/exec.ts';
+import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { buildPreReviewPrompt, collectCandidateDiff, runPreReview, type PreReviewResult } from '../review/pre-review.ts';
+import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
@@ -45,6 +45,8 @@ export interface CardRunnerDeps {
   git?: GitProbe;
   gh?: GhProbe;
   runner?: SyncRunner;
+  /** Concurrent runner for review panels; defaults to the async spawn, or wraps `runner` when a scripted one is given. */
+  asyncRunner?: Runner;
   shipPath?: ShipPath;
   now?: () => string;
 }
@@ -55,6 +57,7 @@ export type CardDirective =
   | { kind: 'ship'; cardId: string; base: string; mode: 'local' | 'remote'; narration: string }
   | { kind: 'review-fix'; cardId: string; reasons: string[]; remainingDecisions: number; narration: string }
   | { kind: 'pre-review'; cardId: string; round: number; maxRounds: number; reviewer: string; narration: string }
+  | { kind: 'review'; cardId: string; reviewer: string; decision: number; maxDecisions: number; narration: string }
   | { kind: 'wait'; cardId: string; on: string; pollSeconds: number; narration: string }
   | { kind: 'close'; cardId: string; missing: string[]; narration: string }
   | { kind: 'done'; cardId: string; narration: string }
@@ -71,6 +74,7 @@ export class CardRunner {
   readonly git: GitProbe;
   readonly gh: GhProbe;
   readonly runner: SyncRunner;
+  readonly asyncRunner: Runner;
   readonly shipPath: ShipPath;
   private readonly clock: () => string;
 
@@ -83,6 +87,8 @@ export class CardRunner {
     this.queue = deps.queue ?? new ReviewQueue(deps.paths.reviewQueue);
     this.ops = deps.ops ?? new OperationLedger(deps.paths.operations);
     this.runner = deps.runner ?? runSync;
+    const scripted = deps.runner;
+    this.asyncRunner = deps.asyncRunner ?? (scripted ? async (command, args, options) => scripted(command, args, options) : run);
     this.git = deps.git ?? new GitProbe(this.runner);
     this.gh = deps.gh ?? new GhProbe(this.runner);
     this.clock = deps.now ?? (() => new Date().toISOString());
@@ -101,6 +107,58 @@ export class CardRunner {
 
   worktreePath(cardId: string): string {
     return path.join(resolveWorktreeRoot(this.config), cardId);
+  }
+
+  /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
+  private reviewCheckout(run: CardRun): string {
+    return run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+  }
+
+  /** The candidate a review is bound to: the pinned sha, verified against the checkout HEAD in a git repository. */
+  private pinnedCandidate(run: CardRun, cwd: string): string {
+    const pinned = run.candidate?.sha;
+    if (this.repo.isGit) {
+      const head = this.git.head(cwd);
+      if (pinned && head !== pinned) throw new Error(`checkout ${cwd} is at ${head.slice(0, 12)}, not the pinned candidate ${pinned.slice(0, 12)}; check out the candidate before the review`);
+      return pinned ?? head;
+    }
+    if (!pinned) throw new Error('no candidate recorded for this run; record the attempt with --candidate-sha first');
+    return pinned;
+  }
+
+  private reviewPolicy(): string {
+    const policyFile = path.join(this.repo.mainRoot, 'REVIEW.md');
+    return existsSync(policyFile)
+      ? readFileSync(policyFile, 'utf8')
+      : 'Must-block: out of scope, hard boundaries, frozen contracts, license, non-original code, missing or fake tests. Two axes, spec and standards. Output the JSON verdict as the last line.';
+  }
+
+  /** R2 eligibility for R3, shared by the gate and the command: the latest round for this candidate passed, or the rounds are exhausted and the policy hands the residual findings on. */
+  private preReviewEligibility(run: CardRun, candidateDigest: string): { eligible: boolean; reason: string } {
+    const cfg = this.config.preReview;
+    if (!cfg.command.length) return { eligible: true, reason: 'pre-review not configured' };
+    const cycle = run.review.substantiveBlocks;
+    const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle);
+    const latest = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
+    if (latest?.outcome === 'pass') return { eligible: true, reason: `pre-review round ${latest.round} passed` };
+    const blocks = rounds.filter((r) => r.outcome === 'block').length;
+    if (blocks >= cfg.rounds && cfg.onExhausted === 'ship') return { eligible: true, reason: 'pre-review rounds exhausted; residual findings handed to R3' };
+    return { eligible: false, reason: latest ? `latest pre-review outcome for this candidate is ${latest.outcome}` : 'no pre-review round for this candidate' };
+  }
+
+  /** Renew the card lease when this session owns it at the run's generation (a review can outlast the TTL). */
+  private renewOwnLease(cardId: string, run: CardRun, now: string): void {
+    const key = resourceKeys.card(this.repo.key, cardId);
+    const lease = this.leases.read(key);
+    const me = currentActor();
+    if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) this.leases.claim(key, { operation: lease.operation, now });
+  }
+
+  /** Drop a pending formal-review reservation from the persisted run (the dispatch failed before a decision). */
+  private releaseReservation(goal: Goal, card: Card, invocationId: string): void {
+    const current = this.store.getCardRun(goal.id, card.id);
+    if (!current) return;
+    this.save({ ...current, review: { ...current.review, invocations: current.review.invocations.filter((i) => i.invocationId !== invocationId) } });
   }
 
   private save(run: CardRun): CardRun {
@@ -356,6 +414,9 @@ export class CardRunner {
     // R2: a fresh pre-review pass for this candidate is required before any ship is issued.
     const gate = this.preReviewGate(goal, card, run);
     if (gate) return gate;
+    // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
+    const formal = this.formalReviewGate(goal, card, run);
+    if (formal) return formal;
     // Fence and record intent before the external mutation.
     try {
       if (run.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), run.ownerGeneration, currentActor(), now);
@@ -386,7 +447,7 @@ export class CardRunner {
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review:${key}`, pollSeconds: 60, narration: 'A matching review is already running in the shared pool; join it instead of launching another.' } };
     }
-    const admit = this.queue.admit(goal.reviewPool, currentActor(), now);
+    const admit = this.admitReview(goal, card, key, now);
     if (admit.status !== 'admitted' || admit.request.key !== key) {
       this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` });
       const next = this.save({ ...run, state: 'WAIT' });
@@ -409,7 +470,7 @@ export class CardRunner {
     const cfg = this.config.preReview;
     if (!cfg.command.length) return undefined;
     const now = this.clock();
-    const cycle = run.review.substantiveDecisions;
+    const cycle = run.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle);
     const decided = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block');
     const blocks = decided.filter((r) => r.outcome === 'block');
@@ -450,42 +511,275 @@ export class CardRunner {
     return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: cfg.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${cfg.reviewer}) before the ship${retry}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.` } };
   }
 
+  /**
+   * R3 gate inside SHIP when the formal reviewer is a configured command. The existing ledger rules
+   * apply unchanged (two substantive decisions, one no-verdict retry); a block was already handed to
+   * REVIEW_FIX by `formalReview`; a quota hold parks the card until `holdUntil`.
+   */
+  private formalReviewGate(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } | undefined {
+    const cfg = this.config.formalReview;
+    if (!cfg.command.length) return undefined;
+    const now = this.clock();
+    const digest = run.candidate?.digest;
+    const last = [...run.review.invocations].reverse().find((i) => i.reviewer === cfg.reviewer && i.candidateDigest === digest);
+    if (last?.outcome === 'pass') return undefined;
+    if (last?.outcome === 'block') {
+      // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar.
+      const blocking = run.review.lastVerdict ? classifyVerdict(run.review.lastVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking : true;
+      if (!blocking) return undefined;
+      const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined });
+      return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.` } };
+    }
+    if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
+      const next = this.save({ ...run, state: 'WAIT' });
+      const pollSeconds = Math.max(60, Math.ceil((Date.parse(last.holdUntil) - Date.parse(now)) / 1000));
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `Formal reviewer ${cfg.reviewer} reported a quota/rate limit; holding until ${last.holdUntil} (not a decision). Then run \`aidlc card next ${card.id}\`.` } };
+    }
+    // R3 policy: a further required review beyond the two-decision allowance is STOP/review, never a third run.
+    if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
+      const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the two-decision allowance (${run.review.substantiveDecisions} used)`, 'return the retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+      const stopped = this.save({ ...run, state: 'STOP', stop });
+      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+    }
+    const decision = run.review.substantiveDecisions + 1;
+    const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : '';
+    const next = this.save({ ...run, state: 'SHIP' });
+    return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: MAX_SUBSTANTIVE_REVIEW_DECISIONS, narration: `Formal review (R3, ${cfg.reviewer}) before the ship, decision ${decision}/${MAX_SUBSTANTIVE_REVIEW_DECISIONS}${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship; a merge-blocking block returns it to REVIEW_FIX and the repaired candidate restarts the pre-review cycle.` } };
+  }
+
+  /**
+   * R3 as a command: run the formal reviewer on the committed candidate, write the candidate-bound
+   * verdict file the ship paths read (`.review/<card>.json`) and record the decision through the
+   * existing R3 ledger (`recordReviewOutcome`), so the two-decision allowance and the single
+   * no-verdict retry apply exactly as for a ship-path reviewer.
+   */
+  async formalReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; classified: ClassifiedVerdict; verdict?: Verdict; advisory: string[]; verdictRef?: string; logRef?: string; durationMs: number; receiptSha256: string }> {
+    const cfg = this.config.formalReview;
+    if (!cfg.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
+    if (run.stop || run.state === 'STOP') throw new Error(`card run is stopped (${run.stop?.reason ?? 'STOP'}); no review may run: ${run.stop?.nextAction ?? 'resolve the stop first'}`);
+    const now = this.clock();
+    const cwd = this.reviewCheckout(run);
+    const baseRef = run.base?.oid ?? this.config.base;
+    const candidateSha = this.pinnedCandidate(run, cwd);
+    const candidateDigest = run.candidate?.digest ?? candidateSha;
+    const eligibility = this.preReviewEligibility(run, candidateDigest);
+    if (!eligibility.eligible) throw new Error(`pre-review pass required first (${eligibility.reason}): run \`aidlc review pre ${card.id}\` on candidate ${candidateSha.slice(0, 12)} before the formal review`);
+    // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
+    const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
+    const ledger = persisted.review;
+    const forCandidate = ledger.invocations.filter((i) => i.reviewer === cfg.reviewer && i.candidateDigest === candidateDigest);
+    const pendingReservation = forCandidate.find((i) => i.outcome === 'pending');
+    if (pendingReservation) throw new Error(`a formal review of this candidate is already pending (${pendingReservation.invocationId}, requested ${pendingReservation.requestedAt}); join it, do not dispatch another`);
+    const lastForCandidate = forCandidate[forCandidate.length - 1];
+    if (lastForCandidate?.outcome === 'quota-hold' && lastForCandidate.holdUntil && Date.parse(lastForCandidate.holdUntil) > Date.parse(now)) {
+      throw new Error(`formal reviewer ${cfg.reviewer} is on a quota hold until ${lastForCandidate.holdUntil}; do not re-run before it clears`);
+    }
+    if (ledger.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
+      throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions}); ${lastForCandidate?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+    }
+    if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
+      throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
+    }
+    // Only the lease owner at the run's generation may reserve a decision.
+    if (persisted.ownerGeneration !== undefined) {
+      this.renewOwnLease(card.id, persisted, now);
+      this.leases.fence(resourceKeys.card(this.repo.key, card.id), persisted.ownerGeneration, currentActor(), now);
+    }
+    const reviewDir = path.join(cwd, '.review');
+    const schema = materialiseVerdictSchema(reviewDir);
+    const reviewPolicy = this.reviewPolicy();
+    const priorFindings = (run.review.lastVerdict?.reasons ?? []).map((f) => `previous R3 decision: ${f}`);
+    const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
+    if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // Deterministic scope gate (dimension 1): no model call, no decision consumed.
+    const outOfScope = changedPaths.filter((p) => !pathAllowed(p, card.allow_paths));
+    if (outOfScope.length) throw new Error(`out of scope: ${outOfScope.join(', ')} outside allow_paths; revert the change or amend the card before the formal review (no decision consumed)`);
+    // Shared review admission (MS3): the command reviewer takes a pool slot like any other formal reviewer.
+    const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer });
+    let enq = this.queue.enqueue({ pool: goal.reviewPool, repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requester: `${goal.id}:${card.id}`, deadline: run.deadline, now });
+    if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
+    if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${goal.reviewPool}; join it, do not dispatch another`);
+    const admit = this.admitReview(goal, card, key, now);
+    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${goal.reviewPool} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status)`);
+    this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq, reviewer: cfg.reviewer } });
+    // Reserve the invocation on the persisted run before dispatch so a concurrent call cannot spend the same decision.
+    const n = ledger.invocations.filter((i) => i.reviewer === cfg.reviewer).length + 1;
+    const fileStem = `${card.id}.r3.${n}.${randomUUID().slice(0, 8)}`;
+    const invocationId = `r3:${fileStem}`;
+    const reservation = { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending' as const };
+    this.save({ ...persisted, review: { ...ledger, invocations: [...ledger.invocations, reservation] } });
+    const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round: ledger.substantiveDecisions + 1, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
+    let panel: PanelResult;
+    try {
+      // The formal review is never fanned out: one exhaustive pass per decision.
+      panel = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
+    } catch (err) {
+      this.queue.markLost(key, `formal review did not run: ${(err as Error).message}`, this.clock());
+      this.releaseReservation(goal, card, invocationId);
+      throw err;
+    }
+    const after = this.clock();
+    const decided = panel.outcome === 'pass' || panel.outcome === 'block';
+    // Keep the reviewer's own binding: an explicit sha or branch that is not this candidate is a stale verdict, never a pass.
+    const verdict: Verdict | undefined = decided && panel.verdict ? { ...panel.verdict, sha: panel.verdict.sha ?? candidateSha, branch: panel.verdict.branch ?? card.id, run_status: panel.runStatus } : undefined;
+    let classified: ClassifiedVerdict;
+    if (panel.outcome === 'quota-hold') classified = { outcome: 'quota-hold', mergeBlocking: false, runStatus: 'tool_error', reasons: panel.reasons, stale: false };
+    else if (!verdict) classified = { outcome: 'no-verdict', mergeBlocking: false, runStatus: panel.runStatus, reasons: panel.reasons.length ? panel.reasons : ['missing or malformed verdict; never pass'], stale: false };
+    else classified = classifyVerdict(verdict, { candidateSha, tier: card.tier, gateRequired: this.config.gateRequired });
+    if (verdict && verdict.branch !== card.id) classified = { outcome: 'no-verdict', mergeBlocking: false, runStatus: 'malformed', reasons: [`stale verdict branch ${verdict.branch}`], stale: true };
+    // Timed from the clock after the run: a review can outlast the hold it reports.
+    const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    if (holdUntil) this.queue.hold(key, holdUntil, 'reviewer reported rate limit/quota', after);
+    else this.queue.complete(key, panel.verdictRef ?? 'no-verdict', after);
+    const advisory = panel.advisory ?? [];
+    const evidenceEntry = { id: `r3-${fileStem}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `formal review ${cfg.reviewer} ${classified.outcome}: ${classified.reasons.join(' | ')}`.slice(0, 500) };
+    // Re-read persisted state: the review may have run for minutes; a stop or takeover saved meanwhile wins,
+    // and a discarded decision is never published.
+    const current = this.store.getCardRun(goal.id, card.id) ?? run;
+    const withoutReservation = { ...current.review, invocations: current.review.invocations.filter((i) => i.invocationId !== invocationId) };
+    const result = { classified, verdict, advisory, verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256 };
+    if (current.stop || current.state === 'STOP') {
+      this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, decision: 'discarded: card run stopped meanwhile', runStatus: classified.runStatus, reasons: classified.reasons, verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs } });
+      return { run: this.save({ ...current, review: withoutReservation, evidence: [...current.evidence, evidenceEntry] }), ...result };
+    }
+    this.renewOwnLease(card.id, current, after);
+    try {
+      if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), after);
+    } catch (err) {
+      const stop = makeStop('ownership', (err as FencedError).message, 'revalidate ownership; a stale generation cannot commit a review decision', { at: after });
+      return { run: this.save({ ...current, review: withoutReservation, state: 'STOP', stop, evidence: [...current.evidence, evidenceEntry] }), ...result };
+    }
+    // The canonical document the ship paths read is published only now, for a successful, non-stale decision that
+    // is being recorded; an advisory block is published as a consistent pass with every finding under `advisory`.
+    const publishable = verdict !== undefined && !classified.stale && classified.runStatus === 'success' && (classified.outcome === 'pass' || classified.outcome === 'block-defect' || classified.outcome === 'block-advisory');
+    if (publishable && verdict) {
+      const canonical =
+        classified.outcome === 'block-advisory'
+          ? { ...verdict, verdict: 'pass' as const, reasons: [], axes: { spec: { verdict: 'pass' as const, reasons: [] }, standards: { verdict: 'pass' as const, reasons: [] } }, advisory: [...new Set([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])])] }
+          : verdict;
+      writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...canonical, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
+    }
+    const rec = recordReviewOutcome(withoutReservation, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil }, classified, verdict);
+    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs, holdUntil } });
+    let next: CardRun = { ...current, review: rec.ledger, evidence: [...current.evidence, evidenceEntry] };
+    switch (rec.decision.action) {
+      case 'review-fix': {
+        // MA2: the reviewed attempt missed acceptance; the repair is the next counted attempt.
+        const effort = current.effort ? markReviewFailure(current.effort, classified.reasons[0] ?? 'review block') : current.effort;
+        next = { ...next, state: 'REVIEW_FIX', effort, dodReceipt: undefined, blocker: undefined };
+        break;
+      }
+      case 'stop-review': {
+        const stop = makeStop('review', rec.decision.detail, 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
+        next = { ...next, state: 'STOP', stop };
+        break;
+      }
+      case 'wait-quota':
+        next = { ...next, state: 'WAIT' };
+        break;
+      default:
+        next = { ...next, state: 'SHIP' };
+    }
+    return { run: this.commitReviewed(goal, card, current, next, after), ...result };
+  }
+
+  /**
+   * Commit a reviewed run: re-read the persisted run under the fence immediately before the write and keep a
+   * terminal state saved meanwhile. The store has no compare-and-set, so this narrows the window; it does not
+   * close it.
+   */
+  private commitReviewed(goal: Goal, card: Card, expected: CardRun, next: CardRun, now: string): CardRun {
+    const latest = this.store.getCardRun(goal.id, card.id) ?? expected;
+    if (latest.stop || latest.state === 'STOP') {
+      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: next.state, to: 'STOP', reason: 'a stop was saved while the review decision was being committed; the decision is kept as evidence only' } });
+      return this.save({ ...latest, evidence: next.evidence });
+    }
+    if (latest.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), latest.ownerGeneration, currentActor(), now);
+    return this.save({ ...next, ownerGeneration: latest.ownerGeneration });
+  }
+
   /** R2: run the configured pre-reviewer on the committed candidate and record the round. */
-  preReview(goal: Goal, card: Card, run: CardRun): { run: CardRun; result: PreReviewResult; round: PreReviewRound } {
+  async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
     const cfg = this.config.preReview;
     if (!cfg.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
+    if (run.stop || run.state === 'STOP') throw new Error(`card run is stopped (${run.stop?.reason ?? 'STOP'}); no review may run: ${run.stop?.nextAction ?? 'resolve the stop first'}`);
     const now = this.clock();
-    const cwd = run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+    const cwd = this.reviewCheckout(run);
     const baseRef = run.base?.oid ?? this.config.base;
-    const candidateSha = run.candidate?.sha ?? this.git.head(cwd);
+    const candidateSha = this.pinnedCandidate(run, cwd);
     const candidateDigest = run.candidate?.digest ?? candidateSha;
-    const cycle = run.review.substantiveDecisions;
+    const cycle = run.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle);
+    const lastRound = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
+    if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
+      throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
+    }
     const round = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + 1;
-    const policyFile = path.join(this.repo.mainRoot, 'REVIEW.md');
-    const reviewPolicy = existsSync(policyFile)
-      ? readFileSync(policyFile, 'utf8')
-      : 'Must-block: out of scope, hard boundaries, frozen contracts, license, non-original code, missing or fake tests. Two axes, spec and standards. Output the JSON verdict as the last line.';
+    const reviewPolicy = this.reviewPolicy();
     const lastBlock = [...rounds].reverse().find((r) => r.outcome === 'block');
     const priorFindings = [...(lastBlock?.reasons ?? []).map((f) => `pre-review round ${lastBlock?.round}: ${f}`), ...(cycle > 0 ? (run.review.lastVerdict?.reasons ?? []).map((f) => `R3 block: ${f}`) : [])];
-    const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes);
+    const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
-    const prompt = buildPreReviewPrompt({ reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round, maxRounds: cfg.rounds });
-    const fileStem = `${card.id}.pre.${cycle}.${round}`;
-    const result = runPreReview({ runner: this.runner, command: cfg.command, cwd, prompt, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: path.join(cwd, '.review'), fileStem, head: candidateSha, reviewer: cfg.reviewer });
-    const holdUntil = result.outcome === 'quota-hold' ? addMs(now, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    const record: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: Math.max(0, Math.round(result.receipt.durationMs)), outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256, holdUntil };
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receipt.outputSha256, durationMs: record.durationMs, holdUntil } });
-    const ledger = { rounds: [...run.preReview.rounds, record] };
-    const evidence = [...run.evidence, { id: `pre-review-${cycle}-${round}`, kind: 'artifact' as const, createdAt: now, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) }];
-    let next: CardRun = { ...run, preReview: ledger, evidence };
+    // Retention names carry the attempt number for this candidate and a nonce, so a retried or overlapping round never
+    // overwrites earlier evidence.
+    const attemptNo = rounds.filter((r) => r.candidateDigest === candidateDigest).length + 1;
+    const fileStem = `${card.id}.pre.${cycle}.${round}.${attemptNo}.${randomUUID().slice(0, 8)}`;
+    const reviewDir = path.join(cwd, '.review');
+    // Deterministic scope gate (dimension 1) first: a block with no model call and no tokens spent.
+    const outOfScope = changedPaths.filter((p) => !pathAllowed(p, card.allow_paths));
+    let result: PanelResult;
+    if (outOfScope.length) {
+      const reasons = outOfScope.map((p) => `[spec] 1 out of scope @ ${p}: outside allow_paths -> revert the change or amend the card (scope-gate)`);
+      const verdict: Verdict = { verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } }, sha: candidateSha, branch: card.id, run_status: 'success' };
+      result = { outcome: 'block', runStatus: 'success', reasons, verdict, perspectives: [{ perspective: 'scope-gate', outcome: 'block', runStatus: 'success', reasons, verdict, durationMs: 0, logRef: '', receiptSha256: '', exitCode: 0 }], durationMs: 0, receiptSha256: '' };
+    } else {
+      const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
+      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round, maxRounds: cfg.rounds });
+      result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
+    }
+    const after = this.clock();
+    // Timed from the clock after the run: a review can outlast the hold it reports.
+    const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
+    const record: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives };
+    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
+    // Re-read persisted state: the panel may have run for minutes; a stop or takeover saved meanwhile wins.
+    const current = this.store.getCardRun(goal.id, card.id) ?? run;
+    if (current.stop || current.state === 'STOP') {
+      this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: 'discarded: card run stopped meanwhile', runStatus: result.runStatus, reasons: result.reasons, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs } });
+      return { run: this.save({ ...current, evidence: [...current.evidence, evidenceEntry] }), result, round: record };
+    }
+    this.renewOwnLease(card.id, current, after);
+    try {
+      if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), after);
+    } catch (err) {
+      const stop = makeStop('ownership', (err as FencedError).message, 'revalidate ownership; a stale generation cannot commit a review round', { at: after });
+      return { run: this.save({ ...current, state: 'STOP', stop, evidence: [...current.evidence, evidenceEntry] }), result, round: record };
+    }
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`) } });
+    let next: CardRun = { ...current, preReview: { rounds: [...current.preReview.rounds, record] }, evidence: [...current.evidence, evidenceEntry] };
     if (result.outcome === 'block') {
       // MA2: the blocked candidate missed acceptance; the repair is the next counted attempt.
-      const effort = run.effort ? markReviewFailure(run.effort, `pre-review: ${result.reasons[0] ?? 'block'}`) : run.effort;
+      const effort = current.effort ? markReviewFailure(current.effort, `pre-review: ${result.reasons[0] ?? 'block'}`) : current.effort;
       next = { ...next, state: 'BUILD', effort, dodReceipt: undefined, blocker: undefined };
     }
-    next = this.save(next);
-    return { run: next, result, round: record };
+    return { run: this.commitReviewed(goal, card, current, next, after), result, round: record };
+  }
+
+  /**
+   * Pool admission in queue order. A stale request of this same card (an earlier candidate that never ran,
+   * left by a refused admission) is superseded; another requester's request is waited for.
+   */
+  private admitReview(goal: Goal, card: Card, key: string, now: string): ReturnType<ReviewQueue['admit']> {
+    const requester = `${goal.id}:${card.id}`;
+    let admit = this.queue.admit(goal.reviewPool, currentActor(), now);
+    for (let guard = 0; admit.status === 'admitted' && admit.request.key !== key && admit.request.requesters.every((r) => r === requester) && guard < 10; guard += 1) {
+      this.queue.complete(admit.request.key, 'superseded by a newer candidate of the same card', now);
+      admit = this.queue.admit(goal.reviewPool, currentActor(), now);
+    }
+    return admit;
   }
 
   applyShipResult(goal: Goal, card: Card, run: CardRun, result: ShipResult, operationId: string, reviewKey: string, candidateDigest: string): { run: CardRun; directive: CardDirective } {
@@ -495,9 +789,33 @@ export class CardRunner {
     const invocationId = `ship:${operationId}`;
     let review = run.review;
     let reviewDecision: ReturnType<typeof recordReviewOutcome>['decision'] | undefined;
+    // The document the command-run formal reviewer already decided for this candidate, re-read by the ship
+    // path, is the same artifact and never a second decision; any other ship review outcome is recorded.
+    const commandReviewer = this.config.formalReview.command.length ? this.config.formalReview.reviewer : undefined;
+    const decidedByCommand = commandReviewer !== undefined && run.review.invocations.some((i) => i.reviewer === commandReviewer && i.candidateDigest === candidateDigest && (i.outcome === 'pass' || i.outcome === 'block'));
+    const rawDoc = (() => {
+      try {
+        return verdictInfo.raw ? (JSON.parse(verdictInfo.raw) as { reviewer?: string; sha?: string }) : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
+    const last = run.review.lastVerdict;
+    // Identity is the document itself: same reviewer (when the raw document names one), same sha, same verdict and
+    // reasons as the command's recorded decision (an advisory block is published as a pass with `advisory`).
+    const commandVerdict = last?.verdict === 'block' && !classifyVerdict(last, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking ? 'pass' : last?.verdict;
+    const commandReasons = commandVerdict === 'pass' ? [] : (last?.reasons ?? []);
+    const sameArtifact =
+      decidedByCommand &&
+      last !== undefined &&
+      verdictInfo.verdict !== undefined &&
+      verdictInfo.verdict.sha === run.candidate?.sha &&
+      (!rawDoc || (rawDoc.reviewer === commandReviewer && rawDoc.sha === run.candidate?.sha)) &&
+      verdictInfo.verdict.verdict === commandVerdict &&
+      JSON.stringify(verdictInfo.verdict.reasons) === JSON.stringify(commandReasons);
     // Record a substantive decision only when a verdict exists or the ship outcome is review-related; a
     // merge without a readable verdict is noted as evidence, never counted as a decision or a retry.
-    if (verdictInfo.verdict || ['review-blocked', 'review-no-verdict'].includes(result.outcome)) {
+    if (!sameArtifact && (verdictInfo.verdict || ['review-blocked', 'review-no-verdict'].includes(result.outcome))) {
       const rec = recordReviewOutcome(review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now }, classified, verdictInfo.verdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - review.scriptCounter) : 0);
       review = rec.ledger;
       reviewDecision = rec.decision;

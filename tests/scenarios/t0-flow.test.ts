@@ -3,11 +3,12 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
-import { CardRun } from '../../src/core/types.ts';
+import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 
@@ -207,14 +208,18 @@ test('WAIT resumes: a goal polled while its only card was running parks in WAIT 
   }
 });
 
-test('pre-review gate: a block returns to BUILD as a counted repair, a pass opens the ship, an R3 block restarts the cycle, and exhaustion is STOP/review unless onExhausted is ship', () => {
+test('pre-review gate: a block returns to BUILD as a counted repair, a pass opens the ship, an R3 block restarts the cycle, and exhaustion is STOP/review unless onExhausted is ship', async () => {
   const fx = makeFixture({ config: { preReview: { command: ['fake-reviewer'], reviewer: 'fake', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
   try {
     const verdicts: string[] = [];
     const script = scriptedRunner({
       'git diff --name-only': { stdout: 'src/t1-gate.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
-      'fake-reviewer': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
+      'fake-reviewer': () => {
+        const out = verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n';
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
     });
     const mk = (rounds: number, onExhausted: 'stop' | 'ship' = 'stop') =>
       new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, rounds, onExhausted } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged']), now: fx.now, runner: script });
@@ -237,7 +242,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     }
     assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 0, 'nothing ships before the pre-review');
     verdicts.push('=== answer ===\n{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-gate.ts:1: no RED -> add a failing test first"]}\n');
-    const round1 = runner.preReview(fx.goal(goal.id), card, r.run);
+    const round1 = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(round1.result.outcome, 'block');
     assert.equal(round1.run.state, 'BUILD');
     assert.equal(round1.run.dodReceipt, undefined, 'a block clears the DoD receipt');
@@ -255,7 +260,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     // A quota hold is WAIT, never a decision: the gate parks the card until the hold clears, then asks again.
     verdicts.push('Error: 429 Too Many Requests, retry after 60 seconds\n');
-    const held = runner.preReview(fx.goal(goal.id), card, r.run);
+    const held = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(held.result.outcome, 'quota-hold');
     r = runner.next(fx.goal(goal.id), card, held.run);
     assert.equal(r.directive.kind, 'wait', r.directive.narration);
@@ -267,13 +272,17 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2, 'a hold consumes no round');
     // A malformed verdict gets one retry within the cycle; it consumes no round either.
     verdicts.push('I cannot decide.\n');
-    const noVerdict = runner.preReview(fx.goal(goal.id), card, r.run);
+    const noVerdict = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(noVerdict.result.outcome, 'no-verdict');
+    // Retried rounds keep every attempt's evidence: distinct files, the earlier round document still present.
+    assert.ok(held.round.verdictRef && existsSync(held.round.verdictRef), 'the held round retained its document');
+    assert.ok(noVerdict.round.verdictRef && existsSync(noVerdict.round.verdictRef), 'the retried round retained its document');
+    assert.notEqual(held.round.verdictRef, noVerdict.round.verdictRef, 'a retry never overwrites an earlier attempt');
     r = runner.next(fx.goal(goal.id), card, noVerdict.run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     verdicts.push('{"verdict":"pass","reasons":[]}\n');
-    const round2 = runner.preReview(fx.goal(goal.id), card, r.run);
+    const round2 = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(round2.result.outcome, 'pass');
     assert.equal(round2.run.state, 'SHIP');
 
@@ -290,7 +299,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
     // The no-verdict retry is per cycle: the earlier cycle's retry does not exhaust this one.
     verdicts.push('garbage\n');
-    const noVerdict2 = runner.preReview(fx.goal(goal.id), card, r.run);
+    const noVerdict2 = await runner.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(noVerdict2.result.outcome, 'no-verdict');
     r = runner.next(fx.goal(goal.id), card, noVerdict2.run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
@@ -299,7 +308,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     // Exhaustion: with one round per cycle, a block followed by a fix has no round left -> STOP/review.
     const strict = mk(1);
     verdicts.push('{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-gate.ts:2: swallowed error -> rethrow"]}\n');
-    const round3 = strict.preReview(fx.goal(goal.id), card, r.run);
+    const round3 = await strict.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(round3.run.state, 'BUILD');
     r = strict.next(fx.goal(goal.id), card, round3.run);
     assert.equal(r.directive.kind, 'build');
@@ -312,6 +321,299 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     const lenient = mk(1, 'ship');
     r = lenient.next(fx.goal(goal.id), card, { ...run, state: 'SHIP', stop: undefined });
     assert.equal(r.directive.kind, 'close', r.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('formal review (R3) command: R2 pass first, then a review directive; a block is REVIEW_FIX and restarts the pre-review cycle; retry and quota hold never decide; a pass opens the ship', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const r2: string[] = [];
+    const r3: string[] = [];
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-r3.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-r3.ts b/src/t1-r3.ts\n+export const r3 = 1;\n' },
+      'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
+      'fake-r3': () => {
+        const out = r3.shift() ?? PASS;
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-R3', title: 'formal review command' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-R3', source: 'card', ref: 'T1-R3', affectedSurfaces: [] }, { cards: ['T1-R3'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-R3'] } });
+    const card = fx.card('T1-R3');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-R3'));
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+
+    // R3 refuses to run before the R2 pass.
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, run), /pre-review/);
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 0, 'nothing ships before R3');
+
+    // A malformed R3 output gets the single retry; a quota hold parks the card; neither is a decision.
+    r3.push('nonsense\n');
+    let f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'no-verdict');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    r3.push('429 Too Many Requests, retry after 60 seconds\n');
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'quota-hold');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'wait');
+    if (r.directive.kind === 'wait') assert.equal(r.directive.on, 'review-quota');
+    fx.advance(61_000);
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    assert.equal(r.run.review.substantiveDecisions, 0);
+
+    // A block (gateRequired) is REVIEW_FIX with one decision consumed; the verdict file is candidate-bound.
+    r3.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-r3.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'block-defect');
+    assert.equal(f.run.state, 'REVIEW_FIX');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    assert.equal(f.run.review.substantiveBlocks, 1);
+    assert.equal(f.run.dodReceipt, undefined);
+    assert.ok(f.verdictRef && existsSync(f.verdictRef));
+    assert.equal((JSON.parse(readFileSync(f.verdictRef, 'utf8')) as { sha: string }).sha, 'sha-1');
+
+    // The repair is the next attempt; the repaired candidate restarts loop 1 (pre-review cycle 1) before R3 runs again.
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'build');
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.substantiveDecisions, 2);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).length, 1);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length, 4, 'no-verdict, quota hold, block and pass are all journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('formal review guards: an advisory block proceeds, a hold blocks the command, a stale sha never passes, and a third decision is refused', async () => {
+  const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const r3: string[] = [];
+    let r3Calls = 0;
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-guard.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-guard.ts b/src/t1-guard.ts\n+export const guard = 1;\n' },
+      'fake-r2': { stdout: PASS },
+      'fake-r3': () => {
+        r3Calls += 1;
+        const out = r3.shift() ?? PASS;
+        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stdout: out };
+      },
+    });
+    // What the ship path re-reads: the published advisory document, a consistent pass with the findings under advisory.
+    const PUBLISHED: Verdict = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', run_status: 'success' };
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged', 'merged'], PUBLISHED), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-GUARD', title: 'review guards' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-GUARD', source: 'card', ref: 'T1-GUARD', affectedSurfaces: [] }, { cards: ['T1-GUARD'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-GUARD'] } });
+    const card = fx.card('T1-GUARD');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GUARD'));
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    const ledgerBase = { base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3' };
+
+    // (1) A standards-only block without a required gate is advisory: the decision counts, the ship proceeds.
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'review');
+    r3.push('{"verdict":"block","reasons":["[standards] 16 slop @ src/t1-guard.ts:1: dead helper -> remove"],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"block","reasons":["dead helper"]}}}\n');
+    let f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'block-advisory');
+    assert.equal(f.run.state, 'SHIP');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', `advisory findings never become a silent merge bar: ${r.directive.narration}`);
+    assert.equal(r.run.review.substantiveDecisions, 1, 'a ship-path re-read of the command verdict is not a second decision');
+    const canonical = JSON.parse(readFileSync(path.join(fx.repo.mainRoot, '.review', 'T1-GUARD.json'), 'utf8')) as { verdict: string; axes: { spec: { verdict: string }; standards: { verdict: string } }; advisory: string[] };
+    assert.equal(canonical.verdict, 'pass');
+    assert.equal(canonical.axes.standards.verdict, 'pass', 'the published advisory document does not contradict itself');
+    assert.equal(canonical.advisory.length, 1, 'the findings are retained under advisory');
+
+    // Guards that refuse before any dispatch: a review pool that does not admit, and a checkout not at the pinned candidate.
+    const spawnsBefore = r3Calls;
+    fx.queue.setPoolLimit(fx.config.reviewPool, 1, 'test: one slot');
+    const occupant = fx.queue.enqueue({ pool: fx.config.reviewPool, repository: 'other/repo', candidateDigest: 'other', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() });
+    fx.queue.admit(fx.config.reviewPool, actorB, fx.now());
+    const busy = CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-1b', dirty: false, untracked: [], digest: 'sha-1b' }, dodReceipt: 'dod:1b', updatedAt: fx.now() });
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, busy), /pool/);
+    fx.queue.complete(occupant.request.key, 'other-verdict', fx.now());
+    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
+    await assert.rejects(() => gitRunner.formalReview(fx.goal(goal.id), card, busy), /pinned candidate/);
+    assert.equal(r3Calls, spawnsBefore, 'neither guard dispatched the reviewer');
+
+    // A ship-path verdict that differs from the command's decision for the same sha is a new outcome and is recorded:
+    // a block as the second decision leaves no allowance for the review a repair would need, so it stops.
+    const closed = r.run;
+    const DIFFERENT: Verdict = { verdict: 'block', reasons: ['[spec] 1 out of scope @ src/t1-guard.ts:9: touches a frozen path -> revert'], axes: { spec: { verdict: 'block', reasons: ['frozen'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1c', run_status: 'success' };
+    const differing = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['review-blocked'], DIFFERENT), now: fx.now, runner: script });
+    const passedByCommand = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'SHIP', mergeVerified: false, candidate: { sha: 'sha-1c', dirty: false, untracked: [], digest: 'sha-1c' }, dodReceipt: 'dod:1c', review: { ...r.run.review, substantiveDecisions: 1, substantiveBlocks: 0, invocations: [{ ...ledgerBase, invocationId: 'r3:cmd-1c', candidateDigest: 'sha-1c', requestedAt: fx.now(), outcome: 'pass' as const }], lastVerdict: { verdict: 'pass' as const, reasons: [], sha: 'sha-1c', run_status: 'success' as const } }, updatedAt: fx.now() }));
+    const differed = differing.next(fx.goal(goal.id), card, passedByCommand);
+    assert.equal(differed.directive.kind, 'stop', `a different ship outcome is a second decision: ${differed.directive.narration}`);
+    assert.match(differed.directive.narration, /two-decision allowance/);
+    assert.equal(differed.run.review.substantiveDecisions, 2);
+    assert.equal(differed.run.review.substantiveBlocks, 1);
+    assert.equal(differed.run.state, 'STOP');
+
+    // (2) An active quota hold blocks the command itself, for R3 and for R2 alike.
+    const held = fx.store.saveCardRun(CardRun.parse({ ...closed, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', review: { ...closed.review, invocations: [...closed.review.invocations, { ...ledgerBase, invocationId: 'r3:hold', candidateDigest: 'sha-2', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: addMs(fx.now(), 60_000) }] }, updatedAt: fx.now() }));
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, held), /hold/);
+    const r2Runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, command: ['fake-r2'], reviewer: 'fake-r2' } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const heldR2 = { ...held, preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-2', requestedAt: fx.now(), durationMs: 0, outcome: 'quota-hold' as const, reasons: [], holdUntil: addMs(fx.now(), 60_000) }] } };
+    await assert.rejects(() => r2Runner.preReview(fx.goal(goal.id), card, heldR2), /hold/);
+    fx.advance(61_000);
+
+    // (3) A verdict that names another sha is stale: never a pass, not a decision, and it never overwrites the candidate-bound verdict file.
+    r = runner.next(fx.goal(goal.id), card, held);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    r3.push('{"verdict":"pass","reasons":[],"sha":"sha-1","axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.stale, true);
+    assert.equal(f.classified.outcome, 'no-verdict');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    const verdictFile = JSON.parse(readFileSync(path.join(fx.repo.mainRoot, '.review', 'T1-GUARD.json'), 'utf8')) as { sha: string; verdict: string };
+    assert.equal(verdictFile.sha, 'sha-1', 'the stale verdict must not be stamped onto the current candidate');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'review', 'the single no-verdict retry');
+    r3.push(PASS);
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.substantiveDecisions, 2);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, f.run), /allowance/, 'no further run once the allowance is used, even with a current-candidate pass');
+    // (4) The two-decision allowance is enforced before a third review is issued or run.
+    const third = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', updatedAt: fx.now() }));
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, third), /allowance/);
+    r = runner.next(fx.goal(goal.id), card, third);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
+    const stoppedRun = CardRun.parse({ ...third, state: 'STOP', stop: makeStop('review', 'second substantive block', 'human ruling', { at: fx.now(), global: false }), review: { ...third.review, substantiveDecisions: 1, substantiveBlocks: 1 }, updatedAt: fx.now() });
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, stoppedRun), /stopped/, 'a stopped card run never dispatches a review');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('review panel: perspectives run concurrently in R2 and R3, any block blocks the round, a pass needs every angle, a stale binding from one angle voids the panel, and one R3 panel is one decision', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2', '--focus', '{perspective}'], perspectives: ['bugs', 'security', 'compliance'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    let securityBlocks = true;
+    let stopDuringReview: CardRun | undefined;
+    const r3Out: string[] = ['{"verdict":"pass","reasons":[],"branch":"OTHER","axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n'];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-panel.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-panel.ts b/src/t1-panel.ts\n+export const panel = 1;\n' },
+      'fake-r2 --focus security': () => ({ stdout: securityBlocks ? '{"verdict":"block","reasons":["[spec] 2 boundary @ src/t1-panel.ts:1: token logged -> redact"],"axes":{"spec":{"verdict":"block","reasons":["token"]},"standards":{"verdict":"pass","reasons":[]}}}\n' : PASS }),
+      'fake-r2': { stdout: PASS },
+      'fake-r3': () => {
+        const out = r3Out.shift() ?? PASS;
+        if (out === 'STOP' && stopDuringReview) {
+          // another window stops the card while this review is still running
+          fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'STOP', stop: makeStop('review', 'stopped meanwhile', 'human ruling', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+          return { stdout: PASS };
+        }
+        return { stdout: out };
+      },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-PANEL', title: 'review panel' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-PANEL', source: 'card', ref: 'T1-PANEL', affectedSurfaces: [] }, { cards: ['T1-PANEL'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-PANEL'] } });
+    const card = fx.card('T1-PANEL');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PANEL'));
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+
+    // R2 round 1: three angles at once; the security angle blocks, so the round blocks with the reason tagged.
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    const round1 = await runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(round1.result.outcome, 'block');
+    assert.equal(round1.run.state, 'BUILD');
+    assert.equal(round1.round.perspectives?.length, 3);
+    assert.ok(round1.result.reasons[0]?.endsWith('(security)'), round1.result.reasons.join(' | '));
+    assert.equal(round1.round.perspectives?.filter((p) => p.outcome === 'pass').length, 2);
+
+    // Fix; round 2 passes on every angle; the R3 panel starts.
+    securityBlocks = false;
+    r = runner.next(fx.goal(goal.id), card, round1.run);
+    assert.equal(r.directive.kind, 'build');
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    const round2 = await runner.preReview(fx.goal(goal.id), card, r.run);
+    assert.equal(round2.result.outcome, 'pass');
+    r = runner.next(fx.goal(goal.id), card, round2.run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+
+    // R3 (one exhaustive pass): a verdict binding another branch is stale (no decision consumed, one retry).
+    let f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.stale, true);
+    assert.equal(f.classified.outcome, 'no-verdict');
+    assert.equal(f.run.review.substantiveDecisions, 0);
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.substantiveDecisions, 1);
+    assert.ok(!f.run.review.invocations.some((i) => i.outcome === 'pending'), 'the reservation is replaced by the decision');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length, 2);
+
+    // A STOP saved while the review runs is never overwritten by the review's own save: no decision, reservation released.
+    const fresh = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', updatedAt: fx.now() }));
+    r = runner.next(fx.goal(goal.id), card, fresh);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    stopDuringReview = r.run;
+    r3Out.push('STOP');
+    f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.run.state, 'STOP', 'a stop saved meanwhile survives the review');
+    assert.equal(f.run.review.substantiveDecisions, 1, 'no decision is recorded on a stopped run');
+    assert.ok(!f.run.review.invocations.some((i) => i.outcome === 'pending'));
+    // The scope gate blocks an R2 round and refuses an R3 dispatch with no reviewer process at all.
+    let spawns = 0;
+    const scoped = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-panel.ts\nsrc/outside.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } }) });
+    const outside = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'BUILD', stop: undefined, candidate: { sha: 'sha-4', dirty: false, untracked: [], digest: 'sha-4' }, dodReceipt: 'dod:4', updatedAt: fx.now() }));
+    const gated = await scoped.preReview(fx.goal(goal.id), card, outside);
+    assert.equal(gated.result.outcome, 'block');
+    assert.ok(gated.result.reasons[0]?.includes('src/outside.ts'), gated.result.reasons.join(' | '));
+    assert.equal(gated.round.perspectives?.[0]?.name, 'scope-gate');
+    const outsideWithR2 = fx.store.saveCardRun(CardRun.parse({ ...outside, preReview: { rounds: [...outside.preReview.rounds, { round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-4', requestedAt: fx.now(), durationMs: 0, outcome: 'pass' as const, reasons: [] }] }, updatedAt: fx.now() }));
+    await assert.rejects(() => scoped.formalReview(fx.goal(goal.id), card, outsideWithR2), /out of scope/);
+    assert.equal(spawns, 0, 'the scope gate spends no tokens');
+
+    // A pending reservation for the same candidate refuses a second dispatch.
+    const pendingRun = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() }));
+    await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, pendingRun), /pending/);
   } finally {
     fx.cleanup();
   }

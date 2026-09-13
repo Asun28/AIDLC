@@ -39,6 +39,12 @@
     "reviewer": "deepseek-v4-pro",
     "rounds": 2,
     "timeoutMs": 600000,
-    "onExhausted": "stop"
+    "onExhausted": "stop",
+    "perspectives": []
+  },
+  "formalReview": {
+    "command": [],
+    "reviewer": "codex",
+    "timeoutMs": 1200000
   }
 }

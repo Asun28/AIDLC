@@ -593,13 +593,25 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('pre <cardId>')
     .description('run the configured pre-reviewer (R2) on the committed candidate: pass opens the ship, block returns the card to BUILD')
     .option('--goal <id>')
-    .action((cardId: string, o: { goal?: string }) => {
+    .action(async (cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
-      const r = runnerFor(c).preReview(goalRec, parsed.card, run);
+      const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
-      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.receipt.durationMs, reasons: r.result.reasons, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
-      out(c, summary, () => `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms)\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
+      out(c, summary, () => `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+    });
+  review
+    .command('r3 <cardId>')
+    .description('run the configured formal reviewer (R3) on the committed candidate: pass opens the ship, a merge-blocking block returns the card to REVIEW_FIX')
+    .option('--goal <id>')
+    .action(async (cardId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const r = await runnerFor(c).formalReview(goalRec, parsed.card, run);
+      c.controller.writeBoard(goalRec);
+      const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: c.config.formalReview.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
+      out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
   program
     .command('ci')

@@ -64,6 +64,7 @@ failure ends the episode. No fifth attempt via another session or card.
 Pre-review (R2) when `preReview.command` is set: `aidlc review pre <id>` on the
 committed candidate; pass opens the ship, block returns to BUILD as a counted
 repair, rounds cap per R3 cycle, an R3 block restarts the cycle.
+Panel: `perspectives` run concurrently; any block blocks the round.
 One existing ship command (`aidlc card ship <id>`; scaffold: task.ps1 -Phase
 ship from the MAIN checkout, never inside the worktree). Preserve explicit
 base and mode across retries; an auth failure never becomes local mode. Do
@@ -73,6 +74,7 @@ rebase or amend receipt-bound or published history; recheck tests and
 review; no stale approval.
 
 ## Review (R3)
+R3 command when `formalReview.command` is set: `aidlc review r3 <id>`.
 Allowance: one initial decision + one for a repaired candidate. A second
 substantive block => STOP/review. Missing, malformed or stale verdict never
 passes; dispatch + one retry TOTAL across script and driver (a script
