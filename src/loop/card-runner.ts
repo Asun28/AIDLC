@@ -934,7 +934,8 @@ export class CardRunner {
       }
       case 'merge-failed':
       default: {
-        if (result.outcome === 'merge-failed' && /conflict|not mergeable/i.test([result.detail, result.receipt.stdout, result.receipt.stderr].join(' '))) {
+        // Only a real conflict returns to BUILD: git's CONFLICT markers or GitHub's clean-merge failure. A branch-protection or status-check refusal ('not mergeable: the base branch policy ...') stays a tool stop.
+        if (result.outcome === 'merge-failed' && /conflict|cannot be cleanly created/i.test([result.detail, result.receipt.stdout, result.receipt.stderr].join(' '))) {
           const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopenEpisode(run.effort) });
           return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: ['merge-conflicts', ...this.buildSkills(goal, card)], narration: `Merge conflict on the base sync (${result.detail}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.` } };
         }

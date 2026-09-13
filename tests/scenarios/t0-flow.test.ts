@@ -666,7 +666,7 @@ test('R4: a merge failure without a conflict is still a tool stop, and a red-mis
     const goal = fx.controller.createGoal({ text: 'implement T1-NOCONF', source: 'card', ref: 'T1-NOCONF', affectedSurfaces: [] }, { cards: ['T1-NOCONF'] });
     fx.controller.next(goal.id);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-NOCONF'] } });
-    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'gh: the base branch policy prohibits the merge'));
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'Pull request #7 is not mergeable: the base branch policy prohibits the merge'));
     const card = fx.card('T1-NOCONF');
     let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-NOCONF'));
     r = runner.next(fx.goal(goal.id), card, r.run);
