@@ -255,6 +255,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     // The repair is the next counted attempt; the new candidate needs a fresh round.
     r = runner.next(fx.goal(goal.id), card, round1.run);
     assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the build directive for a pending pre-review block names the skills');
     if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2);
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok2', redReceipt: 'red:ok', candidateSha: 'sha-2' });
     r = runner.next(fx.goal(goal.id), card, run);
@@ -726,6 +727,68 @@ test('R3: the build directive names tdd, and diagnose as well on a card that car
     r = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(r.directive.kind, 'build');
     if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an incident goal names diagnose on the build directive', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-INC', title: 'checkout 5xx spike after deploy' });
+    const goal = fx.controller.createGoal({ text: 'Alert: 5xx spike on checkout service after deploy', source: 'incident', affectedSurfaces: [] }, { cards: ['T1-INC'] });
+    assert.equal(goal.routing.kind, 'incident');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-INC'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-INC');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-INC'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: every repair path returns a build directive that names the skills: scope-blocked and budget-over (episode kept), CI code defect, and a pending pre-review block', () => {
+  for (const outcome of ['scope-blocked', 'budget-over'] as const) {
+    const fx = makeFixture();
+    try {
+      const id = outcome === 'scope-blocked' ? 'T1-SCOPE' : 'T1-BUDGET';
+      writeCard(fx, { id, title: `ship rejected with ${outcome}` });
+      const goal = fx.controller.createGoal({ text: `implement ${id}`, source: 'card', ref: id, affectedSurfaces: [] }, { cards: [id] });
+      fx.controller.next(goal.id);
+      fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: [id] } });
+      const runner = fx.runner(new DryRunShipPath([outcome]));
+      const card = fx.card(id);
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+      r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'build', `${outcome} returns to BUILD`);
+      if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], `${outcome} build directive names the skills`);
+      assert.equal(r.run.dodReceipt, undefined);
+      assert.equal(r.run.effort?.terminal, 'succeeded', `${outcome} is a code-side repair: the episode is not reopened by this card`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CIRED', title: 'CI finds a code defect' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CIRED', source: 'card', ref: 'T1-CIRED', affectedSurfaces: [] }, { cards: ['T1-CIRED'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CIRED'] } });
+    const runner = fx.runner(new InjectedShipPath(['ci-red'], 'AssertionError: expected 1 to equal 2\n1 failing'));
+    const card = fx.card('T1-CIRED');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CIRED'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', `a CI code defect returns to BUILD: ${r.directive.narration}`);
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the CI code-defect build directive names the skills');
   } finally {
     fx.cleanup();
   }
