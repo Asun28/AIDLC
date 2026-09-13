@@ -70,7 +70,7 @@ export class EvidenceStore {
     writeFileSync(this.manifestFile(), JSON.stringify(manifest, null, 2) + '\n', 'utf8');
   }
 
-  /** Copy an artifact into the evidence tree (survives worktree cleanup) and record it. */
+  /** Copy an artifact into the evidence tree (kept after worktree cleanup) and record it. */
   retain(manifest: Manifest, input: { id: string; kind: string; sourcePath?: string; content?: string; candidateDigest?: string; environment?: string; invocationId?: string; note?: string }): Manifest {
     if (manifest.seal) throw new Error('manifest is sealed; open a new generation for further evidence');
     mkdirSync(this.dir, { recursive: true });

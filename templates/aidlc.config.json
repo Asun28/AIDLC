@@ -10,7 +10,7 @@
   "mode": "remote",
   "shipPath": "dry-run",
   "reviewPool": "default",
-  "reviewPolicyVersion": "REVIEW.md@1",
+  "reviewPolicyVersion": "REVIEW.md@2",
   "reviewer": "reviewer",
   "maxWorkers": 2,
   "family": "claude",

@@ -10,7 +10,7 @@ node bin/aidlc.js init [dir] [--cards-dir specs/tasks] [--ship-path scaffold|git
 node bin/aidlc.js doctor
 ```
 
-`init` copies `templates/` into the repository: `.claude/skills/aidlc-loop/*`, `.claude/skills/secure-api-review`, `.claude/agents/*`, a merged `.claude/settings.json`, `REVIEW.md`, `bands.yaml`, `intent/`, `specs/README.md` and `specs/_SPEC-TEMPLATE.md`, `plans/`, `<cardsDir>/_TEMPLATE.md`, `evals/`, `.github/workflows/agent-evals.yml` and `aidlc-ci.yml`, `docs/DELIVERY-OPS.md`, `aidlc.config.json`, `aidlc.ops.example.json`, an appended `## AI-native SDLC (aidlc)` section in `CLAUDE.md`, and `.aidlc/` plus `_local/` in `.gitignore`. Existing files are skipped unless `--force`.
+`init` copies `templates/` into the repository: `.claude/skills/aidlc-loop/*`, `.claude/skills/secure-api-review`, `.claude/skills/{tdd,diagnose,grilling,merge-conflicts}` (companion skills), `.claude/agents/*`, a merged `.claude/settings.json`, `REVIEW.md`, `bands.yaml`, `intent/`, `specs/README.md` and `specs/_SPEC-TEMPLATE.md`, `plans/`, `<cardsDir>/_TEMPLATE.md`, `evals/`, `.github/workflows/agent-evals.yml`, `aidlc-ci.yml` and `security-scanners.yml`, `docs/DELIVERY-OPS.md`, `docs/LESSONS.md`, `docs/THIRD-PARTY-NOTICES.md`, `aidlc.config.json`, `aidlc.ops.example.json`, an appended `## AI-native SDLC (aidlc)` section in `CLAUDE.md`, and `.aidlc/` plus `_local/` in `.gitignore`. Existing files are skipped unless `--force`.
 
 `aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review), `formalReview.command|reviewer|timeoutMs|shell|maxDiffBytes` (see Formal review as a command).
 
@@ -217,3 +217,20 @@ aidlc audit verify --goal <id> --claim-full [--capture-boundary]
 | `audit` | capture or persistence failure after a mutation | reconcile unknown effects; do not repeat the mutation |
 | `ownership` | stale generation, foreign lease, or worktree/branch mismatch | the owner's own `card next` renews its lease and clears a stop caused only by expiry (journal `LEASE_RENEWED` with `revalidated`); otherwise attach read-only or `goal takeover` after reconciliation |
 | `cancelled` | user cancellation | none; evidence retained; `goal resume` links a new generation |
+
+## Companion skills
+
+Advisory skills installed next to `aidlc-loop`; the loop's gates decide, and a skill never overrides `aidlc next`. Each is read by path when the step needs it (the implementer, investigator and planner agents point at them) or called by name in a session.
+
+| Skill | When the loop reaches for it | What it must not do |
+|---|---|---|
+| `tdd` | BUILD, before writing or changing a test: the agreed seams are the acceptance items and the interfaces they exercise; anti-patterns that fake a RED (implementation-coupled, tautological, horizontal slicing); mocks only at system boundaries | Add a test at a seam the card does not name; weaken a test |
+| `diagnose` | T0-bugfix and the card `diagnosis:` field, or a DoD/CI failure with no known cause: a red-capable command first, then 3-5 ranked falsifiable hypotheses, one variable per probe, the regression test before the fix | Form a hypothesis before the red-capable command exists; count attempts (that stays with `aidlc card attempt`) |
+| `grilling` | T1/T2 intake while the intent's Open questions are not empty, and the T2 plan checkpoint: rounds over the frontier, recommended answer first, at most three rounds, leftovers become `[TBD: ...]` in the spec | Grill on T0 work; ask for a fact that can be looked up; add a confirmation gate the loop does not have |
+| `merge-conflicts` | SHIP when the base moved and the merge-based sync stops on conflicts: resolve by the intent of each side, merge only, rerun DoD and review | Rebase or amend receipt-bound history; take a whole side blindly |
+
+Lessons: `docs/LESSONS.md` is append-only. PREPARE reads it once per card; CLOSE appends at most one dated `NEVER|ALWAYS|NOTE` line when a review block or an incident taught a rule the playbook did not state.
+
+## Upgrading a downstream repository
+
+`aidlc init` adds files that are missing and never overwrites an existing one, so a re-run on an existing repository installs new skills, agents, docs and workflows and leaves everything else as it is. `--force` overwrites ordinary files (including `aidlc.config.json` and `docs/LESSONS.md`) but never refreshes a CLAUDE.md section that is already present. To take a new `REVIEW.md` or CLAUDE.md section into an existing repository, copy the changed sections by hand and bump `reviewPolicyVersion` in `aidlc.config.json`: the version is part of the review admission key, so a pass already recorded for a candidate stays valid and only a changed candidate is reviewed under the new text.

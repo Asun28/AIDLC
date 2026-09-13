@@ -6,7 +6,9 @@ tools: Read, Edit, Write, Bash
 You own one card: `specs/tasks/<id>.md`, in the worktree the loop gives you.
 Inputs you receive: card id + revision, base, mode, deadline, owner
 generation, effort level, evidence location. Read the card, its plan_ref
-section and the code once; do not rerun planning.
+section and the code once; do not rerun planning. Before writing or
+changing a test, read `.claude/skills/tdd/SKILL.md`: the agreed seams
+are the acceptance items and the public interfaces they exercise.
 
 Procedure:
 1. RED: write or extend the failing test that proves the behavior (bugs: a

@@ -16,7 +16,7 @@ describe('aidlc init (scaffold)', () => {
     const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
     dirs.push(target);
     const first = initProject({ target, shipPath: 'dry-run' });
-    for (const rel of ['.claude/settings.json', '.claude/skills/aidlc-loop/SKILL.md', '.claude/skills/aidlc-loop/card-loop.md', '.claude/agents/verifier.md', 'REVIEW.md', 'bands.yaml', 'intent/_TEMPLATE.md', 'specs/README.md', 'plans/_TEMPLATE.md', 'specs/tasks/_TEMPLATE.md', 'evals/example-regression.json', '.github/workflows/agent-evals.yml', 'aidlc.config.json', 'aidlc.ops.example.json', 'docs/DELIVERY-OPS.md', 'CLAUDE.md', '.gitignore']) {
+    for (const rel of ['.claude/settings.json', '.claude/skills/aidlc-loop/SKILL.md', '.claude/skills/aidlc-loop/card-loop.md', '.claude/agents/verifier.md', '.claude/skills/tdd/SKILL.md', '.claude/skills/diagnose/SKILL.md', '.claude/skills/grilling/SKILL.md', '.claude/skills/merge-conflicts/SKILL.md', 'docs/LESSONS.md', 'docs/THIRD-PARTY-NOTICES.md', '.github/workflows/security-scanners.yml', 'REVIEW.md', 'bands.yaml', 'intent/_TEMPLATE.md', 'specs/README.md', 'plans/_TEMPLATE.md', 'specs/tasks/_TEMPLATE.md', 'evals/example-regression.json', '.github/workflows/agent-evals.yml', 'aidlc.config.json', 'aidlc.ops.example.json', 'docs/DELIVERY-OPS.md', 'CLAUDE.md', '.gitignore']) {
       assert.ok(existsSync(path.join(target, rel)), `${rel} not created`);
     }
     assert.ok(first.created.length >= 25);

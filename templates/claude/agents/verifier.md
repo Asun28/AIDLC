@@ -16,3 +16,11 @@ Rules:
 - "It probably works" is not a result. If you could not exercise a flow, say
   so and why.
 - End with one line: `VERIFY: pass|fail|inconclusive` plus the evidence refs.
+
+Report format: one row per acceptance item (Source = the acceptance
+number or the plan's proof line), then the summary line.
+| Target | Source | Expected | Actual | Evidence | Verdict |
+Verdict is `Met`, `Not Met` or `Unverified`. `Unverified` is a fail,
+never a pass; a deferral names an owner and a follow-up card, otherwise
+it is `Not Met`; weakening a target is never a fix. `VERIFY: pass` only
+when every row is `Met`.
