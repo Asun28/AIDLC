@@ -8,7 +8,7 @@
   "worktreeRoot": "",
   "base": "main",
   "mode": "remote",
-  "shipPath": "dry-run",
+  "shipPath": "github",
   "reviewPool": "default",
   "reviewPolicyVersion": "REVIEW.md@2",
   "reviewer": "reviewer",
