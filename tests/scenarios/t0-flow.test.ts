@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, driveCardToDone, candidateShaFor } from './_harness.ts';
+import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
@@ -44,6 +44,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     let r = runner.next(fx.goal(goal.id), card, run0);
     assert.equal(r.directive.kind, 'prepare');
     if (r.directive.kind === 'prepare') assert.equal(r.directive.action, 'start');
+    assert.ok(r.directive.narration.includes('docs/LESSONS.md'), 'PREPARE points at the lessons file');
     assert.equal(r.run.state, 'BUILD');
     assert.ok(r.run.worktree);
 
@@ -53,6 +54,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
       assert.equal(r.directive.attempt, 1);
       assert.equal(r.directive.effort, 'medium');
       assert.equal(r.directive.tdd, true);
+      assert.deepEqual(r.directive.skills, ['tdd'], 'BUILD names the tdd skill');
     }
 
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-HELLO') });
@@ -614,6 +616,96 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     // A pending reservation for the same candidate refuses a second dispatch.
     const pendingRun = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, pendingRun), /pending/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a merge conflict at ship returns the card to BUILD naming merge-conflicts, clears the DoD receipt and reopens the episode; the repaired candidate ships', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CONF', title: 'a change that conflicts with the moved base' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CONF', source: 'card', ref: 'T1-CONF', affectedSurfaces: [] }, { cards: ['T1-CONF'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CONF'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed', 'merged'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-CONF');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CONF'));
+    assert.equal(r.directive.kind, 'prepare');
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    assert.equal(run1.effort?.terminal, 'succeeded');
+
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', `a conflict returns to BUILD, got ${r.directive.kind}: ${r.directive.narration}`);
+    assert.equal(r.run.state, 'BUILD');
+    if (r.directive.kind === 'build') {
+      assert.deepEqual(r.directive.skills, ['merge-conflicts', 'tdd']);
+      assert.match(r.directive.narration, /merge-conflicts/);
+      assert.match(r.directive.narration, /new candidate/);
+    }
+    assert.equal(r.run.dodReceipt, undefined, 'a conflict clears the DoD receipt so the card cannot re-ship the old candidate');
+    assert.equal(r.run.effort?.terminal, undefined, 'the effort episode is reopened, not counted as a failure');
+    assert.equal(r.run.effort?.attempts.filter((a) => a.outcome === 'fail').length, 0);
+
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run2.effort?.terminal, 'succeeded');
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close', `the repaired candidate ships: ${r.directive.narration}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a merge failure without a conflict is still a tool stop, and a red-missing return also reopens the episode', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-NOCONF', title: 'merge fails for another reason' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-NOCONF', source: 'card', ref: 'T1-NOCONF', affectedSurfaces: [] }, { cards: ['T1-NOCONF'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-NOCONF'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'gh: the base branch policy prohibits the merge'));
+    const card = fx.card('T1-NOCONF');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-NOCONF'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop');
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'tool');
+
+    writeCard(fx, { id: 'T1-RED', title: 'red receipt rejected by the ship path' });
+    const goal2 = fx.controller.createGoal({ text: 'implement T1-RED', source: 'card', ref: 'T1-RED', affectedSurfaces: [] }, { cards: ['T1-RED'] });
+    fx.controller.next(goal2.id);
+    fx.controller.report({ goalId: goal2.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-RED'] } });
+    const runner2 = fx.runner(new DryRunShipPath(['red-missing', 'merged']));
+    const card2 = fx.card('T1-RED');
+    let r2 = runner2.next(fx.goal(goal2.id), card2, fx.controller.ensureCardRun(fx.goal(goal2.id), 'T1-RED'));
+    r2 = runner2.next(fx.goal(goal2.id), card2, r2.run);
+    const run21 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r2 = runner2.next(fx.goal(goal2.id), card2, run21);
+    assert.equal(r2.directive.kind, 'build');
+    assert.equal(r2.run.effort?.terminal, undefined, 'red-missing reopens the episode the same way');
+    const run22 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
+    assert.equal(run22.effort?.terminal, 'succeeded');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: the build directive names tdd, and diagnose as well on a card that carries a diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-BUG', title: 'null adjuster crashes claim status', diagnosis: { root_cause: 'adjuster is optional but rendered as required', same_class: 'claim summary checked' } });
+    const goal = fx.controller.createGoal({ text: 'implement T1-BUG', source: 'card', ref: 'T1-BUG', affectedSurfaces: [] }, { cards: ['T1-BUG'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-BUG'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-BUG');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-BUG'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
   } finally {
     fx.cleanup();
   }

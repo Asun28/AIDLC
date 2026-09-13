@@ -46,7 +46,7 @@ A failed attempt is recorded with `--outcome fail --cause "<normalised cause>" [
 aidlc intent new --title "Claims status self-service" --author "J. Ortiz" --problem "..." --outcome "..." --affected "..." --constraints "..."
 aidlc intent validate intent/claims-status-self-service.md
 aidlc spec validate specs/claims-status.md
-aidlc goal new "add claims status self-service to the portal"    # routes T1
+aidlc goal new "add claims status self-service to the portal" --intent intent/claims-status-self-service.md    # routes T1; PLAN lists the open questions of the intent and names the grilling skill
 aidlc next                                  # plan: concise plan points and 2-5 cards
 aidlc plan check plans/claims-status.md     # definition-of-ready gates
 aidlc report --result plan-produced --plan-ref plans/claims-status.md

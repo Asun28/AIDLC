@@ -177,10 +177,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--bug-evidence', 'a stack trace / failing test accompanies the request')
     .option('--limit-hours <h>', 'tighter admission limit in hours')
     .option('--surface <paths>', 'comma-separated affected surfaces')
-    .action((text: string[], o: { size?: RequestSize; target?: DeliveryTarget; card?: string; issue?: string; bugEvidence?: boolean; limitHours?: string; surface?: string }) => {
+    .option('--intent <file>', 'intent file (relative to the main checkout) whose open questions PLAN lists for T1/T2')
+    .action((text: string[], o: { size?: RequestSize; target?: DeliveryTarget; card?: string; issue?: string; bugEvidence?: boolean; limitHours?: string; surface?: string; intent?: string }) => {
       const c = ctx(g());
       const request = { text: text.join(' '), source: o.bugEvidence ? ('bug-evidence' as const) : o.card ? ('card' as const) : o.issue ? ('issue' as const) : ('natural-language' as const), ref: o.card ?? (o.issue ? `#${o.issue}` : undefined), explicitSize: o.size, explicitTarget: o.target, affectedSurfaces: o.surface ? o.surface.split(',').map((s) => s.trim()) : [] };
-      const created = c.controller.createGoal(request, { hasBugEvidence: o.bugEvidence, userLimitMs: o.limitHours ? Number(o.limitHours) * 3600 * 1000 : undefined, cards: o.card ? [o.card] : undefined, knownIssueNumbers: o.issue ? [Number(o.issue)] : undefined });
+      const created = c.controller.createGoal(request, { hasBugEvidence: o.bugEvidence, userLimitMs: o.limitHours ? Number(o.limitHours) * 3600 * 1000 : undefined, cards: o.card ? [o.card] : undefined, knownIssueNumbers: o.issue ? [Number(o.issue)] : undefined, intentRef: o.intent });
       const directive = c.controller.next(created.id);
       out(c, { goal: created.id, routing: created.routing, deadline: created.deadlines.goalDeadline, directive }, () => `${formatRouting(created.routing)}\ngoal ${created.id} deadline ${created.deadlines.goalDeadline}\nnext: ${directive.kind} — ${directive.narration}`);
     });

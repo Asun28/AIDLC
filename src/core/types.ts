@@ -73,6 +73,8 @@ export const RoutingResult = z.object({
   cardCount: z.union([z.number().int().nonnegative(), z.literal('unknown')]),
   modules: z.array(Module),
   nextModule: Module,
+  /** Companion skills the route calls for (tdd, diagnose, grilling, merge-conflicts); the directives carry them. */
+  skills: z.array(z.string()).default([]),
   dataImpact: z.boolean(),
   impactEscalation: z.string().optional(),
   ambiguity: z.string().optional(),
@@ -664,6 +666,8 @@ export const Goal = z.object({
   authorizations: z.array(AuthorizationRecord).default([]),
   cards: z.array(CardId).default([]),
   cardRevisions: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  /** Intent file relative to the main checkout, recorded at intake; PLAN lists its open questions. */
+  intentRef: z.string().optional(),
   planRef: z.string().optional(),
   projectionRef: z.string().optional(),
   counters: GoalCounters.prefault({}),

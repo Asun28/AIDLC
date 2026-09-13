@@ -187,6 +187,7 @@ test('route-new-work prints a routing line for real requests only', () => {
   assert.ok(r.stdout?.startsWith('[route]'));
   assert.ok(r.stdout?.includes('size=T1'));
   assert.ok(r.stdout?.includes('[aidlc] T1:'));
+  assert.ok(r.stdout?.includes('skills=grilling+tdd'), `route line names the companion skills: ${r.stdout}`);
   assert.deepEqual(routeNewWork({ prompt: 'hi' }), { exitCode: 0 });
   assert.deepEqual(routeNewWork({ prompt: 'what does this function do exactly, in plain words?' }), { exitCode: 0 });
   const t2 = routeNewWork({ prompt: 'Build a fully AI native SDLC system from scratch with a new architecture' });

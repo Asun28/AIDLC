@@ -31,6 +31,17 @@ describe('router (Q2)', () => {
     assert.deepEqual(r.modules, ['router', 'card-loop']);
     assert.equal(r.nextModule, 'card-loop');
     assert.equal(r.target, 'development');
+    assert.deepEqual(r.skills, ['diagnose', 'tdd'], 'a bugfix route names diagnose before the build skill');
+  });
+
+  test('R1: companion skills per route: tdd on every card-loop route, grilling on T1/T2, none on a release-only route', () => {
+    assert.deepEqual(classifyRequest({ text: 'Fix a typo in the README' }).skills, ['tdd']);
+    assert.deepEqual(classifyRequest({ text: 'Add a reporting dashboard feature with charts to the admin portal' }).skills, ['grilling', 'tdd']);
+    assert.deepEqual(classifyRequest({ text: 'Build a fully AI native SDLC system from scratch with a new architecture' }).skills, ['grilling', 'tdd']);
+    const rel = classifyRequest({ text: 'Deploy the current build to staging for online testing' });
+    assert.equal(rel.kind, 'release');
+    assert.ok(!rel.modules.includes('card-loop'));
+    assert.deepEqual(rel.skills, []);
   });
 
   test('Q2: a short authentication bug escalates to T1 with a reported reason', () => {
@@ -151,6 +162,8 @@ describe('router (Q2)', () => {
   test('formatRouting prints the concise line with size/kind/target/cards', () => {
     const line = formatRouting(classifyRequest({ text: 'Fix a typo in the README' }));
     assert.match(line, /^\[route\] size=T0 kind=change target=development cards=1 modules=router\+card-loop next=card-loop/);
+    assert.match(line, / next=card-loop skills=tdd/, 'skills follow next= so the anchored prefix stays valid');
+    assert.match(formatRouting(classifyRequest({ text: 'Deploy the current build to staging for online testing' })), / skills=none/);
   });
 
   test('scope is not inferred from prompt length', () => {

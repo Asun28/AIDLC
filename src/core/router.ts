@@ -181,6 +181,12 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   if (dataImpact || target === 'migration') modules.push('migrate');
   const nextModule: Module = modules.includes('arc') ? 'arc' : modules.includes('card-loop') ? 'card-loop' : modules.includes('release') ? 'release' : 'router';
 
+  // --- companion skills (names the directives carry; the loop's gates still decide) ------
+  const skills: string[] = [];
+  if (kind === 'bugfix' || kind === 'incident') skills.push('diagnose');
+  if (modules.includes('arc')) skills.push('grilling');
+  if (modules.includes('card-loop')) skills.push('tdd');
+
   return {
     size,
     sizeSource,
@@ -190,6 +196,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
     cardCount,
     modules: [...new Set(modules)],
     nextModule,
+    skills,
     dataImpact,
     impactEscalation,
     ambiguity,
@@ -200,7 +207,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
 /** Concise routing line printed at intake. */
 export function formatRouting(r: RoutingResult): string {
   const count = r.cardCount === 'unknown' ? 'unknown' : String(r.cardCount);
-  const parts = [`size=${r.size}`, `kind=${r.kind}`, `target=${r.target}`, `cards=${count}`, `modules=${r.modules.join('+')}`, `next=${r.nextModule}`];
+  const parts = [`size=${r.size}`, `kind=${r.kind}`, `target=${r.target}`, `cards=${count}`, `modules=${r.modules.join('+')}`, `next=${r.nextModule}`, `skills=${r.skills.length ? r.skills.join('+') : 'none'}`];
   if (r.dataImpact) parts.push('data-impact=yes');
   if (r.impactEscalation) parts.push(`escalation="${r.impactEscalation}"`);
   if (r.ambiguity) parts.push(`ASK="${r.ambiguity}"`);

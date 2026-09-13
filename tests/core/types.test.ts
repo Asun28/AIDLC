@@ -12,12 +12,13 @@ import {
   RECONCILE_GRACE_MS,
   ReleaseAttempt,
   ReviewLedger,
+  RoutingResult,
   StopRecord,
   addMs,
   minIso,
   nowIso,
 } from '../../src/core/types.ts';
-import { T0, card, cardRun, goal, release } from './_fixtures.ts';
+import { T0, card, cardRun, goal, release, routing } from './_fixtures.ts';
 
 describe('types: primitives', () => {
   test('IsoTimestamp accepts toISOString output and rejects offsets / prose', () => {
@@ -60,6 +61,15 @@ describe('types: schema round-trips', () => {
   test('Card refuses empty allow_paths and bad status', () => {
     assert.equal(Card.safeParse({ ...card('T1-A'), allow_paths: [] }).success, false);
     assert.equal(Card.safeParse({ ...card('T1-A'), status: 'done' }).success, false);
+  });
+
+  test('R1/R2: RoutingResult defaults skills and Goal carries an optional intentRef', () => {
+    const { skills, ...withoutSkills } = routing();
+    assert.deepEqual(skills, ['tdd']);
+    assert.deepEqual(RoutingResult.parse(withoutSkills).skills, [], 'a routing result persisted before skills existed parses with an empty list');
+    assert.deepEqual(RoutingResult.parse(routing({ skills: ['grilling', 'tdd'] })).skills, ['grilling', 'tdd']);
+    assert.equal(goal().intentRef, undefined);
+    assert.equal(Goal.parse({ ...goal(), intentRef: 'intent/claims.md' }).intentRef, 'intent/claims.md');
   });
 
   test('CardRun prefaults review / ci / closure sub-records', () => {

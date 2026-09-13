@@ -52,8 +52,8 @@ export interface CardRunnerDeps {
 }
 
 export type CardDirective =
-  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; narration: string }
-  | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; narration: string }
+  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; narration: string }
+  | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; skills?: string[]; narration: string }
   | { kind: 'ship'; cardId: string; base: string; mode: 'local' | 'remote'; narration: string }
   | { kind: 'review-fix'; cardId: string; reasons: string[]; remainingDecisions: number; narration: string }
   | { kind: 'pre-review'; cardId: string; round: number; maxRounds: number; reviewer: string; narration: string }
@@ -323,9 +323,16 @@ export class CardRunner {
         cardId: card.id,
         action: decision.action,
         worktree: decision.path,
-        narration: decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`,
+        skills: [],
+        narration: 'Read docs/LESSONS.md once before the first attempt. ' + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
+  private buildSkills(goal: Goal, card: Card): string[] {
+    const bugfix = goal.routing.kind === 'bugfix' || goal.routing.kind === 'incident' || Boolean(card.diagnosis);
+    return bugfix ? ['tdd', 'diagnose'] : ['tdd'];
   }
 
   private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel): { run: CardRun; directive: CardDirective } {
@@ -368,6 +375,7 @@ export class CardRunner {
         dodCommand: card.dod_command,
         effort,
         attempt: attemptNo,
+        skills: this.buildSkills(goal, card),
         narration: card.tdd && !redReceipt
           ? `Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`.`
           : `Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt.`,
@@ -901,7 +909,7 @@ export class CardRunner {
       case 'scope-blocked':
       case 'budget-over':
       case 'red-missing': {
-        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence });
+        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopenEpisode(run.effort) });
         return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.` } };
       }
       case 'auth-failed': {
@@ -920,7 +928,12 @@ export class CardRunner {
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
+      case 'merge-failed':
       default: {
+        if (result.outcome === 'merge-failed' && /conflict|not mergeable/i.test([result.detail, result.receipt.stdout, result.receipt.stderr].join(' '))) {
+          const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopenEpisode(run.effort) });
+          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: ['merge-conflicts', ...this.buildSkills(goal, card)], narration: `Merge conflict on the base sync (${result.detail}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.` } };
+        }
         const stop = makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
@@ -984,6 +997,12 @@ export class CardRunner {
 }
 
 /** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
+/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
+export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {
+  if (!episode || episode.terminal !== 'succeeded') return episode;
+  return { ...episode, terminal: undefined };
+}
+
 export function markReviewFailure(episode: NonNullable<CardRun['effort']>, reason: string): NonNullable<CardRun['effort']> {
   const idx = episode.attempts.length - 1;
   const last = episode.attempts[idx];
