@@ -86,6 +86,13 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
     assert.ok(db.narration.includes('missing front matter'), db.narration);
     assert.ok(!db.narration.includes('no open questions'), 'validation failure is never read as an empty question list');
 
+    writeFileSync(path.join(fx.tmp, 'intent', 'partial.md'), INTENT.replace('## Constraints\nClaim notes carry PII.\n\n', '').replace('- Which roles may see claim notes?\n- Is the status API contract frozen?', '- (none)'));
+    const partialGoal = fx.controller.createGoal({ text: 'Add a claims status self-service feature to the portal', source: 'natural-language', affectedSurfaces: [] }, { intentRef: 'intent/partial.md' });
+    const dp = fx.controller.next(partialGoal.id);
+    assert.ok(dp.narration.includes('does not validate'), `a parsed intent with problems is a validation failure: ${dp.narration}`);
+    assert.ok(dp.narration.includes('Constraints'), dp.narration);
+    assert.ok(!dp.narration.includes('no open questions'), 'never read as an empty question list');
+
     const t0 = fx.controller.createGoal({ text: 'Fix a typo in the README', source: 'natural-language', affectedSurfaces: [] });
     assert.equal(t0.routing.size, 'T0');
     assert.deepEqual(t0.routing.skills, ['tdd']);
