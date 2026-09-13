@@ -35,7 +35,7 @@ acceptance:
   - 4. `ProjectConfig.github` (`requiredChecks` default empty, `requireVerdict` default true, `ciTimeoutMs`, `ciPollMs`) parses in both config files and reaches `GitHubShipPath` from `CardRunner`; a required check absent from the returned check runs counts as pending, never as satisfied; this repository lists the four unconditional check-run names (config.test.ts, github-ship.test.ts). [R8] [dod arm 1]
   - 5. `docs/ARCHITECTURE.md` ship outcome map and `docs/OPERATIONS.md` config keys and gate promotion are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-depends_on: [T1-LOOP-SKILLS]
+depends_on: [T1-LOOP-SKILLS-2]
 budget: 250
 tdd: true
 sweep: "grep -rn 'classifyCiFailure\|canRerun\|CiFailureClass\|GitHubShipPath(\|requiredChecks' src tests docs: ci-policy.ts class table, card-runner.ts ci-red case and ship path construction, github-ship.ts gate loop, types.ts enum, ci-rerun.test.ts, github-ship.test.ts, ARCHITECTURE.md outcome map, OPERATIONS.md STOP table"
