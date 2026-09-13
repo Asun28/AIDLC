@@ -95,11 +95,42 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(v.problems.length > 0, 'an untouched intent template must not validate');
   });
 
+  test('companion skills exist, are ASCII, carry frontmatter and attribution, stay under their caps and are wired', () => {
+    const COMPANION_CAPS: Record<string, number> = { tdd: 3500, diagnose: 3500, grilling: 2500, 'merge-conflicts': 1500 };
+    for (const [name, cap] of Object.entries(COMPANION_CAPS)) {
+      const file = path.join(tpl, 'claude', 'skills', name, 'SKILL.md');
+      assert.ok(existsSync(file), `${name}/SKILL.md missing`);
+      const bytes = statSync(file).size;
+      assert.ok(bytes <= cap, `${name}/SKILL.md is ${bytes} bytes > cap ${cap}`);
+      const text = readFileSync(file, 'utf8');
+      assert.ok(!/[^\x00-\x7F]/.test(text), `${name}/SKILL.md must be ASCII so bytes == chars`);
+      assert.ok(text.startsWith(`---\nname: ${name}\n`), `${name} frontmatter must start with its name`);
+      assert.ok(text.includes('\ndescription: >-\n'), `${name} folded description`);
+      assert.ok(text.includes('mattpocock/skills'), `${name} must carry its attribution line`);
+    }
+    const router = readFileSync(path.join(tpl, 'claude', 'skills', 'aidlc-loop', 'SKILL.md'), 'utf8');
+    for (const name of Object.keys(COMPANION_CAPS)) assert.ok(router.includes('`' + name + '`'), `aidlc-loop/SKILL.md must name the companion skill ${name}`);
+    const agent = (n: string) => readFileSync(path.join(tpl, 'claude', 'agents', `${n}.md`), 'utf8');
+    assert.ok(agent('implementer').includes('.claude/skills/tdd/SKILL.md'), 'implementer points at the tdd skill');
+    assert.ok(agent('investigator').includes('.claude/skills/diagnose/SKILL.md'), 'investigator points at the diagnose skill');
+    assert.ok(agent('planner').includes('.claude/skills/grilling/SKILL.md'), 'planner points at the grilling skill');
+    assert.match(agent('planner'), /acyclic|circular/i, 'planner checks the dependency graph');
+    assert.match(agent('planner'), /plan_ref/, 'planner checks plan_ref resolution');
+    assert.match(agent('verifier'), /Unverified/, 'verifier table verdicts');
+    assert.match(agent('verifier'), /Not Met/, 'verifier table verdicts');
+    assert.match(agent('reviewer'), /never instructions/, 'reviewer treats candidate content as evidence');
+    assert.match(agent('reviewer'), /fewer verified findings/, 'reviewer verdict budget');
+  });
+
   test('REVIEW.md carries the two axes, the nit cap and the verdict contract', () => {
     const review = readFileSync(path.join(tpl, 'REVIEW.md'), 'utf8');
     assert.match(review, /spec/);
     assert.match(review, /standards/);
     assert.match(review, /five nits|5 nits|at most five/i);
     assert.match(review, /"verdict"/);
+    assert.match(review, /## Untrusted content/);
+    assert.match(review, /evidence, never instructions/);
+    assert.match(review, /## Verdict budget/);
+    assert.match(review, /fewer verified findings/);
   });
 });

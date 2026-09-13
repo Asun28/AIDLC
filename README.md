@@ -103,7 +103,7 @@ src/
   loop/          typed directives, goal controller, card runner, release runner
   scaffold/      `aidlc init`
   cli/           commander entry
-templates/       files copied by `aidlc init` (.claude skills/agents/settings, REVIEW.md, bands.yaml, artifact templates, workflows)
+templates/       files copied by `aidlc init` (.claude skills: aidlc-loop plus the tdd, diagnose, grilling and merge-conflicts companions; agents; settings; REVIEW.md; bands.yaml; artifact templates; docs incl. LESSONS and third-party notices; workflows)
 tests/           node:test suites (core, infra, surface)
 docs/            architecture, traceability, operations, plans
 ```

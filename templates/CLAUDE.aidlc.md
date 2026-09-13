@@ -45,6 +45,17 @@ while an active card lacks a fresh DoD receipt.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
 - Deadlines (3h/card, 12h/arc) and attempt limits persist across session changes.
 
+### Lessons, docs and companion skills
+- PREPARE reads `docs/LESSONS.md` once per card; CLOSE appends at most one
+  dated line to it, only when a review block or an incident taught a rule
+  the playbook did not state. Past lines are never rewritten.
+- When adding, removing or renaming files, commands or flags, grep `docs/`
+  and `README.md` for stale references and fix them in the same commit.
+- Companion skills are advisory and called by name: `tdd` (before any
+  test), `diagnose` (T0-bugfix, the card `diagnosis:` field), `grilling`
+  (T1/T2 intake questions), `merge-conflicts` (base moved). The loop's
+  gates decide; a skill never overrides `aidlc next`.
+
 ### Writing density (all text, at all times)
 Applies to everything written in or about this repository: chat output,
 PR titles and bodies, commit messages, code comments, docs, cards, skill

@@ -59,6 +59,9 @@ Prints size, kind, target, card count (or unknown), modules, next module.
 - `arc.md`: multi-card dispatch, amendments, integrated acceptance.
 - `release.md`: package/staging/production/recovery. Explicit target only.
 - `migrate.md`: data impact, phase graph, recovery. Data impact only.
+- Companion skills, read by path when the step needs them: `tdd` before
+  any test, `diagnose` on T0-bugfix, `grilling` at T1/T2 intake and the
+  T2 checkpoint, `merge-conflicts` when the base moved. T0 never grills.
 Shared checks above apply even when a T0 route skips arc.md.
 
 ## Effort (MA1/MA2)

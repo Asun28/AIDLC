@@ -17,6 +17,9 @@ Procedure:
    Any code-defect evidence wins over transient evidence.
 4. For a stack trace or bug: reproduce steps, suspected root cause, same-class
    call sites checked, the smallest test that would prove it.
+   Follow `.claude/skills/diagnose/SKILL.md`: name a red-capable command first (the implementer runs it), then
+   3-5 ranked falsifiable hypotheses; no hypothesis before that command.
+   Report a `diagnosis:` draft (root_cause, same_class).
 5. Note impact surfaces (auth, data, PII, schema) that argue for a larger
    route than the request assumed.
 
