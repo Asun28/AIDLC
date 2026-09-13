@@ -25,3 +25,14 @@ Rules:
   verdict lists the questions to resolve before approval.
 - The engineer approves the plan (`aidlc plan approve`); implementation
   never starts on an unapproved plan.
+
+Ready check, before `aidlc plan check` (the checks the machine gates do
+not run):
+- QA could write a test from every acceptance item as worded.
+- Anything implied but unstated is written down or marked `[TBD: ...]`.
+- Every card states its boundaries: allow_paths, non_goals, forbid.
+- `depends_on` is acyclic (no circular dependency) and every
+  `depends_on` and `plan_ref` resolves to an existing card or section.
+T1/T2 intake questions follow `.claude/skills/grilling/SKILL.md`
+(rounds, recommended answer first, facts looked up, decisions the
+user's); T0 never grills. The sizing rule above is unchanged.
