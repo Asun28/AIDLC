@@ -685,9 +685,29 @@ test('R4: a merge failure without a conflict is still a tool stop, and a red-mis
     const run21 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r2 = runner2.next(fx.goal(goal2.id), card2, run21);
     assert.equal(r2.directive.kind, 'build');
+    if (r2.directive.kind === 'build') assert.deepEqual(r2.directive.skills, ['tdd'], 'the repair build directive names the skills too');
     assert.equal(r2.run.effort?.terminal, undefined, 'red-missing reopens the episode the same way');
     const run22 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
     assert.equal(run22.effort?.terminal, 'succeeded');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: a bugfix goal names diagnose on the build directive even without a card diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-FIX', title: 'fix the crash when opening the settings page' });
+    const goal = fx.controller.createGoal({ text: 'Fix crash when opening the settings page', source: 'bug-evidence', affectedSurfaces: [] }, { hasBugEvidence: true, cards: ['T1-FIX'] });
+    assert.equal(goal.routing.kind, 'bugfix');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-FIX'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-FIX');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-FIX'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
   } finally {
     fx.cleanup();
   }

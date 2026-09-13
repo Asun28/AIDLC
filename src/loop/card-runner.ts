@@ -488,7 +488,7 @@ export class CardRunner {
     if (last?.outcome === 'block') {
       // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons.
       const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined });
-      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
+      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
     }
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
@@ -898,7 +898,7 @@ export class CardRunner {
         }
         if (cls.class === 'code-defect') {
           const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence });
-          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.` } };
+          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.` } };
         }
         const stop = makeStop('ci', rerun.reason, 'diagnose the failure before any further rerun', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
@@ -907,10 +907,14 @@ export class CardRunner {
       case 'dod-failed':
       case 'verify-failed':
       case 'scope-blocked':
-      case 'budget-over':
+      case 'budget-over': {
+        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence });
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.` } };
+      }
       case 'red-missing': {
+        // The ship path rejected the RED receipt: not a code fault, so a succeeded episode is reopened rather than counted.
         const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopenEpisode(run.effort) });
-        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.` } };
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Establish the RED receipt again within scope and re-run the DoD.` } };
       }
       case 'auth-failed': {
         const stop = makeStop('auth', 'GitHub account/permission guard failed', 'run `gh auth login` for the configured personal account; never downgrade to local mode silently', { at: now });

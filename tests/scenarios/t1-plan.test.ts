@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import os from 'node:os';
+import { mkdtempSync, rmSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeFixture } from './_harness.ts';
 import { Directive } from '../../src/loop/directive.ts';
 
@@ -67,6 +71,13 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
     assert.match(d.narration, /not found|missing|unreadable/i);
     assert.ok(d.skills.includes('grilling'));
 
+    mkdirSync(path.join(fx.tmp, 'intent', 'unreadable.md'), { recursive: true });
+    const dirGoal = fx.controller.createGoal({ text: 'Add a claims status self-service feature to the portal', source: 'natural-language', affectedSurfaces: [] }, { intentRef: 'intent/unreadable.md' });
+    const dd = fx.controller.next(dirGoal.id);
+    assert.equal(dd.kind, 'plan');
+    assert.ok(dd.narration.includes('intent/unreadable.md'), dd.narration);
+    assert.match(dd.narration, /unreadable/);
+
     const t0 = fx.controller.createGoal({ text: 'Fix a typo in the README', source: 'natural-language', affectedSurfaces: [] });
     assert.equal(t0.routing.size, 'T0');
     assert.deepEqual(t0.routing.skills, ['tdd']);
@@ -78,5 +89,30 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
     assert.deepEqual(parsed.skills, [], 'the directive base defaults skills to an empty list');
   } finally {
     fx.cleanup();
+  }
+});
+
+test('R2: aidlc goal new --intent records the intent on the goal and the printed plan directive lists its open questions', () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'aidlc-cli-'));
+  try {
+    mkdirSync(path.join(tmp, 'intent'), { recursive: true });
+    writeFileSync(path.join(tmp, 'intent', 'claims.md'), INTENT);
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const bin = path.join(root, 'bin', 'aidlc.js');
+    const env = { ...process.env, AIDLC_STATE_DIR: path.join(tmp, 'state') };
+    const created = spawnSync(process.execPath, [bin, 'goal', 'new', 'Add a claims status self-service feature to the portal', '--intent', 'intent/claims.md', '--json'], { cwd: tmp, env, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(created.status, 0, created.stderr);
+    const out = JSON.parse(created.stdout) as { goal: string; routing: { skills: string[] }; directive: { kind: string; skills: string[]; narration: string; inputs?: string[] } };
+    assert.ok(out.routing.skills.includes('grilling'));
+    assert.equal(out.directive.kind, 'plan');
+    assert.ok(out.directive.skills.includes('grilling'));
+    assert.ok(out.directive.inputs?.includes('intent/claims.md'));
+    assert.ok(out.directive.narration.includes('Which roles may see claim notes?'), out.directive.narration);
+    const status = spawnSync(process.execPath, [bin, 'goal', 'status', out.goal, '--json'], { cwd: tmp, env, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(status.status, 0, status.stderr);
+    const record = JSON.parse(status.stdout) as { intentRef?: string; goal?: { intentRef?: string } };
+    assert.equal(record.intentRef ?? record.goal?.intentRef, 'intent/claims.md');
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
   }
 });

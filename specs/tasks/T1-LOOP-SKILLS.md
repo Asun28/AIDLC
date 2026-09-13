@@ -35,7 +35,7 @@ acceptance:
   - 4. A `merge-failed` ship outcome whose receipt reports a conflict returns the card to BUILD with a build directive naming `merge-conflicts`, the DoD receipt cleared and the effort episode reopened so a following `recordAttempt` is accepted; a merge failure without a conflict stays STOP/tool; the existing `red-missing` return reopens the episode the same way (t0-flow.test.ts). [R4] [dod arm 1]
   - 5. `docs/ARCHITECTURE.md` states that the directive base carries `skills` and lists `merge-failed` in the ship outcome map; `docs/OPERATIONS.md` documents `--intent`; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-budget: 300
+budget: 400
 tdd: true
 sweep: "grep -rn 'Directive.parse\|formatRouting\|applyShipResult\|kind: .build.\|routing.modules' src tests: controller.ts baseOf plus the inline base, card-runner.ts CardDirective sites, router.test.ts anchored [route] regex, hooks.test.ts route line, _fixtures.ts RoutingResult literal"
 non_goals: [a hard PLAN gate that refuses to advance on open questions, a new directive kind, scaffold ship path changes, the lessons closure predicate, the security CI class]
@@ -46,6 +46,7 @@ doc_sync: docs/ARCHITECTURE.md (directive contract, ship outcome map), docs/OPER
 
 ## Deliverable
 The router computes `skills` next to `modules` and the list travels with the routing result into the goal, the journal, the route line and every directive. The plan directive for T1 and T2 goals names `grilling` and lists the open questions of the intent file recorded on the goal. The build directive names `tdd` and, on bugfix evidence, `diagnose`; the prepare directive points at `docs/LESSONS.md`. A merge conflict reported by the ship path returns the card to BUILD naming `merge-conflicts`, with the DoD receipt cleared and the effort episode reopened; other merge failures keep the tool stop.
+Budget raised from 300 to 400 after R2 round 1: the reviewers asked for tests of the incident route, the CLI `--intent` wiring, the unreadable-intent branch, the repair-path build directives and a bugfix goal (69 net lines).
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
