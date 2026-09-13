@@ -44,7 +44,7 @@
     "reviewer": "deepseek-v4-pro",
     "rounds": 3,
     "timeoutMs": 1200000,
-    "onExhausted": "stop",
+    "onExhausted": "ship",
     "perspectives": [
       "ac-coverage",
       "spec-deviations",
