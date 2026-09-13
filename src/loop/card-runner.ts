@@ -414,7 +414,7 @@ export class CardRunner {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
     }
-    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: undefined });
+    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: input.outcome === 'success' ? undefined : run.pendingRepair });
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
@@ -1037,11 +1037,24 @@ export class CardRunner {
 
 /** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
 /** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
-/** True only when the ship output carries git's or GitHub's own merge-conflict diagnostic on a line of its own; a resume command or a quoted message never counts. */
+/**
+ * True only when a line of the ship output is git's or GitHub's own merge-conflict diagnostic, anchored at the start of
+ * the line: `CONFLICT (...)`, `Automatic merge failed; fix conflicts and then commit the result.`, `Merge conflict in ...`,
+ * or gh's `Pull request #N is not mergeable: the merge commit cannot be cleanly created` (optionally behind gh's failure
+ * glyph). A quoted message, a resume command or a card id never starts a line that way, so they never count, while a
+ * genuine diagnostic that happens to mention a file such as `resume.ts` still does.
+ */
 export function hasConflictDiagnostic(receipt: { stdout: string; stderr: string }): boolean {
-  const lines = `${receipt.stdout}\n${receipt.stderr}`.split(/\r?\n/).map((l) => l.trim());
-  const diagnostic = [/^CONFLICT \(/, /^Automatic merge failed; fix conflicts and then commit the result\.$/, /^Merge conflict in /, /is not mergeable: the merge commit cannot be cleanly created/];
-  return lines.some((line) => !/resume|\[SAGA-RESUME\]/i.test(line) && diagnostic.some((re) => re.test(line)));
+  const diagnostic = [
+    /^CONFLICT \(/,
+    /^Automatic merge failed; fix conflicts and then commit the result\.$/,
+    /^Merge conflict in /,
+    /^(?:X |\u2717 )?Pull request #\d+ is not mergeable: the merge commit cannot be cleanly created/,
+  ];
+  return `${receipt.stdout}\n${receipt.stderr}`
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .some((line) => diagnostic.some((re) => re.test(line)));
 }
 
 export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {

@@ -838,8 +838,11 @@ test('R4: the pending conflict repair is persisted: a second next() before the r
       assert.deepEqual(again.directive.skills, ['merge-conflicts', 'tdd'], 'a resumed worker still gets the skill');
       assert.match(again.directive.narration, /merge-conflict/);
     }
-    const run2 = runner.recordAttempt(fx.goal(goal.id), card, again.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
-    assert.equal(run2.pendingRepair, undefined, 'a recorded attempt clears the pending repair');
+    const stillFailing = runner.recordAttempt(fx.goal(goal.id), card, again.run, { outcome: 'fail', cause: 'conflict resolution broke a test', progress: true });
+    assert.equal(stillFailing.pendingRepair?.kind, 'merge-conflict', 'a failed attempt keeps the pending repair');
+    const retry = runner.next(fx.goal(goal.id), card, stillFailing);
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, retry.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run2.pendingRepair, undefined, 'a successful attempt clears the pending repair');
     r = runner.next(fx.goal(goal.id), card, run2);
     assert.equal(r.directive.kind, 'close');
   } finally {
@@ -891,6 +894,9 @@ test('R4: a resume line quoting the git message is not a conflict; a real diagno
     assert.equal(hasConflictDiagnostic({ stdout: 'Auto-merging src/a.ts\nCONFLICT (content): Merge conflict in src/a.ts\n', stderr: '' }), true);
     assert.equal(hasConflictDiagnostic({ stdout: 'X Pull request #7 is not mergeable: the merge commit cannot be cleanly created', stderr: '' }), true);
     assert.equal(hasConflictDiagnostic({ stdout: '[SAGA-RESUME] resume with: CONFLICT (content) was seen earlier', stderr: '' }), false);
+    assert.equal(hasConflictDiagnostic({ stdout: 'CONFLICT (content): Merge conflict in src/resume.ts', stderr: '' }), true, 'a real diagnostic naming resume.ts still counts');
+    assert.equal(hasConflictDiagnostic({ stdout: '"Pull request #7 is not mergeable: the merge commit cannot be cleanly created"', stderr: '' }), false, 'a quoted gh message never counts');
+    assert.equal(hasConflictDiagnostic({ stdout: 'X Pull request #7 is not mergeable: the merge commit cannot be cleanly created', stderr: '' }), true, 'the gh failure glyph form counts');
   } finally {
     fx.cleanup();
   }
@@ -963,6 +969,10 @@ test('R4: a RED receipt the ship path rejected is never reloaded from the scaffo
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'the rejected receipt is not reloaded');
     assert.equal(r.run.redReceipt, undefined);
     assert.match(r.directive.narration, /establish behavioural RED first/);
+    const failed = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'red still missing' });
+    assert.equal(failed.pendingRepair?.rejectedReceipt, 'abc:0', 'a failed repair keeps the pending repair and the rejected receipt');
+    r = runner.next(fx.goal(goal.id), card, failed);
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a failed repair');
     writeFileSync(redFile, JSON.stringify({ taskId: 'T1-SCAF', sha: 'def', dodExit: 0, phase: 'red' }));
     r = runner.next(fx.goal(goal.id), card, r.run);
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, 'def:0', 'a fresh receipt is accepted');

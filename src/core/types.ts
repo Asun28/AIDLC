@@ -569,7 +569,7 @@ export const CardRun = z.object({
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
   blocker: z.string().optional(),
-  /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next recorded attempt so a resumed worker still gets the skill and the detail. */
+  /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
   updatedAt: IsoTimestamp,
 });
