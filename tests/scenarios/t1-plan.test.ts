@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import os from 'node:os';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture } from './_harness.ts';
@@ -137,4 +137,15 @@ test('R2: aidlc goal new --intent records the intent on the goal and the printed
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }
+});
+
+test('acceptance 5: the documentation statements the card requires are present', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+  assert.ok(architecture.includes('`skills`'), 'the directive contract names skills');
+  assert.ok(architecture.includes('merge-failed'), 'the ship outcome map lists merge-failed');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+  assert.ok(operations.includes('--intent'), 'OPERATIONS documents goal new --intent');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+  assert.ok(changelog.includes('T1-LOOP-SKILLS'), 'CHANGELOG carries the entry');
 });

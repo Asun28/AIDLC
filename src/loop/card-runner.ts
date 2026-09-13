@@ -332,7 +332,7 @@ export class CardRunner {
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
   private buildSkills(goal: Goal, card: Card): string[] {
-    const bugfix = goal.routing.kind === 'bugfix' || goal.routing.kind === 'incident' || Boolean(card.diagnosis);
+    const bugfix = (goal.routing.skills ?? []).includes('diagnose') || goal.routing.size === 'T0-bugfix' || goal.routing.kind === 'bugfix' || goal.routing.kind === 'incident' || Boolean(card.diagnosis);
     return bugfix ? ['tdd', 'diagnose'] : ['tdd'];
   }
 
@@ -414,7 +414,7 @@ export class CardRunner {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
     }
-    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: input.outcome === 'success' ? undefined : run.pendingRepair });
+    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair });
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
@@ -1055,6 +1055,13 @@ export function hasConflictDiagnostic(receipt: { stdout: string; stderr: string 
     .split(/\r?\n/)
     .map((l) => l.trim())
     .some((line) => diagnostic.some((re) => re.test(line)));
+}
+
+/** A pending repair clears on a successful attempt; a rejected RED receipt clears only when the success brings a replacement receipt, so the rejected one is never reloaded as proof. */
+export function clearsPendingRepair(pending: CardRun['pendingRepair'], input: { outcome: 'success' | 'fail' | 'not-counted'; redReceipt?: string }): boolean {
+  if (!pending || input.outcome !== 'success') return false;
+  if (pending.kind !== 'red-missing') return true;
+  return input.redReceipt !== undefined && input.redReceipt !== pending.rejectedReceipt;
 }
 
 export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {

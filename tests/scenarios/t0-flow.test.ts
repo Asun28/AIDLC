@@ -973,9 +973,33 @@ test('R4: a RED receipt the ship path rejected is never reloaded from the scaffo
     assert.equal(failed.pendingRepair?.rejectedReceipt, 'abc:0', 'a failed repair keeps the pending repair and the rejected receipt');
     r = runner.next(fx.goal(goal.id), card, failed);
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a failed repair');
+    const noReplacement = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:x', candidateSha: 'sha-x' });
+    assert.equal(noReplacement.pendingRepair?.rejectedReceipt, 'abc:0', 'a success without a replacement receipt keeps the rejected one out');
+    r = runner.next(fx.goal(goal.id), card, noReplacement);
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a success without a replacement');
     writeFileSync(redFile, JSON.stringify({ taskId: 'T1-SCAF', sha: 'def', dodExit: 0, phase: 'red' }));
     r = runner.next(fx.goal(goal.id), card, r.run);
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, 'def:0', 'a fresh receipt is accepted');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3/acceptance 7: BUILD skills follow the finalized size: an explicit T0-bugfix card route names diagnose without a bugfix kind or a card diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-SIZED', title: 'explicitly routed as a bugfix' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SIZED', source: 'card', ref: 'T1-SIZED', explicitSize: 'T0-bugfix', affectedSurfaces: [] }, { cards: ['T1-SIZED'] });
+    assert.equal(goal.routing.size, 'T0-bugfix');
+    assert.equal(goal.routing.kind, 'card-execute');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SIZED'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-SIZED');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SIZED'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
   } finally {
     fx.cleanup();
   }
