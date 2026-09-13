@@ -79,6 +79,8 @@ describe('types: schema round-trips', () => {
     assert.deepEqual(r.review.invocations, []);
     assert.deepEqual(r.ci.reruns, []);
     assert.equal(r.closure.cleanup, false);
+    assert.equal(r.pendingRepair, undefined);
+    assert.equal(CardRun.parse({ ...r, pendingRepair: { kind: 'merge-conflict', detail: 'CONFLICT in src/a.ts', at: T0 } }).pendingRepair?.kind, 'merge-conflict');
     assert.equal(r.mergeVerified, false);
     assert.equal(r.mode, 'remote');
     assert.deepEqual(CardRun.parse(JSON.parse(JSON.stringify(r))), r);

@@ -393,6 +393,7 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
     // The repair is the next attempt; the repaired candidate restarts loop 1 (pre-review cycle 1) before R3 runs again.
     r = runner.next(fx.goal(goal.id), card, f.run);
     assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the review-fix build directive names the skills');
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
     r = runner.next(fx.goal(goal.id), card, run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
@@ -688,6 +689,8 @@ test('R4: a merge failure without a conflict is still a tool stop, and a red-mis
     assert.equal(r2.directive.kind, 'build');
     if (r2.directive.kind === 'build') assert.deepEqual(r2.directive.skills, ['tdd'], 'the repair build directive names the skills too');
     assert.equal(r2.run.effort?.terminal, undefined, 'red-missing reopens the episode the same way');
+    assert.equal(r2.run.redReceipt, undefined, 'the rejected RED receipt is cleared, never reused as proof');
+    if (r2.directive.kind === 'build') assert.equal(r2.directive.redReceipt, undefined);
     const run22 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
     assert.equal(run22.effort?.terminal, 'succeeded');
   } finally {
@@ -789,6 +792,83 @@ test('R3: every repair path returns a build directive that names the skills: sco
     r = runner.next(fx.goal(goal.id), card, run1);
     assert.equal(r.directive.kind, 'build', `a CI code defect returns to BUILD: ${r.directive.narration}`);
     if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the CI code-defect build directive names the skills');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: conflict detection needs an affirmative diagnostic: a card whose id contains the word conflict and a policy refusal still stop', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CONFLICT', title: 'a card named after the failure mode' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CONFLICT', source: 'card', ref: 'T1-CONFLICT', affectedSurfaces: [] }, { cards: ['T1-CONFLICT'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CONFLICT'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'gh: Pull request #7 is not mergeable: the base branch policy prohibits the merge; resume with task.ps1 -TaskId T1-CONFLICT'));
+    const card = fx.card('T1-CONFLICT');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CONFLICT'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', `no affirmative conflict diagnostic: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'tool');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: the pending conflict repair is persisted: a second next() before the repair still names merge-conflicts, and a recorded attempt clears it', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-PERSIST', title: 'conflict guidance survives a resumed worker' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-PERSIST', source: 'card', ref: 'T1-PERSIST', affectedSurfaces: [] }, { cards: ['T1-PERSIST'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-PERSIST'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed', 'merged'], 'Automatic merge failed; fix conflicts and then commit the result.'));
+    const card = fx.card('T1-PERSIST');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PERSIST'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build');
+    assert.equal(r.run.pendingRepair?.kind, 'merge-conflict');
+    const again = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(again.directive.kind, 'build');
+    if (again.directive.kind === 'build') {
+      assert.deepEqual(again.directive.skills, ['merge-conflicts', 'tdd'], 'a resumed worker still gets the skill');
+      assert.match(again.directive.narration, /merge-conflict/);
+    }
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, again.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run2.pendingRepair, undefined, 'a recorded attempt clears the pending repair');
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a conflict on an episode that cannot admit another attempt stops the card instead of promising a BUILD', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-SPENT', title: 'two failures, then success, then a conflict' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SPENT', source: 'card', ref: 'T1-SPENT', affectedSurfaces: [] }, { cards: ['T1-SPENT'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SPENT'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-SPENT');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SPENT'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', redReceipt: 'red:3', candidateSha: 'sha-3' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', `the episode cannot admit a repair attempt: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'card');
+      assert.match(r.directive.stop.detail, /merge conflict/i);
+    }
   } finally {
     fx.cleanup();
   }

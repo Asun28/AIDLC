@@ -606,9 +606,11 @@ export class GoalController {
     if (!existsSync(file)) return ` Intake: intent file ${ref} not found under the main checkout; record the open questions before the spec and settle them with the grilling skill.`;
     try {
       const parsed = parseIntent(readFileSync(file, 'utf8'));
-      const questions = parsed.intent?.openQuestions ?? [];
-      if (!questions.length) return ` Intake: ${ref} lists no open questions; write the spec.`;
-      return ` Intake: ${ref} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.`;
+      if (!parsed.intent) return ` Intake: intent file ${ref} does not validate (${parsed.problems.join('; ')}); fix the file and record its open questions before the spec, settling them with the grilling skill.`;
+      const problems = parsed.problems.length ? ` The file also has validation problems: ${parsed.problems.join('; ')}.` : '';
+      const questions = parsed.intent.openQuestions ?? [];
+      if (!questions.length) return ` Intake: ${ref} lists no open questions; write the spec.${problems}`;
+      return ` Intake: ${ref} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.${problems}`;
     } catch (err) {
       return ` Intake: intent file ${ref} is unreadable (${err instanceof Error ? err.message : String(err)}); record the open questions before the spec and settle them with the grilling skill.`;
     }

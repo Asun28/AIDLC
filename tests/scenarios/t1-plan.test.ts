@@ -78,6 +78,14 @@ test('R2: a missing intent file is narrated, never thrown; a T0 route never name
     assert.ok(dd.narration.includes('intent/unreadable.md'), dd.narration);
     assert.match(dd.narration, /unreadable/);
 
+    writeFileSync(path.join(fx.tmp, 'intent', 'bare.md'), ['# Intent', '', '## Open questions', '- Which roles may see claim notes?', ''].join('\n'));
+    const bareGoal = fx.controller.createGoal({ text: 'Add a claims status self-service feature to the portal', source: 'natural-language', affectedSurfaces: [] }, { intentRef: 'intent/bare.md' });
+    const db = fx.controller.next(bareGoal.id);
+    assert.equal(db.kind, 'plan');
+    assert.ok(db.narration.includes('does not validate'), db.narration);
+    assert.ok(db.narration.includes('missing front matter'), db.narration);
+    assert.ok(!db.narration.includes('no open questions'), 'validation failure is never read as an empty question list');
+
     const t0 = fx.controller.createGoal({ text: 'Fix a typo in the README', source: 'natural-language', affectedSurfaces: [] });
     assert.equal(t0.routing.size, 'T0');
     assert.deepEqual(t0.routing.skills, ['tdd']);

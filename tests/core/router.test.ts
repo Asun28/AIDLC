@@ -37,6 +37,9 @@ describe('router (Q2)', () => {
   test('R1: companion skills per route: tdd on every card-loop route, grilling on T1/T2, none on a release-only route', () => {
     assert.deepEqual(classifyRequest({ text: 'Fix a typo in the README' }).skills, ['tdd']);
     assert.deepEqual(classifyRequest({ text: 'Alert: 5xx spike on checkout service after deploy', source: 'incident' }).skills, ['diagnose', 'tdd'], 'an incident route names diagnose too');
+    assert.deepEqual(classifyRequest({ text: 'implement T3-API', knownCardIds: ['T3-API'], explicitSize: 'T0-bugfix' }).skills, ['diagnose', 'tdd'], 'an explicit T0-bugfix card execution names diagnose');
+    assert.deepEqual(classifyRequest({ text: 'implement T3-API', knownCardIds: ['T3-API'], explicitSize: 'T1' }).skills, ['grilling', 'tdd'], 'an explicit T1 card route names grilling');
+    assert.deepEqual(classifyRequest({ text: 'implement T3-API', knownCardIds: ['T3-API'], explicitSize: 'T2' }).skills, ['grilling', 'tdd'], 'an explicit T2 card route names grilling');
     assert.deepEqual(classifyRequest({ text: 'Add a reporting dashboard feature with charts to the admin portal' }).skills, ['grilling', 'tdd']);
     assert.deepEqual(classifyRequest({ text: 'Build a fully AI native SDLC system from scratch with a new architecture' }).skills, ['grilling', 'tdd']);
     const rel = classifyRequest({ text: 'Deploy the current build to staging for online testing' });
