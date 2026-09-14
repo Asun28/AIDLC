@@ -10,7 +10,7 @@ created: 2026-09-14T00:00:00Z
 # Plan: Companion skills, lessons and CI gates driven by the loop itself (from specs/loop-integration.md)
 
 ## 1. Goal and boundaries
-Make the PR #7 additions machine-driven: skills named by directives, lessons as a closure predicate, the secret scan as a gate, required checks from config. In scope: R1-R8. Cut: nothing. Deferred: R9 (evals under the real provider) until the repository has an ANTHROPIC_API_KEY secret. Success: the three cards merge through the loop's own R2, R3 and GitHub ship, each in one review round.
+Make the PR #7 additions machine-driven: skills named by directives, lessons as a closure predicate, the secret scan as a gate, required checks from config. In scope: R1-R8 and R10-R12 (the ladder fix, added after the first card ended twice by the effort ladder while every review finding was accepted). Cut: nothing. Deferred: R9 (evals under the real provider) until the repository has an ANTHROPIC_API_KEY secret. Success: the three cards merge through the loop's own R2, R3 and GitHub ship, each in one review round.
 
 ## 2. Minimal acceptable loop
 aidlc goal new with --intent prints skills=; a fresh card's build directive names tdd; a card closes only after a lesson disposition; a PR with a red secret scan stops with reason risk.
@@ -35,6 +35,7 @@ none this version
 See the spec section Interfaces and contracts; the docs/LESSONS.md line format is frozen.
 
 ## Files that change
+- src/core/effort.ts
 - src/core/types.ts
 - src/core/router.ts
 - src/loop/directive.ts
@@ -64,6 +65,7 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 - CHANGELOG.md
 
 ## Order of work
+0. T1-LOOP-LADDER: review blocks reopen the episode instead of consuming a build attempt; the ladder counts DoD failures only.
 1. T1-LOOP-SKILLS: routing and directive skills, PLAN grilling with the open questions of the intent, build and prepare narration, merge-conflict return to BUILD with the episode reopened.
 2. T1-LOOP-GATES: blocking secret scan, security CI class, github config block and required-check passthrough.
 3. T1-LOOP-LESSONS: lessons artifact, sixth closure predicate, card close lesson flags, prepare context.
@@ -73,13 +75,15 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-LOOP-SKILLS | MUST | skills in routing and directives; grilling at PLAN; merge-conflict return to BUILD | - | W1 | - |
-| T1-LOOP-GATES | MUST | blocking secret scan; security CI class; required checks from config | T1-LOOP-SKILLS | W2 | - |
+| T1-LOOP-LADDER | MUST | review blocks reopen the episode; the ladder counts DoD failures only | T1-LOOP-SKILLS | W1b | - |
+| T1-LOOP-GATES | MUST | blocking secret scan; security CI class; required checks from config | T1-LOOP-LADDER | W2 | - |
 | T1-LOOP-LESSONS | MUST | lessons closure predicate; card close lesson flags; prepare context | T1-LOOP-GATES | W3 | - |
 
 ## Risks
 - The GitHub ship path has scripted-runner tests only; the first live ship may stop with a tooling error that is fixed in place before the next card.
 - The three cards share card-runner.ts and types.ts; they run one at a time so no card starts on a moved base.
 - Returning to BUILD after a successful attempt must reopen the effort episode or the next attempt throws.
+- Until the ladder card lands, every review block still consumes a build attempt; the ladder card runs first for that reason.
 
 ## Proof
 - Router and types tests assert skills per size and the defaults.

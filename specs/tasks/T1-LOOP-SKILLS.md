@@ -1,7 +1,8 @@
 ---
 id: T1-LOOP-SKILLS
 title: Every routing result and directive names its companion skills; PLAN names grilling with the open questions; a merge conflict returns the card to BUILD naming merge-conflicts
-status: in-progress
+status: merged
+superseded_by: T1-LOOP-SKILLS-2
 branch: T1-LOOP-SKILLS
 worktree: C:\wt\T1-LOOP-SKILLS
 allow_paths:
