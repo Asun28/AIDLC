@@ -537,7 +537,10 @@ export class GoalController {
         break;
       }
       case 'revision': {
-        goal = this.applyRevision(goal, d, now, j, true);
+        const rev = this.computeRevision(goal, d, now);
+        goal = rev.goal;
+        if (goal.state === 'WAIT' || goal.state === 'RUN') goal = transitionGoal({ ...goal, state: 'WAIT' }, 'PLAN', now, { revisionAccepted: true });
+        j.append({ type: 'GOAL_REVISED', goalId: goal.id, generation: goal.generation, data: { revision: rev.revision, mapping: rev.mapping, text: rev.text.slice(0, 300) } });
         break;
       }
       case 'cancel':
@@ -554,14 +557,15 @@ export class GoalController {
           if (d['replacements'] !== undefined && (typeof d['replacements'] !== 'object' || d['replacements'] === null || !Object.values(d['replacements'] as Record<string, unknown>).every((v) => typeof v === 'string' && v.trim()))) throw new Error('resume replacements must map old card ids to new card ids');
         }
         const generation = goal.generation + 1;
-        goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' ? 'STOP' : goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
-        if (goal.stop === undefined && goal.state === 'STOP') goal = { ...goal, state: 'WAIT' };
-        j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation, data: { linkedFrom: goal.linkedFrom, reason: d['reason'] } });
-        // A resume may carry the revision that makes the projection admissible again (replacement cards), applied before the projection runs.
-        if (carries) {
-          const last = goal.revisions[goal.revisions.length - 1]!;
-          goal = this.applyRevision(goal, { ...d, text: typeof d['text'] === 'string' ? d['text'] : last.request.text }, now, j, false);
-        }
+        let takeover: Goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' ? 'STOP' : goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
+        if (takeover.stop === undefined && takeover.state === 'STOP') takeover = { ...takeover, state: 'WAIT' };
+        // The carried revision (replacement cards that make the projection admissible again) is computed in full before anything
+        // is journaled, so a refused resume leaves no takeover behind; it applies before the projection runs.
+        const last = takeover.revisions[takeover.revisions.length - 1]!;
+        const rev = carries ? this.computeRevision(takeover, { ...d, text: typeof d['text'] === 'string' ? d['text'] : last.request.text }, now) : undefined;
+        j.append({ type: 'GOAL_TAKEOVER', goalId: takeover.id, generation, data: { linkedFrom: takeover.linkedFrom, reason: d['reason'] } });
+        goal = rev ? rev.goal : takeover;
+        if (rev) j.append({ type: 'GOAL_REVISED', goalId: goal.id, generation: goal.generation, data: { revision: rev.revision, mapping: rev.mapping, text: rev.text.slice(0, 300) } });
         break;
       }
       default:
@@ -642,27 +646,26 @@ export class GoalController {
     return next;
   }
 
-  /** A requirement revision: versions the goal, maps superseded cards and, for an amendment, returns to PLAN; a resume applies it in place. */
-  private applyRevision(goal: Goal, d: Record<string, unknown>, now: string, j: Journal, toPlan: boolean): Goal {
+  /** The revised goal a requirement revision produces (versioned, superseded cards mapped); pure, so callers journal only after it succeeded. */
+  private computeRevision(goal: Goal, d: Record<string, unknown>, now: string): { goal: Goal; revision: number; mapping: ReturnType<typeof mapRevision>; text: string } {
     const text = typeof d['text'] === 'string' ? d['text'] : undefined;
-    if (!text) throw new Error('revision requires data.text');
+    if (!text || !text.trim()) throw new Error('revision requires non-empty data.text');
     const prev = goal.revisions[goal.revisions.length - 1]!;
     const replacements = (d['replacements'] as Record<string, string> | undefined) ?? {};
+    for (const old of Object.keys(replacements)) if (!goal.cards.includes(old)) throw new Error(`replacement of ${old}: the card is outside the goal (${goal.cards.join(', ')})`);
     const nextCards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : goal.cards.map((c) => replacements[c] ?? c);
+    for (const [old, fresh] of Object.entries(replacements)) if (!nextCards.includes(fresh)) throw new Error(`replacement ${old} -> ${fresh}: ${fresh} is not among the listed cards (${nextCards.join(', ')})`);
     const mapping = mapRevision(goal.cards, nextCards, replacements);
     const revision = goal.revision + 1;
-    let next: Goal = {
+    const revised: Goal = {
       ...goal,
       revision,
       revisions: [...goal.revisions, { revision, at: now, reason: String(d['reason'] ?? 'user amendment'), request: { ...prev.request, text }, supersededCards: mapping.supersededCards, removedCards: mapping.removedCards }],
       cards: nextCards,
       cardRevisions: Object.fromEntries(nextCards.map((c) => [c, (goal.cardRevisions[c] ?? -1) + (mapping.retainedEvidenceFor.includes(c) ? 0 : 1)])),
     };
-    if (toPlan && (next.state === 'WAIT' || next.state === 'RUN')) next = transitionGoal({ ...next, state: 'WAIT' }, 'PLAN', now, { revisionAccepted: true });
-    j.append({ type: 'GOAL_REVISED', goalId: next.id, generation: next.generation, data: { revision, mapping, text: text.slice(0, 300) } });
-    return next;
+    return { goal: revised, revision, mapping, text };
   }
-
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
     const goal = this.mustGoal(goalId);
     const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };

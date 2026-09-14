@@ -86,6 +86,8 @@ test('R2/R3: a resume carries its revision so a stopped goal continues with the 
     const eventsBefore = fx.events(goal.id).length;
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'blank', text: '' } }), /non-empty/, 'a carried revision is validated before anything is journaled');
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'bad map', text: 'x', replacements: { 'T1-A': 7 } } }), /replacements/);
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'wrong card', text: 'x', replacements: { 'T1-ZZ': 'T1-A2' } } }), /outside the goal/, 'a replacement of a card the goal never had is refused');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'inconsistent', text: 'x', cards: ['T1-A'], replacements: { 'T1-A': 'T1-A2' } } }), /listed/, 'a replacement absent from the listed cards is refused');
     assert.equal(fx.events(goal.id).length, eventsBefore, 'no takeover event for a refused resume');
     assert.equal(fx.goal(goal.id).generation, 0);
     const plain = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'first look' } });
