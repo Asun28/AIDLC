@@ -984,6 +984,7 @@ export class CardRunner {
     // another writer at the time) is committed now, under the same invocation, without running the reviewer again.
     const retained = this.retainedFormalResult(card, persisted, reviewDir, candidateSha, candidateDigest);
     if (retained) return this.commitFormalResult(goal, card, persisted, retained);
+    persisted = this.releaseFailedReservation(goal, card, persisted, reviewDir);
     this.formalAdmission(persisted, card, candidateSha, candidateDigest, now);
     // Only the lease owner at the run's generation may reserve a decision.
     if (persisted.ownerGeneration !== undefined) {
@@ -1046,8 +1047,20 @@ export class CardRunner {
       // The formal review is never fanned out: one exhaustive pass per decision.
       panel = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
     } catch (err) {
-      this.queue.markLost(key, `formal review did not run: ${(err as Error).message}`, this.clock());
-      this.releaseReservation(goal, card, invocationId);
+      // The failure is retained next to the reservation first (no lock needed), so the reservation is released by the next
+      // command even when the release below is refused; the release and the queue bookkeeping never mask the failure.
+      writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ invocationId, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
+      try {
+        this.releaseReservation(goal, card, invocationId);
+      } catch {
+        /* the retained failure releases it on the next command */
+      }
+      // A review that never ran holds no result to look up: its pool request is cancelled, not marked lost.
+      try {
+        this.queue.cancel(key, `formal review did not run: ${(err as Error).message}`, this.clock());
+      } catch {
+        /* the request is reconciled from the pool */
+      }
       throw err;
     }
     const after = this.clock();
@@ -1103,6 +1116,20 @@ export class CardRunner {
     const durationMs = typeof doc?.['durationMs'] === 'number' ? doc['durationMs'] : 0;
     const receiptSha256 = typeof doc?.['receiptSha256'] === 'string' ? doc['receiptSha256'] : '';
     return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: pending.requestedAt, at: this.clock(), verdict, classified, advisory, verdictRef: doc ? verdictFile : undefined, logRef, durationMs, receiptSha256, holdUntil: undefined, retained: true };
+  }
+
+  /**
+   * A pending reservation whose dispatch failed before the reviewer ran (retained as `<stem>.failed.json`, no log) is
+   * released here when the release at the time was refused, so the card is never left with a review in flight that
+   * never ran; the reviewer is dispatched again by the admission that follows.
+   */
+  private releaseFailedReservation(goal: Goal, card: Card, persisted: CardRun, reviewDir: string): CardRun {
+    const failed = persisted.review.invocations.filter((i) => i.outcome === 'pending' && i.invocationId.startsWith('r3:') && existsSync(path.join(reviewDir, `${i.invocationId.slice(3)}.failed.json`)) && !existsSync(path.join(reviewDir, `${i.invocationId.slice(3)}.log`)));
+    if (!failed.length) return persisted;
+    const ids = new Set(failed.map((i) => i.invocationId));
+    const released = this.store.updateCardRun(goal.id, card.id, (current) => ({ ...(current ?? persisted), review: { ...(current ?? persisted).review, invocations: (current ?? persisted).review.invocations.filter((i) => !ids.has(i.invocationId)) } }));
+    for (const i of failed) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId: i.invocationId, reviewer: i.reviewer, candidateDigest: i.candidateDigest, outcome: 'no-verdict', decision: 'released: the dispatch failed before the reviewer ran', findings: [], reraised: [], resolved: [] } });
+    return released;
   }
 
   /**

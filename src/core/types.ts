@@ -333,7 +333,7 @@ export const ReviewFinding = z.object({
   candidateSha: z.string().optional(),
   raisedAt: IsoTimestamp,
   disposition: FindingDisposition.default('open'),
-  /** The author's disputes in order; `afterReraises` is the re-raise count when the dispute was recorded (one dispute per re-raise). */
+  /** The author's disputes in order; `afterReraises` is the re-raise count when the dispute was recorded. */
   disputes: z.array(z.object({ at: IsoTimestamp, note: z.string().min(1), afterReraises: z.number().int().nonnegative().default(0) })).default([]),
   reraised: z
     .array(
@@ -348,6 +348,8 @@ export const ReviewFinding = z.object({
         perspective: z.string().optional(),
         /** Index of the dispute the reviewer received and answered; absent when the finding was open in the dispatched snapshot. */
         answeredDispute: z.number().int().nonnegative().optional(),
+        /** How many disputes of the finding the round received at dispatch (a re-raise from a round dispatched before a dispute received none of it). */
+        sawDisputes: z.number().int().nonnegative().optional(),
       }),
     )
     .default([]),

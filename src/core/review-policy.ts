@@ -317,7 +317,7 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
       if (!reraised.includes(prior.id)) reraised.push(prior.id);
       // Every re-raise reason is kept with its angle; the dispute it answered is the one the dispatched snapshot showed.
       const received = seen[prior.id];
-      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: received?.disposition === 'disputed' && received.disputes > 0 ? received.disputes - 1 : undefined }];
+      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: received?.disposition === 'disputed' && received.disputes > 0 ? received.disputes - 1 : undefined, sawDisputes: received?.disputes ?? 0 }];
       // A re-raise reopens the finding (a resolved one included) unless it changed after dispatch.
       if (!changedSince(before)) {
         prior.disposition = 'open';
@@ -350,6 +350,14 @@ const findingOrThrow = (findings: ReviewFinding[], id: string): ReviewFinding =>
   if (!f) throw new Error(`no finding ${id} on this card run (aidlc review findings <card> lists them)`);
   return f;
 };
+
+/** Whether the latest re-raise came from a round that received every dispute of the finding recorded so far. */
+function receivedEveryDispute(f: ReviewFinding): boolean {
+  const last = f.reraised.at(-1);
+  if (!last) return false;
+  const saw = last.sawDisputes ?? (last.answeredDispute !== undefined ? last.answeredDispute + 1 : 0);
+  return saw >= f.disputes.length;
+}
 
 /** Rounds of mutual non-acceptance: distinct disputes a reviewer received and answered with a re-raise (a withdrawn dispute never reached a reviewer). */
 export function nonAcceptanceRounds(f: ReviewFinding): number {
@@ -392,9 +400,10 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
   if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to dispute`);
   if (f.disposition === 'disputed') throw new Error(`${f.id} is already disputed; wait for the next round to answer it`);
   if (nonAcceptanceRounds(f) >= 2) throw new Error(`${f.id} was disputed twice and re-raised twice: a human ruling is needed, not a third dispute`);
-  // One dispute per re-raise, a withdrawn one included: the next dispute waits for a reviewer to re-raise the finding.
-  const last = f.disputes.at(-1);
-  if (last && f.reraised.length <= last.afterReraises) throw new Error(`${f.id} was already disputed since the last re-raise (a withdrawn dispute counts); a second dispute needs a re-raise in between`);
+  // One dispute per re-raise that received the previous one, a withdrawn dispute included: the next dispute waits for a
+  // reviewer who received every dispute so far to re-raise the finding. A re-raise by a round dispatched before the
+  // dispute received none of it and opens no second dispute.
+  if (f.disputes.length && !receivedEveryDispute(f)) throw new Error(`${f.id} was already disputed since the last re-raise that received it (a withdrawn dispute counts); a second dispute needs a re-raise in between`);
   return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length }], revision: x.revision + 1 } : x));
 }
 
