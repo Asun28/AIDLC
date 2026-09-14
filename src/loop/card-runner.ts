@@ -837,6 +837,19 @@ export class CardRunner {
     return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: MAX_SUBSTANTIVE_REVIEW_DECISIONS, narration: `Formal review (R3, ${cfg.reviewer}) before the ship, decision ${decision}/${MAX_SUBSTANTIVE_REVIEW_DECISIONS}${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship; a merge-blocking block returns it to REVIEW_FIX and the repaired candidate restarts the pre-review cycle.${disputedNote}` } };
   }
 
+  /**
+   * The candidate a review was prepared for (its diff collected, its guards checked) must still be the record's candidate
+   * when the round or decision is reserved: a candidate recorded meanwhile refuses the reservation, and the command is
+   * run again for the current candidate.
+   */
+  private refuseReplacedCandidate(current: CardRun, card: Card, stage: 'pre' | 'formal', candidateSha: string, candidateDigest: string): void {
+    const sha = current.candidate?.sha;
+    const digest = current.candidate?.digest ?? sha;
+    if ((sha !== undefined && sha !== candidateSha) || (digest !== undefined && digest !== candidateDigest)) {
+      throw new Error(`the candidate changed since the review was prepared (${candidateSha.slice(0, 12)} prepared, ${(sha ?? digest ?? 'none').slice(0, 12)} recorded meanwhile); run \`aidlc review ${stage === 'pre' ? 'pre' : 'r3'} ${card.id}\` again for the current candidate`);
+    }
+  }
+
   /** The R3 guards over one record: stop, R2 eligibility, an in-flight decision, a quota hold, the same-candidate rule, the allowances. */
   private formalAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): void {
     const cfg = this.config.formalReview;
@@ -921,6 +934,7 @@ export class CardRunner {
     try {
       this.store.updateCardRun(goal.id, card.id, (locked) => {
         const current = locked ?? persisted;
+        this.refuseReplacedCandidate(current, card, 'formal', candidateSha, candidateDigest);
         this.formalAdmission(current, card, candidateSha, candidateDigest, now);
         if (current.ownerGeneration !== undefined) {
           this.renewOwnLease(card.id, current, now);
@@ -1133,6 +1147,7 @@ export class CardRunner {
     let seen: Record<string, FindingSnapshot> = {};
     this.store.updateCardRun(goal.id, card.id, (locked) => {
       const current = locked ?? persisted;
+      this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       numbering = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
       if (current.ownerGeneration !== undefined) {
         this.renewOwnLease(card.id, current, now);
