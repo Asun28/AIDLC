@@ -280,16 +280,18 @@ test('verify-before-done acts as the hook event session: the event session_id, u
 test('verify-before-done lists only the cards of the acting session: two windows on one state directory', () => {
   const { cwd, env } = envWithState();
   const { leases, key } = buildRuns(cwd, env, ['T1-MINE', 'T1-THEIRS', 'T1-EXPIRED', 'T1-FREE', 'T1-RELEASED']);
-  // live leases: claimed at a fixed instant with a century of TTL, so no wall clock can expire them
+  // live leases: claimed at a fixed instant with a century of TTL, so they expire in 2126 and no wall
+  // clock this code runs under can see them as expired
   const live = { now: '2026-09-15T00:00:00.000Z', ttlMs: 100 * 365 * 24 * 3600_000 };
   leases.claim(key('T1-MINE'), { actor: windowActor('win-A'), ...live });
   leases.claim(key('T1-THEIRS'), { actor: windowActor('win-B'), ...live });
-  // an expired lease (claimed two weeks before the fixed instant, one second of TTL) still names its
-  // owner: expiry alone never proves the owner stopped, so the guard must not treat it as absent
-  leases.claim(key('T1-EXPIRED'), { actor: windowActor('win-B'), now: '2026-09-01T00:00:00.000Z', ttlMs: 1000 });
-  assert.equal(leases.read(key('T1-EXPIRED'))?.expiresAt, '2026-09-01T00:00:01.000Z');
-  assert.ok(Date.parse(leases.read(key('T1-EXPIRED'))!.expiresAt) < Date.parse(live.now), 'the lease is expired at the fixed instant');
-  assert.ok(Date.parse(leases.read(key('T1-THEIRS'))!.expiresAt) > Date.parse(live.now), 'the live lease is not');
+  // an expired lease: claimed on 2020-01-01 with one second of TTL, so it expired in 2020 under any wall
+  // clock this code runs under. It still names its owner (expiry alone never proves the owner stopped),
+  // so the guard must not treat it as absent: an implementation that consulted the clock and listed
+  // expired leases for every session would list T1-EXPIRED for win-A below and fail this test.
+  leases.claim(key('T1-EXPIRED'), { actor: windowActor('win-B'), now: '2020-01-01T00:00:00.000Z', ttlMs: 1000 });
+  assert.equal(leases.read(key('T1-EXPIRED'))?.expiresAt, '2020-01-01T00:00:01.000Z');
+  assert.ok(leases.read(key('T1-THEIRS'))!.expiresAt > '2126-01-01T00:00:00.000Z', 'the live leases expire in 2126');
   // a released lease has no owner; a run with no lease record never had one
   leases.claim(key('T1-RELEASED'), { actor: windowActor('win-B') });
   leases.release(key('T1-RELEASED'), 0, windowActor('win-B'));
