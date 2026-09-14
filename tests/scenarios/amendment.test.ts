@@ -83,6 +83,11 @@ test('R2/R3: a resume carries its revision so a stopped goal continues with the 
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.equal(fx.goal(goal.id).terminal, true);
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'revision', data: { text: 'again', replacements: { 'T1-A': 'T1-A2' } } }), /goal resume/, 'an amendment on a terminal goal names the resume');
+    const eventsBefore = fx.events(goal.id).length;
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'blank', text: '' } }), /non-empty/, 'a carried revision is validated before anything is journaled');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'bad map', text: 'x', replacements: { 'T1-A': 7 } } }), /replacements/);
+    assert.equal(fx.events(goal.id).length, eventsBefore, 'no takeover event for a refused resume');
+    assert.equal(fx.goal(goal.id).generation, 0);
     const plain = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'first look' } });
     assert.equal(plain.directive.kind, 'stop', 'a resume without a revision re-projects the same stopped card and stops again');
     const resumed = fx.controller.report({ goalId: goal.id, generation: 1, result: 'resume', data: { reason: 'ruling', text: 'continue with the replacement card', replacements: { 'T1-A': 'T1-A2' } } });

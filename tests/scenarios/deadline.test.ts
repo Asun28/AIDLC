@@ -91,6 +91,9 @@ test('Q8: an extension is explicit, later and recorded; an earlier date is refus
     writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
     const goal = goalForCards(fx, ['T1-HELLO']);
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, HOUR_MS), 'too early'), /later/);
+    assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', 'not-a-date', 'garbage'), /ISO/, 'an unparsable deadline is refused');
+    assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '', 'blank'), /ISO/);
+    assert.equal(fx.goal(goal.id).deadlines.extensions.length, 0, 'a refused extension is not recorded');
     const extended = fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 5 * HOUR_MS), 'reviewer outage');
     assert.equal(effectiveGoalDeadline(extended.deadlines), addMs(T0, 5 * HOUR_MS));
     assert.equal(extended.deadlines.extensions.length, 1);

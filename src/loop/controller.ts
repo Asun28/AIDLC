@@ -546,12 +546,19 @@ export class GoalController {
       case 'resume': {
         // Fresh user-authorised continuation links the old terminal generation and preserves exhausted limits.
         if (!goal.terminal) throw new Error('resume applies only to a terminal goal');
+        // A carried revision is validated before anything is journaled, so a refused resume leaves no takeover behind.
+        const carries = d['text'] !== undefined || d['cards'] !== undefined || d['replacements'] !== undefined;
+        if (carries) {
+          if (d['text'] !== undefined && (typeof d['text'] !== 'string' || !d['text'].trim())) throw new Error('a resume with a revision requires non-empty text');
+          if (d['cards'] !== undefined && (!Array.isArray(d['cards']) || !d['cards'].every((c) => typeof c === 'string' && c.trim()))) throw new Error('resume --cards must list card ids');
+          if (d['replacements'] !== undefined && (typeof d['replacements'] !== 'object' || d['replacements'] === null || !Object.values(d['replacements'] as Record<string, unknown>).every((v) => typeof v === 'string' && v.trim()))) throw new Error('resume replacements must map old card ids to new card ids');
+        }
         const generation = goal.generation + 1;
         goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' ? 'STOP' : goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
         if (goal.stop === undefined && goal.state === 'STOP') goal = { ...goal, state: 'WAIT' };
         j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation, data: { linkedFrom: goal.linkedFrom, reason: d['reason'] } });
         // A resume may carry the revision that makes the projection admissible again (replacement cards), applied before the projection runs.
-        if (typeof d['text'] === 'string' || Array.isArray(d['cards']) || (d['replacements'] && typeof d['replacements'] === 'object')) {
+        if (carries) {
           const last = goal.revisions[goal.revisions.length - 1]!;
           goal = this.applyRevision(goal, { ...d, text: typeof d['text'] === 'string' ? d['text'] : last.request.text }, now, j, false);
         }
@@ -659,6 +666,7 @@ export class GoalController {
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
     const goal = this.mustGoal(goalId);
     const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };
+    if (!Number.isFinite(Date.parse(newDeadline))) throw new Error(`extension deadline must be an ISO timestamp, got "${newDeadline}"`);
     if (Date.parse(newDeadline) <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
     this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
     // The extension is the explicit authority a time stop asks for: the goal and every card of it stopped for time are
