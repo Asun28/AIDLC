@@ -697,3 +697,43 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the transient-CI branch decides the re
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the pre-dispatch drift cleanup attempts every step: a failing operation store never skips the pool cancellation nor hides the drift', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    const ship = new DryRunShipPath(['merged']);
+    const runner = fx.runner(ship);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    const realAdmit = fx.queue.admit.bind(fx.queue);
+    fx.queue.admit = (...args: Parameters<typeof realAdmit>) => {
+      fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, candidate: { sha: 'sha-newer', dirty: false, untracked: [], digest: 'sha-newer' }, dodReceipt: 'dod:newer' }));
+      return realAdmit(...args);
+    };
+    const realMark = fx.ops.markResult.bind(fx.ops);
+    let marks = 0;
+    fx.ops.markResult = (...args: Parameters<typeof realMark>) => {
+      marks += 1;
+      if (marks === 1) throw new Error('operation store unavailable');
+      return realMark(...args);
+    };
+    let after: ReturnType<typeof runner.next> | undefined;
+    try {
+      after = runner.next(g(), card, run);
+    } finally {
+      fx.queue.admit = realAdmit;
+      fx.ops.markResult = realMark;
+    }
+    assert.equal(ship.requests.length, 0);
+    assert.equal(after!.directive.kind, 'wait', after!.directive.narration);
+    assert.match(after!.directive.narration, /candidate changed/i, 'the drift is reported although the operation store failed');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool admission is cancelled although the operation store failed');
+  } finally {
+    fx.cleanup();
+  }
+});

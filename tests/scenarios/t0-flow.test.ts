@@ -2680,3 +2680,56 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-o
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict it decided on, so the recovery never reads the sidecar; a decided envelope without its verdict is incomplete', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-env3.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-env3.ts b/src/t1-env3.ts\n+export const env3 = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-ENV3');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const reserve = (id: string) => fx.store.updateCardRun(goal.id, 'T1-ENV3', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations.filter((i) => i.outcome !== 'pending'), { invocationId: `r3:${id}`, candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] } }));
+    const blockDoc = { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-env3.ts:1: no RED -> add one'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-env3.ts:1: no RED -> add one'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV3', run_status: 'success' };
+    const passDoc = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV3', run_status: 'success' };
+    const envelope = (id: string, over: Record<string, unknown>) => ({ invocationId: `r3:${id}`, candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x', ...over });
+    // (1) A block envelope with its verdict inside is recovered as that block even when the sidecar beside it says pass.
+    let run = reserve('T1-ENV3.r3.5.blk');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.5.blk.json'), JSON.stringify(passDoc), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.5.blk.result.json'), JSON.stringify(envelope('T1-ENV3.r3.5.blk', { outcome: 'block', reasons: blockDoc.reasons, verdict: blockDoc })), 'utf8');
+    const blocked = await runner.formalReview(g(), card, run);
+    assert.equal(blocked.classified.outcome, 'block-defect', 'the envelope decides, never the sidecar');
+    run = fx.store.getCardRun(goal.id, 'T1-ENV3')!;
+    assert.equal(run.review.invocations.at(-1)?.outcome, 'block');
+    assert.deepEqual(run.findings.map((f) => f.reason), blockDoc.reasons, 'the findings come from the envelope\'s verdict');
+    assert.equal(run.state, 'REVIEW_FIX');
+    // (2) A decided envelope without its verdict is incomplete: nothing is recovered from the sidecar, the reservation waits.
+    fx.store.updateCardRun(goal.id, 'T1-ENV3', (current) => ({ ...current!, state: 'SHIP', review: { ...current!.review, substantiveDecisions: 0, substantiveBlocks: 0, invocations: [] }, findings: [] }));
+    run = reserve('T1-ENV3.r3.6.novd');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.json'), JSON.stringify(passDoc), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass' })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a pass envelope without its verdict recovers nothing');
+    // A verdict that contradicts its envelope is inconsistent: incomplete as well.
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: blockDoc })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope whose verdict disagrees with its outcome recovers nothing');
+    // (3) A pass envelope with its verdict inside and no sidecar at all is recovered as a pass, and the canonical file is published from it.
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc })), 'utf8');
+    rmSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.json'), { force: true });
+    const passed = await runner.formalReview(g(), card, run);
+    assert.equal(passed.classified.outcome, 'pass');
+    assert.equal(dispatched, 0);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-ENV3')!.review.invocations.at(-1)?.outcome, 'pass');
+    assert.equal((JSON.parse(readFileSync(path.join(reviewDir, 'T1-ENV3.json'), 'utf8')) as { sha?: string }).sha, 'sha-1');
+  } finally {
+    fx.cleanup();
+  }
+});
