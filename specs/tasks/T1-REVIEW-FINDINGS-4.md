@@ -55,7 +55,7 @@ acceptance:
   - 16. The artifact re-read scenario applies the same ship result twice through `applyShipResult` and asserts the second application records no decision and no finding, with a RED that removes the deduplication (review-block.test.ts). [R1] [dod arm 1]
 depends_on: []
 plan_ref: plans/review-findings.md#7
-budget: 4400
+budget: 5000
 tdd: true
 sweep: "grep -rn 'saveCardRun\|this.save(\|priorFindings\|blockAnswered\|reusableReceipt\|answeredDispute' src tests: card-runner.ts every write site and guard, goal-store.ts, review-policy.ts, pre-review.ts prompt section, t0-flow.test.ts and review-block.test.ts scenarios, goal-store.test.ts"
 non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance, an OS-held file lock, lock fencing that stays valid across a process suspension between the ownership read and the write or the release (R3 decision 1 finding 8), serializing normal lock acquisition and release through the takeover marker (finding 9), a journal outbox that reconciles event delivery for the residual hand-off marker (finding 19) or for the disposition events (R3 decision 2 finding 8 of T1-REVIEW-FINDINGS-2: the same class)]
@@ -73,7 +73,7 @@ The 11 findings of decision 2 and their acceptance: the verdict walk reads one l
 
 RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 and -3 (`.review/T1-REVIEW-FINDINGS-2.red*.log`, `.review/T1-REVIEW-FINDINGS-3.red*.log`) cover acceptance 1-12; the repairs of this card fail on their assertions against 22782c4 (`.review/T1-REVIEW-FINDINGS-4.red.log`).
 
-Budget 4400: the reviewed branch T1-REVIEW-FINDINGS-3 is 3893 added / 373 removed lines over 18 files after four R2 rounds and two R3 decisions; the result envelope, the whole-output verdict walk and their scenarios add to it.
+Budget 4400: the reviewed branch T1-REVIEW-FINDINGS-3 is 3893 added / 373 removed lines over 18 files after four R2 rounds and two R3 decisions; the result envelope, the whole-output verdict walk and their scenarios brought it to 4238 added / 384 removed; the eight repairs of R3 decision 1 (the envelope contract, the canonical file repair, the transient-CI ledger, the hand-off reload) bring it to 4536 added / 398 removed, hence 5000 for the rounds left.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
