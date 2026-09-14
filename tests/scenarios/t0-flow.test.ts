@@ -2335,3 +2335,65 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 1: a formal dispatch that fails neve
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 2: a retained formal result is committed whatever the current candidate (history for a replaced one), and a retained quota hold is committed as a hold', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    let onDispatch: (() => void) | undefined;
+    const r3: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-rt.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-rt.ts b/src/t1-rt.ts\n+export const rt = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: r3.shift() ?? R3_PASS }; },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-RT');
+    const { card, g, goal } = s;
+    const lock = `${fx.store.cardFile(goal.id, 'T1-RT')}.lock`;
+    const held = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+    let r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    // (1) The block on sha-1 is retained (the commit lost the lock); the author records sha-2 before retrying.
+    r3.push(r3Block('src/t1-rt.ts'));
+    onDispatch = held;
+    await assert.rejects(() => runner.formalReview(g(), card, r.run), /locked/i);
+    rmSync(lock, { force: true });
+    onDispatch = undefined;
+    const repaired = fx.store.updateCardRun(goal.id, 'T1-RT', (current) => ({ ...current!, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', preReview: { ...current!.preReview, rounds: [...current!.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-2', candidateSha: 'sha-2', requestedAt: fx.now(), durationMs: 0, outcome: 'pass', reasons: [] }] } }));
+    const history = await runner.formalReview(g(), card, repaired);
+    assert.equal(history.classified.outcome, 'block-defect', 'the retained result of the replaced candidate is committed');
+    assert.equal(dispatched, 1, 'no dispatch for the retained result');
+    let persisted = fx.store.getCardRun(goal.id, 'T1-RT')!;
+    assert.deepEqual(persisted.review.invocations.map((i) => [i.candidateSha, i.outcome]), [['sha-1', 'block']], 'the decision is history for sha-1, no reservation stays');
+    assert.equal(persisted.review.substantiveDecisions, 1);
+    assert.equal(persisted.candidate?.sha, 'sha-2');
+    assert.equal(persisted.dodReceipt, 'dod:2', 'the newer candidate keeps its receipt');
+    assert.notEqual(persisted.state, 'REVIEW_FIX', 'the newer candidate keeps its state');
+    assert.deepEqual(persisted.findings.map((f) => [f.id, f.candidateSha]), [['F1', 'sha-1']]);
+    // The next command reviews sha-2.
+    r3.push('Error: 429 Too Many Requests, retry after 60 seconds\n');
+    onDispatch = () => {
+      held();
+      fx.advance(90_000);
+    };
+    await assert.rejects(() => runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-RT')!), /locked/i);
+    rmSync(lock, { force: true });
+    onDispatch = undefined;
+    assert.equal(dispatched, 2);
+    // (2) The retained quota hold is committed as a hold: no retry spent, the card waits for the hold, the command refuses meanwhile.
+    const hold = await runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-RT')!);
+    assert.equal(hold.classified.outcome, 'quota-hold');
+    assert.equal(dispatched, 2, 'no dispatch for the retained hold');
+    persisted = fx.store.getCardRun(goal.id, 'T1-RT')!;
+    const last = persisted.review.invocations.at(-1)!;
+    assert.equal(last.outcome, 'quota-hold');
+    assert.ok(last.holdUntil && Date.parse(last.holdUntil) > Date.parse(fx.now()), 'the hold is recorded with its end');
+    assert.equal(persisted.review.noVerdictRetriesUsed, 0, 'a hold spends no retry');
+    assert.equal(persisted.state, 'WAIT');
+    await assert.rejects(() => runner.formalReview(g(), card, persisted), /hold/);
+  } finally {
+    fx.cleanup();
+  }
+});
