@@ -851,7 +851,7 @@ test('R4: the pending conflict repair is persisted: a second next() before the r
   }
 });
 
-test('R4: a conflict on an episode that cannot admit another attempt stops the card instead of promising a BUILD', () => {
+test('R4: a conflict after the escalated success is repaired at the escalated effort; the review budget paid for the block', () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: 'T1-SPENT', title: 'two failures, then success, then a conflict' });
@@ -872,11 +872,10 @@ test('R4: a conflict on an episode that cannot admit another attempt stops the c
     if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'high', 'the fourth attempt is the single escalation');
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:4', candidateSha: 'sha-4' });
     r = runner.next(fx.goal(goal.id), card, run);
-    assert.equal(r.directive.kind, 'stop', `after the escalated attempt the episode cannot admit a repair: ${r.directive.narration}`);
-    if (r.directive.kind === 'stop') {
-      assert.equal(r.directive.stop.reason, 'card');
-      assert.match(r.directive.stop.detail, /merge conflict/i);
-    }
+    assert.equal(r.directive.kind, 'build', `the conflict repair is admitted at the escalated effort: ${r.directive.narration}`);
+    if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'high');
+    const run5 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:5', redReceipt: 'red:4', candidateSha: 'sha-5' });
+    assert.equal(run5.effort?.terminal, 'succeeded');
   } finally {
     fx.cleanup();
   }

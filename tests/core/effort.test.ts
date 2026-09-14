@@ -148,6 +148,22 @@ describe('effort episodes (MA2 / Q25)', () => {
     assert.equal(nextEffortAction(failing).action, 'stop', 'three DoD failures without progress still stop the episode');
   });
 
+  test('R10/R11: a review block on the escalated success admits the repair at the escalated effort, not escalation-failed', () => {
+    let ep = createEpisode('v', 'implementer', 'medium', GPT);
+    for (const cause of ['a', 'b', 'c']) {
+      ep = startAttempt(ep, 'medium', T0);
+      ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause, progress: true });
+    }
+    const up = nextEffortAction(ep, JUSTIFIED);
+    assert.equal(up.action, 'attempt');
+    if (up.action !== 'attempt') return;
+    ep = startAttempt(ep, up.effort, T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'success', progress: true });
+    ep = reopenAfterReviewBlock(ep, 'R3 block');
+    const repair = nextEffortAction(ep);
+    assert.deepEqual(repair, { action: 'attempt', effort: up.effort, n: 5, escalated: true });
+  });
+
   test('success terminates the episode as done', () => {
     let ep = createEpisode('t', 'implementer', 'medium', GPT);
     ep = startAttempt(ep, 'medium', T0);

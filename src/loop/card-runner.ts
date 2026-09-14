@@ -932,7 +932,8 @@ export class CardRunner {
           return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         }
         const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, redReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'red-missing', detail: result.detail, at: now, rejectedReceipt: run.redReceipt } });
-        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: undefined, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Establish the RED receipt again within scope and re-run the DoD.` } };
+        const repairEffort = inadmissible?.action === 'attempt' ? inadmissible.effort : (run.effort?.baseline ?? 'medium');
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: undefined, dodCommand: card.dod_command, effort: repairEffort, attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Establish the RED receipt again within scope and re-run the DoD.` } };
       }
       case 'auth-failed': {
         const stop = makeStop('auth', 'GitHub account/permission guard failed', 'run `gh auth login` for the configured personal account; never downgrade to local mode silently', { at: now });
@@ -971,7 +972,8 @@ export class CardRunner {
           }
           const detail = `merge conflict on the base sync (${result.detail})`;
           const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'merge-conflict', detail, at: now } });
-          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: ['merge-conflicts', ...this.buildSkills(goal, card)], narration: `Merge conflict on the base sync (${result.detail}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.` } };
+          const repairEffort = inadmissible?.action === 'attempt' ? inadmissible.effort : (run.effort?.baseline ?? 'medium');
+          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: repairEffort, attempt: (run.effort?.attempts.length ?? 0) + 1, skills: ['merge-conflicts', ...this.buildSkills(goal, card)], narration: `Merge conflict on the base sync (${result.detail}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.` } };
         }
         const stop = makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });

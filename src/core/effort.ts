@@ -67,6 +67,12 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   if (episode.attempts.some((a) => a.outcome === 'running')) {
     throw new Error('an attempt is still running; finish or reconcile it before deciding the next action');
   }
+  // A reopened episode (a review block on a success) admits the repair at the effort that succeeded, escalated or not:
+  // the review budget paid for the block, so the ladder position is unchanged.
+  const lastRun = episode.attempts[episode.attempts.length - 1];
+  if (lastRun?.outcome === 'success') {
+    return { action: 'attempt', effort: lastRun.effort, n: nextAttemptNumber(episode), escalated: lastRun.effort !== episode.baseline };
+  }
   const failures = countedFailures(episode);
   const last = failures[failures.length - 1];
   const prev = failures[failures.length - 2];
