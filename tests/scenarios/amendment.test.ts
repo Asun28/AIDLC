@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { driveCardToDone } from './_harness.ts';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 test('Q5: a requirement revision versions the same goal, maps superseded cards and returns to PLAN', () => {
   const fx = makeFixture();
@@ -90,6 +91,7 @@ test('R2/R3: a resume carries its revision so a stopped goal continues with the 
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'wrong card', text: 'x', replacements: { 'T1-ZZ': 'T1-A2' } } }), /outside the goal/, 'a replacement of a card the goal never had is refused');
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'inconsistent', text: 'x', cards: ['T1-A'], replacements: { 'T1-A': 'T1-A2' } } }), /listed/, 'a replacement absent from the listed cards is refused');
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'absent card', text: 'x', replacements: { 'T1-A': 'T1-MISSING' } } }), /registry/, 'a replacement the registry does not know is refused');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'both listed', text: 'x', cards: ['T1-A', 'T1-A2'], replacements: { 'T1-A': 'T1-A2' } } }), /still listed/, 'a replacement whose superseded card is still listed is refused');
     assert.equal(fx.events(goal.id).length, eventsBefore, 'no takeover event for a refused resume');
     assert.equal(fx.goal(goal.id).generation, 0);
     const plain = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'first look' } });
@@ -146,6 +148,8 @@ test('R2: a T2 goal resumed with a replacement card passes the plan checkpoint f
     const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'ruling', text: 'continue with the replacement card', replacements: { 'T1-A': 'T1-A2' } } });
     assert.equal(resumed.directive.kind, 'checkpoint', `revision 1 is not approved yet: ${resumed.directive.narration}`);
     assert.equal(fx.goal(goal.id).revision, 1);
+    const early = runner.next(fx.goal(goal.id), fx.card('T1-A2'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A2'));
+    assert.equal(early.directive.kind, 'wait', `no worker execution of the replacement before the checkpoint: ${early.directive.narration}`);
     fx.controller.report({ goalId: goal.id, generation: 1, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
     const after = fx.controller.next(goal.id);
     assert.equal(after.kind, 'run-card', after.narration);
@@ -180,6 +184,57 @@ test('R2: a resumed goal never reuses the delivered release of an earlier genera
       assert.notEqual(again.directive.attemptId, first);
       assert.equal(fx.store.getRelease(again.directive.attemptId)!.generation, 1);
     }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R2: a resume that retains a repair card added by arc-failed keeps a revision entry for it instead of refusing the continuation', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-B', title: 'b', allowPaths: ['src/b.ts'] });
+    writeCard(fx, { id: 'T1-FIX', title: 'repair the combined workflow', allowPaths: ['src/fix.ts'] });
+    writeCard(fx, { id: 'T1-FIX2', title: 'second repair', allowPaths: ['src/fix2.ts'] });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B'], { size: 'T1' });
+    for (const id of ['T1-A', 'T1-B']) driveCardToDone(fx, goal.id, id);
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-failed', data: { repairCards: ['T1-FIX'], detail: 'combined workflow broken' } });
+    assert.equal(fx.goal(goal.id).cardRevisions['T1-FIX'], undefined, 'the repair card was added without a revision entry');
+    const fix = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-FIX');
+    fx.store.saveCardRun({ ...fix, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'add a second repair', text: 'repair in two cards', cards: ['T1-A', 'T1-B', 'T1-FIX', 'T1-FIX2'] } });
+    const g = fx.goal(goal.id);
+    assert.equal(g.generation, 1);
+    assert.deepEqual(g.cards, ['T1-A', 'T1-B', 'T1-FIX', 'T1-FIX2']);
+    assert.equal(g.cardRevisions['T1-FIX'], 0, 'a retained card without an entry starts at revision 0');
+    assert.equal(g.cardRevisions['T1-FIX2'], 0);
+    assert.equal(g.cardRevisions['T1-A'], 0, 'closed cards keep their revision and evidence');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R2: a revision that leaves a listed card without its prerequisite is refused before anything is journaled', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    const bFile = writeCard(fx, { id: 'T1-B', title: 'b, after a', allowPaths: ['src/b.ts'] });
+    writeFileSync(bFile, readFileSync(bFile, 'utf8').replace('dod_exit: 0\n', 'dod_exit: 0\ndepends_on:\n  - T1-A\n'), 'utf8');
+    writeCard(fx, { id: 'T1-A2', title: 'a again, replacement', allowPaths: ['src/a.ts'] });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B'], { size: 'T1' });
+    assert.deepEqual(fx.card('T1-B').depends_on, ['T1-A']);
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A'));
+    r = runner.next(fx.goal(goal.id), fx.card('T1-A'), r.run);
+    fx.store.saveCardRun({ ...r.run, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    assert.equal(fx.controller.next(goal.id).kind, 'stop', 'b is blocked behind the stopped a');
+    const eventsBefore = fx.events(goal.id).length;
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'replace a', text: 'a again', replacements: { 'T1-A': 'T1-A2' } } }), /T1-B depends on T1-A/, 'the replacement leaves b without its prerequisite');
+    assert.equal(fx.events(goal.id).length, eventsBefore, 'a refused resume journals nothing');
+    assert.equal(fx.goal(goal.id).generation, 0);
   } finally {
     fx.cleanup();
   }

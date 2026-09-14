@@ -213,8 +213,13 @@ test('R1: a T2 goal extended after a time stop passes the plan checkpoint again 
     assert.equal(again.kind, 'checkpoint', `re-entry passes the projection checkpoint before any dispatch: ${again.narration}`);
     if (again.kind === 'checkpoint') assert.equal(again.approvalKind, 'plan-checkpoint');
     assert.equal(fx.goal(goal.id).state, 'CARDS');
+    // A worker calling the card before the approval is parked too: the goal in CARDS has not admitted its projection.
+    const early = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.store.getCardRun(goal.id, 'T1-A')!);
+    assert.equal(early.directive.kind, 'wait', `no worker execution before the checkpoint: ${early.directive.narration}`);
+    if (early.directive.kind === 'wait') assert.ok(early.directive.on.includes('CARDS'), early.directive.on);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
     const after = fx.controller.next(goal.id);
+    assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.store.getCardRun(goal.id, 'T1-A')!).directive.kind, 'build', 'after the approval the worker continues');
     assert.ok(after.kind === 'wait' || after.kind === 'run-card', `after the approval the re-admitted card continues: ${after.kind}`);
   } finally {
     fx.cleanup();

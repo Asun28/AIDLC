@@ -662,9 +662,17 @@ export class GoalController {
     const replacements = (d['replacements'] as Record<string, string> | undefined) ?? {};
     for (const old of Object.keys(replacements)) if (!goal.cards.includes(old)) throw new Error(`replacement of ${old}: the card is outside the goal (${goal.cards.join(', ')})`);
     const nextCards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : goal.cards.map((c) => replacements[c] ?? c);
+    for (const old of Object.keys(replacements)) if (nextCards.includes(old)) throw new Error(`replacement of ${old}: the superseded card is still listed; drop it from the cards or drop the replacement`);
     for (const [old, fresh] of Object.entries(replacements)) if (!nextCards.includes(fresh)) throw new Error(`replacement ${old} -> ${fresh}: ${fresh} is not among the listed cards (${nextCards.join(', ')})`);
     const registry = this.registryLoader();
     for (const id of nextCards) if (!registry.cards.some((c) => c.card.id === id)) throw new Error(`card ${id} is not in the registry; write its card before revising the projection`);
+    // The revised projection must be coherent: a listed card keeps every prerequisite it names, listed or already merged.
+    for (const id of nextCards) {
+      for (const dep of registry.cards.find((c) => c.card.id === id)!.card.depends_on) {
+        if (nextCards.includes(dep) || registry.cards.find((c) => c.card.id === dep)?.card.status === 'merged') continue;
+        throw new Error(`card ${id} depends on ${dep}, which the revision leaves out of the projection; keep ${dep}, or revise ${id} to depend on its replacement`);
+      }
+    }
     const mapping = mapRevision(goal.cards, nextCards, replacements);
     const revision = goal.revision + 1;
     const revised: Goal = {
@@ -672,7 +680,8 @@ export class GoalController {
       revision,
       revisions: [...goal.revisions, { revision, at: now, reason: String(d['reason'] ?? 'user amendment'), request: { ...prev.request, text }, supersededCards: mapping.supersededCards, removedCards: mapping.removedCards }],
       cards: nextCards,
-      cardRevisions: Object.fromEntries(nextCards.map((c) => [c, (goal.cardRevisions[c] ?? -1) + (mapping.retainedEvidenceFor.includes(c) ? 0 : 1)])),
+      // A retained card keeps its revision (a repair card added by arc-failed has none yet and starts at 0); a new or replacement card starts at 0.
+      cardRevisions: Object.fromEntries(nextCards.map((c) => [c, mapping.retainedEvidenceFor.includes(c) ? (goal.cardRevisions[c] ?? 0) : (goal.cardRevisions[c] ?? -1) + 1])),
     };
     // The complete revised goal is validated before any journal entry, so a refused revision leaves state and journal unchanged.
     return { goal: Goal.parse(revised), revision, mapping, text };
