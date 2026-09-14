@@ -14,10 +14,10 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfRound, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type BlockSelector, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type FindingStage, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
+import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -163,10 +163,17 @@ export class CardRunner {
    * new round or decision on the unchanged candidate receives new information. A block that recorded no
    * finding is never answered: the candidate must change.
    */
-  private blockAnswered(run: CardRun, round: { stage: FindingStage; cycle?: number; round: number }): { answered: boolean; open: string[] } {
-    if (!findingsOfRound(run.findings, round).length) return { answered: false, open: [] };
-    const { allowed, open } = rerunAllowed(run.findings, round);
+  private blockAnswered(run: CardRun, block: BlockSelector): { answered: boolean; open: string[] } {
+    if (!findingsOfBlock(run.findings, block).length) return { answered: false, open: [] };
+    const { allowed, open } = rerunAllowed(run.findings, block);
     return { answered: allowed, open };
+  }
+
+  /** Whether a recorded block invocation stops the ship: its own record, else (records written before the field) the run's last verdict. */
+  private invocationBlocking(run: CardRun, card: Card, invocation: { mergeBlocking?: boolean } | undefined): boolean {
+    if (!invocation) return false;
+    if (invocation.mergeBlocking !== undefined) return invocation.mergeBlocking;
+    return run.review.lastVerdict ? classifyVerdict(run.review.lastVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking : true;
   }
 
   /** The refusal text for a round or decision on a blocked, unchanged candidate. */
@@ -280,10 +287,10 @@ export class CardRunner {
       // candidate (new sha/digest after the fix) moves the card back through BUILD/SHIP, and so does a
       // block whose every finding the author disputed (the next decision runs on the unchanged candidate).
       reviewBlockPending: (() => {
-        const reviewedDigest = [...run.review.invocations].reverse().find((i) => i.outcome === 'block')?.candidateDigest;
-        const blocked = run.review.lastVerdict?.verdict === 'block' && classifyVerdict(run.review.lastVerdict, { tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking;
-        const answered = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions }).answered;
-        return Boolean(blocked && !reviewExhausted && reviewedDigest !== undefined && run.candidate?.digest === reviewedDigest && !answered);
+        const lastBlock = [...run.review.invocations].reverse().find((i) => i.outcome === 'block');
+        if (!lastBlock || reviewExhausted || run.candidate?.digest !== lastBlock.candidateDigest) return false;
+        const answered = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }).answered : false;
+        return this.invocationBlocking(run, card, lastBlock) && !answered;
       })(),
       reviewExhausted,
       buildIncomplete: !run.dodReceipt || (card.tdd && !run.redReceipt) || (run.candidate?.dirty ?? false),
@@ -324,7 +331,7 @@ export class CardRunner {
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
         const reasons = run.review.lastVerdict?.reasons ?? [];
-        const open = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions }).open;
+        const open = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }).open : [];
         const disputeHint = open.length ? ` Open finding(s): ${open.join(', ')}; a finding that does not hold is disputed with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
         return {
           run: next,
@@ -565,7 +572,8 @@ export class CardRunner {
       const residual = blocks[blocks.length - 1]?.reasons ?? [];
       const deadlock = describeDeadlock(run.findings);
       if (cfg.onExhausted === 'ship') {
-        this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual, deadlock: deadlock || undefined } });
+        const residualFindings = run.findings.filter((f) => f.stage === 'pre' && !f.resolvedAt).map((f) => f.id);
+        this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual, residualFindings, findings: [], reraised: [], resolved: [], deadlock: deadlock || undefined } });
         return undefined;
       }
       const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${residual.join(' | ') || 'see the retained verdicts'}${deadlock ? `; ${deadlock}` : ''}`, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`, { at: now, global: false });
@@ -620,15 +628,14 @@ export class CardRunner {
     let disputedNote = '';
     if (last?.outcome === 'block') {
       // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar.
-      const blocking = run.review.lastVerdict ? classifyVerdict(run.review.lastVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking : true;
-      if (!blocking) return undefined;
-      const answered = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions });
+      if (!this.invocationBlocking(run, card, last)) return undefined;
+      const answered = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }) : { answered: false, open: [] };
       if (!answered.answered) {
         const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined });
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
         return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}` } };
       }
-      disputedNote = ` Every finding of decision ${run.review.substantiveDecisions} is disputed; the decision runs on the unchanged candidate with the author's notes.`;
+      disputedNote = ` Every finding of the last decision on this candidate is disputed; the next decision runs on the unchanged candidate with the author's notes.`;
     }
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
       const next = this.save({ ...run, state: 'WAIT' });
@@ -677,9 +684,9 @@ export class CardRunner {
     }
     // Same-candidate rule: a blocked, unchanged candidate is re-decided only with every finding of the block disputed.
     const lastDecided = [...forCandidate].reverse().find((i) => i.outcome === 'pass' || i.outcome === 'block');
-    if (lastDecided?.outcome === 'block' && classifyVerdict(persisted.review.lastVerdict, { candidateSha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking) {
-      const answered = this.blockAnswered(persisted, { stage: 'formal', round: ledger.substantiveDecisions });
-      if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, `formal decision ${ledger.substantiveDecisions}`, answered.open));
+    if (lastDecided?.outcome === 'block' && this.invocationBlocking(persisted, card, lastDecided)) {
+      const answered = this.blockAnswered(persisted, { stage: 'formal', candidateSha });
+      if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, 'its last formal decision', answered.open));
     }
     if (ledger.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
       throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions}); ${lastForCandidate?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
@@ -767,7 +774,7 @@ export class CardRunner {
           : verdict;
       writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...canonical, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
     }
-    const rec = recordReviewOutcome(withoutReservation, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil }, classified, verdict);
+    const rec = recordReviewOutcome(withoutReservation, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking }, classified, verdict);
     // Findings: a merge-blocking block raises or re-raises them, a pass (an advisory block included) resolves the stage's open ones.
     const decidedOutcome = classified.outcome === 'block-defect' ? 'block' : classified.outcome === 'pass' || classified.outcome === 'block-advisory' || classified.outcome === 'routed-skip' ? 'pass' : 'no-verdict';
     const found = this.applyFindings(current, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha, at: after, outcome: decidedOutcome, reasons: decidedOutcome === 'block' ? classified.reasons : [] });
@@ -932,7 +939,7 @@ export class CardRunner {
     // Record a substantive decision only when a verdict exists or the ship outcome is review-related; a
     // merge without a readable verdict is noted as evidence, never counted as a decision or a retry.
     if (!sameArtifact && (verdictInfo.verdict || ['review-blocked', 'review-no-verdict'].includes(result.outcome))) {
-      const rec = recordReviewOutcome(review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now }, classified, verdictInfo.verdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - review.scriptCounter) : 0);
+      const rec = recordReviewOutcome(review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now, mergeBlocking: classified.mergeBlocking }, classified, verdictInfo.verdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - review.scriptCounter) : 0);
       review = rec.ledger;
       reviewDecision = rec.decision;
       // Findings of a ship-path decision: a merge-blocking block raises or re-raises them, a pass resolves the open ones.

@@ -345,22 +345,36 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
 /** The author withdraws a dispute: the finding returns to open; the note stays in the history. */
 export function acceptFinding(findings: ReviewFinding[], id: string): ReviewFinding[] {
   const f = findingOrThrow(findings, id);
+  if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to withdraw`);
   if (f.disposition !== 'disputed') throw new Error(`${f.id} is not disputed; nothing to withdraw`);
   return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'open' as const } : x));
 }
 
-/** The findings a round or decision raised or re-raised. */
+/** The findings a pre-review round raised or re-raised (rounds are numbered per cycle). */
 export function findingsOfRound(findings: ReviewFinding[], round: { stage: FindingStage; cycle?: number; round: number }): ReviewFinding[] {
   const inRound = (stage: FindingStage, cycle: number | undefined, n: number) => stage === round.stage && n === round.round && (stage === 'formal' || (cycle ?? 0) === (round.cycle ?? 0));
   return findings.filter((f) => inRound(f.stage, f.cycle, f.round) || f.reraised.some((r) => inRound(r.stage, r.cycle, r.round)));
+}
+
+/** The findings a stage raised or re-raised on one candidate; the formal stage is keyed this way, never by a run-wide decision counter. */
+export function findingsOfCandidate(findings: ReviewFinding[], stage: FindingStage, candidateSha: string): ReviewFinding[] {
+  return findings.filter((f) => (f.stage === stage && f.candidateSha === candidateSha) || f.reraised.some((r) => r.stage === stage && r.candidateSha === candidateSha));
+}
+
+/** A pre-review round (cycle + round) or the formal decisions on one candidate. */
+export type BlockSelector = { stage: 'pre'; cycle?: number; round: number } | { stage: 'formal'; candidateSha: string };
+
+/** The findings a block raised or re-raised, by selector. */
+export function findingsOfBlock(findings: ReviewFinding[], block: BlockSelector): ReviewFinding[] {
+  return block.stage === 'pre' ? findingsOfRound(findings, block) : findingsOfCandidate(findings, 'formal', block.candidateSha);
 }
 
 /**
  * Same-candidate rule: a candidate that a round blocked is re-reviewed unchanged only when every finding
  * of that block is disputed, so the reviewer receives new information and never the same snapshot twice.
  */
-export function rerunAllowed(findings: ReviewFinding[], round: { stage: FindingStage; cycle?: number; round: number }): { allowed: boolean; open: string[] } {
-  const open = findingsOfRound(findings, round)
+export function rerunAllowed(findings: ReviewFinding[], block: BlockSelector): { allowed: boolean; open: string[] } {
+  const open = findingsOfBlock(findings, block)
     .filter((f) => f.disposition !== 'disputed' && !f.resolvedAt)
     .map((f) => f.id);
   return { allowed: open.length === 0, open };

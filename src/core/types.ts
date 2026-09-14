@@ -252,6 +252,8 @@ export const ReviewInvocation = z.object({
   verdictRef: z.string().optional(),
   /** Quota hold reported by a command-run reviewer: no new decision before this time. */
   holdUntil: IsoTimestamp.optional(),
+  /** A block that stops the ship (required gate, or a Tier-S spec block); an advisory block proceeds. Absent on records written before it existed. */
+  mergeBlocking: z.boolean().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
