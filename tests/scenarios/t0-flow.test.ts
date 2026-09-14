@@ -1164,6 +1164,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(r.directive.kind, 'close', r.directive.narration);
     const exhausted = fx.events(goal.id).find((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true)!;
     assert.match(String(exhausted.data['deadlock']), /F1.*disputed twice.*re-raised twice/s);
+    assert.deepEqual({ findings: exhausted.data['findings'], reraised: exhausted.data['reraised'], resolved: exhausted.data['resolved'], residual: exhausted.data['residualFindings'] }, { findings: [], reraised: [], resolved: [], residual: ['F1'] }, 'the exhausted event carries the same id lists as a decision event plus the residual');
   } finally {
     fx.cleanup();
   }
@@ -1210,6 +1211,11 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     const decided = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)!;
     assert.deepEqual({ findings: decided.data['findings'], reraised: decided.data['reraised'] }, { findings: ['F1', 'F2'], reraised: [] });
     await assert.rejects(() => runner.formalReview(g(), card, f.run), /F1, F2.*dispute/s);
+    // The guard is keyed by the candidate's own decision, not by the run's last verdict: a later verdict of another kind changes nothing.
+    const staleVerdict = fx.store.saveCardRun(CardRun.parse({ ...f.run, review: { ...f.run.review, lastVerdict: { verdict: 'pass', reasons: [], sha: 'sha-other', run_status: 'success' } }, updatedAt: fx.now() }));
+    await assert.rejects(() => runner.formalReview(g(), card, staleVerdict), /F1, F2.*dispute/s);
+    assert.equal(runner.next(g(), card, staleVerdict).run.state, 'REVIEW_FIX', 'the block stays pending on the candidate it was recorded for');
+    fx.store.saveCardRun(CardRun.parse({ ...f.run, updatedAt: fx.now() }));
     r = runner.next(g(), card, f.run);
     assert.equal(r.directive.kind, 'build', 'the repair attempt opens');
     run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: 'sha-1' });

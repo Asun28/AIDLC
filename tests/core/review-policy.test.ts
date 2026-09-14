@@ -238,6 +238,10 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.throws(() => policy.acceptFinding(a, 'F1'), /not disputed/);
     const resolved = policy.recordFindings(a, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] }).findings;
     assert.throws(() => policy.disputeFinding(resolved, 'F1', 'late', LATER), /resolved/);
+    // dispute -> pass -> accept: a resolved finding is never reopened by a withdrawal (edge-cases finding, R2 round 3).
+    const disputedThenPassed = policy.recordFindings(policy.disputeFinding(f, 'F1', 'answer', LATER), { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] }).findings;
+    assert.equal(disputedThenPassed[0]?.resolvedAt, LATER);
+    assert.throws(() => policy.acceptFinding(disputedThenPassed, 'F1'), /resolved/);
   });
 
   test('rerunAllowed refuses an unchanged candidate while any finding of its last block is open and allows it once every one is disputed', () => {
@@ -250,7 +254,16 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     // A finding re-raised by a later round belongs to that round's block as well.
     f = raise(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one']);
     assert.deepEqual(policy.rerunAllowed(f, { stage: 'pre', cycle: 0, round: 2 }), { allowed: false, open: ['F1'] });
-    assert.deepEqual(policy.rerunAllowed(f, { stage: 'formal', round: 1 }), { allowed: true, open: [] }, 'a round that raised nothing has nothing open');
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'formal', candidateSha: 'sha-1' }), { allowed: true, open: [] }, 'a candidate with no formal finding has nothing open');
+    // Formal findings are keyed by the candidate they were raised or re-raised on, never by a run-wide counter.
+    let g = raise([], 1, ['[spec] 14 scope fidelity @ src/gate.ts:3: helper not in the acceptance list -> remove it'], 'formal');
+    assert.deepEqual(policy.findingsOfCandidate(g, 'formal', 'sha-1').map((x) => x.id), ['F1']);
+    assert.deepEqual(policy.findingsOfCandidate(g, 'formal', 'sha-2'), []);
+    assert.deepEqual(policy.rerunAllowed(g, { stage: 'formal', candidateSha: 'sha-1' }), { allowed: false, open: ['F1'] });
+    g = policy.disputeFinding(g, 'F1', 'acceptance 1 names it', LATER);
+    assert.deepEqual(policy.rerunAllowed(g, { stage: 'formal', candidateSha: 'sha-1' }), { allowed: true, open: [] });
+    g = policy.recordFindings(g, { stage: 'formal', round: 2, candidateSha: 'sha-1', at: LATER, outcome: 'block', reasons: ['[spec] 14 scope fidelity @ src/gate.ts:3: still there (re:F1) -> remove it'] }).findings;
+    assert.deepEqual(policy.rerunAllowed(g, { stage: 'formal', candidateSha: 'sha-1' }), { allowed: false, open: ['F1'] }, 'a re-raise on the candidate reopens it');
   });
 
   test('deadlockedFindings names a finding disputed twice and re-raised twice, a re-raise of an open finding is not non-acceptance, and a third dispute is refused', () => {
