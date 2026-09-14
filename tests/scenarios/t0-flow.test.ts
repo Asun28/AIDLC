@@ -1127,7 +1127,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     fx.store.getCardRun = (goalId: string, cardId: string) => {
       const value = realGet(goalId, cardId);
       reads += 1;
-      if (reads === 1 && value) fx.store.saveCardRun(CardRun.parse({ ...value, findings: value.findings.map((f) => (f.id === 'F1' ? { ...f, disputes: [...f.disputes, { at: fx.now(), note: 'a second window changed the note', afterReraises: 0 }] } : f)), updatedAt: fx.now() }));
+      if (reads === 1 && value) fx.store.saveCardRun(CardRun.parse({ ...value, findings: value.findings.map((f) => (f.id === 'F1' ? { ...f, disputes: f.disputes.map((d) => ({ ...d, note: `${d.note} (edited by a second window)` })) } : f)), updatedAt: fx.now() }));
       return value;
     };
     try {
@@ -1135,7 +1135,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     } finally {
       fx.store.getCardRun = realGet;
     }
-    assert.equal(run.findings.find((f) => f.id === 'F1')?.disputes.length, 2, 'the concurrent change to F1 survived the write of F2');
+    assert.match(run.findings.find((f) => f.id === 'F1')?.disputes.at(-1)?.note ?? '', /edited by a second window/, 'the concurrent change to F1 survived the write of F2');
     assert.equal(run.findings.find((f) => f.id === 'F2')?.disposition, 'disputed');
     assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').map((e) => e.data['finding']), ['F1', 'F2']);
 

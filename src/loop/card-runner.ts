@@ -239,30 +239,42 @@ export class CardRunner {
 
   /** The author disputes an open finding with a note; the next round or decision receives the note. */
   disputeFinding(goal: Goal, card: Card, run: CardRun, id: string, note: string): CardRun {
-    const current = this.currentForFindings(goal, card, run);
     const now = this.clock();
-    const findings = disputeFinding(current.findings, id, note, now);
-    this.journal(goal.id).append({ type: 'FINDING_DISPUTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), note: note.trim(), disputes: findings.find((f) => f.id === id.toUpperCase())?.disputes.length ?? 0 } });
-    return this.save({ ...current, findings });
+    const next = this.changeFinding(goal, card, run, id, (findings) => disputeFinding(findings, id, note, now));
+    this.journal(goal.id).append({ type: 'FINDING_DISPUTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), note: note.trim(), disputes: next.findings.find((f) => f.id === id.toUpperCase())?.disputes.length ?? 0 } });
+    return next;
   }
 
   /** The author withdraws a dispute: the finding is open again and the next round verifies it. */
   acceptFinding(goal: Goal, card: Card, run: CardRun, id: string): CardRun {
-    const current = this.currentForFindings(goal, card, run);
-    const findings = acceptFinding(current.findings, id);
+    const next = this.changeFinding(goal, card, run, id, (findings) => acceptFinding(findings, id));
     this.journal(goal.id).append({ type: 'FINDING_ACCEPTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase() } });
-    return this.save({ ...current, findings });
+    return next;
   }
 
   /**
-   * A disposition changes the persisted run, never the caller's snapshot: the current record is re-read, a
-   * stop saved meanwhile refuses, and the lease is fenced at the run's generation before the write.
+   * A disposition changes the persisted run, never the caller's snapshot: the current record is re-read
+   * (a stop saved meanwhile refuses), the lease is fenced at the run's generation, the change is computed,
+   * and the record is read once more right before the write; when another window changed the findings or
+   * the state meanwhile the change is recomputed on that record, so no disposition overwrites another.
+   * The store has no compare-and-set; this narrows the window to the atomic write itself.
    */
-  private currentForFindings(goal: Goal, card: Card, run: CardRun): CardRun {
-    const current = this.store.getCardRun(goal.id, card.id) ?? run;
-    this.guardFindingsMutation(current);
-    if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), this.clock());
-    return current;
+  private changeFinding(goal: Goal, card: Card, run: CardRun, id: string, change: (findings: ReviewFinding[]) => ReviewFinding[]): CardRun {
+    const version = (r: CardRun) => JSON.stringify({ findings: r.findings, state: r.state, stop: r.stop });
+    let current = this.store.getCardRun(goal.id, card.id) ?? run;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      this.guardFindingsMutation(current);
+      if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), this.clock());
+      const findings = change(current.findings);
+      const fresh = this.store.getCardRun(goal.id, card.id) ?? current;
+      if (version(fresh) !== version(current)) {
+        current = fresh;
+        continue;
+      }
+      const changed = findings.find((f) => f.id === id.toUpperCase());
+      return this.save({ ...fresh, findings: fresh.findings.map((f) => (changed && f.id === changed.id ? changed : f)) });
+    }
+    throw new Error(`the card run changed while the disposition of ${id} was being recorded; run the command again`);
   }
 
   /** Every finding of the run, in id order; readable on a stopped run too (the adjudicator reads it after a STOP). */
