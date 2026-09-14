@@ -280,10 +280,16 @@ test('verify-before-done acts as the hook event session: the event session_id, u
 test('verify-before-done lists only the cards of the acting session: two windows on one state directory', () => {
   const { cwd, env } = envWithState();
   const { leases, key } = buildRuns(cwd, env, ['T1-MINE', 'T1-THEIRS', 'T1-EXPIRED', 'T1-FREE', 'T1-RELEASED']);
-  leases.claim(key('T1-MINE'), { actor: windowActor('win-A') });
-  leases.claim(key('T1-THEIRS'), { actor: windowActor('win-B') });
-  // an expired lease still names its owner: expiry alone never proves the owner stopped
-  leases.claim(key('T1-EXPIRED'), { actor: windowActor('win-B'), now: '2026-09-15T00:00:00.000Z', ttlMs: 1000 });
+  // live leases: claimed at a fixed instant with a century of TTL, so no wall clock can expire them
+  const live = { now: '2026-09-15T00:00:00.000Z', ttlMs: 100 * 365 * 24 * 3600_000 };
+  leases.claim(key('T1-MINE'), { actor: windowActor('win-A'), ...live });
+  leases.claim(key('T1-THEIRS'), { actor: windowActor('win-B'), ...live });
+  // an expired lease (claimed two weeks before the fixed instant, one second of TTL) still names its
+  // owner: expiry alone never proves the owner stopped, so the guard must not treat it as absent
+  leases.claim(key('T1-EXPIRED'), { actor: windowActor('win-B'), now: '2026-09-01T00:00:00.000Z', ttlMs: 1000 });
+  assert.equal(leases.read(key('T1-EXPIRED'))?.expiresAt, '2026-09-01T00:00:01.000Z');
+  assert.ok(Date.parse(leases.read(key('T1-EXPIRED'))!.expiresAt) < Date.parse(live.now), 'the lease is expired at the fixed instant');
+  assert.ok(Date.parse(leases.read(key('T1-THEIRS'))!.expiresAt) > Date.parse(live.now), 'the live lease is not');
   // a released lease has no owner; a run with no lease record never had one
   leases.claim(key('T1-RELEASED'), { actor: windowActor('win-B') });
   leases.release(key('T1-RELEASED'), 0, windowActor('win-B'));
@@ -294,4 +300,18 @@ test('verify-before-done lists only the cards of the acting session: two windows
   // a third window owns nothing here and is asked only about the unowned runs
   const c = stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-C' }, { cwd, env }));
   assert.deepEqual(c.sort(), ['T1-FREE', 'T1-RELEASED']);
+});
+
+test('verify-before-done keeps listing runs when one card lease record cannot be read, and says which', () => {
+  const { cwd, env } = envWithState();
+  const { leases, key } = buildRuns(cwd, env, ['T1-MINE', 'T1-BROKEN', 'T1-FREE']);
+  leases.claim(key('T1-MINE'), { actor: windowActor('win-A'), now: '2026-09-15T00:00:00.000Z', ttlMs: 100 * 365 * 24 * 3600_000 });
+  writeFileSync(leases.file(key('T1-BROKEN')), '{not json', 'utf8');
+  const r = runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd, env });
+  // the run with the unreadable lease is listed for every session; the other runs are unaffected
+  assert.deepEqual(stopCards(r).sort(), ['T1-BROKEN', 'T1-FREE', 'T1-MINE']);
+  const ctx = (JSON.parse(r.stdout!) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
+  assert.match(ctx, /could not be read[^.]*T1-BROKEN/, ctx);
+  // another session is asked about the unreadable one and the free one, never about the card win-A owns
+  assert.deepEqual(stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-B' }, { cwd, env })).sort(), ['T1-BROKEN', 'T1-FREE']);
 });
