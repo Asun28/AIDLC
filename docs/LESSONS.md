@@ -10,4 +10,4 @@ file once per card.
 Format: `- YYYY-MM-DD <card or incident>: NEVER|ALWAYS|NOTE <rule> (source: <verdict, PR or incident ref>)`
 
 ## Lessons
-- (none yet)
+- 2026-09-14 T1-LOOP-SKILLS-2: NEVER let a review block spend a build attempt; the ladder counts DoD failures only and reviews keep their own rounds and decisions (source: PR #9 review history, two episodes ended escalation-failed with every finding fixed)

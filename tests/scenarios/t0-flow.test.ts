@@ -248,7 +248,8 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     assert.equal(round1.result.outcome, 'block');
     assert.equal(round1.run.state, 'BUILD');
     assert.equal(round1.run.dodReceipt, undefined, 'a block clears the DoD receipt');
-    assert.equal(round1.run.effort?.attempts.at(-1)?.outcome, 'fail', 'the blocked attempt becomes a counted failure');
+    assert.equal(round1.run.effort?.attempts.at(-1)?.outcome, 'success', 'the blocked attempt keeps its success; the review budget, not the ladder, paid for the block');
+    assert.equal(round1.run.effort?.terminal, undefined, 'the episode is reopened for the repair');
     assert.equal(round1.run.preReview.rounds.length, 1);
     assert.ok(round1.result.verdictRef && existsSync(round1.result.verdictRef), 'verdict retained next to the candidate');
 
@@ -861,13 +862,17 @@ test('R4: a conflict on an episode that cannot admit another attempt stops the c
     const card = fx.card('T1-SPENT');
     let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SPENT'));
     r = runner.next(fx.goal(goal.id), card, r.run);
-    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts' });
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts', progress: true });
     r = runner.next(fx.goal(goal.id), card, run);
-    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts' });
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts', progress: true });
     r = runner.next(fx.goal(goal.id), card, run);
-    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', redReceipt: 'red:3', candidateSha: 'sha-3' });
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'timeout in b.test.ts', progress: true });
     r = runner.next(fx.goal(goal.id), card, run);
-    assert.equal(r.directive.kind, 'stop', `the episode cannot admit a repair attempt: ${r.directive.narration}`);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'high', 'the fourth attempt is the single escalation');
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:4', candidateSha: 'sha-4' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', `after the escalated attempt the episode cannot admit a repair: ${r.directive.narration}`);
     if (r.directive.kind === 'stop') {
       assert.equal(r.directive.stop.reason, 'card');
       assert.match(r.directive.stop.detail, /merge conflict/i);

@@ -23,8 +23,23 @@ export function nextSupportedEffort(episode: EffortEpisode): EffortLevel | undef
   return episode.ladder[idx + 1];
 }
 
+/** Attempts that count toward the ladder: DoD failures only. A success ends the episode, and a review block reopens it without spending an attempt (reviews keep their own rounds and decisions). */
 export function countedAttempts(episode: EffortEpisode): Attempt[] {
-  return episode.attempts.filter((a) => a.outcome === 'success' || a.outcome === 'fail');
+  return episode.attempts.filter((a) => a.outcome === 'fail');
+}
+
+/** Sequence number of the next attempt: every attempt that ran, not-counted ones excluded. */
+function nextAttemptNumber(episode: EffortEpisode): number {
+  return episode.attempts.filter((a) => a.outcome !== 'not-counted').length + 1;
+}
+
+/** A review block (R2 or R3) reopens a succeeded episode: the blocked attempt keeps its success and its evidence notes the block; the repair is the next attempt at the same effort. */
+export function reopenAfterReviewBlock(episode: EffortEpisode, reason: string): EffortEpisode {
+  const idx = episode.attempts.length - 1;
+  const last = episode.attempts[idx];
+  if (!last || last.outcome !== 'success') return { ...episode, terminal: undefined };
+  const attempts = episode.attempts.map((a, i) => (i === idx ? { ...a, evidence: `${a.evidence ? `${a.evidence}; ` : ''}review block: ${reason}` } : a));
+  return { ...episode, attempts, terminal: undefined };
 }
 
 export function countedFailures(episode: EffortEpisode): Attempt[] {
@@ -59,8 +74,9 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
     return { action: 'stop', reason: 'same-cause-stop', detail: `two consecutive failures with cause "${normaliseCause(last.cause)}" and no verified progress` };
   }
   const counted = countedAttempts(episode).length;
+  const n = nextAttemptNumber(episode);
   if (counted < MAX_BASELINE_ATTEMPTS) {
-    return { action: 'attempt', effort: episode.baseline, n: counted + 1, escalated: false };
+    return { action: 'attempt', effort: episode.baseline, n, escalated: false };
   }
   if (episode.escalationUsed) {
     return { action: 'stop', reason: 'escalation-failed', detail: 'the single escalated attempt already failed; episode ends with evidence and next needed action' };
@@ -75,7 +91,7 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   if (!justification || !justification.harderProblem || !justification.limitsPermit) {
     return { action: 'stop', reason: 'exhausted', detail: 'escalation requires a diagnosed harder problem and remaining time/authority/quality allowance' };
   }
-  return { action: 'attempt', effort: next, n: counted + 1, escalated: true };
+  return { action: 'attempt', effort: next, n, escalated: true };
 }
 
 export function startAttempt(episode: EffortEpisode, effort: EffortLevel, startedAt: string): EffortEpisode {
