@@ -42,6 +42,7 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 - src/review/pre-review.ts
 - src/review/stats.ts (new)
 - src/loop/card-runner.ts
+- src/state/goal-store.ts
 - src/cli/main.ts
 - REVIEW.md
 - templates/REVIEW.md
@@ -49,6 +50,7 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 - templates/aidlc.config.json
 - .claude/skills/aidlc-loop/card-loop.md
 - templates/claude/skills/aidlc-loop/card-loop.md
+- tests/infra/goal-store.test.ts
 - tests/core/review-policy.test.ts
 - tests/core/types.test.ts
 - tests/surface/pre-review.test.ts
@@ -61,7 +63,7 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 - CHANGELOG.md
 
 ## Order of work
-1. T1-REVIEW-FINDINGS: finding records, re-raise references, dispositions and their CLI, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, deadlock naming.
+1. T1-REVIEW-FINDINGS, replaced by T1-REVIEW-FINDINGS-2 after two R3 decisions (same change, every finding repaired): finding records, re-raise references, dispositions and their CLI, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, deadlock naming, the dispatch snapshot, every card-run write under one lock.
 2. T1-REVIEW-INPUTS: truncation refused before dispatch, policy hash and rule-file note, delta section with `outsideDelta`, question and suggestion tags, R2 advisory notes into R3, REVIEW.md@3.
 3. T1-REVIEW-STATS: `summarizeReviews`, `aidlc review stats`, family totals.
 
@@ -69,8 +71,9 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-REVIEW-FINDINGS | MUST | findings with ids and dispositions; prompt carries them; unchanged candidate never re-reviewed without disputes; deadlock named | - | W1 | - |
-| T1-REVIEW-INPUTS | MUST | truncation refused; policy hash; delta with first-round misses; question and suggestion tags; REVIEW.md@3 | T1-REVIEW-FINDINGS | W2 | - |
+| T1-REVIEW-FINDINGS | MUST | findings with ids and dispositions; prompt carries them; unchanged candidate never re-reviewed without disputes; deadlock named (stopped after two R3 decisions; superseded by T1-REVIEW-FINDINGS-2) | - | W1 | - |
+| T1-REVIEW-FINDINGS-2 | MUST | the T1-REVIEW-FINDINGS change with every R3 finding repaired; rounds bound to the dispatched snapshot; every card-run write under the card-run lock | - | W1 | - |
+| T1-REVIEW-INPUTS | MUST | truncation refused; policy hash; delta with first-round misses; question and suggestion tags; REVIEW.md@3 | T1-REVIEW-FINDINGS-2 | W2 | - |
 | T1-REVIEW-STATS | MUST | `aidlc review stats` per card and family | T1-REVIEW-INPUTS | W3 | - |
 
 ## Risks
