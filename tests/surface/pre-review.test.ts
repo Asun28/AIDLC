@@ -36,6 +36,10 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED'), undefined, 'a truncated trailing document is malformed');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":[]}\n')?.verdict, 'block', 'the last complete document on the line decides');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} trailing note\n')?.verdict, 'pass', 'prose after the document on the same line is ignored');
+  // R3 decision 1 of T1-REVIEW-FINDINGS-3: a block cut before its final braces is malformed, never its last nested axis.
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],"axes":{"spec":{"verdict":"block","reasons":[]},"standards":{"verdict":"pass","reasons":[]}'), undefined, 'a nested axis never stands in for a truncated document');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: a { in a string -> keep"],"axes":{"spec":{"verdict":"block","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}')?.verdict, 'block', 'braces inside strings do not count');
+  assert.equal(extractVerdict('see {this} first: {"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"]}')?.verdict, 'block', 'balanced prose braces before the document are ignored');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {

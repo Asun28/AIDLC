@@ -481,3 +481,35 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: a ship-path decision persists its invo
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-3 R3 decision 1: a decision or a check failure recorded while the ship result is applied is kept: the ledger is not overwritten, the action follows it, and no receipt is recreated', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    const runner = fx.runner(new DryRunShipPath(['review-blocked', 'review-blocked'], BLOCK));
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    assert.throws(() => runner.recordAttempt(g(), card, run, { outcome: 'success', dodReceipt: 'dod:x', checksLost: ['tests/a.test.ts'] }), /lost checks|contradict/i, 'a success that lost checks is refused');
+    // While the ship result is applied, another window records a formal decision (a block) and a failed check on the same candidate.
+    let after: ReturnType<typeof runner.next> | undefined;
+    duringQueueCompletion(fx, () => {
+      fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, dodReceipt: undefined, blockedReceipt: undefined, review: { ...current!.review, substantiveDecisions: current!.review.substantiveDecisions + 1, substantiveBlocks: current!.review.substantiveBlocks + 1, invocations: [...current!.review.invocations, { invocationId: 'r3:other', candidateDigest: candidateShaFor('T1-HELLO'), candidateSha: candidateShaFor('T1-HELLO'), base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'codex', requestedAt: fx.now(), outcome: 'block' as const, runStatus: 'success' as const, mergeBlocking: true }] } }));
+    }, () => {
+      after = runner.next(g(), card, run);
+    });
+    const persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.ok(persisted.review.invocations.some((i) => i.invocationId === 'r3:other'), 'the decision recorded meanwhile survives the ship write');
+    const blocks = persisted.review.invocations.filter((i) => i.outcome === 'block').length;
+    assert.equal(blocks, 2);
+    assert.equal(persisted.review.substantiveBlocks, 2, 'the counters count both decisions');
+    assert.equal(persisted.state, 'STOP', 'two blocks stop the card whichever completed first');
+    assert.equal(after!.directive.kind, 'stop');
+    assert.equal(persisted.blockedReceipt, undefined, 'a receipt cleared by the failed check meanwhile is not recreated from the pre-ship snapshot');
+  } finally {
+    fx.cleanup();
+  }
+});
