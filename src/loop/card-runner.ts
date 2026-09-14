@@ -822,8 +822,6 @@ export class CardRunner {
     const reviewDir = path.join(cwd, '.review');
     const schema = materialiseVerdictSchema(reviewDir);
     const reviewPolicy = this.reviewPolicy();
-    const priorFindings = this.priorFindingsFor(persisted);
-    const seen = this.findingsSnapshot(persisted);
     const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
     // Deterministic scope gate (dimension 1): no model call, no decision consumed.
@@ -842,7 +840,18 @@ export class CardRunner {
     const fileStem = `${card.id}.r3.${n}.${randomUUID().slice(0, 8)}`;
     const invocationId = `r3:${fileStem}`;
     const reservation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending' as const };
-    this.save({ ...persisted, review: { ...ledger, invocations: [...ledger.invocations, reservation] } });
+    // The reservation is written under the card-run lock, and the prior findings and the snapshot the reviewer
+    // receives are read from that same locked record.
+    let priorFindings: PriorFinding[] = [];
+    let seen: Record<string, FindingSnapshot> = {};
+    this.store.updateCardRun(goal.id, card.id, (locked) => {
+      const current = locked ?? persisted;
+      if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run`);
+      if (current.review.invocations.some((i) => i.outcome === 'pending' && i.candidateDigest === candidateDigest)) throw new Error('a formal review of this candidate is already pending; join it, do not dispatch another');
+      priorFindings = this.priorFindingsFor(current);
+      seen = this.findingsSnapshot(current);
+      return { ...current, review: { ...current.review, invocations: [...current.review.invocations, reservation] } };
+    });
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
     const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round: ledger.substantiveDecisions + 1, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
     let panel: PanelResult;
@@ -980,6 +989,9 @@ export class CardRunner {
     if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
       throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
     }
+    // The rounds cap holds whatever the dispositions: exhausted rounds are decided by the gate (STOP, or the hand-off to R3).
+    const blocksSoFar = rounds.filter((r) => r.outcome === 'block').length;
+    if (blocksSoFar >= cfg.rounds) throw new Error(`the pre-review rounds of cycle ${cycle} are exhausted (${blocksSoFar}/${cfg.rounds} blocks); run \`aidlc card next ${card.id}\`: the gate stops the card or hands the residual findings to R3, it never dispatches another round`);
     // Same-candidate rule, keyed by the committed sha: a pass stays valid; a block is re-reviewed unchanged only with every finding disputed.
     const lastDecided = [...forCandidate].reverse().find((r) => r.outcome === 'pass' || r.outcome === 'block');
     if (lastDecided?.outcome === 'pass') throw new Error(`candidate ${candidateSha.slice(0, 12)} already holds a pre-review pass (round ${lastDecided.round} of cycle ${lastDecided.cycle}); run \`aidlc card next ${card.id}\` instead of another round`);
@@ -989,8 +1001,6 @@ export class CardRunner {
     }
     const round = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + 1;
     const reviewPolicy = this.reviewPolicy();
-    const priorFindings = this.priorFindingsFor(persisted);
-    const seen = this.findingsSnapshot(persisted);
     const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
     // Retention names carry the attempt number for this candidate and a nonce, so a retried or overlapping round never
@@ -998,12 +1008,17 @@ export class CardRunner {
     const attemptNo = forCandidate.length + 1;
     const fileStem = `${card.id}.pre.${cycle}.${round}.${attemptNo}.${randomUUID().slice(0, 8)}`;
     const reviewDir = path.join(cwd, '.review');
-    // Reserve the round under the card-run lock before dispatch: a second dispatch sees the pending record.
+    // Reserve the round under the card-run lock before dispatch: a second dispatch sees the pending record, and the
+    // prior findings and the snapshot the reviewer receives are read from that same locked record.
     const reservation: PreReviewRound = { round, cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem };
+    let priorFindings: PriorFinding[] = [];
+    let seen: Record<string, FindingSnapshot> = {};
     this.store.updateCardRun(goal.id, card.id, (locked) => {
       const current = locked ?? persisted;
       if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run`);
       if (current.preReview.rounds.some((r) => r.outcome === 'pending' && r.candidateDigest === candidateDigest)) throw new Error('a pre-review round of this candidate is in flight; wait for it, do not dispatch another');
+      priorFindings = this.priorFindingsFor(current);
+      seen = this.findingsSnapshot(current);
       return { ...current, preReview: { ...current.preReview, rounds: [...current.preReview.rounds, reservation] } };
     });
     const dropReservation = () => this.store.updateCardRun(goal.id, card.id, (locked) => ({ ...(locked ?? persisted), preReview: { ...(locked ?? persisted).preReview, rounds: (locked ?? persisted).preReview.rounds.filter((r) => r.reservationId !== fileStem) } }));
