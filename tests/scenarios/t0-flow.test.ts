@@ -1137,11 +1137,15 @@ test('R6: closure.lessons is never set by a raw card patch, a stale goal snapsho
     const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-GUARD') });
     r = runner.next(fx.goal(goal.id), card, built);
     assert.equal(r.directive.kind, 'close');
-    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { closure: { ...r.run.closure, lessons: true } } }), /never by a raw patch/);
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { closure: { ...r.run.closure, lessons: true } } }), /raw patch/);
+    const five = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true };
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { state: 'DONE', closure: five } }), /raw patch/, 'a closure without the lesson key never reaches the legacy rule');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { state: 'DONE' } }), /raw patch/, 'DONE is derived, never patched');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.state, 'CLOSE');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.closure.lessons, false, 'the raw patch path never sets the predicate');
     const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
     mkdirSync(path.dirname(lessonsFile), { recursive: true });
-    writeFileSync(`${lessonsFile}.lock`, 'held by another closer', 'utf8');
+    writeFileSync(`${lessonsFile}.lock`, `${process.pid} another-closer`, 'utf8');
     assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NOTE guard the closure write (source: R3)' }), /holds/);
     assert.equal(existsSync(lessonsFile), false, 'nothing is written while another closer holds the lock');
     const past = new Date('2020-01-01T00:00:00.000Z');

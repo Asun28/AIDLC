@@ -535,11 +535,11 @@ export const PrInfo = z.object({
 });
 export type PrInfo = z.infer<typeof PrInfo>;
 
-/** A run persisted as DONE before the lessons predicate existed stays DONE: its closure was complete under the rules of its time. */
+/** A run persisted as DONE with its merge verified before the lessons predicate existed stays DONE: its closure was complete under the rules of its time. A raw patch cannot reach this rule (the controller refuses closure and DONE patches). */
 function legacyClosure(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw;
-  const record = raw as { state?: unknown; closure?: unknown };
-  if (record.state !== 'DONE' || !record.closure || typeof record.closure !== 'object') return raw;
+  const record = raw as { state?: unknown; mergeVerified?: unknown; closure?: unknown };
+  if (record.state !== 'DONE' || record.mergeVerified !== true || !record.closure || typeof record.closure !== 'object') return raw;
   const closure = record.closure as Record<string, unknown>;
   if (closure['lessons'] !== undefined) return raw;
   return { ...record, closure: { ...closure, lessons: true } };

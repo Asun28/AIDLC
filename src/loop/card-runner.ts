@@ -1081,7 +1081,7 @@ export class CardRunner {
     if (liveGoal.terminal) throw new Error(`goal ${goal.id} is terminal (${liveGoal.state}); closure cannot change`);
     if (liveGoal.generation !== goal.generation) throw new Error(`goal ${goal.id} is at generation ${liveGoal.generation}, the caller holds ${goal.generation}; reload the goal before closing`);
     const file = this.lessonsFile();
-    return withLessonsLock(file, () => {
+    return withLessonsLock(file, (assertHeld) => {
       const current = this.store.getCardRun(goal.id, card.id) ?? run;
       if (current.state !== 'CLOSE') throw new Error(`card ${card.id} is ${current.state}; closure flags apply to a CLOSE run with its merge verified`);
       if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
@@ -1101,6 +1101,7 @@ export class CardRunner {
           const line = pending ?? formatLesson(entry);
           if (!hasLesson(file, line)) {
             if (!pending) this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
+            assertHeld();
             appendLesson(file, parseLessonLine(line) ?? entry);
           }
           data['lesson'] = line;
@@ -1108,6 +1109,7 @@ export class CardRunner {
         else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
       }
       const closure = { ...current.closure, ...flags };
+      assertHeld();
       this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
       return this.save({ ...current, closure });
     });

@@ -6,6 +6,7 @@
  * lesson is one literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 export const LESSONS_FILE = 'docs/LESSONS.md';
@@ -127,43 +128,71 @@ export function readLessons(file: string, recent = 5): LessonsContext {
   return { file, count: lines.length, recent: lines.slice(-recent) };
 }
 
+/** Whether the process that wrote a lock is still alive on this host; a dead holder never blocks a closer. */
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+function readLock(lock: string): { pid: number; token: string; ageMs: number } | undefined {
+  try {
+    const [pid, token] = readFileSync(lock, 'utf8').trim().split(' ');
+    return { pid: Number(pid), token: token ?? '', ageMs: Date.now() - statSync(lock).mtimeMs };
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * One closer at a time: an exclusive lock file next to the lessons file guards the lookup, the append and the
- * record of a disposition. A lock older than `staleMs` (a closer that died) is taken over; a live one refuses,
- * and the caller retries. The lock is released after the work, whether it returned or threw.
+ * One closer at a time: an exclusive lock file next to the lessons file guards the lookup, the append and the record
+ * of a disposition. The lock carries the holder process and a token; it is taken over only when its holder is no
+ * longer running or the lock is older than `staleMs` (a holder that hung for that long). A live holder refuses and the
+ * caller retries. The work receives `assertHeld`, which throws once the lock changed hands, so an evicted closer never
+ * writes; on release only a lock still carrying this token is removed, never the next owner's.
  */
-export function withLessonsLock<T>(file: string, work: () => T, staleMs = 60_000): T {
+export function withLessonsLock<T>(file: string, work: (assertHeld: () => void) => T, staleMs = 10 * 60_000): T {
   const lock = `${file}.lock`;
   mkdirSync(path.dirname(file), { recursive: true });
+  const token = randomUUID();
   for (let attempt = 0; attempt < 2; attempt += 1) {
     let fd: number | undefined;
     try {
       fd = openSync(lock, 'wx');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-      const age = Date.now() - statSync(lock).mtimeMs;
-      if (age > staleMs) {
-        try {
-          unlinkSync(lock);
-        } catch {
-          /* another closer took it over first */
-        }
-        continue;
+      const held = readLock(lock);
+      if (held && processAlive(held.pid) && held.ageMs <= staleMs) {
+        throw new Error(`another closer holds ${lock} (process ${held.pid}); retry once it is released`);
       }
-      throw new Error(`another closer holds ${lock}; retry once it is released (a lock older than ${staleMs} ms is taken over)`);
-    }
-    try {
-      writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
-    } finally {
-      closeSync(fd);
-    }
-    try {
-      return work();
-    } finally {
       try {
         unlinkSync(lock);
       } catch {
-        /* already gone */
+        /* another closer took it over first */
+      }
+      continue;
+    }
+    try {
+      writeSync(fd, `${process.pid} ${token}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    const assertHeld = () => {
+      if (readLock(lock)?.token !== token) throw new Error(`the lessons lock ${lock} changed hands; nothing was written`);
+    };
+    try {
+      return work(assertHeld);
+    } finally {
+      if (readLock(lock)?.token === token) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* already gone */
+        }
       }
     }
   }
