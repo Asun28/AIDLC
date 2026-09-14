@@ -2045,3 +2045,53 @@ test('R6: a replacement session reclaims the card lease in CLOSE once the old le
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-2 R2 cycle 1 round 2: a candidate recorded between the first read and the reservation refuses the round and the decision; nothing is reserved for the replaced candidate', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-mv.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-mv.ts b/src/t1-mv.ts\n+export const mv = 1;\n' },
+      'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
+      'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-MV');
+    const { card, g, goal } = s;
+    /** Between the command's first read and its reservation the author records a new candidate in another window. */
+    const replacedAfterFirstRead = async (sha: string, body: () => Promise<unknown>) => {
+      const realGet = fx.store.getCardRun.bind(fx.store);
+      let reads = 0;
+      fx.store.getCardRun = (goalId: string, cardId: string) => {
+        const value = realGet(goalId, cardId);
+        reads += 1;
+        if (reads === 1 && value) fx.store.saveCardRun(CardRun.parse({ ...value, candidate: { sha, dirty: false, untracked: [], digest: sha }, dodReceipt: `dod:${sha}`, updatedAt: fx.now() }));
+        return value;
+      };
+      try {
+        await body();
+      } finally {
+        fx.store.getCardRun = realGet;
+      }
+    };
+    await replacedAfterFirstRead('sha-2', () => assert.rejects(() => runner.preReview(g(), card, s.run), /candidate.*changed|changed since/i));
+    let persisted = fx.store.getCardRun(goal.id, 'T1-MV')!;
+    assert.equal(persisted.candidate?.sha, 'sha-2');
+    assert.equal(persisted.preReview.rounds.length, 0, 'no round is reserved for either candidate');
+    assert.equal(dispatched, 0);
+    // The round then runs on the current candidate and passes; the formal stage has the same guard.
+    const passed = await runner.preReview(g(), card, persisted);
+    assert.equal(passed.result.outcome, 'pass');
+    assert.equal(passed.round.candidateSha, 'sha-2');
+    const before = dispatched;
+    await replacedAfterFirstRead('sha-3', () => assert.rejects(() => runner.formalReview(g(), card, passed.run), /candidate.*changed|changed since/i));
+    persisted = fx.store.getCardRun(goal.id, 'T1-MV')!;
+    assert.equal(persisted.candidate?.sha, 'sha-3');
+    assert.equal(persisted.review.invocations.length, 0, 'no decision is reserved for either candidate');
+    assert.equal(dispatched, before);
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the refused reservation released its pool slot');
+  } finally {
+    fx.cleanup();
+  }
+});
