@@ -250,7 +250,7 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
   it('saveCardRun refuses a snapshot that lacks, regresses or un-decides a persisted ledger entry, so controller writers are covered too', () => {
     const store = new GoalStore(paths);
     const base = store.saveCardRun(makeCardRun('goal-s', 'T1-S'));
-    const withPending = store.saveCardRun({ ...base, preReview: { ...base.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd', requestedAt: iso(0), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] } });
+    const withPending = store.updateCardRun('goal-s', 'T1-S', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd', requestedAt: iso(0), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] } }));
     assert.throws(() => store.saveCardRun(base), /changed since it was read/i, 'a snapshot without the reservation is refused');
     const decided = store.saveCardRun({ ...withPending, preReview: { ...withPending.preReview, rounds: [{ ...withPending.preReview.rounds[0]!, outcome: 'block', reasons: ['[spec] 6 tests @ src/s.ts:1: no RED -> add one'] }] } });
     assert.throws(() => store.saveCardRun(withPending), /changed since it was read/i, 'a snapshot that would turn the decided round back into pending is refused');

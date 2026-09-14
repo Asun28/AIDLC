@@ -460,8 +460,10 @@ export interface LedgerView {
 /**
  * Why a write computed from an earlier read of the run is stale: the persisted ledgers carry an entry the writer's
  * copy lacks, an entry the writer still holds as pending that was decided meanwhile (a reservation and its decision
- * share one id), or a decision counter the write would regress. The writer re-runs its command on the current record
- * instead of dropping, undoing or overwriting the entry.
+ * share one id), a pending entry the writer holds that the persisted ledgers no longer carry (a reservation released
+ * or abandoned meanwhile; a reservation is only ever created by the reservation transaction, never by a snapshot
+ * write), or a decision counter the write would regress. The writer re-runs its command on the current record instead
+ * of dropping, undoing, resurrecting or overwriting the entry.
  */
 export function staleLedger(persisted: LedgerView, mine: LedgerView): string | undefined {
   const roundKeyOf = (r: LedgerView['preReview']['rounds'][number]) => r.reservationId ?? `${r.cycle}:${r.round}:${r.requestedAt}`;
@@ -477,6 +479,10 @@ export function staleLedger(persisted: LedgerView, mine: LedgerView): string | u
   }
   const handoff = persisted.preReview.handoffs.find((h) => !mine.preReview.handoffs.some((m) => m.cycle === h.cycle && m.candidateDigest === h.candidateDigest));
   if (handoff) return `residual hand-off of cycle ${handoff.cycle}`;
+  const phantomInvocation = mine.review.invocations.find((m) => m.outcome === 'pending' && !persisted.review.invocations.some((i) => i.invocationId === m.invocationId));
+  if (phantomInvocation) return `the release of review invocation ${phantomInvocation.invocationId}`;
+  const phantomRound = mine.preReview.rounds.find((m) => m.outcome === 'pending' && !persisted.preReview.rounds.some((r) => roundKeyOf(r) === roundKeyOf(m)));
+  if (phantomRound) return `the release of pre-review round ${phantomRound.cycle}/${phantomRound.round} (${roundKeyOf(phantomRound)})`;
   for (const counter of ['substantiveDecisions', 'substantiveBlocks', 'noVerdictRetriesUsed'] as const) {
     if (mine.review[counter] < persisted.review[counter]) return `review counter ${counter} (${persisted.review[counter]})`;
   }

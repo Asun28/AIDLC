@@ -399,14 +399,15 @@ export class CardRunner {
     // lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
     // that case still fails the fence in ship(). A stop caused only by the owner's own expiry is
     // revalidated by the renewal.
+    let revalidatedStop = false;
     if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) {
       const wasExpired = Date.parse(lease.expiresAt) < Date.parse(now);
       const renewal = this.leases.claim(key, { operation: lease.operation, now });
       if (renewal.status === 'renewed') {
         lease = renewal.lease;
-        const revalidated = run.stop?.reason === 'ownership';
-        if (wasExpired || revalidated) this.journal(goal.id).append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated } });
-        if (revalidated) run = { ...run, stop: undefined, blocker: undefined };
+        revalidatedStop = run.stop?.reason === 'ownership';
+        if (wasExpired || revalidatedStop) this.journal(goal.id).append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
+        if (revalidatedStop) run = { ...run, stop: undefined, blocker: undefined };
       }
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
@@ -455,6 +456,9 @@ export class CardRunner {
     };
     const decision = selectCardState(evidence);
     let next: CardRun = { ...run, state: decision.state, stop: decision.stop ?? run.stop, blocker: decision.state === 'STOP' ? decision.reason : undefined };
+    // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
+    // reads the record as persisted and must not find the stop it cleared.
+    if (revalidatedStop) next = this.save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
 
     switch (decision.state) {
@@ -1290,6 +1294,15 @@ export class CardRunner {
       reviewDecision = rec ? rec.decision : standing ? (standing.outcome === 'block' && classified.mergeBlocking ? ({ action: review.substantiveBlocks >= 2 ? 'stop-review' : 'review-fix', remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - review.substantiveDecisions), detail: 'second substantive block' } as LedgerDecision) : { action: 'proceed-merge' }) : undefined;
       if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved } });
     }
+    // The outcome is applied to the record as persisted now, never to the snapshot the ship was issued from: a dispute or
+    // a decision recorded during the ship survives, and a candidate recorded meanwhile (a new attempt during a long ship)
+    // is never overwritten by the shipped candidate's outcome. That outcome is then history: the decision, the findings,
+    // the evidence and the operation result are kept for the shipped candidate and the run is left where the newer
+    // candidate put it.
+    const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    const superseded = (persisted.candidate?.digest ?? 'unknown') !== candidateDigest;
+    const stoppedMeanwhile = Boolean(persisted.stop) || persisted.state === 'STOP';
+    if (!superseded && !stoppedMeanwhile) run = persisted;
     if (classified.outcome === 'quota-hold') {
       this.queue.hold(reviewKey, new Date(Date.parse(now) + 15 * 60 * 1000).toISOString(), 'reviewer reported rate limit/quota', now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
@@ -1298,7 +1311,24 @@ export class CardRunner {
     } else {
       this.queue.complete(reviewKey, verdictInfo.file ?? 'no-verdict', now);
     }
-    const evidence = [...run.evidence, { id: `ship-${operationId}`, kind: 'artifact' as const, createdAt: now, candidateDigest, note: `ship ${result.outcome}: ${result.sentinels.join(' ')}`.slice(0, 500) }];
+    const evidenceEntry = { id: `ship-${operationId}`, kind: 'artifact' as const, createdAt: now, candidateDigest, note: `ship ${result.outcome}: ${result.sentinels.join(' ')}`.slice(0, 500) };
+    const evidence = [...run.evidence, evidenceEntry];
+    if (superseded || stoppedMeanwhile) {
+      // History only: the candidate changed or the run was stopped while the ship was in flight. The decision, the
+      // findings, the evidence and the operation result stay with the shipped candidate; the run is left as it is.
+      const newer = persisted.candidate?.digest?.slice(0, 12) ?? 'none';
+      const why = superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${newer}` : `the card run was stopped (${persisted.stop?.reason ?? 'STOP'})`;
+      const status = result.outcome === 'merged' ? 'UNKNOWN' : 'failed';
+      this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
+      this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status, outcome: result.outcome, superseded, stoppedMeanwhile } });
+      const kept = this.store.updateCardRun(goal.id, card.id, (current) => ({ ...(current ?? persisted), evidence: [...(current ?? persisted).evidence, evidenceEntry] }));
+      const merged = status === 'UNKNOWN' ? ', and its merge is an unresolved operation to reconcile' : '';
+      if (stoppedMeanwhile) {
+        const stop = kept.stop ?? makeStop('card', `stopped while the ship was in flight; the ship result (${result.outcome}) is history${merged}`, 'inspect the card run record', { at: now, global: false });
+        return { run: kept, directive: { kind: 'stop', cardId: card.id, stop, narration: `${stop.detail}. The ship result (${result.outcome}) is recorded as history for candidate ${candidateDigest.slice(0, 12)}${merged}.` } };
+      }
+      return { run: kept, directive: { kind: 'wait', cardId: card.id, on: 'candidate-changed', pollSeconds: 0, narration: `The candidate changed while the ship was in flight (${candidateDigest.slice(0, 12)} shipped, ${newer} recorded meanwhile): the ship result (${result.outcome}) is recorded as history for the shipped candidate${merged}; run \`aidlc card next ${card.id}\` for the current candidate.` } };
+    }
 
     if (result.outcome === 'merged') {
       const token = this.shipPath.readMergeToken(card.id);

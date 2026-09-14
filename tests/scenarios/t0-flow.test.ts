@@ -371,7 +371,8 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
 
     // ... unless the policy hands the residual findings to R3.
     const lenient = mk(1, 'ship');
-    r = lenient.next(fx.goal(goal.id), card, { ...run, state: 'SHIP', stop: undefined });
+    // The resumed state is persisted: a ship reads the record as persisted, and a stop saved there wins over the caller's copy.
+    r = lenient.next(fx.goal(goal.id), card, fx.store.saveCardRun(CardRun.parse({ ...run, state: 'SHIP', stop: undefined, updatedAt: fx.now() })));
     assert.equal(r.directive.kind, 'close', r.directive.narration);
   } finally {
     fx.cleanup();
@@ -1198,7 +1199,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(r.run.blockedReceipt, undefined, 'the retained receipt is consumed on restoration');
     assert.match(r.directive.narration, /disputed/);
     // A round in flight parks the gate; the command refuses a second dispatch; an abandoned round (older than the timeout and the grace) is dropped.
-    const pending = fx.store.saveCardRun(CardRun.parse({ ...r.run, preReview: { ...r.run.preReview, rounds: [...r.run.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), outcome: 'pending' }] }, updatedAt: fx.now() }));
+    const pending = fx.store.updateCardRun(goal.id, 'T1-FIND', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [...current!.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [] }] } }));
     const parked = runner.next(g(), card, pending);
     assert.equal(parked.directive.kind, 'wait', parked.directive.narration);
     if (parked.directive.kind === 'wait') assert.match(parked.directive.on, /pre-review/);
@@ -1594,7 +1595,7 @@ test('T1-REVIEW-FINDINGS-2 acceptance 7: a write computed from a stale read neve
     assert.equal(r.directive.kind, 'pre-review');
     // Another window reserves a round; this window still holds the earlier snapshot.
     const stale = r.run;
-    fx.store.saveCardRun(CardRun.parse({ ...stale, preReview: { ...stale.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] }, updatedAt: fx.now() }));
+    fx.store.updateCardRun(goal.id, 'T1-STALE', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] } }));
     assert.throws(() => runner.next(g(), card, stale), /changed|re-run|run the command again/i, 'the stale write is refused instead of dropping the reservation');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds.length, 1, 'the reservation survives');
     // A stale write that lacks a decided round is refused the same way.

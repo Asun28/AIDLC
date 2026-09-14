@@ -95,7 +95,7 @@ export class GoalStore {
     const lock = `${file}.lock`;
     const owner = `pid=${process.pid} at=${nowIso()} nonce=${Math.random().toString(36).slice(2, 10)}`;
     const deadline = Date.now() + this.lockTimeoutMs;
-    const locked = () => new StoreError('CARD_RUN_LOCKED', file, `card run ${goalId}/${cardId} is locked by another writer (${readLockOwner(lock)}); run the command again`);
+    const locked = () => new StoreError('CARD_RUN_LOCKED', file, `card run ${goalId}/${cardId} is locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);
     for (let attempt = 0; ; attempt += 1) {
       if (attempt > 0 && Date.now() >= deadline) throw locked();
       if (createExclusive(lock, owner)) break;
@@ -106,7 +106,7 @@ export class GoalStore {
     try {
       const next = CardRun.parse({ ...change(readJson(file, CardRun)), updatedAt: nowIso() });
       // Fencing: the lock must still be this writer's right before the write.
-      if (readLockOwner(lock) !== owner) throw new StoreError('CARD_RUN_LOCK_LOST', file, `card run ${goalId}/${cardId}: the lock changed hands during the update (${readLockOwner(lock)}); nothing written, run the command again`);
+      if (readLockOwner(lock) !== owner) throw new StoreError('CARD_RUN_LOCK_LOST', file, `card run ${goalId}/${cardId}: the lock changed hands during the update (${readLockOwner(lock) ?? 'lock gone'}); nothing written, run the command again`);
       atomicWriteJson(file, next);
       return next;
     } finally {
@@ -201,7 +201,7 @@ function ageMs(file: string): number | undefined {
 
 /** Whether the process a lock file names is still running (a process this one may not signal counts as running). */
 function ownerAlive(lock: string): boolean {
-  const pid = Number(/\bpid=(\d+)/.exec(readLockOwner(lock))?.[1]);
+  const pid = Number(/\bpid=(\d+)/.exec(readLockOwner(lock) ?? '')?.[1]);
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     process.kill(pid, 0);
@@ -211,10 +211,12 @@ function ownerAlive(lock: string): boolean {
   }
 }
 
-function readLockOwner(lock: string): string {
+/** The owner text of a lock file, undefined when it is gone; any other read failure propagates (a lock this process cannot read is never taken over or released). */
+function readLockOwner(lock: string): string | undefined {
   try {
     return readFileSync(lock, 'utf8').trim() || 'unknown owner';
-  } catch {
-    return 'unknown owner';
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
   }
 }
