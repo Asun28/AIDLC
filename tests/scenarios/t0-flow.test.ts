@@ -7,7 +7,7 @@ import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
@@ -1121,21 +1121,18 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(fx.store.getCardRun(goal.id, 'T1-FIND')?.state, 'STOP', 'a stale snapshot never overwrites the saved stop');
     assert.deepEqual(runner.listFindings(stopped).map((f) => f.id), ['F1', 'F2'], 'the listing stays readable on a stopped run');
     fx.store.saveCardRun(CardRun.parse({ ...run, updatedAt: fx.now() }));
-    // A disposition written by another window between the read and the write is kept: the change is recomputed on the fresh record.
-    const realGet = fx.store.getCardRun.bind(fx.store);
-    let reads = 0;
-    fx.store.getCardRun = (goalId: string, cardId: string) => {
-      const value = realGet(goalId, cardId);
-      reads += 1;
-      if (reads === 1 && value) fx.store.saveCardRun(CardRun.parse({ ...value, findings: value.findings.map((f) => (f.id === 'F1' ? { ...f, disputes: f.disputes.map((d) => ({ ...d, note: `${d.note} (edited by a second window)` })) } : f)), updatedAt: fx.now() }));
-      return value;
-    };
+    // A disposition recorded by another window is kept: the change is applied to the persisted record under the card-run lock, never to this snapshot.
+    const snapshot = run;
+    fx.store.saveCardRun(CardRun.parse({ ...snapshot, findings: snapshot.findings.map((f) => (f.id === 'F1' ? { ...f, disputes: f.disputes.map((d) => ({ ...d, note: `${d.note} (edited by a second window)` })) } : f)), updatedAt: fx.now() }));
+    run = runner.disputeFinding(g(), card, snapshot, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
+    assert.match(run.findings.find((f) => f.id === 'F1')?.disputes.at(-1)?.note ?? '', /edited by a second window/, 'the other window\'s change to F1 survived the write of F2');
+    const lock = `${fx.store.cardFile(goal.id, 'T1-FIND')}.lock`;
+    writeFileSync(lock, `pid=0 at=${new Date().toISOString()}`, 'utf8');
     try {
-      run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
+      assert.throws(() => runner.acceptFinding(g(), card, run, 'F2'), /locked/, 'a held lock refuses the write instead of overwriting');
     } finally {
-      fx.store.getCardRun = realGet;
+      rmSync(lock, { force: true });
     }
-    assert.match(run.findings.find((f) => f.id === 'F1')?.disputes.at(-1)?.note ?? '', /edited by a second window/, 'the concurrent change to F1 survived the write of F2');
     assert.equal(run.findings.find((f) => f.id === 'F2')?.disposition, 'disputed');
     assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').map((e) => e.data['finding']), ['F1', 'F2']);
 
@@ -1295,6 +1292,102 @@ test('T1-REVIEW-FINDINGS: accept withdraws a dispute, the finding stays open and
     assert.equal(r.directive.kind, 'pre-review');
     run = (await runner.preReview(g(), card, r.run)).run;
     assert.equal(run.findings[0]?.resolvedAt, fx.now(), 'the repaired candidate resolves it');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS: a routed skip is not a decision on the findings: an open formal finding stays open while the ship proceeds', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const r3: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-skip.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-skip.ts b/src/t1-skip.ts\n+export const skip = 1;\n' },
+      'fake-r2': () => ({ stdout: PASS }),
+      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-SKIP', title: 'routed skip' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SKIP', source: 'card', ref: 'T1-SKIP', affectedSurfaces: [] }, { cards: ['T1-SKIP'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SKIP'] } });
+    const card = fx.card('T1-SKIP');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-SKIP'));
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
+    r3.push('{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-skip.ts:3: helper the card does not ask for -> remove it"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-skip.ts:3: helper the card does not ask for -> remove it"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    let f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.run.findings.length, 1);
+    run = runner.disputeFinding(g(), card, f.run, 'F1', 'acceptance 1 names the helper');
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'review');
+    r3.push('{"verdict":"pass","reasons":[],"routed_skip":{"predicate":"AllPathsMatch","reason":"docs only","changed_paths":["src/t1-skip.ts"]},"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.classified.outcome, 'routed-skip');
+    assert.equal(f.run.findings[0]?.resolvedAt, undefined, 'a skip decides nothing about the finding');
+    assert.equal(f.run.findings[0]?.disposition, 'disputed', 'the dispute stands');
+    const decided = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)!;
+    assert.deepEqual({ findings: decided.data['findings'], reraised: decided.data['reraised'], resolved: decided.data['resolved'] }, { findings: [], reraised: [], resolved: [] });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS acceptance 5: a finding that reached two non-acceptance rounds in R2 is named as a deadlock in the STOP detail of the R3 second block', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const r2: string[] = [];
+    const r3: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-dl.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-dl.ts b/src/t1-dl.ts\n+export const dl = 1;\n' },
+      'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
+      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-DL', title: 'deadlock across stages' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-DL', source: 'card', ref: 'T1-DL', affectedSurfaces: [] }, { cards: ['T1-DL'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-DL'] } });
+    const card = fx.card('T1-DL');
+    const g = () => fx.goal(goal.id);
+    const reraise = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: still no behavioural RED (re:F1) -> assert the seam"]}\n';
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-DL'));
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    // R2: block, dispute, re-raise, dispute, re-raise: two non-acceptance rounds, rounds exhausted, residual handed to R3.
+    r = runner.next(g(), card, run);
+    r2.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: no RED -> add a failing test first"]}\n');
+    run = (await runner.preReview(g(), card, r.run)).run;
+    run = runner.disputeFinding(g(), card, run, 'F1', 'the RED is tests/t1-dl.test.ts');
+    r2.push(reraise);
+    run = (await runner.preReview(g(), card, run)).run;
+    run = runner.disputeFinding(g(), card, run, 'F1', 'the test observes the public seam');
+    r2.push(reraise);
+    run = (await runner.preReview(g(), card, run)).run;
+    assert.equal(run.findings[0]?.reraised.filter((x) => x.answeredDispute).length, 2);
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'review', `the residual ships to R3: ${r.directive.narration}`);
+    // R3 decision 1 blocks on the same finding; the author repairs (a deadlocked finding cannot be disputed again); decision 2 re-raises it -> STOP names the deadlock.
+    r3.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: the RED is not behavioural (re:F1) -> assert the seam"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: the RED is not behavioural (re:F1) -> assert the seam"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    let f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.run.state, 'REVIEW_FIX');
+    assert.throws(() => runner.disputeFinding(g(), card, f.run, 'F1', 'a third answer'), /human ruling/);
+    r = runner.next(g(), card, f.run);
+    assert.equal(r.directive.kind, 'build');
+    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'pre-review', 'the repaired candidate restarts the R2 cycle');
+    r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    r3.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: the RED still asserts nothing (re:F1) -> assert the seam"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-dl.ts:1: the RED still asserts nothing (re:F1) -> assert the seam"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.run.state, 'STOP');
+    assert.match(f.run.stop?.detail ?? '', /second substantive block.*deadlock: F1 .*disputed twice.*re-raised twice.*human ruling/s);
   } finally {
     fx.cleanup();
   }

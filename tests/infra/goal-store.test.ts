@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
@@ -88,5 +88,46 @@ describe('state/goal-store', () => {
     assert.equal(store.getGoal('goal-a')?.id, 'goal-a');
     assert.equal(store.getCardRun('goal-a', 'T1-ALPHA')?.cardId, 'T1-ALPHA');
     assert.deepEqual(store.recover().interrupted, []);
+  });
+});
+
+describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () => {
+  const dir = tmpDir();
+  const paths = ensureStatePaths(statePathsFromRoot(path.join(dir, '.aidlc')));
+  after(() => cleanup(dir));
+
+  it('applies the change to the persisted record under the card-run lock, never to a stale snapshot', () => {
+    const store = new GoalStore(paths);
+    const stale = store.saveCardRun(makeCardRun('goal-u', 'T1-U', { findings: [{ id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/u.ts:1: no RED -> add one', raisedAt: iso(0) }] }));
+    // Another window records a note on F1 after this snapshot was taken.
+    store.saveCardRun({ ...stale, findings: stale.findings.map((f) => ({ ...f, disposition: 'disputed', disputes: [{ at: iso(1000), note: 'from the other window', afterReraises: 0 }] })) });
+    const next = store.updateCardRun('goal-u', 'T1-U', (current) => {
+      assert.equal(current?.findings[0]?.disposition, 'disputed', 'the callback receives the persisted record');
+      return { ...current!, findings: [...current!.findings, { id: 'F2', stage: 'pre', round: 1, reason: '[spec] 1 out of scope @ src/v.ts: outside allow_paths -> revert', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [] }] };
+    });
+    assert.deepEqual(next.findings.map((f) => [f.id, f.disposition]), [['F1', 'disputed'], ['F2', 'open']], 'both changes survive');
+    assert.deepEqual(store.getCardRun('goal-u', 'T1-U')?.findings.map((f) => f.id), ['F1', 'F2']);
+    assert.ok(!existsSync(`${store.cardFile('goal-u', 'T1-U')}.lock`), 'the lock is released');
+  });
+
+  it('waits for a held lock and refuses after the timeout; a lock older than the stale age is taken over', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 60 });
+    store.saveCardRun(makeCardRun('goal-l', 'T1-L'));
+    const lock = `${store.cardFile('goal-l', 'T1-L')}.lock`;
+    writeFileSync(lock, `pid=1 at=${new Date().toISOString()}`, 'utf8');
+    assert.throws(() => store.updateCardRun('goal-l', 'T1-L', (current) => current!), /locked/);
+    unlinkSync(lock);
+    writeFileSync(lock, `pid=1 at=${new Date(Date.now() - 120_000).toISOString()}`, 'utf8');
+    const next = store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale lock' }));
+    assert.equal(next.blocker, 'after a stale lock');
+    assert.ok(!existsSync(lock));
+  });
+
+  it('a throwing change leaves the record and the lock untouched', () => {
+    const store = new GoalStore(paths);
+    const before = store.saveCardRun(makeCardRun('goal-t', 'T1-T'));
+    assert.throws(() => store.updateCardRun('goal-t', 'T1-T', () => { throw new Error('refused'); }), /refused/);
+    assert.deepEqual(store.getCardRun('goal-t', 'T1-T'), before);
+    assert.ok(!existsSync(`${store.cardFile('goal-t', 'T1-T')}.lock`));
   });
 });
