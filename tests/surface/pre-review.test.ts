@@ -46,6 +46,9 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":[}'), undefined, 'a malformed final document is malformed, never the document before it');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n{"verdict":"block","reasons":[}\n'), undefined, 'the same across lines');
   assert.equal(extractVerdict('note: {"verdict":"block","reasons":[]} was the draft\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'the last complete top-level document decides');
+  // R2 round 1 of T1-REVIEW-FINDINGS-4: a brace inside a quoted reason of an earlier draft is not a document start.
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: replace the literal with {"]}\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'a quoted brace in a draft never encloses the verdict');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: a { \\" quote"]}\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'escaped quotes inside strings are tracked');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {
