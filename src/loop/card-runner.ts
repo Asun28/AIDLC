@@ -750,10 +750,38 @@ export class CardRunner {
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review-pool:${goal.reviewPool}:${admit.status}`, pollSeconds: 120, narration: `Review pool ${goal.reviewPool} is ${admit.status}${until}; waiting holds no active slot. Continue independent work within limits.` } };
     }
     this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq } });
+    // The record is re-read under the card-run lock right before the external effect: the candidate this ship was issued
+    // for must still be the record's, with its receipts, no stop, no round or decision reserved meanwhile and the same
+    // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
+    const armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
+    const drift = this.shipDrift(card, armed, run);
+    if (drift) {
+      this.ops.markResult(op.id, 'cancelled', { error: `ship not dispatched: ${drift}` });
+      this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, status: 'cancelled', reason: drift } });
+      this.queue.cancel(key, `ship not dispatched: ${drift}`, now);
+      if (armed.stop || armed.state === 'STOP') {
+        const stop = armed.stop ?? makeStop('card', drift, 'inspect the card run record', { at: now, global: false });
+        return { run: armed, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+      }
+      return { run: armed, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The card run changed after the ship gate (${drift}); nothing was dispatched. Run \`aidlc card next ${card.id}\` again.` } };
+    }
     this.ops.markIssued(op.id, undefined, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id } });
-    const result = this.shipPath.ship({ cardId: card.id, base: this.config.base, mode: run.mode, skipRed: !card.tdd, timeoutMs: 60 * 60 * 1000, candidateSha: run.candidate?.sha });
-    return this.applyShipResult(goal, card, run, result, op.id, key, candidateDigest);
+    const result = this.shipPath.ship({ cardId: card.id, base: this.config.base, mode: armed.mode, skipRed: !card.tdd, timeoutMs: 60 * 60 * 1000, candidateSha: armed.candidate?.sha });
+    return this.applyShipResult(goal, card, armed, result, op.id, key, candidateDigest);
+  }
+
+  /** Why the record re-read before the ship dispatch is not the one the gate admitted; undefined when it still is. */
+  private shipDrift(card: Card, armed: CardRun, issued: CardRun): string | undefined {
+    if (armed.stop || armed.state === 'STOP') return `the card run was stopped (${armed.stop?.reason ?? 'STOP'})`;
+    if ((armed.candidate?.digest ?? 'unknown') !== (issued.candidate?.digest ?? 'unknown')) return `the candidate changed (${(issued.candidate?.digest ?? 'unknown').slice(0, 12)} admitted, ${(armed.candidate?.digest ?? 'none').slice(0, 12)} recorded meanwhile)`;
+    if (!armed.dodReceipt || (card.tdd && !armed.redReceipt) || armed.candidate?.dirty) return 'the candidate is no longer ready (a receipt was cleared meanwhile)';
+    const round = armed.preReview.rounds.find((r) => r.outcome === 'pending');
+    if (round) return `a pre-review round was reserved meanwhile (${round.reservationId ?? round.requestedAt})`;
+    const decision = armed.review.invocations.find((i) => i.outcome === 'pending');
+    if (decision) return `a formal review was reserved meanwhile (${decision.invocationId})`;
+    if (armed.ownerGeneration !== issued.ownerGeneration) return `the owner generation changed (${issued.ownerGeneration ?? 'none'} admitted, ${armed.ownerGeneration ?? 'none'} recorded meanwhile)`;
+    return undefined;
   }
 
   /**
