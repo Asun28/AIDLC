@@ -31,7 +31,7 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 ## Goal state machine
 
-A recorded deadline extension re-admits a goal stopped for time and its time-stopped card runs (stops cleared, card deadlines moved to the new goal deadline, journaled as `GOAL_STATE` and `CARD_STATE`); a resume carrying a revision applies it before the projection (re-entering through `CARDS`, the completion evidence of the old projection reset to pending), so replacement cards run in the resumed generation; delivery evidence is bound to the generation, so no earlier release is reused. A goal parked in `WAIT` (polled while its cards were still running) resumes to `RUN`, journaled as `GOAL_STATE WAIT->RUN`, before `VERIFY_ARC` is derived once every required card is closed; the diagram has no `WAIT -> VERIFY_ARC` edge.
+A recorded deadline extension re-admits a goal stopped for time (re-entering through `CARDS`) and the time-stopped card runs of its current projection (stops cleared, runs in progress again, card deadlines moved to the new goal deadline, journaled as `GOAL_STATE` and `CARD_STATE`; a superseded card keeps its stop); a resume carrying a revision applies it before the projection (re-entering through `CARDS`, the completion evidence of the old projection reset to pending), so replacement cards run in the resumed generation; delivery evidence is bound to the generation, so no earlier release is reused. A goal parked in `WAIT` (polled while its cards were still running) resumes to `RUN`, journaled as `GOAL_STATE WAIT->RUN`, before `VERIFY_ARC` is derived once every required card is closed; the diagram has no `WAIT -> VERIFY_ARC` edge.
 
 Source: `GOAL_TRANSITIONS` and guards in `src/core/goal-machine.ts`.
 

@@ -150,3 +150,40 @@ test('R1: a recorded extension re-admits a goal stopped for time and its time-st
     fx.cleanup();
   }
 });
+
+test('R1: an extension after a replacement resume re-admits only the runs of the current projection; a superseded card keeps its time stop', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-B', title: 'b', allowPaths: ['src/b.ts'] });
+    writeCard(fx, { id: 'T1-A2', title: 'a again, replacement', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-B2', title: 'b again, replacement', allowPaths: ['src/b.ts'] });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B'], { size: 'T1' });
+    assert.equal(goal.deadlines.goalDeadline, addMs(T0, 12 * HOUR_MS), 'the arc limit applies, so the goal outlives the card limit');
+    const runner = fx.runner();
+    let a = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A'));
+    a = runner.next(fx.goal(goal.id), fx.card('T1-A'), a.run);
+    assert.equal(a.directive.kind, 'build');
+    let b = runner.next(fx.goal(goal.id), fx.card('T1-B'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-B'));
+    b = runner.next(fx.goal(goal.id), fx.card('T1-B'), b.run);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-A'), a.run).run.stop?.reason, 'time');
+    fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T1-B')!, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'both cards replaced', text: 'continue with the replacements', replacements: { 'T1-A': 'T1-A2', 'T1-B': 'T1-B2' } } });
+    assert.equal(resumed.directive.kind, 'run-card', resumed.directive.narration);
+    assert.deepEqual(fx.goal(goal.id).cards, ['T1-A2', 'T1-B2']);
+    const extended = fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 20 * HOUR_MS), 'more time for the replacements');
+    assert.equal(extended.terminal, false);
+    const superseded = fx.store.getCardRun(goal.id, 'T1-A')!;
+    assert.equal(superseded.stop?.reason, 'time', 'a run outside the current projection is not re-admitted');
+    assert.equal(superseded.state, 'STOP');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'CARD_STATE' && e.cardId === 'T1-A' && String(e.data['reason'] ?? '').includes('extension')), 'no re-admission is journaled for the superseded card');
+    const after = fx.controller.next(goal.id);
+    assert.notEqual(after.kind, 'stop', after.narration);
+    if (after.kind === 'wait') assert.ok(!after.on.includes('T1-A:'), `the controller never waits on a superseded card: ${after.on}`);
+  } finally {
+    fx.cleanup();
+  }
+});

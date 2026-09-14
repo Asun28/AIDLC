@@ -693,6 +693,8 @@ export class GoalController {
     }
     for (const run of this.store.listCardRuns(goal.id)) {
       if (run.stop?.reason !== 'time') continue;
+      // Only the current projection is re-admitted: a run of a card superseded or removed by a revision keeps its stop.
+      if (!readmitted.cards.includes(run.cardId)) continue;
       // The run is in progress again: the controller waits on it instead of re-stopping the goal, and the runner re-derives
       // BUILD, SHIP or CLOSE from the evidence of the run on its next call.
       this.store.saveCardRun(CardRun.parse({ ...run, state: 'BUILD', stop: undefined, deadline: Date.parse(newDeadline) > Date.parse(run.deadline) ? newDeadline : run.deadline, updatedAt: this.clock() }));
