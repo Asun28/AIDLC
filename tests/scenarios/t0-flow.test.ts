@@ -310,17 +310,18 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 1);
 
-    // Exhaustion: with one round per cycle, a block followed by a fix has no round left -> STOP/review.
+    // Exhaustion: with one round per cycle, the block leaves no round for a repair; the cleared DoD evidence of the
+    // unchanged candidate is reused so the gate decides at once -> STOP/review, no repair attempt asked for.
     const strict = mk(1);
     verdicts.push('{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-gate.ts:2: swallowed error -> rethrow"]}\n');
     const round3 = await strict.preReview(fx.goal(goal.id), card, r.run);
     assert.equal(round3.run.state, 'BUILD');
+    assert.equal(round3.run.dodReceipt, undefined, 'the block clears the receipt');
     r = strict.next(fx.goal(goal.id), card, round3.run);
-    assert.equal(r.directive.kind, 'build');
-    run = strict.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok4', redReceipt: 'red:ok', candidateSha: 'sha-4' });
-    r = strict.next(fx.goal(goal.id), card, run);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
+    assert.equal(r.run.dodReceipt, 'dod:ok3', 'the receipt cleared by the block is the evidence the gate decided on');
+    run = r.run;
 
     // ... unless the policy hands the residual findings to R3.
     const lenient = mk(1, 'ship');

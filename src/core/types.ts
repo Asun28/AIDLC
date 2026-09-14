@@ -321,7 +321,8 @@ export const ReviewFinding = z.object({
   candidateSha: z.string().optional(),
   raisedAt: IsoTimestamp,
   disposition: FindingDisposition.default('open'),
-  disputes: z.array(z.object({ at: IsoTimestamp, note: z.string().min(1) })).default([]),
+  /** The author's disputes in order; `afterReraises` is the re-raise count when the dispute was recorded (one dispute per re-raise). */
+  disputes: z.array(z.object({ at: IsoTimestamp, note: z.string().min(1), afterReraises: z.number().int().nonnegative().default(0) })).default([]),
   reraised: z
     .array(
       z.object({
@@ -331,15 +332,30 @@ export const ReviewFinding = z.object({
         candidateSha: z.string().optional(),
         at: IsoTimestamp,
         reason: z.string(),
-        /** The finding was disputed when this round re-raised it: one round of mutual non-acceptance. */
+        /** The panel angle that wrote this re-raise; one round may re-raise a finding from several angles. */
+        perspective: z.string().optional(),
+        /** The finding was disputed in the snapshot the reviewer received: one round of mutual non-acceptance. */
         answeredDispute: z.boolean().default(false),
       }),
     )
     .default([]),
   /** Set by the first decided later round of the same stage that did not re-raise it. */
   resolvedAt: IsoTimestamp.optional(),
+  /** Raised by an advisory block (standards-only without a required gate): retained, never a merge bar. */
+  advisory: z.boolean().optional(),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;
+
+/** DoD evidence a review block cleared, kept for the candidate it was bound to; reused when the unchanged candidate is re-reviewed. */
+export const BlockedReceipt = z.object({
+  dodReceipt: z.string().min(1),
+  candidateDigest: z.string().min(1),
+  stage: FindingStage,
+  cycle: z.number().int().nonnegative().optional(),
+  round: z.number().int().positive().optional(),
+  candidateSha: z.string().optional(),
+});
+export type BlockedReceipt = z.infer<typeof BlockedReceipt>;
 
 // ---------------------------------------------------------------------------
 // CI
@@ -600,6 +616,8 @@ export const CardRun = z.object({
   preReview: PreReviewLedger.prefault({}),
   /** Every cited block reason of this run, with its disposition and re-raise history. */
   findings: z.array(ReviewFinding).default([]),
+  /** The DoD receipt the last review block cleared, bound to its candidate; restored when that candidate is re-reviewed unchanged. */
+  blockedReceipt: BlockedReceipt.optional(),
   ci: CiLedger.prefault({}),
   effort: EffortEpisode.optional(),
   redReceipt: z.string().optional(),

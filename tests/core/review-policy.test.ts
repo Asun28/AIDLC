@@ -232,9 +232,11 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     assert.equal(r.findings[0]!.reraised[0]!.answeredDispute, false, 'the reviewer never saw the dispute');
     assert.equal(policy.nonAcceptanceRounds(r.findings[0]!), 0);
     assert.equal(r.findings[0]!.disputes.length, 1, 'the later dispute is preserved');
-    const late = block(r.findings, 3, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow']).findings; // F2 raised by an overlapping round
+    const late = block(r.findings, 3, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow'], LATEST, { seen: {} }).findings; // F2 raised by an overlapping round that saw nothing
+    assert.equal(late.find((x) => x.id === 'F1')?.resolvedAt, undefined, 'a round that did not receive F1 does not resolve it');
     const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: 'open' } });
     assert.deepEqual(passed.resolved, ['F1'], 'only findings the round received are resolved; F2 stays open');
+    assert.equal(passed.findings.find((x) => x.id === 'F2')?.resolvedAt, undefined);
   });
 
   test('an advisory block records its cited reasons as advisory findings', () => {
@@ -267,7 +269,7 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.throws(() => policy.disputeFinding(f, 'F7', 'x', LATER), /F7/);
     assert.throws(() => policy.disputeFinding(f, 'F1', '   ', LATER), /note/);
     const d = policy.disputeFinding(f, 'F1', 'the RED is behavioural: tests/gate.test.ts', LATER);
-    assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts' }]);
+    assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts', afterReraises: 0 }]);
     assert.throws(() => policy.disputeFinding(d, 'F1', 'again', LATER), /already disputed/);
     const a = policy.acceptFinding(d, 'F1');
     assert.equal(a.find((x) => x.id === 'F1')?.disposition, 'open');
