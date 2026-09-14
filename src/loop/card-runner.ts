@@ -982,7 +982,7 @@ export class CardRunner {
     const reviewDir = path.join(cwd, '.review');
     // A result retained for a reservation of this candidate whose commit did not land (the card-run lock was held by
     // another writer at the time) is committed now, under the same invocation, without running the reviewer again.
-    const retained = this.retainedFormalResult(card, persisted, reviewDir, candidateSha, candidateDigest);
+    const retained = this.retainedFormalResult(card, persisted, reviewDir);
     if (retained) return this.commitFormalResult(goal, card, persisted, retained);
     persisted = this.releaseFailedReservation(goal, card, persisted, reviewDir);
     this.formalAdmission(persisted, card, candidateSha, candidateDigest, now);
@@ -1070,6 +1070,9 @@ export class CardRunner {
     const classified = this.classifyFormal(card, candidateSha, verdict, panel.outcome, panel.runStatus, panel.reasons);
     // Timed from the clock after the run: a review can outlast the hold it reports.
     const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    // The classified result is retained next to its verdict before the commit, so a commit that does not land (the lock
+    // held by another writer) is redone from it later, a hold as a hold and a no-verdict as a no-verdict.
+    writeFileSync(path.join(reviewDir, `${fileStem}.result.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, at: after, outcome: panel.outcome, runStatus: panel.runStatus, reasons: panel.reasons, retryAfterMs: panel.retryAfterMs, holdUntil, advisory: panel.advisory ?? [], verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256 }, null, 2) + '\n', 'utf8');
     if (holdUntil) this.queue.hold(key, holdUntil, 'reviewer reported rate limit/quota', after);
     else this.queue.complete(key, panel.verdictRef ?? 'no-verdict', after);
     return this.commitFormalResult(goal, card, persisted, { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: now, at: after, verdict, classified, advisory: panel.advisory ?? [], verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256, holdUntil });
@@ -1090,12 +1093,16 @@ export class CardRunner {
    * but whose commit did not land: the verdict document written next to the candidate, or a no-verdict when the run
    * left none, together with the snapshot the reviewer received. Undefined while the reviewer is still running.
    */
-  private retainedFormalResult(card: Card, persisted: CardRun, reviewDir: string, candidateSha: string, candidateDigest: string): FormalResult | undefined {
-    const pending = persisted.review.invocations.find((i) => i.outcome === 'pending' && (i.candidateDigest === candidateDigest || i.candidateSha === candidateSha));
-    if (!pending || !pending.invocationId.startsWith('r3:')) return undefined;
+  private retainedFormalResult(card: Card, persisted: CardRun, reviewDir: string): FormalResult | undefined {
+    // Any pending formal reservation of the card whose reviewer finished, whatever the candidate: a result for a candidate
+    // the author replaced meanwhile is committed as history by `commitReviewed`, never left in flight.
+    const pending = persisted.review.invocations.find((i) => i.outcome === 'pending' && i.invocationId.startsWith('r3:'));
+    if (!pending) return undefined;
     const fileStem = pending.invocationId.slice(3);
     const logRef = path.join(reviewDir, `${fileStem}.log`);
     if (!existsSync(logRef)) return undefined;
+    const candidateSha = pending.candidateSha ?? pending.candidateDigest;
+    const candidateDigest = pending.candidateDigest;
     const readDoc = (file: string): Record<string, unknown> | undefined => {
       try {
         return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : undefined;
@@ -1107,15 +1114,24 @@ export class CardRunner {
     const doc = readDoc(verdictFile);
     const raw = doc ? parseVerdict(doc) : undefined;
     const verdict: Verdict | undefined = raw ? { ...raw, sha: raw.sha ?? candidateSha, branch: raw.branch ?? persisted.cardId, run_status: raw.run_status ?? 'success' } : undefined;
-    const runStatus = (typeof doc?.['run_status'] === 'string' ? doc['run_status'] : 'no_output') as PanelResult['runStatus'];
+    // The classified result retained at completion (a hold with its retry-after, a no-verdict with its status); before it
+    // was written the log header carries the outcome and the status.
+    const result = readDoc(path.join(reviewDir, `${fileStem}.result.json`));
+    const header = /outcome=(\S+) runStatus=(\S+)/.exec(readFileSync(logRef, 'utf8').split(/\r?\n/)[0] ?? '');
+    const outcome = (typeof result?.['outcome'] === 'string' ? result['outcome'] : (header?.[1] ?? (verdict ? verdict.verdict : 'no-verdict'))) as PanelResult['outcome'];
+    const runStatus = (typeof result?.['runStatus'] === 'string' ? result['runStatus'] : (header?.[2] ?? (typeof doc?.['run_status'] === 'string' ? doc['run_status'] : 'no_output'))) as PanelResult['runStatus'];
+    const reasons = Array.isArray(result?.['reasons']) ? (result['reasons'] as string[]) : [];
     const reservation = readDoc(path.join(reviewDir, `${fileStem}.reservation.json`));
     const seen = (reservation?.['seen'] as Record<string, FindingSnapshot> | undefined) ?? {};
     const changedPaths = Array.isArray(reservation?.['changedPaths']) ? (reservation['changedPaths'] as string[]) : undefined;
-    const classified = this.classifyFormal(card, candidateSha, verdict, verdict ? verdict.verdict : 'no-verdict', runStatus, []);
-    const advisory = Array.isArray(doc?.['advisory']) ? (doc['advisory'] as string[]) : [];
-    const durationMs = typeof doc?.['durationMs'] === 'number' ? doc['durationMs'] : 0;
-    const receiptSha256 = typeof doc?.['receiptSha256'] === 'string' ? doc['receiptSha256'] : '';
-    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: pending.requestedAt, at: this.clock(), verdict, classified, advisory, verdictRef: doc ? verdictFile : undefined, logRef, durationMs, receiptSha256, holdUntil: undefined, retained: true };
+    const classified = this.classifyFormal(card, candidateSha, outcome === 'quota-hold' ? undefined : verdict, outcome, runStatus, reasons);
+    const at = this.clock();
+    const retryAfterMs = typeof result?.['retryAfterMs'] === 'number' ? result['retryAfterMs'] : undefined;
+    const holdUntil = classified.outcome === 'quota-hold' ? addMs(at, retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    const advisory = Array.isArray(result?.['advisory']) ? (result['advisory'] as string[]) : Array.isArray(doc?.['advisory']) ? (doc['advisory'] as string[]) : [];
+    const durationMs = typeof result?.['durationMs'] === 'number' ? result['durationMs'] : typeof doc?.['durationMs'] === 'number' ? doc['durationMs'] : 0;
+    const receiptSha256 = typeof result?.['receiptSha256'] === 'string' ? result['receiptSha256'] : typeof doc?.['receiptSha256'] === 'string' ? doc['receiptSha256'] : '';
+    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory, verdictRef: doc ? verdictFile : undefined, logRef, durationMs, receiptSha256, holdUntil, retained: true };
   }
 
   /**
