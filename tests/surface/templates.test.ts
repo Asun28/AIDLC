@@ -156,7 +156,7 @@ describe('templates (Q14 packaging)', () => {
     assert.match(review, /fewer verified findings/);
   });
 
-  test('T1-REVIEW-FINDINGS acceptance 7: the operating guide, the architecture note, both card-loop copies and the changelog record findings and dispositions', () => {
+  test('T1-REVIEW-FINDINGS-2 acceptance 8: the operating guide, the architecture note, both card-loop copies and the changelog record findings and dispositions', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /### Findings and dispositions/, 'OPERATIONS.md section');
     assert.match(operations, /aidlc review dispute <card> <id> --note/, 'the dispute command is documented');
@@ -164,7 +164,8 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /aidlc review findings <card>/, 'the listing command is documented');
     assert.match(operations, /re:F<n>/, 'the reference syntax is documented');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
-    assert.match(architecture, /findings \(ids, dispositions, re-raises\)/, 'ARCHITECTURE.md persisted-state table names the findings');
+    assert.match(architecture, /findings \(ids, dispositions, re-raises, revisions\)/, 'ARCHITECTURE.md persisted-state table names the findings');
+    assert.match(architecture, /written under `<file>.lock`/, 'ARCHITECTURE.md names the card-run lock');
     for (const copy of [path.join(tpl, 'claude', 'skills', 'aidlc-loop', 'card-loop.md'), path.join(root, '.claude', 'skills', 'aidlc-loop', 'card-loop.md')]) {
       const text = readFileSync(copy, 'utf8');
       assert.match(text, /aidlc review dispute/, `${copy} names the dispute command`);
@@ -172,6 +173,7 @@ describe('templates (Q14 packaging)', () => {
     }
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
-    assert.match(unreleased, /T1-REVIEW-FINDINGS/, 'CHANGELOG Unreleased carries the entry');
+    assert.match(unreleased, /T1-REVIEW-FINDINGS-2/, 'CHANGELOG Unreleased carries the entry');
+    assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 });
