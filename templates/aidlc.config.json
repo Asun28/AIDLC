@@ -15,6 +15,10 @@
   "maxWorkers": 2,
   "family": "claude",
   "provider": "mock",
+  "github": {
+    "requiredChecks": [],
+    "requireVerdict": true
+  },
   "hooks": {
     "frozenPaths": [],
     "testPathPatterns": [

@@ -78,3 +78,39 @@ describe('CI rerun allowance (Q7)', () => {
     assert.equal(canRerun(ledger, 'run-3', 1, 'cand-1', 'transient').allowed, false);
   });
 });
+
+describe('security class (T1-LOOP-GATES R7)', () => {
+  test('a failed check run named for a secret scan classifies as security from the ship gate line', () => {
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] Gitleaks (committed history)=failure\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-A' }]);
+    assert.equal(c.class, 'security');
+    assert.ok(c.evidence.includes('security: Gitleaks (committed history)'), c.evidence.join(' | '));
+  });
+
+  test('a raw gitleaks log classifies as security, as job text or as extra log text', () => {
+    const log = 'Finding:     REDACTED\nSecret:      REDACTED\nRuleID:      generic-api-key\nEntropy:     4.2\n\n1:23PM WRN leaks found: 2';
+    assert.equal(classifyCiFailure([{ name: 'log', conclusion: 'failure', logExcerpt: log }]).class, 'security');
+    assert.equal(classifyCiFailure([{ name: 'log', conclusion: 'failure' }], log).class, 'security');
+  });
+
+  test('a failed job named for the secret scan classifies as security by its name; a green scan is no failure', () => {
+    assert.equal(classifyCiFailure([{ name: 'Gitleaks (committed history)', conclusion: 'failure' }]).class, 'security');
+    assert.equal(classifyCiFailure([{ name: 'Gitleaks (committed history)', conclusion: 'success' }]).class, 'unknown');
+  });
+
+  test('security wins over code-defect and transient evidence, even when the scan name carries a comma-bearing neighbour', () => {
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] check (ubuntu-latest, 22)=failure,Gitleaks (committed history)=failure\nAssertionError: expected 1 to equal 2\nsocket hang up' }]);
+    assert.equal(c.class, 'security');
+    assert.deepEqual(c.failedJobs, ['ship-ci-gate']);
+  });
+
+  test('a red check without a secret-scan name is not security', () => {
+    assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] check (ubuntu-latest, 22)=failure' }]).class, 'unknown');
+    assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] check (ubuntu-latest, 22)=failure\nAssertionError: expected 1 to equal 2' }]).class, 'code-defect');
+  });
+
+  test('security never reruns', () => {
+    const d = canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', 'security');
+    assert.equal(d.allowed, false);
+    assert.match(d.reason, /security gate/);
+  });
+});

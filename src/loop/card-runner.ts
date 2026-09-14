@@ -63,6 +63,15 @@ export type CardDirective =
   | { kind: 'done'; cardId: string; narration: string }
   | { kind: 'stop'; cardId: string; stop: StopRecord; narration: string };
 
+/** The ship path a project config selects; the `github` block carries the required checks, the verdict rule and the CI polling limits. */
+export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: SyncRunner): ShipPath {
+  if (config.shipPath === 'scaffold') return new ScaffoldShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config), runner });
+  if (config.shipPath === 'github') {
+    const gh = config.github;
+    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
+  }
+  return new DryRunShipPath();
+}
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -92,13 +101,7 @@ export class CardRunner {
     this.git = deps.git ?? new GitProbe(this.runner);
     this.gh = deps.gh ?? new GhProbe(this.runner);
     this.clock = deps.now ?? (() => new Date().toISOString());
-    this.shipPath =
-      deps.shipPath ??
-      (deps.config.shipPath === 'scaffold'
-        ? new ScaffoldShipPath({ mainRoot: deps.repo.mainRoot, worktreeRoot: resolveWorktreeRoot(deps.config), runner: this.runner })
-        : deps.config.shipPath === 'github'
-          ? new GitHubShipPath({ mainRoot: deps.repo.mainRoot, worktreeRoot: resolveWorktreeRoot(deps.config), repository: deps.config.repository ?? '', runner: this.runner })
-          : new DryRunShipPath());
+    this.shipPath = deps.shipPath ?? shipPathFor(deps.config, deps.repo.mainRoot, this.runner);
   }
 
   private journal(goalId: string): Journal {
@@ -894,6 +897,13 @@ export class CardRunner {
         const cls = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: result.outcome === 'ci-timeout' ? 'timed_out' : 'failure', logExcerpt: text }]);
         this.journal(goal.id).append({ type: 'CI_CLASSIFIED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { class: cls.class, evidence: cls.evidence.slice(0, 5) } });
         const runId = text.match(/runs\/(\d+)/)?.[1] ?? `ship-${operationId}`;
+        if (cls.class === 'security') {
+          // A red secret or security scan is never rerun and never repaired blind: STOP/risk naming the check.
+          const finding = cls.evidence.find((e) => e.startsWith('security: '))?.slice('security: '.length) ?? cls.failedJobs.join(',');
+          const stop = makeStop('risk', `security gate red: ${finding}`, 'remove the finding from the change or the history, then ship a new candidate; the gate is never rerun or bypassed', { at: now, global: false });
+          const stopped = this.save({ ...run, state: 'STOP', review, stop, dodReceipt: undefined, evidence });
+          return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        }
         const rerun = canRerun(run.ci, runId, 1, candidateDigest, cls.class);
         if (rerun.allowed) {
           const ci = recordRerunIntent(run.ci, runId, 1, candidateDigest, now);

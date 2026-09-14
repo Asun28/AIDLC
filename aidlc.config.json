@@ -16,6 +16,15 @@
   "family": "claude",
   "provider": "mock",
   "repository": "Asun28/AIDLC",
+  "github": {
+    "requiredChecks": [
+      "check (ubuntu-latest, 22)",
+      "check (windows-latest, 22)",
+      "build-test",
+      "Gitleaks (committed history)"
+    ],
+    "requireVerdict": true
+  },
   "hooks": {
     "frozenPaths": [],
     "testPathPatterns": [

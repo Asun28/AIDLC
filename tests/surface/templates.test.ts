@@ -77,6 +77,14 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(settings.hooks['Stop']?.length, 'Stop hook missing');
   });
 
+  test('the secret scan is a gate: both copies of security-scanners.yml are identical and carry no continue-on-error', () => {
+    const live = readFileSync(path.join(root, '.github', 'workflows', 'security-scanners.yml'), 'utf8');
+    const template = readFileSync(path.join(tpl, 'github', 'workflows', 'security-scanners.yml'), 'utf8');
+    assert.equal(live, template);
+    assert.ok(live.includes('name: Gitleaks (committed history)'), 'the check-run name the ship gate and the config refer to');
+    assert.ok(!live.includes('continue-on-error'), 'the gitleaks step must block the job');
+  });
+
   test('JSON/YAML templates validate against the runtime schemas', () => {
     EvalCase.parse(JSON.parse(readFileSync(path.join(tpl, 'evals', 'example-regression.json'), 'utf8')));
     DeliveryOpsConfig.parse(JSON.parse(readFileSync(path.join(tpl, 'aidlc.ops.example.json'), 'utf8')));

@@ -5,6 +5,9 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
+import { ProjectConfig } from '../../src/config.ts';
+import { shipPathFor } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
 
 const HEAD = 'a'.repeat(40);
 
@@ -101,5 +104,52 @@ describe('GitHubShipPath', () => {
     const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     assert.equal(r.outcome, 'merged');
     assert.equal(r.prNumber, 7);
+  });
+});
+
+describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
+  const dirs: string[] = [];
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+  const runsOf = (runs: Array<{ name: string; status: string; conclusion: string | null }>) => ({ 'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: runs }) } });
+  const base = (f: ReturnType<typeof fixture>) => ({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', sleep: () => {} });
+
+  test('a required check absent from the run list is pending, never satisfied', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    let merges = 0;
+    const ship = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }]), 'gh pr merge': () => { merges += 1; return {}; } }), ciTimeoutMs: 0, requiredChecks: ['ci', 'Gitleaks (committed history)'] });
+    const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'ci-timeout');
+    assert.ok(r.receipt.stdout.includes('Gitleaks (committed history)'), 'the wait names the absent check');
+    assert.equal(merges, 0, 'nothing merges while a required check is missing');
+    assert.equal(ship.readMergeToken('T1-A'), undefined);
+  });
+
+  test('required checks present and green merge; a red check outside the list still reds the gate', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const green = new GitHubShipPath({ ...base(f), runner: runnerWith(runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'Gitleaks (committed history)', status: 'completed', conclusion: 'success' }])), requiredChecks: ['ci', 'Gitleaks (committed history)'] });
+    assert.equal(green.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged');
+    const f2 = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f2.root);
+    const red = new GitHubShipPath({ ...base(f2), runner: runnerWith(runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'evals', status: 'completed', conclusion: 'failure' }])), requiredChecks: ['ci'] });
+    const r = red.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'ci-red');
+    assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] evals=failure'), r.receipt.stdout);
+  });
+
+  test('the ship path options come from the project config through the card runner factory', () => {
+    const cfg = ProjectConfig.parse({ shipPath: 'github', repository: 'o/r', github: { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 5, ciPollMs: 1 } });
+    const ship = shipPathFor(cfg, '/main', scriptedRunner({}));
+    assert.ok(ship instanceof GitHubShipPath);
+    const options = (ship as GitHubShipPath).options;
+    assert.deepEqual(options.requiredChecks, ['ci']);
+    assert.equal(options.requireVerdict, false);
+    assert.equal(options.ciTimeoutMs, 5);
+    assert.equal(options.ciPollMs, 1);
+    assert.equal(options.repository, 'o/r');
+    assert.ok(shipPathFor(ProjectConfig.parse({ shipPath: 'dry-run' }), '/main', scriptedRunner({})) instanceof DryRunShipPath);
   });
 });

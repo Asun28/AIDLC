@@ -12,7 +12,7 @@ node bin/aidlc.js doctor
 
 `init` copies `templates/` into the repository: `.claude/skills/aidlc-loop/*`, `.claude/skills/secure-api-review`, `.claude/skills/{tdd,diagnose,grilling,merge-conflicts}` (companion skills), `.claude/agents/*`, a merged `.claude/settings.json`, `REVIEW.md`, `bands.yaml`, `intent/`, `specs/README.md` and `specs/_SPEC-TEMPLATE.md`, `plans/`, `<cardsDir>/_TEMPLATE.md`, `evals/`, `.github/workflows/agent-evals.yml`, `aidlc-ci.yml` and `security-scanners.yml`, `docs/DELIVERY-OPS.md`, `docs/LESSONS.md`, `docs/THIRD-PARTY-NOTICES.md`, `aidlc.config.json`, `aidlc.ops.example.json`, an appended `## AI-native SDLC (aidlc)` section in `CLAUDE.md`, and `.aidlc/` plus `_local/` in `.gitignore`. Existing files are skipped unless `--force`.
 
-`aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review), `formalReview.command|reviewer|timeoutMs|shell|maxDiffBytes` (see Formal review as a command).
+`aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review), `formalReview.command|reviewer|timeoutMs|shell|maxDiffBytes` (see Formal review as a command), `github.requiredChecks|requireVerdict|ciTimeoutMs|ciPollMs` (see Ship gates).
 
 ## Running a goal
 
@@ -193,6 +193,11 @@ aidlc audit verify --goal <id> --claim-full [--capture-boundary]
 
 `verify` reports the level (`none`, `recorded`, `traceable`, `independently-verified`) and findings: blocking `JOURNAL_CHAIN`, `OP_UNRESOLVED`, `OP_INTENT_MISSING`, `TRACE_MISSING`, `WORK_AFTER_TERMINAL`, `MANIFEST_SEAL`, `MANIFEST_STALE`, `ARTIFACT_MISSING`, `ARTIFACT_ALTERED`, `EVIDENCE_STALE_CANDIDATE`; warnings `OP_UNKNOWN`, `MANIFEST_UNSEALED`, `MANIFEST_TRAILING`. Any block sets exit 1. `--claim-full` evaluates the "fully audited" claim: `verified` only at `independently-verified` with `--capture-boundary` asserted by the operator; otherwise `BLOCKED/capability` with the prerequisite. A mutation journaled after the seal makes it `MANIFEST_STALE`; non-mutating closure events after the seal are only `MANIFEST_TRAILING`. Seal after the last mutation.
 
+## Ship gates (GitHub ship path)
+
+`github.requiredChecks` lists the check-run names that must be present and green on the candidate before the squash merge. A required name absent from the check runs of the head counts as pending until `github.ciTimeoutMs` (default 30 minutes, polled every `github.ciPollMs`, default 20 seconds), never as satisfied; every other check that reports on the head must succeed as well. `github.requireVerdict` (default true) keeps the candidate-bound R3 verdict a precondition of any remote effect. This repository requires `check (ubuntu-latest, 22)`, `check (windows-latest, 22)`, `build-test` and `Gitleaks (committed history)`; `evals` runs only for some paths and stays out of the list, and it still blocks when it reports red.
+
+The gitleaks history scan (`security-scanners.yml`) is a blocking job. A red check run whose name matches a secret or security scan (gitleaks, secret scan, security), or raw gitleaks output given to `aidlc ci classify --log`, is the CI class `security`: it is never rerun, the card stops with reason `risk`, and the way out is to remove the finding from the change or the history and ship a new candidate.
 ## STOP reasons
 
 | Reason | Meaning | Next action |
@@ -200,7 +205,7 @@ aidlc audit verify --goal <id> --claim-full [--capture-boundary]
 | `card` | card contract invalid, unmet dependency, or repair episode exhausted | fix the card or record cause/evidence; no new attempt from another session |
 | `capability` | a required control is missing (no reviewer backend, advisory ship could merge a defect) | configure the control (`gateRequired`, reviewer) or choose a blocking path |
 | `scope` | requested work leaves the accepted scope | amend the goal (`aidlc goal amend`) or split a successor card |
-| `risk` | secrets or license gates tripped, or a high-risk operation refused | remove the offending content or dependency; gates are never bypassed |
+| `risk` | secrets or license gates tripped, a red secret or security scan in CI, or a high-risk operation refused | remove the offending content or dependency; gates are never bypassed |
 | `frozen` | a frozen contract or schema would change | route the change through version review |
 | `checkpoint` | plan/projection checkpoint rejected or planning allowance exhausted | revise under a recorded revision or close the goal |
 | `review` | second substantive block, or no verdict after the single retry | hand the PR and verdict evidence to a human adjudicator |

@@ -88,3 +88,26 @@ test('Q7: a code-defect CI failure never reruns; it goes back to BUILD with a ne
     fx.cleanup();
   }
 });
+
+const SECURITY = '[CI-GATE-RED] Gitleaks (committed history)=failure\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
+
+test('R7: a red secret scan is STOP/risk with no rerun intent and no repair attempt', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.state, 'STOP');
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.ok((r.run.stop?.detail ?? '').includes('Gitleaks (committed history)'), r.run.stop?.detail);
+    assert.equal(r.run.ci.reruns.length, 0, 'no rerun intent is persisted for a security failure');
+    assert.equal(r.run.dodReceipt, undefined, 'the candidate is not ready to ship again');
+    const classified = fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED');
+    assert.equal(classified?.data['class'], 'security');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'CI_RERUN'));
+    assert.equal(ship.requests.length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
