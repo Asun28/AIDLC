@@ -2519,7 +2519,7 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a second completion of an already-deci
       const verdict = { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-dbl.ts:1: no RED -> add one'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-dbl.ts:1: no RED -> add one'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-DBL', run_status: 'success' };
       writeFileSync(path.join(reviewDir, `${stem}.json`), JSON.stringify(verdict), 'utf8');
       writeFileSync(path.join(reviewDir, `${stem}.log`), '# review fake-r3 exit=0 timedOut=false durationMs=1 outputSha256=x outcome=block runStatus=success\n', 'utf8');
-      writeFileSync(path.join(reviewDir, `${stem}.result.json`), JSON.stringify({ invocationId: pending.invocationId, candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'block', runStatus: 'success', reasons: verdict.reasons, advisory: [], verdictRef: path.join(reviewDir, `${stem}.json`), logRef: path.join(reviewDir, `${stem}.log`), durationMs: 1, receiptSha256: 'x' }), 'utf8');
+      writeFileSync(path.join(reviewDir, `${stem}.result.json`), JSON.stringify({ invocationId: pending.invocationId, candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'block', runStatus: 'success', reasons: verdict.reasons, verdict, advisory: [], verdictRef: path.join(reviewDir, `${stem}.json`), logRef: path.join(reviewDir, `${stem}.log`), durationMs: 1, receiptSha256: 'x' }), 'utf8');
       void runner.formalReview(g(), card, now);
     };
     const second = await runner.formalReview(g(), card, r.run);
