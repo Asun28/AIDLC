@@ -77,6 +77,28 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(settings.hooks['Stop']?.length, 'Stop hook missing');
   });
 
+  test('the secret scan is a gate: both copies of security-scanners.yml are identical and carry no continue-on-error', () => {
+    const live = readFileSync(path.join(root, '.github', 'workflows', 'security-scanners.yml'), 'utf8');
+    const template = readFileSync(path.join(tpl, 'github', 'workflows', 'security-scanners.yml'), 'utf8');
+    assert.equal(live, template);
+    assert.ok(live.includes('name: Gitleaks (committed history)'), 'the check-run name the ship gate and the config refer to');
+    assert.ok(!live.includes('continue-on-error'), 'the gitleaks step must block the job');
+  });
+
+  test('the CI gate docs state the security class, the github config block and the changelog entry (T1-LOOP-GATES-2 acceptance 6)', () => {
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.ok(architecture.includes('the `security` class, keyed off a failing check-run name that matches a secret or security scan or off raw gitleaks output, is STOP/risk and never reruns'), 'outcome map names the security class');
+    assert.ok(architecture.includes('The `github` config block (`requiredChecks`, `requireVerdict`, `ciTimeoutMs`, `ciPollMs`) reaches the path through `shipPathFor`'), 'ship path bullet names the config block');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.ok(operations.includes('`github.requiredChecks|requireVerdict|ciTimeoutMs|ciPollMs` (see Ship gates)'), 'config keys list the github block');
+    assert.ok(operations.includes('## Ship gates (GitHub ship path)'), 'the ship gates section exists');
+    assert.ok(operations.includes('it may be false only while `gateRequired` is false'), 'the waived verdict rule is documented');
+    assert.ok(operations.includes('| `risk` | secrets or license gates tripped, a red secret or security scan in CI, or a high-risk operation refused |'), 'the STOP table names the red scan');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## ', changelog.indexOf('## Unreleased') + 1));
+    assert.ok(unreleased.includes('CI gates in the loop, card T1-LOOP-GATES'), 'the Unreleased section carries the entry');
+    assert.ok(unreleased.includes('a block verdict for the candidate fails the ship even when the requirement is waived'), 'the entry records the never-waived block verdict');
+  });
   test('JSON/YAML templates validate against the runtime schemas', () => {
     EvalCase.parse(JSON.parse(readFileSync(path.join(tpl, 'evals', 'example-regression.json'), 'utf8')));
     DeliveryOpsConfig.parse(JSON.parse(readFileSync(path.join(tpl, 'aidlc.ops.example.json'), 'utf8')));

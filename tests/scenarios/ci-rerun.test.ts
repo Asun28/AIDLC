@@ -88,3 +88,76 @@ test('Q7: a code-defect CI failure never reruns; it goes back to BUILD with a ne
     fx.cleanup();
   }
 });
+
+const SECURITY = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
+
+test('R7: a red secret scan is STOP/risk with no rerun intent and no repair attempt', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.state, 'STOP');
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.ok((r.run.stop?.detail ?? '').includes('Gitleaks (committed history)'), r.run.stop?.detail);
+    assert.equal(r.run.ci.reruns.length, 0, 'no rerun intent is persisted for a security failure');
+    assert.equal(r.run.dodReceipt, undefined, 'the candidate is not ready to ship again');
+    const classified = fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED');
+    assert.equal(classified?.data['class'], 'security');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'CI_RERUN'));
+    assert.equal(ship.requests.length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const SECURITY_NATIVE = '[CI-GATE-RED] [{"name":"secret_scan","conclusion":"failure"}]\nnpm ERR! network read ECONNRESET\n[SAGA-FAIL]';
+
+test('R7: a native secret_scan job with transient noise is STOP/risk, never a rerun', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY_NATIVE);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.equal(r.run.ci.reruns.length, 0, 'the transient evidence next to the scan earns no rerun');
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'security');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const SECURITY_JSON = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\nread ECONNRESET while fetching artifact\n[SAGA-FAIL]';
+const PENDING_NOISE = '[CI-GATE-WAIT] 1 pending: [{"name":"flaky-tests","conclusion":null,"status":"in_progress"}]\n[CI-GATE-RED] [{"name":"build-test","conclusion":"failure"}]\n[SAGA-FAIL]';
+
+test('R7: a structured gate line is classified from its checks; transient text next to it never earns the scan a rerun', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY_JSON);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.equal(r.run.ci.reruns.length, 0);
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'security');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R7: pending check names in a wait line are no failure evidence; a red build without a log is unknown and never reruns', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], PENDING_NOISE);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'ci', 'diagnose before any rerun');
+    assert.equal(r.run.ci.reruns.length, 0, 'flaky-tests in the wait line is not transient evidence');
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'unknown');
+  } finally {
+    fx.cleanup();
+  }
+});

@@ -299,7 +299,8 @@ export type PreReviewLedger = z.infer<typeof PreReviewLedger>;
 // CI
 // ---------------------------------------------------------------------------
 
-export const CiFailureClass = z.enum(['code-defect', 'transient', 'unknown']);
+/** security: a red secret or security scan; never rerun, STOP/risk. */
+export const CiFailureClass = z.enum(['code-defect', 'transient', 'unknown', 'security']);
 export type CiFailureClass = z.infer<typeof CiFailureClass>;
 
 export const CiRerun = z.object({

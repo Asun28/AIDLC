@@ -3,7 +3,7 @@
  *
  * Mirrors the scaffold chain: commit -> push -> PR (reuse retained identity) -> require a fresh
  * candidate-bound verdict written by the reviewer role at `<worktree>/.review/<branch>.json`
- * -> CI check runs green -> squash merge matching the head commit -> merge token. Every step
+ * -> CI check runs green (required names present, every reported check green; the gate lines carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every step
  * prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
  * Authentication failure never silently becomes local mode.
  */
@@ -22,37 +22,48 @@ export interface GitHubShipOptions {
   /** owner/repo */
   repository: string;
   runner?: SyncRunner;
-  /** Required check-run names that must conclude success; empty = every check must succeed. */
+  /** Check-run names that must be present and conclude success before the merge; an absent name is pending, never satisfied, and skipped or neutral never satisfies a required name. Every other check that reports on the head must succeed as well. */
   requiredChecks?: string[];
   ciTimeoutMs?: number;
   ciPollMs?: number;
   /** Sleep function for polling (injectable for tests). */
   sleep?: (ms: number) => void;
-  /** Whether a verdict is required before merge (default true). */
+  /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+}
+
+/** Check names travel in the gate lines as JSON with brackets and percent signs encoded: a name can never form a sentinel or break a line. `gateChecks` in core/ci-policy decodes them. */
+function encodeCheckName(name: string): string {
+  return name.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
+  return JSON.stringify(runs.map((r) => ({ name: encodeCheckName(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029'); // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
 }
 
 export class GitHubShipPath implements ShipPath {
   readonly name = 'github';
-  private readonly opts: GitHubShipOptions;
+  readonly options: GitHubShipOptions;
   private readonly runner: SyncRunner;
   private readonly git: GitProbe;
   private readonly gh: GhProbe;
 
   constructor(opts: GitHubShipOptions) {
-    this.opts = opts;
+    this.options = opts;
     this.runner = opts.runner ?? runSync;
     this.git = new GitProbe(this.runner);
     this.gh = new GhProbe(this.runner);
   }
 
   worktreePath(cardId: string): string {
-    return path.join(this.opts.worktreeRoot, cardId);
+    return path.join(this.options.worktreeRoot, cardId);
   }
 
   private receipt(lines: string[], exitCode: number, started: Date): ExecReceipt {
     const finished = new Date();
-    return { command: 'github-ship', args: [], cwd: this.opts.mainRoot, exitCode, signal: null, timedOut: false, stdout: lines.join('\n'), stderr: '', startedAt: started.toISOString(), finishedAt: finished.toISOString(), durationMs: finished.getTime() - started.getTime(), outputSha256: '' };
+    return { command: 'github-ship', args: [], cwd: this.options.mainRoot, exitCode, signal: null, timedOut: false, stdout: lines.join('\n'), stderr: '', startedAt: started.toISOString(), finishedAt: finished.toISOString(), durationMs: finished.getTime() - started.getTime(), outputSha256: '' };
   }
 
   ship(req: ShipRequest): ShipResult {
@@ -80,15 +91,16 @@ export class GitHubShipPath implements ShipPath {
     const head = this.git.head(wt);
     // verdict (fresh, candidate-bound) before any remote effect
     const v = this.readVerdict(req.cardId);
-    if (this.opts.requireVerdict !== false) {
+    // A block verdict is never waived: requireVerdict false only tolerates a missing or stale verdict, not a blocking one.
+    if (v.verdict?.verdict === 'block' && (!v.verdict.sha || v.verdict.sha === head)) return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
+    if (this.options.requireVerdict !== false) {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
       if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
-      if (v.verdict.verdict === 'block') return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
     }
     if (req.mode === 'local') {
-      const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.opts.mainRoot });
+      const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });
       if (merge.exitCode !== 0) return fail('[SHIP-LOCAL-MERGE-FAIL]', merge.stderr);
-      this.writeToken(req.cardId, `tip=${head}\nmerged=${this.git.head(this.opts.mainRoot)}\nutc=${new Date().toISOString()}`);
+      this.writeToken(req.cardId, `tip=${head}\nmerged=${this.git.head(this.options.mainRoot)}\nutc=${new Date().toISOString()}`);
       log.push('[SAGA-DONE] local merge');
       return classifyShipOutput(this.receipt(log, 0, started));
     }
@@ -96,11 +108,11 @@ export class GitHubShipPath implements ShipPath {
     const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt });
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr);
     const base = req.base.replace(/^origin\//, '');
-    const resolved = this.gh.resolvePr(this.opts.repository, req.cardId, base, undefined, wt);
+    const resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
     if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
     let prNumber = resolved.pr?.number;
     if (!prNumber) {
-      const create = this.runner('gh', ['pr', 'create', '--repo', this.opts.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt });
+      const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt });
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
       prNumber = Number(create.stdout.match(/\/pull\/(\d+)/)?.[1]);
       if (!prNumber) return fail('[SHIP-PR-NUMBER-FAIL]', create.stdout);
@@ -110,25 +122,32 @@ export class GitHubShipPath implements ShipPath {
     }
     log.push(`PR #${prNumber}`);
     // CI gate
-    const timeout = this.opts.ciTimeoutMs ?? 30 * 60 * 1000;
-    const poll = this.opts.ciPollMs ?? 20_000;
-    const sleep = this.opts.sleep ?? ((ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
+    const timeout = this.options.ciTimeoutMs ?? 30 * 60 * 1000;
+    const poll = this.options.ciPollMs ?? 20_000;
+    const sleep = this.options.sleep ?? ((ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
     const deadline = Date.now() + timeout;
     for (;;) {
-      const runs = this.gh.checkRuns(this.opts.repository, head, wt);
-      const relevant = this.opts.requiredChecks?.length ? runs.filter((r) => this.opts.requiredChecks!.includes(r.name)) : runs;
-      const pending = relevant.filter((r) => r.status !== 'completed');
-      const failed = relevant.filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes((r.conclusion ?? '').toLowerCase()));
-      if (failed.length) return { ...fail('[CI-GATE-RED]', failed.map((f) => `${f.name}=${f.conclusion}`).join(',')), prNumber };
-      if (!pending.length && relevant.length > 0) break;
-      if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks`), prNumber };
-      log.push(`[CI-GATE-WAIT] ${pending.length} pending`);
+      const runs = this.gh.checkRuns(this.options.repository, head, wt);
+      // Required names must be present and green: an absent one is pending until the timeout. Every reported check must succeed.
+      const required = this.options.requiredChecks ?? [];
+      const absent = required.filter((name) => !runs.some((r) => r.name === name));
+      const pending = [...runs.filter((r) => r.status !== 'completed'), ...absent.map((name) => ({ name, status: 'absent', conclusion: null }))];
+      // A required name must conclude success: skipped or neutral never satisfies it. Any other reported check may be neutral or skipped.
+      const green = (r: { name: string; conclusion: string | null }): boolean => {
+        const c = (r.conclusion ?? '').toLowerCase();
+        return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
+      };
+      const failed = runs.filter((r) => r.status === 'completed' && !green(r));
+      if (failed.length) return { ...fail('[CI-GATE-RED]', checksJson(failed)), prNumber };
+      if (!pending.length && runs.length > 0) break;
+      if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`), prNumber };
+      log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
       sleep(poll);
     }
     log.push('[CI-GATE-PASS]');
-    const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.opts.repository, '--squash', '--match-head-commit', head], { cwd: wt });
+    const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.options.repository, '--squash', '--match-head-commit', head], { cwd: wt });
     if (merge.exitCode !== 0) return { ...fail('[SHIP-MERGE-FAIL]', merge.stderr), prNumber };
-    const view = this.gh.prView(this.opts.repository, prNumber, wt);
+    const view = this.gh.prView(this.options.repository, prNumber, wt);
     if (view.state !== 'MERGED') return { ...fail('[SHIP-MERGE-FAIL]', `PR #${prNumber} state ${view.state} after merge`), prNumber };
     this.writeToken(req.cardId, `tip=${head}\nmerged_pr=#${prNumber}\nutc=${new Date().toISOString()}`);
     log.push('[SAGA-DONE]');
@@ -136,7 +155,7 @@ export class GitHubShipPath implements ShipPath {
   }
 
   private tokenFile(cardId: string): string {
-    return path.join(this.opts.mainRoot, '.git', 'scaffold-merged', cardId);
+    return path.join(this.options.mainRoot, '.git', 'scaffold-merged', cardId);
   }
 
   private writeToken(cardId: string, content: string): void {

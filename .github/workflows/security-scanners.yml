@@ -37,10 +37,8 @@ jobs:
           sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
           gitleaks version
 
-      # Reports without blocking until a baseline or a .gitleaks.toml allowlist exists.
-      # Promote to a gate by removing continue-on-error once a run is clean.
+      # Blocking gate: a leak in the committed history fails the job (allowlist in .gitleaks.toml).
       - name: Scan committed history
-        continue-on-error: true
         run: gitleaks git --redact --no-banner --report-format=sarif --report-path=gitleaks.sarif .
 
       - name: Upload report
