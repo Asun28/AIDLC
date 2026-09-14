@@ -37,7 +37,6 @@ acceptance:
   - 5. A block verdict for the candidate fails the ship before any push or merge even when `github.requireVerdict` is false, and `ProjectConfig` refuses `requireVerdict` false next to `gateRequired` true (github-ship.test.ts, config.test.ts). [R8] [dod arm 1]
   - 6. `docs/ARCHITECTURE.md` ship outcome map and `docs/OPERATIONS.md` config keys and gate promotion are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-depends_on: [T1-LOOP-LADDER]
 budget: 350
 tdd: true
 sweep: "grep -rn 'classifyCiFailure\|canRerun\|CiFailureClass\|GitHubShipPath(\|requiredChecks\|requireVerdict' src tests docs: ci-policy.ts class table and gate-line parser, card-runner.ts ci-red case and shipPathFor, github-ship.ts verdict and gate loop, config.ts refinement, types.ts enum, ci-rerun.test.ts, github-ship.test.ts, config.test.ts, ARCHITECTURE.md outcome map, OPERATIONS.md Ship gates and STOP table"
