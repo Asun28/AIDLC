@@ -41,7 +41,7 @@ export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 export const GitHubShipConfig = z.object({
   /** Check-run names that must be present and green before the merge; an absent name is pending, never satisfied. Every other check that reports on the head must succeed as well. */
   requiredChecks: z.array(z.string()).default([]),
-  /** A fresh candidate-bound R3 verdict is required before any remote effect. */
+  /** A fresh candidate-bound R3 verdict is required before any remote effect. False (only without gateRequired) tolerates a missing or stale verdict; a block verdict for the head always fails the ship. */
   requireVerdict: z.boolean().default(true),
   /** Defaults in the ship path: 30 minutes, polled every 20 seconds. */
   ciTimeoutMs: z.number().int().positive().optional(),
@@ -82,7 +82,13 @@ export const ProjectConfig = z.object({
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
-});
+})
+  .superRefine((config, ctx) => {
+    // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.
+    if (config.gateRequired && config.github.requireVerdict === false) {
+      ctx.addIssue({ code: 'custom', path: ['github', 'requireVerdict'], message: 'github.requireVerdict false conflicts with gateRequired true: a required review is never waived at the ship' });
+    }
+  });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 
 export const CONFIG_FILE = 'aidlc.config.json';

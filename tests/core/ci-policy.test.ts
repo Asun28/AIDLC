@@ -116,6 +116,14 @@ describe('security class (T1-LOOP-GATES R7)', () => {
     assert.equal(canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', c.class).allowed, false);
   });
 
+  test('underscore-separated secret-scan names classify as security; competing transient evidence never earns a rerun', () => {
+    assert.equal(classifyCiFailure([{ name: 'secret_scan', conclusion: 'failure' }]).class, 'security');
+    assert.equal(classifyCiFailure([{ name: 'secret-scanning', conclusion: 'failure' }]).class, 'security');
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret_scan=failure\nnpm ERR! network read ECONNRESET' }]);
+    assert.equal(c.class, 'security', c.evidence.join(' | '));
+    assert.equal(canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', c.class).allowed, false);
+  });
+
   test('security never reruns', () => {
     const d = canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', 'security');
     assert.equal(d.allowed, false);

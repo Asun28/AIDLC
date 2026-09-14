@@ -28,6 +28,12 @@ describe('project config: github ship block (T1-LOOP-GATES R8)', () => {
     assert.throws(() => ProjectConfig.parse({ github: { requiredChecks: 'ci' } }));
   });
 
+  test('a waived verdict requirement conflicts with a required review gate', () => {
+    assert.throws(() => ProjectConfig.parse({ gateRequired: true, github: { requireVerdict: false } }), /requireVerdict/);
+    assert.equal(ProjectConfig.parse({ gateRequired: false, github: { requireVerdict: false } }).github.requireVerdict, false);
+    assert.equal(ProjectConfig.parse({ gateRequired: true }).github.requireVerdict, true);
+  });
+
   test('this repository requires its four unconditional check runs; the template requires none', () => {
     const repo = ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')));
     assert.deepEqual(repo.github.requiredChecks, REQUIRED);

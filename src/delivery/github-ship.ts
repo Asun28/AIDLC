@@ -28,7 +28,7 @@ export interface GitHubShipOptions {
   ciPollMs?: number;
   /** Sleep function for polling (injectable for tests). */
   sleep?: (ms: number) => void;
-  /** Whether a verdict is required before merge (default true). */
+  /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
 }
 
@@ -80,10 +80,11 @@ export class GitHubShipPath implements ShipPath {
     const head = this.git.head(wt);
     // verdict (fresh, candidate-bound) before any remote effect
     const v = this.readVerdict(req.cardId);
+    // A block verdict is never waived: requireVerdict false only tolerates a missing or stale verdict, not a blocking one.
+    if (v.verdict?.verdict === 'block' && (!v.verdict.sha || v.verdict.sha === head)) return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
     if (this.options.requireVerdict !== false) {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
       if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
-      if (v.verdict.verdict === 'block') return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
     }
     if (req.mode === 'local') {
       const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });

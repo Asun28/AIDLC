@@ -111,3 +111,20 @@ test('R7: a red secret scan is STOP/risk with no rerun intent and no repair atte
     fx.cleanup();
   }
 });
+
+const SECURITY_NATIVE = '[CI-GATE-RED] secret_scan=failure\nnpm ERR! network read ECONNRESET\n[SAGA-FAIL]';
+
+test('R7: a native secret_scan job with transient noise is STOP/risk, never a rerun', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY_NATIVE);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.equal(r.run.ci.reruns.length, 0, 'the transient evidence next to the scan earns no rerun');
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'security');
+  } finally {
+    fx.cleanup();
+  }
+});

@@ -33,7 +33,7 @@ const CODE_DEFECT_PATTERNS: RegExp[] = [
 ];
 
 /** Check-run names that are secret or security scans: a red one is `security`, never rerun, STOP/risk. */
-export const SECURITY_CHECK_NAME = /gitleaks|secret[- ]?scan|security/i;
+export const SECURITY_CHECK_NAME = /gitleaks|secret[-_ ]?scan|security/i;
 
 /** Raw scanner output (gitleaks) for `aidlc ci classify --log`. */
 const SECURITY_PATTERNS: RegExp[] = [/leaks found: \d+/i, /^\s*RuleID:\s*\S+/m];
