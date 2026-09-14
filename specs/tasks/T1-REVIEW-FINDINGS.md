@@ -15,6 +15,7 @@ allow_paths:
   - tests/surface/pre-review.test.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/review-block.test.ts
+  - tests/surface/templates.test.ts
   - .claude/skills/aidlc-loop/card-loop.md
   - templates/claude/skills/aidlc-loop/card-loop.md
   - docs/ARCHITECTURE.md
