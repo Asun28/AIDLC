@@ -98,12 +98,12 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
 
   it('applies the change to the persisted record under the card-run lock, never to a stale snapshot', () => {
     const store = new GoalStore(paths);
-    const stale = store.saveCardRun(makeCardRun('goal-u', 'T1-U', { findings: [{ id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/u.ts:1: no RED -> add one', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [] }] }));
+    const stale = store.saveCardRun(makeCardRun('goal-u', 'T1-U', { findings: [{ id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/u.ts:1: no RED -> add one', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [], revision: 0 }] }));
     // Another window records a note on F1 after this snapshot was taken.
     store.saveCardRun({ ...stale, findings: stale.findings.map((f) => ({ ...f, disposition: 'disputed', disputes: [{ at: iso(1000), note: 'from the other window', afterReraises: 0 }] })) });
     const next = store.updateCardRun('goal-u', 'T1-U', (current) => {
       assert.equal(current?.findings[0]?.disposition, 'disputed', 'the callback receives the persisted record');
-      return { ...current!, findings: [...current!.findings, { id: 'F2', stage: 'pre', round: 1, reason: '[spec] 1 out of scope @ src/v.ts: outside allow_paths -> revert', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [] }] };
+      return { ...current!, findings: [...current!.findings, { id: 'F2', stage: 'pre', round: 1, reason: '[spec] 1 out of scope @ src/v.ts: outside allow_paths -> revert', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [], revision: 0 }] };
     });
     assert.deepEqual(next.findings.map((f) => [f.id, f.disposition]), [['F1', 'disputed'], ['F2', 'open']], 'both changes survive');
     assert.deepEqual(store.getCardRun('goal-u', 'T1-U')?.findings.map((f) => f.id), ['F1', 'F2']);

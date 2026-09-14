@@ -228,6 +228,10 @@ export type Verdict = z.infer<typeof Verdict>;
 export const PreReviewOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold']);
 export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
 
+/** A round record's outcome: the decided outcomes, or `pending` while the round is in flight (reserved before dispatch). */
+export const PreReviewRoundOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold', 'pending']);
+export type PreReviewRoundOutcome = z.infer<typeof PreReviewRoundOutcome>;
+
 /** One angle of a concurrent review panel (bugs, security, compliance, or a custom focus). */
 export const PerspectiveRecord = z.object({
   name: z.string().min(1),
@@ -254,6 +258,10 @@ export const ReviewInvocation = z.object({
   holdUntil: IsoTimestamp.optional(),
   /** A block that stops the ship (required gate, or a Tier-S spec block); an advisory block proceeds. Absent on records written before it existed. */
   mergeBlocking: z.boolean().optional(),
+  /** The committed sha the decision was bound to (the digest also covers uncommitted inputs). */
+  candidateSha: z.string().optional(),
+  /** Digest of the verdict document a ship-path reviewer wrote; a re-read of the same artifact is the same decision. */
+  artifactDigest: z.string().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
@@ -280,7 +288,7 @@ export const PreReviewRound = z.object({
   candidateSha: z.string().optional(),
   requestedAt: IsoTimestamp,
   durationMs: z.number().int().nonnegative().default(0),
-  outcome: PreReviewOutcome,
+  outcome: PreReviewRoundOutcome,
   runStatus: RunStatus.optional(),
   reasons: z.array(z.string()).default([]),
   verdictRef: z.string().optional(),
@@ -289,11 +297,15 @@ export const PreReviewRound = z.object({
   holdUntil: IsoTimestamp.optional(),
   /** Concurrent angles of a panel round. */
   perspectives: z.array(PerspectiveRecord).optional(),
+  /** The reservation id of the dispatch (the retention file stem); a pending record is replaced by the decided one under it. */
+  reservationId: z.string().optional(),
 });
 export type PreReviewRound = z.infer<typeof PreReviewRound>;
 
 export const PreReviewLedger = z.object({
   rounds: z.array(PreReviewRound).default([]),
+  /** Residual hand-offs to R3 (exhausted rounds under `onExhausted: ship`), one per cycle and candidate. */
+  handoffs: z.array(z.object({ cycle: z.number().int().nonnegative(), candidateDigest: z.string().min(1), at: IsoTimestamp })).default([]),
 });
 export type PreReviewLedger = z.infer<typeof PreReviewLedger>;
 
@@ -334,8 +346,8 @@ export const ReviewFinding = z.object({
         reason: z.string(),
         /** The panel angle that wrote this re-raise; one round may re-raise a finding from several angles. */
         perspective: z.string().optional(),
-        /** The finding was disputed in the snapshot the reviewer received: one round of mutual non-acceptance. */
-        answeredDispute: z.boolean().default(false),
+        /** Index of the dispute the reviewer received and answered; absent when the finding was open in the dispatched snapshot. */
+        answeredDispute: z.number().int().nonnegative().optional(),
       }),
     )
     .default([]),
@@ -343,6 +355,8 @@ export const ReviewFinding = z.object({
   resolvedAt: IsoTimestamp.optional(),
   /** Raised by an advisory block (standards-only without a required gate): retained, never a merge bar. */
   advisory: z.boolean().optional(),
+  /** Bumped by every change (dispute, withdrawal, re-raise, resolution); a round compares it with the revision it received. */
+  revision: z.number().int().nonnegative().default(0),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;
 

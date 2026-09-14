@@ -242,23 +242,39 @@ export interface RecordFindingsInput {
   /** The block was advisory (never a merge bar): its findings are recorded and marked, the ship proceeds. */
   advisory?: boolean;
   /**
-   * The findings as the reviewer received them at dispatch (id -> disposition and dispute count). A re-raise
-   * answered a dispute only when the dispatched snapshot showed it disputed; a finding absent from the
-   * snapshot was raised after dispatch and is never resolved by this round; a finding whose disposition or
-   * dispute count changed after dispatch keeps that later change (the round neither resets nor resolves it).
-   * Absent = the current findings are the snapshot.
+   * The findings as the reviewer received them at dispatch (id -> disposition, dispute count, revision). A
+   * re-raise answered the dispute the snapshot showed; a finding absent from the snapshot was raised after
+   * dispatch and is never resolved by this round; a finding whose revision moved after dispatch keeps that
+   * later change (the round neither resets nor resolves it). Absent = the current findings are the snapshot;
+   * an empty object = the reviewer received no findings (a ship-path reviewer).
    */
   seen?: Record<string, FindingSnapshot>;
+  /** The angle that wrote each reason, from the structured panel result; takes precedence over a trailing `(<angle>)` tag. */
+  perspectiveByReason?: Record<string, string>;
 }
 
 /** One finding as a reviewer received it at dispatch. */
 export interface FindingSnapshot {
   disposition: FindingDisposition;
   disputes: number;
+  revision: number;
+  resolved: boolean;
 }
 
+/** Every finding of the run as a reviewer receives it, resolved ones included (a re-raise may reopen them). */
 export function snapshotFindings(findings: ReviewFinding[]): Record<string, FindingSnapshot> {
-  return Object.fromEntries(findings.filter((f) => !f.resolvedAt).map((f) => [f.id, { disposition: f.disposition, disputes: f.disputes.length }]));
+  return Object.fromEntries(findings.map((f) => [f.id, { disposition: f.disposition, disputes: f.disputes.length, revision: f.revision, resolved: Boolean(f.resolvedAt) }]));
+}
+
+/** Ordering of rounds within a stage: pre-review rounds by (cycle, round), formal decisions by number. */
+function roundKey(stage: FindingStage, cycle: number | undefined, round: number): number {
+  return stage === 'pre' ? (cycle ?? 0) * 1_000_000 + round : round;
+}
+
+/** The latest round of `stage` that raised or re-raised the finding. */
+function lastRoundOf(f: ReviewFinding, stage: FindingStage): number {
+  const keys = [...(f.stage === stage ? [roundKey(stage, f.cycle, f.round)] : []), ...f.reraised.filter((r) => r.stage === stage).map((r) => roundKey(stage, r.cycle, r.round))];
+  return keys.length ? Math.max(...keys) : -1;
 }
 
 export interface RecordFindingsResult {
@@ -285,36 +301,44 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
   // References resolve against the findings that existed before this round, never against ids this round allocates.
   const known = new Set(findings.map((f) => f.id));
   const seen = input.seen ?? snapshotFindings(findings);
-  // A finding changed after dispatch (a dispute recorded or withdrawn meanwhile) keeps that change: the round never saw it.
-  const changedSince = (f: ReviewFinding) => !(f.id in seen) || seen[f.id]!.disposition !== f.disposition || seen[f.id]!.disputes !== f.disputes.length;
-  const perspectiveOf = (reason: string) => input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
+  // A finding whose revision moved after dispatch (a dispute recorded or withdrawn, another round's re-raise) keeps that change: this round never saw it.
+  const changedSince = (f: ReviewFinding) => !(f.id in seen) || seen[f.id]!.revision !== f.revision;
+  const perspectiveOf = (reason: string) => input.perspectiveByReason?.[reason] ?? input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
+  const thisRound = roundKey(input.stage, input.cycle, input.round);
   let next = findings.map((f) => ({ ...f }));
   const raised: string[] = [];
   const reraised: string[] = [];
   for (const reason of input.reasons) {
     const ref = findingReference(reason);
     if (ref && known.has(ref)) {
+      const before = findings.find((f) => f.id === ref)!;
       const prior = next.find((f) => f.id === ref)!;
       if (!reraised.includes(prior.id)) reraised.push(prior.id);
-      // Every re-raise reason is kept with its angle; whether the round answered a dispute is read from the dispatched snapshot.
-      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: seen[prior.id]?.disposition === 'disputed' }];
-      if (!changedSince(findings.find((f) => f.id === ref)!)) {
+      // Every re-raise reason is kept with its angle; the dispute it answered is the one the dispatched snapshot showed.
+      const received = seen[prior.id];
+      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: received?.disposition === 'disputed' && received.disputes > 0 ? received.disputes - 1 : undefined }];
+      // A re-raise reopens the finding (a resolved one included) unless it changed after dispatch.
+      if (!changedSince(before)) {
         prior.disposition = 'open';
         prior.resolvedAt = undefined;
       }
+      prior.revision = before.revision + 1;
       continue;
     }
     const id = nextFindingId(next);
-    const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [] };
+    const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
     if (input.advisory) finding.advisory = true;
     next = [...next, finding];
     raised.push(id);
   }
   const resolved: string[] = [];
   for (const f of next) {
-    // Only findings the reviewer received, unchanged since, can be resolved by its verdict; one raised or disputed meanwhile stays as it is.
-    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id) || changedSince(findings.find((x) => x.id === f.id)!)) continue;
+    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id)) continue;
+    const before = findings.find((x) => x.id === f.id)!;
+    // Only a finding the reviewer received, unchanged since, and raised or re-raised in a strictly earlier round of the stage is resolved.
+    if (changedSince(before) || lastRoundOf(before, input.stage) >= thisRound) continue;
     f.resolvedAt = input.at;
+    f.revision = before.revision + 1;
     resolved.push(f.id);
   }
   return { findings: next, raised, reraised, resolved };
@@ -326,9 +350,9 @@ const findingOrThrow = (findings: ReviewFinding[], id: string): ReviewFinding =>
   return f;
 };
 
-/** Rounds of mutual non-acceptance: distinct rounds whose re-raise answered a dispute (a withdrawn dispute never reached a reviewer). */
+/** Rounds of mutual non-acceptance: distinct disputes a reviewer received and answered with a re-raise (a withdrawn dispute never reached a reviewer). */
 export function nonAcceptanceRounds(f: ReviewFinding): number {
-  return new Set(f.reraised.filter((r) => r.answeredDispute).map((r) => `${r.stage}:${r.cycle ?? 0}:${r.round}`)).size;
+  return new Set(f.reraised.map((r) => r.answeredDispute).filter((i): i is number => i !== undefined)).size;
 }
 
 /** Findings disputed twice and re-raised twice: two rounds of mutual non-acceptance, a human ruling. */
@@ -370,7 +394,7 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
   // One dispute per re-raise, a withdrawn one included: the next dispute waits for a reviewer to re-raise the finding.
   const last = f.disputes.at(-1);
   if (last && f.reraised.length <= last.afterReraises) throw new Error(`${f.id} was already disputed since the last re-raise (a withdrawn dispute counts); a second dispute needs a re-raise in between`);
-  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length }] } : x));
+  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length }], revision: x.revision + 1 } : x));
 }
 
 /** The author withdraws a dispute: the finding returns to open; the note stays in the history. */
@@ -378,7 +402,7 @@ export function acceptFinding(findings: ReviewFinding[], id: string): ReviewFind
   const f = findingOrThrow(findings, id);
   if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to withdraw`);
   if (f.disposition !== 'disputed') throw new Error(`${f.id} is not disputed; nothing to withdraw`);
-  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'open' as const } : x));
+  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'open' as const, revision: x.revision + 1 } : x));
 }
 
 /** The findings a pre-review round raised or re-raised (rounds are numbered per cycle). */
@@ -409,4 +433,19 @@ export function rerunAllowed(findings: ReviewFinding[], block: BlockSelector): {
     .filter((f) => f.disposition !== 'disputed' && !f.resolvedAt)
     .map((f) => f.id);
   return { allowed: open.length === 0, open };
+}
+
+/**
+ * Merge two views of a run's findings by revision: the higher revision of a finding wins, the writer's
+ * view on a tie; findings only one side knows are kept. A write computed from an older read therefore never
+ * drops a disposition another window recorded meanwhile.
+ */
+export function mergeFindings(persisted: ReviewFinding[], mine: ReviewFinding[]): ReviewFinding[] {
+  const byId = new Map<string, ReviewFinding>();
+  for (const f of persisted) byId.set(f.id, f);
+  for (const f of mine) {
+    const other = byId.get(f.id);
+    if (!other || f.revision >= other.revision) byId.set(f.id, f);
+  }
+  return [...byId.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
 }
