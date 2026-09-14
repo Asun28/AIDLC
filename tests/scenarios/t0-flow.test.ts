@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
+import { countedFailures } from '../../src/core/effort.ts';
 
 test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE and the goal finishes development-only', () => {
   const fx = makeFixture();
@@ -390,11 +391,16 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
     assert.equal(f.run.dodReceipt, undefined);
     assert.ok(f.verdictRef && existsSync(f.verdictRef));
     assert.equal((JSON.parse(readFileSync(f.verdictRef, 'utf8')) as { sha: string }).sha, 'sha-1');
+    assert.equal(f.run.effort?.attempts.at(-1)?.outcome, 'success', 'the blocked attempt keeps its success; the R3 decision paid for the block');
+    assert.equal(f.run.effort?.terminal, undefined, 'the episode is reopened for the repair');
+    assert.equal(countedFailures(f.run.effort!).length, 0, 'no DoD failure was recorded');
 
     // The repair is the next attempt; the repaired candidate restarts loop 1 (pre-review cycle 1) before R3 runs again.
     r = runner.next(fx.goal(goal.id), card, f.run);
     assert.equal(r.directive.kind, 'build');
     if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the review-fix build directive names the skills');
+    if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'medium', 'the repair runs at the effort that succeeded');
+    if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2);
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
     r = runner.next(fx.goal(goal.id), card, run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
@@ -1004,6 +1010,53 @@ test('R3/acceptance 7: BUILD skills follow the finalized size: an explicit T0-bu
     r = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(r.directive.kind, 'build');
     if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R11: an R3 command block on the escalated success reopens the episode and the repair runs at the escalated effort', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-up.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-up.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-up.ts b/src/t1-up.ts\n+export const up = 1;\n' }, 'fake-r2': { stdout: PASS }, 'fake-r3': { stdout: BLOCK } });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-UP', title: 'escalated success blocked by the R3 command' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-UP', source: 'card', ref: 'T1-UP', affectedSurfaces: [] }, { cards: ['T1-UP'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-UP'] } });
+    const card = fx.card('T1-UP');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-UP'));
+    let run = r.run;
+    for (const cause of ['type error in up.ts', 'assertion in up.test.ts', 'timeout in up.test.ts']) {
+      r = runner.next(fx.goal(goal.id), card, run);
+      assert.equal(r.directive.kind, 'build');
+      run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause, progress: true });
+    }
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'high', 'the fourth attempt is the single escalation');
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:4', candidateSha: 'sha-4' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    const f = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    assert.equal(f.classified.outcome, 'block-defect');
+    assert.equal(f.run.state, 'REVIEW_FIX');
+    assert.equal(f.run.effort?.attempts.at(-1)?.outcome, 'success', 'the escalated success is preserved');
+    assert.equal(f.run.effort?.terminal, undefined, 'the episode is reopened');
+    assert.equal(countedFailures(f.run.effort!).length, 3, 'the failure count is unchanged by the block');
+    r = runner.next(fx.goal(goal.id), card, f.run);
+    assert.equal(r.directive.kind, 'build', `the repair is admitted, not escalation-failed: ${r.directive.narration}`);
+    if (r.directive.kind === 'build') {
+      assert.equal(r.directive.effort, 'high', 'the repair runs at the escalated effort');
+      assert.equal(r.directive.attempt, 5);
+    }
+    const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:5', redReceipt: 'red:4', candidateSha: 'sha-5' });
+    assert.equal(repaired.effort?.terminal, 'succeeded');
+    assert.equal(countedFailures(repaired.effort!).length, 3);
   } finally {
     fx.cleanup();
   }

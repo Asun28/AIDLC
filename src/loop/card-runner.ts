@@ -492,7 +492,8 @@ export class CardRunner {
     if (last?.outcome === 'block') {
       // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons.
       const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined });
-      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
+      const admitted = run.effort ? nextEffortAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
+      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
     }
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {

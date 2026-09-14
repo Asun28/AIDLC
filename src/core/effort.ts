@@ -68,15 +68,17 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
     throw new Error('an attempt is still running; finish or reconcile it before deciding the next action');
   }
   // A reopened episode (a review block on a success) admits the repair at the effort that succeeded, escalated or not:
-  // the review budget paid for the block, so the ladder position is unchanged.
-  const lastRun = episode.attempts[episode.attempts.length - 1];
+  // the review budget paid for the block, so the ladder position is unchanged. Not-counted records after the block
+  // (a quota wait, a tool outage) are not evaluated attempts and never hide that success.
+  const evaluated = episode.attempts.filter((a) => a.outcome === 'success' || a.outcome === 'fail');
+  const lastRun = evaluated[evaluated.length - 1];
   if (lastRun?.outcome === 'success') {
     return { action: 'attempt', effort: lastRun.effort, n: nextAttemptNumber(episode), escalated: lastRun.effort !== episode.baseline };
   }
-  const failures = countedFailures(episode);
-  const last = failures[failures.length - 1];
-  const prev = failures[failures.length - 2];
-  if (last && prev && last.cause && prev.cause && normaliseCause(last.cause) === normaliseCause(prev.cause) && !last.progress && !prev.progress) {
+  // The same-cause rule reads consecutive evaluated attempts: a preserved success between two failures breaks the streak.
+  const last = evaluated[evaluated.length - 1];
+  const prev = evaluated[evaluated.length - 2];
+  if (last?.outcome === 'fail' && prev?.outcome === 'fail' && last.cause && prev.cause && normaliseCause(last.cause) === normaliseCause(prev.cause) && !last.progress && !prev.progress) {
     return { action: 'stop', reason: 'same-cause-stop', detail: `two consecutive failures with cause "${normaliseCause(last.cause)}" and no verified progress` };
   }
   const counted = countedAttempts(episode).length;
