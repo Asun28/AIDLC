@@ -374,3 +374,20 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.match(policy.describeDeadlock(f), /F1 .*disputed twice.*re-raised twice/);
   });
 });
+
+describe('stale ledger writes (T1-REVIEW-FINDINGS-2 R3 decision 1)', () => {
+  const ledger = (over: Partial<ReviewLedger> = {}) => ReviewLedger.parse(over);
+  const pending = { ...inv('r3:a'), candidateSha: SHA, outcome: 'pending' as const, runStatus: 'success' as const };
+  const decided = { ...pending, outcome: 'block' as const };
+  const round = { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'cand-1', requestedAt: T0, durationMs: 0, outcome: 'pending' as const, reasons: [], reservationId: 'res-1' };
+  const run = (review: ReviewLedger, rounds: Array<Omit<typeof round, 'outcome'> & { outcome: 'pending' | 'block' | 'pass' }>) => ({ review, preReview: { rounds, handoffs: [] } });
+
+  test('a snapshot that still holds a decided entry as pending, or lower counters, is stale; an identical ledger is not', () => {
+    assert.equal(policy.staleLedger(run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), []), run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), [])), undefined);
+    assert.match(policy.staleLedger(run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), []), run(ledger({ invocations: [pending] }), [])) ?? '', /r3:a/);
+    assert.match(policy.staleLedger(run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), []), run(ledger({ invocations: [decided] }), [])) ?? '', /substantiveDecisions/);
+    assert.match(policy.staleLedger(run(ledger(), [{ ...round, outcome: 'block' }]), run(ledger(), [round])) ?? '', /round/);
+    assert.match(policy.staleLedger(run(ledger({ noVerdictRetriesUsed: 1 }), []), run(ledger(), [])) ?? '', /noVerdictRetriesUsed/);
+    assert.equal(policy.staleLedger(run(ledger(), [round]), run(ledger(), [{ ...round, outcome: 'block' }])), undefined, 'the writer deciding a pending round is the expected direction');
+  });
+});

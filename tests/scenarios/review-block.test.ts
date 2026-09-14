@@ -336,3 +336,43 @@ test('T1-REVIEW-FINDINGS-2: a ship-path decision records its findings against th
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-2 R3 decision 1: a ship-path decision persists its invocation, counters and findings in one locked update, so a failure right after it leaves a consistent ledger and a replay records nothing twice', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const ship = new DryRunShipPath(['review-blocked', 'review-blocked'], BLOCK);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    // The queue completion after the decision fails once: the decision and its findings are already persisted together.
+    const realComplete = fx.queue.complete.bind(fx.queue);
+    let failed = false;
+    fx.queue.complete = (...args: Parameters<typeof realComplete>) => {
+      if (!failed) {
+        failed = true;
+        throw new Error('queue store unavailable');
+      }
+      return realComplete(...args);
+    };
+    try {
+      assert.throws(() => runner.next(g(), card, run), /queue store unavailable/);
+    } finally {
+      fx.queue.complete = realComplete;
+    }
+    const persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(persisted.review.invocations.filter((i) => i.outcome === 'block').length, 1, 'the decision is persisted with its findings');
+    assert.equal(persisted.review.substantiveDecisions, 1);
+    assert.deepEqual(persisted.findings.map((f) => f.id), ['F1']);
+    // Whatever the loop does next with the interrupted ship, the same artifact is never a second decision or a second finding.
+    r = runner.next(g(), card, persisted);
+    assert.equal(r.run.review.substantiveDecisions, 1);
+    assert.deepEqual(r.run.findings.map((f) => f.id), ['F1']);
+  } finally {
+    fx.cleanup();
+  }
+});

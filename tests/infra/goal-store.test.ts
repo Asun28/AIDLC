@@ -1,6 +1,7 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
@@ -172,5 +173,91 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     assert.throws(() => store.updateCardRun('goal-t', 'T1-T', () => { throw new Error('refused'); }), /refused/);
     assert.deepEqual(store.getCardRun('goal-t', 'T1-T'), before);
     assert.ok(!existsSync(`${store.cardFile('goal-t', 'T1-T')}.lock`));
+  });
+});
+
+describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)', () => {
+  const dir = tmpDir();
+  const paths = ensureStatePaths(statePathsFromRoot(path.join(dir, '.aidlc')));
+  after(() => cleanup(dir));
+  /** Route the store's `statSync` of one path through `handler` (the ESM binding of a builtin follows the CJS export after a sync). */
+  const withStatOf = (target: string, handler: () => fs.Stats, body: () => void) => {
+    const real = fs.statSync;
+    (fs as unknown as Record<string, unknown>)['statSync'] = ((p: fs.PathLike, ...rest: unknown[]) => (String(p) === target ? handler() : (real as unknown as (...a: unknown[]) => fs.Stats)(p, ...rest))) as typeof fs.statSync;
+    syncBuiltinESMExports();
+    try {
+      body();
+    } finally {
+      (fs as unknown as Record<string, unknown>)['statSync'] = real;
+      syncBuiltinESMExports();
+    }
+  };
+
+  it('a stale lock whose owner process is alive is never taken over: the waiter refuses at the deadline; a dead owner\'s lock is', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 60, staleLockMs: 10 });
+    store.saveCardRun(makeCardRun('goal-p', 'T1-P'));
+    const lock = `${store.cardFile('goal-p', 'T1-P')}.lock`;
+    writeFileSync(lock, `pid=${process.pid} at=old nonce=x`, 'utf8'); // this process is alive
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lock, old, old);
+    assert.throws(() => store.updateCardRun('goal-p', 'T1-P', (current) => current!), /locked/);
+    assert.ok(existsSync(lock), 'a live owner keeps its lock however old');
+    unlinkSync(lock);
+    writeFileSync(lock, 'pid=999999999 at=old nonce=y', 'utf8'); // no such process
+    utimesSync(lock, old, old);
+    assert.equal(store.updateCardRun('goal-p', 'T1-P', (current) => ({ ...current!, blocker: 'after a dead owner' })).blocker, 'after a dead owner');
+  });
+
+  it('the deadline is checked before every retry acquisition: a wait that overran it never runs the change even when the lock is free by then', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 40 });
+    store.saveCardRun(makeCardRun('goal-f', 'T1-F'));
+    const lock = `${store.cardFile('goal-f', 'T1-F')}.lock`;
+    writeFileSync(lock, 'pid=1 at=now nonce=z', 'utf8');
+    let entered = false;
+    // The wait between two attempts overruns the deadline and the owner releases the lock meanwhile.
+    withStatOf(lock, () => {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 120);
+      try {
+        unlinkSync(lock);
+      } catch {
+        /* already gone */
+      }
+      return { mtimeMs: Date.now() } as fs.Stats;
+    }, () => {
+      assert.throws(() => store.updateCardRun('goal-f', 'T1-F', (current) => { entered = true; return current!; }), /locked/);
+    });
+    assert.equal(entered, false, 'an expired waiter refuses instead of entering late');
+  });
+
+  it('ageMs treats only a vanished file as gone: a permission error on the lock propagates instead of looping to the deadline', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 200 });
+    store.saveCardRun(makeCardRun('goal-e', 'T1-E'));
+    const lock = `${store.cardFile('goal-e', 'T1-E')}.lock`;
+    writeFileSync(lock, 'pid=1 at=now nonce=w', 'utf8');
+    try {
+      withStatOf(lock, () => {
+        const err = new Error('EACCES: permission denied, stat') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }, () => {
+        assert.throws(() => store.updateCardRun('goal-e', 'T1-E', (current) => current!), (err: unknown) => err instanceof Error && /EACCES/.test(err.message) && !/locked by another writer/.test(err.message));
+      });
+    } finally {
+      unlinkSync(lock);
+    }
+  });
+
+  it('saveCardRun refuses a snapshot that lacks, regresses or un-decides a persisted ledger entry, so controller writers are covered too', () => {
+    const store = new GoalStore(paths);
+    const base = store.saveCardRun(makeCardRun('goal-s', 'T1-S'));
+    const withPending = store.saveCardRun({ ...base, preReview: { ...base.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd', requestedAt: iso(0), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] } });
+    assert.throws(() => store.saveCardRun(base), /changed since it was read/i, 'a snapshot without the reservation is refused');
+    const decided = store.saveCardRun({ ...withPending, preReview: { ...withPending.preReview, rounds: [{ ...withPending.preReview.rounds[0]!, outcome: 'block', reasons: ['[spec] 6 tests @ src/s.ts:1: no RED -> add one'] }] } });
+    assert.throws(() => store.saveCardRun(withPending), /changed since it was read/i, 'a snapshot that would turn the decided round back into pending is refused');
+    assert.equal(store.getCardRun('goal-s', 'T1-S')?.preReview.rounds[0]?.outcome, 'block');
+    const counters = store.saveCardRun({ ...decided, review: { ...decided.review, substantiveDecisions: 1, substantiveBlocks: 1 } });
+    assert.throws(() => store.saveCardRun(decided), /changed since it was read/i, 'a snapshot that would regress the decision counters is refused');
+    assert.equal(store.getCardRun('goal-s', 'T1-S')?.review.substantiveDecisions, 1);
+    assert.equal(store.saveCardRun({ ...counters, blocker: 'fresh' }).blocker, 'fresh', 'a snapshot at the current ledger writes');
   });
 });
