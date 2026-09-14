@@ -227,38 +227,53 @@ export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
  * the reasoning.
  */
 export function extractVerdict(output: string): Verdict | undefined {
-  const lines = output
-    .split(/\r?\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length > 0);
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const line = lines[i]!;
-    const start = line.indexOf('{');
-    if (start < 0) continue;
-    // This line decides. Its top-level documents are found by a string-aware brace walk from the first brace: a walk
-    // that ends inside a document (one cut short, or a second one started and not finished) is malformed, whatever a
-    // nested object says; otherwise the last complete document that parses decides, and prose around it is ignored.
-    const docs = topLevelDocuments(line, start);
-    if (!docs) return undefined;
-    for (let d = docs.length - 1; d >= 0; d--) {
-      try {
-        return parseVerdict(JSON.parse(docs[d]!));
-      } catch {
-        /* balanced prose braces, not a document */
-      }
+  // The walk covers the whole output, so a document spanning lines is one document. Every JSON-looking brace (`{`
+  // followed by a quote or a closing brace) is a possible document start; the parseable top-level spans are the
+  // documents, the last of them decides. The output is malformed when a JSON-looking document after the decisive
+  // one is cut short or does not parse, or when a JSON-looking document that encloses the decisive one never closes
+  // (a block cut short after a nested axis is never its last axis).
+  const starts: number[] = [];
+  for (let i = output.indexOf('{'); i >= 0; i = output.indexOf('{', i + 1)) if (jsonLike(output, i)) starts.push(i);
+  const spans: Array<{ start: number; end: number }> = [];
+  const unfinished: number[] = [];
+  for (const start of starts) {
+    const end = closeOf(output, start);
+    if (end === undefined) {
+      unfinished.push(start);
+      continue;
     }
+    try {
+      JSON.parse(output.slice(start, end + 1));
+      spans.push({ start, end });
+    } catch {
+      /* a JSON-looking brace that is not a document: prose, or a malformed document */
+    }
+  }
+  const top = spans.filter((s) => !spans.some((o) => o !== s && o.start < s.start && o.end >= s.end));
+  const decisive = top[top.length - 1];
+  if (!decisive) return undefined;
+  // A JSON-looking start after the decisive document that is not a parseable document is a cut-short or malformed final document.
+  if (starts.some((p) => p > decisive.end && !spans.some((s) => s.start === p))) return undefined;
+  // An unfinished document opened before the decisive one that runs into it encloses it.
+  if (unfinished.some((p) => p < decisive.start)) return undefined;
+  try {
+    return parseVerdict(JSON.parse(output.slice(decisive.start, decisive.end + 1)));
+  } catch {
     return undefined;
   }
-  return undefined;
 }
 
-/** The complete top-level `{...}` spans of `text` from `start` (braces inside JSON strings do not count), or undefined when the walk ends inside one. */
-function topLevelDocuments(text: string, start: number): string[] | undefined {
-  const docs: string[] = [];
+/** A brace that starts a JSON object: followed, after whitespace, by a quote (a key) or a closing brace (an empty object). */
+function jsonLike(text: string, at: number): boolean {
+  const next = text.slice(at + 1).match(/^\s*(["}])/);
+  return next !== null;
+}
+
+/** The index of the brace that closes the object opened at `start` (braces inside strings do not count), undefined when it never closes. */
+function closeOf(text: string, start: number): number | undefined {
   let depth = 0;
   let inString = false;
   let escaped = false;
-  let docStart = -1;
   for (let i = start; i < text.length; i++) {
     const c = text[i]!;
     if (inString) {
@@ -267,16 +282,14 @@ function topLevelDocuments(text: string, start: number): string[] | undefined {
       else if (c === '"') inString = false;
       continue;
     }
-    if (c === '"' && depth > 0) inString = true;
-    else if (c === '{') {
-      if (depth === 0) docStart = i;
-      depth += 1;
-    } else if (c === '}' && depth > 0) {
+    if (c === '"') inString = true;
+    else if (c === '{') depth += 1;
+    else if (c === '}') {
       depth -= 1;
-      if (depth === 0) docs.push(text.slice(docStart, i + 1));
+      if (depth === 0) return i;
     }
   }
-  return depth === 0 && !inString ? docs : undefined;
+  return undefined;
 }
 
 export interface PreReviewClassification {

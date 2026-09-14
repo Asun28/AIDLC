@@ -334,7 +334,9 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
   }
   const resolved: string[] = [];
   for (const f of next) {
-    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id)) continue;
+    // The stage owns a finding it raised or re-raised: an R2 finding re-raised by R3 decision 1 is R3's to resolve at decision 2.
+    const ofStage = f.stage === input.stage || f.reraised.some((r) => r.stage === input.stage);
+    if (!ofStage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id)) continue;
     const before = findings.find((x) => x.id === f.id)!;
     // Only a finding the reviewer received, unchanged since, and raised or re-raised in a strictly earlier round of the stage is resolved.
     if (changedSince(before) || lastRoundOf(before, input.stage) >= thisRound) continue;
@@ -351,12 +353,14 @@ const findingOrThrow = (findings: ReviewFinding[], id: string): ReviewFinding =>
   return f;
 };
 
-/** Whether the latest re-raise came from a round that received every dispute of the finding recorded so far. */
+/**
+ * Whether a re-raise recorded since the latest dispute came from a round that received every dispute of the finding
+ * so far (`afterReraises` on the dispute marks where those re-raises start). A later re-raise from a round that
+ * received none, completing late, never revokes it.
+ */
 function receivedEveryDispute(f: ReviewFinding): boolean {
-  const last = f.reraised.at(-1);
-  if (!last) return false;
-  const saw = last.sawDisputes ?? (last.answeredDispute !== undefined ? last.answeredDispute + 1 : 0);
-  return saw >= f.disputes.length;
+  const since = f.disputes.at(-1)?.afterReraises ?? 0;
+  return f.reraised.slice(since).some((r) => (r.sawDisputes ?? (r.answeredDispute !== undefined ? r.answeredDispute + 1 : 0)) >= f.disputes.length);
 }
 
 /** Rounds of mutual non-acceptance: distinct disputes a reviewer received and answered with a re-raise (a withdrawn dispute never reached a reviewer). */

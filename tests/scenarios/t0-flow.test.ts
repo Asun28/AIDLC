@@ -2301,32 +2301,28 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 1: a formal dispatch that fails neve
     let persisted = fx.store.getCardRun(goal.id, 'T1-TH')!;
     assert.deepEqual(persisted.review.invocations.map((i) => i.outcome), ['no-verdict']);
     assert.equal(persisted.review.noVerdictRetriesUsed, 1);
-    // (2) The retention itself fails (the log cannot be written), so the dispatch throws with no receipt behind it, and the
-    // lock is held again: the failure is retained as a marker and the reservation is released by the next command.
+    // (2) The dispatch fails before any receipt exists (an empty review command) and the lock is held again when the failure
+    // is retained: the reservation cannot be released at once; the next command releases it from the retained failure.
+    const empty = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, formalReview: { ...fx.config.formalReview, command: [''] } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const realWrite = fs.writeFileSync;
     (fs as unknown as Record<string, unknown>)['writeFileSync'] = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
-      if (String(file).endsWith('.log') && String(file).includes('T1-TH.r3.')) {
-        held();
-        const err = new Error('EACCES: permission denied, open') as NodeJS.ErrnoException;
-        err.code = 'EACCES';
-        throw err;
-      }
+      if (String(file).endsWith('.failed.json')) held();
       return (realWrite as unknown as (...a: unknown[]) => void)(file, ...rest);
     }) as typeof fs.writeFileSync;
     syncBuiltinESMExports();
     try {
-      await assert.rejects(() => runner.formalReview(g(), card, persisted), /EACCES/);
+      await assert.rejects(() => empty.formalReview(g(), card, persisted), /review command is empty/);
     } finally {
       (fs as unknown as Record<string, unknown>)['writeFileSync'] = realWrite;
       syncBuiltinESMExports();
       rmSync(lock, { force: true });
     }
-    assert.equal(dispatched, 2);
+    assert.equal(dispatched, 1, 'nothing ran');
     persisted = fx.store.getCardRun(goal.id, 'T1-TH')!;
     assert.ok(persisted.review.invocations.some((i) => i.outcome === 'pending'), 'the release at the time was refused by the held lock');
     const passed = await runner.formalReview(g(), card, persisted);
     assert.equal(passed.classified.outcome, 'pass');
-    assert.equal(dispatched, 3, 'the failed dispatch is released and redone, once');
+    assert.equal(dispatched, 2, 'the failed dispatch is released and redone, once');
     persisted = fx.store.getCardRun(goal.id, 'T1-TH')!;
     assert.deepEqual(persisted.review.invocations.map((i) => i.outcome), ['no-verdict', 'pass'], 'no pending reservation survives a failed dispatch');
     assert.equal(persisted.review.substantiveDecisions, 1);
@@ -2471,6 +2467,7 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a formal result is recovered only from
       }
       return (realWrite as unknown as (...a: unknown[]) => void)(file, ...rest);
     }) as typeof fs.writeFileSync;
+    syncBuiltinESMExports();
     let afterRetention: Awaited<ReturnType<typeof runner.formalReview>> | undefined;
     try {
       afterRetention = await runner.formalReview(g(), card, fresh);

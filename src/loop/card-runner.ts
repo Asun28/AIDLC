@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -32,6 +32,7 @@ import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult, type PriorFinding } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { atomicWriteJson } from '../state/store.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { ProjectConfig } from '../config.ts';
@@ -102,6 +103,8 @@ interface FormalResult {
   receiptSha256: string;
   holdUntil?: string;
   retained?: boolean;
+  /** The pool request key of the envelope, for a recovery that settles it. */
+  key?: string;
 }
 
 /** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
@@ -753,7 +756,20 @@ export class CardRunner {
     // The record is re-read under the card-run lock right before the external effect: the candidate this ship was issued
     // for must still be the record's, with its receipts, no stop, no round or decision reserved meanwhile and the same
     // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
-    const armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
+    let armed: CardRun;
+    try {
+      armed = this.store.updateCardRun(goal.id, card.id, (current) => current ?? run);
+    } catch (err) {
+      // Nothing was dispatched: the intent and the pool admission are withdrawn, and the failure is the caller's.
+      this.ops.markResult(op.id, 'cancelled', { error: `ship not dispatched: ${(err as Error).message}` });
+      this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, status: 'cancelled', reason: (err as Error).message } });
+      try {
+        this.queue.cancel(key, `ship not dispatched: ${(err as Error).message}`, now);
+      } catch {
+        /* the request is reconciled from the pool */
+      }
+      throw err;
+    }
     const drift = this.shipDrift(card, armed, run);
     if (drift) {
       this.ops.markResult(op.id, 'cancelled', { error: `ship not dispatched: ${drift}` });
@@ -833,6 +849,10 @@ export class CardRunner {
       // The gate's own logic handles the reloaded evidence (a decided round, a cleared receipt); only a stop ends it here.
       const reloaded = this.revalidateReloaded(card, run, false);
       if (reloaded) return { run, directive: reloaded };
+      // The reloaded record may hold another candidate or another cycle: the gate reads them from it, never from the caller's copy.
+      if (run.candidate?.digest !== digest || run.review.substantiveBlocks !== cycle) {
+        return { run, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The card run changed while the ship gate ran (${run.candidate?.digest !== digest ? 'the candidate' : 'the review cycle'} moved on); run \`aidlc card next ${card.id}\` again.` } };
+      }
     }
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
     const decided = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block');
@@ -1011,7 +1031,12 @@ export class CardRunner {
     // A result retained for a reservation of this candidate whose commit did not land (the card-run lock was held by
     // another writer at the time) is committed now, under the same invocation, without running the reviewer again.
     const retained = this.retainedFormalResult(card, persisted, reviewDir);
-    if (retained) return this.commitFormalResult(goal, card, persisted, retained);
+    if (retained) {
+      // The original pool request (its key in the envelope, else derived from the reservation) is settled first.
+      const requestKey = retained.key ?? reviewRequestKey({ repository: goal.repository, candidateDigest: retained.candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer });
+      this.settlePoolRequest(requestKey, retained.holdUntil, retained.verdictRef, retained.at);
+      return this.commitFormalResult(goal, card, persisted, retained);
+    }
     persisted = this.releaseFailedReservation(goal, card, persisted, reviewDir);
     this.formalAdmission(persisted, card, candidateSha, candidateDigest, now);
     // Only the lease owner at the run's generation may reserve a decision.
@@ -1070,40 +1095,68 @@ export class CardRunner {
     }
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
     const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, truncated, priorFindings, round: decisionNo, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
-    let panel: PanelResult;
+    let panel: PanelResult | undefined;
+    // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
+    // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
+    let reviewerRan = false;
+    const runner: Runner = async (command, args, options) => {
+      const receipt = await this.asyncRunner(command, args, options);
+      reviewerRan = true;
+      return receipt;
+    };
+    let lost: Error | undefined;
     try {
       // The formal review is never fanned out: one exhaustive pass per decision.
-      panel = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
+      panel = await runReviewPanel({ runner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
     } catch (err) {
-      // The failure is retained next to the reservation first (no lock needed), so the reservation is released by the next
-      // command even when the release below is refused; the release and the queue bookkeeping never mask the failure.
-      writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ invocationId, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
-      try {
-        this.releaseReservation(goal, card, invocationId);
-      } catch {
-        /* the retained failure releases it on the next command */
+      if (reviewerRan) lost = err as Error;
+      else {
+        // The failure is retained next to the reservation first (no lock needed), so the reservation is released by the next
+        // command even when the release below is refused; the release and the queue bookkeeping never mask the failure.
+        writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ invocationId, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
+        try {
+          this.releaseReservation(goal, card, invocationId);
+        } catch {
+          /* the retained failure releases it on the next command */
+        }
+        // A review that never ran holds no result to look up: its pool request is cancelled, not marked lost.
+        try {
+          this.queue.cancel(key, `formal review did not run: ${(err as Error).message}`, this.clock());
+        } catch {
+          /* the request is reconciled from the pool */
+        }
+        throw err;
       }
-      // A review that never ran holds no result to look up: its pool request is cancelled, not marked lost.
-      try {
-        this.queue.cancel(key, `formal review did not run: ${(err as Error).message}`, this.clock());
-      } catch {
-        /* the request is reconciled from the pool */
-      }
-      throw err;
     }
     const after = this.clock();
-    const decided = panel.outcome === 'pass' || panel.outcome === 'block';
+    const outcome: PanelResult['outcome'] = panel?.outcome ?? 'no-verdict';
+    const runStatus: PanelResult['runStatus'] = panel?.runStatus ?? 'malformed';
+    const reasons = panel?.reasons ?? [`the reviewer ran but its result was lost: ${lost?.message ?? 'retention failed'}`];
+    const decided = outcome === 'pass' || outcome === 'block';
     // Keep the reviewer's own binding: an explicit sha or branch that is not this candidate is a stale verdict, never a pass.
-    const verdict: Verdict | undefined = decided && panel.verdict ? { ...panel.verdict, sha: panel.verdict.sha ?? candidateSha, branch: panel.verdict.branch ?? card.id, run_status: panel.runStatus } : undefined;
-    const classified = this.classifyFormal(card, candidateSha, verdict, panel.outcome, panel.runStatus, panel.reasons);
+    const verdict: Verdict | undefined = decided && panel?.verdict ? { ...panel.verdict, sha: panel.verdict.sha ?? candidateSha, branch: panel.verdict.branch ?? card.id, run_status: panel.runStatus } : undefined;
+    const classified = this.classifyFormal(card, candidateSha, verdict, outcome, runStatus, reasons);
     // Timed from the clock after the run: a review can outlast the hold it reports.
-    const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel.retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    // The classified result is retained next to its verdict before the commit, so a commit that does not land (the lock
-    // held by another writer) is redone from it later, a hold as a hold and a no-verdict as a no-verdict.
-    writeFileSync(path.join(reviewDir, `${fileStem}.result.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, at: after, outcome: panel.outcome, runStatus: panel.runStatus, reasons: panel.reasons, retryAfterMs: panel.retryAfterMs, holdUntil, advisory: panel.advisory ?? [], verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256 }, null, 2) + '\n', 'utf8');
-    if (holdUntil) this.queue.hold(key, holdUntil, 'reviewer reported rate limit/quota', after);
-    else this.queue.complete(key, panel.verdictRef ?? 'no-verdict', after);
-    return this.commitFormalResult(goal, card, persisted, { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: now, at: after, verdict, classified, advisory: panel.advisory ?? [], verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256, holdUntil });
+    const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel?.retryAfterMs ?? 15 * 60 * 1000) : undefined;
+    const result: FormalResult = { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: now, at: after, verdict, classified, advisory: panel?.advisory ?? [], verdictRef: panel?.verdictRef, logRef: panel?.logRef, durationMs: panel?.durationMs ?? 0, receiptSha256: panel?.receiptSha256 ?? '', holdUntil };
+    // The complete result is published next to its verdict, atomically, before the pool request is settled and the decision
+    // committed: a later step that does not land is redone from the envelope (`retainedFormalResult`), never from the log.
+    this.publishEnvelope(result, key, outcome, runStatus, reasons, panel?.retryAfterMs);
+    this.settlePoolRequest(key, holdUntil, panel?.verdictRef, after);
+    return this.commitFormalResult(goal, card, persisted, result);
+  }
+
+  /** The result envelope of a formal review, written atomically (`<stem>.result.json`). */
+  private publishEnvelope(r: FormalResult, key: string, outcome: PanelResult['outcome'], runStatus: PanelResult['runStatus'], reasons: string[], retryAfterMs: number | undefined): void {
+    atomicWriteJson(path.join(r.reviewDir, `${r.fileStem}.result.json`), { invocationId: r.invocationId, candidateSha: r.candidateSha, candidateDigest: r.candidateDigest, at: r.at, key, outcome, runStatus, reasons, retryAfterMs, holdUntil: r.holdUntil, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, durationMs: r.durationMs, receiptSha256: r.receiptSha256, changedPaths: r.changedPaths, seen: r.seen });
+  }
+
+  /** The pool request of a formal review is completed (or held) once; a request already settled is left alone. */
+  private settlePoolRequest(key: string, holdUntil: string | undefined, verdictRef: string | undefined, at: string): void {
+    const request = this.queue.get(key);
+    if (!request || request.state === 'completed' || request.state === 'cancelled' || request.state === 'retry-after') return;
+    if (holdUntil) this.queue.hold(key, holdUntil, 'reviewer reported rate limit/quota', at);
+    else this.queue.complete(key, verdictRef ?? 'no-verdict', at);
   }
 
   /** The R3 classification of a verdict document against the candidate: a stale sha or branch is never a pass. */
@@ -1122,13 +1175,14 @@ export class CardRunner {
    * left none, together with the snapshot the reviewer received. Undefined while the reviewer is still running.
    */
   private retainedFormalResult(card: Card, persisted: CardRun, reviewDir: string): FormalResult | undefined {
-    // Any pending formal reservation of the card whose reviewer finished, whatever the candidate: a result for a candidate
-    // the author replaced meanwhile is committed as history by `commitReviewed`, never left in flight.
+    // Any pending formal reservation of the card whose result envelope was published, whatever the candidate: a result for
+    // a candidate the author replaced meanwhile is committed as history by `commitReviewed`, never left in flight. A log
+    // without an envelope is a review still finishing, until it is older than the reviewer timeout and the grace: then
+    // the result is unrecoverable and charged as a no-verdict (the reviewer ran).
     const pending = persisted.review.invocations.find((i) => i.outcome === 'pending' && i.invocationId.startsWith('r3:'));
     if (!pending) return undefined;
     const fileStem = pending.invocationId.slice(3);
     const logRef = path.join(reviewDir, `${fileStem}.log`);
-    if (!existsSync(logRef)) return undefined;
     const candidateSha = pending.candidateSha ?? pending.candidateDigest;
     const candidateDigest = pending.candidateDigest;
     const readDoc = (file: string): Record<string, unknown> | undefined => {
@@ -1138,28 +1192,32 @@ export class CardRunner {
         return undefined;
       }
     };
+    const at = this.clock();
+    const envelope = readDoc(path.join(reviewDir, `${fileStem}.result.json`));
+    if (!envelope) {
+      if (!existsSync(logRef)) return undefined;
+      const age = Date.now() - statSync(logRef).mtimeMs;
+      if (age <= this.config.formalReview.timeoutMs + RECONCILE_GRACE_MS) return undefined;
+      const classified = this.classifyFormal(card, candidateSha, undefined, 'no-verdict', 'malformed', ['the reviewer ran but no result envelope was published']);
+      return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, seen: {}, requestedAt: pending.requestedAt, at, verdict: undefined, classified, advisory: [], logRef, durationMs: 0, receiptSha256: '', retained: true };
+    }
     const verdictFile = path.join(reviewDir, `${fileStem}.json`);
     const doc = readDoc(verdictFile);
     const raw = doc ? parseVerdict(doc) : undefined;
     const verdict: Verdict | undefined = raw ? { ...raw, sha: raw.sha ?? candidateSha, branch: raw.branch ?? persisted.cardId, run_status: raw.run_status ?? 'success' } : undefined;
-    // The classified result retained at completion (a hold with its retry-after, a no-verdict with its status); before it
-    // was written the log header carries the outcome and the status.
-    const result = readDoc(path.join(reviewDir, `${fileStem}.result.json`));
-    const header = /outcome=(\S+) runStatus=(\S+)/.exec(readFileSync(logRef, 'utf8').split(/\r?\n/)[0] ?? '');
-    const outcome = (typeof result?.['outcome'] === 'string' ? result['outcome'] : (header?.[1] ?? (verdict ? verdict.verdict : 'no-verdict'))) as PanelResult['outcome'];
-    const runStatus = (typeof result?.['runStatus'] === 'string' ? result['runStatus'] : (header?.[2] ?? (typeof doc?.['run_status'] === 'string' ? doc['run_status'] : 'no_output'))) as PanelResult['runStatus'];
-    const reasons = Array.isArray(result?.['reasons']) ? (result['reasons'] as string[]) : [];
-    const reservation = readDoc(path.join(reviewDir, `${fileStem}.reservation.json`));
-    const seen = (reservation?.['seen'] as Record<string, FindingSnapshot> | undefined) ?? {};
-    const changedPaths = Array.isArray(reservation?.['changedPaths']) ? (reservation['changedPaths'] as string[]) : undefined;
+    const outcome = (typeof envelope['outcome'] === 'string' ? envelope['outcome'] : 'no-verdict') as PanelResult['outcome'];
+    const runStatus = (typeof envelope['runStatus'] === 'string' ? envelope['runStatus'] : 'malformed') as PanelResult['runStatus'];
+    const reasons = Array.isArray(envelope['reasons']) ? (envelope['reasons'] as string[]) : [];
+    const seen = (envelope['seen'] as Record<string, FindingSnapshot> | undefined) ?? {};
+    const changedPaths = Array.isArray(envelope['changedPaths']) ? (envelope['changedPaths'] as string[]) : undefined;
     const classified = this.classifyFormal(card, candidateSha, outcome === 'quota-hold' ? undefined : verdict, outcome, runStatus, reasons);
-    const at = this.clock();
-    const retryAfterMs = typeof result?.['retryAfterMs'] === 'number' ? result['retryAfterMs'] : undefined;
+    const retryAfterMs = typeof envelope['retryAfterMs'] === 'number' ? envelope['retryAfterMs'] : undefined;
     const holdUntil = classified.outcome === 'quota-hold' ? addMs(at, retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    const advisory = Array.isArray(result?.['advisory']) ? (result['advisory'] as string[]) : Array.isArray(doc?.['advisory']) ? (doc['advisory'] as string[]) : [];
-    const durationMs = typeof result?.['durationMs'] === 'number' ? result['durationMs'] : typeof doc?.['durationMs'] === 'number' ? doc['durationMs'] : 0;
-    const receiptSha256 = typeof result?.['receiptSha256'] === 'string' ? result['receiptSha256'] : typeof doc?.['receiptSha256'] === 'string' ? doc['receiptSha256'] : '';
-    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory, verdictRef: doc ? verdictFile : undefined, logRef, durationMs, receiptSha256, holdUntil, retained: true };
+    const advisory = Array.isArray(envelope['advisory']) ? (envelope['advisory'] as string[]) : [];
+    const durationMs = typeof envelope['durationMs'] === 'number' ? envelope['durationMs'] : 0;
+    const receiptSha256 = typeof envelope['receiptSha256'] === 'string' ? envelope['receiptSha256'] : '';
+    const key = typeof envelope['key'] === 'string' ? envelope['key'] : undefined;
+    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory, verdictRef: doc ? verdictFile : undefined, logRef: existsSync(logRef) ? logRef : undefined, durationMs, receiptSha256, holdUntil, retained: true, key };
   }
 
   /**
@@ -1199,7 +1257,8 @@ export class CardRunner {
         candidateDigest,
         evidence: evidenceEntry,
         reserved: (latest) => latest.review.invocations.some((i) => i.invocationId === invocationId && i.outcome === 'pending'),
-        release: (latest) => ({ ...latest, review: dropReservation(latest) }),
+        // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
+        release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
           const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking }, classified, verdict);
           decision = rec.decision;
@@ -1414,7 +1473,7 @@ export class CardRunner {
         candidateDigest,
         evidence: evidenceEntry,
         reserved: (latest) => latest.preReview.rounds.some((r) => r.reservationId === fileStem),
-        release: (latest) => ({ ...latest, preReview: { ...latest.preReview, rounds: latest.preReview.rounds.filter((r) => r.reservationId !== fileStem) } }),
+        release: (latest) => ({ ...latest, preReview: { ...latest.preReview, rounds: latest.preReview.rounds.filter((r) => !(r.reservationId === fileStem && r.outcome === 'pending')) } }),
         decide: () => ({
           findingsInput,
           history: withRecord,
