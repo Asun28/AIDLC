@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harness.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { countedFailures } from '../../src/core/effort.ts';
-import type { Verdict } from '../../src/core/types.ts';
+import { CardRun, type Verdict } from '../../src/core/types.ts';
 
 const BLOCK: Verdict = {
   verdict: 'block',
@@ -300,6 +300,37 @@ test('T1-REVIEW-FINDINGS-2: the same advisory verdict artifact re-read on a CI r
     r = runner.next(g(), card, { ...r.run, state: 'SHIP', dodReceipt: 'dod:1', stop: undefined, ci: { reruns: [] } });
     assert.equal(r.run.review.substantiveDecisions, decisionsAfterFirst, 'a re-read of the same verdict artifact is not a second decision');
     assert.equal(r.run.findings.length, findingsAfterFirst, 'no duplicate finding for the identical reason');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2: a ship-path decision records its findings against the record locked at completion, so a dispute saved during the ship survives and the ids stay unique', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const second: Verdict = { ...BLOCK, reasons: ['[spec] 6 tests missing @ src/hello.ts: the added test has no assertion -> assert the greeting'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests missing @ src/hello.ts: the added test has no assertion -> assert the greeting'] }, standards: { verdict: 'pass', reasons: [] } } };
+    const ship = new SequencedVerdictShipPath(['review-blocked', 'review-blocked'], [BLOCK, second]);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(g(), card, run);
+    assert.deepEqual(r.run.findings.map((f) => f.id), ['F1']);
+    r = runner.next(g(), card, r.run);
+    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' });
+    // Between the caller's read and the ship's completion another window disputes F1 and a concurrent completion added F2.
+    const snapshot = run;
+    const concurrent = fx.store.saveCardRun(CardRun.parse({ ...snapshot, findings: [...snapshot.findings.map((f) => ({ ...f, disposition: 'disputed' as const, disputes: [{ at: fx.now(), note: 'the test asserts the greeting', afterReraises: 0 }], revision: f.revision + 1 })), { id: 'F2', stage: 'formal' as const, round: 1, reason: '[standards] 9 error handling @ src/hello.ts:9: swallowed -> rethrow', raisedAt: fx.now(), disposition: 'open' as const, disputes: [], reraised: [], revision: 0 }], updatedAt: fx.now() }));
+    assert.equal(concurrent.findings.length, 2);
+    r = runner.next(g(), card, snapshot);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    const ids = r.run.findings.map((f) => f.id);
+    assert.deepEqual(ids, ['F1', 'F2', 'F3'], 'the new finding takes the next free id of the locked record, never a duplicate of F2');
+    assert.equal(r.run.findings.find((f) => f.id === 'F1')?.disposition, 'disputed', 'the dispute saved meanwhile survives the completion');
   } finally {
     fx.cleanup();
   }

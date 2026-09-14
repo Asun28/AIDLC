@@ -26,6 +26,11 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(block?.reasons.length, 1);
   assert.equal(extractVerdict('no json here\n{"verdict":"maybe"}'), undefined);
   assert.equal(extractVerdict(''), undefined);
+  // The last JSON-looking line decides: a document cut short is no verdict, and an earlier draft in the reasoning never stands in for it.
+  const draft = 'Draft:\n{"verdict":"block","reasons":["[standards] 9 error handling @ src/gate.ts:1: ... -> ..."]}\n=== answer ===\n{"verdict":"block","reasons":["[standards] 9 error handling @ src/gate.ts:1: the receipt is written before the fsync -> fsync first"],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"block","reasons":["x"]}}\n';
+  assert.equal(extractVerdict(draft), undefined, 'a truncated final document is malformed, never the draft');
+  assert.equal(extractVerdict(draft.trimEnd() + '}\n')?.reasons[0], '[standards] 9 error handling @ src/gate.ts:1: the receipt is written before the fsync -> fsync first');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\nDone.\n')?.verdict, 'pass', 'prose after the document is ignored');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {
