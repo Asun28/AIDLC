@@ -304,3 +304,33 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
     unlinkSync(lock);
   });
 });
+
+describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', () => {
+  const dir = tmpDir();
+  const paths = ensureStatePaths(statePathsFromRoot(path.join(dir, '.aidlc')));
+  after(() => cleanup(dir));
+
+  it('every write under the lock bumps the revision, and a snapshot save is a compare-and-set on it whatever field changed', () => {
+    const store = new GoalStore(paths);
+    const v0 = store.saveCardRun(makeCardRun('goal-v', 'T1-V'));
+    assert.equal(v0.revision, 1, 'the first write is revision 1');
+    const v1 = store.updateCardRun('goal-v', 'T1-V', (current) => ({ ...current!, blocker: 'other window' }));
+    assert.equal(v1.revision, 2);
+    // The stale snapshot changes a field no ledger check covers: the candidate and the receipt.
+    assert.throws(() => store.saveCardRun({ ...v0, candidate: { sha: 'old', dirty: false, untracked: [], digest: 'old' }, dodReceipt: 'dod:old' }), /changed since it was read/i, 'a snapshot at an earlier revision is refused whatever it changes');
+    assert.equal(store.getCardRun('goal-v', 'T1-V')?.blocker, 'other window', 'the concurrent write survives');
+    assert.equal(store.getCardRun('goal-v', 'T1-V')?.candidate, undefined);
+    // A stale snapshot cannot clear a stop recorded meanwhile either.
+    const stopped = store.updateCardRun('goal-v', 'T1-V', (current) => ({ ...current!, state: 'STOP', stop: { reason: 'review', detail: 'x', nextAction: 'y', at: iso(0), global: false, unresolvedOperations: [] } }));
+    assert.throws(() => store.saveCardRun({ ...v1, state: 'BUILD' }), /changed since it was read/i);
+    assert.equal(store.getCardRun('goal-v', 'T1-V')?.stop?.reason, 'review');
+    // The snapshot at the current revision writes and takes the next one.
+    const v3 = store.saveCardRun({ ...stopped, blocker: 'current' });
+    assert.equal(v3.revision, stopped.revision + 1);
+    assert.equal(store.getCardRun('goal-v', 'T1-V')?.blocker, 'current');
+    // A run written before the revision existed (revision 0 on disk) is written once by a snapshot at revision 0.
+    const legacy = store.saveCardRun({ ...v3, revision: 0, cardId: 'T1-L' });
+    assert.equal(legacy.revision, 1);
+    assert.throws(() => store.saveCardRun({ ...legacy, revision: 0 }), /changed since it was read/i);
+  });
+});

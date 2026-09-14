@@ -32,6 +32,10 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict('Draft:\n{"verdict":"block","reasons":["[standards] 9 error handling @ src/gate.ts:1: ... -> ..."]}\n=== answer ===\n{"verdict":"block","reasons":["[standards] 9 error handling @ src/gate.ts:1: cut before any closing brace'), undefined, 'a final line cut before its first closing brace is malformed too, never the draft');
   assert.equal(extractVerdict(draft.trimEnd() + '}\n')?.reasons[0], '[standards] 9 error handling @ src/gate.ts:1: the receipt is written before the fsync -> fsync first');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\nDone.\n')?.verdict, 'pass', 'prose after the document is ignored');
+  // T1-REVIEW-FINDINGS-3 acceptance 9: a second document started on the decisive line after a complete one is a cut-short output, not a pass.
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED'), undefined, 'a truncated trailing document is malformed');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":[]}\n')?.verdict, 'block', 'the last complete document on the line decides');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} trailing note\n')?.verdict, 'pass', 'prose after the document on the same line is ignored');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {

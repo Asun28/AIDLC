@@ -91,6 +91,9 @@ describe('types: schema round-trips', () => {
     // T1-REVIEW-FINDINGS acceptance 6: a run persisted before findings existed parses with an empty list.
     const { findings: _dropped, ...withoutFindings } = r as typeof r & { findings?: unknown };
     assert.deepEqual(CardRun.parse(withoutFindings).findings, []);
+    // T1-REVIEW-FINDINGS-3 acceptance 10: a run persisted before the revision existed parses at revision 0.
+    const { revision: _rev, ...withoutRevision } = r as typeof r & { revision?: unknown };
+    assert.equal(CardRun.parse(withoutRevision).revision, 0);
     const finding = { id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/a.ts:1: no RED -> add one', raisedAt: T0 };
     const parsed = CardRun.parse({ ...r, findings: [finding] }).findings[0]!;
     assert.deepEqual({ disposition: parsed.disposition, disputes: parsed.disputes, reraised: parsed.reraised }, { disposition: 'open', disputes: [], reraised: [] }, 'finding sub-records default');

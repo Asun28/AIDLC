@@ -337,6 +337,68 @@ test('T1-REVIEW-FINDINGS-2: a ship-path decision records its findings against th
   }
 });
 
+/** A ship path whose review-queue completion runs `during` (another window acting while the ship result is being applied). */
+function duringQueueCompletion(fx: ReturnType<typeof makeFixture>, during: () => void, body: () => void): void {
+  const real = fx.queue.complete.bind(fx.queue);
+  let fired = false;
+  fx.queue.complete = (...args: Parameters<typeof real>) => {
+    if (!fired) {
+      fired = true;
+      during();
+    }
+    return real(...args);
+  };
+  try {
+    body();
+  } finally {
+    fx.queue.complete = real;
+  }
+}
+
+test('T1-REVIEW-FINDINGS-3 acceptance 10: a candidate or a stop recorded while the ship result is being applied is never overwritten by the shipped candidate\'s outcome; the outcome is history', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    // (1) A newer candidate lands after the ship read the persisted record.
+    let runner = fx.runner(new DryRunShipPath(['review-blocked', 'review-blocked'], BLOCK));
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    let after: ReturnType<typeof runner.next> | undefined;
+    duringQueueCompletion(fx, () => {
+      const now = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+      fx.store.saveCardRun(CardRun.parse({ ...now, candidate: { sha: 'sha-newer', dirty: false, untracked: [], digest: 'sha-newer' }, dodReceipt: 'dod:newer', updatedAt: fx.now() }));
+    }, () => {
+      after = runner.next(g(), card, run);
+    });
+    let persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(persisted.candidate?.sha, 'sha-newer', 'the newer candidate stays');
+    assert.equal(persisted.dodReceipt, 'dod:newer', 'the newer candidate keeps its receipt');
+    assert.notEqual(persisted.state, 'REVIEW_FIX');
+    assert.equal(persisted.review.substantiveDecisions, 1, 'the decision on the shipped candidate is history');
+    assert.match(after!.directive.narration, /candidate changed|superseded/i, after!.directive.narration);
+    // (2) A stop lands after the ship read the persisted record: it stays, and the ship outcome is history.
+    const second = fx.store.saveCardRun(CardRun.parse({ ...persisted, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', state: 'BUILD', updatedAt: fx.now() }));
+    runner = fx.runner(new DryRunShipPath(['merged']));
+    duringQueueCompletion(fx, () => {
+      const now = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+      fx.store.saveCardRun(CardRun.parse({ ...now, state: 'STOP', stop: { reason: 'review', detail: 'stopped by the adjudicator', nextAction: 'human ruling', at: fx.now(), global: false, unresolvedOperations: [] }, updatedAt: fx.now() }));
+    }, () => {
+      after = runner.next(g(), card, second);
+    });
+    persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(persisted.state, 'STOP', 'the stop recorded meanwhile stays');
+    assert.equal(persisted.stop?.detail, 'stopped by the adjudicator');
+    assert.equal(after!.directive.kind, 'stop');
+    assert.equal(persisted.mergeVerified, false, 'the merge of a stopped run is not applied as a verified merge');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 /** A ship path during whose ship another window records a newer candidate with its own DoD receipt. */
 class SupersedingShipPath extends DryRunShipPath {
   private readonly fx: ReturnType<typeof makeFixture>;
