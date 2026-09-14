@@ -69,6 +69,7 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 1. T1-LOOP-SKILLS: routing and directive skills, PLAN grilling with the open questions of the intent, build and prepare narration, merge-conflict return to BUILD with the episode reopened.
 2. T1-LOOP-GATES, replaced by T1-LOOP-GATES-2 after two R3 decisions (same change, every finding repaired): blocking secret scan, security CI class, github config block and required-check passthrough, a block verdict never waived at the ship.
 3. T1-LOOP-LESSONS: lessons artifact, sixth closure predicate, card close lesson flags, prepare context.
+4. T1-LOOP-RESUME: goal extend re-admits time-stopped work; goal resume applies a revision before the projection; amend on a terminal goal names the resume.
 
 ## 7. Task split (dependencies and parallel windows)
 
@@ -79,6 +80,7 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 | T1-LOOP-GATES | MUST | blocking secret scan; security CI class; required checks from config (stopped after two R3 decisions; superseded by T1-LOOP-GATES-2) | T1-LOOP-LADDER | W2 | - |
 | T1-LOOP-GATES-2 | MUST | the T1-LOOP-GATES change with every R3 finding repaired; a block verdict never waived at the ship | T1-LOOP-LADDER | W2 | - |
 | T1-LOOP-LESSONS | MUST | lessons closure predicate; card close lesson flags; prepare context | T1-LOOP-GATES-2 | W3 | - |
+| T1-LOOP-RESUME | SHOULD | a recorded extension re-admits the goal and its time-stopped cards; goal resume carries a projection revision | - | W4 | - |
 
 ## Risks
 - The GitHub ship path has scripted-runner tests only; the first live ship may stop with a tooling error that is fixed in place before the next card.
