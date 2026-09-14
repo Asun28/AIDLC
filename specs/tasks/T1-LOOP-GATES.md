@@ -2,6 +2,7 @@
 id: T1-LOOP-GATES
 title: The secret scan is a merge gate; a red scan is a security CI class that never reruns; required checks and verdict policy flow from config to the GitHub ship path
 status: todo
+superseded_by: T1-LOOP-GATES-2
 branch: T1-LOOP-GATES
 worktree: C:\wt\T1-LOOP-GATES
 allow_paths:
