@@ -1163,8 +1163,12 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.ok(!r.run.preReview.rounds.some((x) => x.outcome === 'pending'), 'the abandoned round is gone');
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     verdicts.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-find.ts:1: the test asserts nothing about the gate (re:F1) -> assert the behaviour"]}\n');
-    const round2 = await runner.preReview(g(), card, r.run);
+    // The prompt is built from the record read under the card-run lock: a note changed after the caller's read reaches the reviewer.
+    const stale2 = r.run;
+    fx.store.saveCardRun(CardRun.parse({ ...stale2, findings: stale2.findings.map((f) => (f.id === 'F2' ? { ...f, disputes: f.disputes.map((d) => ({ ...d, note: `${d.note}; see also the receipt test` })), revision: f.revision + 1 } : f)), updatedAt: fx.now() }));
+    const round2 = await runner.preReview(g(), card, stale2);
     const prompt2 = prompts.at(-1)!;
+    assert.ok(prompt2.includes('see also the receipt test'), 'the note saved after the caller read the run is in the prompt');
     assert.ok(prompt2.includes('## Prior findings') && prompt2.includes('re:F<n>'), 'the prompt states the reference syntax');
     assert.ok(/- F1 .*disputed.*fails on the assertion at the baseline/.test(prompt2), `F1 with its note in the prompt: ${prompt2.slice(prompt2.indexOf('## Prior findings'), prompt2.indexOf('## Candidate'))}`);
     assert.ok(/- F2 .*disputed.*rethrown at src\/t1-find.ts:12/.test(prompt2), 'F2 with its note in the prompt');
@@ -1393,6 +1397,7 @@ test('T1-REVIEW-FINDINGS acceptance 5: a finding that reached two non-acceptance
     r2.push(reraise);
     run = (await runner.preReview(g(), card, run)).run;
     assert.deepEqual(run.findings[0]?.reraised.map((x) => x.answeredDispute), [0, 1]);
+    await assert.rejects(() => runner.preReview(g(), card, run), /exhausted/, 'the rounds cap holds: no fourth round, whatever the dispositions');
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'review', `the residual ships to R3: ${r.directive.narration}`);
     // R3 decision 1 blocks on the same finding; the author repairs (a deadlocked finding cannot be disputed again); decision 2 re-raises it -> STOP names the deadlock.
@@ -1478,6 +1483,45 @@ test('T1-REVIEW-FINDINGS-2: findRun resolves an existing card run without creati
     assert.throws(() => runner.findRun('T1-FR'), /--goal/);
     assert.equal(runner.findRun('T1-FR', goalA.id)?.startedAt, runA.startedAt);
     assert.equal(runner.findRun('T1-FR', 'g-none'), undefined);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2 acceptance 4: the DoD receipt restored for a disputed block is dropped by a later check failure, so the next directive is the repair, never a review', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    const verdicts: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-drop.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-drop.ts b/src/t1-drop.ts\n+export const drop = 1;\n' },
+      'fake-r2': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
+    });
+    // The ship reports a red CI run with code-defect evidence: the card returns to BUILD with its receipts cleared.
+    const ship = new InjectedShipPath(['ci-red', 'merged'], 'FAIL tests/drop.test.ts\nAssertionError: expected 1 to equal 2');
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-DROP', title: 'drop the restored receipt' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-DROP', source: 'card', ref: 'T1-DROP', affectedSurfaces: [] }, { cards: ['T1-DROP'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-DROP'] } });
+    const card = fx.card('T1-DROP');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-DROP'));
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    verdicts.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-drop.ts:1: no RED -> add a failing test first"]}\n');
+    run = (await runner.preReview(g(), card, r.run)).run;
+    run = runner.disputeFinding(g(), card, run, 'F1', 'the RED is tests/drop.test.ts');
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'pre-review', 'the receipt is restored for the fully disputed candidate');
+    assert.equal(r.run.dodReceipt, 'dod:1');
+    run = (await runner.preReview(g(), card, r.run)).run; // round 2 passes
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'build', `a red CI run with a code defect returns the card to BUILD: ${r.directive.narration}`);
+    assert.equal(r.run.dodReceipt, undefined, 'the check failure clears the receipt');
+    assert.equal(r.run.blockedReceipt, undefined, 'and drops the retained one');
+    r = runner.next(g(), card, r.run);
+    assert.equal(r.directive.kind, 'build', 'nothing restores the receipt after a check failure');
   } finally {
     fx.cleanup();
   }
