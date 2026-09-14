@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
+import { makeStop } from '../../src/core/stop.ts';
 
 test('Q5: a requirement revision versions the same goal, maps superseded cards and returns to PLAN', () => {
   const fx = makeFixture();
@@ -64,6 +65,35 @@ test('Q5/Q8: a terminal goal refuses new work; resume links the old generation a
     assert.notEqual(resumed.directive.kind, 'stop');
     assert.equal(resumed.directive.generation, 1);
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-HELLO'] } }), /stale report/, 'old-generation dispatch is refused after resume');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R2/R3: a resume carries its revision so a stopped goal continues with the replacement card; an amendment on a terminal goal names the resume', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-A2', title: 'a again, replacement', allowPaths: ['src/a.ts'] });
+    const goal = goalForCards(fx, ['T1-A']);
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A'));
+    r = runner.next(fx.goal(goal.id), fx.card('T1-A'), r.run);
+    fx.store.saveCardRun({ ...r.run, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'revision', data: { text: 'again', replacements: { 'T1-A': 'T1-A2' } } }), /goal resume/, 'an amendment on a terminal goal names the resume');
+    const plain = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'first look' } });
+    assert.equal(plain.directive.kind, 'stop', 'a resume without a revision re-projects the same stopped card and stops again');
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 1, result: 'resume', data: { reason: 'ruling', text: 'continue with the replacement card', replacements: { 'T1-A': 'T1-A2' } } });
+    const g = fx.goal(goal.id);
+    assert.equal(g.generation, 2);
+    assert.deepEqual(g.cards, ['T1-A2']);
+    assert.equal(g.revision, 1);
+    const types = fx.events(goal.id).map((e) => e.type);
+    assert.ok(types.lastIndexOf('GOAL_REVISED') > types.lastIndexOf('GOAL_TAKEOVER'), 'the revision is journaled inside the resume');
+    assert.equal(resumed.directive.kind, 'run-card', resumed.directive.narration);
+    if (resumed.directive.kind === 'run-card') assert.equal(resumed.directive.cardId, 'T1-A2');
   } finally {
     fx.cleanup();
   }

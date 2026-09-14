@@ -5,6 +5,7 @@ import { GoalController } from '../../src/loop/controller.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { HOUR_MS, MINUTE_MS, addMs } from '../../src/core/types.ts';
 import { effectiveGoalDeadline } from '../../src/core/deadlines.ts';
+import { makeStop } from '../../src/core/stop.ts';
 
 test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP survives a fresh controller', () => {
   const fx = makeFixture();
@@ -98,6 +99,45 @@ test('Q8: an extension is explicit, later and recorded; an earlier date is refus
     assert.notEqual(fx.controller.next(goal.id).kind, 'stop', 'inside the extended window');
     fx.advance(HOUR_MS + MINUTE_MS);
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R1: a recorded extension re-admits a goal stopped for time and its time-stopped cards; a stop for any other reason stays', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    r = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), r.run);
+    assert.equal(r.directive.kind, 'build');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const stopped = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), r.run);
+    assert.equal(stopped.run.stop?.reason, 'time');
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    const until = addMs(T0, 6 * HOUR_MS);
+    const extended = fx.controller.extendDeadline(goal.id, 'lead', until, 'the change is complete; the reviews and the ship remain');
+    assert.equal(extended.terminal, false, 'the extension re-admits the goal');
+    assert.equal(extended.state, 'WAIT');
+    assert.equal(extended.stop, undefined);
+    const hello = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(hello.stop, undefined, 'the time stop of the card is cleared');
+    assert.equal(hello.deadline, until, 'the card deadline follows the extension');
+    assert.ok(fx.events(goal.id).some((e) => e.type === 'CARD_STATE' && e.cardId === 'T1-HELLO' && String(e.data['reason'] ?? '').includes('extension')), 'the re-admission is journaled');
+    const resumed = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), hello);
+    assert.equal(resumed.directive.kind, 'build', `the card continues under the new deadline: ${resumed.directive.narration}`);
+    assert.notEqual(fx.controller.next(goal.id).kind, 'stop', 'the goal continues under the extension (it waits on its running card)');
+
+    // A card stopped for another reason keeps its stop when its goal is extended.
+    writeCard(fx, { id: 'T1-OTHER', title: 'stopped for review' });
+    const other = goalForCards(fx, ['T1-OTHER']);
+    const otherRun = fx.controller.ensureCardRun(fx.goal(other.id), 'T1-OTHER');
+    fx.store.saveCardRun({ ...otherRun, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    fx.controller.extendDeadline(other.id, 'lead', addMs(fx.now(), 6 * HOUR_MS), 'more time');
+    assert.equal(fx.store.getCardRun(other.id, 'T1-OTHER')?.stop?.reason, 'review', 'a stop for another reason stays');
   } finally {
     fx.cleanup();
   }

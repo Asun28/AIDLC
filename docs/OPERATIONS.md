@@ -98,7 +98,7 @@ aidlc monitor check --bands bands.yaml --data samples.json --file-intent
 - `aidlc goal status`, `aidlc goal list`, `aidlc board [goalId]` show state; the board is a view.
 - A second window that runs `aidlc next` on a goal owned by another live session receives `wait` with the owner and lease expiry. After expiry, `aidlc goal takeover <id>` succeeds only when `aidlc ops list --goal <id>` shows no unresolved operations; otherwise reconcile first with `aidlc ops reconcile <opId> --status succeeded|failed|running|cancelled|UNKNOWN`.
 - `aidlc review status [--pool <name>]` shows active slots, queued requests, `retry-after` holds and the pool reset time. Raising a pool above one concurrent review needs provider evidence (`ReviewQueue.setPoolLimit`).
-- `aidlc goal extend <id> --until <iso> --by <who> --reason "..."` is the only way to move a deadline; retries, revisions and delayed approvals never extend it.
+- `aidlc goal extend <id> --until <iso> --by <who> --reason "..."` is the only way to move a deadline; retries, revisions and delayed approvals never extend it. An extension re-admits a goal stopped for time and every card of it stopped for time (their deadlines move to the new goal deadline; a stop for any other reason stays). `aidlc goal resume <id> --reason "..." [--text "..."] [--cards a,b] [--replace '{"old":"new"}']` carries a revision into the resume and applies it before the projection, the only way to re-plan a terminal goal: `aidlc goal amend` refuses a terminal goal and names the resume.
 - `aidlc goal cancel <id>` and `aidlc goal resume <id> --reason "..."` handle terminal goals; resume links a new generation and keeps exhausted limits.
 
 ## Provider operation bindings
@@ -213,7 +213,7 @@ The gitleaks history scan (`security-scanners.yml`) is a blocking job. A red che
 | `tool` | unclassified ship or probe outcome | inspect the receipt; resume with the printed `[SAGA-RESUME]` command |
 | `ci` | unclassified CI failure or rerun allowance consumed | diagnose the failure before any rerun |
 | `auth` | account or permission guard failed | `gh auth login` for the configured account; never downgrade to local mode |
-| `time` | admission deadline or reconciliation grace reached | hand off with branches, PRs and evidence; extend only explicitly |
+| `time` | admission deadline or reconciliation grace reached | hand off with branches, PRs and evidence; `aidlc goal extend` is the explicit extension and re-admits the goal and its time-stopped cards |
 | `arc-verify` | integrated acceptance failed after the single repair cycle | hand off with the integrated evidence |
 | `release-config` | a required provider operation is NOT CONFIGURED or unreadable | bind it in `aidlc.ops.json` |
 | `release-auth` | no matching staging/production authority for the prepared effects | record the authorization bound to candidate, environment and operations |

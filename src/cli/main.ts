@@ -221,11 +221,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   goal
     .command('resume <id>')
-    .description('fresh user-authorised continuation of a terminal goal (links the old generation, keeps exhausted limits)')
+    .description('fresh user-authorised continuation of a terminal goal (links the old generation, keeps exhausted limits); with --text, --cards or --replace the revision is applied before the projection')
     .option('--reason <text>')
-    .action((id: string, o: { reason?: string }) => {
+    .option('--text <text>', 'revised request text (a revision inside the resume)')
+    .option('--cards <ids>', 'comma-separated card ids for the revised projection')
+    .option('--replace <map>', 'JSON map old->new card ids')
+    .action((id: string, o: { reason?: string; text?: string; cards?: string; replace?: string }) => {
       const c = ctx(g());
-      const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'resume', data: { reason: o.reason } });
+      const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'resume', data: { reason: o.reason, text: o.text, cards: o.cards?.split(',').map((s) => s.trim()), replacements: o.replace ? (JSON.parse(o.replace) as Record<string, string>) : undefined } });
       out(c, r.directive, () => `${r.goal.id} generation ${r.goal.generation}: ${r.directive.kind} — ${r.directive.narration}`);
     });
   goal

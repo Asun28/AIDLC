@@ -418,6 +418,7 @@ export class GoalController {
     let goal = this.mustGoal(input.goalId);
     const now = this.clock();
     if (input.generation !== goal.generation) throw new Error(`stale report: observed generation ${input.generation}, current ${goal.generation}; revalidate before further mutation`);
+    if (goal.terminal && input.result === 'revision') throw new Error(`goal ${goal.id} is terminal (${goal.state}); carry the revision into the resume: aidlc goal resume ${goal.id} --text "..." --replace '{"old":"new"}'`);
     if (goal.terminal && input.result !== 'resume') throw new Error(`goal ${goal.id} is terminal (${goal.state}); a fresh user-authorised continuation must link a new generation (aidlc goal resume)`);
     const j = this.journal(goal.id);
     const d = input.data;
@@ -536,21 +537,7 @@ export class GoalController {
         break;
       }
       case 'revision': {
-        const text = typeof d['text'] === 'string' ? d['text'] : undefined;
-        if (!text) throw new Error('revision requires data.text');
-        const prev = goal.revisions[goal.revisions.length - 1]!;
-        const nextCards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : goal.cards;
-        const mapping = mapRevision(goal.cards, nextCards, (d['replacements'] as Record<string, string>) ?? {});
-        const revision = goal.revision + 1;
-        goal = {
-          ...goal,
-          revision,
-          revisions: [...goal.revisions, { revision, at: now, reason: String(d['reason'] ?? 'user amendment'), request: { ...prev.request, text }, supersededCards: mapping.supersededCards, removedCards: mapping.removedCards }],
-          cards: nextCards,
-          cardRevisions: Object.fromEntries(nextCards.map((c) => [c, (goal.cardRevisions[c] ?? -1) + (mapping.retainedEvidenceFor.includes(c) ? 0 : 1)])),
-        };
-        if (goal.state === 'WAIT' || goal.state === 'RUN') goal = transitionGoal({ ...goal, state: 'WAIT' }, 'PLAN', now, { revisionAccepted: true });
-        j.append({ type: 'GOAL_REVISED', goalId: goal.id, generation: goal.generation, data: { revision, mapping, text: text.slice(0, 300) } });
+        goal = this.applyRevision(goal, d, now, j, true);
         break;
       }
       case 'cancel':
@@ -563,6 +550,11 @@ export class GoalController {
         goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' ? 'STOP' : goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
         if (goal.stop === undefined && goal.state === 'STOP') goal = { ...goal, state: 'WAIT' };
         j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation, data: { linkedFrom: goal.linkedFrom, reason: d['reason'] } });
+        // A resume may carry the revision that makes the projection admissible again (replacement cards), applied before the projection runs.
+        if (typeof d['text'] === 'string' || Array.isArray(d['cards']) || (d['replacements'] && typeof d['replacements'] === 'object')) {
+          const last = goal.revisions[goal.revisions.length - 1]!;
+          goal = this.applyRevision(goal, { ...d, text: typeof d['text'] === 'string' ? d['text'] : last.request.text }, now, j, false);
+        }
         break;
       }
       default:
@@ -643,12 +635,47 @@ export class GoalController {
     return next;
   }
 
+  /** A requirement revision: versions the goal, maps superseded cards and, for an amendment, returns to PLAN; a resume applies it in place. */
+  private applyRevision(goal: Goal, d: Record<string, unknown>, now: string, j: Journal, toPlan: boolean): Goal {
+    const text = typeof d['text'] === 'string' ? d['text'] : undefined;
+    if (!text) throw new Error('revision requires data.text');
+    const prev = goal.revisions[goal.revisions.length - 1]!;
+    const replacements = (d['replacements'] as Record<string, string> | undefined) ?? {};
+    const nextCards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : goal.cards.map((c) => replacements[c] ?? c);
+    const mapping = mapRevision(goal.cards, nextCards, replacements);
+    const revision = goal.revision + 1;
+    let next: Goal = {
+      ...goal,
+      revision,
+      revisions: [...goal.revisions, { revision, at: now, reason: String(d['reason'] ?? 'user amendment'), request: { ...prev.request, text }, supersededCards: mapping.supersededCards, removedCards: mapping.removedCards }],
+      cards: nextCards,
+      cardRevisions: Object.fromEntries(nextCards.map((c) => [c, (goal.cardRevisions[c] ?? -1) + (mapping.retainedEvidenceFor.includes(c) ? 0 : 1)])),
+    };
+    if (toPlan && (next.state === 'WAIT' || next.state === 'RUN')) next = transitionGoal({ ...next, state: 'WAIT' }, 'PLAN', now, { revisionAccepted: true });
+    j.append({ type: 'GOAL_REVISED', goalId: next.id, generation: next.generation, data: { revision, mapping, text: text.slice(0, 300) } });
+    return next;
+  }
+
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
     const goal = this.mustGoal(goalId);
     const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };
     if (Date.parse(newDeadline) <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
     this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
-    return this.store.saveGoal(extended);
+    // The extension is the explicit authority a time stop asks for: the goal and every card of it stopped for time are
+    // re-admitted under the new deadline; a stop for any other reason stays.
+    let readmitted: Goal = extended;
+    if (goal.terminal && goal.stop?.reason === 'time') {
+      readmitted = { ...extended, terminal: false, stop: undefined, state: 'WAIT' };
+      this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'STOP', to: 'WAIT', reason: `deadline extension to ${newDeadline} by ${by}` } });
+    }
+    for (const run of this.store.listCardRuns(goal.id)) {
+      if (run.stop?.reason !== 'time') continue;
+      this.store.saveCardRun(CardRun.parse({ ...run, stop: undefined, deadline: Date.parse(newDeadline) > Date.parse(run.deadline) ? newDeadline : run.deadline, updatedAt: this.clock() }));
+      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
+    }
+    const saved = this.store.saveGoal(readmitted);
+    this.writeBoard(saved);
+    return saved;
   }
 
   writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[]): string {
