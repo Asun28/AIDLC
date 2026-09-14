@@ -856,7 +856,10 @@ export class CardRunner {
     // A round in flight parks the card; one abandoned past the reviewer timeout and the reconciliation grace is dropped.
     const pending = run.preReview.rounds.find((r) => r.outcome === 'pending');
     if (pending) {
-      const expiry = (r: PreReviewRound) => Date.parse(r.requestedAt) + cfg.timeoutMs + RECONCILE_GRACE_MS;
+      // A round whose dispatch failed before any receipt (its retained failure marker, no log) never ran: it expires at once.
+      const reviewDir = path.join(this.reviewCheckout(run), '.review');
+      const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
+      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + cfg.timeoutMs + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
@@ -1152,8 +1155,12 @@ export class CardRunner {
       if (reviewerRan) lost = err as Error;
       else {
         // The failure is retained next to the reservation first (no lock needed), so the reservation is released by the next
-        // command even when the release below is refused; the release and the queue bookkeeping never mask the failure.
-        writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ invocationId, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
+        // command even when the release below is refused; neither the marker, the release nor the queue bookkeeping masks the failure.
+        try {
+          writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ invocationId, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
+        } catch {
+          /* the release below, or the expiry of the reservation, covers a marker that could not be written */
+        }
         try {
           this.releaseReservation(goal, card, invocationId);
         } catch {
@@ -1545,7 +1552,19 @@ export class CardRunner {
       try {
         result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths });
       } catch (err) {
-        dropReservation();
+        // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
+        // when the drop below is refused; neither masks the panel's own error.
+        try {
+          mkdirSync(reviewDir, { recursive: true });
+          writeFileSync(path.join(reviewDir, `${fileStem}.failed.json`), JSON.stringify({ reservationId: fileStem, candidateSha, at: this.clock(), error: (err as Error).message }, null, 2) + '\n', 'utf8');
+        } catch {
+          /* the drop below, or the expiry of the round, covers a marker that could not be written */
+        }
+        try {
+          dropReservation();
+        } catch {
+          /* the retained failure drops it on the next gate pass */
+        }
         throw err;
       }
     }
