@@ -29,7 +29,7 @@ acceptance:
   - 3. `aidlc goal amend` and `aidlc report --result revision` on a terminal goal fail with a message that names `goal resume --text ... --replace ...` (amendment.test.ts). [R3] [dod arm 1]
   - 4. `docs/OPERATIONS.md` (extend, resume) and `docs/ARCHITECTURE.md` (deadline extension and resume semantics) are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-budget: 300
+budget: 400
 tdd: true
 sweep: "grep -rn 'extendDeadline\|result: .resume.\|case .resume.\|GOAL_TAKEOVER\|makeStop(.time.' src tests docs: controller.ts extendDeadline and the resume and revision cases, card-runner.ts time stops, main.ts extend and resume commands, deadline.test.ts, amendment.test.ts, OPERATIONS.md deadlines and STOP table, ARCHITECTURE.md goal machine"
 non_goals: [changing the 3h card limit or the 12h arc, automatic extensions, session identity across concurrent sessions, clearing stops of any other reason]
