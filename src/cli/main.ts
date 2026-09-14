@@ -10,6 +10,7 @@ import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../c
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
+import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { CardRunner } from '../loop/card-runner.ts';
 import { ReleaseRunner } from '../loop/release-runner.ts';
@@ -460,7 +461,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = latestActiveGoalId(c, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
-      out(c, run, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+      // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
+      // the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md, Sessions). An
+      // unreadable record is named by its store error code only, never by its contents.
+      const me = currentActor();
+      let lease: { owner: { session: string; host: string; pid: number }; generation: number; expiresAt: string; released: boolean; ownedByThisSession: boolean } | { unreadable: string } | null = null;
+      let leaseLine = '-';
+      try {
+        const record = new LeaseStore(c.paths.leases).read(resourceKeys.card(c.repo.key, cardId));
+        if (record) {
+          lease = { owner: record.owner, generation: record.generation, expiresAt: record.expiresAt, released: record.released, ownedByThisSession: !record.released && record.owner.session === me.session && record.owner.host === me.host };
+          leaseLine = `${record.owner.session}@${record.owner.host} gen=${record.generation} expires=${record.expiresAt} released=${record.released} this-session=${lease.ownedByThisSession}`;
+        }
+      } catch (err) {
+        const code = err instanceof StoreError ? err.code : 'UNREADABLE';
+        lease = { unreadable: code };
+        leaseLine = `unreadable (${code})`;
+      }
+      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
     });
   card
     .command('fix-task [cardId]')

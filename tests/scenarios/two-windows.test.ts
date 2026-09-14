@@ -102,3 +102,45 @@ test('Q24: the shared review pool admits one request per candidate and holds a s
     fx.cleanup();
   }
 });
+
+test('T0-SESSION-IDENTITY-2, live to expired: a run whose lease belongs to an ended session stops before PREPARE, stays stopped after expiry, and continues as the owner identity', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    const card = fx.card('T1-HELLO');
+    // window A prepares the card and holds a live lease
+    const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    assert.equal(prepared.directive.kind, 'prepare');
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-A');
+    // window B, the new session after a /clear, reads the same run: stopped for ownership before PREPARE, and the
+    // stop names no owner
+    setActorForTests(actorB);
+    const stoppedLive = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stoppedLive.directive.kind, 'stop');
+    assert.equal(stoppedLive.run.stop?.reason, 'ownership');
+    assert.ok(!stoppedLive.run.stop?.detail.includes('win-A'), `the generic stop names no owner: ${stoppedLive.run.stop?.detail}`);
+    // the owner session is readable from the lease record while the lease is live: what card status prints
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-A');
+    // expiry alone clears nothing: the stop persists and the record still names the owner
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const stoppedExpired = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stoppedExpired.directive.kind, 'stop');
+    assert.equal(stoppedExpired.run.stop?.reason, 'ownership');
+    const expiredRecord = fx.leases.read(cardKey);
+    assert.equal(expiredRecord?.owner.session, 'win-A');
+    assert.ok(expiredRecord && Date.parse(expiredRecord.expiresAt) < Date.parse(fx.now()), 'the lease is expired');
+    // running as the owner identity on the same host, which is what AIDLC_SESSION=<owner session id> does, renews
+    // the lease, clears the stop and continues the card
+    setActorForTests(actorA);
+    const continued = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.notEqual(continued.directive.kind, 'stop', `continues: ${continued.directive.kind}`);
+    assert.equal(continued.run.stop, undefined);
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-A');
+    assert.ok(Date.parse(fx.leases.read(cardKey)!.expiresAt) > Date.parse(fx.now()), 'the lease is renewed');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
