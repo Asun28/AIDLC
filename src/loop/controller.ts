@@ -681,6 +681,10 @@ export class GoalController {
     const goal = this.mustGoal(goalId);
     const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };
     if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
+    // The shape check admits day and hour values no calendar has (2026-02-30, 24:00:00), which Date.parse rolls over silently;
+    // only a timestamp that round-trips is recorded.
+    const deadlineMs = Date.parse(newDeadline);
+    if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
     if (Date.parse(newDeadline) <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
     this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
     // The extension is the explicit authority a time stop asks for: the goal and every card of it stopped for time are

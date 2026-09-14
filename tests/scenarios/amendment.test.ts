@@ -129,3 +129,58 @@ test('R2: resuming a DONE goal with a replacement card re-enters execution throu
     fx.cleanup();
   }
 });
+
+test('R2: a T2 goal resumed with a replacement card passes the plan checkpoint for the new revision before the replacement is dispatched', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-A2', title: 'a again, replacement', allowPaths: ['src/a.ts'] });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T2' });
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
+    assert.equal(fx.controller.next(goal.id).kind, 'run-card');
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A'));
+    r = runner.next(fx.goal(goal.id), fx.card('T1-A'), r.run);
+    fx.store.saveCardRun({ ...r.run, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'ruling', text: 'continue with the replacement card', replacements: { 'T1-A': 'T1-A2' } } });
+    assert.equal(resumed.directive.kind, 'checkpoint', `revision 1 is not approved yet: ${resumed.directive.narration}`);
+    assert.equal(fx.goal(goal.id).revision, 1);
+    fx.controller.report({ goalId: goal.id, generation: 1, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
+    const after = fx.controller.next(goal.id);
+    assert.equal(after.kind, 'run-card', after.narration);
+    if (after.kind === 'run-card') assert.equal(after.cardId, 'T1-A2');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R2: a resumed goal never reuses the delivered release of an earlier generation; the replacement candidate gets a fresh attempt', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    writeCard(fx, { id: 'T1-A2', title: 'a again, replacement', allowPaths: ['src/a.ts'] });
+    const goal = goalForCards(fx, ['T1-A'], { target: 'staging' });
+    driveCardToDone(fx, goal.id, 'T1-A');
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    const rep = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: {} });
+    assert.equal(rep.directive.kind, 'release');
+    const first = rep.directive.kind === 'release' ? rep.directive.attemptId : '';
+    const delivered = fx.store.getRelease(first)!;
+    fx.store.saveRelease({ ...delivered, state: 'DONE', disposition: 'delivered', updatedAt: fx.now() });
+    assert.equal(fx.controller.next(goal.id).kind, 'done');
+    assert.equal(fx.goal(goal.id).state, 'DONE');
+    const resumed = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'follow-up', text: 'ship the replacement', replacements: { 'T1-A': 'T1-A2' } } });
+    assert.equal(resumed.directive.kind, 'run-card', resumed.directive.narration);
+    driveCardToDone(fx, goal.id, 'T1-A2');
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    const again = fx.controller.report({ goalId: goal.id, generation: 1, result: 'arc-verified', data: {} });
+    assert.equal(again.directive.kind, 'release', `a fresh release, never the delivered one of generation 0: ${again.directive.narration}`);
+    if (again.directive.kind === 'release') {
+      assert.notEqual(again.directive.attemptId, first);
+      assert.equal(fx.store.getRelease(again.directive.attemptId)!.generation, 1);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});

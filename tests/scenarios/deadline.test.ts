@@ -94,6 +94,8 @@ test('Q8: an extension is explicit, later and recorded; an earlier date is refus
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', 'not-a-date', 'garbage'), /ISO/, 'an unparsable deadline is refused');
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '', 'blank'), /ISO/);
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '2026-09-11T06:00:00+00:00', 'offset form'), /ISO/, 'only the persisted UTC form is accepted');
+    assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '2026-02-30T00:00:00Z', 'no such day'), /calendar/, 'a shape-valid timestamp that is no calendar date is refused');
+    assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '2026-09-11T24:00:00Z', 'no such hour'), /calendar/);
     assert.equal(fx.goal(goal.id).deadlines.extensions.length, 0, 'a refused extension is not recorded');
     const extended = fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 5 * HOUR_MS), 'reviewer outage');
     assert.equal(effectiveGoalDeadline(extended.deadlines), addMs(T0, 5 * HOUR_MS));
@@ -183,6 +185,37 @@ test('R1: an extension after a replacement resume re-admits only the runs of the
     const after = fx.controller.next(goal.id);
     assert.notEqual(after.kind, 'stop', after.narration);
     if (after.kind === 'wait') assert.ok(!after.on.includes('T1-A:'), `the controller never waits on a superseded card: ${after.on}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R1: a T2 goal extended after a time stop passes the plan checkpoint again before any dispatch', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T2' });
+    assert.equal(fx.controller.next(goal.id).kind, 'checkpoint');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
+    assert.equal(fx.controller.next(goal.id).kind, 'run-card');
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A'));
+    r = runner.next(fx.goal(goal.id), fx.card('T1-A'), r.run);
+    assert.equal(r.directive.kind, 'build');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-A'), r.run).run.stop?.reason, 'time');
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    // The checkpoint approval expired during the stop: re-entry must ask again before any dispatch.
+    const stopped = fx.goal(goal.id);
+    fx.store.saveGoal({ ...stopped, authorizations: stopped.authorizations.map((a) => ({ ...a, expiresAt: addMs(T0, 2 * HOUR_MS) })) });
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 6 * HOUR_MS), 'more time');
+    const again = fx.controller.next(goal.id);
+    assert.equal(again.kind, 'checkpoint', `re-entry passes the projection checkpoint before any dispatch: ${again.narration}`);
+    if (again.kind === 'checkpoint') assert.equal(again.approvalKind, 'plan-checkpoint');
+    assert.equal(fx.goal(goal.id).state, 'CARDS');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'plan-checkpoint', by: 'user' } });
+    const after = fx.controller.next(goal.id);
+    assert.ok(after.kind === 'wait' || after.kind === 'run-card', `after the approval the re-admitted card continues: ${after.kind}`);
   } finally {
     fx.cleanup();
   }
