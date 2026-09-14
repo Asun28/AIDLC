@@ -2733,3 +2733,68 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict 
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 2: a failed dispatch always releases what it can and rethrows its own error; a round or decision it could not release is dropped by the next command, never charged', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-fd.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-fd.ts b/src/t1-fd.ts\n+export const fd = 1;\n' },
+      'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
+      'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
+    });
+    const mk = (over: Record<string, unknown>) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, ...over }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const runner = mk({});
+    const s = cardAtShip(fx, runner, 'T1-FD');
+    const { card, g, goal } = s;
+    // (1) R2: the dispatch throws before any receipt and the release is refused (the lock held): the original error surfaces,
+    // and the next gate pass drops the round at once from its retained failure instead of waiting out the timeout.
+    const emptyR2 = mk({ preReview: { ...fx.config.preReview, command: [''] } });
+    const realUpdate = fx.store.updateCardRun.bind(fx.store);
+    let updates = 0;
+    fx.store.updateCardRun = ((goalId: string, cardId: string, change: Parameters<typeof realUpdate>[2]) => {
+      updates += 1;
+      if (updates === 2) throw new Error('CARD_RUN_LOCKED: card run is locked by another writer; run the command again');
+      return realUpdate(goalId, cardId, change);
+    }) as typeof fx.store.updateCardRun;
+    try {
+      await assert.rejects(() => emptyR2.preReview(g(), card, s.run), /review command is empty/, 'the dispatch error is the one thrown');
+    } finally {
+      fx.store.updateCardRun = realUpdate;
+    }
+    let persisted = fx.store.getCardRun(goal.id, 'T1-FD')!;
+    assert.ok(persisted.preReview.rounds.some((x) => x.outcome === 'pending'), 'fixture: the release was refused');
+    let r = runner.next(g(), card, persisted);
+    assert.equal(r.directive.kind, 'pre-review', `the round that never ran is dropped at once: ${r.directive.narration}`);
+    assert.ok(!fx.store.getCardRun(goal.id, 'T1-FD')!.preReview.rounds.some((x) => x.outcome === 'pending'));
+    assert.equal(dispatched, 0);
+    // (2) R3: the failure marker cannot be written; the reservation is still released and the pool request cancelled, and the original error surfaces.
+    r = runner.next(g(), card, (await runner.preReview(g(), card, fx.store.getCardRun(goal.id, 'T1-FD')!)).run);
+    assert.equal(r.directive.kind, 'review');
+    const emptyR3 = mk({ formalReview: { ...fx.config.formalReview, command: [''] } });
+    const realWrite = fs.writeFileSync;
+    (fs as unknown as Record<string, unknown>)['writeFileSync'] = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(file).endsWith('.failed.json')) {
+        const err = new Error('EACCES: permission denied, open') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (realWrite as unknown as (...a: unknown[]) => void)(file, ...rest);
+    }) as typeof fs.writeFileSync;
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(() => emptyR3.formalReview(g(), card, r.run), /review command is empty/, 'the dispatch error is the one thrown, not the marker failure');
+    } finally {
+      (fs as unknown as Record<string, unknown>)['writeFileSync'] = realWrite;
+      syncBuiltinESMExports();
+    }
+    persisted = fx.store.getCardRun(goal.id, 'T1-FD')!;
+    assert.ok(!persisted.review.invocations.some((i) => i.outcome === 'pending'), 'the reservation is released although the marker could not be written');
+    assert.equal(persisted.review.noVerdictRetriesUsed, 0, 'a review that never ran is never charged');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool request is cancelled');
+    assert.equal(dispatched, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
