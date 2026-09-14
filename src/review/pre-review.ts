@@ -227,35 +227,17 @@ export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
  * the reasoning.
  */
 export function extractVerdict(output: string): Verdict | undefined {
-  // The walk covers the whole output, so a document spanning lines is one document. Every JSON-looking brace (`{`
-  // followed by a quote or a closing brace) is a possible document start; the parseable top-level spans are the
-  // documents, the last of them decides. The output is malformed when a JSON-looking document after the decisive
-  // one is cut short or does not parse, or when a JSON-looking document that encloses the decisive one never closes
-  // (a block cut short after a nested axis is never its last axis).
-  const starts: number[] = [];
-  for (let i = output.indexOf('{'); i >= 0; i = output.indexOf('{', i + 1)) if (jsonLike(output, i)) starts.push(i);
-  const spans: Array<{ start: number; end: number }> = [];
-  const unfinished: number[] = [];
-  for (const start of starts) {
-    const end = closeOf(output, start);
-    if (end === undefined) {
-      unfinished.push(start);
-      continue;
-    }
-    try {
-      JSON.parse(output.slice(start, end + 1));
-      spans.push({ start, end });
-    } catch {
-      /* a JSON-looking brace that is not a document: prose, or a malformed document */
-    }
-  }
-  const top = spans.filter((s) => !spans.some((o) => o !== s && o.start < s.start && o.end >= s.end));
-  const decisive = top[top.length - 1];
+  // One string-aware pass over the whole output, so a document spanning lines is one document. Outside a document a
+  // JSON-looking brace (`{` followed by a quote or a closing brace) opens one; inside, strings, escapes and depth are
+  // tracked, so a brace in a quoted reason opens nothing. The parseable top-level documents are the candidates and the
+  // last decides. The output is malformed when a document after the decisive one closed without parsing, or when a
+  // document never closes (a block cut short after a nested axis is never its last axis).
+  const { spans, unfinished } = topLevelDocuments(output);
+  const parseable = spans.filter((s) => s.parses);
+  const decisive = parseable[parseable.length - 1];
   if (!decisive) return undefined;
-  // A JSON-looking start after the decisive document that is not a parseable document is a cut-short or malformed final document.
-  if (starts.some((p) => p > decisive.end && !spans.some((s) => s.start === p))) return undefined;
-  // An unfinished document opened before the decisive one that runs into it encloses it.
-  if (unfinished.some((p) => p < decisive.start)) return undefined;
+  if (spans.some((s) => s.start > decisive.start && !s.parses)) return undefined;
+  if (unfinished !== undefined) return undefined;
   try {
     return parseVerdict(JSON.parse(output.slice(decisive.start, decisive.end + 1)));
   } catch {
@@ -263,19 +245,23 @@ export function extractVerdict(output: string): Verdict | undefined {
   }
 }
 
-/** A brace that starts a JSON object: followed, after whitespace, by a quote (a key) or a closing brace (an empty object). */
-function jsonLike(text: string, at: number): boolean {
-  const next = text.slice(at + 1).match(/^\s*(["}])/);
-  return next !== null;
-}
-
-/** The index of the brace that closes the object opened at `start` (braces inside strings do not count), undefined when it never closes. */
-function closeOf(text: string, start: number): number | undefined {
+/** The top-level JSON-looking documents of `text` in order, each with whether it parses, and the start of a document that never closed. */
+function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
+  const spans: Array<{ start: number; end: number; parses: boolean }> = [];
   let depth = 0;
   let inString = false;
   let escaped = false;
-  for (let i = start; i < text.length; i++) {
+  let docStart = -1;
+  for (let i = 0; i < text.length; i++) {
     const c = text[i]!;
+    if (depth === 0) {
+      // Outside a document only a JSON-looking brace opens one: prose braces and quotes are ignored.
+      if (c === '{' && /^\s*["}]/.test(text.slice(i + 1, i + 64))) {
+        docStart = i;
+        depth = 1;
+      }
+      continue;
+    }
     if (inString) {
       if (escaped) escaped = false;
       else if (c === '\\') escaped = true;
@@ -286,10 +272,18 @@ function closeOf(text: string, start: number): number | undefined {
     else if (c === '{') depth += 1;
     else if (c === '}') {
       depth -= 1;
-      if (depth === 0) return i;
+      if (depth === 0) {
+        let parses = true;
+        try {
+          JSON.parse(text.slice(docStart, i + 1));
+        } catch {
+          parses = false;
+        }
+        spans.push({ start: docStart, end: i, parses });
+      }
     }
   }
-  return undefined;
+  return { spans, unfinished: depth > 0 ? docStart : undefined };
 }
 
 export interface PreReviewClassification {
