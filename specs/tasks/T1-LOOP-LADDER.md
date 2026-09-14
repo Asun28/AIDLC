@@ -29,7 +29,6 @@ acceptance:
   - 3. `countedAttempts` counts DoD failures only: a card whose DoD passed and that was review-blocked four times still has three baseline attempts and one justified escalation for real failures, while three DoD failures without progress still stop it and the same-cause rule is unchanged (effort.test.ts). [R12] [dod arm 1]
   - 4. Both `card-loop.md` copies stay within the byte cap and no longer call a review block a counted repair; `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` and CHANGELOG.md record the policy; `docs/LESSONS.md` carries the first lesson line in the frozen format (templates.test.ts, mirror.test.ts). [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-depends_on: [T1-LOOP-SKILLS]
 budget: 200
 tdd: true
 sweep: "grep -rn 'markReviewFailure\|countedAttempts\|counted repair\|becomes a counted failure' src tests templates .claude docs: card-runner.ts three call sites (R3 command, pre-review, ship-path block), effort.ts counting, t0-flow.test.ts pre-review gate and formal review assertions, review-block.test.ts, card-loop.md SHIP paragraph"
