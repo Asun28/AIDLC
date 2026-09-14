@@ -4,6 +4,7 @@ import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harnes
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
+import { rmSync, writeFileSync } from 'node:fs';
 
 const BLOCK: Verdict = {
   verdict: 'block',
@@ -567,6 +568,81 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 3: the run is re-read under the lock
     after = runner.next(g(), card, current);
     assert.equal(ship.requests.length, 1);
     assert.equal(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 acceptance 15: a pre-dispatch re-read whose lock acquisition fails cancels the intent and the pool admission and keeps the original error', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    const ship = new DryRunShipPath(['merged']);
+    const runner = fx.runner(ship);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    const lock = `${fx.store.cardFile(goal.id, 'T1-HELLO')}.lock`;
+    const real = fx.queue.admit.bind(fx.queue);
+    fx.queue.admit = (...args: Parameters<typeof real>) => {
+      writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+      return real(...args);
+    };
+    try {
+      assert.throws(() => runner.next(g(), card, run), /locked/i);
+    } finally {
+      fx.queue.admit = real;
+      rmSync(lock, { force: true });
+    }
+    assert.equal(ship.requests.length, 0);
+    assert.equal(fx.ops.unresolved(goal.id, 'T1-HELLO').filter((o) => o.status === 'issued' || o.status === 'running' || o.status === 'UNKNOWN').length, 0, 'the intent is cancelled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool admission is released');
+    // The next call ships.
+    const after = runner.next(g(), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(ship.requests.length, 1);
+    assert.equal(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A ship path that counts how often its verdict file is read. */
+class CountingVerdictShipPath extends SequencedVerdictShipPath {
+  reads = 0;
+  override readVerdict(): { verdict?: Verdict } {
+    this.reads += 1;
+    return super.readVerdict();
+  }
+}
+
+test('T1-REVIEW-FINDINGS-4 acceptance 16: the same ship result applied twice reads the artifact twice and records one decision and one finding', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-ADV2', title: 'advisory re-read', tier: '1', acceptance: ['1. it works. [dod arm 1]'] });
+    const goal = goalForCards(fx, ['T1-ADV2']);
+    const advisory: Verdict = { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv2.ts:3: duplicated helper -> reuse'], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv2.ts:3: duplicated helper -> reuse'] } }, sha: candidateShaFor('T1-ADV2'), run_status: 'success' };
+    const ship = new CountingVerdictShipPath(['ci-red', 'merged'], [advisory, advisory]);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-ADV2');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-ADV2'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-ADV2') });
+    r = runner.next(g(), card, run);
+    assert.equal(ship.reads, 1);
+    assert.equal(r.run.review.substantiveDecisions, 1);
+    assert.equal(r.run.findings.length, 1, 'the advisory block records its cited reason once');
+    // The second ship is persisted as resumable (the CI rerun cleared), so it is dispatched and its verdict file re-read.
+    const resumed = fx.store.updateCardRun(goal.id, 'T1-ADV2', (current) => ({ ...current!, state: 'SHIP', stop: undefined, dodReceipt: 'dod:1', ci: { reruns: [] } }));
+    r = runner.next(g(), card, resumed);
+    assert.equal(ship.requests.length, 2, 'the second ship ran');
+    assert.equal(ship.reads, 2, 'the artifact was re-read');
+    assert.equal(r.run.review.substantiveDecisions, 1, 'a re-read of the same verdict artifact is not a second decision');
+    assert.equal(r.run.findings.length, 1, 'no duplicate finding for the identical reason');
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
   } finally {
     fx.cleanup();
   }

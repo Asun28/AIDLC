@@ -40,6 +40,12 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],"axes":{"spec":{"verdict":"block","reasons":[]},"standards":{"verdict":"pass","reasons":[]}'), undefined, 'a nested axis never stands in for a truncated document');
   assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: a { in a string -> keep"],"axes":{"spec":{"verdict":"block","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}')?.verdict, 'block', 'braces inside strings do not count');
   assert.equal(extractVerdict('see {this} first: {"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"]}')?.verdict, 'block', 'balanced prose braces before the document are ignored');
+  // T1-REVIEW-FINDINGS-4 acceptance 13: the walk covers the whole output, so a document spanning lines is one document.
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],\n"axes":{"spec":{"verdict":"block","reasons":[]},\n"standards":{"verdict":"pass","reasons":[]}'), undefined, 'a multi-line document cut short after a nested axis is malformed, never the axis');
+  assert.equal(extractVerdict('Reasoning.\n{\n  "verdict": "block",\n  "reasons": ["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],\n  "axes": {"spec": {"verdict": "block", "reasons": []}, "standards": {"verdict": "pass", "reasons": []}}\n}\n')?.verdict, 'block', 'a pretty-printed document is one document');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":[}'), undefined, 'a malformed final document is malformed, never the document before it');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n{"verdict":"block","reasons":[}\n'), undefined, 'the same across lines');
+  assert.equal(extractVerdict('note: {"verdict":"block","reasons":[]} was the draft\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'the last complete top-level document decides');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {

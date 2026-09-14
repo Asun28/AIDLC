@@ -420,3 +420,33 @@ describe('one dispute per answered re-raise (T1-REVIEW-FINDINGS-3 R2 cycle 1 rou
     assert.equal(policy.disputeFinding(g, 'F1', 'a second answer', LATER)[0]!.disputes.length, 2, 'one dispute per answered re-raise');
   });
 });
+
+describe('resolution by the deciding stage and the second-dispute window (T1-REVIEW-FINDINGS-4 acceptance 14)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const LATEST = '2026-09-11T02:00:00.000Z';
+  const raise = (): ReviewFinding[] => policy.recordFindings([], { stage: 'pre', cycle: 0, round: 1, candidateSha: SHA, at: T0, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: no RED -> add one'] }).findings;
+
+  test('an R2 finding re-raised by R3 decision 1 is resolved by decision 2 when it received the finding unchanged', () => {
+    let f = raise();
+    f = policy.recordFindings(f, { stage: 'formal', round: 1, candidateSha: SHA, at: LATER, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one'] }).findings;
+    assert.deepEqual(f[0]!.reraised.map((r) => r.stage), ['formal']);
+    const pass = policy.recordFindings(f, { stage: 'formal', round: 2, candidateSha: 'b'.repeat(40), at: LATEST, outcome: 'pass', reasons: [], seen: policy.snapshotFindings(f) });
+    assert.deepEqual(pass.resolved, ['F1'], 'the deciding stage re-raised it, so its later decision resolves it');
+    assert.equal(pass.findings[0]!.resolvedAt, LATEST);
+    // A finding the formal stage never raised or re-raised is left to its own stage.
+    const other = policy.recordFindings(raise(), { stage: 'formal', round: 1, candidateSha: SHA, at: LATER, outcome: 'pass', reasons: [] });
+    assert.deepEqual(other.resolved, [], 'the other stage leaves it alone');
+  });
+
+  test('a second dispute is admitted by any re-raise since the latest dispute that received it; a late overlapping re-raise that received none never revokes it', () => {
+    let f = raise();
+    const seenOpen = policy.snapshotFindings(f);
+    f = policy.disputeFinding(f, 'F1', 'the RED is tests/a.test.ts', T0);
+    const seenDisputed = policy.snapshotFindings(f);
+    f = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 2, candidateSha: SHA, at: LATER, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one'], seen: seenDisputed }).findings;
+    // A round dispatched before the dispute completes late and re-raises too.
+    f = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 3, candidateSha: SHA, at: LATEST, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: no RED seen (re:F1) -> add one'], seen: seenOpen }).findings;
+    assert.deepEqual(f[0]!.reraised.map((r) => r.sawDisputes), [1, 0]);
+    assert.equal(policy.disputeFinding(f, 'F1', 'a second answer', LATEST)[0]!.disputes.length, 2, 'the earlier answering re-raise keeps the second dispute open');
+  });
+});
