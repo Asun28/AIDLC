@@ -201,7 +201,7 @@ class SequencedVerdictShipPath extends DryRunShipPath {
   }
 }
 
-test('T1-REVIEW-FINDINGS: a ship-path review block records findings, stays pending on the unchanged candidate until every finding is disputed, and a re-raise at the second decision stops with the contested finding named', () => {
+test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a command reviewer the disputes reach no reviewer, so the block stays pending until the candidate changes, and a re-raise on the repaired candidate stops with the contested finding named', () => {
   const fx = makeFixture();
   try {
     tierSCard(fx);
@@ -223,15 +223,20 @@ test('T1-REVIEW-FINDINGS: a ship-path review block records findings, stays pendi
     // The unchanged candidate with the finding open: the block stays pending (no second ship).
     r = runner.next(g(), card, r.run);
     assert.equal(r.directive.kind, 'build');
-    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
-    r = runner.next(g(), card, run);
-    assert.equal(r.directive.kind, 'build', r.directive.narration);
     assert.equal(r.run.state, 'REVIEW_FIX');
     assert.match(r.directive.narration, /open finding.*F1/is);
     assert.equal(ship.requests.length, 1, 'no ship while the block is pending');
 
-    // Disputed: the second decision runs on the unchanged candidate; the reviewer re-raises -> STOP/review naming F1.
-    run = runner.disputeFinding(g(), card, r.run, 'F1', 'tests/hello.test.ts asserts the greeting at line 8 and fails on the baseline');
+    // Disputed, but the ship-path reviewer re-reads a verdict file and receives no notes: the block stays pending until the candidate changes.
+    let run = runner.disputeFinding(g(), card, r.run, 'F1', 'tests/hello.test.ts asserts the greeting at line 8 and fails on the baseline');
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.state, 'REVIEW_FIX');
+    assert.match(r.directive.narration, /ship-path reviewer/i);
+    assert.equal(ship.requests.length, 1, 'a dispute alone never re-ships to a reviewer that cannot read it');
+
+    // The repaired candidate ships; the reviewer re-raises F1 (disputed when the ship was dispatched) -> STOP/review naming it.
+    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(ship.requests.length, 2);

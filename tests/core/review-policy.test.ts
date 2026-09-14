@@ -206,6 +206,43 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x -> y'), undefined);
   });
 
+  test('references resolve against the findings that existed before the round: two reasons naming an unknown F1 on an empty ledger are two new findings', () => {
+    const r = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one', '[standards] 9 error handling @ src/gate.ts:9: swallowed (re:F1) -> rethrow']);
+    assert.deepEqual(r.raised, ['F1', 'F2']);
+    assert.deepEqual(r.reraised, []);
+    assert.deepEqual(r.findings.map((f) => f.reraised.length), [0, 0]);
+  });
+
+  test('several panel angles re-raising one finding keep every reason with its angle, and the round counts once toward non-acceptance', () => {
+    let f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one (ac-coverage)']).findings;
+    f = policy.disputeFinding(f, 'F1', 'the RED is tests/gate.test.ts', LATER);
+    const r = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: the RED asserts nothing (re:F1) -> assert (ac-coverage)', '[spec] 6 tests @ src/gate.ts:1: the RED is not behavioural (re:F1) -> assert the seam (edge-cases)'], LATEST);
+    assert.deepEqual(r.reraised, ['F1']);
+    const f1 = r.findings[0]!;
+    assert.deepEqual(f1.reraised.map((x) => [x.round, x.perspective, x.answeredDispute]), [[2, 'ac-coverage', true], [2, 'edge-cases', true]], 'both re-raise reasons are retained with their angle');
+    assert.match(f1.reraised[1]!.reason, /not behavioural/);
+    assert.equal(policy.nonAcceptanceRounds(f1), 1, 'one round, not two');
+  });
+
+  test('the dispatched snapshot decides what a round answered and what it may resolve: a dispute recorded after dispatch is not answered, a finding raised after dispatch is not resolved', () => {
+    let f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
+    const seenOpen = { F1: 'open' as const };
+    f = policy.disputeFinding(f, 'F1', 'disputed while the round ran', LATER);
+    const r = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'], LATEST, { seen: seenOpen });
+    assert.equal(r.findings[0]!.reraised[0]!.answeredDispute, false, 'the reviewer never saw the dispute');
+    assert.equal(policy.nonAcceptanceRounds(r.findings[0]!), 0);
+    assert.equal(r.findings[0]!.disputes.length, 1, 'the later dispute is preserved');
+    const late = block(r.findings, 3, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow']).findings; // F2 raised by an overlapping round
+    const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: 'open' } });
+    assert.deepEqual(passed.resolved, ['F1'], 'only findings the round received are resolved; F2 stays open');
+  });
+
+  test('an advisory block records its cited reasons as advisory findings', () => {
+    const r = policy.recordFindings([], { stage: 'formal', round: 1, candidateSha: 'sha-1', at: T0, outcome: 'block', advisory: true, reasons: ['[standards] 16 de-AI-slop @ src/gate.ts:4: duplicated helper -> reuse'] });
+    assert.deepEqual(r.raised, ['F1']);
+    assert.equal(r.findings[0]!.advisory, true);
+  });
+
   test('a decided later round of the same stage that does not re-raise an open or disputed finding resolves it; the other stage and a non-decision leave it open', () => {
     const first = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one', '[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow']).findings;
     const otherStage = policy.recordFindings(first, { stage: 'formal', round: 1, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] });
@@ -236,6 +273,9 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.equal(a.find((x) => x.id === 'F1')?.disposition, 'open');
     assert.equal(a.find((x) => x.id === 'F1')?.disputes.length, 1, 'the withdrawn dispute stays in the history');
     assert.throws(() => policy.acceptFinding(a, 'F1'), /not disputed/);
+    assert.throws(() => policy.disputeFinding(a, 'F1', 'once more', LATER), /re-raise/, 'a withdrawn dispute still needs a re-raise before the next one');
+    const answered = policy.recordFindings(a, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATER, outcome: 'block', reasons: ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'] }).findings;
+    assert.equal(policy.disputeFinding(answered, 'F1', 'second answer', LATER).find((x) => x.id === 'F1')?.disputes.length, 2, 'after a re-raise the next dispute is allowed');
     const resolved = policy.recordFindings(a, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] }).findings;
     assert.throws(() => policy.disputeFinding(resolved, 'F1', 'late', LATER), /resolved/);
     // dispute -> pass -> accept: a resolved finding is never reopened by a withdrawal (edge-cases finding, R2 round 3).

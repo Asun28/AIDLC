@@ -1107,28 +1107,27 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.match(r.directive.narration, /aidlc review dispute T1-FIND/);
     assert.deepEqual(runner.listFindings(r.run).map((f) => f.id), ['F1', 'F2']);
 
-    // Dispositions: dispute needs a note, a second dispute needs a re-raise in between, accept withdraws; each is journaled; a stopped run refuses.
+    // Dispositions: dispute needs a note, a second dispute needs a re-raise in between; each is journaled; a stopped run refuses.
     assert.throws(() => runner.disputeFinding(g(), card, r.run, 'F1', '  '), /note/);
     run = runner.disputeFinding(g(), card, r.run, 'F1', 'the RED is behavioural: tests/t1-find.test.ts fails on the assertion at the baseline');
     assert.equal(run.findings.find((f) => f.id === 'F1')?.disposition, 'disputed');
     assert.throws(() => runner.disputeFinding(g(), card, run, 'F1', 'again'), /already disputed/);
     await assert.rejects(() => runner.preReview(g(), card, run), /F2/);
-    run = runner.acceptFinding(g(), card, run, 'F1');
-    assert.equal(run.findings.find((f) => f.id === 'F1')?.disposition, 'open');
-    run = runner.disputeFinding(g(), card, run, 'F1', 'the RED is behavioural: tests/t1-find.test.ts fails on the assertion at the baseline');
-    run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
-    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').map((e) => e.data['finding']), ['F1', 'F1', 'F2']);
-    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_ACCEPTED').map((e) => e.data['finding']), ['F1']);
-    const stopped = { ...run, state: 'STOP' as const, stop: makeStop('review', 'x', 'y', { at: fx.now(), global: false }) };
-    assert.throws(() => runner.disputeFinding(g(), card, stopped, 'F2', 'late'), /stopped/);
-    assert.throws(() => runner.acceptFinding(g(), card, stopped, 'F2'), /stopped/);
+    // Dispositions act on the persisted run, never on the caller's snapshot: a STOP saved meanwhile refuses and is kept.
+    const stopped = fx.store.saveCardRun(CardRun.parse({ ...run, state: 'STOP', stop: makeStop('review', 'x', 'y', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+    assert.throws(() => runner.disputeFinding(g(), card, run, 'F2', 'late'), /stopped/);
+    assert.throws(() => runner.acceptFinding(g(), card, run, 'F1'), /stopped/);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-FIND')?.state, 'STOP', 'a stale snapshot never overwrites the saved stop');
     assert.deepEqual(runner.listFindings(stopped).map((f) => f.id), ['F1', 'F2'], 'the listing stays readable on a stopped run');
+    fx.store.saveCardRun(CardRun.parse({ ...run, updatedAt: fx.now() }));
+    run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').map((e) => e.data['finding']), ['F1', 'F2']);
 
-    // Every finding disputed: the gate issues round 2 on the unchanged candidate and the prompt carries the notes.
-    run = runner.recordAttempt(g(), card, run, { outcome: 'success', dodReceipt: 'dod:1c', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    // Every finding disputed: no further attempt is needed, the block's own DoD evidence is reused for the unchanged candidate, the gate issues round 2 and the prompt carries the notes.
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
+    assert.equal(r.run.dodReceipt, 'dod:1b', 'the receipt cleared by the block is restored for the unchanged, fully disputed candidate');
     assert.match(r.directive.narration, /disputed/);
     verdicts.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-find.ts:1: the test asserts nothing about the gate (re:F1) -> assert the behaviour"]}\n');
     const round2 = await runner.preReview(g(), card, r.run);
@@ -1152,15 +1151,15 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     const round3 = await runner.preReview(g(), card, run);
     assert.equal(round3.result.outcome, 'block');
     const f1b = round3.run.findings.find((f) => f.id === 'F1')!;
-    assert.equal(f1b.disputes.length, 3, 'the withdrawn dispute stays in the history');
+    assert.equal(f1b.disputes.length, 2);
     assert.deepEqual(f1b.reraised.map((x) => x.answeredDispute), [true, true], 'two rounds of mutual non-acceptance');
     assert.throws(() => runner.disputeFinding(g(), card, round3.run, 'F1', 'a third answer'), /human ruling/);
-    run = runner.recordAttempt(g(), card, round3.run, { outcome: 'success', dodReceipt: 'dod:1d', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    // Exhausted rounds decide on the unchanged candidate without a further attempt: STOP names the deadlock, or the residual ships to R3.
     const strict = mk('stop');
-    r = strict.next(g(), card, run);
+    r = strict.next(g(), card, round3.run);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     if (r.directive.kind === 'stop') assert.match(r.directive.stop.detail, /deadlock.*F1.*disputed twice.*re-raised twice/s);
-    r = runner.next(g(), card, { ...run, state: 'SHIP', stop: undefined });
+    r = runner.next(g(), card, { ...round3.run, state: 'SHIP', stop: undefined });
     assert.equal(r.directive.kind, 'close', r.directive.narration);
     const exhausted = fx.events(goal.id).find((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true)!;
     assert.match(String(exhausted.data['deadlock']), /F1.*disputed twice.*re-raised twice/s);
@@ -1204,10 +1203,12 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     assert.equal(r2Runs, 1);
 
     // Decision 1 blocks: two findings recorded on the formal stage; the unchanged candidate is refused while one is open.
-    r3.push('{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: exported helper the card does not ask for -> remove it","[standards] 9 error handling @ src/t1-fr3.ts:7: swallowed error -> rethrow"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: exported helper the card does not ask for -> remove it"]},"standards":{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-fr3.ts:7: swallowed error -> rethrow"]}}}\n');
+    // The second reason lives only on the standards axis: every cited reason of the document is a finding, root or axis.
+    r3.push('{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: exported helper the card does not ask for -> remove it"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: exported helper the card does not ask for -> remove it"]},"standards":{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-fr3.ts:7: swallowed error -> rethrow"]}}}\n');
     let f = await runner.formalReview(g(), card, r.run);
     assert.equal(f.classified.outcome, 'block-defect');
     assert.deepEqual(f.run.findings.map((x) => [x.id, x.stage, x.round]), [['F1', 'formal', 1], ['F2', 'formal', 1]]);
+    assert.match(f.run.findings[1]!.reason, /swallowed error/, 'the axis-only reason is F2');
     const decided = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)!;
     assert.deepEqual({ findings: decided.data['findings'], reraised: decided.data['reraised'] }, { findings: ['F1', 'F2'], reraised: [] });
     await assert.rejects(() => runner.formalReview(g(), card, f.run), /F1, F2.*dispute/s);
@@ -1217,18 +1218,16 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     assert.equal(runner.next(g(), card, staleVerdict).run.state, 'REVIEW_FIX', 'the block stays pending on the candidate it was recorded for');
     fx.store.saveCardRun(CardRun.parse({ ...f.run, updatedAt: fx.now() }));
     r = runner.next(g(), card, f.run);
-    assert.equal(r.directive.kind, 'build', 'the repair attempt opens');
-    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: 'sha-1' });
-    r = runner.next(g(), card, run);
-    assert.equal(r.directive.kind, 'build', `an undisputed block on the unchanged candidate stays pending as a repair: ${r.directive.narration}`);
+    assert.equal(r.directive.kind, 'build', `an undisputed block on the unchanged candidate is a pending repair: ${r.directive.narration}`);
     assert.equal(r.run.state, 'REVIEW_FIX');
     assert.match(r.directive.narration, /open finding.*F1, F2.*aidlc review dispute T1-FR3/is);
 
-    // Every finding disputed: the block is no longer pending, the earlier R2 pass still counts, and decision 2 runs on the unchanged candidate with the notes.
+    // Every finding disputed, no further attempt: the block's DoD evidence is reused for the unchanged candidate, the earlier R2 pass still counts, and decision 2 runs with the notes.
     run = runner.disputeFinding(g(), card, r.run, 'F1', 'acceptance 1 names the helper; it is exercised by tests/t1-fr3.test.ts');
     run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at line 12');
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'review', r.directive.narration);
+    assert.equal(r.run.dodReceipt, 'dod:1', 'the receipt cleared by the block is restored');
     assert.match(r.directive.narration, /disputed/);
     if (r.directive.kind === 'review') assert.equal(r.directive.decision, 2);
     assert.equal(r2Runs, 1, 'no second pre-review round for a candidate that already holds its pass');
@@ -1241,6 +1240,45 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     assert.match(f.run.stop?.detail ?? '', /second substantive block.*F1 re-raised after the author.s dispute/s);
     assert.equal(f.run.findings.find((x) => x.id === 'F1')?.reraised.length, 1);
     assert.equal(f.run.findings.find((x) => x.id === 'F2')?.resolvedAt, fx.now());
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS: accept withdraws a dispute, the finding stays open and undisputable until a re-raise, and the repaired candidate resolves it', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    const verdicts: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-acc.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-acc.ts b/src/t1-acc.ts\n+export const acc = 1;\n' },
+      'fake-r2': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-ACC', title: 'accept a finding' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-ACC', source: 'card', ref: 'T1-ACC', affectedSurfaces: [] }, { cards: ['T1-ACC'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-ACC'] } });
+    const card = fx.card('T1-ACC');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-ACC'));
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    verdicts.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-acc.ts:1: no RED -> add a failing test first"]}\n');
+    run = (await runner.preReview(g(), card, r.run)).run;
+    run = runner.disputeFinding(g(), card, run, 'F1', 'the RED is tests/t1-acc.test.ts');
+    run = runner.acceptFinding(g(), card, run, 'F1');
+    assert.equal(run.findings[0]?.disposition, 'open');
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_ACCEPTED').map((e) => e.data['finding']), ['F1']);
+    assert.throws(() => runner.disputeFinding(g(), card, run, 'F1', 'again'), /re-raise/, 'a withdrawn dispute is still the one dispute allowed before a re-raise');
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'build', 'an open finding keeps the candidate in repair');
+    assert.equal(r.run.dodReceipt, undefined, 'no receipt is restored while a finding is open');
+    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    run = (await runner.preReview(g(), card, r.run)).run;
+    assert.equal(run.findings[0]?.resolvedAt, fx.now(), 'the repaired candidate resolves it');
   } finally {
     fx.cleanup();
   }
