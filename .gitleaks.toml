@@ -1,9 +1,11 @@
 # Gitleaks configuration for the committed-history scan (.github/workflows/security-scanners.yml).
-# Extends the default rules; only the secrets-guard hook fixtures are allowlisted: the values there
-# are placeholders the hook must deny (tests/surface/hooks.test.ts), not credentials.
+# Extends the default rules; allowlisted: the secrets-guard hook fixtures (placeholders the hook must deny,
+# tests/surface/hooks.test.ts) and the synthetic canary a narration test plants in an invalid intent file
+# (tests/scenarios/t1-plan.test.ts). Nothing else: the scan blocks the merge.
 [extend]
 useDefault = true
 
 [allowlist]
-description = "Placeholder credentials used as fixtures by the secrets-guard hook tests"
+description = "Placeholder credentials used as fixtures by the secrets-guard hook tests, and the synthetic YAML canary of the intent narration test"
 paths = ['''tests/surface/hooks\.test\.ts''']
+regexes = ['''CANARY-hunter2-SECRET''']

@@ -1,6 +1,6 @@
 /**
  * Project configuration (`aidlc.config.json`), kept deliberately small: paths, base/mode,
- * the single ship path, review pool, worker cap, model family and hook settings.
+ * the single ship path (with its GitHub gate options), review pool, worker cap, model family and hook settings.
  */
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -37,6 +37,17 @@ export const FormalReviewConfig = z.object({
 });
 export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
+/** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */
+export const GitHubShipConfig = z.object({
+  /** Check-run names that must be present and conclude success before the merge; an absent name is pending, never satisfied, and skipped or neutral never satisfies a required name. Every other check that reports on the head must succeed as well. */
+  requiredChecks: z.array(z.string()).default([]),
+  /** A fresh candidate-bound R3 verdict is required before any remote effect. False (only without gateRequired) tolerates a missing or stale verdict; a block verdict for the head always fails the ship. */
+  requireVerdict: z.boolean().default(true),
+  /** Defaults in the ship path: 30 minutes, polled every 20 seconds. */
+  ciTimeoutMs: z.number().int().positive().optional(),
+  ciPollMs: z.number().int().positive().optional(),
+});
+export type GitHubShipConfig = z.infer<typeof GitHubShipConfig>;
 export const ProjectConfig = z.object({
   schemaVersion: z.literal(1).default(1),
   cardsDir: z.string().default('specs/tasks'),
@@ -70,7 +81,14 @@ export const ProjectConfig = z.object({
   tierPaths: z.object({ tierS: z.array(z.string()).default([]), tier0: z.array(z.string()).default([]), frozen: z.array(z.string()).default([]) }).default({ tierS: [], tier0: [], frozen: [] }),
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
-});
+  github: GitHubShipConfig.prefault({}),
+})
+  .superRefine((config, ctx) => {
+    // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.
+    if (config.gateRequired && config.github.requireVerdict === false) {
+      ctx.addIssue({ code: 'custom', path: ['github', 'requireVerdict'], message: 'github.requireVerdict false conflicts with gateRequired true: a required review is never waived at the ship' });
+    }
+  });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;
 
 export const CONFIG_FILE = 'aidlc.config.json';
