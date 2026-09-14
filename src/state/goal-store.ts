@@ -79,20 +79,13 @@ export class GoalStore {
   updateCardRun(goalId: string, cardId: string, change: (current: CardRun | undefined) => CardRun): CardRun {
     const file = this.cardFile(goalId, cardId);
     const lock = `${file}.lock`;
+    const owner = `pid=${process.pid} at=${nowIso()}`;
     const deadline = Date.now() + this.lockTimeoutMs;
-    while (!createExclusive(lock, `pid=${process.pid} at=${nowIso()}`)) {
-      let age = 0;
-      try {
-        age = Date.now() - statSync(lock).mtimeMs;
-      } catch {
-        continue; // released between the attempt and the stat
-      }
+    while (!createExclusive(lock, owner)) {
+      const age = ageMs(lock);
+      if (age === undefined) continue; // released between the attempt and the stat
       if (age > this.staleLockMs) {
-        try {
-          unlinkSync(lock);
-        } catch {
-          /* taken over by another writer */
-        }
+        this.takeOverStaleLock(lock, owner);
         continue;
       }
       if (Date.now() >= deadline) throw new StoreError('CARD_RUN_LOCKED', file, `card run ${goalId}/${cardId} is locked by another writer (${readLockOwner(lock)}); run the command again`);
@@ -105,6 +98,41 @@ export class GoalStore {
     } finally {
       try {
         unlinkSync(lock);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+
+  /**
+   * Stale-lock takeover, serialized among waiters by a second exclusive marker (`<lock>.takeover`): the one
+   * waiter holding the marker re-checks the lock's age and removes it only while it is still stale. A live
+   * writer cannot create a lock while the stale file exists, so nothing but the stale file is ever removed;
+   * a marker left by a crashed taker-over ages out the same way.
+   */
+  private takeOverStaleLock(lock: string, owner: string): void {
+    const marker = `${lock}.takeover`;
+    if (!createExclusive(marker, owner)) {
+      const markerAge = ageMs(marker);
+      if (markerAge !== undefined && markerAge > this.staleLockMs) {
+        try {
+          unlinkSync(marker);
+        } catch {
+          /* removed by another waiter */
+        }
+      } else {
+        sleepSync(10);
+      }
+      return;
+    }
+    try {
+      const age = ageMs(lock);
+      if (age !== undefined && age > this.staleLockMs) unlinkSync(lock);
+    } catch {
+      /* removed meanwhile */
+    } finally {
+      try {
+        unlinkSync(marker);
       } catch {
         /* already gone */
       }
@@ -145,6 +173,15 @@ export class GoalStore {
       if (found.length) interrupted.push(...recoverInterruptedWrites(d));
     }
     return { interrupted };
+  }
+}
+
+/** Age of a file by its mtime, undefined when it is gone. */
+function ageMs(file: string): number | undefined {
+  try {
+    return Date.now() - statSync(file).mtimeMs;
+  } catch {
+    return undefined;
   }
 }
 

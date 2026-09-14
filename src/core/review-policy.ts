@@ -242,11 +242,23 @@ export interface RecordFindingsInput {
   /** The block was advisory (never a merge bar): its findings are recorded and marked, the ship proceeds. */
   advisory?: boolean;
   /**
-   * The findings as the reviewer received them at dispatch (id -> disposition). A re-raise answered a dispute
-   * only when the dispatched snapshot showed it disputed; a finding absent from the snapshot was raised after
-   * dispatch and is never resolved by this round. Absent = the current findings are the snapshot.
+   * The findings as the reviewer received them at dispatch (id -> disposition and dispute count). A re-raise
+   * answered a dispute only when the dispatched snapshot showed it disputed; a finding absent from the
+   * snapshot was raised after dispatch and is never resolved by this round; a finding whose disposition or
+   * dispute count changed after dispatch keeps that later change (the round neither resets nor resolves it).
+   * Absent = the current findings are the snapshot.
    */
-  seen?: Record<string, FindingDisposition>;
+  seen?: Record<string, FindingSnapshot>;
+}
+
+/** One finding as a reviewer received it at dispatch. */
+export interface FindingSnapshot {
+  disposition: FindingDisposition;
+  disputes: number;
+}
+
+export function snapshotFindings(findings: ReviewFinding[]): Record<string, FindingSnapshot> {
+  return Object.fromEntries(findings.filter((f) => !f.resolvedAt).map((f) => [f.id, { disposition: f.disposition, disputes: f.disputes.length }]));
 }
 
 export interface RecordFindingsResult {
@@ -271,7 +283,9 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
   if (input.outcome !== 'pass' && input.outcome !== 'block') return { findings, raised: [], reraised: [], resolved: [] };
   // References resolve against the findings that existed before this round, never against ids this round allocates.
   const known = new Set(findings.map((f) => f.id));
-  const seen = input.seen ?? Object.fromEntries(findings.map((f) => [f.id, f.disposition]));
+  const seen = input.seen ?? snapshotFindings(findings);
+  // A finding changed after dispatch (a dispute recorded or withdrawn meanwhile) keeps that change: the round never saw it.
+  const changedSince = (f: ReviewFinding) => !(f.id in seen) || seen[f.id]!.disposition !== f.disposition || seen[f.id]!.disputes !== f.disputes.length;
   const perspectiveOf = (reason: string) => input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
   let next = findings.map((f) => ({ ...f }));
   const raised: string[] = [];
@@ -282,9 +296,11 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
       const prior = next.find((f) => f.id === ref)!;
       if (!reraised.includes(prior.id)) reraised.push(prior.id);
       // Every re-raise reason is kept with its angle; whether the round answered a dispute is read from the dispatched snapshot.
-      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: seen[prior.id] === 'disputed' }];
-      prior.disposition = 'open';
-      prior.resolvedAt = undefined;
+      prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, perspective: perspectiveOf(reason), answeredDispute: seen[prior.id]?.disposition === 'disputed' }];
+      if (!changedSince(findings.find((f) => f.id === ref)!)) {
+        prior.disposition = 'open';
+        prior.resolvedAt = undefined;
+      }
       continue;
     }
     const id = nextFindingId(next);
@@ -295,8 +311,8 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
   }
   const resolved: string[] = [];
   for (const f of next) {
-    // Only findings the reviewer received can be resolved by its verdict; one raised meanwhile stays open.
-    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id) || !(f.id in seen)) continue;
+    // Only findings the reviewer received, unchanged since, can be resolved by its verdict; one raised or disputed meanwhile stays as it is.
+    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id) || changedSince(findings.find((x) => x.id === f.id)!)) continue;
     f.resolvedAt = input.at;
     resolved.push(f.id);
   }

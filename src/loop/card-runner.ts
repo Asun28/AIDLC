@@ -14,10 +14,10 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type BlockSelector, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type RecordFindingsInput } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingDisposition, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
+import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type BlockedReceipt, type Card, type EffortLevel, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -170,9 +170,9 @@ export class CardRunner {
       }));
   }
 
-  /** The findings as a reviewer receives them at dispatch: id -> disposition of every unresolved finding. */
-  private findingsSnapshot(run: CardRun): Record<string, FindingDisposition> {
-    return Object.fromEntries(run.findings.filter((f) => !f.resolvedAt).map((f) => [f.id, f.disposition]));
+  /** The findings as a reviewer receives them at dispatch: disposition and dispute count of every unresolved finding. */
+  private findingsSnapshot(run: CardRun): Record<string, FindingSnapshot> {
+    return snapshotFindings(run.findings);
   }
 
   /** The DoD receipt a block clears, kept for the candidate it was bound to. */
