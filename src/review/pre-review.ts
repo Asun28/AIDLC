@@ -235,22 +235,48 @@ export function extractVerdict(output: string): Verdict | undefined {
     const line = lines[i]!;
     const start = line.indexOf('{');
     if (start < 0) continue;
-    // This line decides: a document cut short (no closing brace, or one that does not parse) is malformed, and so is a
-    // second document started after a complete one (a truncated trailing document); prose after the document is ignored.
-    const end = line.lastIndexOf('}');
-    if (end <= start) return undefined;
-    if (line.slice(end + 1).includes('{')) return undefined;
-    // The last complete document on the line decides (an inner brace never parses to the line's end).
-    for (let from = line.lastIndexOf('{', end); from >= start; from = line.lastIndexOf('{', from - 1)) {
+    // This line decides. Its top-level documents are found by a string-aware brace walk from the first brace: a walk
+    // that ends inside a document (one cut short, or a second one started and not finished) is malformed, whatever a
+    // nested object says; otherwise the last complete document that parses decides, and prose around it is ignored.
+    const docs = topLevelDocuments(line, start);
+    if (!docs) return undefined;
+    for (let d = docs.length - 1; d >= 0; d--) {
       try {
-        return parseVerdict(JSON.parse(line.slice(from, end + 1)));
+        return parseVerdict(JSON.parse(docs[d]!));
       } catch {
-        /* not a document from here */
+        /* balanced prose braces, not a document */
       }
     }
     return undefined;
   }
   return undefined;
+}
+
+/** The complete top-level `{...}` spans of `text` from `start` (braces inside JSON strings do not count), or undefined when the walk ends inside one. */
+function topLevelDocuments(text: string, start: number): string[] | undefined {
+  const docs: string[] = [];
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let docStart = -1;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"' && depth > 0) inString = true;
+    else if (c === '{') {
+      if (depth === 0) docStart = i;
+      depth += 1;
+    } else if (c === '}' && depth > 0) {
+      depth -= 1;
+      if (depth === 0) docs.push(text.slice(docStart, i + 1));
+    }
+  }
+  return depth === 0 && !inString ? docs : undefined;
 }
 
 export interface PreReviewClassification {
