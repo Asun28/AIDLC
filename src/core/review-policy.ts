@@ -276,8 +276,9 @@ const nextFindingId = (findings: ReviewFinding[]): string => `F${findings.reduce
 /**
  * Record the findings of one round or decision. Each cited reason without a known `re:F<n>` reference
  * becomes a new finding; a reason that references a prior finding is a re-raise of it (the finding
- * returns to open, the dispute history stays). A decided round resolves the stage's other open or
- * disputed findings. Rounds without a verdict change nothing.
+ * returns to open unless it changed after dispatch; the dispute history stays). A decided round resolves
+ * the stage's other open or disputed findings it received, unchanged since. Rounds without a verdict
+ * change nothing.
  */
 export function recordFindings(findings: ReviewFinding[], input: RecordFindingsInput): RecordFindingsResult {
   if (input.outcome !== 'pass' && input.outcome !== 'block') return { findings, raised: [], reraised: [], resolved: [] };
