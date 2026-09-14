@@ -80,6 +80,9 @@ describe('types: schema round-trips', () => {
     assert.deepEqual(r.ci.reruns, []);
     assert.equal(r.closure.cleanup, false);
     assert.equal(r.closure.lessons, false, 'the lesson disposition is the sixth closure predicate');
+    const five = { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true };
+    assert.equal(CardRun.parse({ ...r, state: 'DONE', mergeVerified: true, closure: five }).closure.lessons, true, 'a run persisted as DONE before the predicate existed stays complete');
+    assert.equal(CardRun.parse({ ...r, state: 'CLOSE', mergeVerified: true, closure: five }).closure.lessons, false, 'any other run has an open lesson step');
     assert.equal(r.pendingRepair, undefined);
     assert.equal(CardRun.parse({ ...r, pendingRepair: { kind: 'merge-conflict', detail: 'CONFLICT in src/a.ts', at: T0 } }).pendingRepair?.kind, 'merge-conflict');
     assert.equal(r.mergeVerified, false);

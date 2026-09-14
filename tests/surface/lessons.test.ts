@@ -1,11 +1,11 @@
 import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, withLessonsLock, LESSON_LINE } from '../../src/artifacts/lessons.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -106,6 +106,20 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     const text = readFileSync(file, 'utf8');
     assert.ok(text.startsWith(LINE + '\n'), text);
     assert.equal(readLessons(file).count, 2, 'both lines survive');
+  });
+
+  test('the lessons lock serialises closers: a held lock refuses, a stale one is taken over, and the lock is released after the work', () => {
+    const file = path.join(dir(), 'docs', 'LESSONS.md');
+    assert.equal(withLessonsLock(file, () => 42), 42);
+    assert.equal(existsSync(`${file}.lock`), false, 'released after the work');
+    writeFileSync(`${file}.lock`, 'held by another closer', 'utf8');
+    assert.throws(() => withLessonsLock(file, () => 1), /holds/);
+    const past = new Date('2020-01-01T00:00:00.000Z');
+    utimesSync(`${file}.lock`, past, past);
+    assert.equal(withLessonsLock(file, () => 7), 7, 'a stale lock is taken over');
+    assert.equal(existsSync(`${file}.lock`), false);
+    assert.throws(() => withLessonsLock(file, () => { throw new Error('inside'); }), /inside/);
+    assert.equal(existsSync(`${file}.lock`), false, 'released when the work throws');
   });
 
   test('reading a missing file is an empty context; recent is capped', () => {

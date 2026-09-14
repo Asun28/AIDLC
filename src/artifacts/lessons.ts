@@ -5,7 +5,7 @@
  * file is created by one exclusive append of the embedded header and the first line, and every
  * lesson is one literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 export const LESSONS_FILE = 'docs/LESSONS.md';
@@ -125,4 +125,47 @@ export function readLessons(file: string, recent = 5): LessonsContext {
   if (!existsSync(file)) return { file, count: 0, recent: [] };
   const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => parseLessonLine(l) !== undefined);
   return { file, count: lines.length, recent: lines.slice(-recent) };
+}
+
+/**
+ * One closer at a time: an exclusive lock file next to the lessons file guards the lookup, the append and the
+ * record of a disposition. A lock older than `staleMs` (a closer that died) is taken over; a live one refuses,
+ * and the caller retries. The lock is released after the work, whether it returned or threw.
+ */
+export function withLessonsLock<T>(file: string, work: () => T, staleMs = 60_000): T {
+  const lock = `${file}.lock`;
+  mkdirSync(path.dirname(file), { recursive: true });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let fd: number | undefined;
+    try {
+      fd = openSync(lock, 'wx');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      const age = Date.now() - statSync(lock).mtimeMs;
+      if (age > staleMs) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* another closer took it over first */
+        }
+        continue;
+      }
+      throw new Error(`another closer holds ${lock}; retry once it is released (a lock older than ${staleMs} ms is taken over)`);
+    }
+    try {
+      writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`);
+    } finally {
+      closeSync(fd);
+    }
+    try {
+      return work();
+    } finally {
+      try {
+        unlinkSync(lock);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  throw new Error(`could not take the stale lock ${lock}`);
 }

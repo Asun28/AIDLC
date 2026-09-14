@@ -7,7 +7,7 @@ import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
@@ -1119,6 +1119,69 @@ test('R5: PREPARE carries the count and the most recent lessons from docs/LESSON
     }
     assert.ok(r.directive.narration.includes('6 lessons so far'), r.directive.narration);
   } finally {
+    fx.cleanup();
+  }
+});
+
+test('R6: closure.lessons is never set by a raw card patch, a stale goal snapshot cannot record a disposition, and overlapping closers are serialised by the lessons lock', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-GUARD', title: 'guarded closure' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-GUARD', source: 'card', ref: 'T1-GUARD', affectedSurfaces: [] }, { cards: ['T1-GUARD'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-GUARD'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-GUARD');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GUARD'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-GUARD') });
+    r = runner.next(fx.goal(goal.id), card, built);
+    assert.equal(r.directive.kind, 'close');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { closure: { ...r.run.closure, lessons: true } } }), /never by a raw patch/);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.closure.lessons, false, 'the raw patch path never sets the predicate');
+    const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
+    mkdirSync(path.dirname(lessonsFile), { recursive: true });
+    writeFileSync(`${lessonsFile}.lock`, 'held by another closer', 'utf8');
+    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NOTE guard the closure write (source: R3)' }), /holds/);
+    assert.equal(existsSync(lessonsFile), false, 'nothing is written while another closer holds the lock');
+    const past = new Date('2020-01-01T00:00:00.000Z');
+    utimesSync(`${lessonsFile}.lock`, past, past);
+    const recorded = runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NOTE guard the closure write (source: R3)' });
+    assert.equal(recorded.closure.lessons, true, 'a stale lock is taken over');
+    assert.equal(existsSync(`${lessonsFile}.lock`), false, 'the lock is released');
+    const stale = fx.goal(goal.id);
+    assert.throws(() => runner.markClosure({ ...stale, generation: stale.generation + 1 }, card, recorded, { metadata: true }), /generation/);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: { detail: 'cancelled under the closer' } });
+    assert.throws(() => runner.markClosure(stale, card, recorded, { metadata: true }), /terminal/, 'the persisted goal decides, not the caller snapshot');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R6: a replacement session reclaims the card lease in CLOSE once the old lease expired and no delivery operation is unresolved, then records the disposition', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-TAKE', title: 'closure after the owner left' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-TAKE', source: 'card', ref: 'T1-TAKE', affectedSurfaces: [] }, { cards: ['T1-TAKE'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-TAKE'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-TAKE');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TAKE'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-TAKE') });
+    r = runner.next(fx.goal(goal.id), card, built);
+    assert.equal(r.directive.kind, 'close');
+    const before = r.run.ownerGeneration;
+    fx.advance(DEFAULT_LEASE_TTL_MS + 1000);
+    setActorForTests(actorB);
+    const taken = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(taken.directive.kind, 'close', taken.directive.narration);
+    assert.ok(taken.run.ownerGeneration !== undefined && before !== undefined && taken.run.ownerGeneration > before, 'the expired lease is taken over with a new generation');
+    const closed = runner.markClosure(fx.goal(goal.id), card, taken.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'the replacement session found no rule to record' });
+    assert.equal(runner.next(fx.goal(goal.id), card, closed).directive.kind, 'done');
+  } finally {
+    setActorForTests(actorA);
     fx.cleanup();
   }
 });
