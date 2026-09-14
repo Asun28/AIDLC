@@ -235,14 +235,20 @@ export function extractVerdict(output: string): Verdict | undefined {
     const line = lines[i]!;
     const start = line.indexOf('{');
     if (start < 0) continue;
-    // This line decides: a document cut short (no closing brace, or one that does not parse) is malformed.
+    // This line decides: a document cut short (no closing brace, or one that does not parse) is malformed, and so is a
+    // second document started after a complete one (a truncated trailing document); prose after the document is ignored.
     const end = line.lastIndexOf('}');
     if (end <= start) return undefined;
-    try {
-      return parseVerdict(JSON.parse(line.slice(start, end + 1)));
-    } catch {
-      return undefined;
+    if (line.slice(end + 1).includes('{')) return undefined;
+    // The last complete document on the line decides (an inner brace never parses to the line's end).
+    for (let from = line.lastIndexOf('{', end); from >= start; from = line.lastIndexOf('{', from - 1)) {
+      try {
+        return parseVerdict(JSON.parse(line.slice(from, end + 1)));
+      } catch {
+        /* not a document from here */
+      }
     }
+    return undefined;
   }
   return undefined;
 }

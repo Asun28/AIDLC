@@ -631,6 +631,8 @@ export const CardRun = z.object({
   preReview: PreReviewLedger.prefault({}),
   /** Every cited block reason of this run, with its disposition and re-raise history. */
   findings: z.array(ReviewFinding).default([]),
+  /** Bumped by every write under the card-run lock; a snapshot write must carry the persisted value (compare-and-set). Runs written before the field parse at 0. */
+  revision: z.number().int().nonnegative().default(0),
   /** The DoD receipt the last review block cleared, bound to its candidate; restored when that candidate is re-reviewed unchanged. */
   blockedReceipt: BlockedReceipt.optional(),
   ci: CiLedger.prefault({}),

@@ -61,16 +61,18 @@ export class GoalStore {
   }
 
   /**
-   * A plain write of a card run, serialized through the card-run lock like every other write (see `updateCardRun`).
-   * The findings are merged by revision with the persisted record, so a disposition another window recorded meanwhile
-   * survives a write computed from an older read; a write that lacks a round, a decision or a hand-off the persisted
-   * record carries, still holds a decided entry as pending, or would regress a decision counter was computed from a
-   * stale read and is refused: the caller re-runs its command on the current record.
+   * A plain write of a card run, serialized through the card-run lock like every other write (see `updateCardRun`),
+   * as a compare-and-set on the run revision: a snapshot that does not carry the persisted revision was read before
+   * another write landed and is refused whatever it changes (a candidate, a receipt, a stop, a ledger entry), so the
+   * caller re-runs its command on the current record. The ledgers name the entry when they can (`staleLedger`). The
+   * findings are merged by revision with the persisted record.
    */
   saveCardRun(run: CardRun): CardRun {
     return this.updateCardRun(run.goalId, run.cardId, (persisted) => {
-      const stale = persisted ? staleLedger(persisted, run) : undefined;
-      if (stale) throw new StoreError('CARD_RUN_STALE', this.cardFile(run.goalId, run.cardId), `card run ${run.cardId} changed since it was read (${stale} was recorded meanwhile); run the command again`);
+      if (persisted && run.revision !== persisted.revision) {
+        const why = staleLedger(persisted, run);
+        throw new StoreError('CARD_RUN_STALE', this.cardFile(run.goalId, run.cardId), `card run ${run.cardId} changed since it was read (revision ${persisted.revision} persisted, ${run.revision} read${why ? `: ${why} was recorded meanwhile` : ''}); run the command again`);
+      }
       return { ...run, findings: mergeFindings(persisted?.findings ?? [], run.findings) };
     });
   }
@@ -104,7 +106,10 @@ export class GoalStore {
       else sleepSync(10);
     }
     try {
-      const next = CardRun.parse({ ...change(readJson(file, CardRun)), updatedAt: nowIso() });
+      const persisted = readJson(file, CardRun);
+      // Every write over a persisted record takes the next revision, so a later snapshot write must carry it
+      // (`saveCardRun`); the creating write keeps revision 0, the value its caller holds.
+      const next = CardRun.parse({ ...change(persisted), revision: persisted ? persisted.revision + 1 : 0, updatedAt: nowIso() });
       // Fencing: the lock must still be this writer's right before the write.
       if (readLockOwner(lock) !== owner) throw new StoreError('CARD_RUN_LOCK_LOST', file, `card run ${goalId}/${cardId}: the lock changed hands during the update (${readLockOwner(lock) ?? 'lock gone'}); nothing written, run the command again`);
       atomicWriteJson(file, next);

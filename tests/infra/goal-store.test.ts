@@ -4,6 +4,7 @@ import fs, { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } f
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import { atomicWriteJson } from '../../src/state/store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
 import { ReleaseAttempt } from '../../src/core/types.ts';
 import { cleanup, iso, makeCardRun, makeGoal, tmpDir } from './helpers.ts';
@@ -274,7 +275,8 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
     store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: current!.preReview.rounds.filter((r) => r.reservationId !== 'res-late') } }));
     assert.throws(() => store.saveCardRun({ ...withRound, blocker: 'late' }), /changed since it was read/i, 'the abandoned R2 round is not resurrected');
     assert.equal(store.getCardRun('goal-r', 'T1-R')?.preReview.rounds.length, 0);
-    assert.equal(store.saveCardRun({ ...base, preReview: { ...base.preReview, rounds: [{ ...round, outcome: 'pass' }] }, blocker: 'decided' }).blocker, 'decided', 'a decided round the writer adds is written');
+    const current = store.getCardRun('goal-r', 'T1-R')!;
+    assert.equal(store.saveCardRun({ ...current, preReview: { ...current.preReview, rounds: [{ ...round, outcome: 'pass' }] }, blocker: 'decided' }).blocker, 'decided', 'a decided round the writer adds is written');
   });
 
   it('a lock this process cannot read is never taken over: the read error propagates instead of counting as a dead owner', () => {
@@ -313,9 +315,9 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
   it('every write under the lock bumps the revision, and a snapshot save is a compare-and-set on it whatever field changed', () => {
     const store = new GoalStore(paths);
     const v0 = store.saveCardRun(makeCardRun('goal-v', 'T1-V'));
-    assert.equal(v0.revision, 1, 'the first write is revision 1');
+    assert.equal(v0.revision, 0, 'the creating write keeps revision 0, the value its caller holds');
     const v1 = store.updateCardRun('goal-v', 'T1-V', (current) => ({ ...current!, blocker: 'other window' }));
-    assert.equal(v1.revision, 2);
+    assert.equal(v1.revision, 1);
     // The stale snapshot changes a field no ledger check covers: the candidate and the receipt.
     assert.throws(() => store.saveCardRun({ ...v0, candidate: { sha: 'old', dirty: false, untracked: [], digest: 'old' }, dodReceipt: 'dod:old' }), /changed since it was read/i, 'a snapshot at an earlier revision is refused whatever it changes');
     assert.equal(store.getCardRun('goal-v', 'T1-V')?.blocker, 'other window', 'the concurrent write survives');
@@ -328,9 +330,12 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     const v3 = store.saveCardRun({ ...stopped, blocker: 'current' });
     assert.equal(v3.revision, stopped.revision + 1);
     assert.equal(store.getCardRun('goal-v', 'T1-V')?.blocker, 'current');
-    // A run written before the revision existed (revision 0 on disk) is written once by a snapshot at revision 0.
-    const legacy = store.saveCardRun({ ...v3, revision: 0, cardId: 'T1-L' });
-    assert.equal(legacy.revision, 1);
-    assert.throws(() => store.saveCardRun({ ...legacy, revision: 0 }), /changed since it was read/i);
+    // A run written before the revision existed (no field on disk) reads at revision 0 and is written once by that snapshot.
+    const { revision: _legacyRevision, ...withoutRevision } = { ...v3, cardId: 'T1-L' };
+    atomicWriteJson(store.cardFile('goal-v', 'T1-L'), withoutRevision);
+    const legacy = store.getCardRun('goal-v', 'T1-L')!;
+    assert.equal(legacy.revision, 0);
+    assert.equal(store.saveCardRun({ ...legacy, blocker: 'legacy' }).revision, 1);
+    assert.throws(() => store.saveCardRun({ ...legacy, blocker: 'again' }), /changed since it was read/i);
   });
 });
