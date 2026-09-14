@@ -29,7 +29,7 @@ acceptance:
   - 3. `countedAttempts` counts DoD failures only: a card whose DoD passed and that was review-blocked four times still has three baseline attempts and one justified escalation for real failures, while three DoD failures without progress still stop it and the same-cause rule is unchanged (effort.test.ts). [R12] [dod arm 1]
   - 4. Both `card-loop.md` copies stay within the byte cap and no longer call a review block a counted repair; `docs/ARCHITECTURE.md`, `docs/OPERATIONS.md` and CHANGELOG.md record the policy; `docs/LESSONS.md` carries the first lesson line in the frozen format (templates.test.ts, mirror.test.ts). [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-budget: 200
+budget: 250
 tdd: true
 sweep: "grep -rn 'markReviewFailure\|countedAttempts\|counted repair\|becomes a counted failure' src tests templates .claude docs: card-runner.ts three call sites (R3 command, pre-review, ship-path block), effort.ts counting, t0-flow.test.ts pre-review gate and formal review assertions, review-block.test.ts, card-loop.md SHIP paragraph"
 non_goals: [changing the R2 rounds cap or the R3 decision allowance, changing MAX_BASELINE_ATTEMPTS, changing what counts as a DoD failure, the lessons closure predicate]
@@ -40,6 +40,8 @@ doc_sync: docs/ARCHITECTURE.md (effort policy), docs/OPERATIONS.md (attempts and
 
 ## Deliverable
 Two cards in this goal ended by the effort ladder while every review finding was accepted and fixed: each review block converted the preceding successful attempt into a counted failure, and the ladder allows four attempts while one R2 cycle plus R3 can block five times. This card makes review budgets and the build ladder independent: a review block reopens the episode without a counted failure, and the ladder counts DoD failures only. Reviews keep their own limits (R2 rounds per cycle, two R3 decisions).
+
+Budget raised from 200 to 250 at R3 decision 1: the reviewer asked for four regression scenarios (the review repair interrupted by a not-counted record, the same-cause streak across a preserved success, both R3 call sites including the escalated success, and the reopened episode continued through its own failures).
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
