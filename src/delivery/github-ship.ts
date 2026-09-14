@@ -22,7 +22,7 @@ export interface GitHubShipOptions {
   /** owner/repo */
   repository: string;
   runner?: SyncRunner;
-  /** Check-run names that must be present and green before the merge; an absent name is pending, never satisfied. Every other check that reports on the head must succeed as well. */
+  /** Check-run names that must be present and conclude success before the merge; an absent name is pending, never satisfied, and skipped or neutral never satisfies a required name. Every other check that reports on the head must succeed as well. */
   requiredChecks?: string[];
   ciTimeoutMs?: number;
   ciPollMs?: number;
@@ -127,9 +127,15 @@ export class GitHubShipPath implements ShipPath {
     for (;;) {
       const runs = this.gh.checkRuns(this.options.repository, head, wt);
       // Required names must be present and green: an absent one is pending until the timeout. Every reported check must succeed.
-      const absent = (this.options.requiredChecks ?? []).filter((name) => !runs.some((r) => r.name === name));
+      const required = this.options.requiredChecks ?? [];
+      const absent = required.filter((name) => !runs.some((r) => r.name === name));
       const pending = [...runs.filter((r) => r.status !== 'completed'), ...absent.map((name) => ({ name, status: 'absent', conclusion: null }))];
-      const failed = runs.filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes((r.conclusion ?? '').toLowerCase()));
+      // A required name must conclude success: skipped or neutral never satisfies it. Any other reported check may be neutral or skipped.
+      const green = (r: { name: string; conclusion: string | null }): boolean => {
+        const c = (r.conclusion ?? '').toLowerCase();
+        return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
+      };
+      const failed = runs.filter((r) => r.status === 'completed' && !green(r));
       if (failed.length) return { ...fail('[CI-GATE-RED]', checksJson(failed)), prNumber };
       if (!pending.length && runs.length > 0) break;
       if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`), prNumber };

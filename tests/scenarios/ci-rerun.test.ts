@@ -89,7 +89,7 @@ test('Q7: a code-defect CI failure never reruns; it goes back to BUILD with a ne
   }
 });
 
-const SECURITY = '[CI-GATE-RED] Gitleaks (committed history)=failure\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
+const SECURITY = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
 
 test('R7: a red secret scan is STOP/risk with no rerun intent and no repair attempt', () => {
   const fx = makeFixture();
@@ -112,7 +112,7 @@ test('R7: a red secret scan is STOP/risk with no rerun intent and no repair atte
   }
 });
 
-const SECURITY_NATIVE = '[CI-GATE-RED] secret_scan=failure\nnpm ERR! network read ECONNRESET\n[SAGA-FAIL]';
+const SECURITY_NATIVE = '[CI-GATE-RED] [{"name":"secret_scan","conclusion":"failure"}]\nnpm ERR! network read ECONNRESET\n[SAGA-FAIL]';
 
 test('R7: a native secret_scan job with transient noise is STOP/risk, never a rerun', () => {
   const fx = makeFixture();

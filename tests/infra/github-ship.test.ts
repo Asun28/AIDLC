@@ -140,6 +140,21 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
   });
 
   /** PREPARE and BUILD through the dry-run path (the fixture has no git); the ship is the GitHub path the runner builds from the config. */
+  test('a required check that reports skipped or neutral never satisfies the gate: ci-red with the conclusion on the gate line', () => {
+    for (const conclusion of ['skipped', 'neutral']) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+      dirs.push(f.root);
+      let merges = 0;
+      const ship = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'Gitleaks (committed history)', status: 'completed', conclusion }]), 'gh pr merge': () => { merges += 1; return {}; } }), requiredChecks: ['ci', 'Gitleaks (committed history)'] });
+      const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'ci-red', `${conclusion}: ${r.receipt.stdout}`);
+      assert.ok(r.receipt.stdout.includes(`[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"${conclusion}"}]`), r.receipt.stdout);
+      assert.equal(merges, 0);
+    }
+    const other = new GitHubShipPath({ ...base(fixture({ verdict: 'pass', reasons: [], sha: HEAD })), runner: runnerWith(runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'docs-lint', status: 'completed', conclusion: 'skipped' }])), requiredChecks: ['ci'] });
+    assert.equal(other.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged', 'a skipped check outside the required list is not a failure');
+  });
+
   type Runs = Array<{ name: string; status: string; conclusion: string | null }>;
 
   test('a pending check named like a sentinel never enters the sentinel stream; a later red scan is ci-red with the names encoded', () => {

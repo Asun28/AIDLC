@@ -39,7 +39,7 @@ export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
 /** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */
 export const GitHubShipConfig = z.object({
-  /** Check-run names that must be present and green before the merge; an absent name is pending, never satisfied. Every other check that reports on the head must succeed as well. */
+  /** Check-run names that must be present and conclude success before the merge; an absent name is pending, never satisfied, and skipped or neutral never satisfies a required name. Every other check that reports on the head must succeed as well. */
   requiredChecks: z.array(z.string()).default([]),
   /** A fresh candidate-bound R3 verdict is required before any remote effect. False (only without gateRequired) tolerates a missing or stale verdict; a block verdict for the head always fails the ship. */
   requireVerdict: z.boolean().default(true),
