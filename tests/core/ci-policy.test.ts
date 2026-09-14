@@ -134,6 +134,41 @@ describe('security class (T1-LOOP-GATES R7)', () => {
     assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"skipped"},{"name":"build-test","conclusion":"failure"}]' }]).class, 'unknown', 'a skipped scan is no security evidence');
   });
 
+  test('a name with a Unicode line separator survives the JSON gate line, in the text and through the parser', () => {
+    for (const sep of ['\u2028', '\u2029']) {
+      const line = '[CI-GATE-RED] ' + JSON.stringify([{ name: `scan (tool=gitleaks,${sep}os=linux)`, conclusion: 'failure' }, { name: 'flaky-tests', conclusion: 'failure' }]);
+      assert.deepEqual(gateChecks(line)?.map((c) => c.name), [`scan (tool=gitleaks,${sep}os=linux)`, 'flaky-tests']);
+      const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: line + '\nread ECONNRESET while fetching artifact' }]);
+      assert.equal(c.class, 'security', c.evidence.join(' | '));
+    }
+  });
+
+  test('the safe legacy form still counts: plain name=conclusion pairs parse, an ambiguous red line with a scan name fails closed, the scaffold text stays free text', () => {
+    const legacy = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret_scan=failure\nread ECONNRESET while fetching artifact' }]);
+    assert.equal(legacy.class, 'security', legacy.evidence.join(' | '));
+    assert.deepEqual(gateChecks('[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure'), [{ name: 'Gitleaks (committed history)', conclusion: 'success' }, { name: 'build-test', conclusion: 'failure' }]);
+    const green = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure\nAssertionError: expected 1 to equal 2' }]);
+    assert.equal(green.class, 'code-defect', green.evidence.join(' | '));
+    const ambiguous = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret scan (tool=success, os=linux)=failure\nread ECONNRESET while fetching artifact' }]);
+    assert.equal(ambiguous.class, 'security', 'a red line that names a scan but cannot be parsed fails closed');
+    assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3' }]).class, 'code-defect', 'scaffold output keeps its log classification');
+  });
+
+  test('every red gate line counts: a scan failure on a later line wins over an earlier build failure and transient text', () => {
+    const text = '[CI-GATE-RED] [{"name":"build-test","conclusion":"failure"}]\n[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\nread ECONNRESET while fetching artifact';
+    assert.deepEqual(gateChecks(text)?.map((c) => c.name), ['build-test', 'Gitleaks (committed history)']);
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: text }]);
+    assert.equal(c.class, 'security', c.evidence.join(' | '));
+  });
+
+  test('check metadata never feeds the log regexes: a wait line naming flaky-tests is no transient evidence and a green scan named after a leak is no security evidence', () => {
+    const noise = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-WAIT] 1 pending: [{"name":"flaky-tests","conclusion":null,"status":"in_progress"}]\n[CI-GATE-RED] [{"name":"build-test","conclusion":"failure"}]' }]);
+    assert.equal(noise.class, 'unknown', noise.evidence.join(' | '));
+    assert.equal(canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', noise.class).allowed, false);
+    const named = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] [{"name":"Gitleaks leaks found: 2","conclusion":"success"},{"name":"build-test","conclusion":"failure"}]\nAssertionError: expected 1 to equal 2' }]);
+    assert.equal(named.class, 'code-defect', named.evidence.join(' | '));
+  });
+
   test('security never reruns', () => {
     const d = canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', 'security');
     assert.equal(d.allowed, false);

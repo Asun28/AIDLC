@@ -229,6 +229,16 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(r.merges, 0);
   });
 
+  test('R7: a native scan name with a Unicode line separator reaches the runner intact: STOP/risk, no rerun, beside a failed flaky-tests check', () => {
+    for (const sep of ['\u2028', '\u2029']) {
+      const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 60_000, ciPollMs: 1 };
+      const r = shipThroughConfig([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: `scan (tool=gitleaks,${sep}os=linux)`, status: 'completed', conclusion: 'failure' }, { name: 'flaky-tests', status: 'completed', conclusion: 'failure' }], github);
+      assert.equal(r.kind, 'stop', r.narration);
+      assert.equal(r.stopReason, 'risk', `U+${sep.charCodeAt(0).toString(16)}: ${r.narration}`);
+      assert.equal(r.reruns, 0);
+    }
+  });
+
   test('R8: a block verdict for the candidate fails the ship even when the config waives the verdict requirement; nothing is pushed or merged', () => {
     const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
     const blocked = shipThroughConfig([{ name: 'ci', status: 'completed', conclusion: 'success' }], github, { verdict: 'block', reasons: ['[spec] 6 tests missing @ src/a.ts'], sha: HEAD });

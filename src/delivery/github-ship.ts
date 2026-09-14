@@ -38,7 +38,9 @@ function encodeCheckName(name: string): string {
 }
 
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
-  return JSON.stringify(runs.map((r) => ({ name: encodeCheckName(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })));
+  return JSON.stringify(runs.map((r) => ({ name: encodeCheckName(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029'); // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
 }
 
 export class GitHubShipPath implements ShipPath {
