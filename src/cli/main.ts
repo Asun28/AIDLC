@@ -146,9 +146,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
       const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
-      // The session source: the explicit override, the Claude Code session, or the shared default token (a warning).
+      // The session line names the source token (env, claude, default) and what it means; default is a warning.
       const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
-        source === 'env' ? 'AIDLC_SESSION' : source === 'claude' ? 'Claude Code session' : 'DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
+        source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
         git: gitVersion ?? 'MISSING',

@@ -25,7 +25,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
-import { AuthorizationRecord } from '../core/types.ts';
+import { AuthorizationRecord, type Lease } from '../core/types.ts';
 import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
@@ -232,12 +232,20 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     const repoKey = resolveRepoIdentity(cwd).key;
     const host = hostName();
     let acting = session;
+    const unreadable: string[] = [];
     // A run whose unreleased card lease names another session is that session's to verify. A run with no
     // lease record, or a released one, has no owner and is listed as before. Expiry is not consulted:
-    // expiry alone never proves the owner stopped (LeaseStore). The default token is resolved only when a
-    // lease has to be compared, so a Stop outside any aidlc state creates nothing.
+    // expiry alone never proves the owner stopped (LeaseStore). A lease record that cannot be read hides
+    // nothing: that run is listed for every session and the context says so. The default token is
+    // resolved only when a lease has to be compared, so a Stop outside any aidlc state creates nothing.
     const ownedHere = (cardId: string): boolean => {
-      const lease = leases.read(resourceKeys.card(repoKey, cardId));
+      let lease: Lease | undefined;
+      try {
+        lease = leases.read(resourceKeys.card(repoKey, cardId));
+      } catch (err) {
+        unreadable.push(`${cardId}: ${String((err as Error).message).split(/\r?\n/)[0]}`);
+        return true;
+      }
       if (!lease || lease.released) return true;
       if (acting === undefined) acting = resolveSessionId(env, cwd).session;
       return lease.owner.session === acting && lease.owner.host === host;
@@ -249,7 +257,8 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
       }
     }
     if (!pending.length) return { exitCode: 0 };
-    return stopContext(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.`);
+    const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
+    return stopContext(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
   } catch {
     return { exitCode: 0 };
   }
