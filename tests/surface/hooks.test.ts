@@ -3,14 +3,15 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DEFAULT_HOOK_CONFIG, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type HookResult } from '../../src/hooks/index.ts';
+import { DEFAULT_HOOK_CONFIG, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
-import { AuthorizationRecord, CardRun, Goal, addMs, nowIso, type AuthorizationRecord as AuthRec } from '../../src/core/types.ts';
+import { AuthorizationRecord, CardRun, Goal, addMs, nowIso, type ActorIdentity, type AuthorizationRecord as AuthRec } from '../../src/core/types.ts';
 import { classifyRequest } from '../../src/core/router.ts';
 import { stagesForTarget } from '../../src/core/goal-machine.ts';
 import { computeGoalDeadlines } from '../../src/core/deadlines.ts';
-import { resolveStatePaths } from '../../src/state/paths.ts';
+import { hostName, resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 
 function envWithState(): { cwd: string; env: NodeJS.ProcessEnv; stateDir: string } {
   const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-hooks-'));
@@ -230,4 +231,67 @@ test('dispatchHook runs every guard for the event in one process: first block wi
   // advisory output is returned unchanged
   const route = dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'Add a reporting dashboard feature with charts to the admin portal' }, { cwd, env });
   assert.ok(route.stdout?.startsWith('[route]'));
+});
+
+/** A window's process identity on this host; the lease store compares session and host. */
+function windowActor(session: string): ActorIdentity {
+  return { session, pid: 4242, processStart: '2026-09-15T00:00:00.000Z', host: hostName() };
+}
+
+/** One goal with a BUILD run per card and no DoD receipt, plus the lease store and keys the hook reads. */
+function buildRuns(cwd: string, env: NodeJS.ProcessEnv, cardIds: string[]): { leases: LeaseStore; key: (cardId: string) => string } {
+  const paths = resolveStatePaths(cwd, env);
+  const store = new GoalStore(paths);
+  store.saveGoal(makeGoal('g1'));
+  const now = nowIso();
+  for (const cardId of cardIds) store.saveCardRun(CardRun.parse({ goalId: 'g1', cardId, cardRevision: 0, goalGeneration: 0, state: 'BUILD', startedAt: now, deadline: addMs(now, 3600_000), updatedAt: now }));
+  mkdirSync(paths.leases, { recursive: true });
+  const repoKey = resolveRepoIdentity(cwd).key;
+  return { leases: new LeaseStore(paths.leases), key: (cardId) => resourceKeys.card(repoKey, cardId) };
+}
+
+/** The card ids a Stop result asks for, in context order; an exit 0 with no output is an empty list. */
+function stopCards(r: HookResult): string[] {
+  if (!r.stdout) return [];
+  const parsed = JSON.parse(r.stdout) as { hookSpecificOutput: { additionalContext: string } };
+  return [...parsed.hookSpecificOutput.additionalContext.matchAll(/(T\d+-[A-Z0-9-]+) \((?:BUILD|SHIP|REVIEW_FIX)\)/g)].map((m) => m[1]!);
+}
+
+test('verify-before-done acts as the hook event session: the event session_id, unless AIDLC_SESSION is set', () => {
+  const { cwd, env } = envWithState();
+  const { leases, key } = buildRuns(cwd, env, ['T1-FOO']);
+  leases.claim(key('T1-FOO'), { actor: windowActor('sess-hook') });
+  const stop = (event: HookEvent, e: NodeJS.ProcessEnv) => stopCards(runHook('verify-before-done', event, { cwd, env: e }));
+  // the event's session_id is the acting session, over a Claude session id in the hook's own environment
+  assert.deepEqual(stop({ hook_event_name: 'Stop', session_id: 'sess-hook' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-other' }), ['T1-FOO']);
+  assert.deepEqual(stop({ hook_event_name: 'Stop', session_id: 'sess-other' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-hook' }), []);
+  // AIDLC_SESSION wins over the event
+  assert.deepEqual(stop({ hook_event_name: 'Stop', session_id: 'sess-hook' }, { ...env, AIDLC_SESSION: 'sess-explicit' }), []);
+  assert.deepEqual(stop({ hook_event_name: 'Stop', session_id: 'sess-other' }, { ...env, AIDLC_SESSION: 'sess-hook' }), ['T1-FOO']);
+  // an event without session_id keeps the environment order
+  assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-hook' }), ['T1-FOO']);
+  assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-other' }), []);
+  assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_SESSION_ID: 'sess-hook' }), ['T1-FOO']);
+  // the dispatcher resolves the same way
+  assert.deepEqual(stopCards(dispatchHook({ hook_event_name: 'Stop', session_id: 'sess-hook' }, { cwd, env })), ['T1-FOO']);
+  assert.deepEqual(dispatchHook({ hook_event_name: 'Stop', session_id: 'sess-other' }, { cwd, env }), { exitCode: 0 });
+});
+
+test('verify-before-done lists only the cards of the acting session: two windows on one state directory', () => {
+  const { cwd, env } = envWithState();
+  const { leases, key } = buildRuns(cwd, env, ['T1-MINE', 'T1-THEIRS', 'T1-EXPIRED', 'T1-FREE', 'T1-RELEASED']);
+  leases.claim(key('T1-MINE'), { actor: windowActor('win-A') });
+  leases.claim(key('T1-THEIRS'), { actor: windowActor('win-B') });
+  // an expired lease still names its owner: expiry alone never proves the owner stopped
+  leases.claim(key('T1-EXPIRED'), { actor: windowActor('win-B'), now: '2026-09-15T00:00:00.000Z', ttlMs: 1000 });
+  // a released lease has no owner; a run with no lease record never had one
+  leases.claim(key('T1-RELEASED'), { actor: windowActor('win-B') });
+  leases.release(key('T1-RELEASED'), 0, windowActor('win-B'));
+  const a = stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd, env }));
+  assert.deepEqual(a.sort(), ['T1-FREE', 'T1-MINE', 'T1-RELEASED']);
+  const b = stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-B' }, { cwd, env }));
+  assert.deepEqual(b.sort(), ['T1-EXPIRED', 'T1-FREE', 'T1-RELEASED', 'T1-THEIRS']);
+  // a third window owns nothing here and is asked only about the unowned runs
+  const c = stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-C' }, { cwd, env }));
+  assert.deepEqual(c.sort(), ['T1-FREE', 'T1-RELEASED']);
 });
