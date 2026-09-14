@@ -63,7 +63,7 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 - CHANGELOG.md
 
 ## Order of work
-1. T1-REVIEW-FINDINGS, replaced by T1-REVIEW-FINDINGS-2 and then T1-REVIEW-FINDINGS-3 after two R3 decisions each (same change, every finding repaired; card 3 adds the run revision compare-and-set and the one-in-flight limits): finding records, re-raise references, dispositions and their CLI, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, deadlock naming, the dispatch snapshot, every card-run write under one lock.
+1. T1-REVIEW-FINDINGS, replaced by T1-REVIEW-FINDINGS-2, -3 and -4 after two R3 decisions each (same change, every finding repaired; card 3 adds the run revision compare-and-set and the one-in-flight limits, card 4 the whole-output verdict walk and the recovery envelope): finding records, re-raise references, dispositions and their CLI, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, deadlock naming, the dispatch snapshot, every card-run write under one lock.
 2. T1-REVIEW-INPUTS: truncation refused before dispatch, policy hash and rule-file note, delta section with `outsideDelta`, question and suggestion tags, R2 advisory notes into R3, REVIEW.md@3.
 3. T1-REVIEW-STATS: `summarizeReviews`, `aidlc review stats`, family totals.
 
@@ -73,8 +73,9 @@ See the spec section Interfaces and contracts. The verdict JSON document and the
 |---|---|---|---|---|---|
 | T1-REVIEW-FINDINGS | MUST | findings with ids and dispositions; prompt carries them; unchanged candidate never re-reviewed without disputes; deadlock named (stopped after two R3 decisions; superseded by T1-REVIEW-FINDINGS-2) | - | W1 | - |
 | T1-REVIEW-FINDINGS-2 | MUST | the T1-REVIEW-FINDINGS change with every R3 finding repaired; rounds bound to the dispatched snapshot; every card-run write under the card-run lock (stopped after two R3 decisions; superseded by T1-REVIEW-FINDINGS-3) | - | W1 | - |
-| T1-REVIEW-FINDINGS-3 | MUST | the T1-REVIEW-FINDINGS-2 change with findings 1-7 of its decision 2 repaired: a run revision with compare-and-set on every snapshot write, one round and one decision in flight per card | - | W1 | - |
-| T1-REVIEW-INPUTS | MUST | truncation refused; policy hash; delta with first-round misses; question and suggestion tags; REVIEW.md@3 | T1-REVIEW-FINDINGS-3 | W2 | - |
+| T1-REVIEW-FINDINGS-3 | MUST | the T1-REVIEW-FINDINGS-2 change with findings 1-7 of its decision 2 repaired: a run revision with compare-and-set on every snapshot write, one round and one decision in flight per card (stopped after two R3 decisions; superseded by T1-REVIEW-FINDINGS-4) | - | W1 | - |
+| T1-REVIEW-FINDINGS-4 | MUST | the T1-REVIEW-FINDINGS-3 change with the 11 findings of its decision 2 repaired: the whole-output verdict walk, the resolution stage guard, the recovery envelope with its pool request | - | W1 | - |
+| T1-REVIEW-INPUTS | MUST | truncation refused; policy hash; delta with first-round misses; question and suggestion tags; REVIEW.md@3 | T1-REVIEW-FINDINGS-4 | W2 | - |
 | T1-REVIEW-STATS | MUST | `aidlc review stats` per card and family | T1-REVIEW-INPUTS | W3 | - |
 
 ## Risks

@@ -35,7 +35,7 @@ acceptance:
   - 3. A round or decision that follows an earlier decided one of the same stage collects `git diff <lastSha>...<head>` and renders `## Delta since the last reviewed candidate`, or the no-change note when the shas are equal; `ReviewInvocation.candidateSha` is recorded; a new finding whose cited file is outside the delta's paths carries `outsideDelta: true`, and every new finding does when the delta is empty (review-policy.test.ts, pre-review.test.ts, t0-flow.test.ts). [R9] [dod arm 1]
   - 4. Reasons tagged `[question]` or `[suggestion]` are advisory in R2 and R3; the prompt contract and REVIEW.md say so; the R3 prompt lists the latest R2 round's advisory notes for the candidate as non-blocking; the `review pre` summary prints advisory notes (pre-review.test.ts, t0-flow.test.ts, templates.test.ts). [R10] [dod arm 1]
   - 5. `REVIEW.md` and `templates/REVIEW.md` stay identical and both configs carry `reviewPolicyVersion: REVIEW.md@3`; `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and CHANGELOG.md record the truncation rule, the hash, the delta and the tags (templates.test.ts, mirror.test.ts). [dod arm 1]
-depends_on: [T1-REVIEW-FINDINGS-3]
+depends_on: [T1-REVIEW-FINDINGS-4]
 plan_ref: plans/review-findings.md#7
 budget: 350
 tdd: true

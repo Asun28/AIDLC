@@ -1,10 +1,9 @@
 ---
-id: T1-REVIEW-FINDINGS-3
-title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock and every snapshot write a compare-and-set on the run revision (replacement of T1-REVIEW-FINDINGS-2 after its two R3 decisions)
+id: T1-REVIEW-FINDINGS-4
+title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock with a compare-and-set on the run revision, review results recovered only from a complete envelope (replacement of T1-REVIEW-FINDINGS-3 after its two R3 decisions)
 status: todo
-branch: T1-REVIEW-FINDINGS-3
-worktree: C:\wt\T1-REVIEW-FINDINGS-3
-superseded_by: T1-REVIEW-FINDINGS-4
+branch: T1-REVIEW-FINDINGS-4
+worktree: C:\wt\T1-REVIEW-FINDINGS-4
 allow_paths:
   - src/core/types.ts
   - src/core/review-policy.ts
@@ -27,6 +26,7 @@ allow_paths:
   - specs/tasks/T1-REVIEW-FINDINGS.md
   - specs/tasks/T1-REVIEW-FINDINGS-2.md
   - specs/tasks/T1-REVIEW-FINDINGS-3.md
+  - specs/tasks/T1-REVIEW-FINDINGS-4.md
 dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 dod_exit: 0
 requirements:
@@ -49,31 +49,35 @@ acceptance:
   - 10. `CardRun.revision` (default 0 for runs written before this change) is bumped by every write under the card-run lock, and `GoalStore.saveCardRun` is a compare-and-set: a snapshot whose revision is not the persisted revision is refused (`changed since it was read`), whatever field changed, so no snapshot write restores a candidate, a receipt or clears a stop another window recorded; writes that patch the locked record (`updateCardRun`) are unaffected (goal-store.test.ts, t0-flow.test.ts, review-block.test.ts). [R2] [dod arm 1]
   - 11. One pre-review round and one formal review in flight per card, whatever the candidate: a reservation for any candidate refuses a second dispatch, R2 numbering counts pending rounds, and the R3 allowance counts pending decisions, so overlapping candidates can neither exceed the rounds cap nor the two-decision allowance (t0-flow.test.ts). [R4] [dod arm 1]
   - 12. A failed attempt or lost checks clear the active DoD receipt as well as the retained one; the checkout status and HEAD are re-probed inside the reservation transaction right before dispatch (a change since the diff was collected refuses the round or decision and releases the reservation and the pool admission); `reviewBlockPending` keys on the candidate's latest decided invocation, so a pass after a block on the same candidate is not a pending block (t0-flow.test.ts, review-block.test.ts). [R4] [dod arm 1]
+  - 13. `extractVerdict` walks the whole reviewer output, not one line: the decisive document is the last top-level JSON document of the output, tracked across lines with a string-aware brace walk; an enclosing document left unfinished (cut short after a nested axis, on any line) is malformed, and a malformed final JSON-looking document is malformed too, never replaced by an earlier document; prose around the document is ignored (pre-review.test.ts). [R1] [dod arm 1]
+  - 14. A decided later round resolves a finding the deciding stage raised or re-raised (an R2 finding re-raised by R3 decision 1 is resolved by decision 2's pass), with the revision and strictly-earlier-round checks kept; a second dispute is admitted by any re-raise recorded since the latest dispute that received every dispute so far, so a late overlapping re-raise that received none never revokes it (review-policy.test.ts). [R1] [R2] [dod arm 1]
+  - 15. A formal result is recovered only from a complete result envelope published atomically at completion (`<stem>.result.json`, temp file and rename), never from the log alone, and the recovery settles the original pool request (completed or held) under its key; a retention failure after the reviewer returned is charged against the no-verdict allowance (the reviewer ran) while a failure before any receipt releases the reservation; a completion of an already-decided invocation removes only a pending reservation, never the decision; the pre-dispatch locked re-read of the ship cancels the operation intent and the pool admission when its lock acquisition fails, keeping the original error; the SHIP gate recomputes candidate, cycle and pre-review eligibility after every reload of the run (t0-flow.test.ts, review-block.test.ts). [R4] [dod arm 1]
+  - 16. The artifact re-read scenario applies the same ship result twice through `applyShipResult` and asserts the second application records no decision and no finding, with a RED that removes the deduplication (review-block.test.ts). [R1] [dod arm 1]
 depends_on: []
 plan_ref: plans/review-findings.md#7
-budget: 3900
+budget: 4400
 tdd: true
 sweep: "grep -rn 'saveCardRun\|this.save(\|priorFindings\|blockAnswered\|reusableReceipt\|answeredDispute' src tests: card-runner.ts every write site and guard, goal-store.ts, review-policy.ts, pre-review.ts prompt section, t0-flow.test.ts and review-block.test.ts scenarios, goal-store.test.ts"
 non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance, an OS-held file lock, lock fencing that stays valid across a process suspension between the ownership read and the write or the release (R3 decision 1 finding 8), serializing normal lock acquisition and release through the takeover marker (finding 9), a journal outbox that reconciles event delivery for the residual hand-off marker (finding 19) or for the disposition events (R3 decision 2 finding 8 of T1-REVIEW-FINDINGS-2: the same class)]
 doc_sync: docs/OPERATIONS.md (Findings and dispositions), docs/ARCHITECTURE.md (persisted-state table, state layer), CHANGELOG.md
 ---
 
-# T1-REVIEW-FINDINGS-3
+# T1-REVIEW-FINDINGS-4
 
 ## Deliverable
-Replacement of T1-REVIEW-FINDINGS-2, which stopped after its two R3 decisions on branch T1-REVIEW-FINDINGS-2 (556c4a6): decision 1 (19 findings, 16 repaired, 3 excluded on the card) and decision 2 (8 findings). This card carries the same change, repairs findings 1-7 of decision 2 with a failing test first, and takes the change through a fresh R2 cycle and two fresh R3 decisions.
+Replacement of T1-REVIEW-FINDINGS-3, which stopped after its two R3 decisions on branch T1-REVIEW-FINDINGS-3 (22782c4): decision 1 (6 findings, all repaired) and decision 2 (11 findings). This card carries the same change, repairs the 11 findings of decision 2 with a failing test first, and takes the change through a fresh R2 cycle and two fresh R3 decisions.
 
-The change: every cited block reason is a finding with a stable id on the card run; the author disputes or accepts a finding with a recorded note; the next prompt renders the findings with their dispositions and quoted history (`re:F<n>` marks a re-raise); an unchanged blocked candidate is not re-reviewed until every finding of the block is disputed; a pre-review pass stays valid across cycles; two rounds of mutual non-acceptance are a deadlock; every round is bound to the findings it received at dispatch; every card-run write goes through one lock. The R2 rounds cap and the two R3 decisions stay the only budgets.
+The change: every cited block reason is a finding with a stable id on the card run; the author disputes or accepts a finding with a recorded note; the next prompt renders the findings with their dispositions and quoted history (`re:F<n>` marks a re-raise); an unchanged blocked candidate is not re-reviewed until every finding of the block is disputed; a pre-review pass stays valid across cycles; two rounds of mutual non-acceptance are a deadlock; every round is bound to the findings it received at dispatch; every card-run write goes through one lock, every snapshot write is a compare-and-set on the run revision, one round and one decision are in flight per card, and a formal result whose commit did not land is recovered from its retained envelope. The R2 rounds cap and the two R3 decisions stay the only budgets.
 
-Findings 1-7 of decision 2 and their repairs: a failed attempt keeps the active DoD receipt (12); the checkout is probed before the diff, not at dispatch (12); R2 numbering ignores pending rounds and R3 allowances ignore pending decisions of other candidates (11); `reviewBlockPending` keys on the last block, not the candidate's last decision (12); a complete verdict followed on the same line by a truncated document passes (9); same-ledger stale snapshots still overwrite the candidate, the receipts and a concurrent stop (10: a run revision with compare-and-set on every snapshot write replaces the targeted stale checks of card 2, which three reviews found incomplete). Finding 8 (a disposition committed before its journal event, with no delivery reconciliation) is the class already excluded as finding 19 and is a non_goal.
+The 11 findings of decision 2 and their acceptance: the verdict walk reads one line at a time and falls back to an earlier document (13); the resolution stage guard and the second-dispute check (14); the recovery envelope, its pool request, a post-execution retention failure, a double completion, the pre-dispatch re-read failing its lock, the gate's reload (15); the artifact re-read scenario (16).
 
-RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 (`.review/T1-REVIEW-FINDINGS-2.red*.log`, `red-seeded*.log`) cover acceptance 1-9; the repairs of this card fail on their assertions against 556c4a6 (`.review/T1-REVIEW-FINDINGS-3.red.log`).
+RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 and -3 (`.review/T1-REVIEW-FINDINGS-2.red*.log`, `.review/T1-REVIEW-FINDINGS-3.red*.log`) cover acceptance 1-12; the repairs of this card fail on their assertions against 22782c4 (`.review/T1-REVIEW-FINDINGS-4.red.log`).
 
-Budget 3200: the reviewed branch T1-REVIEW-FINDINGS-2 is 3048 added / 298 removed lines over 18 files after four R2 rounds and two R3 decisions; with the revision compare-and-set (every snapshot write site and its scenarios), the in-flight limits and the ship path applied through one locked update per branch, this branch was 3337 added / 355 removed over 18 files against main before R3 decision 1; the six repairs of that decision (the verdict walk, the ship's final transaction from the locked record, the reloaded run re-validated, a formal result committed from its retained verdict) bring it to 3595 added / 369 removed; the two repairs of R2 cycle 1 round 1 (sawDisputes on re-raises, the retained failure of a formal dispatch) bring it to 3727 added / 371 removed, hence 3900 for the rounds left.
+Budget 4400: the reviewed branch T1-REVIEW-FINDINGS-3 is 3893 added / 373 removed lines over 18 files after four R2 rounds and two R3 decisions; the result envelope, the whole-output verdict walk and their scenarios add to it.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 ```
 - Expected exit code: 0
-- Assertion: the review-policy, types, pre-review, scenario, store, template and mirror tests named above pass, including the assertions on finding ids, re-raises, dispositions, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, the deadlock naming, the dispatch snapshot, the card-run lock, the run revision compare-and-set and the one-in-flight limits.
+- Assertion: the review-policy, types, pre-review, scenario, store, template and mirror tests named above pass, including the assertions on finding ids, re-raises, dispositions, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, the deadlock naming, the dispatch snapshot, the card-run lock, the run revision compare-and-set, the one-in-flight limits, the whole-output verdict walk and the recovery envelope.
