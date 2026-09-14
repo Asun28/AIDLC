@@ -1314,9 +1314,12 @@ export class CardRunner {
     if (doc['candidateDigest'] !== pending.candidateDigest) return undefined;
     if (typeof outcome !== 'string' || !outcomes.includes(outcome as PanelResult['outcome'])) return undefined;
     if (typeof runStatus !== 'string' || typeof at !== 'string' || !Array.isArray(doc['reasons'])) return undefined;
-    // A decided outcome carries the verdict it was classified from, and that verdict agrees with it; anything else is an inconsistent artifact, never a decision.
+    // A decided outcome carries the verdict it was classified from, and that verdict agrees with it; a non-decided outcome
+    // carries none. Anything else is an inconsistent artifact, never a decision.
     const verdict = doc['verdict'] !== undefined ? parseVerdict(doc['verdict']) : undefined;
-    if ((outcome === 'pass' || outcome === 'block') && (!verdict || verdict.verdict !== outcome)) return undefined;
+    if (outcome === 'pass' || outcome === 'block') {
+      if (!verdict || verdict.verdict !== outcome) return undefined;
+    } else if (doc['verdict'] !== undefined) return undefined;
     return {
       verdict,
       outcome: outcome as PanelResult['outcome'],
