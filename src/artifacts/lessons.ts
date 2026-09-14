@@ -5,7 +5,7 @@
  * file is created by one exclusive append of the embedded header and the first line, and every
  * lesson is one literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
@@ -139,45 +139,65 @@ function processAlive(pid: number): boolean {
   }
 }
 
-function readLock(lock: string): { pid: number; token: string; ageMs: number } | undefined {
+function readLock(file: string): { pid: number; token: string; ageMs: number } | undefined {
   try {
-    const [pid, token] = readFileSync(lock, 'utf8').trim().split(' ');
-    return { pid: Number(pid), token: token ?? '', ageMs: Date.now() - statSync(lock).mtimeMs };
+    const [pid, token] = readFileSync(file, 'utf8').trim().split(' ');
+    return { pid: Number(pid), token: token ?? '', ageMs: Date.now() - statSync(file).mtimeMs };
   } catch {
     return undefined;
   }
 }
 
 /**
+ * Remove the lock only if it still carries `token`. The file is first moved to a private name (an atomic rename,
+ * so no other closer can be looking at the same file), then inspected: a matching token is deleted, any other
+ * token is moved back untouched. Two syscalls, but never a compare on one file and a delete of another.
+ */
+function removeIfToken(lock: string, token: string, mine: string): boolean {
+  const aside = `${lock}.${mine}.aside`;
+  try {
+    renameSync(lock, aside);
+  } catch {
+    return false;
+  }
+  if (readLock(aside)?.token === token) {
+    unlinkSync(aside);
+    return true;
+  }
+  try {
+    renameSync(aside, lock);
+  } catch {
+    /* a new lock appeared meanwhile; the moved file was not ours to keep */
+    unlinkSync(aside);
+  }
+  return false;
+}
+
+/**
  * One closer at a time: an exclusive lock file next to the lessons file guards the lookup, the append and the record
  * of a disposition. The lock carries the holder process and a token; it is taken over only when its holder is no
- * longer running or the lock is older than `staleMs` (a holder that hung for that long). A live holder refuses and the
- * caller retries. The work receives `assertHeld`, which throws once the lock changed hands, so an evicted closer never
- * writes; on release only a lock still carrying this token is removed, never the next owner's. The window that remains
- * is a holder hung past the stale limit that resumes between its held check and its write.
+ * longer running or the lock is older than `staleMs` (a holder that hung for that long), and only the very file that
+ * was judged stale is removed, through an atomic rename. A live holder refuses and the caller retries. The work
+ * receives `assertHeld`, which throws once the lock changed hands, so an evicted closer never writes; on release
+ * only the file still carrying this token is removed, never the next owner's. The window that remains is a holder
+ * hung past the stale limit that resumes between its held check and its write.
  */
 export function withLessonsLock<T>(file: string, work: (assertHeld: () => void) => T, staleMs = 10 * 60_000): T {
   const lock = `${file}.lock`;
   mkdirSync(path.dirname(file), { recursive: true });
   const token = randomUUID();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
     let fd: number | undefined;
     try {
       fd = openSync(lock, 'wx');
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
       const held = readLock(lock);
-      if (held && processAlive(held.pid) && held.ageMs <= staleMs) {
+      if (!held) continue;
+      if (processAlive(held.pid) && held.ageMs <= staleMs) {
         throw new Error(`another closer holds ${lock} (process ${held.pid}); retry once it is released`);
       }
-      // Take over only the lock just read: a closer that replaced the stale lock meanwhile keeps its own.
-      if (readLock(lock)?.token === held?.token) {
-        try {
-          unlinkSync(lock);
-        } catch {
-          /* another closer took it over first */
-        }
-      }
+      removeIfToken(lock, held.token, token);
       continue;
     }
     try {
@@ -191,13 +211,7 @@ export function withLessonsLock<T>(file: string, work: (assertHeld: () => void) 
     try {
       return work(assertHeld);
     } finally {
-      if (readLock(lock)?.token === token) {
-        try {
-          unlinkSync(lock);
-        } catch {
-          /* already gone */
-        }
-      }
+      removeIfToken(lock, token, token);
     }
   }
   throw new Error(`could not take the stale lock ${lock}`);
