@@ -513,3 +513,61 @@ test('T1-REVIEW-FINDINGS-3 R3 decision 1: a decision or a check failure recorded
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 3: the run is re-read under the lock right before the ship is dispatched: a candidate or a reservation recorded after the gate cancels the dispatch', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    const ship = new DryRunShipPath(['merged', 'merged']);
+    const runner = fx.runner(ship);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    /** Between the gate and the dispatch (at pool admission) another window writes `during`. */
+    const atAdmission = (during: () => void, body: () => ReturnType<typeof runner.next>) => {
+      const real = fx.queue.admit.bind(fx.queue);
+      let fired = false;
+      fx.queue.admit = (...args: Parameters<typeof real>) => {
+        if (!fired) {
+          fired = true;
+          during();
+        }
+        return real(...args);
+      };
+      try {
+        return body();
+      } finally {
+        fx.queue.admit = real;
+      }
+    };
+    // (1) A newer candidate with its own receipt lands after the gate: the ship for the old one is not dispatched.
+    let after = atAdmission(
+      () => fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, candidate: { sha: 'sha-newer', dirty: false, untracked: [], digest: 'sha-newer' }, dodReceipt: 'dod:newer' })),
+      () => runner.next(g(), card, run),
+    );
+    assert.equal(ship.requests.length, 0, 'no ship is dispatched for a candidate the record no longer holds');
+    assert.equal(after.directive.kind, 'wait', after.directive.narration);
+    assert.match(after.directive.narration, /candidate|changed/i);
+    assert.equal(fx.ops.unresolved(goal.id, 'T1-HELLO').filter((o) => o.status === 'issued' || o.status === 'running' || o.status === 'UNKNOWN').length, 0, 'the operation intent is cancelled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool slot is released');
+    // (2) A pre-review round reserved after the gate parks the ship as well.
+    let current = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    after = atAdmission(
+      () => fx.store.updateCardRun(goal.id, 'T1-HELLO', (c) => ({ ...c!, preReview: { ...c!.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'sha-newer', candidateSha: 'sha-newer', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-late' }] } })),
+      () => runner.next(g(), card, current),
+    );
+    assert.equal(ship.requests.length, 0, 'no ship is dispatched while a review is reserved');
+    assert.equal(after.directive.kind, 'wait', after.directive.narration);
+    assert.equal(fx.ops.unresolved(goal.id, 'T1-HELLO').filter((o) => o.status === 'issued' || o.status === 'running' || o.status === 'UNKNOWN').length, 0);
+    // With the record as the gate saw it, the ship runs.
+    current = fx.store.updateCardRun(goal.id, 'T1-HELLO', (c) => ({ ...c!, preReview: { ...c!.preReview, rounds: [] } }));
+    after = runner.next(g(), card, current);
+    assert.equal(ship.requests.length, 1);
+    assert.equal(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
