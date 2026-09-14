@@ -221,7 +221,11 @@ export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
   return buildReviewPrompt({ ...i, stage: 'pre', includeDiff: true });
 }
 
-/** The last line of the output that parses as a verdict document; reasoning and prose before it are ignored. */
+/**
+ * The verdict document: the last JSON-looking line of the output (prose after it is ignored). That line decides
+ * alone: one that does not parse as a verdict is a malformed document, never replaced by an earlier draft in
+ * the reasoning.
+ */
 export function extractVerdict(output: string): Verdict | undefined {
   const lines = output
     .split(/\r?\n/)
@@ -233,10 +237,9 @@ export function extractVerdict(output: string): Verdict | undefined {
     const end = line.lastIndexOf('}');
     if (start < 0 || end <= start) continue;
     try {
-      const v = parseVerdict(JSON.parse(line.slice(start, end + 1)));
-      if (v) return v;
+      return parseVerdict(JSON.parse(line.slice(start, end + 1)));
     } catch {
-      /* not this line */
+      return undefined;
     }
   }
   return undefined;

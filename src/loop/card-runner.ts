@@ -161,15 +161,22 @@ export class CardRunner {
    */
   private recordResidualHandoff(goal: Goal, card: Card, run: CardRun, cycle: number, candidateDigest: string): CardRun {
     if (run.preReview.handoffs.some((h) => h.cycle === cycle && h.candidateDigest === candidateDigest)) return run;
-    const blocks = run.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome === 'block');
-    const residual = blocks[blocks.length - 1]?.reasons ?? [];
-    const residualFindings = run.findings.filter((f) => f.stage === 'pre' && !f.resolvedAt).map((f) => f.id);
-    const deadlock = describeDeadlock(run.findings);
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual, residualFindings, findings: [], reraised: [], resolved: [], deadlock: deadlock || undefined } });
-    return this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    // The marker is persisted under the lock first; the event is journaled only for the write that inserted it.
+    let inserted = false;
+    const next = this.store.updateCardRun(goal.id, card.id, (persisted) => {
       const current = persisted ?? run;
+      if (current.preReview.handoffs.some((h) => h.cycle === cycle && h.candidateDigest === candidateDigest)) return current;
+      inserted = true;
       return { ...current, preReview: { ...current.preReview, handoffs: [...current.preReview.handoffs, { cycle, candidateDigest, at: this.clock() }] } };
     });
+    if (inserted) {
+      const blocks = next.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome === 'block');
+      const residual = blocks[blocks.length - 1]?.reasons ?? [];
+      const residualFindings = next.findings.filter((f) => f.stage === 'pre' && !f.resolvedAt).map((f) => f.id);
+      const deadlock = describeDeadlock(next.findings);
+      this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual, residualFindings, findings: [], reraised: [], resolved: [], deadlock: deadlock || undefined } });
+    }
+    return next;
   }
 
   /** A review reads the committed candidate: uncommitted or untracked inputs are never reviewed. */
@@ -1133,11 +1140,18 @@ export class CardRunner {
       review = rec.ledger;
       reviewDecision = rec.decision;
       if (recorded) {
-        // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included) is recorded. The
-        // ship-path reviewer receives no prompt, so it delivered no findings: a re-raise answers no dispute and a pass resolves nothing.
+        // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included) is recorded against
+        // the record locked at completion (ids allocated there, a dispute saved during the ship kept). The ship-path reviewer
+        // receives no prompt, so it delivered no findings: a re-raise answers no dispute and a pass resolves nothing.
         const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict'; // a routed skip decides nothing about the findings
-        const found = this.applyFindings(run, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdictInfo.verdict ? citedReasonsOf(verdictInfo.verdict) : [], advisory: classified.outcome === 'block-advisory', seen: {} });
-        run = found.run;
+        const input: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdictInfo.verdict ? citedReasonsOf(verdictInfo.verdict) : [], advisory: classified.outcome === 'block-advisory', seen: {} };
+        let found: RecordFindingsResult = { findings: run.findings, raised: [], reraised: [], resolved: [] };
+        const locked = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+          const current = persisted ?? run;
+          found = recordFindings(current.findings, input);
+          return { ...current, findings: found.findings };
+        });
+        run = { ...run, findings: locked.findings };
         this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved } });
       }
     } else if (reread) {
