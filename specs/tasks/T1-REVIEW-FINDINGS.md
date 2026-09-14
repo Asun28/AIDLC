@@ -43,7 +43,7 @@ acceptance:
   - 7. `docs/OPERATIONS.md` gains the findings and dispositions section, `docs/ARCHITECTURE.md` the persisted field, both `card-loop.md` copies name the dispute command within the byte cap, and CHANGELOG.md Unreleased carries the entry (templates.test.ts, mirror.test.ts). [dod arm 1]
 depends_on: []
 plan_ref: plans/review-findings.md#7
-budget: 1050
+budget: 1700
 tdd: true
 sweep: "grep -rn 'priorFindings\|Findings to verify\|lastVerdict?.reasons\|residual' src tests: pre-review.ts prompt section and ReviewPromptInput, card-runner.ts preReview, formalReview, preReviewGate, formalReviewGate and preReviewEligibility, t0-flow.test.ts pre-review gate and formal review tests, review-block.test.ts second-block test, pre-review.test.ts prompt test"
 non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance]
@@ -55,7 +55,7 @@ doc_sync: docs/OPERATIONS.md (Findings and dispositions), docs/ARCHITECTURE.md (
 ## Deliverable
 A block today hands the author free-text reasons and the only recorded response is a repaired candidate; the same candidate can be re-reviewed after a block, which spends a round or the last decision without new information. This card makes every cited block reason a finding with a stable id on the card run, lets the author dispute or accept a finding with a recorded note, renders the findings with their dispositions in the next prompt (`re:F<n>` marks a re-raise), refuses to re-review an unchanged blocked candidate until every finding of that block is disputed, keeps a pre-review pass valid for the formal review across cycles, and names a finding disputed twice and re-raised twice as a deadlock in the existing stop details and residuals. The R2 rounds cap and the two R3 decisions stay the only budgets.
 
-Budget 1050, raised from 450 before the first review: the reviewed branch is 1037 net changed lines, of which about 400 are the scenario, policy and prompt tests the seven acceptance items name and about 130 are the two byte-capped `card-loop.md` copies, where the added sentence forced equal cuts and re-wrapped lines.
+Budget 1700, raised from 450 before the first review and from 1050 after the repairs of three R2 rounds and one R3 decision: the reviewed branch is about 1650 net changed lines, of which about 750 are the scenario, policy, prompt and store tests the acceptance items name (the repairs added regression scenarios for the dispatch snapshot, the card-run lock, advisory and axis reasons, the ship-path reviewer and the cross-stage deadlock), about 130 are the two byte-capped `card-loop.md` copies, and the rest the bookkeeping, the prompt section, the runner guards and `GoalStore.updateCardRun`.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
