@@ -535,17 +535,7 @@ export const PrInfo = z.object({
 });
 export type PrInfo = z.infer<typeof PrInfo>;
 
-/** A run persisted as DONE with its merge verified before the lessons predicate existed stays DONE: its closure was complete under the rules of its time. A raw patch cannot reach this rule (the controller refuses closure and DONE patches). */
-function legacyClosure(raw: unknown): unknown {
-  if (!raw || typeof raw !== 'object') return raw;
-  const record = raw as { state?: unknown; mergeVerified?: unknown; closure?: unknown };
-  if (record.state !== 'DONE' || record.mergeVerified !== true || !record.closure || typeof record.closure !== 'object') return raw;
-  const closure = record.closure as Record<string, unknown>;
-  if (closure['lessons'] !== undefined) return raw;
-  return { ...record, closure: { ...closure, lessons: true } };
-}
-
-export const CardRun = z.preprocess(legacyClosure, z.object({
+export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
   cardRevision: z.number().int().nonnegative(),
@@ -575,7 +565,7 @@ export const CardRun = z.preprocess(legacyClosure, z.object({
       findings: z.boolean().default(false),
       evidence: z.boolean().default(false),
       cleanup: z.boolean().default(false),
-      /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. */
+      /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. Always false by default: a run persisted as DONE before the predicate existed stays DONE through the state evidence, not through this default. */
       lessons: z.boolean().default(false),
     })
     .prefault({}),
@@ -585,7 +575,7 @@ export const CardRun = z.preprocess(legacyClosure, z.object({
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
   updatedAt: IsoTimestamp,
-}));
+});
 export type CardRun = z.infer<typeof CardRun>;
 
 // ---------------------------------------------------------------------------

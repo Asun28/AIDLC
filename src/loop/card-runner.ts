@@ -217,7 +217,8 @@ export class CardRunner {
       terminal: run.stop,
       prepared: Boolean(run.worktree) && Boolean(lease && !lease.released && lease.owner.session === me.session),
       mergeVerified: run.mergeVerified,
-      closureComplete: Object.values(run.closure).every(Boolean),
+      // A run persisted as DONE keeps its closure complete: DONE is derived from a verified merge and a complete closure and never patched, so a record that predates the lessons predicate stays DONE.
+      closureComplete: run.state === 'DONE' || Object.values(run.closure).every(Boolean),
       // A block stays pending only while the reviewed candidate is still the current candidate; a new
       // candidate (new sha/digest after the fix) moves the card back through BUILD/SHIP.
       reviewBlockPending: (() => {

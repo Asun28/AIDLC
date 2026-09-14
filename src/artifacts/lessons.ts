@@ -153,7 +153,8 @@ function readLock(lock: string): { pid: number; token: string; ageMs: number } |
  * of a disposition. The lock carries the holder process and a token; it is taken over only when its holder is no
  * longer running or the lock is older than `staleMs` (a holder that hung for that long). A live holder refuses and the
  * caller retries. The work receives `assertHeld`, which throws once the lock changed hands, so an evicted closer never
- * writes; on release only a lock still carrying this token is removed, never the next owner's.
+ * writes; on release only a lock still carrying this token is removed, never the next owner's. The window that remains
+ * is a holder hung past the stale limit that resumes between its held check and its write.
  */
 export function withLessonsLock<T>(file: string, work: (assertHeld: () => void) => T, staleMs = 10 * 60_000): T {
   const lock = `${file}.lock`;
@@ -169,10 +170,13 @@ export function withLessonsLock<T>(file: string, work: (assertHeld: () => void) 
       if (held && processAlive(held.pid) && held.ageMs <= staleMs) {
         throw new Error(`another closer holds ${lock} (process ${held.pid}); retry once it is released`);
       }
-      try {
-        unlinkSync(lock);
-      } catch {
-        /* another closer took it over first */
+      // Take over only the lock just read: a closer that replaced the stale lock meanwhile keeps its own.
+      if (readLock(lock)?.token === held?.token) {
+        try {
+          unlinkSync(lock);
+        } catch {
+          /* another closer took it over first */
+        }
       }
       continue;
     }

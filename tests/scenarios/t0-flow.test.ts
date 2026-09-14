@@ -1183,7 +1183,13 @@ test('R6: a replacement session reclaims the card lease in CLOSE once the old le
     assert.equal(taken.directive.kind, 'close', taken.directive.narration);
     assert.ok(taken.run.ownerGeneration !== undefined && before !== undefined && taken.run.ownerGeneration > before, 'the expired lease is taken over with a new generation');
     const closed = runner.markClosure(fx.goal(goal.id), card, taken.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'the replacement session found no rule to record' });
-    assert.equal(runner.next(fx.goal(goal.id), card, closed).directive.kind, 'done');
+    const done = runner.next(fx.goal(goal.id), card, closed);
+    assert.equal(done.directive.kind, 'done');
+    // A record persisted as DONE before the lessons predicate existed stays DONE: the predicate defaults to false, the state evidence keeps the closure complete.
+    fx.store.saveCardRun({ ...done.run, closure: { ...done.run.closure, lessons: false } });
+    const legacy = runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-TAKE')!);
+    assert.equal(legacy.directive.kind, 'done', legacy.directive.narration);
+    assert.equal(legacy.run.state, 'DONE');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
