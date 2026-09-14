@@ -25,7 +25,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
-import { appendLesson, lessonFromText, lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult } from '../review/pre-review.ts';
@@ -1040,18 +1040,37 @@ export class CardRunner {
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} ${firstFlag}\`.${lessonHint}` } };
   }
 
-  /** Closure flags. `lessons` needs a disposition: one lesson line appended to docs/LESSONS.md (past lines untouched) or a reason to skip; both are journaled. */
+  /**
+   * Closure flags for a card whose merge is verified. The run is reloaded and fenced (a stale or foreign session cannot
+   * assert closure) and only a CLOSE run of a live goal accepts flags. `lessons` needs a disposition: one lesson line
+   * appended to docs/LESSONS.md or a reason to skip. A lesson is journaled as pending before the file changes and as
+   * recorded once the closure is saved; an append that completed without its record is recognised on retry, so no
+   * line is ever written twice.
+   */
   markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string } = {}): CardRun {
+    const now = this.clock();
+    const current = this.store.getCardRun(goal.id, card.id) ?? run;
+    if (goal.terminal) throw new Error(`goal ${goal.id} is terminal (${goal.state}); closure cannot change`);
+    if (current.state !== 'CLOSE') throw new Error(`card ${card.id} is ${current.state}; closure flags apply to a CLOSE run with its merge verified`);
+    if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
     const data: Record<string, unknown> = {};
     if (flags.lessons) {
       if (disposition.lessonText && disposition.skipped) throw new Error('record either a lesson or a reason to skip, not both');
-      if (disposition.lessonText) data['lesson'] = appendLesson(this.lessonsFile(), lessonFromText(disposition.lessonText, card.id, this.clock().slice(0, 10)));
-      else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
+      if (disposition.lessonText) {
+        const entry = lessonFromText(disposition.lessonText, card.id, now.slice(0, 10));
+        const line = formatLesson(entry);
+        const file = this.lessonsFile();
+        if (!hasLesson(file, line)) {
+          this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
+          appendLesson(file, entry);
+        }
+        data['lesson'] = line;
+      } else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
       else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
     }
-    const closure = { ...run.closure, ...flags };
+    const closure = { ...current.closure, ...flags };
     this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
-    return this.save({ ...run, closure });
+    return this.save({ ...current, closure });
   }
 
   /** Write a fix-task marker so the protect-tests hook locks test files during a fix (Q1). */

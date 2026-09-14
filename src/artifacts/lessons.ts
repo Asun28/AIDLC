@@ -1,10 +1,11 @@
 /**
  * Lessons (`docs/LESSONS.md`): the frozen line format, an append-only writer and the reader
  * PREPARE uses. One dated line per lesson, written at CLOSE only when a review block or an
- * incident taught a rule the playbook did not state. Past lines are never rewritten; the
- * `- (none yet)` placeholder of a fresh file is not a lesson and gives way to the first one.
+ * incident taught a rule the playbook did not state. Existing bytes are never rewritten: the
+ * file is created exclusively from an embedded header when missing, and every lesson is one
+ * literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 export const LESSONS_FILE = 'docs/LESSONS.md';
@@ -19,7 +20,7 @@ export type LessonKind = (typeof LESSON_KINDS)[number];
 export const LESSON_LINE = /^- (\d{4}-\d{2}-\d{2}) (\S+): (NEVER|ALWAYS|NOTE) (.+) \(source: ([^()]+)\)$/;
 /** The disposition text `aidlc card close --lesson` accepts: the kind, the rule and the source. */
 export const LESSON_TEXT = /^(NEVER|ALWAYS|NOTE) (.+) \(source: ([^()]+)\)$/;
-const PLACEHOLDER = '- (none yet)';
+const ONE_LINE = /^[^\r\n\u2028\u2029]+$/;
 
 export interface LessonEntry {
   date: string;
@@ -51,25 +52,34 @@ const HEADER = [
   '',
 ].join('\n');
 
+/** A calendar date in YYYY-MM-DD that round-trips through UTC, so 2026-02-30 is rejected. */
+function isCalendarDate(date: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return false;
+  const t = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(t) && new Date(t).toISOString().slice(0, 10) === date;
+}
+
 export function formatLesson(entry: LessonEntry): string {
   return `- ${entry.date} ${entry.ref}: ${entry.kind} ${entry.rule} (source: ${entry.source})`;
 }
 
+/** Why an entry does not format to a valid line, or undefined when it does. The same rule governs parsing, reading and writing. */
+export function lessonProblem(entry: LessonEntry): string | undefined {
+  if (!isCalendarDate(entry.date)) return `date ${entry.date} is not a calendar date in YYYY-MM-DD`;
+  if (!entry.ref || !ONE_LINE.test(entry.ref) || /\s/.test(entry.ref)) return 'the card or incident ref must be one token';
+  if (!(LESSON_KINDS as readonly string[]).includes(entry.kind)) return `kind ${entry.kind} is not NEVER, ALWAYS or NOTE`;
+  if (!entry.rule.trim() || entry.rule !== entry.rule.trim() || !ONE_LINE.test(entry.rule)) return 'the rule must be one non-empty line without leading or trailing whitespace';
+  if (!entry.source.trim() || entry.source !== entry.source.trim() || !ONE_LINE.test(entry.source) || /[()]/.test(entry.source)) return 'the source must be one non-empty line without parentheses';
+  const line = formatLesson(entry);
+  return LESSON_LINE.test(line) ? undefined : `line does not match the frozen format: ${line}`;
+}
+
+/** A line in the frozen format whose fields pass the validation a written lesson passes; anything else is not a lesson. */
 export function parseLessonLine(line: string): LessonEntry | undefined {
   const m = line.match(LESSON_LINE);
   if (!m) return undefined;
-  return { date: m[1]!, ref: m[2]!, kind: m[3] as LessonKind, rule: m[4]!, source: m[5]! };
-}
-
-/** Why an entry does not format to a valid line, or undefined when it does. */
-export function lessonProblem(entry: LessonEntry): string | undefined {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || Number.isNaN(Date.parse(entry.date))) return `date ${entry.date} is not YYYY-MM-DD`;
-  if (!entry.ref || /\s/.test(entry.ref)) return 'the card or incident ref must be one token';
-  if (!(LESSON_KINDS as readonly string[]).includes(entry.kind)) return `kind ${entry.kind} is not NEVER, ALWAYS or NOTE`;
-  if (!entry.rule.trim() || /[\r\n]/.test(entry.rule)) return 'the rule must be one non-empty line';
-  if (!entry.source.trim() || /[()\r\n]/.test(entry.source)) return 'the source must be one non-empty line without parentheses';
-  const line = formatLesson(entry);
-  return LESSON_LINE.test(line) ? undefined : `line does not match the frozen format: ${line}`;
+  const entry: LessonEntry = { date: m[1]!, ref: m[2]!, kind: m[3] as LessonKind, rule: m[4]!, source: m[5]! };
+  return lessonProblem(entry) ? undefined : entry;
 }
 
 /** Parse the `--lesson` text into an entry for the card on the given date. */
@@ -82,30 +92,41 @@ export function lessonFromText(text: string, ref: string, date: string): LessonE
   return entry;
 }
 
-/** Append one line; creates the file from the embedded header when missing; never rewrites past lines. */
+/** True when the file already holds this exact line: an earlier append that completed. */
+export function hasLesson(file: string, line: string): boolean {
+  if (!existsSync(file)) return false;
+  return readFileSync(file, 'utf8').split(/\r?\n/).includes(line);
+}
+
+/**
+ * Append one line. A missing file is created exclusively from the embedded header (a concurrent creator
+ * loses the race and appends instead); existing bytes are never rewritten, and the append is one literal
+ * write, so no character of the rule is interpreted.
+ */
 export function appendLesson(file: string, entry: LessonEntry): string {
   const problem = lessonProblem(entry);
   if (problem) throw new Error(problem);
   const line = formatLesson(entry);
-  if (!existsSync(file)) {
-    mkdirSync(path.dirname(file), { recursive: true });
-    writeFileSync(file, `${HEADER}${line}\n`, 'utf8');
+  mkdirSync(path.dirname(file), { recursive: true });
+  try {
+    const fd = openSync(file, 'wx');
+    try {
+      writeSync(fd, `${HEADER}${line}\n`);
+    } finally {
+      closeSync(fd);
+    }
     return line;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
   }
   const current = readFileSync(file, 'utf8');
-  const placeholderOnly = current.split(/\r?\n/).filter((l) => LESSON_LINE.test(l)).length === 0 && current.includes(`\n${PLACEHOLDER}`);
-  if (placeholderOnly) {
-    // The placeholder of a fresh file is not a lesson; the first lesson takes its line.
-    writeFileSync(file, current.replace(`\n${PLACEHOLDER}`, `\n${line}`), 'utf8');
-    return line;
-  }
-  appendFileSync(file, `${current.endsWith('\n') ? '' : '\n'}${line}\n`, 'utf8');
+  appendFileSync(file, `${current.length > 0 && !current.endsWith('\n') ? '\n' : ''}${line}\n`, 'utf8');
   return line;
 }
 
-/** The context PREPARE hands the card: the file, the number of lessons and the most recent lines. */
+/** The context PREPARE hands the card: the file, the number of valid lessons and the most recent lines. */
 export function readLessons(file: string, recent = 5): LessonsContext {
   if (!existsSync(file)) return { file, count: 0, recent: [] };
-  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => LESSON_LINE.test(l));
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => parseLessonLine(l) !== undefined);
   return { file, count: lines.length, recent: lines.slice(-recent) };
 }

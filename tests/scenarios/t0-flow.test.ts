@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath, T0 } from './_harness.ts';
 import { DryRunShipPath, ScaffoldShipPath } from '../../src/delivery/ship.ts';
-import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
+import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
@@ -61,6 +61,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
 
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-HELLO') });
     assert.equal(run1.effort?.terminal, 'succeeded');
+    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, run1, { metadata: true }), /CLOSE/, 'closure flags apply to a CLOSE run only; a merge not yet verified refuses them');
     assert.equal(run1.dodReceipt, 'dod:ok');
     assert.equal(run1.candidate?.sha, candidateShaFor('T1-HELLO'));
 
@@ -70,6 +71,9 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     assert.equal(r.run.mergeVerified, true);
     if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
 
+    setActorForTests(actorB);
+    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true }), (e: unknown) => e instanceof FencedError, 'a foreign session cannot assert closure');
+    setActorForTests(actorA);
     const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
     r = runner.next(fx.goal(goal.id), card, run2);
     assert.equal(r.directive.kind, 'close', 'the five mechanical steps leave the lesson step open');
@@ -81,6 +85,11 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     const run3 = runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NEVER ship without the lesson step (source: T1-HELLO review)' });
     assert.deepEqual(readFileSync(lessonsFile, 'utf8').split('\n').filter((l) => l.startsWith('- ')), [`- ${T0.slice(0, 10)} T1-HELLO: NEVER ship without the lesson step (source: T1-HELLO review)`], 'one valid line appended to a file created from the header');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['lesson'], `- ${T0.slice(0, 10)} T1-HELLO: NEVER ship without the lesson step (source: T1-HELLO review)`, 'the line is journaled');
+    const retainedEvents = fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED');
+    assert.equal(retainedEvents.at(-2)?.data['lessonPending'], retainedEvents.at(-1)?.data['lesson'], 'the disposition is journaled before the file changes');
+    const retried = runner.markClosure(fx.goal(goal.id), card, run3, { lessons: true }, { lessonText: 'NEVER ship without the lesson step (source: T1-HELLO review)' });
+    assert.equal(retried.closure.lessons, true);
+    assert.equal(readFileSync(lessonsFile, 'utf8').split('\n').filter((l) => l.startsWith('- ')).length, 1, 'a retry recognises the completed append and writes no second line');
     r = runner.next(fx.goal(goal.id), card, run3);
     assert.equal(r.directive.kind, 'done');
     assert.equal(r.run.state, 'DONE');

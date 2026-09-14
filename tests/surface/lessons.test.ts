@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { appendLesson, formatLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -57,15 +57,45 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     assert.equal(readLessons(file).count, 2, 'a rejected entry writes nothing');
   });
 
-  test('the template placeholder gives way to the first lesson; a file with lessons keeps every line', () => {
+  test('existing bytes are never rewritten: the template placeholder stays above the first lesson and is not counted', () => {
     const file = path.join(dir(), 'LESSONS.md');
-    writeFileSync(file, '# Lessons\n\nintro\n\n## Lessons\n- (none yet)\n', 'utf8');
+    const original = '# Lessons\n\nintro\n\n## Lessons\n- (none yet)\n';
+    writeFileSync(file, original, 'utf8');
     appendLesson(file, ENTRY);
-    assert.equal(readFileSync(file, 'utf8'), '# Lessons\n\nintro\n\n## Lessons\n' + LINE + '\n');
+    assert.equal(readFileSync(file, 'utf8'), original + LINE + '\n', 'the original bytes are a prefix of the result');
+    assert.deepEqual(readLessons(file), { file, count: 1, recent: [LINE] }, 'the placeholder is not a lesson');
     const noTrailingNewline = path.join(dir(), 'LESSONS.md');
     writeFileSync(noTrailingNewline, '## Lessons\n' + LINE, 'utf8');
     appendLesson(noTrailingNewline, { ...ENTRY, rule: 'second' });
     assert.equal(readFileSync(noTrailingNewline, 'utf8'), '## Lessons\n' + LINE + '\n' + formatLesson({ ...ENTRY, rule: 'second' }) + '\n');
+  });
+
+  test('a rule is appended literally: dollar sequences and percent signs survive, and the header is written exactly once', () => {
+    const file = path.join(dir(), 'docs', 'LESSONS.md');
+    const odd = { ...ENTRY, rule: 'quote $& and $1 and 100% literally' };
+    appendLesson(file, odd);
+    appendLesson(file, { ...ENTRY, rule: 'second' });
+    const text = readFileSync(file, 'utf8');
+    assert.equal(text.split('\n').filter((l) => l === '# Lessons').length, 1, 'one header');
+    assert.ok(text.includes('quote $& and $1 and 100% literally'), text);
+    assert.equal(readLessons(file).count, 2);
+    assert.equal(hasLesson(file, formatLesson(odd)), true);
+    assert.equal(hasLesson(file, formatLesson({ ...ENTRY, rule: 'third' })), false);
+    assert.equal(hasLesson(path.join(dir(), 'none.md'), LINE), false);
+  });
+
+  test('validation is shared by parsing, reading and writing: impossible dates, blank fields and line terminators are never lessons', () => {
+    assert.match(lessonProblem({ ...ENTRY, date: '2026-02-30' }) ?? '', /calendar/);
+    assert.equal(parseLessonLine('- 2026-02-30 T1: NEVER do it (source: x)'), undefined, 'an impossible date is not a lesson');
+    assert.equal(parseLessonLine('- 2026-09-14 T1: NEVER    (source: x)'), undefined, 'a blank rule is not a lesson');
+    assert.equal(parseLessonLine('- 2026-09-14 T1: NEVER do it (source:  )'), undefined, 'a blank source is not a lesson');
+    assert.match(lessonProblem({ ...ENTRY, rule: 'two\nlines' }) ?? '', /one non-empty line/);
+    assert.match(lessonProblem({ ...ENTRY, source: 'a\u2028b' }) ?? '', /one non-empty line/);
+    assert.throws(() => lessonFromText('NEVER    (source: x)', 'T1', '2026-09-14'));
+    assert.throws(() => appendLesson(path.join(dir(), 'x.md'), { ...ENTRY, date: '2026-02-30' }), /calendar/);
+    const file = path.join(dir(), 'LESSONS.md');
+    writeFileSync(file, '## Lessons\n- 2026-02-30 T1: NEVER impossible (source: x)\n- 2026-09-14 T1: NEVER    (source: x)\n' + LINE + '\n', 'utf8');
+    assert.deepEqual(readLessons(file), { file, count: 1, recent: [LINE] }, 'malformed lines are neither counted nor recent');
   });
 
   test('reading a missing file is an empty context; recent is capped', () => {
