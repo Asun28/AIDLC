@@ -451,14 +451,34 @@ export function mergeFindings(persisted: ReviewFinding[], mine: ReviewFinding[])
   return [...byId.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
 }
 
-/** An entry of the persisted ledgers that the writer's copy lacks: the writer read the run before it was recorded. */
-export function ledgerEntryMissing(persisted: { review: ReviewLedger; preReview: { rounds: Array<{ reservationId?: string; cycle: number; round: number; requestedAt: string }>; handoffs: Array<{ cycle: number; candidateDigest: string }> } }, mine: typeof persisted): string | undefined {
-  const roundKeyOf = (r: { reservationId?: string; cycle: number; round: number; requestedAt: string }) => r.reservationId ?? `${r.cycle}:${r.round}:${r.requestedAt}`;
-  const invocation = persisted.review.invocations.find((i) => !mine.review.invocations.some((m) => m.invocationId === i.invocationId));
-  if (invocation) return `review invocation ${invocation.invocationId}`;
-  const round = persisted.preReview.rounds.find((r) => !mine.preReview.rounds.some((m) => roundKeyOf(m) === roundKeyOf(r)));
-  if (round) return `pre-review round ${round.cycle}/${round.round} (${roundKeyOf(round)})`;
+/** The ledgers of a card run as a stale-write check reads them. */
+export interface LedgerView {
+  review: ReviewLedger;
+  preReview: { rounds: Array<{ reservationId?: string; cycle: number; round: number; requestedAt: string; outcome: string }>; handoffs: Array<{ cycle: number; candidateDigest: string }> };
+}
+
+/**
+ * Why a write computed from an earlier read of the run is stale: the persisted ledgers carry an entry the writer's
+ * copy lacks, an entry the writer still holds as pending that was decided meanwhile (a reservation and its decision
+ * share one id), or a decision counter the write would regress. The writer re-runs its command on the current record
+ * instead of dropping, undoing or overwriting the entry.
+ */
+export function staleLedger(persisted: LedgerView, mine: LedgerView): string | undefined {
+  const roundKeyOf = (r: LedgerView['preReview']['rounds'][number]) => r.reservationId ?? `${r.cycle}:${r.round}:${r.requestedAt}`;
+  for (const i of persisted.review.invocations) {
+    const m = mine.review.invocations.find((x) => x.invocationId === i.invocationId);
+    if (!m) return `review invocation ${i.invocationId}`;
+    if (i.outcome !== 'pending' && m.outcome === 'pending') return `the decision of review invocation ${i.invocationId}`;
+  }
+  for (const r of persisted.preReview.rounds) {
+    const m = mine.preReview.rounds.find((x) => roundKeyOf(x) === roundKeyOf(r));
+    if (!m) return `pre-review round ${r.cycle}/${r.round} (${roundKeyOf(r)})`;
+    if (r.outcome !== 'pending' && m.outcome === 'pending') return `the outcome of pre-review round ${r.cycle}/${r.round} (${roundKeyOf(r)})`;
+  }
   const handoff = persisted.preReview.handoffs.find((h) => !mine.preReview.handoffs.some((m) => m.cycle === h.cycle && m.candidateDigest === h.candidateDigest));
   if (handoff) return `residual hand-off of cycle ${handoff.cycle}`;
+  for (const counter of ['substantiveDecisions', 'substantiveBlocks', 'noVerdictRetriesUsed'] as const) {
+    if (mine.review[counter] < persisted.review[counter]) return `review counter ${counter} (${persisted.review[counter]})`;
+  }
   return undefined;
 }

@@ -4,6 +4,7 @@
 import path from 'node:path';
 import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { CardRun, Goal, ReleaseAttempt, nowIso } from '../core/types.ts';
+import { mergeFindings, staleLedger } from '../core/review-policy.ts';
 import { StoreError, atomicWriteJson, createExclusive, findInterruptedWrites, listJsonFiles, readJson, recoverInterruptedWrites } from './store.ts';
 import type { StatePaths } from './paths.ts';
 
@@ -59,9 +60,19 @@ export class GoalStore {
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
 
-  /** A plain write of a card run, serialized through the card-run lock like every other write (see `updateCardRun`). */
+  /**
+   * A plain write of a card run, serialized through the card-run lock like every other write (see `updateCardRun`).
+   * The findings are merged by revision with the persisted record, so a disposition another window recorded meanwhile
+   * survives a write computed from an older read; a write that lacks a round, a decision or a hand-off the persisted
+   * record carries, still holds a decided entry as pending, or would regress a decision counter was computed from a
+   * stale read and is refused: the caller re-runs its command on the current record.
+   */
   saveCardRun(run: CardRun): CardRun {
-    return this.updateCardRun(run.goalId, run.cardId, () => run);
+    return this.updateCardRun(run.goalId, run.cardId, (persisted) => {
+      const stale = persisted ? staleLedger(persisted, run) : undefined;
+      if (stale) throw new StoreError('CARD_RUN_STALE', this.cardFile(run.goalId, run.cardId), `card run ${run.cardId} changed since it was read (${stale} was recorded meanwhile); run the command again`);
+      return { ...run, findings: mergeFindings(persisted?.findings ?? [], run.findings) };
+    });
   }
 
   getCardRun(goalId: string, cardId: string): CardRun | undefined {
@@ -74,19 +85,22 @@ export class GoalStore {
    * writers never work from the same snapshot and neither overwrites the other's change. The write and the
    * release are ownership-checked: a writer whose lock changed hands meanwhile (a stale takeover after a
    * long suspension) refuses instead of writing over the new owner and never removes that owner's lock.
-   * A waiter that cannot take the lock before the deadline refuses; a lock older than the stale age belongs
-   * to a crashed writer and is taken over through a serialized marker. A throwing `change` leaves the record.
+   * A waiter that cannot take the lock before the deadline refuses, and the deadline is checked before every
+   * retry, so a wait that overran it never runs `change` on a lock freed meanwhile. A lock older than the stale
+   * age whose owner process is gone belongs to a crashed writer and is taken over through a serialized marker; a
+   * live owner keeps its lock however old. A throwing `change` leaves the record.
    */
   updateCardRun(goalId: string, cardId: string, change: (current: CardRun | undefined) => CardRun): CardRun {
     const file = this.cardFile(goalId, cardId);
     const lock = `${file}.lock`;
     const owner = `pid=${process.pid} at=${nowIso()} nonce=${Math.random().toString(36).slice(2, 10)}`;
     const deadline = Date.now() + this.lockTimeoutMs;
-    for (;;) {
+    const locked = () => new StoreError('CARD_RUN_LOCKED', file, `card run ${goalId}/${cardId} is locked by another writer (${readLockOwner(lock)}); run the command again`);
+    for (let attempt = 0; ; attempt += 1) {
+      if (attempt > 0 && Date.now() >= deadline) throw locked();
       if (createExclusive(lock, owner)) break;
-      if (Date.now() >= deadline) throw new StoreError('CARD_RUN_LOCKED', file, `card run ${goalId}/${cardId} is locked by another writer (${readLockOwner(lock)}); run the command again`);
-      const age = ageMs(lock);
-      if (age !== undefined && age > this.staleLockMs) this.takeOverStaleLock(lock, owner);
+      if (Date.now() >= deadline) throw locked();
+      if (this.staleLock(lock)) this.takeOverStaleLock(lock, owner);
       else sleepSync(10);
     }
     try {
@@ -101,12 +115,18 @@ export class GoalStore {
     }
   }
 
+  /** A lock older than the stale age whose owner process is gone (a lock naming no process counts as gone). */
+  private staleLock(lock: string): boolean {
+    const age = ageMs(lock);
+    return age !== undefined && age > this.staleLockMs && !ownerAlive(lock);
+  }
+
   /**
    * Stale-lock takeover, serialized among waiters by a second exclusive marker (`<lock>.takeover`): the one
-   * waiter holding the marker re-checks the lock's age and removes it only while it is still stale. A live
-   * writer cannot create a lock while the stale file exists, so nothing but the stale file is ever removed;
-   * a marker left by a crashed taker-over ages out the same way. Removal errors other than a vanished file
-   * propagate: a lock this process cannot remove is not silently retried.
+   * waiter holding the marker re-checks the lock's age and its owner's liveness and removes it only while it
+   * is still stale. A live writer cannot create a lock while the stale file exists, so nothing but the stale
+   * file is ever removed; a marker left by a crashed taker-over ages out the same way. Errors other than a
+   * vanished file propagate: a lock this process cannot read or remove is not silently retried.
    */
   private takeOverStaleLock(lock: string, owner: string): void {
     const marker = `${lock}.takeover`;
@@ -117,8 +137,7 @@ export class GoalStore {
       return;
     }
     try {
-      const age = ageMs(lock);
-      if (age !== undefined && age > this.staleLockMs) removeIfPresent(lock);
+      if (this.staleLock(lock)) removeIfPresent(lock);
     } finally {
       removeIfPresent(marker);
     }
@@ -170,12 +189,25 @@ function removeIfPresent(file: string): void {
   }
 }
 
-/** Age of a file by its mtime, undefined when it is gone. */
+/** Age of a file by its mtime, undefined when it is gone; any other stat failure propagates. */
 function ageMs(file: string): number | undefined {
   try {
     return Date.now() - statSync(file).mtimeMs;
-  } catch {
-    return undefined;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
+/** Whether the process a lock file names is still running (a process this one may not signal counts as running). */
+function ownerAlive(lock: string): boolean {
+  const pid = Number(/\bpid=(\d+)/.exec(readLockOwner(lock))?.[1]);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
 

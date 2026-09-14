@@ -12,8 +12,16 @@ import path from 'node:path';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { countedFailures } from '../../src/core/effort.ts';
+import { atomicWriteJson } from '../../src/state/store.ts';
 import { acceptFinding } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
+
+/** Test-only: write a run record wholesale, past the store's stale-write check, to rewind a scenario to an earlier ledger state. */
+function rewindCardRun(fx: ReturnType<typeof makeFixture>, run: CardRun): CardRun {
+  const next = CardRun.parse({ ...run, updatedAt: fx.now() });
+  atomicWriteJson(fx.store.cardFile(run.goalId, run.cardId), next);
+  return next;
+}
 
 test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE and the goal finishes development-only', () => {
   const fx = makeFixture();
@@ -476,7 +484,7 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     const busy = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-1b', dirty: false, untracked: [], digest: 'sha-1b' }, dodReceipt: 'dod:1b', updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, busy), /pool/);
     fx.queue.complete(occupant.request.key, 'other-verdict', fx.now());
-    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
+    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git status': { stdout: '' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
     await assert.rejects(() => gitRunner.formalReview(fx.goal(goal.id), card, busy), /pinned candidate/);
     assert.equal(r3Calls, spawnsBefore, 'neither guard dispatched the reviewer');
 
@@ -485,7 +493,7 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     const closed = r.run;
     const DIFFERENT: Verdict = { verdict: 'block', reasons: ['[spec] 1 out of scope @ src/t1-guard.ts:9: touches a frozen path -> revert'], axes: { spec: { verdict: 'block', reasons: ['frozen'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1c', run_status: 'success' };
     const differing = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['review-blocked'], DIFFERENT), now: fx.now, runner: script });
-    const passedByCommand = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'SHIP', mergeVerified: false, candidate: { sha: 'sha-1c', dirty: false, untracked: [], digest: 'sha-1c' }, dodReceipt: 'dod:1c', review: { ...r.run.review, substantiveDecisions: 1, substantiveBlocks: 0, invocations: [{ ...ledgerBase, invocationId: 'r3:cmd-1c', candidateDigest: 'sha-1c', requestedAt: fx.now(), outcome: 'pass' as const }], lastVerdict: { verdict: 'pass' as const, reasons: [], sha: 'sha-1c', run_status: 'success' as const } }, updatedAt: fx.now() }));
+    const passedByCommand = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'SHIP', mergeVerified: false, candidate: { sha: 'sha-1c', dirty: false, untracked: [], digest: 'sha-1c' }, dodReceipt: 'dod:1c', review: { ...r.run.review, substantiveDecisions: 1, substantiveBlocks: 0, invocations: [...r.run.review.invocations, { ...ledgerBase, invocationId: 'r3:cmd-1c', candidateDigest: 'sha-1c', requestedAt: fx.now(), outcome: 'pass' as const }], lastVerdict: { verdict: 'pass' as const, reasons: [], sha: 'sha-1c', run_status: 'success' as const } }, updatedAt: fx.now() }));
     const differed = differing.next(fx.goal(goal.id), card, passedByCommand);
     assert.equal(differed.directive.kind, 'stop', `a different ship outcome is a second decision: ${differed.directive.narration}`);
     assert.match(differed.directive.narration, /two-decision allowance/);
@@ -494,13 +502,13 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     assert.equal(differed.run.state, 'STOP');
 
     // (2) An active quota hold blocks the command itself, for R3 and for R2 alike.
-    const held = fx.store.saveCardRun(CardRun.parse({ ...closed, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', review: { ...closed.review, invocations: [...closed.review.invocations, { ...ledgerBase, invocationId: 'r3:hold', candidateDigest: 'sha-2', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: addMs(fx.now(), 60_000) }] }, updatedAt: fx.now() }));
+    const held = rewindCardRun(fx, { ...closed, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2', review: { ...closed.review, invocations: [...closed.review.invocations, { ...ledgerBase, invocationId: 'r3:hold', candidateDigest: 'sha-2', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: addMs(fx.now(), 60_000) }] } });
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, held), /hold/);
     const r2Runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, command: ['fake-r2'], reviewer: 'fake-r2' } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     // The R2 guard reads the persisted run: the hold is saved, not handed over in a snapshot.
     const heldR2 = fx.store.saveCardRun(CardRun.parse({ ...held, preReview: { ...held.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-2', candidateSha: 'sha-2', requestedAt: fx.now(), durationMs: 0, outcome: 'quota-hold' as const, reasons: [], holdUntil: addMs(fx.now(), 60_000) }] }, updatedAt: fx.now() }));
     await assert.rejects(() => r2Runner.preReview(fx.goal(goal.id), card, heldR2), /hold/);
-    fx.store.saveCardRun(CardRun.parse({ ...held, updatedAt: fx.now() }));
+    rewindCardRun(fx, held);
     fx.advance(61_000);
 
     // (3) A verdict that names another sha is stale: never a pass, not a decision, and it never overwrites the candidate-bound verdict file.
@@ -551,8 +559,8 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
       'fake-r3': () => {
         const out = r3Out.shift() ?? PASS;
         if (out === 'STOP' && stopDuringReview) {
-          // another window stops the card while this review is still running
-          fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'STOP', stop: makeStop('review', 'stopped meanwhile', 'human ruling', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+          // another window stops the card while this review is still running (from the record as persisted, reservation included)
+          fx.store.saveCardRun(CardRun.parse({ ...(fx.store.getCardRun(stopDuringReview.goalId, stopDuringReview.cardId) ?? stopDuringReview), state: 'STOP', stop: makeStop('review', 'stopped meanwhile', 'human ruling', { at: fx.now(), global: false }), updatedAt: fx.now() }));
           return { stdout: PASS };
         }
         return { stdout: out };
@@ -624,12 +632,12 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     assert.equal(gated.result.outcome, 'block');
     assert.ok(gated.result.reasons[0]?.includes('src/outside.ts'), gated.result.reasons.join(' | '));
     assert.equal(gated.round.perspectives?.[0]?.name, 'scope-gate');
-    const outsideWithR2 = fx.store.saveCardRun(CardRun.parse({ ...outside, preReview: { rounds: [...outside.preReview.rounds, { round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-4', requestedAt: fx.now(), durationMs: 0, outcome: 'pass' as const, reasons: [] }] }, updatedAt: fx.now() }));
+    const outsideWithR2 = fx.store.saveCardRun(CardRun.parse({ ...gated.run, preReview: { ...gated.run.preReview, rounds: [...gated.run.preReview.rounds, { round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-4', requestedAt: fx.now(), durationMs: 0, outcome: 'pass' as const, reasons: [] }] }, updatedAt: fx.now() }));
     await assert.rejects(() => scoped.formalReview(fx.goal(goal.id), card, outsideWithR2), /out of scope/);
     assert.equal(spawns, 0, 'the scope gate spends no tokens');
 
     // A pending reservation for the same candidate refuses a second dispatch.
-    const pendingRun = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() }));
+    const pendingRun = rewindCardRun(fx, { ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] } });
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, pendingRun), /pending/);
   } finally {
     fx.cleanup();
