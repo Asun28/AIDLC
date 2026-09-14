@@ -63,7 +63,7 @@ Card states (`src/core/card-machine.ts`) are selected from evidence in a fixed p
 
 ## Multi-session
 
-Several windows may work on one repository. State is shared through `<main checkout>/.aidlc/`. Each window must identify itself: set `AIDLC_SESSION` per window (or rely on `CLAUDE_SESSION_ID` under Claude Code); without either, every process shares one default token stored in `.aidlc/session-default`, which is the plan's interim single-controller mode and `aidlc doctor` warns about it.
+Several windows may work on one repository. State is shared through `<main checkout>/.aidlc/`. Each window must identify itself: under Claude Code every subprocess carries `CLAUDE_CODE_SESSION_ID` and every hook event its `session_id`, so each Claude Code session is one loop session (a `/clear` starts a new one); elsewhere set `AIDLC_SESSION` per window; without either, every process shares one default token stored in `.aidlc/session-default`, which is the plan's interim single-controller mode and `aidlc doctor` warns about it.
 
 - Leases (`src/coordination/lease.ts`): atomic file claims per goal, card, integration base, environment and review pool, with owner session/pid/start, expiry, heartbeat and a monotonically advancing generation. A mutation is fenced against its generation; a stale writer cannot commit.
 - Takeover (`aidlc goal takeover`) is allowed only after the previous owner's operations are reconciled; lease expiry alone does not prove the owner stopped.

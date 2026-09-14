@@ -22,14 +22,18 @@ export function sha256(text: string): string {
 let cachedActor: ActorIdentity | undefined;
 
 /**
- * Session identity precedence (MS1): `AIDLC_SESSION` (one value per window/session) >
- * `CLAUDE_SESSION_ID` > the repository's default session token. The default token is created
- * once under the state directory and shared by every process that does not set a session, which
- * is the plan's interim single-controller mode; `aidlc doctor` warns about it.
+ * Session identity precedence (MS1): `AIDLC_SESSION` (one value per window/session, the explicit
+ * override) > the Claude Code session (`CLAUDE_CODE_SESSION_ID`, which Claude Code exports to every
+ * Bash and PowerShell subprocess; the older `CLAUDE_SESSION_ID` is still read) > the repository's
+ * default session token. The default token is created once under the state directory and shared by
+ * every process that does not set a session, which is the plan's interim single-controller mode;
+ * `aidlc doctor` warns about it. A hook process acts as the `session_id` of the hook event instead
+ * (`hooks/index.ts`, `hookSession`): that is the same Claude Code session.
  */
 export function resolveSessionId(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): { session: string; source: 'env' | 'claude' | 'default' } {
   if (env['AIDLC_SESSION']) return { session: env['AIDLC_SESSION'], source: 'env' };
-  if (env['CLAUDE_SESSION_ID']) return { session: env['CLAUDE_SESSION_ID'], source: 'claude' };
+  const claude = env['CLAUDE_CODE_SESSION_ID'] || env['CLAUDE_SESSION_ID'];
+  if (claude) return { session: claude, source: 'claude' };
   try {
     const root = resolveStatePaths(cwd, env).root;
     const file = path.join(root, 'session-default');

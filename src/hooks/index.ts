@@ -11,8 +11,13 @@
  *  - protect-paths     (PreToolUse Edit|Write|Bash): frozen paths cannot be edited in place.
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
  *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
- *  - verify-before-done(Stop): an active card without a fresh DoD receipt is not done.
+ *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done.
  *  - route-new-work    (UserPromptSubmit): print the routing result for a new request.
+ *
+ * Session: a hook process acts as the session of the event it handles. `hookSession` resolves it as
+ * `AIDLC_SESSION` (the explicit per-window override), else the event's `session_id` (the Claude Code
+ * session, the value the CLI reads from `CLAUDE_CODE_SESSION_ID`), else the process order of
+ * `resolveSessionId`.
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
@@ -21,8 +26,10 @@ import path from 'node:path';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord } from '../core/types.ts';
-import { resolveStatePaths } from '../state/paths.ts';
+import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { resolveSessionId } from '../state/journal.ts';
+import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 
 export interface HookEvent {
   hook_event_name?: string;
@@ -206,15 +213,39 @@ export function secretsGuard(event: HookEvent): HookResult {
   return { exitCode: 0 };
 }
 
-export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv): HookResult {
+/**
+ * The acting session of a hook process: `AIDLC_SESSION` (the explicit override), else the hook
+ * event's `session_id`; undefined when the event carries none, so the guard falls back to the process
+ * order of `resolveSessionId`.
+ */
+export function hookSession(event: HookEvent, env: NodeJS.ProcessEnv): string | undefined {
+  if (env['AIDLC_SESSION']) return env['AIDLC_SESSION'];
+  return typeof event.session_id === 'string' && event.session_id ? event.session_id : undefined;
+}
+
+export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: string): HookResult {
   try {
     const paths = resolveStatePaths(cwd, env);
     const store = new GoalStore(paths);
     const active = store.listGoals().filter((g) => !g.terminal);
+    const leases = new LeaseStore(paths.leases);
+    const repoKey = resolveRepoIdentity(cwd).key;
+    const host = hostName();
+    let acting = session;
+    // A run whose unreleased card lease names another session is that session's to verify. A run with no
+    // lease record, or a released one, has no owner and is listed as before. Expiry is not consulted:
+    // expiry alone never proves the owner stopped (LeaseStore). The default token is resolved only when a
+    // lease has to be compared, so a Stop outside any aidlc state creates nothing.
+    const ownedHere = (cardId: string): boolean => {
+      const lease = leases.read(resourceKeys.card(repoKey, cardId));
+      if (!lease || lease.released) return true;
+      if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+      return lease.owner.session === acting && lease.owner.host === host;
+    };
     const pending: string[] = [];
     for (const goal of active) {
       for (const run of store.listCardRuns(goal.id)) {
-        if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt) pending.push(`${run.cardId} (${run.state})`);
+        if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
       }
     }
     if (!pending.length) return { exitCode: 0 };
@@ -260,7 +291,7 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
     case 'secrets-guard':
       return secretsGuard(event);
     case 'verify-before-done':
-      return verifyBeforeDone(cwd, env);
+      return verifyBeforeDone(cwd, env, hookSession(event, env));
     case 'route-new-work':
       return routeNewWork(event);
     default:

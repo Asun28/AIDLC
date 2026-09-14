@@ -146,6 +146,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
       const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
+      // The session source: the explicit override, the Claude Code session, or the shared default token (a warning).
+      const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
+        source === 'env' ? 'AIDLC_SESSION' : source === 'claude' ? 'Claude Code session' : 'DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
         git: gitVersion ?? 'MISSING',
@@ -158,9 +161,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
-        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_SESSION_ID']
-          ? `${currentActor().session} (${resolveSessionId().source === 'default' ? 'DEFAULT: every window shares this identity; set AIDLC_SESSION per window for multi-session coordination' : resolveSessionId().source})`
-          : '(no state dir yet; created on first goal; set AIDLC_SESSION per window for multi-session coordination)',
+        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
+          ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
+          : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
       };
       out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n'));
     });
