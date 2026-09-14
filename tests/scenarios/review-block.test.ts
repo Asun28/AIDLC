@@ -201,7 +201,7 @@ class SequencedVerdictShipPath extends DryRunShipPath {
   }
 }
 
-test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a command reviewer the disputes reach no reviewer, so the block stays pending until the candidate changes, and a re-raise on the repaired candidate stops with the contested finding named', () => {
+test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a command reviewer the disputes reach no reviewer, so the block stays pending until the candidate changes; the ship-path reviewer delivers no findings, so a re-raise answers no dispute and a pass resolves nothing', () => {
   const fx = makeFixture();
   try {
     tierSCard(fx);
@@ -235,15 +235,71 @@ test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a c
     assert.match(r.directive.narration, /ship-path reviewer/i);
     assert.equal(ship.requests.length, 1, 'a dispute alone never re-ships to a reviewer that cannot read it');
 
-    // The repaired candidate ships; the reviewer re-raises F1 (disputed when the ship was dispatched) -> STOP/review naming it.
+    // The repaired candidate ships; the reviewer re-raises F1 -> STOP/review. The ship-path reviewer received no prompt, so the re-raise answered no dispute and the dispute stands.
     run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(ship.requests.length, 2);
     assert.equal(r.run.stop?.reason, 'review');
-    assert.match(r.run.stop?.detail ?? '', /second substantive block.*F1 re-raised after the author.s dispute/s);
-    assert.equal(r.run.findings.find((f) => f.id === 'F1')?.reraised.length, 1);
+    assert.match(r.run.stop?.detail ?? '', /second substantive block/);
+    assert.ok(!/re-raised after the author/.test(r.run.stop?.detail ?? ''), 'no contest is claimed for a reviewer that never received the dispute');
+    const f1 = r.run.findings.find((f) => f.id === 'F1')!;
+    assert.equal(f1.reraised.length, 1);
+    assert.equal(f1.reraised[0]!.answeredDispute, undefined);
+    assert.equal(f1.disposition, 'disputed', 'the dispute is kept for the human adjudicator');
     assert.equal(r.run.findings.length, 1, 'the re-raise is not a new finding');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2: a ship-path pass resolves no finding the reviewer never received, and a re-read of the same verdict artifact records no second decision and no finding', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const ship = new SequencedVerdictShipPath(['review-blocked', 'merged'], [BLOCK, { verdict: 'pass', reasons: [], sha: 'x', run_status: 'success' }]);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'review-fix');
+    r = runner.next(g(), card, r.run);
+    run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    assert.equal(r.run.findings[0]?.resolvedAt, undefined, 'the ship-path pass received no findings and resolves none');
+    assert.equal(r.run.review.substantiveDecisions, 2);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2: the same advisory verdict artifact re-read on a CI retry is not a second decision and creates no duplicate finding', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-ADV', title: 'advisory retry', tier: '1', acceptance: ['1. it works. [dod arm 1]'] });
+    const goal = goalForCards(fx, ['T1-ADV']);
+    const advisory: Verdict = { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv.ts:3: duplicated helper -> reuse'], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv.ts:3: duplicated helper -> reuse'] } }, sha: candidateShaFor('T1-ADV'), run_status: 'success' };
+    // First ship: CI red with transient evidence -> one rerun; second ship: merged. The reviewer file is the same advisory verdict both times.
+    const ship = new SequencedVerdictShipPath(['ci-red', 'merged'], [advisory, advisory]);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-ADV');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-ADV'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-ADV') });
+    r = runner.next(g(), card, run);
+    const decisionsAfterFirst = r.run.review.substantiveDecisions;
+    const findingsAfterFirst = r.run.findings.length;
+    assert.equal(findingsAfterFirst, 1, 'the advisory block records its cited reason once');
+    // Drive the second ship whatever the CI classification asked for.
+    r = runner.next(g(), card, { ...r.run, state: 'SHIP', dodReceipt: 'dod:1', stop: undefined, ci: { reruns: [] } });
+    assert.equal(r.run.review.substantiveDecisions, decisionsAfterFirst, 'a re-read of the same verdict artifact is not a second decision');
+    assert.equal(r.run.findings.length, findingsAfterFirst, 'no duplicate finding for the identical reason');
   } finally {
     fx.cleanup();
   }

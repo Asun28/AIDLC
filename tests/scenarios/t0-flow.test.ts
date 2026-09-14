@@ -1099,8 +1099,13 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     const decided1 = fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED').at(-1)!;
     assert.deepEqual({ findings: decided1.data['findings'], reraised: decided1.data['reraised'] }, { findings: ['F1', 'F2'], reraised: [] });
 
-    // The unchanged candidate: the command refuses while a finding of the block is open, and the gate hands back to BUILD naming the open ids and the two moves.
+    // The unchanged candidate: the command refuses while a finding of the block is open, also when the caller holds a snapshot from before the block (the guard reads the persisted run), and the gate hands back to BUILD naming the open ids and the two moves.
     await assert.rejects(() => runner.preReview(g(), card, round1.run), /F1, F2.*dispute/s);
+    await assert.rejects(() => runner.preReview(g(), card, r.run), /F1, F2.*dispute/s);
+    // A candidate with uncommitted inputs is never reviewed: the review reads the committed sha.
+    const dirty = fx.store.saveCardRun(CardRun.parse({ ...round1.run, candidate: { sha: 'sha-1', dirty: true, untracked: ['scratch.txt'], digest: 'other-digest' }, updatedAt: fx.now() }));
+    await assert.rejects(() => runner.preReview(g(), card, dirty), /dirty|uncommitted/i);
+    fx.store.saveCardRun(CardRun.parse({ ...round1.run, updatedAt: fx.now() }));
     run = runner.recordAttempt(g(), card, round1.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'build', r.directive.narration);
@@ -1141,7 +1146,19 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     assert.equal(r.run.dodReceipt, 'dod:1b', 'the receipt cleared by the block is restored for the unchanged, fully disputed candidate');
+    assert.equal(r.run.blockedReceipt, undefined, 'the retained receipt is consumed on restoration');
     assert.match(r.directive.narration, /disputed/);
+    // A round in flight parks the gate; the command refuses a second dispatch; an abandoned round (older than the timeout and the grace) is dropped.
+    const pending = fx.store.saveCardRun(CardRun.parse({ ...r.run, preReview: { ...r.run.preReview, rounds: [...r.run.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), outcome: 'pending' }] }, updatedAt: fx.now() }));
+    const parked = runner.next(g(), card, pending);
+    assert.equal(parked.directive.kind, 'wait', parked.directive.narration);
+    if (parked.directive.kind === 'wait') assert.match(parked.directive.on, /pre-review/);
+    await assert.rejects(() => runner.preReview(g(), card, parked.run), /pending|in flight|running/i);
+    fx.advance(1000 + 5 * 60_000 + 1);
+    r = runner.next(g(), card, parked.run);
+    assert.equal(r.directive.kind, 'pre-review', `an abandoned round is dropped: ${r.directive.narration}`);
+    assert.ok(!r.run.preReview.rounds.some((x) => x.outcome === 'pending'), 'the abandoned round is gone');
+    if (r.directive.kind === 'pre-review') assert.equal(r.directive.round, 2);
     verdicts.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-find.ts:1: the test asserts nothing about the gate (re:F1) -> assert the behaviour"]}\n');
     const round2 = await runner.preReview(g(), card, r.run);
     const prompt2 = prompts.at(-1)!;
@@ -1165,7 +1182,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(round3.result.outcome, 'block');
     const f1b = round3.run.findings.find((f) => f.id === 'F1')!;
     assert.equal(f1b.disputes.length, 2);
-    assert.deepEqual(f1b.reraised.map((x) => x.answeredDispute), [true, true], 'two rounds of mutual non-acceptance');
+    assert.deepEqual(f1b.reraised.map((x) => x.answeredDispute), [0, 1], 'two distinct disputes answered: two rounds of mutual non-acceptance');
     assert.throws(() => runner.disputeFinding(g(), card, round3.run, 'F1', 'a third answer'), /human ruling/);
     // Exhausted rounds decide on the unchanged candidate without a further attempt: STOP names the deadlock, or the residual ships to R3.
     const strict = mk('stop');
@@ -1228,6 +1245,9 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     // The guard is keyed by the candidate's own decision, not by the run's last verdict: a later verdict of another kind changes nothing.
     const staleVerdict = fx.store.saveCardRun(CardRun.parse({ ...f.run, review: { ...f.run.review, lastVerdict: { verdict: 'pass', reasons: [], sha: 'sha-other', run_status: 'success' } }, updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(g(), card, staleVerdict), /F1, F2.*dispute/s);
+    // The candidate's last decision counts whoever recorded it: a differently named reviewer is refused the same way.
+    const renamed = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, formalReview: { ...fx.config.formalReview, reviewer: 'other-r3' } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    await assert.rejects(() => renamed.formalReview(g(), card, staleVerdict), /F1, F2.*dispute/s);
     assert.equal(runner.next(g(), card, staleVerdict).run.state, 'REVIEW_FIX', 'the block stays pending on the candidate it was recorded for');
     fx.store.saveCardRun(CardRun.parse({ ...f.run, updatedAt: fx.now() }));
     r = runner.next(g(), card, f.run);
@@ -1369,7 +1389,7 @@ test('T1-REVIEW-FINDINGS acceptance 5: a finding that reached two non-acceptance
     run = runner.disputeFinding(g(), card, run, 'F1', 'the test observes the public seam');
     r2.push(reraise);
     run = (await runner.preReview(g(), card, run)).run;
-    assert.equal(run.findings[0]?.reraised.filter((x) => x.answeredDispute).length, 2);
+    assert.deepEqual(run.findings[0]?.reraised.map((x) => x.answeredDispute), [0, 1]);
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'review', `the residual ships to R3: ${r.directive.narration}`);
     // R3 decision 1 blocks on the same finding; the author repairs (a deadlocked finding cannot be disputed again); decision 2 re-raises it -> STOP names the deadlock.
@@ -1388,6 +1408,73 @@ test('T1-REVIEW-FINDINGS acceptance 5: a finding that reached two non-acceptance
     f = await runner.formalReview(g(), card, r.run);
     assert.equal(f.run.state, 'STOP');
     assert.match(f.run.stop?.detail ?? '', /second substantive block.*deadlock: F1 .*disputed twice.*re-raised twice.*human ruling/s);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2: review r3 on exhausted R2 rounds journals the residual hand-off once, the gate does not add a second, and a cited advisory block guards the unchanged candidate like a blocking one', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const r2: string[] = [];
+    const r3: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-ho.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-ho.ts b/src/t1-ho.ts\n+export const ho = 1;\n' },
+      'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
+      'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-HO', title: 'hand-off once', tier: '1' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-HO', source: 'card', ref: 'T1-HO', affectedSurfaces: [] }, { cards: ['T1-HO'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-HO'] } });
+    const card = fx.card('T1-HO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HO'));
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    r2.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho.ts:1: no RED -> add a failing test first"]}\n');
+    run = (await runner.preReview(g(), card, r.run)).run;
+    // The single round is exhausted: the command dispatches R3 directly and records the hand-off itself.
+    const handoffs = () => fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true);
+    assert.equal(handoffs().length, 0);
+    r3.push('{"verdict":"block","reasons":["[standards] 16 de-AI-slop @ src/t1-ho.ts:2: duplicated helper -> reuse the existing one"],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"block","reasons":["[standards] 16 de-AI-slop @ src/t1-ho.ts:2: duplicated helper -> reuse the existing one"]}}}\n');
+    const f = await runner.formalReview(g(), card, { ...run, dodReceipt: 'dod:1' });
+    assert.equal(handoffs().length, 1, 'the command journals the hand-off');
+    assert.deepEqual(handoffs()[0]!.data['residualFindings'], ['F1']);
+    assert.equal(f.classified.outcome, 'block-advisory', 'a standards-only block on a tier-1 card without a required gate is advisory');
+    assert.deepEqual(f.run.findings.map((x) => [x.id, x.stage, x.advisory ?? false]), [['F1', 'pre', false], ['F2', 'formal', true]], 'the advisory block records its cited reason');
+    await assert.rejects(() => runner.formalReview(g(), card, f.run), /F2.*dispute/s, 'an advisory block with an open finding guards the unchanged candidate too');
+    r = runner.next(g(), card, f.run);
+    assert.equal(handoffs().length, 1, 'the gate records no second hand-off for the same cycle and candidate');
+    assert.equal(r.directive.kind, 'close', `the advisory block ships: ${r.directive.narration}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-2: findRun resolves an existing card run without creating one, and asks for the goal when the card runs in several goals', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-FR', title: 'find run' });
+    const runner = fx.runner();
+    assert.equal(runner.findRun('T1-FR'), undefined, 'no run, nothing created');
+    assert.equal(fx.store.listGoals().length, 0);
+    const goalA = fx.controller.createGoal({ text: 'implement T1-FR', source: 'card', ref: 'T1-FR', affectedSurfaces: [] }, { cards: ['T1-FR'] });
+    fx.controller.next(goalA.id);
+    fx.controller.report({ goalId: goalA.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-FR'] } });
+    assert.equal(runner.findRun('T1-FR'), undefined, 'a projected card without a run is not a run');
+    const runA = fx.controller.ensureCardRun(fx.goal(goalA.id), 'T1-FR');
+    assert.equal(runner.findRun('T1-FR')?.goalId, goalA.id);
+    const goalB = fx.controller.createGoal({ text: 'implement T1-FR again', source: 'card', ref: 'T1-FR', affectedSurfaces: [] }, { cards: ['T1-FR'] });
+    fx.controller.next(goalB.id);
+    fx.controller.report({ goalId: goalB.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-FR'] } });
+    fx.controller.ensureCardRun(fx.goal(goalB.id), 'T1-FR');
+    assert.throws(() => runner.findRun('T1-FR'), /--goal/);
+    assert.equal(runner.findRun('T1-FR', goalA.id)?.startedAt, runA.startedAt);
+    assert.equal(runner.findRun('T1-FR', 'g-none'), undefined);
   } finally {
     fx.cleanup();
   }

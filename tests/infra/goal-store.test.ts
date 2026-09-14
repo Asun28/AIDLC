@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
@@ -132,6 +132,38 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     utimesSync(`${lock}.takeover`, old, old);
     assert.equal(store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale takeover marker' })).blocker, 'after a stale takeover marker');
     assert.ok(!existsSync(lock) && !existsSync(`${lock}.takeover`));
+  });
+
+  it('the write and the release are ownership-checked: a lock lost to another owner refuses the write and leaves that owner\'s lock', () => {
+    const store = new GoalStore(paths);
+    const before = store.saveCardRun(makeCardRun('goal-o', 'T1-O'));
+    const lock = `${store.cardFile('goal-o', 'T1-O')}.lock`;
+    assert.throws(
+      () =>
+        store.updateCardRun('goal-o', 'T1-O', (current) => {
+          writeFileSync(lock, 'pid=other at=now', 'utf8'); // the lock changed hands while this writer was suspended
+          return { ...current!, blocker: 'must not be written' };
+        }),
+      /lock/,
+    );
+    assert.deepEqual(store.getCardRun('goal-o', 'T1-O'), before);
+    assert.equal(readFileSync(lock, 'utf8'), 'pid=other at=now', 'the other owner\'s lock is left in place');
+    unlinkSync(lock);
+  });
+
+  it('the deadline holds on every wait: a stale lock behind a live takeover marker refuses within the timeout', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 80 });
+    store.saveCardRun(makeCardRun('goal-d', 'T1-D'));
+    const lock = `${store.cardFile('goal-d', 'T1-D')}.lock`;
+    writeFileSync(lock, 'pid=1 (crashed)', 'utf8');
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lock, old, old);
+    writeFileSync(`${lock}.takeover`, 'pid=2 (taking over)', 'utf8');
+    const started = Date.now();
+    assert.throws(() => store.updateCardRun('goal-d', 'T1-D', (current) => current!), /locked/);
+    assert.ok(Date.now() - started < 2_000, 'refused at the deadline, not after the stale age');
+    unlinkSync(lock);
+    unlinkSync(`${lock}.takeover`);
   });
 
   it('a throwing change leaves the record and the lock untouched', () => {

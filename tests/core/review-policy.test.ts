@@ -200,7 +200,8 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     const f1 = r.findings.find((f) => f.id === 'F1')!;
     assert.equal(f1.disposition, 'open', 'a re-raise rejects the dispute');
     assert.equal(f1.disputes.length, 1, 'the dispute stays in the history');
-    assert.deepEqual(f1.reraised.map((x) => ({ stage: x.stage, round: x.round, at: x.at, answeredDispute: x.answeredDispute })), [{ stage: 'pre', round: 2, at: LATEST, answeredDispute: true }]);
+    assert.deepEqual(f1.reraised.map((x) => ({ stage: x.stage, round: x.round, at: x.at, answeredDispute: x.answeredDispute })), [{ stage: 'pre', round: 2, at: LATEST, answeredDispute: 0 }], 'the re-raise records which dispute it answered');
+    assert.equal(f1.revision, 2, 'the dispute and the re-raise each bumped the revision');
     assert.match(f1.reraised[0]!.reason, /asserts nothing/);
     assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x (re: F12) -> y'), 'F12');
     assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x -> y'), undefined);
@@ -219,17 +220,17 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     const r = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: the RED asserts nothing (re:F1) -> assert (ac-coverage)', '[spec] 6 tests @ src/gate.ts:1: the RED is not behavioural (re:F1) -> assert the seam (edge-cases)'], LATEST);
     assert.deepEqual(r.reraised, ['F1']);
     const f1 = r.findings[0]!;
-    assert.deepEqual(f1.reraised.map((x) => [x.round, x.perspective, x.answeredDispute]), [[2, 'ac-coverage', true], [2, 'edge-cases', true]], 'both re-raise reasons are retained with their angle');
+    assert.deepEqual(f1.reraised.map((x) => [x.round, x.perspective, x.answeredDispute]), [[2, 'ac-coverage', 0], [2, 'edge-cases', 0]], 'both re-raise reasons are retained with their angle');
     assert.match(f1.reraised[1]!.reason, /not behavioural/);
     assert.equal(policy.nonAcceptanceRounds(f1), 1, 'one round, not two');
   });
 
   test('the dispatched snapshot decides what a round answered and what it may resolve: a dispute recorded after dispatch is not answered, a finding raised after dispatch is not resolved', () => {
     let f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
-    const seenOpen = { F1: { disposition: 'open' as const, disputes: 0 } };
+    const seenOpen = policy.snapshotFindings(f);
     f = policy.disputeFinding(f, 'F1', 'disputed while the round ran', LATER);
     const r = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'], LATEST, { seen: seenOpen });
-    assert.equal(r.findings[0]!.reraised[0]!.answeredDispute, false, 'the reviewer never saw the dispute');
+    assert.equal(r.findings[0]!.reraised[0]!.answeredDispute, undefined, 'the reviewer never saw the dispute');
     assert.equal(policy.nonAcceptanceRounds(r.findings[0]!), 0);
     assert.equal(r.findings[0]!.disputes.length, 1, 'the later dispute is preserved');
     assert.equal(r.findings[0]!.disposition, 'disputed', 'a re-raise that never saw the dispute does not reset it: the dispute waits for the next round');
@@ -237,9 +238,48 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     assert.deepEqual(passedLate.resolved, [], 'a pass whose snapshot had F1 open does not resolve the finding disputed meanwhile');
     const late = block(r.findings, 3, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow'], LATEST, { seen: {} }).findings; // F2 raised by an overlapping round that saw nothing
     assert.equal(late.find((x) => x.id === 'F1')?.resolvedAt, undefined, 'a round that did not receive F1 does not resolve it');
-    const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: { disposition: 'disputed', disputes: 1 } } });
+    const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 4, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: policy.snapshotFindings(late)['F1']! } });
     assert.deepEqual(passed.resolved, ['F1'], 'only findings the round received, unchanged since, are resolved; F2 stays open');
     assert.equal(passed.findings.find((x) => x.id === 'F2')?.resolvedAt, undefined);
+  });
+
+  test('resolution needs a strictly later round of the stage and an unchanged finding revision; a re-raise reopens a resolved finding', () => {
+    let f = block([], 2, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
+    assert.equal(f[0]!.revision, 0);
+    const sameRound = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATER, outcome: 'pass', reasons: [], seen: policy.snapshotFindings(f) });
+    assert.deepEqual(sameRound.resolved, [], 'a pass of the same round never resolves a finding of that round');
+    const before = policy.snapshotFindings(f);
+    f = block(f, 3, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'], LATEST).findings;
+    assert.equal(f[0]!.revision, 1, 'a re-raise bumps the revision');
+    const stalePass = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: before });
+    assert.deepEqual(stalePass.resolved, [], 'a late round-two pass never resolves a finding round three re-raised');
+    const later = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 4, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: policy.snapshotFindings(f) });
+    assert.deepEqual(later.resolved, ['F1']);
+    assert.equal(later.findings[0]!.revision, 2, 'resolution bumps the revision');
+    const reopened = policy.recordFindings(later.findings, { stage: 'formal', round: 1, candidateSha: 'sha-1', at: LATEST, outcome: 'block', reasons: ['[spec] 6 tests @ src/gate.ts:1: the RED is not behavioural (re:F1) -> assert the seam'], seen: policy.snapshotFindings(later.findings) });
+    assert.deepEqual(reopened.reraised, ['F1'], 'a known resolved finding is re-raised, not re-created');
+    assert.equal(reopened.findings[0]!.resolvedAt, undefined);
+    assert.equal(reopened.findings[0]!.disposition, 'open');
+    const cycled = policy.recordFindings(reopened.findings, { stage: 'pre', cycle: 1, round: 1, candidateSha: 'sha-2', at: LATEST, outcome: 'pass', reasons: [], seen: policy.snapshotFindings(reopened.findings) });
+    assert.deepEqual(cycled.resolved, ['F1'], 'a later cycle is a later round of the pre-review stage');
+  });
+
+  test('two rounds that answered the same dispute count as one round of non-acceptance', () => {
+    let f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
+    f = policy.disputeFinding(f, 'F1', 'the RED is tests/gate.test.ts', LATER);
+    const seen = policy.snapshotFindings(f);
+    f = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'], LATEST, { seen }).findings;
+    f = policy.recordFindings(f, { stage: 'formal', round: 1, candidateSha: 'sha-1', at: LATEST, outcome: 'block', reasons: ['[spec] 6 tests @ src/gate.ts:1: no behavioural RED (re:F1) -> assert'], seen }).findings;
+    assert.deepEqual(f[0]!.reraised.map((x) => x.answeredDispute), [0, 0], 'both rounds answered the first dispute');
+    assert.equal(policy.nonAcceptanceRounds(f[0]!), 1);
+    assert.deepEqual(policy.deadlockedFindings(f), []);
+    assert.equal(policy.disputeFinding(f, 'F1', 'second answer', LATER)[0]!.disputes.length, 2, 'a second dispute is still allowed');
+  });
+
+  test('a structured perspective map names the angle of an untagged reason (a single-angle panel)', () => {
+    const reason = '[spec] 6 tests @ src/gate.ts:1: no RED -> add one';
+    const r = policy.recordFindings([], { stage: 'pre', cycle: 0, round: 1, candidateSha: 'sha-1', at: T0, outcome: 'block', reasons: [reason], perspectives: ['ac-coverage'], perspectiveByReason: { [reason]: 'ac-coverage' } });
+    assert.equal(r.findings[0]!.perspective, 'ac-coverage');
   });
 
   test('an advisory block records its cited reasons as advisory findings', () => {
