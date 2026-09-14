@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath } from './_harness.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
@@ -643,6 +643,56 @@ test('T1-REVIEW-FINDINGS-4 acceptance 16: the same ship result applied twice rea
     assert.equal(r.run.review.substantiveDecisions, 1, 'a re-read of the same verdict artifact is not a second decision');
     assert.equal(r.run.findings.length, 1, 'no duplicate finding for the identical reason');
     assert.equal(r.directive.kind, 'close', r.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 1: the transient-CI branch decides the rerun from the ledger locked at completion, and a pre-dispatch cleanup always cancels the pool admission and keeps the original error', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    // (1) Another window persists a rerun for this candidate while the ship result is applied: the allowance is consumed, no second rerun is granted and the other window's rerun is kept.
+    const runner = fx.runner(new InjectedShipPath(['ci-red', 'ci-red'], '[CI-GATE-RED] job=build conclusion=failure runs/111\nnpm ERR! network ECONNRESET'));
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    let after: ReturnType<typeof runner.next> | undefined;
+    duringQueueCompletion(fx, () => {
+      fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, ci: { ...current!.ci, reruns: [...current!.ci.reruns, { runId: '999', attempt: 1, candidate: candidateShaFor('T1-HELLO'), requestedAt: fx.now(), outcome: 'requested' as const }] } }));
+    }, () => {
+      after = runner.next(g(), card, run);
+    });
+    const persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.ok(persisted.ci.reruns.some((x) => x.runId === '999'), 'the rerun another window persisted survives');
+    assert.equal(persisted.ci.reruns.length, 1, 'no second rerun is granted once the allowance is consumed');
+    assert.notEqual(after!.directive.kind, 'ship', after!.directive.narration);
+    // (2) The pre-dispatch cleanup: a failing operation store never masks the lock error nor skips the pool cancellation.
+    const fresh = fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, state: 'SHIP', stop: undefined, dodReceipt: 'dod:1', ci: { reruns: [] } }));
+    const lock = `${fx.store.cardFile(goal.id, 'T1-HELLO')}.lock`;
+    const realAdmit = fx.queue.admit.bind(fx.queue);
+    fx.queue.admit = (...args: Parameters<typeof realAdmit>) => {
+      writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+      return realAdmit(...args);
+    };
+    const realMark = fx.ops.markResult.bind(fx.ops);
+    let marks = 0;
+    fx.ops.markResult = (...args: Parameters<typeof realMark>) => {
+      marks += 1;
+      if (marks === 1) throw new Error('operation store unavailable');
+      return realMark(...args);
+    };
+    try {
+      assert.throws(() => runner.next(g(), card, fresh), /locked/i, 'the original lock error is the one thrown');
+    } finally {
+      fx.queue.admit = realAdmit;
+      fx.ops.markResult = realMark;
+      rmSync(lock, { force: true });
+    }
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool admission is cancelled although the operation store failed');
   } finally {
     fx.cleanup();
   }

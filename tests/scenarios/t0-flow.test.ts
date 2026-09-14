@@ -14,7 +14,7 @@ import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
-import { acceptFinding } from '../../src/core/review-policy.ts';
+import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
 
 /** Test-only: write a run record wholesale, past the store's stale-write check, to rewind a scenario to an earlier ledger state. */
@@ -2539,6 +2539,143 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a second completion of an already-deci
     assert.equal(ship.requests.length, 0, 'sha-2 is never shipped on sha-1 pass');
     assert.notEqual(after.directive.kind, 'review', after.directive.narration);
     assert.notEqual(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 1: an envelope is recovered only when complete and bound to its reservation, its outcome is authoritative, its hold keeps the recorded deadline, and a reservation with no artefact at all expires into a charged no-verdict', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-env2.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-env2.ts b/src/t1-env2.ts\n+export const env2 = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-ENV2');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const reserve = (id: string) => fx.store.updateCardRun(goal.id, 'T1-ENV2', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations.filter((i) => i.outcome !== 'pending'), { invocationId: `r3:${id}`, candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] } }));
+    const passDoc = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV2', run_status: 'success' };
+    // (1) An empty envelope is no envelope: the reservation stays in flight, nothing is recovered from the verdict file next to it.
+    let run = reserve('T1-ENV2.r3.7.empty');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.result.json'), '{}\n', 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.json'), JSON.stringify(passDoc), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an incomplete envelope recovers nothing');
+    // An envelope bound to another reservation is not this one's.
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.result.json'), JSON.stringify({ invocationId: 'r3:someone-else', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'pass', runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope of another invocation recovers nothing');
+    // (2) A complete envelope declaring no-verdict is authoritative over a pass document beside it.
+    run = reserve('T1-ENV2.r3.8.novd');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.8.novd.json'), JSON.stringify(passDoc), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.8.novd.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.8.novd', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'no-verdict', runStatus: 'malformed', reasons: ['inconsistent axes'], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    const novd = await runner.formalReview(g(), card, run);
+    assert.equal(novd.classified.outcome, 'no-verdict', 'the envelope decides, not the document beside it');
+    run = fx.store.getCardRun(goal.id, 'T1-ENV2')!;
+    assert.equal(run.review.invocations.at(-1)?.outcome, 'no-verdict');
+    assert.equal(run.review.substantiveDecisions, 0);
+    // (3) A recovered hold keeps the deadline the envelope recorded, whenever the recovery runs.
+    run = reserve('T1-ENV2.r3.9.hold');
+    const recorded = addMs(fx.now(), 60_000);
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.9.hold.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.9.hold', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 60_000, holdUntil: recorded, advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    fx.advance(3_600_000);
+    const held = await runner.formalReview(g(), card, run);
+    assert.equal(held.classified.outcome, 'quota-hold');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-ENV2')!.review.invocations.at(-1)?.holdUntil, recorded, 'the recorded deadline is kept, not restarted from the recovery');
+    // (4) A reservation with no log, no envelope and no failure marker expires from its request time into a charged no-verdict, with its pool request settled.
+    run = reserve('T1-ENV2.r3.10.nothing');
+    const key = reviewRequestKey({ repository: goal.repository, candidateDigest: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3' });
+    fx.queue.enqueue({ pool: goal.reviewPool, repository: goal.repository, candidateDigest: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requester: `${goal.id}:T1-ENV2`, deadline: addMs(fx.now(), 3_600_000), now: fx.now() });
+    fx.queue.requeue(key, fx.now());
+    fx.queue.admit(goal.reviewPool, actorA, fx.now());
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 1, 'fixture: the request is running');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'young enough to be still running');
+    fx.advance(1000 + RECONCILE_GRACE_MS + 1);
+    const expired = await runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-ENV2')!);
+    assert.equal(expired.classified.outcome, 'no-verdict');
+    assert.equal(dispatched, 0);
+    run = fx.store.getCardRun(goal.id, 'T1-ENV2')!;
+    assert.ok(!run.review.invocations.some((i) => i.outcome === 'pending'));
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool request is settled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-off reload, and the canonical verdict file is repaired from the envelope before the ship', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const r2: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-ho2.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-ho2.ts b/src/t1-ho2.ts\n+export const ho2 = 1;\n' },
+      'fake-r2': () => ({ stdout: r2.shift() ?? R2_PASS }),
+      'fake-r3': () => ({ stdout: R3_PASS }),
+    });
+    const ship = new DryRunShipPath(['merged']);
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-HO2');
+    const { card, g, goal } = s;
+    // (1) The only round blocks; the exhausted cycle hands the residual to R3. Between card next's own writes and the
+    // hand-off transaction (at the operation-ledger read) another window records a newer candidate with its receipt.
+    r2.push(r2Block('src/t1-ho2.ts'));
+    const blocked = (await runner.preReview(g(), card, s.run)).run;
+    const disputed = runner.disputeFinding(g(), card, blocked, 'F1', 'the RED is tests/t1-ho2.test.ts');
+    const realUnresolved = fx.ops.unresolved.bind(fx.ops);
+    let injected = false;
+    fx.ops.unresolved = (...args: Parameters<typeof realUnresolved>) => {
+      if (!injected) {
+        injected = true;
+        fx.store.updateCardRun(goal.id, 'T1-HO2', (current) => ({ ...current!, candidate: { sha: 'sha-2', dirty: false, untracked: [], digest: 'sha-2' }, dodReceipt: 'dod:2' }));
+      }
+      return realUnresolved(...args);
+    };
+    let r: ReturnType<typeof runner.next>;
+    try {
+      r = runner.next(g(), card, disputed);
+    } finally {
+      fx.ops.unresolved = realUnresolved;
+    }
+    assert.ok(injected);
+    assert.equal(ship.requests.length, 0, 'sha-2 is never shipped on sha-1 exhaustion');
+    assert.notEqual(r.directive.kind, 'review', `sha-2 has no R2 review: ${r.directive.narration}`);
+    assert.notEqual(r.directive.kind, 'close', r.directive.narration);
+    // (2) A pass committed while the canonical file could not be written: the gate repairs the file from the envelope before it opens the ship.
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    const canonical = path.join(reviewDir, 'T1-HO2.json');
+    fx.store.updateCardRun(goal.id, 'T1-HO2', (current) => ({ ...current!, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', preReview: { ...current!.preReview, rounds: [...current!.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-3', candidateSha: 'sha-3', requestedAt: fx.now(), durationMs: 0, outcome: 'pass', reasons: [] }] } }));
+    const realWrite = fs.writeFileSync;
+    (fs as unknown as Record<string, unknown>)['writeFileSync'] = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(file) === canonical) {
+        const err = new Error('EACCES: permission denied, open') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (realWrite as unknown as (...a: unknown[]) => void)(file, ...rest);
+    }) as typeof fs.writeFileSync;
+    syncBuiltinESMExports();
+    let passed: Awaited<ReturnType<typeof runner.formalReview>> | undefined;
+    try {
+      passed = await runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-HO2')!);
+    } catch {
+      /* the publication failure may surface as an error; the decision is committed either way */
+    } finally {
+      (fs as unknown as Record<string, unknown>)['writeFileSync'] = realWrite;
+      syncBuiltinESMExports();
+    }
+    const committed = fx.store.getCardRun(goal.id, 'T1-HO2')!;
+    assert.equal(committed.review.invocations.at(-1)?.outcome, 'pass', passed ? 'the pass is committed' : 'the pass is committed even when the publication threw');
+    rmSync(canonical, { force: true });
+    const after = runner.next(g(), card, committed);
+    assert.ok(existsSync(canonical), 'the canonical verdict file is repaired from the committed envelope before the ship');
+    assert.equal((JSON.parse(readFileSync(canonical, 'utf8')) as { sha?: string }).sha, 'sha-3');
+    assert.equal(after.directive.kind, 'close', after.directive.narration);
   } finally {
     fx.cleanup();
   }
