@@ -5,9 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
-import { ProjectConfig } from '../../src/config.ts';
-import { shipPathFor } from '../../src/loop/card-runner.ts';
-import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
 
 const HEAD = 'a'.repeat(40);
 
@@ -140,16 +139,42 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] evals=failure'), r.receipt.stdout);
   });
 
-  test('the ship path options come from the project config through the card runner factory', () => {
-    const cfg = ProjectConfig.parse({ shipPath: 'github', repository: 'o/r', github: { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 5, ciPollMs: 1 } });
-    const ship = shipPathFor(cfg, '/main', scriptedRunner({}));
-    assert.ok(ship instanceof GitHubShipPath);
-    const options = (ship as GitHubShipPath).options;
-    assert.deepEqual(options.requiredChecks, ['ci']);
-    assert.equal(options.requireVerdict, false);
-    assert.equal(options.ciTimeoutMs, 5);
-    assert.equal(options.ciPollMs, 1);
-    assert.equal(options.repository, 'o/r');
-    assert.ok(shipPathFor(ProjectConfig.parse({ shipPath: 'dry-run' }), '/main', scriptedRunner({})) instanceof DryRunShipPath);
+  /** PREPARE and BUILD through the dry-run path (the fixture has no git); the ship is the GitHub path the runner builds from the config. */
+  function shipThroughConfig(runs: Array<{ name: string; status: string; conclusion: string | null }>, github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-GATE', title: 'gate from config' });
+      const goal = goalForCards(fx, ['T1-GATE']);
+      const card = fx.card('T1-GATE');
+      const dry = fx.runner();
+      let r = dry.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GATE'));
+      r = dry.next(fx.goal(goal.id), card, r.run);
+      const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: HEAD });
+      mkdirSync(path.join(fx.config.worktreeRoot, 'T1-GATE'), { recursive: true });
+      let merges = 0;
+      const script = runnerWith({ 'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: runs }) }, 'gh pr merge': () => { merges += 1; return {}; } });
+      // No ship path is injected: the runner builds it from the config, so the block below is the only way the options reach the gate.
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
+      const shipped = runner.next(fx.goal(goal.id), card, built);
+      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges };
+    } finally {
+      fx.cleanup();
+    }
+  }
+
+  test('R8: the card runner builds the GitHub ship path from the project config; an absent required check keeps the merge pending and the verdict rule follows the config', () => {
+    const github = { requiredChecks: ['ci', 'Gitleaks (committed history)'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
+    const green = [{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'Gitleaks (committed history)', status: 'completed', conclusion: 'success' }];
+    const absent = shipThroughConfig([{ name: 'ci', status: 'completed', conclusion: 'success' }], github);
+    assert.equal(absent.merges, 0, 'nothing merges while a required check is absent from the head');
+    assert.equal(absent.kind, 'stop', absent.narration);
+    assert.equal(absent.stopReason, 'ci', 'the gate timed out on the absent check; the timeout is an unclassified CI failure');
+    const present = shipThroughConfig(green, github);
+    assert.equal(present.merges, 1, 'every required check present and green merges; no verdict file exists, so the merge proves requireVerdict false reached the path');
+    assert.equal(present.kind, 'close', present.narration);
+    assert.equal(present.state, 'CLOSE');
+    const strict = shipThroughConfig(green, { ...github, requireVerdict: true });
+    assert.equal(strict.merges, 0, 'with the verdict rule on, nothing merges without a candidate-bound verdict');
+    assert.equal(strict.kind, 'ship', strict.narration);
   });
 });

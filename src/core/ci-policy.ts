@@ -38,13 +38,15 @@ export const SECURITY_CHECK_NAME = /gitleaks|secret[- ]?scan|security/i;
 /** Raw scanner output (gitleaks) for `aidlc ci classify --log`. */
 const SECURITY_PATTERNS: RegExp[] = [/leaks found: \d+/i, /^\s*RuleID:\s*\S+/m];
 
-/** Names in a `[CI-GATE-RED] name=conclusion,name=conclusion` line the ship path emits; a name may contain commas. */
+/** Names in a `[CI-GATE-RED] name=conclusion,name=conclusion` line the ship path emits; a name may contain commas and =value fragments. */
+/** One name=conclusion pair; the name may carry commas and =value fragments, so only a recognised conclusion followed by a comma or the end of the line closes a pair. */
+const GATE_PAIR = /(.+?)=(success|failure|neutral|cancelled|skipped|timed_out|action_required|stale|startup_failure|pending|queued|in_progress|null)(?:,|$)/g;
 export function gateRedNames(text: string): string[] {
   const names: string[] = [];
   for (const line of text.split(/\r?\n/)) {
     const m = line.match(/^\[CI-GATE-RED\]\s+(.+)$/);
     if (!m) continue;
-    for (const name of m[1]!.split(/=[a-z_]+(?:,|$)/i)) if (name.trim()) names.push(name.trim());
+    for (const pair of m[1]!.matchAll(GATE_PAIR)) if (pair[1]!.trim()) names.push(pair[1]!.trim());
   }
   return names;
 }

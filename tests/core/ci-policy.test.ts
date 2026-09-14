@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canRerun, classifyCiFailure, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
+import { canRerun, classifyCiFailure, gateRedNames, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
@@ -106,6 +106,14 @@ describe('security class (T1-LOOP-GATES R7)', () => {
   test('a red check without a secret-scan name is not security', () => {
     assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] check (ubuntu-latest, 22)=failure' }]).class, 'unknown');
     assert.equal(classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] check (ubuntu-latest, 22)=failure\nAssertionError: expected 1 to equal 2' }]).class, 'code-defect');
+  });
+
+  test('native check names with =value fragments survive the gate-line parser; transient noise never earns the scan a rerun', () => {
+    const line = '[CI-GATE-RED] scan (tool=gitleaks, os=linux)=failure,ci (node=22)=success';
+    assert.deepEqual(gateRedNames(line), ['scan (tool=gitleaks, os=linux)', 'ci (node=22)']);
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: `${line}\nread ECONNRESET while fetching artifact` }]);
+    assert.equal(c.class, 'security', c.evidence.join(' | '));
+    assert.equal(canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', c.class).allowed, false);
   });
 
   test('security never reruns', () => {
