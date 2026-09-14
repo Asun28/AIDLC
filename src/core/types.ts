@@ -336,8 +336,6 @@ export const ReviewFinding = z.object({
     .default([]),
   /** Set by the first decided later round of the same stage that did not re-raise it. */
   resolvedAt: IsoTimestamp.optional(),
-  /** The cited file lies outside the delta since the last reviewed candidate: a first-round miss. */
-  outsideDelta: z.boolean().optional(),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;
 

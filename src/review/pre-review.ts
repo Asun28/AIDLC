@@ -49,6 +49,8 @@ export interface PriorFinding {
   /** The author's latest dispute note. */
   note?: string;
   origin: string;
+  /** Re-raises that answered a dispute; two is a deadlock awaiting a human ruling. */
+  nonAcceptanceRounds?: number;
 }
 
 /** The `## Prior findings` lines: the reference syntax, then one line per finding with its disposition and the move it asks of the reviewer. */
@@ -56,7 +58,9 @@ export function renderPriorFindings(findings: PriorFinding[]): string[] {
   if (!findings.length) return ['- none (first round of this cycle)'];
   const lines = ['Each prior finding has an id. To re-raise one, put `re:F<n>` in the reason (for example `... -> fix (re:F2)`); a reason without a reference is a new finding.'];
   for (const f of findings) {
-    if (f.disposition === 'disputed') {
+    if ((f.nonAcceptanceRounds ?? 0) >= 2) {
+      lines.push(`- ${f.id} (deadlock: disputed twice and re-raised twice, a human ruling is pending; ${f.origin}): ${f.reason} -> verify it against the code; re-raise with re:${f.id} only with evidence the author's notes do not answer.`);
+    } else if (f.disposition === 'disputed') {
       lines.push(`- ${f.id} (disputed by the author: "${(f.note ?? '').replace(/\s+/g, ' ').trim()}"; ${f.origin}): ${f.reason} -> re-raise with re:${f.id} only with evidence the note does not answer; otherwise omit it.`);
     } else {
       lines.push(`- ${f.id} (open; ${f.origin}): ${f.reason} -> verify it is resolved in this candidate; re-raise with re:${f.id} if it is not.`);

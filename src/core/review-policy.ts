@@ -239,8 +239,6 @@ export interface RecordFindingsInput {
   reasons: string[];
   /** Panel angle names: a trailing `(<name>)` on a reason is the angle that raised it. */
   perspectives?: string[];
-  /** Paths changed since the last reviewed candidate; a new finding citing a file outside them is a first-round miss. Empty = no change. */
-  deltaPaths?: string[];
 }
 
 export interface RecordFindingsResult {
@@ -255,8 +253,6 @@ export interface RecordFindingsResult {
 
 const nextFindingId = (findings: ReviewFinding[]): string => `F${findings.reduce((n, f) => Math.max(n, Number(f.id.slice(1)) || 0), 0) + 1}`;
 
-const normalisePath = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '');
-
 /**
  * Record the findings of one round or decision. Each cited reason without a known `re:F<n>` reference
  * becomes a new finding; a reason that references a prior finding is a re-raise of it (the finding
@@ -268,7 +264,6 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
   let next = findings.map((f) => ({ ...f }));
   const raised: string[] = [];
   const reraised: string[] = [];
-  const delta = input.deltaPaths?.map(normalisePath);
   for (const reason of input.reasons) {
     const ref = findingReference(reason);
     const prior = ref ? next.find((f) => f.id === ref) : undefined;
@@ -285,7 +280,6 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
     const file = findingLocation(reason);
     const perspective = input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
     const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective, reason, file, candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [] };
-    if (delta !== undefined) finding.outsideDelta = !file || !delta.includes(normalisePath(file));
     next = [...next, finding];
     raised.push(id);
   }
@@ -349,7 +343,7 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
 }
 
 /** The author withdraws a dispute: the finding returns to open; the note stays in the history. */
-export function acceptFinding(findings: ReviewFinding[], id: string, _at: string): ReviewFinding[] {
+export function acceptFinding(findings: ReviewFinding[], id: string): ReviewFinding[] {
   const f = findingOrThrow(findings, id);
   if (f.disposition !== 'disputed') throw new Error(`${f.id} is not disputed; nothing to withdraw`);
   return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'open' as const } : x));

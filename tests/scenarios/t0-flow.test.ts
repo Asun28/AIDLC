@@ -1122,6 +1122,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     const stopped = { ...run, state: 'STOP' as const, stop: makeStop('review', 'x', 'y', { at: fx.now(), global: false }) };
     assert.throws(() => runner.disputeFinding(g(), card, stopped, 'F2', 'late'), /stopped/);
     assert.throws(() => runner.acceptFinding(g(), card, stopped, 'F2'), /stopped/);
+    assert.deepEqual(runner.listFindings(stopped).map((f) => f.id), ['F1', 'F2'], 'the listing stays readable on a stopped run');
 
     // Every finding disputed: the gate issues round 2 on the unchanged candidate and the prompt carries the notes.
     run = runner.recordAttempt(g(), card, run, { outcome: 'success', dodReceipt: 'dod:1c', redReceipt: 'red:1', candidateSha: 'sha-1' });

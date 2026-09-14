@@ -232,10 +232,10 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     const d = policy.disputeFinding(f, 'F1', 'the RED is behavioural: tests/gate.test.ts', LATER);
     assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts' }]);
     assert.throws(() => policy.disputeFinding(d, 'F1', 'again', LATER), /already disputed/);
-    const a = policy.acceptFinding(d, 'F1', LATER);
+    const a = policy.acceptFinding(d, 'F1');
     assert.equal(a.find((x) => x.id === 'F1')?.disposition, 'open');
     assert.equal(a.find((x) => x.id === 'F1')?.disputes.length, 1, 'the withdrawn dispute stays in the history');
-    assert.throws(() => policy.acceptFinding(a, 'F1', LATER), /not disputed/);
+    assert.throws(() => policy.acceptFinding(a, 'F1'), /not disputed/);
     const resolved = policy.recordFindings(a, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] }).findings;
     assert.throws(() => policy.disputeFinding(resolved, 'F1', 'late', LATER), /resolved/);
   });

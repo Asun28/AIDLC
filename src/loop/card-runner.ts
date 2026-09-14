@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfRound, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfRound, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type FindingStage, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
@@ -155,7 +155,7 @@ export class CardRunner {
   private priorFindingsFor(run: CardRun): PriorFinding[] {
     return run.findings
       .filter((f) => !f.resolvedAt)
-      .map((f) => ({ id: f.id, reason: f.reason, disposition: f.disposition, note: f.disposition === 'disputed' ? f.disputes.at(-1)?.note : undefined, origin: f.stage === 'pre' ? `pre-review round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}` }));
+      .map((f) => ({ id: f.id, reason: f.reason, disposition: f.disposition, note: f.disposition === 'disputed' ? f.disputes.at(-1)?.note : undefined, origin: f.stage === 'pre' ? `pre-review round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`, nonAcceptanceRounds: nonAcceptanceRounds(f) }));
   }
 
   /**
@@ -203,12 +203,12 @@ export class CardRunner {
   /** The author withdraws a dispute: the finding is open again and the next round verifies it. */
   acceptFinding(goal: Goal, card: Card, run: CardRun, id: string): CardRun {
     this.guardFindingsMutation(run);
-    const findings = acceptFinding(run.findings, id, this.clock());
+    const findings = acceptFinding(run.findings, id);
     this.journal(goal.id).append({ type: 'FINDING_ACCEPTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase() } });
     return this.save({ ...run, findings });
   }
 
-  /** Every finding of the run, in id order. */
+  /** Every finding of the run, in id order; readable on a stopped run too (the adjudicator reads it after a STOP). */
   listFindings(run: CardRun): ReviewFinding[] {
     return [...run.findings].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
   }

@@ -55,6 +55,12 @@ test('T1-REVIEW-FINDINGS acceptance 3: the prior findings section carries ids, t
   }
   const fresh = buildReviewPrompt({ stage: 'pre', includeDiff: true, reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', truncated: false, priorFindings: [], round: 1, maxRounds: 3 });
   assert.ok(fresh.includes('## Prior findings') && fresh.includes('none'), 'a first round says there are no prior findings');
+  // Acceptance 5: a deadlocked finding handed on (exhausted R2 rounds, onExhausted ship) is named as such in the R3 prompt.
+  const deadlocked = buildReviewPrompt({ stage: 'formal', includeDiff: true, reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', truncated: false, priorFindings: [{ id: 'F1', reason: '[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first', disposition: 'open', origin: 'pre-review round 1', nonAcceptanceRounds: 2 }], round: 1, maxRounds: 2 });
+  const line = deadlocked.split('\n').find((l) => l.startsWith('- F1 '))!;
+  assert.match(line, /deadlock/i);
+  assert.match(line, /disputed twice and re-raised twice/);
+  assert.match(line, /human ruling/);
 });
 
 test('runPreReview classifies pass, block, malformed and quota output and writes verdict + log files', () => {
