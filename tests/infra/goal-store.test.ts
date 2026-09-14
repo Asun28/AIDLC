@@ -260,4 +260,47 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
     assert.equal(store.getCardRun('goal-s', 'T1-S')?.review.substantiveDecisions, 1);
     assert.equal(store.saveCardRun({ ...counters, blocker: 'fresh' }).blocker, 'fresh', 'a snapshot at the current ledger writes');
   });
+
+  it('saveCardRun refuses a snapshot that still holds a reservation the persisted record released: a phantom pending entry is never written back', () => {
+    const store = new GoalStore(paths);
+    const base = store.saveCardRun(makeCardRun('goal-r', 'T1-R'));
+    const reservation = { invocationId: 'r3:res', candidateDigest: 'd', base: 'main', policyVersion: 'v1', reviewer: 'r3', requestedAt: iso(0), outcome: 'pending' as const };
+    const reserved = store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations, reservation] } }));
+    store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => i.invocationId !== 'r3:res') } }));
+    assert.throws(() => store.saveCardRun({ ...reserved, blocker: 'late' }), /changed since it was read/i, 'the released R3 reservation is not resurrected');
+    assert.equal(store.getCardRun('goal-r', 'T1-R')?.review.invocations.length, 0);
+    const round = { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd', requestedAt: iso(0), durationMs: 0, outcome: 'pending' as const, reasons: [], reservationId: 'res-late' };
+    const withRound = store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [...current!.preReview.rounds, round] } }));
+    store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: current!.preReview.rounds.filter((r) => r.reservationId !== 'res-late') } }));
+    assert.throws(() => store.saveCardRun({ ...withRound, blocker: 'late' }), /changed since it was read/i, 'the abandoned R2 round is not resurrected');
+    assert.equal(store.getCardRun('goal-r', 'T1-R')?.preReview.rounds.length, 0);
+    assert.equal(store.saveCardRun({ ...base, preReview: { ...base.preReview, rounds: [{ ...round, outcome: 'pass' }] }, blocker: 'decided' }).blocker, 'decided', 'a decided round the writer adds is written');
+  });
+
+  it('a lock this process cannot read is never taken over: the read error propagates instead of counting as a dead owner', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 200, staleLockMs: 10 });
+    store.saveCardRun(makeCardRun('goal-u', 'T1-U'));
+    const lock = `${store.cardFile('goal-u', 'T1-U')}.lock`;
+    writeFileSync(lock, `pid=${process.pid} at=old nonce=u`, 'utf8');
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lock, old, old);
+    const real = fs.readFileSync;
+    (fs as unknown as Record<string, unknown>)['readFileSync'] = ((p: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
+      if (String(p) === lock) {
+        const err = new Error('EACCES: permission denied, open') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (real as unknown as (...a: unknown[]) => Buffer | string)(p, ...rest);
+    }) as typeof fs.readFileSync;
+    syncBuiltinESMExports();
+    try {
+      assert.throws(() => store.updateCardRun('goal-u', 'T1-U', (current) => current!), (err: unknown) => err instanceof Error && /EACCES/.test(err.message));
+    } finally {
+      (fs as unknown as Record<string, unknown>)['readFileSync'] = real;
+      syncBuiltinESMExports();
+    }
+    assert.ok(existsSync(lock), 'the unreadable lock is left in place');
+    unlinkSync(lock);
+  });
 });

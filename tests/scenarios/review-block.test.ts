@@ -337,6 +337,49 @@ test('T1-REVIEW-FINDINGS-2: a ship-path decision records its findings against th
   }
 });
 
+/** A ship path during whose ship another window records a newer candidate with its own DoD receipt. */
+class SupersedingShipPath extends DryRunShipPath {
+  private readonly fx: ReturnType<typeof makeFixture>;
+  private readonly goalId: string;
+  constructor(fx: ReturnType<typeof makeFixture>, goalId: string, outcomes: ShipOutcomeClass[], verdict: Verdict) {
+    super(outcomes, verdict);
+    this.fx = fx;
+    this.goalId = goalId;
+  }
+  override ship(req: Parameters<DryRunShipPath['ship']>[0]): ReturnType<DryRunShipPath['ship']> {
+    const now = this.fx.store.getCardRun(this.goalId, req.cardId)!;
+    this.fx.store.saveCardRun(CardRun.parse({ ...now, candidate: { sha: 'sha-newer', dirty: false, untracked: [], digest: 'sha-newer' }, dodReceipt: 'dod:newer', updatedAt: this.fx.now() }));
+    return super.ship(req);
+  }
+}
+
+test('T1-REVIEW-FINDINGS-2 R2 cycle 1 round 1: a ship result for a candidate replaced during the ship is recorded as history; the newer candidate keeps its receipt, state and identity', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const ship = new SupersedingShipPath(fx, goal.id, ['review-blocked'], BLOCK);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    const after = runner.next(g(), card, run);
+    const persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(persisted.candidate?.sha, 'sha-newer', "the newer candidate is the run's candidate");
+    assert.equal(persisted.dodReceipt, 'dod:newer', 'the newer candidate keeps its receipt');
+    assert.equal(persisted.blockedReceipt, undefined, 'no receipt of another candidate is retained under this block');
+    assert.notEqual(persisted.state, 'REVIEW_FIX', 'the block of the shipped candidate does not move the newer candidate');
+    assert.equal(persisted.review.substantiveDecisions, 1, 'the decision on the shipped candidate is history');
+    assert.deepEqual(persisted.findings.map((f) => [f.id, f.candidateSha]), [['F1', candidateShaFor('T1-HELLO')]]);
+    assert.equal(after.run.candidate?.sha, 'sha-newer');
+    assert.match(after.directive.narration, /candidate changed|superseded/i, after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T1-REVIEW-FINDINGS-2 R3 decision 1: a ship-path decision persists its invocation, counters and findings in one locked update, so a failure right after it leaves a consistent ledger and a replay records nothing twice', () => {
   const fx = makeFixture();
   try {

@@ -390,4 +390,10 @@ describe('stale ledger writes (T1-REVIEW-FINDINGS-2 R3 decision 1)', () => {
     assert.match(policy.staleLedger(run(ledger({ noVerdictRetriesUsed: 1 }), []), run(ledger(), [])) ?? '', /noVerdictRetriesUsed/);
     assert.equal(policy.staleLedger(run(ledger(), [round]), run(ledger(), [{ ...round, outcome: 'block' }])), undefined, 'the writer deciding a pending round is the expected direction');
   });
+
+  test('a pending entry the writer still holds after the persisted ledger released it is stale (a resurrection); a decided entry the writer adds is not', () => {
+    assert.match(policy.staleLedger(run(ledger(), []), run(ledger({ invocations: [pending] }), [])) ?? '', /r3:a/, 'a released R3 reservation is not written back');
+    assert.match(policy.staleLedger(run(ledger(), []), run(ledger(), [round])) ?? '', /res-1/, 'an abandoned R2 round is not written back');
+    assert.equal(policy.staleLedger(run(ledger(), []), run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), [{ ...round, outcome: 'block' }])), undefined, 'a decided entry the writer adds is the expected direction');
+  });
 });
