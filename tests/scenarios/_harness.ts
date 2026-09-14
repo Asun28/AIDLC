@@ -143,7 +143,7 @@ export function driveCardToDone(fx: Fixture, goalId: string, cardId: string, shi
   const run1 = runner.recordAttempt(goal, card, r.run, { outcome: 'success', dodReceipt: `dod:${cardId}`, redReceipt: `red:${cardId}`, candidateSha: candidateShaFor(cardId) });
   r = runner.next(goal, card, run1);
   assert.equal(r.directive.kind, 'close', `${cardId}: expected close after merged ship, got ${r.directive.kind}: ${r.directive.narration}`);
-  const run2 = runner.markClosure(goal, card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
+  const run2 = runner.markClosure(goal, card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
   r = runner.next(goal, card, run2);
   assert.equal(r.directive.kind, 'done', `${cardId}: expected done, got ${r.directive.kind}`);
   return r.run;

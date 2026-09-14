@@ -645,6 +645,8 @@ export const CardRun = z.object({
       findings: z.boolean().default(false),
       evidence: z.boolean().default(false),
       cleanup: z.boolean().default(false),
+      /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. Always false by default: a run persisted as DONE before the predicate existed stays DONE through the state evidence, not through this default. */
+      lessons: z.boolean().default(false),
     })
     .prefault({}),
   evidence: z.array(EvidenceRef).default([]),

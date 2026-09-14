@@ -412,13 +412,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--findings')
     .option('--evidence')
     .option('--cleanup')
-    .option('--all')
-    .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean }) => {
+    .option('--all', 'the five mechanical steps; the lesson step stays open until a disposition is recorded')
+    .option('--lesson <text>', 'record the lesson: "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"')
+    .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')
+    .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean; lesson?: string; skipLesson?: string }) => {
       const c = ctx(g());
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
-      const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup };
+      const lessons = o.lesson !== undefined || o.skipLesson !== undefined ? true : undefined;
+      const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup, lessons };
       const defined = Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)) as Partial<typeof run.closure>;
-      const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined);
+      const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
       out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
     });
   card

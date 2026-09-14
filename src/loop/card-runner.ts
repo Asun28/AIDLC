@@ -26,6 +26,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult, type PriorFinding } from '../review/pre-review.ts';
@@ -53,7 +54,7 @@ export interface CardRunnerDeps {
 }
 
 export type CardDirective =
-  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; narration: string }
+  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; lessons?: LessonsContext; narration: string }
   | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; skills?: string[]; narration: string }
   | { kind: 'ship'; cardId: string; base: string; mode: 'local' | 'remote'; narration: string }
   | { kind: 'review-fix'; cardId: string; reasons: string[]; remainingDecisions: number; narration: string }
@@ -134,6 +135,11 @@ export class CardRunner {
     this.gh = deps.gh ?? new GhProbe(this.runner);
     this.clock = deps.now ?? (() => new Date().toISOString());
     this.shipPath = deps.shipPath ?? shipPathFor(deps.config, deps.repo.mainRoot, this.runner);
+  }
+
+  /** The repository copy of the lessons file: read at PREPARE, appended at CLOSE. */
+  private lessonsFile(): string {
+    return lessonsPath(this.repo.mainRoot);
   }
 
   private journal(goalId: string): Journal {
@@ -383,6 +389,12 @@ export class CardRunner {
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = this.leases.read(key);
+    // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
+    // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
+    if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
+      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
+      run = this.save({ ...run, state: 'CLOSE', stop: undefined });
+    }
     // Heartbeat: the owner's own `card next` renews the card lease, as the controller renews the goal
     // lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
     // that case still fails the fence in ship(). A stop caused only by the owner's own expiry is
@@ -422,7 +434,8 @@ export class CardRunner {
       terminal: run.stop,
       prepared: Boolean(run.worktree) && Boolean(lease && !lease.released && lease.owner.session === me.session),
       mergeVerified: run.mergeVerified,
-      closureComplete: Object.values(run.closure).every(Boolean),
+      // A run persisted as DONE keeps its closure complete: DONE is derived from a verified merge and a complete closure and never patched, so a record that predates the lessons predicate stays DONE.
+      closureComplete: run.state === 'DONE' || Object.values(run.closure).every(Boolean),
       // A block stays pending only while the reviewed candidate is still the current candidate; a new
       // candidate (new sha/digest after the fix) moves the card back through BUILD/SHIP, and so does a
       // block whose every finding the author disputed (the next decision runs on the unchanged candidate).
@@ -540,6 +553,7 @@ export class CardRunner {
       const stopped = this.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
+    const lessons = readLessons(this.lessonsFile());
     const next = this.save({ ...run, state: 'BUILD', worktree: decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
@@ -549,7 +563,8 @@ export class CardRunner {
         action: decision.action,
         worktree: decision.path,
         skills: [],
-        narration: 'Read docs/LESSONS.md once before the first attempt. ' + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        lessons,
+        narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
   }
@@ -1451,9 +1466,39 @@ export class CardRunner {
     return this.save({ ...run, ci, state: outcome === 'success' ? 'SHIP' : outcome === 'failure' ? 'BUILD' : 'WAIT' });
   }
 
-  private close(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
+  private close(goal: Goal, card: Card, caller: CardRun): { run: CardRun; directive: CardDirective } {
+    const now = this.clock();
+    // The stored run is the truth: a card next that read before a concurrent card close never undoes a recorded disposition.
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
     const missing = Object.entries(run.closure).filter(([, v]) => !v).map(([k]) => k);
-    const next = this.save({ ...run, state: missing.length ? 'CLOSE' : 'DONE' });
+    let ownerGeneration = run.ownerGeneration;
+    if (missing.length) {
+      // The closing session holds the card lease: the owner renews it, a replacement takes over an expired one once no
+      // delivery operation of the card is unresolved, and a live lease of another session stops the card.
+      const key = resourceKeys.card(this.repo.key, card.id);
+      const claim = this.leases.claim(key, { operation: `card:${card.id}:close`, now });
+      if (claim.status === 'held') {
+        const stop = makeStop('ownership', `card ${card.id} is owned by session ${claim.lease.owner.session} (generation ${claim.lease.generation}) while it closes`, 'let the owner close it, or take over after its lease expires and its operations are reconciled', { at: now, global: false });
+        const stopped = this.save({ ...run, state: 'STOP', stop });
+        return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+      }
+      if (claim.status === 'expired') {
+        const unresolved = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+        try {
+          const taken = this.leases.takeover(key, () => ({ reconciled: unresolved.length === 0, unresolvedOperations: unresolved }), { operation: `card:${card.id}:close`, now });
+          ownerGeneration = taken.lease.generation;
+          this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: taken.lease.generation, takeover: true, previousOwner: claim.lease.owner.session } });
+        } catch (err) {
+          const stop = makeStop('ownership', `card ${card.id}: ${(err as Error).message}`, 'reconcile the unresolved operations, then close the card again', { at: now, global: false });
+          const stopped = this.save({ ...run, state: 'STOP', stop });
+          return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        }
+      } else {
+        ownerGeneration = claim.lease.generation;
+        this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
+      }
+    }
+    const next = this.save({ ...run, state: missing.length ? 'CLOSE' : 'DONE', ownerGeneration });
     if (!missing.length) {
       const key = resourceKeys.card(this.repo.key, card.id);
       try {
@@ -1464,13 +1509,60 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'CLOSE', to: 'DONE' } });
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${missing[0]}\`.` } };
+    // The lesson step has its own flags; every other step is marked by its own name.
+    const firstFlag = missing[0] === 'lessons' ? '--lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"' : `--${missing[0]}`;
+    const lessonHint = missing.includes('lessons') ? ' The lesson step takes --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"; --all never records it.' : '';
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} ${firstFlag}\`.${lessonHint}` } };
   }
 
-  markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>): CardRun {
-    const closure = { ...run.closure, ...flags };
-    this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure } });
-    return this.save({ ...run, closure });
+  /**
+   * Closure flags for a card whose merge is verified. The card lease is the serialisation: the run is reloaded, its merge
+   * evidence and a present lease generation are required, and the lease is fenced (a stale or foreign session refused);
+   * only a CLOSE run of a live goal accepts flags, and the persisted goal is read again right before anything is written.
+   * `lessons` needs a disposition: one lesson line appended to docs/LESSONS.md or a reason to skip. A lesson is journaled
+   * as pending before the file changes and as recorded once the closure is saved; a retry reuses the pending line, so a
+   * completed append is recognised even across a date rollover and no line is written twice.
+   */
+  markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string } = {}): CardRun {
+    const now = this.clock();
+    const assertLiveGoal = () => {
+      const persisted = this.store.getGoal(goal.id) ?? goal;
+      if (persisted.terminal) throw new Error(`goal ${goal.id} is terminal (${persisted.state}); closure cannot change`);
+      if (persisted.generation !== goal.generation) throw new Error(`goal ${goal.id} is at generation ${persisted.generation}, the caller holds ${goal.generation}; reload the goal before closing`);
+    };
+    assertLiveGoal();
+    const current = this.store.getCardRun(goal.id, card.id) ?? run;
+    if (current.state !== 'CLOSE' || !current.mergeVerified) throw new Error(`card ${card.id} is ${current.state}${current.mergeVerified ? '' : ' without a verified merge'}; closure flags apply to a CLOSE run with its merge verified`);
+    if (current.ownerGeneration === undefined) throw new Error(`card ${card.id} holds no card lease; run aidlc card next ${card.id} to hold it before closing`);
+    this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
+    const file = this.lessonsFile();
+    const data: Record<string, unknown> = {};
+    if (flags.lessons) {
+      if (disposition.lessonText && disposition.skipped) throw new Error('record either a lesson or a reason to skip, not both');
+      if (disposition.lessonText) {
+        const entry = lessonFromText(disposition.lessonText, card.id, now.slice(0, 10));
+        const pending = this.journal(goal.id)
+          .filter((e) => e.type === 'EVIDENCE_RETAINED' && e.cardId === card.id && typeof e.data['lessonPending'] === 'string')
+          .map((e) => String(e.data['lessonPending']))
+          .reverse()
+          .find((l) => {
+            const p = parseLessonLine(l);
+            return p !== undefined && p.ref === entry.ref && p.kind === entry.kind && p.rule === entry.rule && p.source === entry.source;
+          });
+        const line = pending ?? formatLesson(entry);
+        if (!hasLesson(file, line)) {
+          assertLiveGoal();
+          if (!pending) this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
+          appendLesson(file, parseLessonLine(line) ?? entry);
+        }
+        data['lesson'] = line;
+      } else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
+      else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
+    }
+    const closure = { ...current.closure, ...flags };
+    assertLiveGoal();
+    this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
+    return this.save({ ...current, closure });
   }
 
   /** Write a fix-task marker so the protect-tests hook locks test files during a fix (Q1). */
