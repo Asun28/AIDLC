@@ -234,8 +234,10 @@ export function extractVerdict(output: string): Verdict | undefined {
   for (let i = lines.length - 1; i >= 0; i--) {
     const line = lines[i]!;
     const start = line.indexOf('{');
+    if (start < 0) continue;
+    // This line decides: a document cut short (no closing brace, or one that does not parse) is malformed.
     const end = line.lastIndexOf('}');
-    if (start < 0 || end <= start) continue;
+    if (end <= start) return undefined;
     try {
       return parseVerdict(JSON.parse(line.slice(start, end + 1)));
     } catch {

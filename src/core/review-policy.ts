@@ -298,9 +298,10 @@ const nextFindingId = (findings: ReviewFinding[]): string => `F${findings.reduce
  */
 export function recordFindings(findings: ReviewFinding[], input: RecordFindingsInput): RecordFindingsResult {
   if (input.outcome !== 'pass' && input.outcome !== 'block') return { findings, raised: [], reraised: [], resolved: [] };
-  // References resolve against the findings that existed before this round, never against ids this round allocates.
-  const known = new Set(findings.map((f) => f.id));
+  // References resolve against the findings the reviewer received (the dispatched snapshot), never against ids this
+  // round allocates nor against findings added while it was in flight.
   const seen = input.seen ?? snapshotFindings(findings);
+  const known = new Set(Object.keys(seen).filter((id) => findings.some((f) => f.id === id)));
   // A finding whose revision moved after dispatch (a dispute recorded or withdrawn, another round's re-raise) keeps that change: this round never saw it.
   const changedSince = (f: ReviewFinding) => !(f.id in seen) || seen[f.id]!.revision !== f.revision;
   const perspectiveOf = (reason: string) => input.perspectiveByReason?.[reason] ?? input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
@@ -448,4 +449,16 @@ export function mergeFindings(persisted: ReviewFinding[], mine: ReviewFinding[])
     if (!other || f.revision >= other.revision) byId.set(f.id, f);
   }
   return [...byId.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
+}
+
+/** An entry of the persisted ledgers that the writer's copy lacks: the writer read the run before it was recorded. */
+export function ledgerEntryMissing(persisted: { review: ReviewLedger; preReview: { rounds: Array<{ reservationId?: string; cycle: number; round: number; requestedAt: string }>; handoffs: Array<{ cycle: number; candidateDigest: string }> } }, mine: typeof persisted): string | undefined {
+  const roundKeyOf = (r: { reservationId?: string; cycle: number; round: number; requestedAt: string }) => r.reservationId ?? `${r.cycle}:${r.round}:${r.requestedAt}`;
+  const invocation = persisted.review.invocations.find((i) => !mine.review.invocations.some((m) => m.invocationId === i.invocationId));
+  if (invocation) return `review invocation ${invocation.invocationId}`;
+  const round = persisted.preReview.rounds.find((r) => !mine.preReview.rounds.some((m) => roundKeyOf(m) === roundKeyOf(r)));
+  if (round) return `pre-review round ${round.cycle}/${round.round} (${roundKeyOf(round)})`;
+  const handoff = persisted.preReview.handoffs.find((h) => !mine.preReview.handoffs.some((m) => m.cycle === h.cycle && m.candidateDigest === h.candidateDigest));
+  if (handoff) return `residual hand-off of cycle ${handoff.cycle}`;
+  return undefined;
 }

@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, mergeFindings, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, ledgerEntryMissing, mergeFindings, nonAcceptanceRounds, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, addMs, type BlockedReceipt, type Card, type EffortLevel, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
@@ -330,18 +330,25 @@ export class CardRunner {
 
   /** Drop a pending formal-review reservation from the persisted run (the dispatch failed before a decision). */
   private releaseReservation(goal: Goal, card: Card, invocationId: string): void {
-    const current = this.store.getCardRun(goal.id, card.id);
-    if (!current) return;
-    this.save({ ...current, review: { ...current.review, invocations: current.review.invocations.filter((i) => i.invocationId !== invocationId) } });
+    if (!this.store.getCardRun(goal.id, card.id)) return;
+    this.store.updateCardRun(goal.id, card.id, (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => i.invocationId !== invocationId) } }));
   }
 
   /**
    * Every write goes through the card-run lock. A caller writes the run it computed; findings are merged
    * by revision with the persisted record, so a disposition another window recorded meanwhile survives a
-   * write computed from an older read (the writer's own finding changes carry the higher revision).
+   * write computed from an older read (the writer's own finding changes carry the higher revision). A
+   * write that lacks a round, a decision or a hand-off the persisted record carries was computed from a
+   * stale read and is refused: the command is re-run on the current record instead of dropping the entry.
+   * Paths that remove an entry on purpose (a released reservation, an abandoned round) write through
+   * `updateCardRun` from the locked record.
    */
   private save(run: CardRun): CardRun {
-    return this.store.updateCardRun(run.goalId, run.cardId, (persisted) => CardRun.parse({ ...run, findings: mergeFindings(persisted?.findings ?? [], run.findings), updatedAt: this.clock() }));
+    return this.store.updateCardRun(run.goalId, run.cardId, (persisted) => {
+      const missing = persisted ? ledgerEntryMissing(persisted, run) : undefined;
+      if (missing) throw new Error(`card run ${run.cardId} changed since it was read (${missing} was recorded meanwhile); run the command again`);
+      return CardRun.parse({ ...run, findings: mergeFindings(persisted?.findings ?? [], run.findings), updatedAt: this.clock() });
+    });
   }
 
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
@@ -614,9 +621,11 @@ export class CardRunner {
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'ci-rerun', pollSeconds: 90, narration: 'A CI rerun is persisted but not reconciled; look it up (aidlc card ci-reconcile) before shipping again.' } };
     }
-    // R2: a fresh pre-review pass for this candidate is required before any ship is issued.
+    // R2: a fresh pre-review pass for this candidate is required before any ship is issued. The gate may have
+    // written the run (a dropped abandoned round, a recorded hand-off): the ship continues from that record.
     const gate = this.preReviewGate(goal, card, run);
-    if (gate) return gate;
+    if (gate.directive) return { run: gate.run, directive: gate.directive };
+    run = gate.run;
     // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
     const formal = this.formalReviewGate(goal, card, run);
     if (formal) return formal;
@@ -669,9 +678,9 @@ export class CardRunner {
    * far), so an R3 block restarts the cycle. A pass on the current candidate opens the ship; a block
    * was already handed back to BUILD by `preReview`; blocks beyond `rounds` apply `onExhausted`.
    */
-  private preReviewGate(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } | undefined {
+  private preReviewGate(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive?: CardDirective } {
     const cfg = this.config.preReview;
-    if (!cfg.command.length) return undefined;
+    if (!cfg.command.length) return { run };
     const now = this.clock();
     const cycle = run.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
     const digest = run.candidate?.digest;
@@ -684,21 +693,18 @@ export class CardRunner {
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
       }
       this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle: pending.cycle, round: pending.round, reviewer: pending.reviewer, candidateDigest: digest, outcome: 'no-verdict', decision: 'abandoned: no result within the timeout and the grace', reservationId: pending.reservationId, findings: [], reraised: [], resolved: [] } });
-      run = this.save({ ...run, preReview: { ...run.preReview, rounds: run.preReview.rounds.filter((r) => r !== pending) } });
+      run = this.store.updateCardRun(goal.id, card.id, (current) => ({ ...(current ?? run), preReview: { ...(current ?? run).preReview, rounds: (current ?? run).preReview.rounds.filter((r) => r.reservationId !== pending.reservationId || r.requestedAt !== pending.requestedAt) } }));
     }
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
     const decided = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block');
     const blocks = decided.filter((r) => r.outcome === 'block');
     // A pass stays valid for the candidate it reviewed, whatever cycle recorded it.
-    if (run.preReview.rounds.some((r) => r.candidateDigest === digest && r.outcome === 'pass')) return undefined;
+    if (run.preReview.rounds.some((r) => r.candidateDigest === digest && r.outcome === 'pass')) return { run };
     // Exhausted rounds decide first: a candidate after the last allowed block stops or ships, whether or not it changed.
     if (blocks.length >= cfg.rounds) {
       const residual = blocks[blocks.length - 1]?.reasons ?? [];
       const deadlock = describeDeadlock(run.findings);
-      if (cfg.onExhausted === 'ship') {
-        this.recordResidualHandoff(goal, card, run, cycle, digest ?? 'unknown');
-        return undefined;
-      }
+      if (cfg.onExhausted === 'ship') return { run: this.recordResidualHandoff(goal, card, run, cycle, digest ?? 'unknown') };
       const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${residual.join(' | ') || 'see the retained verdicts'}${deadlock ? `; ${deadlock}` : ''}`, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
@@ -891,16 +897,18 @@ export class CardRunner {
     const dropReservation = (r: CardRun) => ({ ...r.review, invocations: r.review.invocations.filter((i) => i.invocationId !== invocationId) });
     const withoutReservation = dropReservation(current);
     const result = { classified, verdict, advisory, verdictRef: panel.verdictRef, logRef: panel.logRef, durationMs: panel.durationMs, receiptSha256: panel.receiptSha256 };
+    // The reservation is released from the locked record, never from a snapshot.
+    const releaseAndSave = (patch: Partial<CardRun>) => this.store.updateCardRun(goal.id, card.id, (locked) => ({ ...(locked ?? current), ...patch, review: dropReservation(locked ?? current), evidence: [...(locked ?? current).evidence, evidenceEntry] }));
     if (current.stop || current.state === 'STOP') {
       this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, decision: 'discarded: card run stopped meanwhile', runStatus: classified.runStatus, reasons: classified.reasons, findings: [], reraised: [], resolved: [], verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs } });
-      return { run: this.save({ ...current, review: withoutReservation, evidence: [...current.evidence, evidenceEntry] }), ...result };
+      return { run: releaseAndSave({}), ...result };
     }
     this.renewOwnLease(card.id, current, after);
     try {
       if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), after);
     } catch (err) {
       const stop = makeStop('ownership', (err as FencedError).message, 'revalidate ownership; a stale generation cannot commit a review decision', { at: after });
-      return { run: this.save({ ...current, review: withoutReservation, state: 'STOP', stop, evidence: [...current.evidence, evidenceEntry] }), ...result };
+      return { run: releaseAndSave({ state: 'STOP', stop }), ...result };
     }
     // The canonical document the ship paths read is published only now, for a successful, non-stale decision that
     // is being recorded; an advisory block is published as a consistent pass with every finding under `advisory`.

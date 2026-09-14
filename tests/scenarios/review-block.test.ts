@@ -235,7 +235,8 @@ test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a c
     assert.match(r.directive.narration, /ship-path reviewer/i);
     assert.equal(ship.requests.length, 1, 'a dispute alone never re-ships to a reviewer that cannot read it');
 
-    // The repaired candidate ships; the reviewer re-raises F1 -> STOP/review. The ship-path reviewer received no prompt, so the re-raise answered no dispute and the dispute stands.
+    // The repaired candidate ships; the reviewer writes re:F1 -> STOP/review. The ship-path reviewer received no findings, so the
+    // reference names an id it never had: the reason is a new finding, F1 keeps its dispute for the human adjudicator.
     run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-repaired' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
@@ -244,10 +245,10 @@ test('T1-REVIEW-FINDINGS: a ship-path review block records findings; without a c
     assert.match(r.run.stop?.detail ?? '', /second substantive block/);
     assert.ok(!/re-raised after the author/.test(r.run.stop?.detail ?? ''), 'no contest is claimed for a reviewer that never received the dispute');
     const f1 = r.run.findings.find((f) => f.id === 'F1')!;
-    assert.equal(f1.reraised.length, 1);
-    assert.equal(f1.reraised[0]!.answeredDispute, undefined);
+    assert.equal(f1.reraised.length, 0, 'a reviewer that received no findings cannot re-raise one');
     assert.equal(f1.disposition, 'disputed', 'the dispute is kept for the human adjudicator');
-    assert.equal(r.run.findings.length, 1, 'the re-raise is not a new finding');
+    assert.equal(f1.resolvedAt, undefined);
+    assert.deepEqual(r.run.findings.map((f) => f.id), ['F1', 'F2'], 'the reason is recorded as a new finding');
   } finally {
     fx.cleanup();
   }
