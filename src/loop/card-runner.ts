@@ -260,12 +260,6 @@ export class CardRunner {
     return named ? `${detail}; ${named}` : detail;
   }
 
-  /** Record the findings of a decided round or decision on the run and journal the id lists with the round. */
-  private applyFindings(run: CardRun, input: Omit<RecordFindingsInput, 'reasons'> & { reasons: string[] }): { run: CardRun; raised: string[]; reraised: string[]; resolved: string[] } {
-    const rec = recordFindings(run.findings, input);
-    return { run: { ...run, findings: rec.findings }, raised: rec.raised, reraised: rec.reraised, resolved: rec.resolved };
-  }
-
   private guardFindingsMutation(run: CardRun): void {
     if (run.stop || run.state === 'STOP') throw new Error(`card run is stopped (${run.stop?.reason ?? 'STOP'}); findings cannot change: ${run.stop?.nextAction ?? 'resolve the stop first'}`);
   }
