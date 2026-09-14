@@ -2721,6 +2721,11 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict 
     // A verdict that contradicts its envelope is inconsistent: incomplete as well.
     writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: blockDoc })), 'utf8');
     await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope whose verdict disagrees with its outcome recovers nothing');
+    // A non-decided envelope that carries a verdict is inconsistent as well: a no-verdict or a hold never recovers the pass beside it.
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'no-verdict', runStatus: 'malformed', verdict: passDoc })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a no-verdict envelope with an embedded pass recovers nothing');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'quota-hold', runStatus: 'tool_error', retryAfterMs: 60_000, verdict: passDoc })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a hold envelope with an embedded pass recovers nothing');
     // (3) A pass envelope with its verdict inside and no sidecar at all is recovered as a pass, and the canonical file is published from it.
     writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc })), 'utf8');
     rmSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.json'), { force: true });
