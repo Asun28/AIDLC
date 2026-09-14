@@ -1121,7 +1121,22 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     assert.equal(fx.store.getCardRun(goal.id, 'T1-FIND')?.state, 'STOP', 'a stale snapshot never overwrites the saved stop');
     assert.deepEqual(runner.listFindings(stopped).map((f) => f.id), ['F1', 'F2'], 'the listing stays readable on a stopped run');
     fx.store.saveCardRun(CardRun.parse({ ...run, updatedAt: fx.now() }));
-    run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
+    // A disposition written by another window between the read and the write is kept: the change is recomputed on the fresh record.
+    const realGet = fx.store.getCardRun.bind(fx.store);
+    let reads = 0;
+    fx.store.getCardRun = (goalId: string, cardId: string) => {
+      const value = realGet(goalId, cardId);
+      reads += 1;
+      if (reads === 1 && value) fx.store.saveCardRun(CardRun.parse({ ...value, findings: value.findings.map((f) => (f.id === 'F1' ? { ...f, disputes: [...f.disputes, { at: fx.now(), note: 'a second window changed the note', afterReraises: 0 }] } : f)), updatedAt: fx.now() }));
+      return value;
+    };
+    try {
+      run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at src/t1-find.ts:12 after the receipt is written');
+    } finally {
+      fx.store.getCardRun = realGet;
+    }
+    assert.equal(run.findings.find((f) => f.id === 'F1')?.disputes.length, 2, 'the concurrent change to F1 survived the write of F2');
+    assert.equal(run.findings.find((f) => f.id === 'F2')?.disposition, 'disputed');
     assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').map((e) => e.data['finding']), ['F1', 'F2']);
 
     // Every finding disputed: no further attempt is needed, the block's own DoD evidence is reused for the unchanged candidate, the gate issues round 2 and the prompt carries the notes.
