@@ -32,7 +32,8 @@ aidlc card attempt T0-CLAIM-NPE --outcome success --dod-receipt "pytest exit 0" 
 aidlc card fix-task --clear
 aidlc card next T0-CLAIM-NPE                # ship (dry-run or scaffold task.ps1)
 aidlc card next T0-CLAIM-NPE                # close: lists missing closure steps
-aidlc card close T0-CLAIM-NPE --all
+aidlc card close T0-CLAIM-NPE --all         # the five mechanical steps; the lesson step stays open
+aidlc card close T0-CLAIM-NPE --lesson "NEVER <rule> (source: <ref>)"   # or --skip-lesson "<why>" (commander reserves --no-)
 aidlc next                                  # verify-arc, then report arc-verified
 aidlc report --result arc-verified --detail "regression test green on integrated SHA"
 aidlc next                                  # close -> done

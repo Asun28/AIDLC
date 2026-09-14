@@ -1,0 +1,111 @@
+/**
+ * Lessons (`docs/LESSONS.md`): the frozen line format, an append-only writer and the reader
+ * PREPARE uses. One dated line per lesson, written at CLOSE only when a review block or an
+ * incident taught a rule the playbook did not state. Past lines are never rewritten; the
+ * `- (none yet)` placeholder of a fresh file is not a lesson and gives way to the first one.
+ */
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+
+export const LESSONS_FILE = 'docs/LESSONS.md';
+/** The repository copy PREPARE reads and CLOSE appends to. */
+export function lessonsPath(mainRoot: string): string {
+  return path.join(mainRoot, 'docs', 'LESSONS.md');
+}
+export const LESSON_KINDS = ['NEVER', 'ALWAYS', 'NOTE'] as const;
+export type LessonKind = (typeof LESSON_KINDS)[number];
+
+/** `- YYYY-MM-DD <card or incident>: NEVER|ALWAYS|NOTE <rule> (source: <ref>)` on one line. */
+export const LESSON_LINE = /^- (\d{4}-\d{2}-\d{2}) (\S+): (NEVER|ALWAYS|NOTE) (.+) \(source: ([^()]+)\)$/;
+/** The disposition text `aidlc card close --lesson` accepts: the kind, the rule and the source. */
+export const LESSON_TEXT = /^(NEVER|ALWAYS|NOTE) (.+) \(source: ([^()]+)\)$/;
+const PLACEHOLDER = '- (none yet)';
+
+export interface LessonEntry {
+  date: string;
+  ref: string;
+  kind: LessonKind;
+  rule: string;
+  source: string;
+}
+
+export interface LessonsContext {
+  file: string;
+  count: number;
+  recent: string[];
+}
+
+const HEADER = [
+  '# Lessons',
+  '',
+  'Durable rules this repository learned from its own review blocks and',
+  'incidents. Append-only: one dated line per lesson, written at CLOSE of the',
+  'card that learned it, only when a review block or an incident taught a',
+  'rule the playbook did not already state. Past lines are never rewritten;',
+  'a superseded lesson gets a new line that names it. PREPARE reads this',
+  'file once per card.',
+  '',
+  'Format: `- YYYY-MM-DD <card or incident>: NEVER|ALWAYS|NOTE <rule> (source: <verdict, PR or incident ref>)`',
+  '',
+  '## Lessons',
+  '',
+].join('\n');
+
+export function formatLesson(entry: LessonEntry): string {
+  return `- ${entry.date} ${entry.ref}: ${entry.kind} ${entry.rule} (source: ${entry.source})`;
+}
+
+export function parseLessonLine(line: string): LessonEntry | undefined {
+  const m = line.match(LESSON_LINE);
+  if (!m) return undefined;
+  return { date: m[1]!, ref: m[2]!, kind: m[3] as LessonKind, rule: m[4]!, source: m[5]! };
+}
+
+/** Why an entry does not format to a valid line, or undefined when it does. */
+export function lessonProblem(entry: LessonEntry): string | undefined {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.date) || Number.isNaN(Date.parse(entry.date))) return `date ${entry.date} is not YYYY-MM-DD`;
+  if (!entry.ref || /\s/.test(entry.ref)) return 'the card or incident ref must be one token';
+  if (!(LESSON_KINDS as readonly string[]).includes(entry.kind)) return `kind ${entry.kind} is not NEVER, ALWAYS or NOTE`;
+  if (!entry.rule.trim() || /[\r\n]/.test(entry.rule)) return 'the rule must be one non-empty line';
+  if (!entry.source.trim() || /[()\r\n]/.test(entry.source)) return 'the source must be one non-empty line without parentheses';
+  const line = formatLesson(entry);
+  return LESSON_LINE.test(line) ? undefined : `line does not match the frozen format: ${line}`;
+}
+
+/** Parse the `--lesson` text into an entry for the card on the given date. */
+export function lessonFromText(text: string, ref: string, date: string): LessonEntry {
+  const m = text.trim().match(LESSON_TEXT);
+  if (!m) throw new Error(`lesson text must read "NEVER|ALWAYS|NOTE <rule> (source: <ref>)", got: ${text}`);
+  const entry: LessonEntry = { date, ref, kind: m[1] as LessonKind, rule: m[2]!.trim(), source: m[3]!.trim() };
+  const problem = lessonProblem(entry);
+  if (problem) throw new Error(problem);
+  return entry;
+}
+
+/** Append one line; creates the file from the embedded header when missing; never rewrites past lines. */
+export function appendLesson(file: string, entry: LessonEntry): string {
+  const problem = lessonProblem(entry);
+  if (problem) throw new Error(problem);
+  const line = formatLesson(entry);
+  if (!existsSync(file)) {
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, `${HEADER}${line}\n`, 'utf8');
+    return line;
+  }
+  const current = readFileSync(file, 'utf8');
+  const placeholderOnly = current.split(/\r?\n/).filter((l) => LESSON_LINE.test(l)).length === 0 && current.includes(`\n${PLACEHOLDER}`);
+  if (placeholderOnly) {
+    // The placeholder of a fresh file is not a lesson; the first lesson takes its line.
+    writeFileSync(file, current.replace(`\n${PLACEHOLDER}`, `\n${line}`), 'utf8');
+    return line;
+  }
+  appendFileSync(file, `${current.endsWith('\n') ? '' : '\n'}${line}\n`, 'utf8');
+  return line;
+}
+
+/** The context PREPARE hands the card: the file, the number of lessons and the most recent lines. */
+export function readLessons(file: string, recent = 5): LessonsContext {
+  if (!existsSync(file)) return { file, count: 0, recent: [] };
+  const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => LESSON_LINE.test(l));
+  return { file, count: lines.length, recent: lines.slice(-recent) };
+}

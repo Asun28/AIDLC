@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath } from './_harness.ts';
+import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath, T0 } from './_harness.ts';
 import { DryRunShipPath, ScaffoldShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
@@ -46,6 +46,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     assert.equal(r.directive.kind, 'prepare');
     if (r.directive.kind === 'prepare') assert.equal(r.directive.action, 'start');
     assert.ok(r.directive.narration.includes('docs/LESSONS.md'), 'PREPARE points at the lessons file');
+    if (r.directive.kind === 'prepare') assert.deepEqual(r.directive.lessons, { file: path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md'), count: 0, recent: [] }, 'PREPARE carries the lessons context, empty while the file is missing');
     assert.equal(r.run.state, 'BUILD');
     assert.ok(r.run.worktree);
 
@@ -67,10 +68,19 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     assert.equal(r.directive.kind, 'close');
     assert.equal(r.run.state, 'CLOSE');
     assert.equal(r.run.mergeVerified, true);
-    if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup']);
+    if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
 
     const run2 = runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
     r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close', 'the five mechanical steps leave the lesson step open');
+    if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['lessons']);
+    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }), /--lesson|--skip-lesson/, 'the lesson step needs a disposition');
+    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'MAYBE do it (source: x)' }), /NEVER/, 'the frozen format is enforced');
+    const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
+    const run3 = runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NEVER ship without the lesson step (source: T1-HELLO review)' });
+    assert.deepEqual(readFileSync(lessonsFile, 'utf8').split('\n').filter((l) => l.startsWith('- ')), [`- ${T0.slice(0, 10)} T1-HELLO: NEVER ship without the lesson step (source: T1-HELLO review)`], 'one valid line appended to a file created from the header');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['lesson'], `- ${T0.slice(0, 10)} T1-HELLO: NEVER ship without the lesson step (source: T1-HELLO review)`, 'the line is journaled');
+    r = runner.next(fx.goal(goal.id), card, run3);
     assert.equal(r.directive.kind, 'done');
     assert.equal(r.run.state, 'DONE');
 
@@ -194,8 +204,10 @@ test('WAIT resumes: a goal polled while its only card was running parks in WAIT 
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-PARK') });
     r = runner.next(fx.goal(goal.id), card, run1);
     assert.equal(r.directive.kind, 'close');
-    r = runner.next(fx.goal(goal.id), card, runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true }));
+    r = runner.next(fx.goal(goal.id), card, runner.markClosure(fx.goal(goal.id), card, r.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'parked scenario: no rule learned' }));
     assert.equal(r.directive.kind, 'done');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['lessonSkipped'], 'parked scenario: no rule learned', 'the skip reason is journaled and no file is written');
+    assert.equal(existsSync(path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md')), false);
 
     // The parked goal must resume: WAIT -> RUN -> VERIFY_ARC, never an illegal WAIT -> VERIFY_ARC throw.
     const d = fx.controller.next(goal.id);
@@ -1057,6 +1069,31 @@ test('R11: an R3 command block on the escalated success reopens the episode and 
     const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:5', redReceipt: 'red:4', candidateSha: 'sha-5' });
     assert.equal(repaired.effort?.terminal, 'succeeded');
     assert.equal(countedFailures(repaired.effort!).length, 3);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R5: PREPARE carries the count and the most recent lessons from docs/LESSONS.md', () => {
+  const fx = makeFixture();
+  try {
+    const file = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
+    mkdirSync(path.dirname(file), { recursive: true });
+    const lines = [1, 2, 3, 4, 5, 6].map((n) => `- 2026-09-1${n} T1-OLD: NOTE rule ${n} (source: test)`);
+    writeFileSync(file, `# Lessons\n\n## Lessons\n${lines.join('\n')}\n`, 'utf8');
+    writeCard(fx, { id: 'T1-READ', title: 'reads the lessons' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-READ', source: 'card', ref: 'T1-READ', affectedSurfaces: [] }, { cards: ['T1-READ'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-READ'] } });
+    const runner = fx.runner();
+    const r = runner.next(fx.goal(goal.id), fx.card('T1-READ'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-READ'));
+    assert.equal(r.directive.kind, 'prepare');
+    if (r.directive.kind === 'prepare') {
+      assert.equal(r.directive.lessons?.file, file);
+      assert.equal(r.directive.lessons?.count, 6);
+      assert.deepEqual(r.directive.lessons?.recent, lines.slice(1), 'the five most recent lines');
+    }
+    assert.ok(r.directive.narration.includes('6 lessons so far'), r.directive.narration);
   } finally {
     fx.cleanup();
   }

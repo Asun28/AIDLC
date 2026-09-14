@@ -565,6 +565,8 @@ export const CardRun = z.object({
       findings: z.boolean().default(false),
       evidence: z.boolean().default(false),
       cleanup: z.boolean().default(false),
+      /** A lesson line appended to docs/LESSONS.md or a recorded reason to skip; `--all` never asserts it. */
+      lessons: z.boolean().default(false),
     })
     .prefault({}),
   evidence: z.array(EvidenceRef).default([]),

@@ -400,7 +400,7 @@ export class GoalController {
       for (const [k, v] of Object.entries(run.closure)) if (!v) missing.push(`${id}: closure.${k}`);
     }
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
-    if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup) through the existing approved procedure; a reminder or exit zero alone is not closure.' });
+    if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
     this.store.saveGoal(next);
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });

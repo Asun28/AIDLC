@@ -122,7 +122,7 @@ stateDiagram-v2
 2. A terminal record, a stale ownership generation (STOP/ownership) or a capability blocker (STOP/capability).
 3. Merge verified and closure complete: DONE.
 4. A known operation still running: WAIT.
-5. Merge verified, closure incomplete: CLOSE.
+5. Merge verified, closure incomplete: CLOSE. The closure predicates are metadata, docSync, findings, evidence, cleanup and lessons; the last needs a lesson line appended to `docs/LESSONS.md` (frozen format owned by `src/artifacts/lessons.ts`, past lines never rewritten) or a recorded reason to skip, both journaled as EVIDENCE_RETAINED, and `card close --all` never asserts it. PREPARE hands the card the same file with its count and most recent lines.
 6. Admission deadline reached: STOP/time.
 7. Review allowance exhausted (STOP/review) or repair episode exhausted (STOP/card).
 8. No validated run context: PREPARE.

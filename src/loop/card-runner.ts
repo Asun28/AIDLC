@@ -25,6 +25,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
+import { appendLesson, lessonFromText, lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult } from '../review/pre-review.ts';
@@ -52,7 +53,7 @@ export interface CardRunnerDeps {
 }
 
 export type CardDirective =
-  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; narration: string }
+  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; lessons?: LessonsContext; narration: string }
   | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; skills?: string[]; narration: string }
   | { kind: 'ship'; cardId: string; base: string; mode: 'local' | 'remote'; narration: string }
   | { kind: 'review-fix'; cardId: string; reasons: string[]; remainingDecisions: number; narration: string }
@@ -102,6 +103,11 @@ export class CardRunner {
     this.gh = deps.gh ?? new GhProbe(this.runner);
     this.clock = deps.now ?? (() => new Date().toISOString());
     this.shipPath = deps.shipPath ?? shipPathFor(deps.config, deps.repo.mainRoot, this.runner);
+  }
+
+  /** The repository copy of the lessons file: read at PREPARE, appended at CLOSE. */
+  private lessonsFile(): string {
+    return lessonsPath(this.repo.mainRoot);
   }
 
   private journal(goalId: string): Journal {
@@ -319,6 +325,7 @@ export class CardRunner {
       const stopped = this.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
+    const lessons = readLessons(this.lessonsFile());
     const next = this.save({ ...run, state: 'BUILD', worktree: decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
@@ -328,7 +335,8 @@ export class CardRunner {
         action: decision.action,
         worktree: decision.path,
         skills: [],
-        narration: 'Read docs/LESSONS.md once before the first attempt. ' + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
+        lessons,
+        narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
   }
@@ -1026,12 +1034,21 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'CLOSE', to: 'DONE' } });
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${missing[0]}\`.` } };
+    const lessonHint = missing.includes('lessons') ? ' The lesson step takes --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"; --all never records it.' : '';
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${missing[0]}\`.${lessonHint}` } };
   }
 
-  markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>): CardRun {
+  /** Closure flags. `lessons` needs a disposition: one lesson line appended to docs/LESSONS.md (past lines untouched) or a reason to skip; both are journaled. */
+  markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string } = {}): CardRun {
+    const data: Record<string, unknown> = {};
+    if (flags.lessons) {
+      if (disposition.lessonText && disposition.skipped) throw new Error('record either a lesson or a reason to skip, not both');
+      if (disposition.lessonText) data['lesson'] = appendLesson(this.lessonsFile(), lessonFromText(disposition.lessonText, card.id, this.clock().slice(0, 10)));
+      else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
+      else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
+    }
     const closure = { ...run.closure, ...flags };
-    this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure } });
+    this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
     return this.save({ ...run, closure });
   }
 
