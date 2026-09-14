@@ -14,10 +14,10 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
-import { classifyVerdict, recordReviewOutcome, reviewRequestKey, type ClassifiedVerdict } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfRound, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, type ClassifiedVerdict, type RecordFindingsInput } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord, type Verdict } from '../core/types.ts';
+import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type FindingStage, type Goal, type PreReviewRound, type ReviewFinding, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -27,7 +27,7 @@ import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult } from '../review/pre-review.ts';
+import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult, type PriorFinding } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
@@ -133,17 +133,84 @@ export class CardRunner {
       : 'Must-block: out of scope, hard boundaries, frozen contracts, license, non-original code, missing or fake tests. Two axes, spec and standards. Output the JSON verdict as the last line.';
   }
 
-  /** R2 eligibility for R3, shared by the gate and the command: the latest round for this candidate passed, or the rounds are exhausted and the policy hands the residual findings on. */
+  /**
+   * R2 eligibility for R3, shared by the gate and the command: the candidate holds a pre-review pass
+   * (from any cycle: a pass stays valid for the candidate it reviewed), or the current cycle's rounds
+   * are exhausted and the policy hands the residual findings on.
+   */
   private preReviewEligibility(run: CardRun, candidateDigest: string): { eligible: boolean; reason: string } {
     const cfg = this.config.preReview;
     if (!cfg.command.length) return { eligible: true, reason: 'pre-review not configured' };
     const cycle = run.review.substantiveBlocks;
+    const passed = [...run.preReview.rounds].reverse().find((r) => r.candidateDigest === candidateDigest && r.outcome === 'pass');
+    if (passed) return { eligible: true, reason: `pre-review round ${passed.round} of cycle ${passed.cycle} passed` };
     const rounds = run.preReview.rounds.filter((r) => r.cycle === cycle);
     const latest = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
-    if (latest?.outcome === 'pass') return { eligible: true, reason: `pre-review round ${latest.round} passed` };
     const blocks = rounds.filter((r) => r.outcome === 'block').length;
     if (blocks >= cfg.rounds && cfg.onExhausted === 'ship') return { eligible: true, reason: 'pre-review rounds exhausted; residual findings handed to R3' };
     return { eligible: false, reason: latest ? `latest pre-review outcome for this candidate is ${latest.outcome}` : 'no pre-review round for this candidate' };
+  }
+
+  /** The run's unresolved findings as the prompt renders them: open ones to verify, disputed ones with the author's note. */
+  private priorFindingsFor(run: CardRun): PriorFinding[] {
+    return run.findings
+      .filter((f) => !f.resolvedAt)
+      .map((f) => ({ id: f.id, reason: f.reason, disposition: f.disposition, note: f.disposition === 'disputed' ? f.disputes.at(-1)?.note : undefined, origin: f.stage === 'pre' ? `pre-review round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}` }));
+  }
+
+  /**
+   * Same-candidate rule: a block is answered when every finding it raised or re-raised is disputed, so a
+   * new round or decision on the unchanged candidate receives new information. A block that recorded no
+   * finding is never answered: the candidate must change.
+   */
+  private blockAnswered(run: CardRun, round: { stage: FindingStage; cycle?: number; round: number }): { answered: boolean; open: string[] } {
+    if (!findingsOfRound(run.findings, round).length) return { answered: false, open: [] };
+    const { allowed, open } = rerunAllowed(run.findings, round);
+    return { answered: allowed, open };
+  }
+
+  /** The refusal text for a round or decision on a blocked, unchanged candidate. */
+  private sameCandidateRefusal(card: Card, candidateSha: string, blockedBy: string, open: string[]): string {
+    const ids = open.length ? open.join(', ') : 'none recorded';
+    return `candidate ${candidateSha.slice(0, 12)} was blocked by ${blockedBy} and is unchanged; open finding(s): ${ids}. Repair it and record the attempt with the new candidate sha, or dispute each finding with \`aidlc review dispute ${card.id} <id> --note "<why it does not hold>"\`; the round runs on the unchanged candidate only when every finding of the block is disputed`;
+  }
+
+  /** A stop detail with the deadlocked or contested findings named after it. */
+  private withContest(detail: string, findings: ReviewFinding[]): string {
+    const named = describeDeadlock(findings) || describeContested(findings);
+    return named ? `${detail}; ${named}` : detail;
+  }
+
+  /** Record the findings of a decided round or decision on the run and journal the id lists with the round. */
+  private applyFindings(run: CardRun, input: Omit<RecordFindingsInput, 'reasons'> & { reasons: string[] }): { run: CardRun; raised: string[]; reraised: string[]; resolved: string[] } {
+    const rec = recordFindings(run.findings, input);
+    return { run: { ...run, findings: rec.findings }, raised: rec.raised, reraised: rec.reraised, resolved: rec.resolved };
+  }
+
+  private guardFindingsMutation(run: CardRun): void {
+    if (run.stop || run.state === 'STOP') throw new Error(`card run is stopped (${run.stop?.reason ?? 'STOP'}); findings cannot change: ${run.stop?.nextAction ?? 'resolve the stop first'}`);
+  }
+
+  /** The author disputes an open finding with a note; the next round or decision receives the note. */
+  disputeFinding(goal: Goal, card: Card, run: CardRun, id: string, note: string): CardRun {
+    this.guardFindingsMutation(run);
+    const now = this.clock();
+    const findings = disputeFinding(run.findings, id, note, now);
+    this.journal(goal.id).append({ type: 'FINDING_DISPUTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), note: note.trim(), disputes: findings.find((f) => f.id === id.toUpperCase())?.disputes.length ?? 0 } });
+    return this.save({ ...run, findings });
+  }
+
+  /** The author withdraws a dispute: the finding is open again and the next round verifies it. */
+  acceptFinding(goal: Goal, card: Card, run: CardRun, id: string): CardRun {
+    this.guardFindingsMutation(run);
+    const findings = acceptFinding(run.findings, id, this.clock());
+    this.journal(goal.id).append({ type: 'FINDING_ACCEPTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase() } });
+    return this.save({ ...run, findings });
+  }
+
+  /** Every finding of the run, in id order. */
+  listFindings(run: CardRun): ReviewFinding[] {
+    return [...run.findings].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
   }
 
   /** Renew the card lease when this session owns it at the run's generation (a review can outlast the TTL). */
@@ -210,11 +277,13 @@ export class CardRunner {
       mergeVerified: run.mergeVerified,
       closureComplete: Object.values(run.closure).every(Boolean),
       // A block stays pending only while the reviewed candidate is still the current candidate; a new
-      // candidate (new sha/digest after the fix) moves the card back through BUILD/SHIP.
+      // candidate (new sha/digest after the fix) moves the card back through BUILD/SHIP, and so does a
+      // block whose every finding the author disputed (the next decision runs on the unchanged candidate).
       reviewBlockPending: (() => {
         const reviewedDigest = [...run.review.invocations].reverse().find((i) => i.outcome === 'block')?.candidateDigest;
         const blocked = run.review.lastVerdict?.verdict === 'block' && classifyVerdict(run.review.lastVerdict, { tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking;
-        return Boolean(blocked && !reviewExhausted && reviewedDigest !== undefined && run.candidate?.digest === reviewedDigest);
+        const answered = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions }).answered;
+        return Boolean(blocked && !reviewExhausted && reviewedDigest !== undefined && run.candidate?.digest === reviewedDigest && !answered);
       })(),
       reviewExhausted,
       buildIncomplete: !run.dodReceipt || (card.tdd && !run.redReceipt) || (run.candidate?.dirty ?? false),
@@ -255,6 +324,8 @@ export class CardRunner {
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
         const reasons = run.review.lastVerdict?.reasons ?? [];
+        const open = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions }).open;
+        const disputeHint = open.length ? ` Open finding(s): ${open.join(', ')}; a finding that does not hold is disputed with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
         return {
           run: next,
           directive: {
@@ -267,7 +338,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running?.n ?? (episode?.attempts.length ?? 0),
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, 2 - run.review.substantiveDecisions)} substantive decision(s) left.`,
+            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, 2 - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint}`,
           },
         };
       }
@@ -487,13 +558,33 @@ export class CardRunner {
     const decided = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block');
     const blocks = decided.filter((r) => r.outcome === 'block');
     const digest = run.candidate?.digest;
+    // A pass stays valid for the candidate it reviewed, whatever cycle recorded it.
+    if (run.preReview.rounds.some((r) => r.candidateDigest === digest && r.outcome === 'pass')) return undefined;
+    // Exhausted rounds decide first: a candidate after the last allowed block stops or ships, whether or not it changed.
+    if (blocks.length >= cfg.rounds) {
+      const residual = blocks[blocks.length - 1]?.reasons ?? [];
+      const deadlock = describeDeadlock(run.findings);
+      if (cfg.onExhausted === 'ship') {
+        this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual, deadlock: deadlock || undefined } });
+        return undefined;
+      }
+      const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${residual.join(' | ') || 'see the retained verdicts'}${deadlock ? `; ${deadlock}` : ''}`, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`, { at: now, global: false });
+      const stopped = this.save({ ...run, state: 'STOP', stop });
+      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+    }
     const last = [...rounds].reverse().find((r) => r.candidateDigest === digest);
-    if (last?.outcome === 'pass') return undefined;
+    let disputedNote = '';
     if (last?.outcome === 'block') {
-      // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons.
-      const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined });
-      const admitted = run.effort ? nextEffortAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
-      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
+      const answered = this.blockAnswered(run, { stage: 'pre', cycle, round: last.round });
+      if (!answered.answered) {
+        // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons and the open finding ids.
+        // The episode reopens so the repair can be recorded; the review budget, not the ladder, paid for the block.
+        const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined, effort: run.effort ? reopenAfterReviewBlock(run.effort, 'pre-review block still pending') : run.effort });
+        const admitted = run.effort ? nextEffortAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
+        const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the round runs on the unchanged candidate once every finding of the block is disputed.` : '';
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.${ids}` } };
+      }
+      disputedNote = ` Every finding of round ${last.round} is disputed; the round runs on the unchanged candidate with the author's notes.`;
     }
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
@@ -508,20 +599,10 @@ export class CardRunner {
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
-    if (blocks.length >= cfg.rounds) {
-      const residual = blocks[blocks.length - 1]?.reasons ?? [];
-      if (cfg.onExhausted === 'ship') {
-        this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, exhausted: true, action: 'ship', residual } });
-        return undefined;
-      }
-      const stop = makeStop('review', `pre-review rounds exhausted (${blocks.length}/${cfg.rounds} blocks in R3 cycle ${cycle}); last block: ${residual.join(' | ') || 'see the retained verdicts'}`, `read the retained verdicts under .review/${card.id}.pre.*; fix within scope and re-run, or set preReview.onExhausted to "ship" to hand the residual findings to R3`, { at: now, global: false });
-      const stopped = this.save({ ...run, state: 'STOP', stop });
-      return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
-    }
     const round = decided.length + 1;
     const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : last?.outcome === 'quota-hold' ? ' (the previous run reported a quota hold; retry once it clears)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
-    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: cfg.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${cfg.reviewer}) before the ship${retry}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.` } };
+    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: cfg.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${cfg.reviewer}) before the ship${retry}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
   }
 
   /**
@@ -536,12 +617,18 @@ export class CardRunner {
     const digest = run.candidate?.digest;
     const last = [...run.review.invocations].reverse().find((i) => i.reviewer === cfg.reviewer && i.candidateDigest === digest);
     if (last?.outcome === 'pass') return undefined;
+    let disputedNote = '';
     if (last?.outcome === 'block') {
       // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar.
       const blocking = run.review.lastVerdict ? classifyVerdict(run.review.lastVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking : true;
       if (!blocking) return undefined;
-      const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined });
-      return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.` } };
+      const answered = this.blockAnswered(run, { stage: 'formal', round: run.review.substantiveDecisions });
+      if (!answered.answered) {
+        const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined });
+        const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
+        return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}` } };
+      }
+      disputedNote = ` Every finding of decision ${run.review.substantiveDecisions} is disputed; the decision runs on the unchanged candidate with the author's notes.`;
     }
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
       const next = this.save({ ...run, state: 'WAIT' });
@@ -557,7 +644,7 @@ export class CardRunner {
     const decision = run.review.substantiveDecisions + 1;
     const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
-    return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: MAX_SUBSTANTIVE_REVIEW_DECISIONS, narration: `Formal review (R3, ${cfg.reviewer}) before the ship, decision ${decision}/${MAX_SUBSTANTIVE_REVIEW_DECISIONS}${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship; a merge-blocking block returns it to REVIEW_FIX and the repaired candidate restarts the pre-review cycle.` } };
+    return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: MAX_SUBSTANTIVE_REVIEW_DECISIONS, narration: `Formal review (R3, ${cfg.reviewer}) before the ship, decision ${decision}/${MAX_SUBSTANTIVE_REVIEW_DECISIONS}${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship; a merge-blocking block returns it to REVIEW_FIX and the repaired candidate restarts the pre-review cycle.${disputedNote}` } };
   }
 
   /**
@@ -588,6 +675,12 @@ export class CardRunner {
     if (lastForCandidate?.outcome === 'quota-hold' && lastForCandidate.holdUntil && Date.parse(lastForCandidate.holdUntil) > Date.parse(now)) {
       throw new Error(`formal reviewer ${cfg.reviewer} is on a quota hold until ${lastForCandidate.holdUntil}; do not re-run before it clears`);
     }
+    // Same-candidate rule: a blocked, unchanged candidate is re-decided only with every finding of the block disputed.
+    const lastDecided = [...forCandidate].reverse().find((i) => i.outcome === 'pass' || i.outcome === 'block');
+    if (lastDecided?.outcome === 'block' && classifyVerdict(persisted.review.lastVerdict, { candidateSha, tier: card.tier, gateRequired: this.config.gateRequired }).mergeBlocking) {
+      const answered = this.blockAnswered(persisted, { stage: 'formal', round: ledger.substantiveDecisions });
+      if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, `formal decision ${ledger.substantiveDecisions}`, answered.open));
+    }
     if (ledger.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
       throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions}); ${lastForCandidate?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
@@ -602,7 +695,7 @@ export class CardRunner {
     const reviewDir = path.join(cwd, '.review');
     const schema = materialiseVerdictSchema(reviewDir);
     const reviewPolicy = this.reviewPolicy();
-    const priorFindings = (run.review.lastVerdict?.reasons ?? []).map((f) => `previous R3 decision: ${f}`);
+    const priorFindings = this.priorFindingsFor(persisted);
     const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
     // Deterministic scope gate (dimension 1): no model call, no decision consumed.
@@ -675,8 +768,11 @@ export class CardRunner {
       writeFileSync(path.join(reviewDir, `${card.id}.json`), JSON.stringify({ ...canonical, reviewer: cfg.reviewer }, null, 2) + '\n', 'utf8');
     }
     const rec = recordReviewOutcome(withoutReservation, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil }, classified, verdict);
-    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs, holdUntil } });
-    let next: CardRun = { ...current, review: rec.ledger, evidence: [...current.evidence, evidenceEntry] };
+    // Findings: a merge-blocking block raises or re-raises them, a pass (an advisory block included) resolves the stage's open ones.
+    const decidedOutcome = classified.outcome === 'block-defect' ? 'block' : classified.outcome === 'pass' || classified.outcome === 'block-advisory' || classified.outcome === 'routed-skip' ? 'pass' : 'no-verdict';
+    const found = this.applyFindings(current, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha, at: after, outcome: decidedOutcome, reasons: decidedOutcome === 'block' ? classified.reasons : [] });
+    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs, holdUntil } });
+    let next: CardRun = { ...found.run, review: rec.ledger, evidence: [...current.evidence, evidenceEntry] };
     switch (rec.decision.action) {
       case 'review-fix': {
         // The review budget, not the ladder, paid for this block: the episode reopens and the repair is the next attempt.
@@ -685,7 +781,7 @@ export class CardRunner {
         break;
       }
       case 'stop-review': {
-        const stop = makeStop('review', rec.decision.detail, 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
+        const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
         next = { ...next, state: 'STOP', stop };
         break;
       }
@@ -729,10 +825,16 @@ export class CardRunner {
     if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
       throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
     }
+    // Same-candidate rule: a pass stays valid for this candidate; a block is re-reviewed unchanged only with every finding disputed.
+    const lastDecided = [...run.preReview.rounds].reverse().find((r) => r.candidateDigest === candidateDigest && (r.outcome === 'pass' || r.outcome === 'block'));
+    if (lastDecided?.outcome === 'pass') throw new Error(`candidate ${candidateSha.slice(0, 12)} already holds a pre-review pass (round ${lastDecided.round} of cycle ${lastDecided.cycle}); run \`aidlc card next ${card.id}\` instead of another round`);
+    if (lastDecided?.outcome === 'block') {
+      const answered = this.blockAnswered(run, { stage: 'pre', cycle: lastDecided.cycle, round: lastDecided.round });
+      if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, `pre-review round ${lastDecided.round}`, answered.open));
+    }
     const round = rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + 1;
     const reviewPolicy = this.reviewPolicy();
-    const lastBlock = [...rounds].reverse().find((r) => r.outcome === 'block');
-    const priorFindings = [...(lastBlock?.reasons ?? []).map((f) => `pre-review round ${lastBlock?.round}: ${f}`), ...(cycle > 0 ? (run.review.lastVerdict?.reasons ?? []).map((f) => `R3 block: ${f}`) : [])];
+    const priorFindings = this.priorFindingsFor(run);
     const { changedPaths, diff, truncated } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
     // Retention names carry the attempt number for this candidate and a nonce, so a retried or overlapping round never
@@ -771,8 +873,9 @@ export class CardRunner {
       const stop = makeStop('ownership', (err as FencedError).message, 'revalidate ownership; a stale generation cannot commit a review round', { at: after });
       return { run: this.save({ ...current, state: 'STOP', stop, evidence: [...current.evidence, evidenceEntry] }), result, round: record };
     }
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`) } });
-    let next: CardRun = { ...current, preReview: { rounds: [...current.preReview.rounds, record] }, evidence: [...current.evidence, evidenceEntry] };
+    const found = this.applyFindings(current, { stage: 'pre', cycle, round, candidateSha, at: after, outcome: result.outcome, reasons: result.outcome === 'block' ? result.reasons : [], perspectives: cfg.perspectives });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`) } });
+    let next: CardRun = { ...found.run, preReview: { rounds: [...current.preReview.rounds, record] }, evidence: [...current.evidence, evidenceEntry] };
     if (result.outcome === 'block') {
       // The R2 rounds are the pre-review's own budget: the episode reopens and the repair is the next attempt.
       const effort = current.effort ? reopenAfterReviewBlock(current.effort, `pre-review: ${result.reasons[0] ?? 'block'}`) : current.effort;
@@ -832,7 +935,11 @@ export class CardRunner {
       const rec = recordReviewOutcome(review, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now }, classified, verdictInfo.verdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - review.scriptCounter) : 0);
       review = rec.ledger;
       reviewDecision = rec.decision;
-      this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus } });
+      // Findings of a ship-path decision: a merge-blocking block raises or re-raises them, a pass resolves the open ones.
+      const decidedOutcome = classified.outcome === 'block-defect' ? 'block' : classified.outcome === 'pass' || classified.outcome === 'block-advisory' || classified.outcome === 'routed-skip' ? 'pass' : 'no-verdict';
+      const found = this.applyFindings(run, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' ? classified.reasons : [] });
+      run = found.run;
+      this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved } });
     }
     if (classified.outcome === 'quota-hold') {
       this.queue.hold(reviewKey, new Date(Date.parse(now) + 15 * 60 * 1000).toISOString(), 'reviewer reported rate limit/quota', now);
@@ -870,7 +977,7 @@ export class CardRunner {
     switch (result.outcome) {
       case 'review-blocked': {
         if (reviewDecision?.action === 'stop-review') {
-          const stop = makeStop('review', reviewDecision.detail, 'return the PR and retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+          const stop = makeStop('review', this.withContest(reviewDecision.detail, run.findings), 'return the PR and retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
           const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
           return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         }

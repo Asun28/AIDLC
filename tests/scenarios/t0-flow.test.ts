@@ -1103,7 +1103,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     run = runner.recordAttempt(g(), card, round1.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'build', r.directive.narration);
-    assert.match(r.directive.narration, /open finding.*F1, F2/s);
+    assert.match(r.directive.narration, /open finding.*F1, F2/is);
     assert.match(r.directive.narration, /aidlc review dispute T1-FIND/);
     assert.deepEqual(runner.listFindings(r.run).map((f) => f.id), ['F1', 'F2']);
 
@@ -1151,8 +1151,8 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     const round3 = await runner.preReview(g(), card, run);
     assert.equal(round3.result.outcome, 'block');
     const f1b = round3.run.findings.find((f) => f.id === 'F1')!;
-    assert.equal(f1b.disputes.length, 2);
-    assert.equal(f1b.reraised.length, 2);
+    assert.equal(f1b.disputes.length, 3, 'the withdrawn dispute stays in the history');
+    assert.deepEqual(f1b.reraised.map((x) => x.answeredDispute), [true, true], 'two rounds of mutual non-acceptance');
     assert.throws(() => runner.disputeFinding(g(), card, round3.run, 'F1', 'a third answer'), /human ruling/);
     run = runner.recordAttempt(g(), card, round3.run, { outcome: 'success', dodReceipt: 'dod:1d', redReceipt: 'red:1', candidateSha: 'sha-1' });
     const strict = mk('stop');
@@ -1213,15 +1213,16 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     assert.equal(r.directive.kind, 'build', 'the repair attempt opens');
     run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r = runner.next(g(), card, run);
-    assert.equal(r.directive.kind, 'review-fix', `an undisputed block on the unchanged candidate stays pending: ${r.directive.narration}`);
-    assert.match(r.directive.narration, /F1, F2/);
+    assert.equal(r.directive.kind, 'build', `an undisputed block on the unchanged candidate stays pending as a repair: ${r.directive.narration}`);
+    assert.equal(r.run.state, 'REVIEW_FIX');
+    assert.match(r.directive.narration, /open finding.*F1, F2.*aidlc review dispute T1-FR3/is);
 
     // Every finding disputed: the block is no longer pending, the earlier R2 pass still counts, and decision 2 runs on the unchanged candidate with the notes.
     run = runner.disputeFinding(g(), card, r.run, 'F1', 'acceptance 1 names the helper; it is exercised by tests/t1-fr3.test.ts');
     run = runner.disputeFinding(g(), card, run, 'F2', 'the error is rethrown at line 12');
-    run = runner.recordAttempt(g(), card, run, { outcome: 'success', dodReceipt: 'dod:1c', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r = runner.next(g(), card, run);
     assert.equal(r.directive.kind, 'review', r.directive.narration);
+    assert.match(r.directive.narration, /disputed/);
     if (r.directive.kind === 'review') assert.equal(r.directive.decision, 2);
     assert.equal(r2Runs, 1, 'no second pre-review round for a candidate that already holds its pass');
     r3.push('{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: the helper is not in the acceptance list (re:F1) -> remove it"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 14 scope fidelity @ src/t1-fr3.ts:3: the helper is not in the acceptance list (re:F1) -> remove it"]},"standards":{"verdict":"pass","reasons":[]}}}\n');

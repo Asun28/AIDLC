@@ -200,7 +200,7 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     const f1 = r.findings.find((f) => f.id === 'F1')!;
     assert.equal(f1.disposition, 'open', 'a re-raise rejects the dispute');
     assert.equal(f1.disputes.length, 1, 'the dispute stays in the history');
-    assert.deepEqual(f1.reraised.map((x) => ({ stage: x.stage, round: x.round, at: x.at })), [{ stage: 'pre', round: 2, at: LATEST }]);
+    assert.deepEqual(f1.reraised.map((x) => ({ stage: x.stage, round: x.round, at: x.at, answeredDispute: x.answeredDispute })), [{ stage: 'pre', round: 2, at: LATEST, answeredDispute: true }]);
     assert.match(f1.reraised[0]!.reason, /asserts nothing/);
     assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x (re: F12) -> y'), 'F12');
     assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x -> y'), undefined);
@@ -253,13 +253,16 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.deepEqual(policy.rerunAllowed(f, { stage: 'formal', round: 1 }), { allowed: true, open: [] }, 'a round that raised nothing has nothing open');
   });
 
-  test('deadlockedFindings names a finding disputed twice and re-raised twice, and a third dispute is refused', () => {
+  test('deadlockedFindings names a finding disputed twice and re-raised twice, a re-raise of an open finding is not non-acceptance, and a third dispute is refused', () => {
     let f = raise([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']);
-    f = policy.disputeFinding(f, 'F1', 'first answer', LATER);
     f = raise(f, 2, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one']);
-    assert.deepEqual(policy.deadlockedFindings(f), []);
-    f = policy.disputeFinding(f, 'F1', 'second answer', LATER);
+    assert.equal(policy.nonAcceptanceRounds(f[0]!), 0, 'a re-raise of an open finding answered no dispute');
+    f = policy.disputeFinding(f, 'F1', 'first answer', LATER);
     f = raise(f, 3, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one']);
+    assert.deepEqual(policy.deadlockedFindings(f), []);
+    assert.deepEqual(policy.contestedFindings(f).map((x) => x.id), ['F1']);
+    f = policy.disputeFinding(f, 'F1', 'second answer', LATER);
+    f = raise(f, 4, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one']);
     assert.deepEqual(policy.deadlockedFindings(f).map((x) => x.id), ['F1']);
     assert.throws(() => policy.disputeFinding(f, 'F1', 'third answer', LATER), /human ruling/);
     assert.match(policy.describeDeadlock(f), /F1 .*disputed twice.*re-raised twice/);

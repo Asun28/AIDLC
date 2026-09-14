@@ -10,7 +10,7 @@
  *   own counter is tracked separately and never rewritten.
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
-import { MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
+import { MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
 
@@ -202,4 +202,172 @@ export function findingMarker(cardId: string, prNumber: number | undefined, sha:
     .replace(/^-|-$/g, '')
     .slice(0, 48);
   return `aidlc-finding:${cardId}:${prNumber ?? 'nopr'}:${sha.slice(0, 12)}:${slug}`;
+}
+
+// ---------------------------------------------------------------------------
+// Review findings: identity, dispositions, re-raises (T1-REVIEW-FINDINGS)
+// ---------------------------------------------------------------------------
+
+/** `re:F<n>` (a space after the colon is accepted) anywhere in a reason names the prior finding it re-raises. */
+const FINDING_REFERENCE = /\bre:\s?(F\d+)\b/i;
+
+/** `@ <path>[:line[-line]]`: the path is any run of non-space characters (dot-leading and non-ASCII included) up to an optional `:line`. */
+export const FINDING_LOCATION = /@\s*([^\s@:]+)(?::\d+(?:-\d+)?)?/u;
+
+export function findingReference(reason: string): string | undefined {
+  const m = FINDING_REFERENCE.exec(reason);
+  return m ? m[1]!.toUpperCase() : undefined;
+}
+
+/** The changed file a reason cites, normalised to posix separators without a leading `./`. */
+export function findingLocation(reason: string): string | undefined {
+  const m = FINDING_LOCATION.exec(reason);
+  if (!m) return undefined;
+  const file = m[1]!.replace(/\\/g, '/').replace(/^\.\//, '');
+  return /[\p{L}\p{N}]/u.test(file) ? file : undefined;
+}
+
+export interface RecordFindingsInput {
+  stage: FindingStage;
+  cycle?: number;
+  round: number;
+  candidateSha?: string;
+  at: string;
+  /** A decided outcome (pass or block) resolves the stage's open findings the round did not re-raise; anything else records nothing. */
+  outcome: 'pass' | 'block' | 'no-verdict' | 'quota-hold';
+  /** The cited block reasons, as the aggregated verdict carries them (a panel tags each with ` (<perspective>)`). */
+  reasons: string[];
+  /** Panel angle names: a trailing `(<name>)` on a reason is the angle that raised it. */
+  perspectives?: string[];
+  /** Paths changed since the last reviewed candidate; a new finding citing a file outside them is a first-round miss. Empty = no change. */
+  deltaPaths?: string[];
+}
+
+export interface RecordFindingsResult {
+  findings: ReviewFinding[];
+  /** Ids of the new findings, in reason order. */
+  raised: string[];
+  /** Ids of the prior findings this round re-raised. */
+  reraised: string[];
+  /** Ids resolved by this round (same stage, open or disputed, not re-raised). */
+  resolved: string[];
+}
+
+const nextFindingId = (findings: ReviewFinding[]): string => `F${findings.reduce((n, f) => Math.max(n, Number(f.id.slice(1)) || 0), 0) + 1}`;
+
+const normalisePath = (p: string): string => p.replace(/\\/g, '/').replace(/^\.\//, '');
+
+/**
+ * Record the findings of one round or decision. Each cited reason without a known `re:F<n>` reference
+ * becomes a new finding; a reason that references a prior finding is a re-raise of it (the finding
+ * returns to open, the dispute history stays). A decided round resolves the stage's other open or
+ * disputed findings. Rounds without a verdict change nothing.
+ */
+export function recordFindings(findings: ReviewFinding[], input: RecordFindingsInput): RecordFindingsResult {
+  if (input.outcome !== 'pass' && input.outcome !== 'block') return { findings, raised: [], reraised: [], resolved: [] };
+  let next = findings.map((f) => ({ ...f }));
+  const raised: string[] = [];
+  const reraised: string[] = [];
+  const delta = input.deltaPaths?.map(normalisePath);
+  for (const reason of input.reasons) {
+    const ref = findingReference(reason);
+    const prior = ref ? next.find((f) => f.id === ref) : undefined;
+    if (prior) {
+      if (!reraised.includes(prior.id)) {
+        reraised.push(prior.id);
+        prior.reraised = [...prior.reraised, { stage: input.stage, cycle: input.cycle, round: input.round, candidateSha: input.candidateSha, at: input.at, reason, answeredDispute: prior.disposition === 'disputed' }];
+        prior.disposition = 'open';
+        prior.resolvedAt = undefined;
+      }
+      continue;
+    }
+    const id = nextFindingId(next);
+    const file = findingLocation(reason);
+    const perspective = input.perspectives?.find((p) => reason.trimEnd().endsWith(`(${p})`));
+    const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective, reason, file, candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [] };
+    if (delta !== undefined) finding.outsideDelta = !file || !delta.includes(normalisePath(file));
+    next = [...next, finding];
+    raised.push(id);
+  }
+  const resolved: string[] = [];
+  for (const f of next) {
+    if (f.stage !== input.stage || f.resolvedAt || raised.includes(f.id) || reraised.includes(f.id)) continue;
+    f.resolvedAt = input.at;
+    resolved.push(f.id);
+  }
+  return { findings: next, raised, reraised, resolved };
+}
+
+const findingOrThrow = (findings: ReviewFinding[], id: string): ReviewFinding => {
+  const f = findings.find((x) => x.id === id.toUpperCase());
+  if (!f) throw new Error(`no finding ${id} on this card run (aidlc review findings <card> lists them)`);
+  return f;
+};
+
+/** Rounds of mutual non-acceptance: re-raises that answered a dispute (a withdrawn dispute never reached a reviewer). */
+export function nonAcceptanceRounds(f: ReviewFinding): number {
+  return f.reraised.filter((r) => r.answeredDispute).length;
+}
+
+/** Findings disputed twice and re-raised twice: two rounds of mutual non-acceptance, a human ruling. */
+export function deadlockedFindings(findings: ReviewFinding[]): ReviewFinding[] {
+  return findings.filter((f) => nonAcceptanceRounds(f) >= 2);
+}
+
+/** Findings re-raised after a dispute at least once. */
+export function contestedFindings(findings: ReviewFinding[]): ReviewFinding[] {
+  return findings.filter((f) => nonAcceptanceRounds(f) >= 1);
+}
+
+const times = (n: number): string => (n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`);
+
+/** One sentence naming the deadlocked findings, empty when there are none. */
+export function describeDeadlock(findings: ReviewFinding[]): string {
+  const dead = deadlockedFindings(findings);
+  if (!dead.length) return '';
+  return `deadlock: ${dead.map((f) => `${f.id} (${f.reason}) disputed ${times(nonAcceptanceRounds(f))} and re-raised ${times(nonAcceptanceRounds(f))}`).join('; ')}; human ruling needed`;
+}
+
+/** One sentence naming the findings re-raised after a dispute, empty when there are none. */
+export function describeContested(findings: ReviewFinding[]): string {
+  const contested = contestedFindings(findings);
+  if (!contested.length) return '';
+  return contested.map((f) => `${f.id} re-raised after the author's dispute (${f.reason})`).join('; ');
+}
+
+/**
+ * The author disputes an open finding with a note. A second dispute needs a re-raise in between; a
+ * finding disputed twice and re-raised twice is a deadlock that only a human ruling settles.
+ */
+export function disputeFinding(findings: ReviewFinding[], id: string, note: string, at: string): ReviewFinding[] {
+  const f = findingOrThrow(findings, id);
+  if (!note.trim()) throw new Error(`a dispute needs a note: why ${f.id} does not hold`);
+  if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to dispute`);
+  if (f.disposition === 'disputed') throw new Error(`${f.id} is already disputed; wait for the next round to answer it`);
+  if (nonAcceptanceRounds(f) >= 2) throw new Error(`${f.id} was disputed twice and re-raised twice: a human ruling is needed, not a third dispute`);
+  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim() }] } : x));
+}
+
+/** The author withdraws a dispute: the finding returns to open; the note stays in the history. */
+export function acceptFinding(findings: ReviewFinding[], id: string, _at: string): ReviewFinding[] {
+  const f = findingOrThrow(findings, id);
+  if (f.disposition !== 'disputed') throw new Error(`${f.id} is not disputed; nothing to withdraw`);
+  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'open' as const } : x));
+}
+
+/** The findings a round or decision raised or re-raised. */
+export function findingsOfRound(findings: ReviewFinding[], round: { stage: FindingStage; cycle?: number; round: number }): ReviewFinding[] {
+  const inRound = (stage: FindingStage, cycle: number | undefined, n: number) => stage === round.stage && n === round.round && (stage === 'formal' || (cycle ?? 0) === (round.cycle ?? 0));
+  return findings.filter((f) => inRound(f.stage, f.cycle, f.round) || f.reraised.some((r) => inRound(r.stage, r.cycle, r.round)));
+}
+
+/**
+ * Same-candidate rule: a candidate that a round blocked is re-reviewed unchanged only when every finding
+ * of that block is disputed, so the reviewer receives new information and never the same snapshot twice.
+ */
+export function rerunAllowed(findings: ReviewFinding[], round: { stage: FindingStage; cycle?: number; round: number }): { allowed: boolean; open: string[] } {
+  const open = findingsOfRound(findings, round)
+    .filter((f) => f.disposition !== 'disputed' && !f.resolvedAt)
+    .map((f) => f.id);
+  return { allowed: open.length === 0, open };
 }

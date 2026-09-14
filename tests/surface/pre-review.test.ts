@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { aggregateVerdicts, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
+import { aggregateVerdicts, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -128,7 +128,7 @@ test('formal review (R3) command: placeholders expand, the prompt is passed in a
 test('panel: perspectives run concurrently with their own prompt section and files, the round verdict aggregates quota > block > no-verdict > pass, and a non-zero exit never passes', async () => {
   const { dir, card } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
-  const base = { reviewPolicy: 'policy', card, base: 'main', head: 'h', changedPaths: [] as string[], diff: 'd', truncated: false, priorFindings: [] as string[] };
+  const base = { reviewPolicy: 'policy', card, base: 'main', head: 'h', changedPaths: [] as string[], diff: 'd', truncated: false, priorFindings: [] as PriorFinding[] };
   const secPrompt = buildReviewPrompt({ ...base, stage: 'pre', includeDiff: true, perspective: 'security', round: 1, maxRounds: 3 });
   assert.ok(secPrompt.includes('## This pass: security'), 'perspective section');
   assert.ok(/injection|credential|PII/i.test(secPrompt), 'security guidance');

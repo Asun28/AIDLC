@@ -295,6 +295,52 @@ export const PreReviewLedger = z.object({
 });
 export type PreReviewLedger = z.infer<typeof PreReviewLedger>;
 
+// Review findings: one record per cited block reason, with a stable id (`F<n>`, sequential per card run)
+// that later rounds reference with `re:F<n>`. Dispositions are the author's recorded answers; a re-raise
+// by a later round returns the finding to open; a decided later round of the same stage that does not
+// re-raise it resolves it.
+export const FindingStage = z.enum(['pre', 'formal']);
+export type FindingStage = z.infer<typeof FindingStage>;
+
+export const FindingDisposition = z.enum(['open', 'disputed']);
+export type FindingDisposition = z.infer<typeof FindingDisposition>;
+
+export const ReviewFinding = z.object({
+  id: z.string().regex(/^F\d+$/),
+  stage: FindingStage,
+  /** Pre-review cycle (the R3 blocks so far when the round ran); absent on formal findings. */
+  cycle: z.number().int().nonnegative().optional(),
+  /** Pre-review round or formal decision number that raised it. */
+  round: z.number().int().positive(),
+  perspective: z.string().optional(),
+  reason: z.string().min(1),
+  /** The changed file the reason cites (`@ file[:line]`). */
+  file: z.string().optional(),
+  candidateSha: z.string().optional(),
+  raisedAt: IsoTimestamp,
+  disposition: FindingDisposition.default('open'),
+  disputes: z.array(z.object({ at: IsoTimestamp, note: z.string().min(1) })).default([]),
+  reraised: z
+    .array(
+      z.object({
+        stage: FindingStage,
+        cycle: z.number().int().nonnegative().optional(),
+        round: z.number().int().positive(),
+        candidateSha: z.string().optional(),
+        at: IsoTimestamp,
+        reason: z.string(),
+        /** The finding was disputed when this round re-raised it: one round of mutual non-acceptance. */
+        answeredDispute: z.boolean().default(false),
+      }),
+    )
+    .default([]),
+  /** Set by the first decided later round of the same stage that did not re-raise it. */
+  resolvedAt: IsoTimestamp.optional(),
+  /** The cited file lies outside the delta since the last reviewed candidate: a first-round miss. */
+  outsideDelta: z.boolean().optional(),
+});
+export type ReviewFinding = z.infer<typeof ReviewFinding>;
+
 // ---------------------------------------------------------------------------
 // CI
 // ---------------------------------------------------------------------------
@@ -552,6 +598,8 @@ export const CardRun = z.object({
   pr: PrInfo.optional(),
   review: ReviewLedger.prefault({}),
   preReview: PreReviewLedger.prefault({}),
+  /** Every cited block reason of this run, with its disposition and re-raise history. */
+  findings: z.array(ReviewFinding).default([]),
   ci: CiLedger.prefault({}),
   effort: EffortEpisode.optional(),
   redReceipt: z.string().optional(),
@@ -711,6 +759,8 @@ export const JournalEventType = z.enum([
   'REVIEW_DECIDED',
   'REVIEW_HOLD',
   'PRE_REVIEW_DECIDED',
+  'FINDING_DISPUTED',
+  'FINDING_ACCEPTED',
   'CI_CLASSIFIED',
   'CI_RERUN',
   'OPERATION_INTENT',

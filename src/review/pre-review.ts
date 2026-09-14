@@ -16,8 +16,8 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { detectQuotaHold, parseVerdict } from '../core/review-policy.ts';
-import type { Card, PreReviewOutcome, RunStatus, Verdict } from '../core/types.ts';
+import { detectQuotaHold, findingLocation, parseVerdict } from '../core/review-policy.ts';
+import type { Card, FindingDisposition, PreReviewOutcome, RunStatus, Verdict } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 
 export interface ReviewPromptInput {
@@ -34,12 +34,36 @@ export interface ReviewPromptInput {
   changedPaths: string[];
   diff: string;
   truncated: boolean;
-  /** Findings the reviewer must verify as resolved: the previous round's block, or the R3 reasons. */
-  priorFindings: string[];
+  /** The run's open and disputed findings: open ones are verified as resolved, disputed ones are re-raised only with new evidence. */
+  priorFindings: PriorFinding[];
   round: number;
   maxRounds: number;
 }
 export type PreReviewPromptInput = Omit<ReviewPromptInput, 'stage' | 'includeDiff' | 'perspective'>;
+
+/** A prior finding as the prompt renders it; `origin` names the round or decision that raised it. */
+export interface PriorFinding {
+  id: string;
+  reason: string;
+  disposition: FindingDisposition;
+  /** The author's latest dispute note. */
+  note?: string;
+  origin: string;
+}
+
+/** The `## Prior findings` lines: the reference syntax, then one line per finding with its disposition and the move it asks of the reviewer. */
+export function renderPriorFindings(findings: PriorFinding[]): string[] {
+  if (!findings.length) return ['- none (first round of this cycle)'];
+  const lines = ['Each prior finding has an id. To re-raise one, put `re:F<n>` in the reason (for example `... -> fix (re:F2)`); a reason without a reference is a new finding.'];
+  for (const f of findings) {
+    if (f.disposition === 'disputed') {
+      lines.push(`- ${f.id} (disputed by the author: "${(f.note ?? '').replace(/\s+/g, ' ').trim()}"; ${f.origin}): ${f.reason} -> re-raise with re:${f.id} only with evidence the note does not answer; otherwise omit it.`);
+    } else {
+      lines.push(`- ${f.id} (open; ${f.origin}): ${f.reason} -> verify it is resolved in this candidate; re-raise with re:${f.id} if it is not.`);
+    }
+  }
+  return lines;
+}
 
 export const VERDICT_CONTRACT =
   '{"verdict":"pass|block","reasons":["[spec|standards] <dimension> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}';
@@ -147,7 +171,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   if (c.forbid?.length) lines.push(`- forbid: ${c.forbid.join('; ')}`);
   if (c.diagnosis) lines.push(`- diagnosis.root_cause: ${c.diagnosis.root_cause}`);
   lines.push(`- tdd: ${c.tdd}`, `- dod_command: ${c.dod_command}`, '- acceptance (closed list):', ...c.acceptance.map((a) => `  ${a}`));
-  lines.push('', '## Findings to verify', ...(i.priorFindings.length ? i.priorFindings.map((f) => `- ${f}`) : ['- none (first round of this cycle)']));
+  lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings));
   lines.push('', '## Candidate', `- base: ${i.base}`, `- head: ${i.head}`, `- changed paths (${i.changedPaths.length}): ${i.changedPaths.join(', ') || 'none'}`);
   if (i.includeDiff) {
     if (i.truncated) lines.push('- note: the diff was truncated to the configured byte cap; judge what is shown and say so in reasons if it matters.');
@@ -194,16 +218,11 @@ export interface PreReviewClassification {
   advisory?: string[];
 }
 
-/** `@ <path>[:line[-line]]`: the path is any run of non-space characters (dot-leading and non-ASCII included) up to an optional `:line`. */
-const LOCATION = /@\s*([^\s@:]+)(?::\d+(?:-\d+)?)?/u;
-
-/** A reason is cited when it carries an axis tag and a location that names a file, one of the changed paths when they are known. */
+/** A reason is cited when it carries an axis tag and a location that names a file (`findingLocation`), one of the changed paths when they are known. */
 export function citedReason(reason: string, changedPaths?: string[]): boolean {
   if (!/^\s*\[(spec|standards)\]/i.test(reason)) return false;
-  const m = LOCATION.exec(reason);
-  if (!m) return false;
-  const file = m[1]!.replace(/\\/g, '/').replace(/^\.\//, '');
-  if (!/[\p{L}\p{N}]/u.test(file)) return false; // punctuation such as "->" is not a file
+  const file = findingLocation(reason); // punctuation such as "->" is not a file
+  if (!file) return false;
   if (!changedPaths) return true;
   return changedPaths.some((p) => p.replace(/\\/g, '/').replace(/^\.\//, '') === file);
 }
