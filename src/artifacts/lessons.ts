@@ -2,10 +2,10 @@
  * Lessons (`docs/LESSONS.md`): the frozen line format, an append-only writer and the reader
  * PREPARE uses. One dated line per lesson, written at CLOSE only when a review block or an
  * incident taught a rule the playbook did not state. Existing bytes are never rewritten: the
- * file is created exclusively from an embedded header when missing, and every lesson is one
- * literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
+ * file is created by one exclusive append of the embedded header and the first line, and every
+ * lesson is one literal appended line. The `- (none yet)` placeholder of a fresh file is not a lesson; it stays.
  */
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, writeSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const LESSONS_FILE = 'docs/LESSONS.md';
@@ -99,9 +99,10 @@ export function hasLesson(file: string, line: string): boolean {
 }
 
 /**
- * Append one line. A missing file is created exclusively from the embedded header (a concurrent creator
- * loses the race and appends instead); existing bytes are never rewritten, and the append is one literal
- * write, so no character of the rule is interpreted.
+ * Append one line. Every write opens the file in append mode, so no writer can overwrite another: a missing
+ * file gets its header and first line in one exclusive append (a concurrent creator loses the race and appends
+ * its line instead), an existing file gets one literal appended line, and the only race left is the newline
+ * placed before a line, worth at most one blank line.
  */
 export function appendLesson(file: string, entry: LessonEntry): string {
   const problem = lessonProblem(entry);
@@ -109,18 +110,13 @@ export function appendLesson(file: string, entry: LessonEntry): string {
   const line = formatLesson(entry);
   mkdirSync(path.dirname(file), { recursive: true });
   try {
-    const fd = openSync(file, 'wx');
-    try {
-      writeSync(fd, `${HEADER}${line}\n`);
-    } finally {
-      closeSync(fd);
-    }
+    appendFileSync(file, `${HEADER}${line}\n`, { flag: 'ax' });
     return line;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
   }
   const current = readFileSync(file, 'utf8');
-  appendFileSync(file, `${current.length > 0 && !current.endsWith('\n') ? '\n' : ''}${line}\n`, 'utf8');
+  appendFileSync(file, `${current.length > 0 && !current.endsWith('\n') ? '\n' : ''}${line}\n`, { flag: 'a' });
   return line;
 }
 

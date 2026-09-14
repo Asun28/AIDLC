@@ -1,6 +1,6 @@
 import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -96,6 +96,16 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     const file = path.join(dir(), 'LESSONS.md');
     writeFileSync(file, '## Lessons\n- 2026-02-30 T1: NEVER impossible (source: x)\n- 2026-09-14 T1: NEVER    (source: x)\n' + LINE + '\n', 'utf8');
     assert.deepEqual(readLessons(file), { file, count: 1, recent: [LINE] }, 'malformed lines are neither counted nor recent');
+  });
+
+  test('a concurrent creator that has not written yet loses nothing: every write is an append', () => {
+    const file = path.join(dir(), 'LESSONS.md');
+    closeSync(openSync(file, 'wx')); // another closer created the file and has not written its header yet
+    appendLesson(file, ENTRY);
+    appendLesson(file, { ...ENTRY, rule: 'second' });
+    const text = readFileSync(file, 'utf8');
+    assert.ok(text.startsWith(LINE + '\n'), text);
+    assert.equal(readLessons(file).count, 2, 'both lines survive');
   });
 
   test('reading a missing file is an empty context; recent is capped', () => {

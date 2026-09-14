@@ -90,6 +90,12 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     const retried = runner.markClosure(fx.goal(goal.id), card, run3, { lessons: true }, { lessonText: 'NEVER ship without the lesson step (source: T1-HELLO review)' });
     assert.equal(retried.closure.lessons, true);
     assert.equal(readFileSync(lessonsFile, 'utf8').split('\n').filter((l) => l.startsWith('- ')).length, 1, 'a retry recognises the completed append and writes no second line');
+    // A retry on another date reuses the pending line: a runner whose clock reads yesterday retries the same rule.
+    const yesterday = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: () => addMs(T0, -86_400_000) });
+    const rolled = yesterday.markClosure(fx.goal(goal.id), card, run3, { lessons: true }, { lessonText: 'NEVER ship without the lesson step (source: T1-HELLO review)' });
+    assert.equal(rolled.closure.lessons, true);
+    assert.equal(readFileSync(lessonsFile, 'utf8').split('\n').filter((l) => l.startsWith('- ')).length, 1, 'a retry on another date reuses the pending line instead of dating a new one');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'EVIDENCE_RETAINED').at(-1)?.data['lesson'], `- ${T0.slice(0, 10)} T1-HELLO: NEVER ship without the lesson step (source: T1-HELLO review)`, 'the recorded line keeps its original date');
     r = runner.next(fx.goal(goal.id), card, run3);
     assert.equal(r.directive.kind, 'done');
     assert.equal(r.run.state, 'DONE');

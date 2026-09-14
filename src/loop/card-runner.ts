@@ -25,7 +25,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult } from '../review/pre-review.ts';
@@ -1058,11 +1058,21 @@ export class CardRunner {
       if (disposition.lessonText && disposition.skipped) throw new Error('record either a lesson or a reason to skip, not both');
       if (disposition.lessonText) {
         const entry = lessonFromText(disposition.lessonText, card.id, now.slice(0, 10));
-        const line = formatLesson(entry);
         const file = this.lessonsFile();
+        // A retry reuses the line an earlier call journaled as pending for the same rule, so a date rollover between the
+        // append and its record never dates a second line; the pending line is appended when the first append never landed.
+        const pending = this.journal(goal.id)
+          .filter((e) => e.type === 'EVIDENCE_RETAINED' && e.cardId === card.id && typeof e.data['lessonPending'] === 'string')
+          .map((e) => String(e.data['lessonPending']))
+          .reverse()
+          .find((l) => {
+            const p = parseLessonLine(l);
+            return p !== undefined && p.ref === entry.ref && p.kind === entry.kind && p.rule === entry.rule && p.source === entry.source;
+          });
+        const line = pending ?? formatLesson(entry);
         if (!hasLesson(file, line)) {
-          this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
-          appendLesson(file, entry);
+          if (!pending) this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
+          appendLesson(file, parseLessonLine(line) ?? entry);
         }
         data['lesson'] = line;
       } else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
