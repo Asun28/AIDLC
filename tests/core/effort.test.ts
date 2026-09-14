@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  reopenAfterReviewBlock,
   EFFORT_LADDERS,
   MAX_BASELINE_ATTEMPTS,
   MAX_COUNTED_ATTEMPTS,
@@ -119,6 +120,92 @@ describe('effort episodes (MA2 / Q25)', () => {
     assert.equal(countedAttempts(ep).length, 0);
     assert.deepEqual(nextEffortAction(ep), { action: 'attempt', effort: 'medium', n: 1, escalated: false });
     assert.equal(ep.escalationUsed, false);
+  });
+
+  test('R12: only DoD failures count toward the ladder; a review-blocked success reopens the episode without spending an attempt', () => {
+    let ep = createEpisode('t', 'implementer', 'medium', GPT);
+    for (let i = 0; i < 4; i++) {
+      ep = startAttempt(ep, 'medium', T0);
+      ep = finishAttempt(ep, { finishedAt: T0, outcome: 'success', progress: true });
+      assert.equal(ep.terminal, 'succeeded');
+      ep = reopenAfterReviewBlock(ep, `review block ${i + 1}`);
+      assert.equal(ep.terminal, undefined);
+      assert.equal(ep.attempts.at(-1)?.outcome, 'success', 'the blocked attempt keeps its success');
+    }
+    assert.equal(countedAttempts(ep).length, 0, 'successes are not counted attempts');
+    const next = nextEffortAction(ep);
+    assert.equal(next.action, 'attempt');
+    if (next.action === 'attempt') {
+      assert.equal(next.effort, 'medium', 'still a baseline attempt after four review blocks');
+      assert.equal(next.n, 5, 'attempt numbers stay sequential');
+    }
+    // The same episode keeps three baseline failures and one justified escalation for real DoD failures.
+    for (const [cause, n] of [['a', 6], ['b', 7]] as Array<[string, number]>) {
+      ep = startAttempt(ep, 'medium', T0);
+      ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause, progress: true });
+      assert.equal(ep.terminal, undefined);
+      assert.deepEqual(nextEffortAction(ep), { action: 'attempt', effort: 'medium', n, escalated: false });
+    }
+    ep = startAttempt(ep, 'medium', T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause: 'c', progress: true });
+    assert.equal(countedAttempts(ep).length, MAX_BASELINE_ATTEMPTS, 'three DoD failures on the reopened episode');
+    assert.equal(nextEffortAction(ep).action, 'stop', 'the fourth attempt needs a justification');
+    assert.deepEqual(nextEffortAction(ep, JUSTIFIED), { action: 'attempt', effort: 'high', n: 8, escalated: true });
+    ep = startAttempt(ep, 'high', T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause: 'd', progress: true });
+    assert.equal(countedAttempts(ep).length, MAX_COUNTED_ATTEMPTS);
+    assert.equal(ep.terminal, 'escalation-failed', 'four DoD failures end the episode; the review blocks never counted');
+    assert.equal(nextEffortAction(ep, JUSTIFIED).action, 'stop');
+    let failing = createEpisode('u', 'implementer', 'medium', GPT);
+    for (const cause of ['a', 'b', 'c']) {
+      failing = startAttempt(failing, 'medium', T0);
+      failing = finishAttempt(failing, { finishedAt: T0, outcome: 'fail', cause, progress: false });
+    }
+    assert.equal(countedAttempts(failing).length, 3);
+    assert.equal(nextEffortAction(failing).action, 'stop', 'three DoD failures without progress still stop the episode');
+  });
+
+  test('R10/R11: a review block on the escalated success admits the repair at the escalated effort, not escalation-failed', () => {
+    let ep = createEpisode('v', 'implementer', 'medium', GPT);
+    for (const cause of ['a', 'b', 'c']) {
+      ep = startAttempt(ep, 'medium', T0);
+      ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause, progress: true });
+    }
+    const up = nextEffortAction(ep, JUSTIFIED);
+    assert.equal(up.action, 'attempt');
+    if (up.action !== 'attempt') return;
+    ep = startAttempt(ep, up.effort, T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'success', progress: true });
+    ep = reopenAfterReviewBlock(ep, 'R3 block');
+    const repair = nextEffortAction(ep);
+    assert.deepEqual(repair, { action: 'attempt', effort: up.effort, n: 5, escalated: true });
+  });
+
+  test('R10/R11: not-counted records after a review block never hide the reopened success', () => {
+    let ep = createEpisode('w', 'implementer', 'medium', GPT);
+    for (const cause of ['a', 'b', 'c']) {
+      ep = startAttempt(ep, 'medium', T0);
+      ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause, progress: true });
+    }
+    ep = startAttempt(ep, 'high', T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'success', progress: true });
+    ep = reopenAfterReviewBlock(ep, 'R3 block');
+    ep = startAttempt(ep, 'high', T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'not-counted', notCountedReason: 'quota' });
+    assert.equal(countedAttempts(ep).length, 3, 'the interruption is not a DoD failure');
+    assert.deepEqual(nextEffortAction(ep), { action: 'attempt', effort: 'high', n: 5, escalated: true }, 'the repair resumes at the escalated effort after the interruption');
+  });
+
+  test('R12: a preserved success between two same-cause failures breaks the same-cause streak', () => {
+    let ep = fail(createEpisode('x', 'implementer', 'medium', GPT), 1, 'type error in a.ts', false);
+    ep = startAttempt(ep, 'medium', T0);
+    ep = finishAttempt(ep, { finishedAt: T0, outcome: 'success', progress: true });
+    ep = reopenAfterReviewBlock(ep, 'R2 block');
+    ep = fail(ep, 3, 'type error in a.ts', false);
+    assert.equal(ep.terminal, undefined, 'the two failures are not consecutive');
+    assert.deepEqual(nextEffortAction(ep), { action: 'attempt', effort: 'medium', n: 4, escalated: false });
+    ep = fail(ep, 4, 'type error in a.ts', false);
+    assert.equal(ep.terminal, 'same-cause-stop', 'two consecutive same-cause failures without progress still stop');
   });
 
   test('success terminates the episode as done', () => {

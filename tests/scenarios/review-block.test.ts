@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { countedFailures } from '../../src/core/effort.ts';
 import type { Verdict } from '../../src/core/types.ts';
 
 const BLOCK: Verdict = {
@@ -42,6 +43,15 @@ test('Q6: a Tier-S spec block is merge-blocking and routes to REVIEW_FIX with on
     const types = fx.events(goal.id).map((e) => e.type);
     assert.ok(types.includes('REVIEW_DECIDED'));
     assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the review slot is released after the decision');
+    assert.equal(r.run.effort?.attempts.at(-1)?.outcome, 'success', 'the blocked attempt keeps its success; the R3 decision paid for the block');
+    assert.equal(r.run.effort?.terminal, undefined, 'the episode is reopened for the repair');
+    assert.equal(countedFailures(r.run.effort!).length, 0, 'no DoD failure was recorded');
+    const repair = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(repair.directive.kind, 'build');
+    if (repair.directive.kind === 'build') {
+      assert.equal(repair.directive.effort, 'medium', 'the repair runs at the effort that succeeded');
+      assert.equal(repair.directive.attempt, 2);
+    }
   } finally {
     fx.cleanup();
   }
@@ -78,6 +88,44 @@ test('Q6: after REVIEW_FIX a repaired candidate ships once more; a second substa
     assert.equal(r.run.review.substantiveDecisions, 2);
     assert.equal(r.run.review.substantiveBlocks, 2);
     assert.equal(ship.requests.length, 2, 'no third ship request');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R11: a ship-path review block on the escalated success reopens the episode and repairs at the escalated effort', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const ship = new DryRunShipPath(['review-blocked', 'merged'], BLOCK);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    let run = r.run;
+    for (const cause of ['type error in hello.ts', 'assertion in hello.test.ts', 'timeout in hello.test.ts']) {
+      r = runner.next(fx.goal(goal.id), card, run);
+      assert.equal(r.directive.kind, 'build');
+      run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause, progress: true });
+    }
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.equal(r.directive.effort, 'high', 'the fourth attempt is the single escalation');
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:4', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'review-fix', r.directive.narration);
+    assert.equal(r.run.effort?.attempts.at(-1)?.outcome, 'success', 'the escalated success is preserved');
+    assert.equal(r.run.effort?.terminal, undefined, 'the episode is reopened');
+    assert.equal(countedFailures(r.run.effort!).length, 3, 'the failure count is unchanged by the block');
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build', `the repair is admitted, not escalation-failed: ${r.directive.narration}`);
+    if (r.directive.kind === 'build') {
+      assert.equal(r.directive.effort, 'high', 'the repair runs at the escalated effort');
+      assert.equal(r.directive.attempt, 5);
+    }
+    const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:5', redReceipt: 'red:4', candidateSha: 'sha-repaired' });
+    assert.equal(repaired.effort?.terminal, 'succeeded');
+    assert.equal(countedFailures(repaired.effort!).length, 3);
   } finally {
     fx.cleanup();
   }
