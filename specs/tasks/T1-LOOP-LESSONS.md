@@ -26,7 +26,7 @@ requirements:
 acceptance:
   - 1. `src/artifacts/lessons.ts` validates the frozen line format (`- YYYY-MM-DD <ref>: NEVER|ALWAYS|NOTE <rule> (source: <ref>)`), appends one line per call without rewriting past lines, creates the file from an embedded header when it is missing, and reads the count and recent entries (lessons.test.ts). [R6] [dod arm 1]
   - 2. The prepare directive carries `lessons` with the file path, the count and the recent entries read from `<mainRoot>/docs/LESSONS.md` (t0-flow.test.ts). [R5] [dod arm 1]
-  - 3. `CardRun.closure.lessons` defaults to false; the close directive lists `lessons` until `markClosure` records a lesson (one appended line) or a skip reason, both journaled as `EVIDENCE_RETAINED`; `aidlc card close --lesson <text>` and `--no-lesson <why>` drive it and `--all` leaves it untouched (types.test.ts, t0-flow.test.ts). [R6] [dod arm 1]
+  - 3. `CardRun.closure.lessons` defaults to false; the close directive lists `lessons` until `markClosure` records a lesson (one appended line) or a skip reason, both journaled as `EVIDENCE_RETAINED`; `aidlc card close --lesson <text>` and `--skip-lesson <why>` drive it (commander reserves the `--no-` prefix for boolean negation, so the skip flag is `--skip-lesson`) and `--all` leaves it untouched (types.test.ts, t0-flow.test.ts). [R6] [dod arm 1]
   - 4. The goal-level CLOSE narration names `lessons`; `docs/ARCHITECTURE.md` closure description and `docs/OPERATIONS.md` card close usage are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
 depends_on: [T1-LOOP-GATES-2]
