@@ -28,13 +28,33 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict(''), undefined);
 });
 
-test('buildPreReviewPrompt carries the policy, the card contract, the findings to verify and the diff, and demands one JSON last line', () => {
+test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {
   const { card } = fixtureCard();
-  const prompt = buildPreReviewPrompt({ reviewPolicy: '# Review instructions\nMust-block 1-6.', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: 'diff --git a/src/gate.ts b/src/gate.ts\n+export const gate = 1;\n', truncated: false, priorFindings: ['[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first'], round: 2, maxRounds: 3 });
+  const prompt = buildPreReviewPrompt({ reviewPolicy: '# Review instructions\nMust-block 1-6.', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: 'diff --git a/src/gate.ts b/src/gate.ts\n+export const gate = 1;\n', truncated: false, priorFindings: [{ id: 'F1', reason: '[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first', disposition: 'open', origin: 'pre-review round 1' }], round: 2, maxRounds: 3 });
   for (const needle of ['Must-block 1-6.', 'T1-GATE', 'src/gate.ts', '1. the gate holds.', 'no RED -> add a failing test first', '+export const gate = 1;', 'round 2 of 3', '"verdict":"pass|block"']) {
     assert.ok(prompt.includes(needle), `prompt must include ${needle}`);
   }
-  assert.ok(prompt.indexOf('## Diff') > prompt.indexOf('## Findings to verify'), 'the diff comes after the findings to verify');
+  assert.ok(prompt.indexOf('## Diff') > prompt.indexOf('## Prior findings'), 'the diff comes after the prior findings');
+});
+
+test('T1-REVIEW-FINDINGS acceptance 3: the prior findings section carries ids, the re:F<n> instruction, open findings to verify and disputed findings with the note to re-raise only with new evidence', () => {
+  const { card } = fixtureCard();
+  const priorFindings = [
+    { id: 'F1', reason: '[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first', disposition: 'open' as const, origin: 'pre-review round 1 (ac-coverage)' },
+    { id: 'F2', reason: '[standards] 9 error handling @ src/gate.ts:9: swallowed error -> rethrow', disposition: 'disputed' as const, note: 'the error is rethrown at src/gate.ts:12 after the receipt is written', origin: 'R3 decision 1' },
+  ];
+  for (const stage of ['pre', 'formal'] as const) {
+    const prompt = buildReviewPrompt({ stage, includeDiff: true, reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', truncated: false, priorFindings, round: 2, maxRounds: 3 });
+    const section = prompt.slice(prompt.indexOf('## Prior findings'), prompt.indexOf('## Candidate'));
+    assert.ok(section.includes('re:F<n>'), `${stage}: the re-raise reference syntax is stated`);
+    const f1 = section.split('\n').find((l) => l.startsWith('- F1 '))!;
+    const f2 = section.split('\n').find((l) => l.startsWith('- F2 '))!;
+    assert.ok(f1 && /open/.test(f1) && /pre-review round 1 \(ac-coverage\)/.test(f1) && /verify/i.test(f1) && /re:F1/.test(f1), `${stage}: F1 line: ${f1}`);
+    assert.ok(f2 && /disputed/.test(f2) && f2.includes('rethrown at src/gate.ts:12') && /R3 decision 1/.test(f2) && /new evidence|the note does not answer/i.test(f2) && /re:F2/.test(f2), `${stage}: F2 line: ${f2}`);
+    assert.ok(f1.includes('no RED -> add a failing test first') && f2.includes('swallowed error -> rethrow'), `${stage}: reasons kept verbatim`);
+  }
+  const fresh = buildReviewPrompt({ stage: 'pre', includeDiff: true, reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', truncated: false, priorFindings: [], round: 1, maxRounds: 3 });
+  assert.ok(fresh.includes('## Prior findings') && fresh.includes('none'), 'a first round says there are no prior findings');
 });
 
 test('runPreReview classifies pass, block, malformed and quota output and writes verdict + log files', () => {

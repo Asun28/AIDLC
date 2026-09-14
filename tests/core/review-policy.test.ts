@@ -1,7 +1,10 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyVerdict, detectQuotaHold, findingMarker, parseVerdict, recordReviewOutcome, reviewRequestKey } from '../../src/core/review-policy.ts';
-import { ReviewLedger, type Verdict } from '../../src/core/types.ts';
+// Namespace import for the finding bookkeeping (T1-REVIEW-FINDINGS): on the baseline the functions are absent and each
+// test fails at its first call, so the RED is the behaviour, not a link error that aborts the file.
+import * as policy from '../../src/core/review-policy.ts';
+import { ReviewLedger, type ReviewFinding, type Verdict } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
 const SHA = 'a'.repeat(40);
@@ -162,5 +165,103 @@ describe('keys and markers', () => {
     assert.equal(m, findingMarker('T1-A', 12, SHA, 'Missing test for the empty case!'));
     assert.match(m, /^aidlc-finding:T1-A:12:aaaaaaaaaaaa:missing-test-for-the-empty-case$/);
     assert.match(findingMarker('T1-A', undefined, SHA, 'x'), /:nopr:/);
+  });
+});
+
+describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance 1)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const LATEST = '2026-09-11T02:00:00.000Z';
+  const block = (findings: ReviewFinding[], round: number, reasons: string[], at = T0, extra: Partial<policy.RecordFindingsInput> = {}) =>
+    policy.recordFindings(findings, { stage: 'pre', cycle: 0, round, candidateSha: 'sha-1', at, outcome: 'block', reasons, perspectives: ['ac-coverage', 'edge-cases'], ...extra });
+
+  test('a block records one finding per cited reason with sequential ids, stage, cycle, round, perspective, cited file and candidate sha', () => {
+    const r = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first (ac-coverage)', '[standards] 9 error handling @ src/gate.ts:9: swallowed error -> rethrow (edge-cases)']);
+    assert.deepEqual(r.raised, ['F1', 'F2']);
+    assert.deepEqual(r.reraised, []);
+    assert.deepEqual(r.resolved, []);
+    const [f1, f2] = r.findings;
+    assert.deepEqual({ id: f1!.id, stage: f1!.stage, cycle: f1!.cycle, round: f1!.round, perspective: f1!.perspective, file: f1!.file, candidateSha: f1!.candidateSha, disposition: f1!.disposition, raisedAt: f1!.raisedAt }, { id: 'F1', stage: 'pre', cycle: 0, round: 1, perspective: 'ac-coverage', file: 'src/gate.ts', candidateSha: 'sha-1', disposition: 'open', raisedAt: T0 });
+    assert.equal(f2!.perspective, 'edge-cases');
+    assert.equal(f2!.reason, '[standards] 9 error handling @ src/gate.ts:9: swallowed error -> rethrow (edge-cases)', 'the reason is kept verbatim');
+    // Ids continue from the last one across rounds and stages.
+    const more = policy.recordFindings(r.findings, { stage: 'formal', round: 1, candidateSha: 'sha-1', at: LATER, outcome: 'block', reasons: ['[spec] 1 out of scope @ src/other.ts: outside allow_paths -> revert'] });
+    assert.deepEqual(more.raised, ['F3']);
+    assert.equal(more.findings.find((f) => f.id === 'F3')?.stage, 'formal');
+  });
+
+  test('a reason carrying re:F<k> is a re-raise of F<k> (a space after the colon is accepted), returns it to open, and an unknown id is a new finding', () => {
+    const first = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
+    const disputed = policy.disputeFinding(first, 'F1', 'the RED is tests/gate.test.ts at 0f1e', LATER);
+    assert.equal(disputed.find((f) => f.id === 'F1')?.disposition, 'disputed');
+    const r = block(disputed, 2, ['[spec] 6 tests @ src/gate.ts:1: the RED asserts nothing (re: F1) -> assert the gate', '[standards] 9 error handling @ src/gate.ts:9: swallowed error (re:F9) -> rethrow'], LATEST);
+    assert.deepEqual(r.reraised, ['F1']);
+    assert.deepEqual(r.raised, ['F2'], 'an unknown reference is a new finding');
+    assert.equal(r.findings.length, 2);
+    const f1 = r.findings.find((f) => f.id === 'F1')!;
+    assert.equal(f1.disposition, 'open', 'a re-raise rejects the dispute');
+    assert.equal(f1.disputes.length, 1, 'the dispute stays in the history');
+    assert.deepEqual(f1.reraised.map((x) => ({ stage: x.stage, round: x.round, at: x.at })), [{ stage: 'pre', round: 2, at: LATEST }]);
+    assert.match(f1.reraised[0]!.reason, /asserts nothing/);
+    assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x (re: F12) -> y'), 'F12');
+    assert.equal(policy.findingReference('[spec] 6 tests @ a.ts:1: x -> y'), undefined);
+  });
+
+  test('a decided later round of the same stage that does not re-raise an open or disputed finding resolves it; the other stage and a non-decision leave it open', () => {
+    const first = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one', '[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow']).findings;
+    const otherStage = policy.recordFindings(first, { stage: 'formal', round: 1, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] });
+    assert.deepEqual(otherStage.resolved, [], 'a formal pass does not resolve pre-review findings');
+    const undecided = policy.recordFindings(first, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'no-verdict', reasons: [] });
+    assert.deepEqual(undecided.resolved, [], 'a round without a verdict resolves nothing');
+    const r = block(first, 2, ['[standards] 9 error handling @ src/gate.ts:9: still swallowed (re:F2) -> rethrow'], LATEST, { candidateSha: 'sha-2' });
+    assert.deepEqual(r.resolved, ['F1']);
+    assert.equal(r.findings.find((f) => f.id === 'F1')?.resolvedAt, LATEST);
+    assert.equal(r.findings.find((f) => f.id === 'F2')?.resolvedAt, undefined);
+    const passed = policy.recordFindings(r.findings, { stage: 'pre', cycle: 0, round: 3, candidateSha: 'sha-3', at: LATEST, outcome: 'pass', reasons: [] });
+    assert.deepEqual(passed.resolved, ['F2'], 'a pass resolves every open finding of the stage');
+  });
+});
+
+describe('review findings: dispositions, the same-candidate rule and deadlocks (acceptance 2, 4, 5)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const raise = (findings: ReviewFinding[], round: number, reasons: string[], stage: 'pre' | 'formal' = 'pre') => policy.recordFindings(findings, { stage, cycle: 0, round, candidateSha: 'sha-1', at: T0, outcome: 'block', reasons }).findings;
+
+  test('dispute needs an open finding and a note, a second dispute needs a re-raise in between, and accept withdraws the dispute', () => {
+    const f = raise([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']);
+    assert.throws(() => policy.disputeFinding(f, 'F7', 'x', LATER), /F7/);
+    assert.throws(() => policy.disputeFinding(f, 'F1', '   ', LATER), /note/);
+    const d = policy.disputeFinding(f, 'F1', 'the RED is behavioural: tests/gate.test.ts', LATER);
+    assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts' }]);
+    assert.throws(() => policy.disputeFinding(d, 'F1', 'again', LATER), /already disputed/);
+    const a = policy.acceptFinding(d, 'F1', LATER);
+    assert.equal(a.find((x) => x.id === 'F1')?.disposition, 'open');
+    assert.equal(a.find((x) => x.id === 'F1')?.disputes.length, 1, 'the withdrawn dispute stays in the history');
+    assert.throws(() => policy.acceptFinding(a, 'F1', LATER), /not disputed/);
+    const resolved = policy.recordFindings(a, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-2', at: LATER, outcome: 'pass', reasons: [] }).findings;
+    assert.throws(() => policy.disputeFinding(resolved, 'F1', 'late', LATER), /resolved/);
+  });
+
+  test('rerunAllowed refuses an unchanged candidate while any finding of its last block is open and allows it once every one is disputed', () => {
+    let f = raise([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one', '[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow']);
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'pre', cycle: 0, round: 1 }), { allowed: false, open: ['F1', 'F2'] });
+    f = policy.disputeFinding(f, 'F1', 'covered by tests/gate.test.ts', LATER);
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'pre', cycle: 0, round: 1 }), { allowed: false, open: ['F2'] });
+    f = policy.disputeFinding(f, 'F2', 'the error is rethrown at line 12', LATER);
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'pre', cycle: 0, round: 1 }), { allowed: true, open: [] });
+    // A finding re-raised by a later round belongs to that round's block as well.
+    f = raise(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one']);
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'pre', cycle: 0, round: 2 }), { allowed: false, open: ['F1'] });
+    assert.deepEqual(policy.rerunAllowed(f, { stage: 'formal', round: 1 }), { allowed: true, open: [] }, 'a round that raised nothing has nothing open');
+  });
+
+  test('deadlockedFindings names a finding disputed twice and re-raised twice, and a third dispute is refused', () => {
+    let f = raise([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']);
+    f = policy.disputeFinding(f, 'F1', 'first answer', LATER);
+    f = raise(f, 2, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one']);
+    assert.deepEqual(policy.deadlockedFindings(f), []);
+    f = policy.disputeFinding(f, 'F1', 'second answer', LATER);
+    f = raise(f, 3, ['[spec] 6 tests @ src/gate.ts:1: no RED (re:F1) -> add one']);
+    assert.deepEqual(policy.deadlockedFindings(f).map((x) => x.id), ['F1']);
+    assert.throws(() => policy.disputeFinding(f, 'F1', 'third answer', LATER), /human ruling/);
+    assert.match(policy.describeDeadlock(f), /F1 .*disputed twice.*re-raised twice/);
   });
 });

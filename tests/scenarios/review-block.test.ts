@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, candidateShaFor } from './_harness.ts';
-import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import type { Verdict } from '../../src/core/types.ts';
 
@@ -181,6 +181,63 @@ test('Q6: a standards-only block on a Tier-1 card is advisory and the merge proc
     assert.equal(r.directive.kind, 'close');
     assert.equal(r.run.review.substantiveDecisions, 1);
     assert.equal(r.run.review.substantiveBlocks, 0, 'advisory block is not a substantive block');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A dry-run ship path whose scripted reviewer returns a different verdict per ship request. */
+class SequencedVerdictShipPath extends DryRunShipPath {
+  private readonly verdicts: Verdict[];
+  constructor(outcomes: ShipOutcomeClass[], verdicts: Verdict[]) {
+    super(outcomes);
+    this.verdicts = verdicts;
+  }
+  override readVerdict(): { verdict?: Verdict } {
+    const last = this.requests[this.requests.length - 1];
+    const verdict = this.verdicts[Math.min(this.requests.length - 1, this.verdicts.length - 1)];
+    if (!verdict) return {};
+    return { verdict: last?.candidateSha ? { ...verdict, sha: last.candidateSha } : verdict };
+  }
+}
+
+test('T1-REVIEW-FINDINGS: a ship-path review block records findings, stays pending on the unchanged candidate until every finding is disputed, and a re-raise at the second decision stops with the contested finding named', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const reraise: Verdict = { ...BLOCK, reasons: ['[spec] 6 tests missing @ src/hello.ts: the added test has no assertion (re:F1) -> assert the greeting'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests missing @ src/hello.ts: the added test has no assertion (re:F1) -> assert the greeting'] }, standards: { verdict: 'pass', reasons: [] } } };
+    const ship = new SequencedVerdictShipPath(['review-blocked', 'review-blocked'], [BLOCK, reraise]);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const run1 = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(g(), card, run1);
+    assert.equal(r.directive.kind, 'review-fix');
+    assert.deepEqual(r.run.findings.map((f) => [f.id, f.stage, f.round, f.candidateSha]), [['F1', 'formal', 1, candidateShaFor('T1-HELLO')]]);
+    const decided = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)!;
+    assert.deepEqual(decided.data['findings'], ['F1']);
+
+    // The unchanged candidate with the finding open: the block stays pending (no second ship).
+    r = runner.next(g(), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1b', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'review-fix', r.directive.narration);
+    assert.equal(ship.requests.length, 1, 'no ship while the block is pending');
+
+    // Disputed: the second decision runs on the unchanged candidate; the reviewer re-raises -> STOP/review naming F1.
+    run = runner.disputeFinding(g(), card, r.run, 'F1', 'tests/hello.test.ts asserts the greeting at line 8 and fails on the baseline');
+    run = runner.recordAttempt(g(), card, run, { outcome: 'success', dodReceipt: 'dod:1c', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(ship.requests.length, 2);
+    assert.equal(r.run.stop?.reason, 'review');
+    assert.match(r.run.stop?.detail ?? '', /second substantive block.*F1 re-raised after the author.s dispute/s);
+    assert.equal(r.run.findings.find((f) => f.id === 'F1')?.reraised.length, 1);
+    assert.equal(r.run.findings.length, 1, 'the re-raise is not a new finding');
   } finally {
     fx.cleanup();
   }

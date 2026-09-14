@@ -133,4 +133,23 @@ describe('templates (Q14 packaging)', () => {
     assert.match(review, /## Verdict budget/);
     assert.match(review, /fewer verified findings/);
   });
+
+  test('T1-REVIEW-FINDINGS acceptance 7: the operating guide, the architecture note, both card-loop copies and the changelog record findings and dispositions', () => {
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.match(operations, /### Findings and dispositions/, 'OPERATIONS.md section');
+    assert.match(operations, /aidlc review dispute <card> <id> --note/, 'the dispute command is documented');
+    assert.match(operations, /aidlc review accept <card> <id>/, 'the accept command is documented');
+    assert.match(operations, /aidlc review findings <card>/, 'the listing command is documented');
+    assert.match(operations, /re:F<n>/, 'the reference syntax is documented');
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.match(architecture, /findings \(ids, dispositions, re-raises\)/, 'ARCHITECTURE.md persisted-state table names the findings');
+    for (const copy of [path.join(tpl, 'claude', 'skills', 'aidlc-loop', 'card-loop.md'), path.join(root, '.claude', 'skills', 'aidlc-loop', 'card-loop.md')]) {
+      const text = readFileSync(copy, 'utf8');
+      assert.match(text, /aidlc review dispute/, `${copy} names the dispute command`);
+      assert.ok(Buffer.byteLength(text, 'utf8') <= CAPS['card-loop.md']!, `${copy} stays under the cap`);
+    }
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T1-REVIEW-FINDINGS/, 'CHANGELOG Unreleased carries the entry');
+  });
 });
