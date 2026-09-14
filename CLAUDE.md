@@ -86,9 +86,11 @@ R3 formal review pass on the current candidate. Both are external commands
 configured in `aidlc.config.json` (`preReview`, `formalReview`; this repo
 uses DeepSeek for R2 and Codex for R3) and can be run by hand with
 `aidlc review pre <card>` / `aidlc review r3 <card>`. Allowances are
-constants in `core/types.ts` enforced by `core/review-policy.ts`: a block is
-a counted REVIEW_FIX, a second substantive block stops the card, a quota
-hold is WAIT, a missing or malformed verdict fails closed.
+constants in `core/types.ts` enforced by `core/review-policy.ts`: a block
+returns the card to REVIEW_FIX and reopens the effort episode without
+spending a build attempt (the ladder counts DoD failures only), a second
+substantive block stops the card, a quota hold is WAIT, a missing or
+malformed verdict fails closed.
 
 **Every side effect is injectable.** `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,

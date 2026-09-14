@@ -1,7 +1,7 @@
 ---
 id: T1-LOOP-LADDER
 title: Review blocks reopen the effort episode instead of consuming a build attempt; the ladder counts DoD failures only
-status: todo
+status: merged
 branch: T1-LOOP-LADDER
 worktree: C:\wt\T1-LOOP-LADDER
 allow_paths:

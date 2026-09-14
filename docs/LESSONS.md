@@ -11,3 +11,4 @@ Format: `- YYYY-MM-DD <card or incident>: NEVER|ALWAYS|NOTE <rule> (source: <ver
 
 ## Lessons
 - 2026-09-14 T1-LOOP-SKILLS-2: NEVER let a review block spend a build attempt; the ladder counts DoD failures only and reviews keep their own rounds and decisions (source: PR #9 review history, two episodes ended escalation-failed with every finding fixed)
+- 2026-09-14 T1-LOOP-LADDER: NEVER edit a card file on main and on its branch in separate commits; write the registry copy on main before branching and sync the branch text to main before the ship, since adjacent-line edits conflict and GitHub runs no pull_request workflow on a conflicting PR (source: PR #10, no check runs until main carried the branch card text)
