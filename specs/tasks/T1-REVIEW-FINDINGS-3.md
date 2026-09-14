@@ -1,10 +1,9 @@
 ---
-id: T1-REVIEW-FINDINGS-2
-title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock (replacement of T1-REVIEW-FINDINGS after its two R3 decisions)
+id: T1-REVIEW-FINDINGS-3
+title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock and every snapshot write a compare-and-set on the run revision (replacement of T1-REVIEW-FINDINGS-2 after its two R3 decisions)
 status: todo
-branch: T1-REVIEW-FINDINGS-2
-worktree: C:\wt\T1-REVIEW-FINDINGS-2
-superseded_by: T1-REVIEW-FINDINGS-3
+branch: T1-REVIEW-FINDINGS-3
+worktree: C:\wt\T1-REVIEW-FINDINGS-3
 allow_paths:
   - src/core/types.ts
   - src/core/review-policy.ts
@@ -26,6 +25,7 @@ allow_paths:
   - CHANGELOG.md
   - specs/tasks/T1-REVIEW-FINDINGS.md
   - specs/tasks/T1-REVIEW-FINDINGS-2.md
+  - specs/tasks/T1-REVIEW-FINDINGS-3.md
 dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 dod_exit: 0
 requirements:
@@ -44,34 +44,35 @@ acceptance:
   - 6. `CardRun.findings` defaults to `[]` so runs written before this change parse; every `PRE_REVIEW_DECIDED` and `REVIEW_DECIDED` event carries the `findings`, `reraised` and `resolved` id lists; a ledger replay or an artifact re-read records no finding; the ship-path reviewer, which receives no prompt, delivers an empty snapshot (types.test.ts, t0-flow.test.ts, review-block.test.ts). [R1] [dod arm 1]
   - 7. Every card-run write goes through `GoalStore.updateCardRun`: an exclusive lock file with an ownership-checked write and release, a deadline checked on every wait, non-recoverable takeover errors propagated, a stale lock taken over through a serialized marker; a review completion recomputes its findings against the locked record; the R2 round is reserved as `pending` under the lock and the gate waits on it (goal-store.test.ts, t0-flow.test.ts). [R2] [dod arm 1]
   - 8. `docs/OPERATIONS.md` gains the findings and dispositions section, `docs/ARCHITECTURE.md` the persisted fields and the lock, both `card-loop.md` copies name the dispute command within the byte cap, and CHANGELOG.md Unreleased carries the entry (templates.test.ts, mirror.test.ts). [dod arm 1]
-  - 9. `extractVerdict` lets the last JSON-looking line of the reviewer output decide alone: a document cut short is malformed (no verdict), never replaced by a draft earlier in the reasoning; prose after the document is still ignored (pre-review.test.ts). [R1] [dod arm 1]
+  - 9. `extractVerdict` lets the last JSON-looking line of the reviewer output decide alone: a document cut short is malformed (no verdict), never replaced by a draft earlier in the reasoning; prose after the document is still ignored, and a second document started on the decisive line after a complete one (a truncated trailing document) is malformed too (pre-review.test.ts). [R1] [dod arm 1]
+  - 10. `CardRun.revision` (default 0 for runs written before this change) is bumped by every write under the card-run lock, and `GoalStore.saveCardRun` is a compare-and-set: a snapshot whose revision is not the persisted revision is refused (`changed since it was read`), whatever field changed, so no snapshot write restores a candidate, a receipt or clears a stop another window recorded; writes that patch the locked record (`updateCardRun`) are unaffected (goal-store.test.ts, t0-flow.test.ts, review-block.test.ts). [R2] [dod arm 1]
+  - 11. One pre-review round and one formal review in flight per card, whatever the candidate: a reservation for any candidate refuses a second dispatch, R2 numbering counts pending rounds, and the R3 allowance counts pending decisions, so overlapping candidates can neither exceed the rounds cap nor the two-decision allowance (t0-flow.test.ts). [R4] [dod arm 1]
+  - 12. A failed attempt or lost checks clear the active DoD receipt as well as the retained one; the checkout status and HEAD are re-probed inside the reservation transaction right before dispatch (a change since the diff was collected refuses the round or decision and releases the reservation and the pool admission); `reviewBlockPending` keys on the candidate's latest decided invocation, so a pass after a block on the same candidate is not a pending block (t0-flow.test.ts, review-block.test.ts). [R4] [dod arm 1]
 depends_on: []
 plan_ref: plans/review-findings.md#7
-budget: 2100
+budget: 2600
 tdd: true
 sweep: "grep -rn 'saveCardRun\|this.save(\|priorFindings\|blockAnswered\|reusableReceipt\|answeredDispute' src tests: card-runner.ts every write site and guard, goal-store.ts, review-policy.ts, pre-review.ts prompt section, t0-flow.test.ts and review-block.test.ts scenarios, goal-store.test.ts"
-non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance, an OS-held file lock, lock fencing that stays valid across a process suspension between the ownership read and the write or the release (R3 decision 1 finding 8), serializing normal lock acquisition and release through the takeover marker (finding 9), a journal outbox that reconciles event delivery for the residual hand-off marker (finding 19)]
+non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance, an OS-held file lock, lock fencing that stays valid across a process suspension between the ownership read and the write or the release (R3 decision 1 finding 8), serializing normal lock acquisition and release through the takeover marker (finding 9), a journal outbox that reconciles event delivery for the residual hand-off marker (finding 19) or for the disposition events (R3 decision 2 finding 8 of T1-REVIEW-FINDINGS-2: the same class)]
 doc_sync: docs/OPERATIONS.md (Findings and dispositions), docs/ARCHITECTURE.md (persisted-state table, state layer), CHANGELOG.md
 ---
 
-# T1-REVIEW-FINDINGS-2
+# T1-REVIEW-FINDINGS-3
 
 ## Deliverable
-Replacement of T1-REVIEW-FINDINGS, which stopped after its two R3 decisions on branch T1-REVIEW-FINDINGS (937e62f). Decision 1 (13 findings) and decision 2 (16 findings) were repaired on that branch and on this one, each with a failing test first; this card carries the same change through a fresh R2 cycle and two fresh R3 decisions.
+Replacement of T1-REVIEW-FINDINGS-2, which stopped after its two R3 decisions on branch T1-REVIEW-FINDINGS-2 (556c4a6): decision 1 (19 findings, 16 repaired, 3 excluded on the card) and decision 2 (8 findings). This card carries the same change, repairs findings 1-7 of decision 2 with a failing test first, and takes the change through a fresh R2 cycle and two fresh R3 decisions.
 
-A block gives the author free-text reasons and the only recorded response is a repaired candidate; the same candidate can be re-reviewed after a block without new information. This card makes every cited block reason a finding with a stable id on the card run, lets the author dispute or accept a finding with a recorded note, renders the findings with their dispositions and quoted history in the next prompt (`re:F<n>` marks a re-raise), refuses to re-review an unchanged blocked candidate until every finding of that block is disputed, keeps a pre-review pass valid across cycles, names two rounds of mutual non-acceptance as a deadlock, binds every round to the findings it received at dispatch, and serializes every card-run write through one lock. The R2 rounds cap and the two R3 decisions stay the only budgets.
+The change: every cited block reason is a finding with a stable id on the card run; the author disputes or accepts a finding with a recorded note; the next prompt renders the findings with their dispositions and quoted history (`re:F<n>` marks a re-raise); an unchanged blocked candidate is not re-reviewed until every finding of the block is disputed; a pre-review pass stays valid across cycles; two rounds of mutual non-acceptance are a deadlock; every round is bound to the findings it received at dispatch; every card-run write goes through one lock. The R2 rounds cap and the two R3 decisions stay the only budgets.
 
-Acceptance 9 was added after R2 round 2 of this card: an angle's final document lost a closing brace, the extractor fell back to the placeholder draft in the reasoning, and two `...` reasons blocked the round.
+Findings 1-7 of decision 2 and their repairs: a failed attempt keeps the active DoD receipt (12); the checkout is probed before the diff, not at dispatch (12); R2 numbering ignores pending rounds and R3 allowances ignore pending decisions of other candidates (11); `reviewBlockPending` keys on the last block, not the candidate's last decision (12); a complete verdict followed on the same line by a truncated document passes (9); same-ledger stale snapshots still overwrite the candidate, the receipts and a concurrent stop (10: a run revision with compare-and-set on every snapshot write replaces the targeted stale checks of card 2, which three reviews found incomplete). Finding 8 (a disposition committed before its journal event, with no delivery reconciliation) is the class already excluded as finding 19 and is a non_goal.
 
-Excluded after R3 decision 1 of this card (19 findings; 16 repaired with a failing test first): findings 8 and 9 ask for lock transitions that hold across an arbitrary process suspension between two file operations, which a lock file on a local filesystem cannot give without an OS-held lock (already a non-goal); the stale takeover now requires the owner process to be gone, which closes the crash case the lock exists for. Finding 19 asks for a journal outbox with delivery reconciliation for one marker; the marker is persisted before its event and the event is emitted once per insertion, and an outbox is a journal-wide change outside this card.
+RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 (`.review/T1-REVIEW-FINDINGS-2.red*.log`, `red-seeded*.log`) cover acceptance 1-9; the repairs of this card fail on their assertions against 556c4a6 (`.review/T1-REVIEW-FINDINGS-3.red.log`).
 
-RED evidence for the transitions: the retained `.review/T1-REVIEW-FINDINGS-2.red-seeded.log` runs the transition tests against a baseline where the identity interface creates findings and the transitions (dispute, accept, re-raise, resolution, the same-candidate rule, the deadlock) have no behaviour, so every failure is an assertion on a transition; the repair REDs of decision 2 fail on their assertions against the previous sources.
-
-Budget 2100: the reviewed branch T1-REVIEW-FINDINGS was 1650 net changed lines after the repairs of three R2 rounds and one R3 decision; the sixteen findings of decision 2 add the lock on every write, the pending R2 round, finding revisions, dispute indices and their scenarios.
+Budget 2600: the reviewed branch T1-REVIEW-FINDINGS-2 is 3048 added / 298 removed lines over 18 files after four R2 rounds and two R3 decisions; the revision compare-and-set touches every snapshot write site and its scenarios.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
 npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 ```
 - Expected exit code: 0
-- Assertion: the review-policy, types, pre-review, scenario, store, template and mirror tests named above pass, including the assertions on finding ids, re-raises, dispositions, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, the deadlock naming, the dispatch snapshot and the card-run lock.
+- Assertion: the review-policy, types, pre-review, scenario, store, template and mirror tests named above pass, including the assertions on finding ids, re-raises, dispositions, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles, the deadlock naming, the dispatch snapshot, the card-run lock, the run revision compare-and-set and the one-in-flight limits.

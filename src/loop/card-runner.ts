@@ -32,6 +32,7 @@ import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, runReviewPanel, type PanelResult, type PriorFinding } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { ProjectConfig } from '../config.ts';
 import { resolveWorktreeRoot } from '../config.ts';
@@ -386,6 +387,11 @@ export class CardRunner {
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
   next(goal: Goal, card: Card, run: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
+    // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
+    if (goal.state === 'CARDS' && goal.routing.size === 'T2' && !run.stop && run.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing') {
+      return { run, directive: { kind: 'wait', cardId: card.id, on: `goal:${goal.state}:plan-checkpoint`, pollSeconds: 60, narration: `goal ${goal.id} is in CARDS without a plan checkpoint for revision ${goal.revision}: run \`aidlc next --goal ${goal.id}\` and record the approval before this card continues` } };
+    }
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = this.leases.read(key);
