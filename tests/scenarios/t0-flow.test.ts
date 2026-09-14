@@ -1526,3 +1526,40 @@ test('T1-REVIEW-FINDINGS-2 acceptance 4: the DoD receipt restored for a disputed
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-2 acceptance 7: a write computed from a stale read never drops a round, a decision or a hand-off another window recorded: it is refused', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-stale.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-stale.ts b/src/t1-stale.ts\n+export const stale = 1;\n' },
+      'fake-r2': () => ({ stdout: '{"verdict":"pass","reasons":[]}\n' }),
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-STALE', title: 'stale writer' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-STALE', source: 'card', ref: 'T1-STALE', affectedSurfaces: [] }, { cards: ['T1-STALE'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-STALE'] } });
+    const card = fx.card('T1-STALE');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-STALE'));
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'pre-review');
+    // Another window reserves a round; this window still holds the earlier snapshot.
+    const stale = r.run;
+    fx.store.saveCardRun(CardRun.parse({ ...stale, preReview: { ...stale.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] }, updatedAt: fx.now() }));
+    assert.throws(() => runner.next(g(), card, stale), /changed|re-run|run the command again/i, 'the stale write is refused instead of dropping the reservation');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds.length, 1, 'the reservation survives');
+    // A stale write that lacks a decided round is refused the same way.
+    fx.store.saveCardRun(CardRun.parse({ ...stale, preReview: { ...stale.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 5, outcome: 'pass', reasons: [], reservationId: 'res-1' }] }, updatedAt: fx.now() }));
+    assert.throws(() => runner.disputeFinding(g(), card, stale, 'F1', 'x'), /F1|changed/);
+    assert.throws(() => runner.next(g(), card, stale), /changed|re-run|run the command again/i);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds[0]?.outcome, 'pass');
+    // Re-read, the same command proceeds.
+    const fresh = fx.store.getCardRun(goal.id, 'T1-STALE')!;
+    assert.equal(runner.next(g(), card, fresh).directive.kind, 'close');
+  } finally {
+    fx.cleanup();
+  }
+});

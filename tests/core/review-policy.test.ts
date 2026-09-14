@@ -212,6 +212,14 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
     assert.deepEqual(r.raised, ['F1', 'F2']);
     assert.deepEqual(r.reraised, []);
     assert.deepEqual(r.findings.map((f) => f.reraised.length), [0, 0]);
+    // A finding added while the round was in flight did not exist for that reviewer: a reference to it is an unknown id.
+    const f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
+    const seen = policy.snapshotFindings(f);
+    const withF2 = block(f, 2, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow'], LATER, { seen: {} }).findings; // F2 raised by an overlapping round
+    const late = block(withF2, 3, ['[standards] 9 error handling @ src/gate.ts:9: still swallowed (re:F2) -> rethrow'], LATEST, { seen });
+    assert.deepEqual(late.raised, ['F3'], 'the reference to an id the reviewer never received is a new finding');
+    assert.deepEqual(late.reraised, []);
+    assert.equal(late.findings.find((x) => x.id === 'F2')?.reraised.length, 0, 'F2 is untouched');
   });
 
   test('several panel angles re-raising one finding keep every reason with its angle, and the round counts once toward non-acceptance', () => {
