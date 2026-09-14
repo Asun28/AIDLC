@@ -397,3 +397,26 @@ describe('stale ledger writes (T1-REVIEW-FINDINGS-2 R3 decision 1)', () => {
     assert.equal(policy.staleLedger(run(ledger(), []), run(ledger({ invocations: [decided], substantiveDecisions: 1, substantiveBlocks: 1 }), [{ ...round, outcome: 'block' }])), undefined, 'a decided entry the writer adds is the expected direction');
   });
 });
+
+describe('one dispute per answered re-raise (T1-REVIEW-FINDINGS-3 R2 cycle 1 round 1)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const raise = (): ReviewFinding[] => policy.recordFindings([], { stage: 'pre', cycle: 0, round: 1, candidateSha: SHA, at: T0, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: no RED -> add one'] }).findings;
+
+  test('a re-raise by a round that never received the dispute answers nothing: no second dispute until a reviewer who received it re-raises', () => {
+    let f = raise();
+    const seenOpen = policy.snapshotFindings(f); // a round dispatched before the dispute
+    f = policy.disputeFinding(f, 'F1', 'the RED is tests/a.test.ts', T0);
+    f = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 2, candidateSha: SHA, at: LATER, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one'], seen: seenOpen }).findings;
+    assert.equal(f[0]!.reraised[0]?.answeredDispute, undefined, 'the re-raise answered no dispute');
+    assert.equal(f[0]!.disposition, 'disputed', 'a finding changed after dispatch keeps its disposition');
+    f = policy.acceptFinding(f, 'F1');
+    assert.throws(() => policy.disputeFinding(f, 'F1', 'a second answer', LATER), /re-raise/, 'no reviewer answered the first dispute yet');
+    // A round that received the dispute re-raises: the answer opens the next dispute.
+    const seenDisputed = policy.snapshotFindings(policy.disputeFinding(raise(), 'F1', 'x', T0));
+    let g = policy.disputeFinding(raise(), 'F1', 'the RED is tests/a.test.ts', T0);
+    g = policy.recordFindings(g, { stage: 'pre', cycle: 0, round: 2, candidateSha: SHA, at: LATER, outcome: 'block', reasons: ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one'], seen: seenDisputed }).findings;
+    assert.equal(g[0]!.reraised[0]?.answeredDispute, 0);
+    assert.equal(g[0]!.disposition, 'open');
+    assert.equal(policy.disputeFinding(g, 'F1', 'a second answer', LATER)[0]!.disputes.length, 2, 'one dispute per answered re-raise');
+  });
+});

@@ -2266,3 +2266,41 @@ test('T1-REVIEW-FINDINGS-3 R3 decision 1: a formal result whose commit lost the 
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 1: a formal dispatch that throws never leaves its reservation in flight, even when the release itself is refused; the next review r3 dispatches again', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    let onDispatch: (() => void) | undefined;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-th.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-th.ts b/src/t1-th.ts\n+export const th = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: R3_PASS }; },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-TH');
+    const { card, g, goal } = s;
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    // The reviewer process cannot be spawned, and a live writer holds the card-run lock at that moment.
+    const lock = `${fx.store.cardFile(goal.id, 'T1-TH')}.lock`;
+    onDispatch = () => {
+      writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+      throw new Error('spawn ENOENT');
+    };
+    await assert.rejects(() => runner.formalReview(g(), card, r.run), /spawn ENOENT/);
+    rmSync(lock, { force: true });
+    onDispatch = undefined;
+    // The next command finds no review in flight: the failed dispatch is released and the reviewer runs.
+    const f = await runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-TH')!);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(dispatched, 2, 'the failed dispatch is redone, once');
+    const persisted = fx.store.getCardRun(goal.id, 'T1-TH')!;
+    assert.deepEqual(persisted.review.invocations.map((i) => i.outcome), ['pass'], 'no pending reservation survives a failed dispatch');
+    assert.equal(persisted.review.substantiveDecisions, 1);
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
