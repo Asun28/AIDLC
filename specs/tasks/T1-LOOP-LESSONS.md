@@ -29,7 +29,7 @@ acceptance:
   - 3. `CardRun.closure.lessons` defaults to false; the close directive lists `lessons` until `markClosure` records a lesson (one appended line) or a skip reason, both journaled as `EVIDENCE_RETAINED`; `aidlc card close --lesson <text>` and `--no-lesson <why>` drive it and `--all` leaves it untouched (types.test.ts, t0-flow.test.ts). [R6] [dod arm 1]
   - 4. The goal-level CLOSE narration names `lessons`; `docs/ARCHITECTURE.md` closure description and `docs/OPERATIONS.md` card close usage are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-depends_on: [T1-LOOP-GATES]
+depends_on: [T1-LOOP-GATES-2]
 budget: 300
 tdd: true
 sweep: "grep -rn 'closure' src tests docs: types.ts closure object, card-runner.ts close and markClosure, controller.ts goal CLOSE, main.ts card close flags, _harness.ts driveCardToDone, t0-flow.test.ts closure literals, card-machine.test.ts closureComplete, ARCHITECTURE.md closure text"

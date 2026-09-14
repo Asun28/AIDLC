@@ -67,7 +67,7 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 ## Order of work
 0. T1-LOOP-LADDER: review blocks reopen the episode instead of consuming a build attempt; the ladder counts DoD failures only.
 1. T1-LOOP-SKILLS: routing and directive skills, PLAN grilling with the open questions of the intent, build and prepare narration, merge-conflict return to BUILD with the episode reopened.
-2. T1-LOOP-GATES: blocking secret scan, security CI class, github config block and required-check passthrough.
+2. T1-LOOP-GATES, replaced by T1-LOOP-GATES-2 after two R3 decisions (same change, every finding repaired): blocking secret scan, security CI class, github config block and required-check passthrough, a block verdict never waived at the ship.
 3. T1-LOOP-LESSONS: lessons artifact, sixth closure predicate, card close lesson flags, prepare context.
 
 ## 7. Task split (dependencies and parallel windows)
@@ -76,8 +76,9 @@ See the spec section Interfaces and contracts; the docs/LESSONS.md line format i
 |---|---|---|---|---|---|
 | T1-LOOP-SKILLS | MUST | skills in routing and directives; grilling at PLAN; merge-conflict return to BUILD | - | W1 | - |
 | T1-LOOP-LADDER | MUST | review blocks reopen the episode; the ladder counts DoD failures only | T1-LOOP-SKILLS | W1b | - |
-| T1-LOOP-GATES | MUST | blocking secret scan; security CI class; required checks from config | T1-LOOP-LADDER | W2 | - |
-| T1-LOOP-LESSONS | MUST | lessons closure predicate; card close lesson flags; prepare context | T1-LOOP-GATES | W3 | - |
+| T1-LOOP-GATES | MUST | blocking secret scan; security CI class; required checks from config (stopped after two R3 decisions; superseded by T1-LOOP-GATES-2) | T1-LOOP-LADDER | W2 | - |
+| T1-LOOP-GATES-2 | MUST | the T1-LOOP-GATES change with every R3 finding repaired; a block verdict never waived at the ship | T1-LOOP-LADDER | W2 | - |
+| T1-LOOP-LESSONS | MUST | lessons closure predicate; card close lesson flags; prepare context | T1-LOOP-GATES-2 | W3 | - |
 
 ## Risks
 - The GitHub ship path has scripted-runner tests only; the first live ship may stop with a tooling error that is fixed in place before the next card.
