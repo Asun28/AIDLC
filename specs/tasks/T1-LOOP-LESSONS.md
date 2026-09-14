@@ -1,7 +1,7 @@
 ---
 id: T1-LOOP-LESSONS
 title: Lessons are read at PREPARE and become a closure predicate with an explicit disposition recorded by aidlc card close
-status: todo
+status: merged
 branch: T1-LOOP-LESSONS
 worktree: C:\wt\T1-LOOP-LESSONS
 allow_paths:
