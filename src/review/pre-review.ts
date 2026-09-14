@@ -255,10 +255,16 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
   for (let i = 0; i < text.length; i++) {
     const c = text[i]!;
     if (depth === 0) {
-      // Outside a document only a JSON-looking brace opens one: prose braces and quotes are ignored.
-      if (c === '{' && /^\s*["}]/.test(text.slice(i + 1, i + 64))) {
-        docStart = i;
-        depth = 1;
+      // Outside a document only a JSON-looking brace opens one (whitespace before the first key is unbounded); a brace
+      // followed by nothing but whitespace to the end of the output is a document cut short; prose braces are ignored.
+      if (c === '{') {
+        const rest = text.slice(i + 1);
+        const next = rest.search(/\S/);
+        if (next < 0) return { spans, unfinished: i };
+        if (rest[next] === '"' || rest[next] === '}') {
+          docStart = i;
+          depth = 1;
+        }
       }
       continue;
     }
