@@ -14,6 +14,8 @@ const Base = z.object({
   goalState: GoalState,
   deadline: z.string(),
   narration: z.string(),
+  /** Companion skills the step calls for, supplied from the goal routing and the card step; advisory names, never a gate. */
+  skills: z.array(z.string()).default([]),
 });
 
 export const Directive = z.discriminatedUnion('kind', [

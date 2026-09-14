@@ -52,8 +52,8 @@ export interface CardRunnerDeps {
 }
 
 export type CardDirective =
-  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; narration: string }
-  | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; narration: string }
+  | { kind: 'prepare'; cardId: string; action: 'start' | 'attach'; worktree: string; skills?: string[]; narration: string }
+  | { kind: 'build'; cardId: string; worktree: string; tdd: boolean; redReceipt?: string; dodCommand: string; effort: EffortLevel; attempt: number; skills?: string[]; narration: string }
   | { kind: 'ship'; cardId: string; base: string; mode: 'local' | 'remote'; narration: string }
   | { kind: 'review-fix'; cardId: string; reasons: string[]; remainingDecisions: number; narration: string }
   | { kind: 'pre-review'; cardId: string; round: number; maxRounds: number; reviewer: string; narration: string }
@@ -266,6 +266,7 @@ export class CardRunner {
             dodCommand: card.dod_command,
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running?.n ?? (episode?.attempts.length ?? 0),
+            skills: this.buildSkills(goal, card),
             narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, 2 - run.review.substantiveDecisions)} substantive decision(s) left.`,
           },
         };
@@ -323,9 +324,16 @@ export class CardRunner {
         cardId: card.id,
         action: decision.action,
         worktree: decision.path,
-        narration: decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`,
+        skills: [],
+        narration: 'Read docs/LESSONS.md once before the first attempt. ' + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
+  private buildSkills(goal: Goal, card: Card): string[] {
+    const bugfix = (goal.routing.skills ?? []).includes('diagnose') || goal.routing.size === 'T0-bugfix' || goal.routing.kind === 'bugfix' || goal.routing.kind === 'incident' || Boolean(card.diagnosis);
+    return bugfix ? ['tdd', 'diagnose'] : ['tdd'];
   }
 
   private build(goal: Goal, card: Card, run: CardRun, effortOverride?: EffortLevel): { run: CardRun; directive: CardDirective } {
@@ -354,8 +362,11 @@ export class CardRunner {
     let redReceipt = run.redReceipt;
     if (!redReceipt && this.shipPath instanceof ScaffoldShipPath) {
       const red = this.shipPath.readRedReceipt(card.id);
-      if (red) redReceipt = `${red.sha}:${red.dodExit}`;
+      const id = red ? `${red.sha}:${red.dodExit}` : undefined;
+      // A receipt the ship path already rejected is never reloaded as proof; RED has to be established again.
+      if (id && id !== run.pendingRepair?.rejectedReceipt) redReceipt = id;
     }
+    const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${run.pendingRepair.detail} ` : '';
     const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt });
     return {
       run: next,
@@ -368,9 +379,10 @@ export class CardRunner {
         dodCommand: card.dod_command,
         effort,
         attempt: attemptNo,
+        skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
         narration: card.tdd && !redReceipt
-          ? `Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`.`
-          : `Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt.`,
+          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`.`
+          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt.`,
       },
     };
   }
@@ -402,7 +414,7 @@ export class CardRunner {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
     }
-    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate });
+    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : run.dodReceipt, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair });
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
@@ -480,7 +492,7 @@ export class CardRunner {
     if (last?.outcome === 'block') {
       // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons.
       const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined });
-      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
+      return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.` } };
     }
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
     if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
@@ -890,7 +902,7 @@ export class CardRunner {
         }
         if (cls.class === 'code-defect') {
           const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence });
-          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.` } };
+          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.` } };
         }
         const stop = makeStop('ci', rerun.reason, 'diagnose the failure before any further rerun', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
@@ -899,10 +911,28 @@ export class CardRunner {
       case 'dod-failed':
       case 'verify-failed':
       case 'scope-blocked':
-      case 'budget-over':
-      case 'red-missing': {
+      case 'budget-over': {
         const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence });
-        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, narration: `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.` } };
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.` } };
+      }
+      case 'red-missing': {
+        // The ship path rejected the RED receipt: not a code fault, so a succeeded episode is reopened rather than counted,
+        // provided the episode can still admit an attempt; the rejected receipt is never reused as proof.
+        const admission = checkAdmission(run.deadline, now);
+        if (admission.phase !== 'open') {
+          const stop = makeStop('time', `RED receipt rejected (${result.detail}) after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false });
+          const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+          return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        }
+        const reopened = reopenEpisode(run.effort);
+        const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
+        if (inadmissible && inadmissible.action !== 'attempt') {
+          const stop = makeStop('card', `RED receipt rejected (${result.detail}) but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false });
+          const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+          return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        }
+        const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, redReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'red-missing', detail: result.detail, at: now, rejectedReceipt: run.redReceipt } });
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: undefined, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `${result.outcome}: ${result.detail}. Establish the RED receipt again within scope and re-run the DoD.` } };
       }
       case 'auth-failed': {
         const stop = makeStop('auth', 'GitHub account/permission guard failed', 'run `gh auth login` for the configured personal account; never downgrade to local mode silently', { at: now });
@@ -920,7 +950,29 @@ export class CardRunner {
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
       }
+      case 'merge-failed':
       default: {
+        // Only a real conflict returns to BUILD, and only on an affirmative diagnostic in the ship output: git's CONFLICT
+        // markers or GitHub's clean-merge failure. A policy or status-check refusal, or the word inside a card id or a
+        // resume command, never counts.
+        if (result.outcome === 'merge-failed' && hasConflictDiagnostic(result.receipt)) {
+          const admission = checkAdmission(run.deadline, now);
+          if (admission.phase !== 'open') {
+            const stop = makeStop('time', `merge conflict on the base sync after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false });
+            const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+            return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+          }
+          const reopened = reopenEpisode(run.effort);
+          const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
+          if (inadmissible && inadmissible.action !== 'attempt') {
+            const stop = makeStop('card', `merge conflict on the base sync but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false });
+            const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
+            return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+          }
+          const detail = `merge conflict on the base sync (${result.detail})`;
+          const next = this.save({ ...run, state: 'BUILD', review, dodReceipt: undefined, evidence, effort: reopened, pendingRepair: { kind: 'merge-conflict', detail, at: now } });
+          return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: run.effort?.baseline ?? 'medium', attempt: (run.effort?.attempts.length ?? 0) + 1, skills: ['merge-conflicts', ...this.buildSkills(goal, card)], narration: `Merge conflict on the base sync (${result.detail}): resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.` } };
+        }
         const stop = makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', review, stop, evidence });
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
@@ -984,6 +1036,39 @@ export class CardRunner {
 }
 
 /** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
+/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
+/**
+ * True only when a line of the ship output is git's or GitHub's own merge-conflict diagnostic, anchored at the start of
+ * the line: `CONFLICT (...)`, `Automatic merge failed; fix conflicts and then commit the result.`, `Merge conflict in ...`,
+ * or gh's `Pull request #N is not mergeable: the merge commit cannot be cleanly created` (optionally behind gh's failure
+ * glyph). A quoted message, a resume command or a card id never starts a line that way, so they never count, while a
+ * genuine diagnostic that happens to mention a file such as `resume.ts` still does.
+ */
+export function hasConflictDiagnostic(receipt: { stdout: string; stderr: string }): boolean {
+  const diagnostic = [
+    /^CONFLICT \(/,
+    /^Automatic merge failed; fix conflicts and then commit the result\.$/,
+    /^Merge conflict in /,
+    /^(?:X |\u2717 )?Pull request #\d+ is not mergeable: the merge commit cannot be cleanly created/,
+  ];
+  return `${receipt.stdout}\n${receipt.stderr}`
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .some((line) => diagnostic.some((re) => re.test(line)));
+}
+
+/** A pending repair clears on a successful attempt; a rejected RED receipt clears only when the success brings a replacement receipt, so the rejected one is never reloaded as proof. */
+export function clearsPendingRepair(pending: CardRun['pendingRepair'], input: { outcome: 'success' | 'fail' | 'not-counted'; redReceipt?: string }): boolean {
+  if (!pending || input.outcome !== 'success') return false;
+  if (pending.kind !== 'red-missing') return true;
+  return input.redReceipt !== undefined && input.redReceipt !== pending.rejectedReceipt;
+}
+
+export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {
+  if (!episode || episode.terminal !== 'succeeded') return episode;
+  return { ...episode, terminal: undefined };
+}
+
 export function markReviewFailure(episode: NonNullable<CardRun['effort']>, reason: string): NonNullable<CardRun['effort']> {
   const idx = episode.attempts.length - 1;
   const last = episode.attempts[idx];

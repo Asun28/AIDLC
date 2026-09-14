@@ -9,12 +9,13 @@
  * coordinator: the goal lease is claimed at intake and checked on every mutation.
  */
 import path from 'node:path';
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { selectArc, canOpenIntegrationRepair, type CardOutcome } from '../core/arc.ts';
 import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline } from '../core/deadlines.ts';
 import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/goal-machine.ts';
 import { classifyRequest, formatRouting } from '../core/router.ts';
+import { parseIntent } from '../artifacts/intent.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket, requireAuthority } from '../core/authorization.ts';
 import { resolveRoleProfile, assessTaskEffort } from '../core/roles.ts';
@@ -67,6 +68,13 @@ export interface CreateGoalOptions {
   userLimitMs?: number;
   cards?: string[];
   grantedBy?: string;
+  /** Intent file relative to the main checkout; PLAN lists its open questions for T1/T2. */
+  intentRef?: string;
+}
+
+/** Validation problems are narrated by category only: a YAML parser message quotes the offending source, which may be a private front-matter value. */
+function sanitizeIntentProblem(problem: string): string {
+  return problem.startsWith('front matter:') ? 'front matter does not parse' : problem;
 }
 
 export class GoalController {
@@ -143,6 +151,7 @@ export class GoalController {
       revisions: [{ revision: 0, at: now, reason: 'intake', request, supersededCards: {}, removedCards: [] }],
       repository: request.repository ?? this.config.repository ?? this.repo.mainRoot,
       routing,
+      intentRef: options.intentRef,
       target,
       stages: stagesForTarget(target),
       state: 'PLAN',
@@ -176,7 +185,7 @@ export class GoalController {
   next(goalId: string): Directive {
     let goal = this.mustGoal(goalId);
     const now = this.clock();
-    const base = (g: Goal) => ({ goalId: g.id, generation: g.generation, revision: g.revision, goalState: g.state, deadline: effectiveGoalDeadline(g.deadlines) });
+    const base = (g: Goal) => ({ goalId: g.id, generation: g.generation, revision: g.revision, goalState: g.state, deadline: effectiveGoalDeadline(g.deadlines), skills: g.routing.skills ?? [] });
 
     if (goal.terminal || goal.state === 'DONE' || goal.state === 'STOP') {
       return goal.state === 'DONE'
@@ -248,8 +257,10 @@ export class GoalController {
       return Directive.parse({ kind: 'project-cards', ...base, planRef: goal.planRef, cardsDir: this.config.cardsDir, outputs: [], narration: 'Plan accepted; project cards into the registry (human sign-off writes the card files), validate them, then report cards-projected with the card ids.' });
     }
     const inputs = [goal.revisions[goal.revisions.length - 1]!.request.text];
+    const planInputs = goal.intentRef && !light ? [...inputs, goal.intentRef] : inputs;
+    const intake = light ? '' : this.intakeNarration(goal);
     const outputs = light ? ['one coherent card (diagnosis + fix + regression test)'] : size === 'T1' ? ['concise plan points (Files that change / Order of work / Risks / Proof)', '2-5 valid cards with depends_on'] : ['brief', 'plan (10 sections)', 'plan-forge audit ready-to-decompose', 'validated card projection'];
-    return Directive.parse({ kind: 'plan', ...base, size, inputs, invocationAllowance: allowance, outputs, narration: light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.' });
+    return Directive.parse({ kind: 'plan', ...base, size, inputs: planInputs, invocationAllowance: allowance, outputs, narration: (light ? 'T0: diagnose and write one card; no planning funnel.' : size === 'T1' ? 'T1: concise plan and cards; no full forge where routing policy permits.' : 'T2: full funnel; one product checkpoint approves plan and projection together.') + intake });
   }
 
   private nextInCards(goal: Goal, now: string): Directive {
@@ -592,8 +603,27 @@ export class GoalController {
     return g;
   }
 
+  /** PLAN intake for T1/T2: the grilling skill settles the open questions of the intent before the spec; a missing or unreadable file is narrated, never thrown. */
+  private intakeNarration(goal: Goal): string {
+    const ref = goal.intentRef;
+    if (!ref) return ' Intake: settle any open questions with the grilling skill before writing the spec (record the intent with `aidlc goal new --intent <file>` to have them listed here).';
+    const file = path.resolve(this.repo.mainRoot, ref);
+    if (!existsSync(file)) return ` Intake: intent file ${ref} not found under the main checkout; record the open questions before the spec and settle them with the grilling skill.`;
+    try {
+      const parsed = parseIntent(readFileSync(file, 'utf8'));
+      const questions = parsed.intent?.openQuestions ?? [];
+      const listed = questions.length ? ` Open questions to settle first: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.` : '';
+      // Any validation failure is narrated as such: an invalid file is never read as an empty question list.
+      if (!parsed.ok || !parsed.intent) return ` Intake: intent file ${ref} does not validate (${parsed.problems.map(sanitizeIntentProblem).join('; ')}); fix the file and settle its open questions with the grilling skill before the spec.${listed}`;
+      if (!questions.length) return ` Intake: ${ref} lists no open questions; write the spec.`;
+      return ` Intake: ${ref} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.`;
+    } catch (err) {
+      return ` Intake: intent file ${ref} is unreadable (${err instanceof Error ? err.message : String(err)}); record the open questions before the spec and settle them with the grilling skill.`;
+    }
+  }
+
   private baseOf(goal: Goal) {
-    return { goalId: goal.id, generation: goal.generation, revision: goal.revision, goalState: goal.state, deadline: effectiveGoalDeadline(goal.deadlines) };
+    return { goalId: goal.id, generation: goal.generation, revision: goal.revision, goalState: goal.state, deadline: effectiveGoalDeadline(goal.deadlines), skills: goal.routing.skills ?? [] };
   }
 
   private persistStop(goal: Goal, stop: StopRecord): Goal {

@@ -73,6 +73,8 @@ export const RoutingResult = z.object({
   cardCount: z.union([z.number().int().nonnegative(), z.literal('unknown')]),
   modules: z.array(Module),
   nextModule: Module,
+  /** Companion skills the route calls for (tdd, diagnose, grilling, merge-conflicts); the directives carry them. */
+  skills: z.array(z.string()).default([]),
   dataImpact: z.boolean(),
   impactEscalation: z.string().optional(),
   ambiguity: z.string().optional(),
@@ -567,6 +569,8 @@ export const CardRun = z.object({
   evidence: z.array(EvidenceRef).default([]),
   stop: StopRecord.optional(),
   blocker: z.string().optional(),
+  /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
+  pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
   updatedAt: IsoTimestamp,
 });
 export type CardRun = z.infer<typeof CardRun>;
@@ -664,6 +668,8 @@ export const Goal = z.object({
   authorizations: z.array(AuthorizationRecord).default([]),
   cards: z.array(CardId).default([]),
   cardRevisions: z.record(z.string(), z.number().int().nonnegative()).default({}),
+  /** Intent file relative to the main checkout, recorded at intake; PLAN lists its open questions. */
+  intentRef: z.string().optional(),
   planRef: z.string().optional(),
   projectionRef: z.string().optional(),
   counters: GoalCounters.prefault({}),

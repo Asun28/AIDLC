@@ -12,12 +12,13 @@ import {
   RECONCILE_GRACE_MS,
   ReleaseAttempt,
   ReviewLedger,
+  RoutingResult,
   StopRecord,
   addMs,
   minIso,
   nowIso,
 } from '../../src/core/types.ts';
-import { T0, card, cardRun, goal, release } from './_fixtures.ts';
+import { T0, card, cardRun, goal, release, routing } from './_fixtures.ts';
 
 describe('types: primitives', () => {
   test('IsoTimestamp accepts toISOString output and rejects offsets / prose', () => {
@@ -62,6 +63,15 @@ describe('types: schema round-trips', () => {
     assert.equal(Card.safeParse({ ...card('T1-A'), status: 'done' }).success, false);
   });
 
+  test('R1/R2: RoutingResult defaults skills and Goal carries an optional intentRef', () => {
+    const { skills, ...withoutSkills } = routing();
+    assert.deepEqual(skills, ['tdd']);
+    assert.deepEqual(RoutingResult.parse(withoutSkills).skills, [], 'a routing result persisted before skills existed parses with an empty list');
+    assert.deepEqual(RoutingResult.parse(routing({ skills: ['grilling', 'tdd'] })).skills, ['grilling', 'tdd']);
+    assert.equal(goal().intentRef, undefined);
+    assert.equal(Goal.parse({ ...goal(), intentRef: 'intent/claims.md' }).intentRef, 'intent/claims.md');
+  });
+
   test('CardRun prefaults review / ci / closure sub-records', () => {
     const r = cardRun();
     assert.equal(r.review.substantiveDecisions, 0);
@@ -69,6 +79,8 @@ describe('types: schema round-trips', () => {
     assert.deepEqual(r.review.invocations, []);
     assert.deepEqual(r.ci.reruns, []);
     assert.equal(r.closure.cleanup, false);
+    assert.equal(r.pendingRepair, undefined);
+    assert.equal(CardRun.parse({ ...r, pendingRepair: { kind: 'merge-conflict', detail: 'CONFLICT in src/a.ts', at: T0 } }).pendingRepair?.kind, 'merge-conflict');
     assert.equal(r.mergeVerified, false);
     assert.equal(r.mode, 'remote');
     assert.deepEqual(CardRun.parse(JSON.parse(JSON.stringify(r))), r);

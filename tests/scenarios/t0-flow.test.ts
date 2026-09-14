@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, driveCardToDone, candidateShaFor } from './_harness.ts';
-import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath } from './_harness.ts';
+import { DryRunShipPath, ScaffoldShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { CardRunner } from '../../src/loop/card-runner.ts';
+import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 
 test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE and the goal finishes development-only', () => {
@@ -44,6 +44,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     let r = runner.next(fx.goal(goal.id), card, run0);
     assert.equal(r.directive.kind, 'prepare');
     if (r.directive.kind === 'prepare') assert.equal(r.directive.action, 'start');
+    assert.ok(r.directive.narration.includes('docs/LESSONS.md'), 'PREPARE points at the lessons file');
     assert.equal(r.run.state, 'BUILD');
     assert.ok(r.run.worktree);
 
@@ -53,6 +54,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
       assert.equal(r.directive.attempt, 1);
       assert.equal(r.directive.effort, 'medium');
       assert.equal(r.directive.tdd, true);
+      assert.deepEqual(r.directive.skills, ['tdd'], 'BUILD names the tdd skill');
     }
 
     const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: candidateShaFor('T1-HELLO') });
@@ -253,6 +255,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
     // The repair is the next counted attempt; the new candidate needs a fresh round.
     r = runner.next(fx.goal(goal.id), card, round1.run);
     assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the build directive for a pending pre-review block names the skills');
     if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2);
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok2', redReceipt: 'red:ok', candidateSha: 'sha-2' });
     r = runner.next(fx.goal(goal.id), card, run);
@@ -390,6 +393,7 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
     // The repair is the next attempt; the repaired candidate restarts loop 1 (pre-review cycle 1) before R3 runs again.
     r = runner.next(fx.goal(goal.id), card, f.run);
     assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the review-fix build directive names the skills');
     run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
     r = runner.next(fx.goal(goal.id), card, run);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
@@ -614,6 +618,388 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     // A pending reservation for the same candidate refuses a second dispatch.
     const pendingRun = fx.store.saveCardRun(CardRun.parse({ ...stopDuringReview, state: 'SHIP', stop: undefined, review: { ...stopDuringReview.review, invocations: [...stopDuringReview.review.invocations, { invocationId: 'r3:pending', candidateDigest: 'sha-3', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] }, updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, pendingRun), /pending/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a merge conflict at ship returns the card to BUILD naming merge-conflicts, clears the DoD receipt and reopens the episode; the repaired candidate ships', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CONF', title: 'a change that conflicts with the moved base' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CONF', source: 'card', ref: 'T1-CONF', affectedSurfaces: [] }, { cards: ['T1-CONF'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CONF'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed', 'merged'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-CONF');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CONF'));
+    assert.equal(r.directive.kind, 'prepare');
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    assert.equal(run1.effort?.terminal, 'succeeded');
+
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', `a conflict returns to BUILD, got ${r.directive.kind}: ${r.directive.narration}`);
+    assert.equal(r.run.state, 'BUILD');
+    if (r.directive.kind === 'build') {
+      assert.deepEqual(r.directive.skills, ['merge-conflicts', 'tdd']);
+      assert.match(r.directive.narration, /merge-conflicts/);
+      assert.match(r.directive.narration, /new candidate/);
+    }
+    assert.equal(r.run.dodReceipt, undefined, 'a conflict clears the DoD receipt so the card cannot re-ship the old candidate');
+    assert.equal(r.run.effort?.terminal, undefined, 'the effort episode is reopened, not counted as a failure');
+    assert.equal(r.run.effort?.attempts.filter((a) => a.outcome === 'fail').length, 0);
+
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run2.effort?.terminal, 'succeeded');
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close', `the repaired candidate ships: ${r.directive.narration}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a merge failure without a conflict is still a tool stop, and a red-missing return also reopens the episode', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-NOCONF', title: 'merge fails for another reason' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-NOCONF', source: 'card', ref: 'T1-NOCONF', affectedSurfaces: [] }, { cards: ['T1-NOCONF'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-NOCONF'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'Pull request #7 is not mergeable: the base branch policy prohibits the merge'));
+    const card = fx.card('T1-NOCONF');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-NOCONF'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop');
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'tool');
+
+    writeCard(fx, { id: 'T1-RED', title: 'red receipt rejected by the ship path' });
+    const goal2 = fx.controller.createGoal({ text: 'implement T1-RED', source: 'card', ref: 'T1-RED', affectedSurfaces: [] }, { cards: ['T1-RED'] });
+    fx.controller.next(goal2.id);
+    fx.controller.report({ goalId: goal2.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-RED'] } });
+    const runner2 = fx.runner(new DryRunShipPath(['red-missing', 'merged']));
+    const card2 = fx.card('T1-RED');
+    let r2 = runner2.next(fx.goal(goal2.id), card2, fx.controller.ensureCardRun(fx.goal(goal2.id), 'T1-RED'));
+    r2 = runner2.next(fx.goal(goal2.id), card2, r2.run);
+    const run21 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r2 = runner2.next(fx.goal(goal2.id), card2, run21);
+    assert.equal(r2.directive.kind, 'build');
+    if (r2.directive.kind === 'build') assert.deepEqual(r2.directive.skills, ['tdd'], 'the repair build directive names the skills too');
+    assert.equal(r2.run.effort?.terminal, undefined, 'red-missing reopens the episode the same way');
+    assert.equal(r2.run.redReceipt, undefined, 'the rejected RED receipt is cleared, never reused as proof');
+    if (r2.directive.kind === 'build') assert.equal(r2.directive.redReceipt, undefined);
+    const run22 = runner2.recordAttempt(fx.goal(goal2.id), card2, r2.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
+    assert.equal(run22.effort?.terminal, 'succeeded');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: a bugfix goal names diagnose on the build directive even without a card diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-FIX', title: 'fix the crash when opening the settings page' });
+    const goal = fx.controller.createGoal({ text: 'Fix crash when opening the settings page', source: 'bug-evidence', affectedSurfaces: [] }, { hasBugEvidence: true, cards: ['T1-FIX'] });
+    assert.equal(goal.routing.kind, 'bugfix');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-FIX'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-FIX');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-FIX'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: the build directive names tdd, and diagnose as well on a card that carries a diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-BUG', title: 'null adjuster crashes claim status', diagnosis: { root_cause: 'adjuster is optional but rendered as required', same_class: 'claim summary checked' } });
+    const goal = fx.controller.createGoal({ text: 'implement T1-BUG', source: 'card', ref: 'T1-BUG', affectedSurfaces: [] }, { cards: ['T1-BUG'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-BUG'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-BUG');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-BUG'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an incident goal names diagnose on the build directive', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-INC', title: 'checkout 5xx spike after deploy' });
+    const goal = fx.controller.createGoal({ text: 'Alert: 5xx spike on checkout service after deploy', source: 'incident', affectedSurfaces: [] }, { cards: ['T1-INC'] });
+    assert.equal(goal.routing.kind, 'incident');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-INC'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-INC');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-INC'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: every repair path returns a build directive that names the skills: scope-blocked and budget-over (episode kept), CI code defect, and a pending pre-review block', () => {
+  for (const outcome of ['scope-blocked', 'budget-over'] as const) {
+    const fx = makeFixture();
+    try {
+      const id = outcome === 'scope-blocked' ? 'T1-SCOPE' : 'T1-BUDGET';
+      writeCard(fx, { id, title: `ship rejected with ${outcome}` });
+      const goal = fx.controller.createGoal({ text: `implement ${id}`, source: 'card', ref: id, affectedSurfaces: [] }, { cards: [id] });
+      fx.controller.next(goal.id);
+      fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: [id] } });
+      const runner = fx.runner(new DryRunShipPath([outcome]));
+      const card = fx.card(id);
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+      r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'build', `${outcome} returns to BUILD`);
+      if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], `${outcome} build directive names the skills`);
+      assert.equal(r.run.dodReceipt, undefined);
+      assert.equal(r.run.effort?.terminal, 'succeeded', `${outcome} is a code-side repair: the episode is not reopened by this card`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CIRED', title: 'CI finds a code defect' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CIRED', source: 'card', ref: 'T1-CIRED', affectedSurfaces: [] }, { cards: ['T1-CIRED'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CIRED'] } });
+    const runner = fx.runner(new InjectedShipPath(['ci-red'], 'AssertionError: expected 1 to equal 2\n1 failing'));
+    const card = fx.card('T1-CIRED');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CIRED'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', `a CI code defect returns to BUILD: ${r.directive.narration}`);
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], 'the CI code-defect build directive names the skills');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: conflict detection needs an affirmative diagnostic: a card whose id contains the word conflict and a policy refusal still stop', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-CONFLICT', title: 'a card named after the failure mode' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CONFLICT', source: 'card', ref: 'T1-CONFLICT', affectedSurfaces: [] }, { cards: ['T1-CONFLICT'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CONFLICT'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'gh: Pull request #7 is not mergeable: the base branch policy prohibits the merge; resume with task.ps1 -TaskId T1-CONFLICT'));
+    const card = fx.card('T1-CONFLICT');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CONFLICT'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', `no affirmative conflict diagnostic: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'tool');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: the pending conflict repair is persisted: a second next() before the repair still names merge-conflicts, and a recorded attempt clears it', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-PERSIST', title: 'conflict guidance survives a resumed worker' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-PERSIST', source: 'card', ref: 'T1-PERSIST', affectedSurfaces: [] }, { cards: ['T1-PERSIST'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-PERSIST'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed', 'merged'], 'Automatic merge failed; fix conflicts and then commit the result.'));
+    const card = fx.card('T1-PERSIST');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PERSIST'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build');
+    assert.equal(r.run.pendingRepair?.kind, 'merge-conflict');
+    const again = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(again.directive.kind, 'build');
+    if (again.directive.kind === 'build') {
+      assert.deepEqual(again.directive.skills, ['merge-conflicts', 'tdd'], 'a resumed worker still gets the skill');
+      assert.match(again.directive.narration, /merge-conflict/);
+    }
+    const stillFailing = runner.recordAttempt(fx.goal(goal.id), card, again.run, { outcome: 'fail', cause: 'conflict resolution broke a test', progress: true });
+    assert.equal(stillFailing.pendingRepair?.kind, 'merge-conflict', 'a failed attempt keeps the pending repair');
+    const retry = runner.next(fx.goal(goal.id), card, stillFailing);
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, retry.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run2.pendingRepair, undefined, 'a successful attempt clears the pending repair');
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a conflict on an episode that cannot admit another attempt stops the card instead of promising a BUILD', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-SPENT', title: 'two failures, then success, then a conflict' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SPENT', source: 'card', ref: 'T1-SPENT', affectedSurfaces: [] }, { cards: ['T1-SPENT'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SPENT'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-SPENT');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SPENT'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', redReceipt: 'red:3', candidateSha: 'sha-3' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', `the episode cannot admit a repair attempt: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'card');
+      assert.match(r.directive.stop.detail, /merge conflict/i);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a resume line quoting the git message is not a conflict; a real diagnostic on its own line is', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-QUOTE', title: 'policy refusal followed by a resume hint' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-QUOTE', source: 'card', ref: 'T1-QUOTE', affectedSurfaces: [] }, { cards: ['T1-QUOTE'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-QUOTE'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'gh: Pull request #7 is not mergeable: the base branch policy prohibits the merge\n[SAGA-RESUME] pwsh scripts/task.ps1 -TaskId T1-QUOTE -Note "fix conflicts and then commit the result."'));
+    const card = fx.card('T1-QUOTE');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-QUOTE'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', `quoted text never counts: ${r.directive.narration}`);
+    assert.equal(hasConflictDiagnostic({ stdout: 'Auto-merging src/a.ts\nCONFLICT (content): Merge conflict in src/a.ts\n', stderr: '' }), true);
+    assert.equal(hasConflictDiagnostic({ stdout: 'X Pull request #7 is not mergeable: the merge commit cannot be cleanly created', stderr: '' }), true);
+    assert.equal(hasConflictDiagnostic({ stdout: '[SAGA-RESUME] resume with: CONFLICT (content) was seen earlier', stderr: '' }), false);
+    assert.equal(hasConflictDiagnostic({ stdout: 'CONFLICT (content): Merge conflict in src/resume.ts', stderr: '' }), true, 'a real diagnostic naming resume.ts still counts');
+    assert.equal(hasConflictDiagnostic({ stdout: '"Pull request #7 is not mergeable: the merge commit cannot be cleanly created"', stderr: '' }), false, 'a quoted gh message never counts');
+    assert.equal(hasConflictDiagnostic({ stdout: 'X Pull request #7 is not mergeable: the merge commit cannot be cleanly created', stderr: '' }), true, 'the gh failure glyph form counts');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a conflict after two failures with progress and a success is admitted as the escalated attempt, not refused', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-PROG', title: 'progress on every failure' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-PROG', source: 'card', ref: 'T1-PROG', affectedSurfaces: [] }, { cards: ['T1-PROG'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-PROG'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed', 'merged'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-PROG');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PROG'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts', progress: true });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts', progress: true });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', redReceipt: 'red:3', candidateSha: 'sha-3' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'build', `the same justification BUILD grants admits the repair: ${r.directive.narration}`);
+    const run4 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:3', candidateSha: 'sha-4' });
+    assert.equal(run4.effort?.terminal, 'succeeded');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a conflict reported after the card deadline stops with reason time instead of reopening BUILD', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-LATE', title: 'ship finishes after the deadline' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-LATE', source: 'card', ref: 'T1-LATE', affectedSurfaces: [] }, { cards: ['T1-LATE'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-LATE'] } });
+    const runner = fx.runner(new InjectedShipPath(['merge-failed'], 'CONFLICT (content): Merge conflict in src/a.ts'));
+    const card = fx.card('T1-LATE');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-LATE'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    fx.advance(3 * 3600_000 + 1000);
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'time');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R4: a RED receipt the ship path rejected is never reloaded from the scaffold worktree; a fresh receipt is', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-SCAF', title: 'scaffold worktree keeps the old red file' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SCAF', source: 'card', ref: 'T1-SCAF', affectedSurfaces: [] }, { cards: ['T1-SCAF'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SCAF'] } });
+    const worktreeRoot = path.join(fx.tmp, 'wt');
+    const runner = fx.runner(new ScaffoldShipPath({ mainRoot: fx.tmp, worktreeRoot }));
+    const card = fx.card('T1-SCAF');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SCAF'));
+    assert.equal(r.directive.kind, 'prepare');
+    const redFile = path.join(worktreeRoot, 'T1-SCAF', '.review', 'T1-SCAF.red');
+    mkdirSync(path.dirname(redFile), { recursive: true });
+    writeFileSync(redFile, JSON.stringify({ taskId: 'T1-SCAF', sha: 'abc', dodExit: 0, phase: 'red' }));
+    const rejected = fx.store.saveCardRun(CardRun.parse({ ...r.run, redReceipt: undefined, pendingRepair: { kind: 'red-missing', detail: 'RED rejected', at: fx.now(), rejectedReceipt: 'abc:0' }, updatedAt: fx.now() }));
+    r = runner.next(fx.goal(goal.id), card, rejected);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'the rejected receipt is not reloaded');
+    assert.equal(r.run.redReceipt, undefined);
+    assert.match(r.directive.narration, /establish behavioural RED first/);
+    const failed = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'red still missing' });
+    assert.equal(failed.pendingRepair?.rejectedReceipt, 'abc:0', 'a failed repair keeps the pending repair and the rejected receipt');
+    r = runner.next(fx.goal(goal.id), card, failed);
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a failed repair');
+    const noReplacement = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:x', candidateSha: 'sha-x' });
+    assert.equal(noReplacement.pendingRepair?.rejectedReceipt, 'abc:0', 'a success without a replacement receipt keeps the rejected one out');
+    r = runner.next(fx.goal(goal.id), card, noReplacement);
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a success without a replacement');
+    writeFileSync(redFile, JSON.stringify({ taskId: 'T1-SCAF', sha: 'def', dodExit: 0, phase: 'red' }));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, 'def:0', 'a fresh receipt is accepted');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3/acceptance 7: BUILD skills follow the finalized size: an explicit T0-bugfix card route names diagnose without a bugfix kind or a card diagnosis', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-SIZED', title: 'explicitly routed as a bugfix' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-SIZED', source: 'card', ref: 'T1-SIZED', explicitSize: 'T0-bugfix', affectedSurfaces: [] }, { cards: ['T1-SIZED'] });
+    assert.equal(goal.routing.size, 'T0-bugfix');
+    assert.equal(goal.routing.kind, 'card-execute');
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-SIZED'] } });
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const card = fx.card('T1-SIZED');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SIZED'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build');
+    if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd', 'diagnose']);
   } finally {
     fx.cleanup();
   }

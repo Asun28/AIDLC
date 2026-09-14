@@ -40,6 +40,7 @@ export function routing(overrides: Partial<RoutingResult> = {}): RoutingResult {
     cardCount: 1,
     modules: ['router', 'card-loop'],
     nextModule: 'card-loop',
+    skills: ['tdd'],
     dataImpact: false,
     reasons: [],
     ...overrides,
