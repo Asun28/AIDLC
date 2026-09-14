@@ -3,6 +3,13 @@ name: ci
 on:
   push:
     branches: [main, master]
+    paths-ignore:
+      - docs/**
+      - intent/**
+      - plans/**
+      - specs/**
+      - CHANGELOG.md
+      - README.md
   pull_request:
 
 jobs:
