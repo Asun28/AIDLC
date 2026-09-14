@@ -58,7 +58,8 @@
       "ac-coverage",
       "spec-deviations",
       "edge-cases"
-    ]
+    ],
+    "maxDiffBytes": 800000
   },
   "gateRequired": true,
   "formalReview": {
@@ -71,6 +72,7 @@
       "{schema}"
     ],
     "reviewer": "codex",
-    "timeoutMs": 1200000
+    "timeoutMs": 1200000,
+    "maxDiffBytes": 800000
   }
 }
