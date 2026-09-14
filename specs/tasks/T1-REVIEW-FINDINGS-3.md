@@ -50,7 +50,7 @@ acceptance:
   - 12. A failed attempt or lost checks clear the active DoD receipt as well as the retained one; the checkout status and HEAD are re-probed inside the reservation transaction right before dispatch (a change since the diff was collected refuses the round or decision and releases the reservation and the pool admission); `reviewBlockPending` keys on the candidate's latest decided invocation, so a pass after a block on the same candidate is not a pending block (t0-flow.test.ts, review-block.test.ts). [R4] [dod arm 1]
 depends_on: []
 plan_ref: plans/review-findings.md#7
-budget: 3200
+budget: 3700
 tdd: true
 sweep: "grep -rn 'saveCardRun\|this.save(\|priorFindings\|blockAnswered\|reusableReceipt\|answeredDispute' src tests: card-runner.ts every write site and guard, goal-store.ts, review-policy.ts, pre-review.ts prompt section, t0-flow.test.ts and review-block.test.ts scenarios, goal-store.test.ts"
 non_goals: [a human ruling command or a card resume, fuzzy matching of a re-raised finding without a re:F<n> reference, the delta section and the policy hash (T1-REVIEW-INPUTS), statistics (T1-REVIEW-STATS), changing the R2 rounds cap or the R3 decision allowance, an OS-held file lock, lock fencing that stays valid across a process suspension between the ownership read and the write or the release (R3 decision 1 finding 8), serializing normal lock acquisition and release through the takeover marker (finding 9), a journal outbox that reconciles event delivery for the residual hand-off marker (finding 19) or for the disposition events (R3 decision 2 finding 8 of T1-REVIEW-FINDINGS-2: the same class)]
@@ -68,7 +68,7 @@ Findings 1-7 of decision 2 and their repairs: a failed attempt keeps the active 
 
 RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 (`.review/T1-REVIEW-FINDINGS-2.red*.log`, `red-seeded*.log`) cover acceptance 1-9; the repairs of this card fail on their assertions against 556c4a6 (`.review/T1-REVIEW-FINDINGS-3.red.log`).
 
-Budget 3200: the reviewed branch T1-REVIEW-FINDINGS-2 is 3048 added / 298 removed lines over 18 files after four R2 rounds and two R3 decisions; with the revision compare-and-set (every snapshot write site and its scenarios), the in-flight limits and the ship path applied through one locked update per branch, this branch is 3337 added / 355 removed over 18 files against main.
+Budget 3200: the reviewed branch T1-REVIEW-FINDINGS-2 is 3048 added / 298 removed lines over 18 files after four R2 rounds and two R3 decisions; with the revision compare-and-set (every snapshot write site and its scenarios), the in-flight limits and the ship path applied through one locked update per branch, this branch was 3337 added / 355 removed over 18 files against main before R3 decision 1; the six repairs of that decision (the verdict walk, the ship's final transaction from the locked record, the reloaded run re-validated, a formal result committed from its retained verdict) bring it to 3595 added / 369 removed, hence 3700.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
