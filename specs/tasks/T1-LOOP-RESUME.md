@@ -1,7 +1,7 @@
 ---
 id: T1-LOOP-RESUME
 title: A recorded extension re-admits the goal and its time-stopped cards; goal resume carries a projection revision so a stopped goal continues with replacement cards
-status: todo
+status: merged
 branch: T1-LOOP-RESUME
 worktree: C:\wt\T1-LOOP-RESUME
 allow_paths:
