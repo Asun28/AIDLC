@@ -116,6 +116,7 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     const lock = `${store.cardFile('goal-l', 'T1-L')}.lock`;
     writeFileSync(lock, `pid=1 at=${new Date().toISOString()}`, 'utf8');
     assert.throws(() => store.updateCardRun('goal-l', 'T1-L', (current) => current!), /locked/);
+    assert.ok(existsSync(lock), 'a live lock is never removed by a waiter');
     unlinkSync(lock);
     writeFileSync(lock, 'pid=1 (crashed)', 'utf8');
     const old = new Date(Date.now() - 120_000);
@@ -123,6 +124,14 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     const next = store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale lock' }));
     assert.equal(next.blocker, 'after a stale lock');
     assert.ok(!existsSync(lock));
+    assert.ok(!existsSync(`${lock}.takeover`), 'the takeover marker is released');
+    // A crashed taker-over leaves a stale takeover marker: it is aged out the same way and never blocks forever.
+    writeFileSync(lock, 'pid=1 (crashed)', 'utf8');
+    writeFileSync(`${lock}.takeover`, 'pid=2 (crashed during takeover)', 'utf8');
+    utimesSync(lock, old, old);
+    utimesSync(`${lock}.takeover`, old, old);
+    assert.equal(store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale takeover marker' })).blocker, 'after a stale takeover marker');
+    assert.ok(!existsSync(lock) && !existsSync(`${lock}.takeover`));
   });
 
   it('a throwing change leaves the record and the lock untouched', () => {

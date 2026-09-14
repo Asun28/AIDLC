@@ -226,16 +226,19 @@ describe('review findings: identity and re-raises (T1-REVIEW-FINDINGS acceptance
 
   test('the dispatched snapshot decides what a round answered and what it may resolve: a dispute recorded after dispatch is not answered, a finding raised after dispatch is not resolved', () => {
     let f = block([], 1, ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one']).findings;
-    const seenOpen = { F1: 'open' as const };
+    const seenOpen = { F1: { disposition: 'open' as const, disputes: 0 } };
     f = policy.disputeFinding(f, 'F1', 'disputed while the round ran', LATER);
     const r = block(f, 2, ['[spec] 6 tests @ src/gate.ts:1: still no RED (re:F1) -> add one'], LATEST, { seen: seenOpen });
     assert.equal(r.findings[0]!.reraised[0]!.answeredDispute, false, 'the reviewer never saw the dispute');
     assert.equal(policy.nonAcceptanceRounds(r.findings[0]!), 0);
     assert.equal(r.findings[0]!.disputes.length, 1, 'the later dispute is preserved');
+    assert.equal(r.findings[0]!.disposition, 'disputed', 'a re-raise that never saw the dispute does not reset it: the dispute waits for the next round');
+    const passedLate = policy.recordFindings(f, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: seenOpen });
+    assert.deepEqual(passedLate.resolved, [], 'a pass whose snapshot had F1 open does not resolve the finding disputed meanwhile');
     const late = block(r.findings, 3, ['[standards] 9 error handling @ src/gate.ts:9: swallowed -> rethrow'], LATEST, { seen: {} }).findings; // F2 raised by an overlapping round that saw nothing
     assert.equal(late.find((x) => x.id === 'F1')?.resolvedAt, undefined, 'a round that did not receive F1 does not resolve it');
-    const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: 'open' } });
-    assert.deepEqual(passed.resolved, ['F1'], 'only findings the round received are resolved; F2 stays open');
+    const passed = policy.recordFindings(late, { stage: 'pre', cycle: 0, round: 2, candidateSha: 'sha-1', at: LATEST, outcome: 'pass', reasons: [], seen: { F1: { disposition: 'disputed', disputes: 1 } } });
+    assert.deepEqual(passed.resolved, ['F1'], 'only findings the round received, unchanged since, are resolved; F2 stays open');
     assert.equal(passed.findings.find((x) => x.id === 'F2')?.resolvedAt, undefined);
   });
 
