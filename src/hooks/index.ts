@@ -29,6 +29,7 @@ import { AuthorizationRecord, type Lease } from '../core/types.ts';
 import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
+import { StoreError } from '../state/store.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 
 export interface HookEvent {
@@ -223,6 +224,13 @@ export function hookSession(event: HookEvent, env: NodeJS.ProcessEnv): string | 
   return typeof event.session_id === 'string' && event.session_id ? event.session_id : undefined;
 }
 
+/** The codes a lease read fails with; anything else is UNREADABLE, so no error text reaches a session's context. */
+const LEASE_READ_CODES = new Set(['READ_FAILED', 'MALFORMED_JSON', 'SCHEMA_VIOLATION']);
+
+function leaseReadCode(err: unknown): string {
+  return err instanceof StoreError && LEASE_READ_CODES.has(err.code) ? err.code : 'UNREADABLE';
+}
+
 export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: string): HookResult {
   try {
     const paths = resolveStatePaths(cwd, env);
@@ -236,14 +244,16 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     // A run whose unreleased card lease names another session is that session's to verify. A run with no
     // lease record, or a released one, has no owner and is listed as before. Expiry is not consulted:
     // expiry alone never proves the owner stopped (LeaseStore). A lease record that cannot be read hides
-    // nothing: that run is listed for every session and the context says so. The default token is
-    // resolved only when a lease has to be compared, so a Stop outside any aidlc state creates nothing.
+    // nothing: that run is listed for every session and the context names it by card id and error code
+    // only, since the error message quotes the file and file contents never enter a session's context.
+    // The default token is resolved only when a lease has to be compared, so a Stop outside any aidlc
+    // state creates nothing.
     const ownedHere = (cardId: string): boolean => {
       let lease: Lease | undefined;
       try {
         lease = leases.read(resourceKeys.card(repoKey, cardId));
       } catch (err) {
-        unreadable.push(`${cardId}: ${String((err as Error).message).split(/\r?\n/)[0]}`);
+        unreadable.push(`${cardId}: ${leaseReadCode(err)}`);
         return true;
       }
       if (!lease || lease.released) return true;
