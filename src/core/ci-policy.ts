@@ -32,24 +32,6 @@ const CODE_DEFECT_PATTERNS: RegExp[] = [
   /Traceback \(most recent call last\)/,
 ];
 
-/** Check-run names that are secret or security scans: a red one is `security`, never rerun, STOP/risk. */
-export const SECURITY_CHECK_NAME = /gitleaks|secret[-_ ]?scan|security/i;
-
-/** Raw scanner output (gitleaks) for `aidlc ci classify --log`. */
-const SECURITY_PATTERNS: RegExp[] = [/leaks found: \d+/i, /^\s*RuleID:\s*\S+/m];
-
-/** Names in a `[CI-GATE-RED] name=conclusion,name=conclusion` line the ship path emits; a name may contain commas and =value fragments. */
-/** One name=conclusion pair; the name may carry commas and =value fragments, so only a recognised conclusion followed by a comma or the end of the line closes a pair. */
-const GATE_PAIR = /(.+?)=(success|failure|neutral|cancelled|skipped|timed_out|action_required|stale|startup_failure|pending|queued|in_progress|null)(?:,|$)/g;
-export function gateRedNames(text: string): string[] {
-  const names: string[] = [];
-  for (const line of text.split(/\r?\n/)) {
-    const m = line.match(/^\[CI-GATE-RED\]\s+(.+)$/);
-    if (!m) continue;
-    for (const pair of m[1]!.matchAll(GATE_PAIR)) if (pair[1]!.trim()) names.push(pair[1]!.trim());
-  }
-  return names;
-}
 export interface CiJob {
   name: string;
   conclusion?: string | null;
@@ -57,6 +39,60 @@ export interface CiJob {
   logExcerpt?: string;
 }
 
+/** Check-run names that are secret or security scans: a red one is `security`, never rerun, STOP/risk. */
+export const SECURITY_CHECK_NAME = /gitleaks|secret[-_ ]?scan|security/i;
+
+/** Raw scanner output (gitleaks) for `aidlc ci classify --log`. */
+const SECURITY_PATTERNS: RegExp[] = [/leaks found: \d+/i, /^\s*RuleID:\s*\S+/m];
+
+/** Decode a name the GitHub ship path encoded for its gate lines. */
+function decodeCheckName(name: string): string {
+  return name.replace(/%5B/gi, '[').replace(/%5D/gi, ']').replace(/%25/g, '%');
+}
+
+const isFailure = (conclusion: string | null | undefined): boolean => Boolean(conclusion) && !['success', 'neutral', 'skipped'].includes(String(conclusion).toLowerCase());
+
+/**
+ * The structured gate line of the GitHub ship path: `[CI-GATE-RED] [{name, conclusion}]` or `[CI-GATE-TIMEOUT] N pending checks: [...]`,
+ * names JSON-encoded with brackets escaped, so a name with newlines, commas or sentinel-like text survives. Undefined when no such
+ * line exists (scaffold output, free text).
+ */
+export function gateChecks(text: string): CiJob[] | undefined {
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\[CI-GATE-(?:RED|TIMEOUT)\][^\[]*(\[.*\])\s*$/);
+    if (!m) continue;
+    try {
+      const parsed: unknown = JSON.parse(m[1]!);
+      if (!Array.isArray(parsed)) continue;
+      return parsed
+        .filter((c): c is { name: unknown; conclusion?: unknown } => typeof c === 'object' && c !== null && 'name' in c)
+        .map((c) => ({ name: decodeCheckName(String(c.name)), conclusion: c.conclusion == null ? null : String(c.conclusion) }));
+    } catch {
+      /* not JSON: the pair form, parsed by gateRedChecks */
+    }
+  }
+  return undefined;
+}
+
+/** One name=conclusion pair of the older form; the name may carry commas and =value fragments, so only a recognised conclusion followed by a comma or the end of the line closes a pair. */
+const GATE_PAIR = /(.+?)=(success|failure|neutral|cancelled|skipped|timed_out|action_required|stale|startup_failure|pending|queued|in_progress|null)(?:,|$)/g;
+
+/** Names and conclusions in a `[CI-GATE-RED]` line: the JSON form, or the older `name=conclusion,...` pair form where a pair closes only at a recognised conclusion. */
+export function gateRedChecks(text: string): CiJob[] {
+  const structured = gateChecks(text);
+  if (structured) return structured;
+  const checks: CiJob[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^\[CI-GATE-RED\]\s+(.+)$/);
+    if (!m) continue;
+    for (const pair of m[1]!.matchAll(GATE_PAIR)) if (pair[1]!.trim()) checks.push({ name: pair[1]!.trim(), conclusion: pair[2]! });
+  }
+  return checks;
+}
+
+export function gateRedNames(text: string): string[] {
+  return gateRedChecks(text).map((c) => c.name);
+}
 export interface CiClassification {
   class: CiFailureClass;
   failedJobs: string[];
@@ -70,7 +106,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string): CiClassific
   const securityHits: string[] = [];
   for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push(j.name);
   for (const text of texts) {
-    for (const name of gateRedNames(text)) if (SECURITY_CHECK_NAME.test(name)) securityHits.push(name);
+    for (const c of gateRedChecks(text)) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push(c.name);
     for (const p of SECURITY_PATTERNS) {
       const m = text.match(p);
       if (m) securityHits.push(m[0].trim().slice(0, 80));

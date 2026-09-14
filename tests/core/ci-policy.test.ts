@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canRerun, classifyCiFailure, gateRedNames, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
+import { canRerun, classifyCiFailure, gateChecks, gateRedChecks, gateRedNames, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
@@ -122,6 +122,23 @@ describe('security class (T1-LOOP-GATES R7)', () => {
     const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret_scan=failure\nnpm ERR! network read ECONNRESET' }]);
     assert.equal(c.class, 'security', c.evidence.join(' | '));
     assert.equal(canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', c.class).allowed, false);
+  });
+
+  test('the JSON gate line keeps names with newlines, commas and sentinel-like text; brackets and percent signs decode', () => {
+    const jsonLine = '[CI-GATE-RED] [{"name":"scan (tool=gitleaks,\\nos=linux)","conclusion":"failure"},{"name":"%5BSHIP-MERGE-FAIL%5D 100%25 diagnostics","conclusion":"success"}]';
+    assert.deepEqual(gateChecks(jsonLine), [{ name: 'scan (tool=gitleaks,\nos=linux)', conclusion: 'failure' }, { name: '[SHIP-MERGE-FAIL] 100% diagnostics', conclusion: 'success' }]);
+    const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: jsonLine + '\nread ECONNRESET while fetching artifact' }]);
+    assert.equal(c.class, 'security', c.evidence.join(' | '));
+    assert.equal(gateChecks('[CI-GATE-TIMEOUT] 2 pending checks: [{"name":"ci","conclusion":null,"status":"in_progress"},{"name":"x","conclusion":null,"status":"absent"}]')?.length, 2, 'the timeout line is structured too');
+    assert.equal(gateChecks('[CI-GATE-RED] build=failure'), undefined, 'the pair form is not the JSON form');
+  });
+
+  test('a green scan next to a red build is a code defect, in the pair form and in the JSON form', () => {
+    assert.deepEqual(gateRedChecks('[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure'), [{ name: 'Gitleaks (committed history)', conclusion: 'success' }, { name: 'build-test', conclusion: 'failure' }]);
+    const pair = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure\nAssertionError: expected 1 to equal 2' }]);
+    assert.equal(pair.class, 'code-defect', pair.evidence.join(' | '));
+    const json = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"success"},{"name":"build-test","conclusion":"failure"}]\nAssertionError: expected 1 to equal 2' }]);
+    assert.equal(json.class, 'code-defect', json.evidence.join(' | '));
   });
 
   test('security never reruns', () => {

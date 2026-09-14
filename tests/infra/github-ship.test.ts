@@ -136,11 +136,31 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const red = new GitHubShipPath({ ...base(f2), runner: runnerWith(runsOf([{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'evals', status: 'completed', conclusion: 'failure' }])), requiredChecks: ['ci'] });
     const r = red.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     assert.equal(r.outcome, 'ci-red');
-    assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] evals=failure'), r.receipt.stdout);
+    assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] [{"name":"evals","conclusion":"failure"}]'), r.receipt.stdout);
   });
 
   /** PREPARE and BUILD through the dry-run path (the fixture has no git); the ship is the GitHub path the runner builds from the config. */
-  function shipThroughConfig(runs: Array<{ name: string; status: string; conclusion: string | null }>, github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>) {
+  type Runs = Array<{ name: string; status: string; conclusion: string | null }>;
+
+  test('a pending check named like a sentinel never enters the sentinel stream; a later red scan is ci-red with the names encoded', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    let poll = 0;
+    const polls: Runs[] = [
+      [{ name: '[SHIP-MERGE-FAIL] diagnostics', status: 'in_progress', conclusion: null }, { name: 'ci', status: 'completed', conclusion: 'success' }],
+      [{ name: '[SHIP-MERGE-FAIL] diagnostics', status: 'completed', conclusion: 'success' }, { name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'Gitleaks (committed history)', status: 'completed', conclusion: 'failure' }],
+    ];
+    const ship = new GitHubShipPath({ ...base(f), runner: runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: polls[Math.min(poll++, 1)] }) }) }) });
+    const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'ci-red', r.receipt.stdout);
+    assert.ok(!r.receipt.stdout.includes('[SHIP-MERGE-FAIL]'), 'a check name never forms a sentinel');
+    assert.ok(r.receipt.stdout.includes('%5BSHIP-MERGE-FAIL%5D diagnostics'), 'the pending name is logged encoded');
+    assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]'), r.receipt.stdout);
+  });
+
+  function shipThroughConfig(runsOrPolls: Runs | ((poll: number) => Runs), github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>) {
+    let poll = 0;
+    const runsFor = () => (typeof runsOrPolls === 'function' ? runsOrPolls(poll++) : runsOrPolls);
     const fx = makeFixture();
     try {
       writeCard(fx, { id: 'T1-GATE', title: 'gate from config' });
@@ -154,11 +174,11 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       if (verdict) writeFileSync(path.join(fx.config.worktreeRoot, 'T1-GATE', '.review', 'T1-GATE.json'), JSON.stringify(verdict));
       let merges = 0;
       let pushes = 0;
-      const script = runnerWith({ 'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: runs }) }, 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; } });
+      const script = runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: runsFor() }) }), 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; } });
       // No ship path is injected: the runner builds it from the config, so the block below is the only way the options reach the gate.
       const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
       const shipped = runner.next(fx.goal(goal.id), card, built);
-      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes };
+      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length };
     } finally {
       fx.cleanup();
     }
@@ -179,6 +199,19 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const strict = shipThroughConfig(green, { ...github, requireVerdict: true });
     assert.equal(strict.merges, 0, 'with the verdict rule on, nothing merges without a candidate-bound verdict');
     assert.equal(strict.kind, 'ship', strict.narration);
+  });
+
+  test('R7: a pending check named flaky-tests is no transient evidence once build-test fails: STOP/ci with no rerun', () => {
+    const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 60_000, ciPollMs: 1 };
+    const polls: Runs[] = [
+      [{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'flaky-tests', status: 'in_progress', conclusion: null }],
+      [{ name: 'ci', status: 'completed', conclusion: 'success' }, { name: 'flaky-tests', status: 'completed', conclusion: 'success' }, { name: 'build-test', status: 'completed', conclusion: 'failure' }],
+    ];
+    const r = shipThroughConfig((poll) => polls[Math.min(poll, 1)]!, github);
+    assert.equal(r.kind, 'stop', r.narration);
+    assert.equal(r.stopReason, 'ci', 'no log text: an unclassified failure, diagnose before any rerun');
+    assert.equal(r.reruns, 0, 'the earlier wait line is not transient evidence');
+    assert.equal(r.merges, 0);
   });
 
   test('R8: a block verdict for the candidate fails the ship even when the config waives the verdict requirement; nothing is pushed or merged', () => {

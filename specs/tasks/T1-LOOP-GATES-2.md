@@ -37,7 +37,7 @@ acceptance:
   - 5. A block verdict for the candidate fails the ship before any push or merge even when `github.requireVerdict` is false, and `ProjectConfig` refuses `requireVerdict` false next to `gateRequired` true (github-ship.test.ts, config.test.ts). [R8] [dod arm 1]
   - 6. `docs/ARCHITECTURE.md` ship outcome map and `docs/OPERATIONS.md` config keys and gate promotion are updated; CHANGELOG.md Unreleased carries the entry. [dod arm 1]
 plan_ref: plans/loop-integration.md#7
-budget: 350
+budget: 500
 tdd: true
 sweep: "grep -rn 'classifyCiFailure\|canRerun\|CiFailureClass\|GitHubShipPath(\|requiredChecks\|requireVerdict' src tests docs: ci-policy.ts class table and gate-line parser, card-runner.ts ci-red case and shipPathFor, github-ship.ts verdict and gate loop, config.ts refinement, types.ts enum, ci-rerun.test.ts, github-ship.test.ts, config.test.ts, ARCHITECTURE.md outcome map, OPERATIONS.md Ship gates and STOP table"
 non_goals: [a local scanner behind aidlc security check, renaming CI jobs, a gitleaks baseline file, parsing job logs from GitHub, changes to the R2 or R3 review paths]
@@ -51,7 +51,7 @@ Replacement of T1-LOOP-GATES, which stopped after its two R3 decisions (decision
 
 The gitleaks history scan becomes a blocking check. The CI classifier gains a `security` class keyed off the failing check-run name the ship path reports (and the raw gitleaks log for `aidlc ci classify --log`); that class never reruns and stops the card with reason `risk`. A `github` config block carries required check names, the verdict requirement and the CI polling limits from `aidlc.config.json` to the GitHub ship path; a required check missing from the run list is treated as pending, a block verdict is never waived, and the config refuses a waived verdict next to a required gate.
 
-Budget 350: the reviewed change is 313 net lines after the four regression scenarios the two R3 decisions asked for.
+Budget 500: the reviewed change is 460 net lines after the regression scenarios of three R3 decisions; the first decision on this card asked for structured gate lines (names with newlines, commas or sentinel-like text; conclusions kept; pending names never evidence) and their tests.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell

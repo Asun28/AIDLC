@@ -128,3 +128,36 @@ test('R7: a native secret_scan job with transient noise is STOP/risk, never a re
     fx.cleanup();
   }
 });
+
+const SECURITY_JSON = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\nread ECONNRESET while fetching artifact\n[SAGA-FAIL]';
+const PENDING_NOISE = '[CI-GATE-WAIT] 1 pending: [{"name":"flaky-tests","conclusion":null,"status":"in_progress"}]\n[CI-GATE-RED] [{"name":"build-test","conclusion":"failure"}]\n[SAGA-FAIL]';
+
+test('R7: a structured gate line is classified from its checks; transient text next to it never earns the scan a rerun', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], SECURITY_JSON);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'risk');
+    assert.equal(r.run.ci.reruns.length, 0);
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'security');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R7: pending check names in a wait line are no failure evidence; a red build without a log is unknown and never reruns', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], PENDING_NOISE);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'ci', 'diagnose before any rerun');
+    assert.equal(r.run.ci.reruns.length, 0, 'flaky-tests in the wait line is not transient evidence');
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'unknown');
+  } finally {
+    fx.cleanup();
+  }
+});

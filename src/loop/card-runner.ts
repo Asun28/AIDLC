@@ -15,7 +15,7 @@ import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
 import { classifyVerdict, recordReviewOutcome, reviewRequestKey, type ClassifiedVerdict } from '../core/review-policy.ts';
-import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
+import { classifyCiFailure, canRerun, gateChecks, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type Goal, type PreReviewRound, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
@@ -894,7 +894,12 @@ export class CardRunner {
       case 'ci-red':
       case 'ci-timeout': {
         const text = `${result.receipt.stdout}\n${result.receipt.stderr}`;
-        const cls = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: result.outcome === 'ci-timeout' ? 'timed_out' : 'failure', logExcerpt: text }]);
+        // The GitHub ship path reports check runs as structured gate lines (names and conclusions, no logs): classify those alone, so wait
+        // lines and check names are never failure evidence. Free-text output (scaffold) keeps the log classification.
+        const structured = gateChecks(text);
+        const cls = structured
+          ? classifyCiFailure(structured) // pending entries carry no conclusion and are no failures: a timeout stays unclassified
+          : classifyCiFailure([{ name: 'ship-ci-gate', conclusion: result.outcome === 'ci-timeout' ? 'timed_out' : 'failure', logExcerpt: text }]);
         this.journal(goal.id).append({ type: 'CI_CLASSIFIED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { class: cls.class, evidence: cls.evidence.slice(0, 5) } });
         const runId = text.match(/runs\/(\d+)/)?.[1] ?? `ship-${operationId}`;
         if (cls.class === 'security') {

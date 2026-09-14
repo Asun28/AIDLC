@@ -3,7 +3,7 @@
  *
  * Mirrors the scaffold chain: commit -> push -> PR (reuse retained identity) -> require a fresh
  * candidate-bound verdict written by the reviewer role at `<worktree>/.review/<branch>.json`
- * -> CI check runs green (required names present, every reported check green) -> squash merge matching the head commit -> merge token. Every step
+ * -> CI check runs green (required names present, every reported check green; the gate lines carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every step
  * prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
  * Authentication failure never silently becomes local mode.
  */
@@ -30,6 +30,15 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+}
+
+/** Check names travel in the gate lines as JSON with brackets and percent signs encoded: a name can never form a sentinel or break a line. `gateChecks` in core/ci-policy decodes them. */
+function encodeCheckName(name: string): string {
+  return name.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
+  return JSON.stringify(runs.map((r) => ({ name: encodeCheckName(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })));
 }
 
 export class GitHubShipPath implements ShipPath {
@@ -119,12 +128,12 @@ export class GitHubShipPath implements ShipPath {
       const runs = this.gh.checkRuns(this.options.repository, head, wt);
       // Required names must be present and green: an absent one is pending until the timeout. Every reported check must succeed.
       const absent = (this.options.requiredChecks ?? []).filter((name) => !runs.some((r) => r.name === name));
-      const pending = [...runs.filter((r) => r.status !== 'completed').map((r) => r.name), ...absent.map((name) => `${name} (absent)`)];
+      const pending = [...runs.filter((r) => r.status !== 'completed'), ...absent.map((name) => ({ name, status: 'absent', conclusion: null }))];
       const failed = runs.filter((r) => r.status === 'completed' && !['success', 'neutral', 'skipped'].includes((r.conclusion ?? '').toLowerCase()));
-      if (failed.length) return { ...fail('[CI-GATE-RED]', failed.map((f) => `${f.name}=${f.conclusion}`).join(',')), prNumber };
+      if (failed.length) return { ...fail('[CI-GATE-RED]', checksJson(failed)), prNumber };
       if (!pending.length && runs.length > 0) break;
-      if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${pending.join(', ')}`), prNumber };
-      log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${pending.join(', ')}`);
+      if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`), prNumber };
+      log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
       sleep(poll);
     }
     log.push('[CI-GATE-PASS]');
