@@ -1034,8 +1034,10 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'CLOSE', to: 'DONE' } });
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
+    // The lesson step has its own flags; every other step is marked by its own name.
+    const firstFlag = missing[0] === 'lessons' ? '--lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"' : `--${missing[0]}`;
     const lessonHint = missing.includes('lessons') ? ' The lesson step takes --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"; --all never records it.' : '';
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${missing[0]}\`.${lessonHint}` } };
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} ${firstFlag}\`.${lessonHint}` } };
   }
 
   /** Closure flags. `lessons` needs a disposition: one lesson line appended to docs/LESSONS.md (past lines untouched) or a reason to skip; both are journaled. */

@@ -1,6 +1,8 @@
 import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { appendLesson, formatLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
@@ -76,5 +78,79 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     const ctx = readLessons(many, 3);
     assert.equal(ctx.count, 7);
     assert.deepEqual(ctx.recent.map((l) => parseLessonLine(l)?.rule), ['rule 5', 'rule 6', 'rule 7']);
+  });
+});
+
+const CARD = ['---', 'id: T0-LESSON', 'title: a card that closes with a lesson', 'status: todo', 'branch: T0-LESSON', 'worktree: wt/T0-LESSON', 'allow_paths:', '  - src/x.ts', 'dod_command: node -e 0', 'dod_exit: 0', 'acceptance:', '  - 1. x. [dod arm 1]', 'plan_ref: plans/x.md#1', 'budget: 10', 'tdd: false', '---', '', '# T0-LESSON', ''].join('\n');
+
+describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-LOOP-LESSONS R6)', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const bin = path.join(root, 'bin', 'aidlc.js');
+  const repos: string[] = [];
+  after(() => {
+    for (const d of repos) rmSync(d, { recursive: true, force: true });
+  });
+
+  /** A temp repository on the dry-run ship path with one card driven to CLOSE through the CLI. */
+  function repoAtClose() {
+    const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-lessons-cli-'));
+    repos.push(tmp);
+    mkdirSync(path.join(tmp, 'specs', 'tasks'), { recursive: true });
+    writeFileSync(path.join(tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(tmp, 'wt') }));
+    writeFileSync(path.join(tmp, 'specs', 'tasks', 'T0-LESSON.md'), CARD);
+    const env = { ...process.env, AIDLC_STATE_DIR: path.join(tmp, 'state') };
+    const cli = (...args: string[]) => {
+      const r = spawnSync(process.execPath, [bin, ...args, '--json'], { cwd: tmp, env, encoding: 'utf8', timeout: 60_000 });
+      assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
+      return JSON.parse(r.stdout) as Record<string, any>;
+    };
+    const created = cli('goal', 'new', 'implement T0-LESSON', '--card', 'T0-LESSON');
+    const goal = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
+    for (let i = 0; i < 4; i += 1) {
+      const d = cli('next', '--goal', goal)['directive'] ?? cli('next', '--goal', goal);
+      const kind = String(d['kind']);
+      if (kind === 'run-card') break;
+      if (kind === 'plan') cli('report', '--goal', goal, '--result', 'plan-produced', '--plan-ref', 'plans/x.md');
+      else if (kind.startsWith('cards') || kind.startsWith('project')) cli('report', '--goal', goal, '--result', 'cards-projected', '--cards', 'T0-LESSON');
+      else assert.fail(`unexpected goal directive ${kind}: ${String(d['narration'])}`);
+    }
+    assert.equal(cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive']['kind'], 'prepare');
+    assert.equal(cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive']['kind'], 'build');
+    cli('card', 'attempt', 'T0-LESSON', '--goal', goal, '--outcome', 'success', '--dod-receipt', 'dod:cli', '--candidate-sha', 'sha-cli');
+    const close = cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive'];
+    assert.equal(close['kind'], 'close', String(close['narration']));
+    assert.deepEqual(close['missing'], ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
+    return { tmp, goal, cli };
+  }
+
+  test('--all leaves the lesson step open, the close hint names --lesson and --skip-lesson, and --lesson appends one line before DONE', () => {
+    const { tmp, goal, cli } = repoAtClose();
+    const all = cli('card', 'close', 'T0-LESSON', '--goal', goal, '--all');
+    assert.equal(all['lessons'], false, '--all never records the lesson disposition');
+    const still = cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive'];
+    assert.equal(still['kind'], 'close');
+    assert.deepEqual(still['missing'], ['lessons']);
+    assert.ok(String(still['narration']).includes('--lesson "'), String(still['narration']));
+    assert.ok(String(still['narration']).includes('--skip-lesson'), String(still['narration']));
+    assert.ok(!String(still['narration']).includes('--lessons'), 'no invented flag');
+    const recorded = cli('card', 'close', 'T0-LESSON', '--goal', goal, '--lesson', 'NEVER close a card without its lesson step (source: T1-LOOP-LESSONS R6)');
+    assert.equal(recorded['lessons'], true);
+    const file = readFileSync(path.join(tmp, 'docs', 'LESSONS.md'), 'utf8');
+    assert.ok(file.startsWith('# Lessons'), 'the file is created from the header');
+    assert.equal(file.split('\n').filter((l) => LESSON_LINE.test(l)).length, 1);
+    assert.ok(file.includes('T0-LESSON: NEVER close a card without its lesson step (source: T1-LOOP-LESSONS R6)'), file);
+    assert.equal(cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive']['kind'], 'done');
+  });
+
+  test('--skip-lesson records the reason and closes the step without touching the file; malformed --lesson text is refused', () => {
+    const { tmp, goal, cli } = repoAtClose();
+    cli('card', 'close', 'T0-LESSON', '--goal', goal, '--all');
+    const bad = spawnSync(process.execPath, [bin, 'card', 'close', 'T0-LESSON', '--goal', goal, '--lesson', 'do it later', '--json'], { cwd: tmp, env: { ...process.env, AIDLC_STATE_DIR: path.join(tmp, 'state') }, encoding: 'utf8', timeout: 60_000 });
+    assert.notEqual(bad.status, 0, 'malformed lesson text is refused');
+    assert.ok(!existsSync(path.join(tmp, 'docs', 'LESSONS.md')), 'nothing is written for a refused lesson');
+    const skipped = cli('card', 'close', 'T0-LESSON', '--goal', goal, '--skip-lesson', 'the reviews taught no new rule');
+    assert.equal(skipped['lessons'], true);
+    assert.ok(!existsSync(path.join(tmp, 'docs', 'LESSONS.md')), 'a skip writes no file');
+    assert.equal(cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive']['kind'], 'done');
   });
 });

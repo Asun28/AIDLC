@@ -74,6 +74,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     r = runner.next(fx.goal(goal.id), card, run2);
     assert.equal(r.directive.kind, 'close', 'the five mechanical steps leave the lesson step open');
     if (r.directive.kind === 'close') assert.deepEqual(r.directive.missing, ['lessons']);
+    assert.ok(r.directive.narration.includes('--lesson "') && r.directive.narration.includes('--skip-lesson') && !r.directive.narration.includes('--lessons'), `the close hint names the real flags: ${r.directive.narration}`);
     assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }), /--lesson|--skip-lesson/, 'the lesson step needs a disposition');
     assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'MAYBE do it (source: x)' }), /NEVER/, 'the frozen format is enforced');
     const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
@@ -89,7 +90,15 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     if (d1.kind === 'verify-arc') assert.deepEqual(d1.cards, ['T1-HELLO']);
     assert.equal(fx.goal(goal.id).state, 'VERIFY_ARC');
 
-    const done = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } });
+    // The goal-level CLOSE lists a card whose lesson step is open and names it; once recorded, the goal is DONE.
+    const closedRun = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    fx.store.saveCardRun({ ...closedRun, closure: { ...closedRun.closure, lessons: false } });
+    const pending = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } });
+    assert.equal(pending.directive.kind, 'close', pending.directive.narration);
+    if (pending.directive.kind === 'close') assert.deepEqual(pending.directive.missing, ['T1-HELLO: closure.lessons']);
+    assert.ok(pending.directive.narration.includes('lessons'), `the goal-level CLOSE narration names the lesson step: ${pending.directive.narration}`);
+    fx.store.saveCardRun(closedRun);
+    const done = { directive: fx.controller.next(goal.id) };
     assert.equal(done.directive.kind, 'done');
     const final = fx.goal(goal.id);
     assert.equal(final.state, 'DONE');
