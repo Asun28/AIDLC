@@ -93,6 +93,7 @@ test('Q8: an extension is explicit, later and recorded; an earlier date is refus
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, HOUR_MS), 'too early'), /later/);
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', 'not-a-date', 'garbage'), /ISO/, 'an unparsable deadline is refused');
     assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '', 'blank'), /ISO/);
+    assert.throws(() => fx.controller.extendDeadline(goal.id, 'lead', '2026-09-11T06:00:00+00:00', 'offset form'), /ISO/, 'only the persisted UTC form is accepted');
     assert.equal(fx.goal(goal.id).deadlines.extensions.length, 0, 'a refused extension is not recorded');
     const extended = fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 5 * HOUR_MS), 'reviewer outage');
     assert.equal(effectiveGoalDeadline(extended.deadlines), addMs(T0, 5 * HOUR_MS));
@@ -124,10 +125,14 @@ test('R1: a recorded extension re-admits a goal stopped for time and its time-st
     const until = addMs(T0, 6 * HOUR_MS);
     const extended = fx.controller.extendDeadline(goal.id, 'lead', until, 'the change is complete; the reviews and the ship remain');
     assert.equal(extended.terminal, false, 'the extension re-admits the goal');
-    assert.equal(extended.state, 'WAIT');
+    assert.equal(extended.state, 'CARDS', 're-entry runs through the projection check and its authorization');
     assert.equal(extended.stop, undefined);
     const hello = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
     assert.equal(hello.stop, undefined, 'the time stop of the card is cleared');
+    assert.notEqual(hello.state, 'STOP', 'the re-admitted run is selectable again');
+    const afterExtension = fx.controller.next(goal.id);
+    assert.equal(afterExtension.kind, 'wait', `the controller waits on the re-admitted card before any worker call, it never re-stops: ${afterExtension.narration}`);
+    if (afterExtension.kind === 'wait') assert.ok(afterExtension.on.includes('T1-HELLO'), afterExtension.on);
     assert.equal(hello.deadline, until, 'the card deadline follows the extension');
     assert.ok(fx.events(goal.id).some((e) => e.type === 'CARD_STATE' && e.cardId === 'T1-HELLO' && String(e.data['reason'] ?? '').includes('extension')), 'the re-admission is journaled');
     const resumed = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), hello);
