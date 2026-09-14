@@ -1,11 +1,11 @@
 import { describe, test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, utimesSync, writeFileSync, mkdirSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, withLessonsLock, LESSON_LINE } from '../../src/artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -108,34 +108,6 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     assert.equal(readLessons(file).count, 2, 'both lines survive');
   });
 
-  test('the lessons lock names its holder: a live holder refuses, a dead or hung holder is taken over, an evicted holder never writes, and a release never removes the next owner lock', () => {
-    const file = path.join(dir(), 'docs', 'LESSONS.md');
-    const lock = `${file}.lock`;
-    assert.equal(withLessonsLock(file, () => 42), 42);
-    assert.equal(existsSync(lock), false, 'released after the work');
-    writeFileSync(lock, `${process.pid} live-holder`, 'utf8');
-    assert.throws(() => withLessonsLock(file, () => 1), /holds/);
-    writeFileSync(lock, '2147483647 dead-holder', 'utf8');
-    assert.equal(withLessonsLock(file, () => 7), 7, 'a lock of a process that no longer runs is taken over');
-    writeFileSync(lock, `${process.pid} hung-holder`, 'utf8');
-    const past = new Date('2020-01-01T00:00:00.000Z');
-    utimesSync(lock, past, past);
-    assert.equal(withLessonsLock(file, () => 8), 8, 'a holder hung past the stale limit is taken over');
-    assert.throws(
-      () =>
-        withLessonsLock(file, (assertHeld) => {
-          writeFileSync(lock, '2147483647 next-owner', 'utf8');
-          assertHeld();
-          return 0;
-        }),
-      /changed hands/,
-      'an evicted holder never writes',
-    );
-    assert.equal(readFileSync(lock, 'utf8'), '2147483647 next-owner', 'the release never removes the next owner lock');
-    rmSync(lock);
-    assert.throws(() => withLessonsLock(file, () => { throw new Error('inside'); }), /inside/);
-    assert.equal(existsSync(lock), false, 'released when the work throws');
-  });
   test('reading a missing file is an empty context; recent is capped', () => {
     const file = path.join(dir(), 'missing.md');
     assert.deepEqual(readLessons(file), { file, count: 0, recent: [] });

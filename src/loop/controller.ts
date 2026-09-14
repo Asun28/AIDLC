@@ -397,7 +397,8 @@ export class GoalController {
         continue;
       }
       if (!run.mergeVerified) missing.push(`${id}: merge not verified`);
-      for (const [k, v] of Object.entries(run.closure)) if (!v) missing.push(`${id}: closure.${k}`);
+      // A run persisted as DONE keeps its closure complete: DONE is derived and never patched, so a record that predates the lessons predicate stays complete.
+      for (const [k, v] of Object.entries(run.closure)) if (!v && !(run.state === 'DONE' && k === 'lessons')) missing.push(`${id}: closure.${k}`);
     }
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
@@ -487,10 +488,10 @@ export class GoalController {
         const existing = this.store.getCardRun(goal.id, input.cardId);
         if (!existing) throw new Error(`no run record for ${input.cardId}; start it with aidlc card next`);
         const patch = d['run'] && typeof d['run'] === 'object' ? (d['run'] as Record<string, unknown>) : d;
-        if (Object.prototype.hasOwnProperty.call(patch, 'closure')) {
-          throw new Error('closure predicates are recorded by aidlc card close (the lesson step by --lesson or --skip-lesson with its disposition), never by a raw patch');
+        for (const owned of ['closure', 'mergeVerified', 'ownerGeneration']) {
+          if (Object.prototype.hasOwnProperty.call(patch, owned)) throw new Error(`${owned} is loop-owned evidence (closure predicates come from aidlc card close, the lesson step from --lesson or --skip-lesson), never set by a raw patch`);
         }
-        if (patch['state'] === 'DONE') throw new Error('DONE is derived from a verified merge and a complete closure, never set by a raw patch');
+        if (patch['state'] === 'DONE' || patch['state'] === 'CLOSE') throw new Error(`${String(patch['state'])} is derived from a verified merge and the closure record, never set by a raw patch`);
         const run = CardRun.parse({ ...existing, ...patch, goalId: goal.id, cardId: input.cardId, updatedAt: now });
         this.store.saveCardRun(run);
         j.append({ type: 'CARD_RESULT', goalId: goal.id, cardId: input.cardId, generation: goal.generation, data: { state: run.state, candidate: run.candidate?.digest, pr: run.pr?.number, mergeVerified: run.mergeVerified, stop: run.stop?.reason, childRef: d['childRef'] ?? `card:${input.cardId}` } });

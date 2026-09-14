@@ -7,7 +7,7 @@ import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
@@ -107,7 +107,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
 
     // The goal-level CLOSE lists a card whose lesson step is open and names it; once recorded, the goal is DONE.
     const closedRun = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
-    fx.store.saveCardRun({ ...closedRun, closure: { ...closedRun.closure, lessons: false } });
+    fx.store.saveCardRun({ ...closedRun, state: 'CLOSE', closure: { ...closedRun.closure, lessons: false } });
     const pending = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } });
     assert.equal(pending.directive.kind, 'close', pending.directive.narration);
     if (pending.directive.kind === 'close') assert.deepEqual(pending.directive.missing, ['T1-HELLO: closure.lessons']);
@@ -1143,16 +1143,18 @@ test('R6: closure.lessons is never set by a raw card patch, a stale goal snapsho
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: { state: 'DONE' } }), /raw patch/, 'DONE is derived, never patched');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.state, 'CLOSE');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.closure.lessons, false, 'the raw patch path never sets the predicate');
+    for (const patch of [{ mergeVerified: true }, { state: 'CLOSE' }, { ownerGeneration: 9 }]) {
+      assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-GUARD', data: patch }), /raw patch/, `${JSON.stringify(patch)} is loop-owned evidence`);
+    }
     const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
-    mkdirSync(path.dirname(lessonsFile), { recursive: true });
-    writeFileSync(`${lessonsFile}.lock`, `${process.pid} another-closer`, 'utf8');
-    assert.throws(() => runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NOTE guard the closure write (source: R3)' }), /holds/);
-    assert.equal(existsSync(lessonsFile), false, 'nothing is written while another closer holds the lock');
-    const past = new Date('2020-01-01T00:00:00.000Z');
-    utimesSync(`${lessonsFile}.lock`, past, past);
     const recorded = runner.markClosure(fx.goal(goal.id), card, r.run, { lessons: true }, { lessonText: 'NOTE guard the closure write (source: R3)' });
-    assert.equal(recorded.closure.lessons, true, 'a stale lock is taken over');
-    assert.equal(existsSync(`${lessonsFile}.lock`), false, 'the lock is released');
+    assert.equal(recorded.closure.lessons, true);
+    assert.ok(readFileSync(lessonsFile, 'utf8').includes('NOTE guard the closure write (source: R3)'));
+    // A card next that read the run before the disposition never overwrites it: the persisted closure is preserved on save.
+    const after = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-GUARD')?.closure.lessons, true, 'the stale snapshot of card next does not undo the recorded disposition');
+    assert.equal(after.directive.kind, 'close');
+    if (after.directive.kind === 'close') assert.deepEqual(after.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup']);
     const stale = fx.goal(goal.id);
     assert.throws(() => runner.markClosure({ ...stale, generation: stale.generation + 1 }, card, recorded, { metadata: true }), /generation/);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: { detail: 'cancelled under the closer' } });
@@ -1177,10 +1179,14 @@ test('R6: a replacement session reclaims the card lease in CLOSE once the old le
     r = runner.next(fx.goal(goal.id), card, built);
     assert.equal(r.directive.kind, 'close');
     const before = r.run.ownerGeneration;
-    fx.advance(DEFAULT_LEASE_TTL_MS + 1000);
     setActorForTests(actorB);
-    const taken = runner.next(fx.goal(goal.id), card, r.run);
-    assert.equal(taken.directive.kind, 'close', taken.directive.narration);
+    const early = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(early.directive.kind, 'stop', 'a live lease of another session is not taken');
+    assert.equal(early.run.stop?.reason, 'ownership');
+    fx.advance(DEFAULT_LEASE_TTL_MS + 1000);
+    const taken = runner.next(fx.goal(goal.id), card, early.run);
+    assert.equal(taken.directive.kind, 'close', `the ownership stop is reconciled once the blocking lease expired: ${taken.directive.narration}`);
+    assert.equal(taken.run.stop, undefined);
     assert.ok(taken.run.ownerGeneration !== undefined && before !== undefined && taken.run.ownerGeneration > before, 'the expired lease is taken over with a new generation');
     const closed = runner.markClosure(fx.goal(goal.id), card, taken.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'the replacement session found no rule to record' });
     const done = runner.next(fx.goal(goal.id), card, closed);
@@ -1190,6 +1196,12 @@ test('R6: a replacement session reclaims the card lease in CLOSE once the old le
     const legacy = runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-TAKE')!);
     assert.equal(legacy.directive.kind, 'done', legacy.directive.narration);
     assert.equal(legacy.run.state, 'DONE');
+    // The goal finishes too: goal-level closure never lists the lesson step of a run persisted as DONE.
+    setActorForTests(actorA);
+    assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+    const finished = fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: ['dod:1'] } });
+    assert.equal(finished.directive.kind, 'done', finished.directive.narration);
+    assert.equal(fx.goal(goal.id).state, 'DONE');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
