@@ -10,6 +10,8 @@ allow_paths:
   - src/review/pre-review.ts
   - src/loop/card-runner.ts
   - src/cli/main.ts
+  - src/state/goal-store.ts
+  - tests/infra/goal-store.test.ts
   - tests/core/review-policy.test.ts
   - tests/core/types.test.ts
   - tests/surface/pre-review.test.ts
@@ -22,7 +24,7 @@ allow_paths:
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T1-REVIEW-FINDINGS.md
-dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
+dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 dod_exit: 0
 requirements:
   - R1. WHEN a pre-review round or a formal decision ends in a block, the loop shall record one finding with a stable id per cited reason and record a reason that references an earlier finding as a re-raise of that finding.
@@ -33,7 +35,7 @@ requirements:
   - R6. WHEN a finding is re-raised after two disputes, the loop shall name it as a deadlock in the stop detail or in the residual findings handed to R3.
 acceptance:
   - 1. `recordFindings` gives every cited reason of a block a sequential id `F<n>` with stage, cycle, round, perspective, cited file and candidate sha; a reason carrying `re:F<k>` (optional space after the colon) is recorded as a re-raise on F<k> and returns it to open; an unknown id makes a new finding; a decided later round of the same stage that does not re-raise an open or disputed finding resolves it (review-policy.test.ts). [R1] [dod arm 1]
-  - 2. `aidlc review dispute <card> <id> --note` sets `disputed` and stores the note; a second dispute without a re-raise in between is refused; `aidlc review accept <card> <id>` returns the finding to open; `aidlc review findings <card>` lists id, disposition, disputes, re-raises and resolution, on a stopped run too (the human adjudicator reads it after a STOP); `FINDING_DISPUTED` and `FINDING_ACCEPTED` are journaled; dispute and accept refuse a stopped run (t0-flow.test.ts). [R2] [dod arm 1]
+  - 2. `aidlc review dispute <card> <id> --note` sets `disputed` and stores the note; a second dispute without a re-raise in between is refused; `aidlc review accept <card> <id>` returns the finding to open; `aidlc review findings <card>` lists id, disposition, disputes, re-raises and resolution, on a stopped run too (the human adjudicator reads it after a STOP); `FINDING_DISPUTED` and `FINDING_ACCEPTED` are journaled; dispute and accept refuse a stopped run and change the persisted record under the card-run lock (`GoalStore.updateCardRun`), so a caller's stale snapshot never overwrites another window's disposition (t0-flow.test.ts, goal-store.test.ts). [R2] [dod arm 1]
   - 3. `buildReviewPrompt` renders `## Prior findings` with the `re:F<n>` instruction, open findings as ones to verify and disputed findings with the note as ones to re-raise only with evidence the note does not answer; the R2 panel prompts and the R3 prompt receive the run's findings (pre-review.test.ts, t0-flow.test.ts). [R3] [dod arm 1]
   - 4. `review pre` and `review r3` refuse a candidate whose last decided round or decision of the same stage was a block while any finding of that block is open, naming the open ids and the two moves (repair to a new candidate, or dispute each), and run when every one is disputed; a pre-review pass for the candidate from an earlier cycle satisfies the formal review's eligibility and the SHIP gate goes to the formal review (t0-flow.test.ts, review-block.test.ts). [R4] [R5] [dod arm 1]
   - 5. The STOP detail of the R3 second block and of exhausted R2 rounds, and the residual handed to R3 under `onExhausted: ship` (the journal event and the R3 prompt's prior-findings line), name every finding disputed twice and re-raised twice as a deadlock (review-block.test.ts, t0-flow.test.ts, pre-review.test.ts). [R6] [dod arm 1]
@@ -57,7 +59,7 @@ Budget 1050, raised from 450 before the first review: the reviewed branch is 103
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
+npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/types.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts tests/infra/goal-store.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the review-policy, types, pre-review, scenario, template and mirror tests named above pass, including the new assertions on finding ids, re-raises, dispositions, the prior-findings prompt section, the same-candidate guard, the pass valid across cycles and the deadlock naming.
