@@ -256,28 +256,19 @@ export class CardRunner {
   }
 
   /**
-   * A disposition changes the persisted run, never the caller's snapshot: the current record is re-read
-   * (a stop saved meanwhile refuses), the lease is fenced at the run's generation, the change is computed,
-   * and the record is read once more right before the write; when another window changed the findings or
-   * the state meanwhile the change is recomputed on that record, so no disposition overwrites another.
-   * The store has no compare-and-set; this narrows the window to the atomic write itself.
+   * A disposition changes the persisted run under the card-run lock (`GoalStore.updateCardRun`), never the
+   * caller's snapshot: the record is read inside the lock, a stop saved meanwhile refuses, the lease is
+   * fenced at the run's generation, and only the changed finding is written back into that record, so no
+   * disposition overwrites another window's.
    */
   private changeFinding(goal: Goal, card: Card, run: CardRun, id: string, change: (findings: ReviewFinding[]) => ReviewFinding[]): CardRun {
-    const version = (r: CardRun) => JSON.stringify({ findings: r.findings, state: r.state, stop: r.stop });
-    let current = this.store.getCardRun(goal.id, card.id) ?? run;
-    for (let attempt = 0; attempt < 5; attempt += 1) {
+    return this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      const current = persisted ?? run;
       this.guardFindingsMutation(current);
       if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), this.clock());
-      const findings = change(current.findings);
-      const fresh = this.store.getCardRun(goal.id, card.id) ?? current;
-      if (version(fresh) !== version(current)) {
-        current = fresh;
-        continue;
-      }
-      const changed = findings.find((f) => f.id === id.toUpperCase());
-      return this.save({ ...fresh, findings: fresh.findings.map((f) => (changed && f.id === changed.id ? changed : f)) });
-    }
-    throw new Error(`the card run changed while the disposition of ${id} was being recorded; run the command again`);
+      const changed = change(current.findings).find((f) => f.id === id.toUpperCase());
+      return { ...current, findings: current.findings.map((f) => (changed && f.id === changed.id ? changed : f)) };
+    });
   }
 
   /** Every finding of the run, in id order; readable on a stopped run too (the adjudicator reads it after a STOP). */
@@ -850,7 +841,8 @@ export class CardRunner {
     }
     const rec = recordReviewOutcome(withoutReservation, { invocationId, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, verdictRef: panel.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking }, classified, verdict);
     // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
-    const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' || classified.outcome === 'routed-skip' ? 'pass' : 'no-verdict';
+    // A routed skip is not a decision on the findings: it records and resolves nothing.
+    const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict';
     const found = this.applyFindings(current, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha, at: after, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdict ? citedReasonsOf(verdict, changedPaths) : [], advisory: classified.outcome === 'block-advisory', seen });
     this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: panel.verdictRef, receiptSha256: panel.receiptSha256, durationMs: panel.durationMs, holdUntil } });
     let next: CardRun = { ...found.run, review: rec.ledger, evidence: [...current.evidence, evidenceEntry] };
@@ -1018,7 +1010,7 @@ export class CardRunner {
       review = rec.ledger;
       reviewDecision = rec.decision;
       // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the open ones the reviewer received.
-      const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' || classified.outcome === 'routed-skip' ? 'pass' : 'no-verdict';
+      const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict'; // a routed skip decides nothing about the findings
       const found = this.applyFindings(run, { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && verdictInfo.verdict ? citedReasonsOf(verdictInfo.verdict) : [], advisory: classified.outcome === 'block-advisory', seen: this.findingsSnapshot(run) });
       run = found.run;
       this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved } });

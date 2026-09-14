@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
@@ -98,7 +98,7 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
 
   it('applies the change to the persisted record under the card-run lock, never to a stale snapshot', () => {
     const store = new GoalStore(paths);
-    const stale = store.saveCardRun(makeCardRun('goal-u', 'T1-U', { findings: [{ id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/u.ts:1: no RED -> add one', raisedAt: iso(0) }] }));
+    const stale = store.saveCardRun(makeCardRun('goal-u', 'T1-U', { findings: [{ id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/u.ts:1: no RED -> add one', raisedAt: iso(0), disposition: 'open', disputes: [], reraised: [] }] }));
     // Another window records a note on F1 after this snapshot was taken.
     store.saveCardRun({ ...stale, findings: stale.findings.map((f) => ({ ...f, disposition: 'disputed', disputes: [{ at: iso(1000), note: 'from the other window', afterReraises: 0 }] })) });
     const next = store.updateCardRun('goal-u', 'T1-U', (current) => {
@@ -117,7 +117,9 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     writeFileSync(lock, `pid=1 at=${new Date().toISOString()}`, 'utf8');
     assert.throws(() => store.updateCardRun('goal-l', 'T1-L', (current) => current!), /locked/);
     unlinkSync(lock);
-    writeFileSync(lock, `pid=1 at=${new Date(Date.now() - 120_000).toISOString()}`, 'utf8');
+    writeFileSync(lock, 'pid=1 (crashed)', 'utf8');
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(lock, old, old);
     const next = store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale lock' }));
     assert.equal(next.blocker, 'after a stale lock');
     assert.ok(!existsSync(lock));
