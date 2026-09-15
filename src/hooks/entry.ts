@@ -8,6 +8,9 @@
  * Merge rule: the first block wins (exit 2, or `permissionDecision: "deny"`); otherwise the first
  * advisory output (frozen-path note, Stop context, routing line) is returned unchanged; otherwise
  * exit 0 with no output. One JSON document per process keeps the hook protocol intact.
+ *
+ * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
+ * only about the cards this session owns.
  */
 import { loadHookConfig, readStdinJson, runHook, type HookEvent, type HookName, type HookResult } from './index.ts';
 

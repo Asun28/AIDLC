@@ -2,7 +2,7 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { GENESIS_HASH, Journal, currentActor, setActorForTests, sha256 } from '../../src/state/journal.ts';
+import { GENESIS_HASH, Journal, currentActor, resolveSessionId, setActorForTests, sha256 } from '../../src/state/journal.ts';
 import { actor, cleanup, tmpDir } from './helpers.ts';
 
 describe('state/journal (Q12 evidence chain)', () => {
@@ -109,5 +109,32 @@ describe('state/journal (Q12 evidence chain)', () => {
 
   it('sha256 helper produces lowercase hex', () => {
     assert.equal(sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  });
+});
+
+describe('state/journal session identity (T0-SESSION-IDENTITY)', () => {
+  const state = tmpDir();
+  after(() => {
+    cleanup(state);
+    setActorForTests(undefined);
+  });
+
+  it('session precedence: AIDLC_SESSION, then the Claude Code session, then the persisted default token', () => {
+    const base: NodeJS.ProcessEnv = { AIDLC_STATE_DIR: state };
+    // Claude Code exports its session to every Bash and PowerShell subprocess as CLAUDE_CODE_SESSION_ID.
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1' }, state), { session: 'cc-1', source: 'claude' });
+    // the explicit override wins over both Claude variables
+    assert.deepEqual(resolveSessionId({ ...base, AIDLC_SESSION: 'win-A', CLAUDE_CODE_SESSION_ID: 'cc-1', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'win-A', source: 'env' });
+    // the older name is still honoured, after the exported one; an empty value is unset
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'cc-1', source: 'claude' });
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'legacy-1', source: 'claude' });
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'legacy-1', source: 'claude' });
+    // none set: the persisted default token, unchanged
+    writeFileSync(path.join(state, 'session-default'), 'default-abcd1234\n', 'utf8');
+    assert.deepEqual(resolveSessionId(base, state), { session: 'default-abcd1234', source: 'default' });
+    // currentActor carries the resolved value
+    setActorForTests(undefined);
+    assert.equal(currentActor({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1' }).session, 'cc-1');
+    setActorForTests(undefined);
   });
 });
