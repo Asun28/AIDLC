@@ -6,8 +6,11 @@ import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, actorA, actorB, T0 } from './_harness.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
-import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
+import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS, addMs } from '../../src/core/types.ts';
+import { makeStop } from '../../src/core/stop.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -256,8 +259,16 @@ test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled le
     const pending = records();
     assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, pending.run!), new RegExp(`not reconciled \\(${op.id}\\)`));
     assert.deepEqual(records(), pending);
-    // reconciled: the lease is taken at the next generation and the run is owned at it, its ownership stop cleared
     fx.ops.markResult(op.id, 'succeeded', {}, fx.now());
+    // the lease is one resource per repository and card: an operation of the card unresolved in another goal that lists it
+    // refuses too, named by id, nothing written
+    const other = goalForCards(fx, ['T1-HELLO']);
+    const elsewhere = fx.ops.recordIntent({ kind: 'merge', goalId: other.id, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c2', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    const foreign = records();
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, foreign.run!), new RegExp(`not reconciled \\(${elsewhere.id}\\)`));
+    assert.deepEqual(records(), foreign);
+    fx.ops.markResult(elsewhere.id, 'cancelled', {}, fx.now());
+    // reconciled: the lease is taken at the next generation and the run is owned at it, its ownership stop cleared
     const taken = fx.runner().takeover(fx.goal(goal.id), card, records().run!);
     assert.equal(taken.lease.generation, 1);
     assert.equal(taken.lease.owner.session, 'win-B');
@@ -278,12 +289,14 @@ test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled le
     // window B continues the card
     const continued = fx.runner().next(fx.goal(goal.id), card, owned.run!);
     assert.equal(continued.directive.kind, 'build', `B continues: ${continued.directive.narration}`);
-    // window A is fenced at its generation: its write is refused and its dispatch stops, the lease stays with B
+    // window A is fenced at its generation: its write is refused, and its dispatch with the run it kept from before the
+    // takeover (generation 0) stops without writing that generation back; the stored run keeps B's, the lease stays with B
     assert.throws(() => fx.leases.fence(cardKey, 0, actorA, fx.now()), FencedError);
     setActorForTests(actorA);
-    const stale = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    const stale = fx.runner().next(fx.goal(goal.id), card, prepared.run);
     assert.equal(stale.directive.kind, 'stop');
     assert.equal(stale.run.stop?.reason, 'ownership');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-HELLO')?.ownerGeneration, 1, "A's stale snapshot never writes its generation back");
     assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-B');
     assert.equal(fx.leases.read(cardKey)?.generation, 1);
     // the stop A's stale dispatch recorded is revalidated by B's next call, as any owner stop caused by expiry is
@@ -457,6 +470,89 @@ test('T0-CARD-TAKEOVER, goal stopped: a goal the dispatch stopped on the card ow
     const continued = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(continued.directive.kind, 'build', `B continues the card: ${continued.directive.narration}`);
     assert.equal(continued.run.ownerGeneration, 1);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+/** A lease store that lets another process act (`meanwhile`) after the command's first read and before the store's own takeover. */
+class InterleavedLeaseStore extends LeaseStore {
+  readonly meanwhile: () => void;
+  constructor(dir: string, meanwhile: () => void) {
+    super(dir);
+    this.meanwhile = meanwhile;
+  }
+  override takeover(...args: Parameters<LeaseStore['takeover']>): ReturnType<LeaseStore['takeover']> {
+    this.meanwhile();
+    return super.takeover(...args);
+  }
+}
+
+test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeover persisted between the read and the lease write is honoured, and an interrupted takeover is completed', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const ids = ['T1-OP', 'T1-STOP', 'T1-RELEASE', 'T1-TWICE'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
+    // window A prepares every card and ends; window B, the next session, reads each run stopped for ownership
+    for (const id of ids) {
+      setActorForTests(actorA);
+      assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
+      setActorForTests(actorB);
+      assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), current(id)).run.stop?.reason, 'ownership');
+    }
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const interleaved = (meanwhile: () => void) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new InterleavedLeaseStore(fx.paths.leases, meanwhile), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    // an operation of the card recorded meanwhile: the ledger is read inside the reconciliation, so the takeover refuses it by id
+    let op = '';
+    assert.throws(
+      () => interleaved(() => { op = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-OP', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now()).id; }).takeover(fx.goal(goal.id), fx.card('T1-OP'), current('T1-OP')),
+      (err: unknown) => err instanceof Error && err.message.includes(`not reconciled (${op})`),
+    );
+    assert.equal(fx.leases.read(key('T1-OP'))?.generation, 0);
+    assert.equal(current('T1-OP').ownerGeneration, 0);
+    // a stop another process persisted meanwhile: the run is read again once the lease is held, so the stop stays, at the new generation
+    const riskStop = makeStop('risk', 'a secret-looking value in the candidate', 'rotate it before any push', { at: fx.now(), global: false });
+    const risky = interleaved(() => fx.store.saveCardRun({ ...current('T1-STOP'), state: 'STOP', stop: riskStop })).takeover(fx.goal(goal.id), fx.card('T1-STOP'), current('T1-STOP'));
+    assert.equal(risky.lease.generation, 1);
+    assert.equal(risky.run.ownerGeneration, 1);
+    assert.equal(risky.run.state, 'STOP');
+    assert.equal(risky.run.stop?.reason, 'risk', 'a stop that is not an ownership stop is kept');
+    assert.equal(current('T1-STOP').stop?.reason, 'risk');
+    // a release meanwhile (the old owner let the card go): the record the store hands to the reconciliation is released, so the takeover refuses
+    assert.throws(() => interleaved(() => fx.leases.release(key('T1-RELEASE'), 0, actorA)).takeover(fx.goal(goal.id), fx.card('T1-RELEASE'), current('T1-RELEASE')), /lease of card T1-RELEASE is released \(generation 0\)/);
+    assert.equal(fx.leases.read(key('T1-RELEASE'))?.generation, 0);
+    assert.equal(fx.leases.read(key('T1-RELEASE'))?.released, true);
+    assert.equal(current('T1-RELEASE').ownerGeneration, 0);
+    // a takeover by this session meanwhile (a second window of the same session, or a retry racing the first) whose run update
+    // did not land: the record handed to the reconciliation is already this session's, so no second advance; the run update is
+    // completed instead, journaled as such, and the state selected
+    const twiceKey = key('T1-TWICE');
+    const completed = interleaved(() => { fx.leases.takeover(twiceKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'card:T1-TWICE' }); }).takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE'));
+    assert.equal(completed.completed, true);
+    assert.equal(completed.previousOwner, undefined);
+    assert.equal(completed.lease.generation, 1, 'no second advance');
+    assert.equal(completed.run.ownerGeneration, 1);
+    assert.equal(completed.run.stop, undefined);
+    assert.equal(completed.run.state, 'BUILD');
+    const acquisitions = fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-TWICE');
+    assert.equal(acquisitions.length, 1);
+    assert.deepEqual(acquisitions[0]?.data, { resource: twiceKey, leaseGeneration: 1, takeover: true, completed: true });
+    // B continues; with the run at the lease generation there is nothing left to take over
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE')).directive.kind, 'build');
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE')), /this session owns card T1-TWICE at generation 1; run/);
+    // the same completion when the lease was taken and the process ended before the run update: the command run again finishes it
+    const again = fx.leases.read(twiceKey)!;
+    fx.store.saveCardRun({ ...current('T1-TWICE'), ownerGeneration: 0, state: 'STOP', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate', { at: fx.now() }) });
+    const finished = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE'));
+    assert.equal(finished.completed, true);
+    assert.equal(finished.lease.generation, again.generation);
+    assert.equal(finished.run.ownerGeneration, again.generation);
+    assert.equal(finished.run.stop, undefined);
+    assert.equal(finished.run.state, 'BUILD');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
