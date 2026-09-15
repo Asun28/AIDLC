@@ -3311,3 +3311,88 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-INPUTS R3 decision 1 (F5, F6): review r3 checks the diff cap before the exhausted hand-off, so a refused review leaves no hand-off and no event; the hand-off recorded later carries the hash of the round it hands on', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const big = 'diff --git a/src/t1-ho2.ts b/src/t1-ho2.ts\n' + '+export const ho2 = 1;\n'.repeat(4);
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-ho2.ts\n' }, 'git diff': { stdout: big }, 'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho2.ts:1: no RED -> add one"]}\n' }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    const mk = (formal: number) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, formalReview: { ...fx.config.formalReview, maxDiffBytes: formal } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const narrow = mk(40);
+    const s = cardAtShip(fx, narrow, 'T1-HO2');
+    const { card, g, goal } = s;
+    assert.equal(s.directive.kind, 'pre-review');
+    const round = await narrow.preReview(g(), card, s.run);
+    assert.equal(round.result.outcome, 'block', 'the single round of the cycle is spent: exhausted');
+    // The command reaches the exhausted candidate before the gate does: the cap refuses it before the hand-off is recorded.
+    await assert.rejects(() => narrow.formalReview(g(), card, round.run), /formalReview\.maxDiffBytes/);
+    const stored = fx.store.getCardRun(goal.id, 'T1-HO2')!;
+    assert.deepEqual(stored.preReview.handoffs, [], 'no hand-off persisted by a refused review');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true), 'no hand-off event');
+    assert.equal(stored.review.invocations.length, 0);
+    // Within the cap the hand-off is recorded once, naming the hash of the round it hands on, and the decision runs.
+    const f = await mk(1000).formalReview(g(), card, stored);
+    assert.equal(f.classified.outcome, 'pass');
+    const handoff = fx.events(goal.id).find((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true)!;
+    assert.equal(handoff.data['policyHash'], round.round.policyHash, 'the hand-off carries the hash of the round it hands on');
+    assert.equal(f.run.preReview.handoffs.length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-INPUTS R3 decision 1 (F6, F7): a ship-path decision records the policy_hash its verdict document names, and a ship-path block carried only by tagged reasons is a pass with the notes: no block consumed, the notes handed back with the ship refusal', () => {
+  const question = '[spec] 14 scope fidelity @ src/t1-tag.ts:3: [question] is the helper named by acceptance 1? -> confirm';
+  class HashedShipPath extends DryRunShipPath {
+    override readVerdict(): { verdict?: Verdict; raw?: string } {
+      const v = super.readVerdict();
+      return { ...v, raw: v.verdict ? JSON.stringify({ ...v.verdict, policy_hash: 'h'.repeat(64) }) : undefined };
+    }
+  }
+  const fx = makeFixture({ config: { gateRequired: true } });
+  try {
+    const blockByTag: Verdict = { verdict: 'block', reasons: [question], axes: { spec: { verdict: 'block', reasons: [question] }, standards: { verdict: 'pass', reasons: [] } }, run_status: 'success' };
+    const runner = fx.runner(new HashedShipPath(['review-blocked', 'merged'], blockByTag));
+    const s = cardAtShip(fx, runner, 'T1-TAG');
+    const { goal } = s;
+    assert.equal(s.directive.kind, 'review-fix', `the ship path refused, so the author is handed the notes: ${s.directive.narration}`);
+    if (s.directive.kind === 'review-fix') assert.ok(s.directive.reasons.some((x) => x.includes(question)), 'the advisory note is handed back');
+    assert.equal(s.run.review.substantiveBlocks, 0, 'no block consumed');
+    assert.equal(s.run.review.invocations.at(-1)?.outcome, 'pass', 'the ledger records a pass with the notes');
+    assert.equal(s.run.review.invocations.at(-1)?.policyHash, 'h'.repeat(64), 'the hash the verdict document names is recorded');
+    assert.deepEqual(s.run.findings, [], 'a tagged reason is no finding');
+    const decided = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)!;
+    assert.equal(decided.data['policyHash'], 'h'.repeat(64));
+    assert.deepEqual(decided.data['advisory'], [question]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-INPUTS R3 decision 1 (F9): a result envelope whose policy hash contradicts the reservation is not that reservation\'s; an envelope naming none recovers under the reserved hash', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-env3.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-env3.ts b/src/t1-env3.ts\n+export const env3 = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-ENV3');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const reserve = (id: string) => fx.store.updateCardRun(goal.id, 'T1-ENV3', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations.filter((i) => i.outcome !== 'pending'), { invocationId: `r3:${id}`, candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const, policyHash: 'a'.repeat(64) }] } }));
+    const passDoc = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV3', run_status: 'success' };
+    const envelope = (id: string, extra: Record<string, unknown>) => ({ invocationId: `r3:${id}`, candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), outcome: 'pass', runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x', verdict: passDoc, ...extra });
+    let run = reserve('T1-ENV3.r3.1.other');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.1.other.result.json'), JSON.stringify(envelope('T1-ENV3.r3.1.other', { policyHash: 'b'.repeat(64) })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope claiming another applied policy is not this reservation\'s');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-ENV3')!.review.invocations.at(-1)?.outcome, 'pending', 'nothing recovered');
+    run = reserve('T1-ENV3.r3.2.legacy');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.2.legacy.result.json'), JSON.stringify(envelope('T1-ENV3.r3.2.legacy', {})), 'utf8');
+    const legacy = await runner.formalReview(g(), card, run);
+    assert.equal(legacy.classified.outcome, 'pass');
+    assert.equal(legacy.run.review.invocations.at(-1)?.policyHash, 'a'.repeat(64), 'the reserved hash is authoritative');
+  } finally {
+    fx.cleanup();
+  }
+});

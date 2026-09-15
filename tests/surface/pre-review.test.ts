@@ -498,3 +498,30 @@ test('T1-REVIEW-INPUTS R2 round 1 (F1): the review pre summary prints the adviso
   assert.ok(text.startsWith('pre-review deepseek-v4-pro round 1/3 (cycle 0): pass') && text.includes('aidlc card next T1-GATE'), 'the verdict line and the next command stay');
   assert.ok(!cli.preReviewSummaryText({ ...base, advisory: [] }, 'T1-GATE').includes('advisory'), 'no advisory line without notes');
 });
+
+test('T1-REVIEW-INPUTS R3 decision 1 (F8): a repository-reading reviewer (no embedded diff) receives a pinned delta command and its paths, never the delta text', () => {
+  const { card } = fixtureCard();
+  const delta = { sinceSha: 'sha-1', changedPaths: ['src/gate.ts'], diff: 'diff --git a/src/gate.ts b/src/gate.ts\n-export const gate = 1;\n+export const gate = 2;\n' };
+  const base = { stage: 'formal' as const, reviewPolicy: 'policy', card, base: 'main', head: 'sha-2', changedPaths: ['src/gate.ts'], priorFindings: [] as PriorFinding[], round: 2, maxRounds: 2, delta };
+  const argv = buildReviewPrompt({ ...base, includeDiff: false, diff: 'SHOULD NOT APPEAR' });
+  const section = argv.slice(argv.indexOf('## Delta since the last reviewed candidate'), argv.indexOf('## Diff'));
+  assert.ok(section.includes('git diff sha-1...HEAD') && section.includes('src/gate.ts'), `the delta names its command and its paths: ${section}`);
+  assert.ok(!argv.includes('-export const gate = 1;') && !argv.includes('\`\`\`diff'), 'no diff text travels in an argv prompt');
+  assert.ok(buildReviewPrompt({ ...base, includeDiff: true, diff: '+x\n' }).includes('-export const gate = 1;'), 'a stdin prompt embeds it');
+});
+
+test('T1-REVIEW-INPUTS R3 decision 1 (F7): tagged reasons are stripped from a ship-path verdict before classification: a block carried only by tags is a pass with the notes, a cited block keeps its reasons', () => {
+  const question = '[spec] 14 scope fidelity @ src/gate.ts:3: [question] is the helper needed? -> confirm';
+  const cited = '[spec] 6 tests @ src/gate.ts:1: no RED -> add one';
+  const only = inputs.stripAdvisoryTags({ verdict: 'block', reasons: [question], axes: { spec: { verdict: 'block', reasons: [question] }, standards: { verdict: 'pass', reasons: [] } } });
+  assert.equal(only.verdict.verdict, 'pass');
+  assert.equal(only.verdict.axes?.spec?.verdict, 'pass');
+  assert.deepEqual(only.advisory, [question]);
+  const mixed = inputs.stripAdvisoryTags({ verdict: 'block', reasons: [cited, question], axes: { spec: { verdict: 'block', reasons: [cited] }, standards: { verdict: 'block', reasons: [question] } } });
+  assert.equal(mixed.verdict.verdict, 'block');
+  assert.deepEqual(mixed.verdict.reasons, [cited]);
+  assert.equal(mixed.verdict.axes?.standards?.verdict, 'pass', 'an axis carried only by tags passes');
+  assert.deepEqual(mixed.advisory, [question]);
+  assert.deepEqual(inputs.stripAdvisoryTags({ verdict: 'block', reasons: [cited] }).advisory, [], 'a cited block is untouched');
+  assert.deepEqual(inputs.stripAdvisoryTags({ verdict: 'pass', reasons: [question] }).advisory, [question], 'notes on a pass are advisory');
+});
