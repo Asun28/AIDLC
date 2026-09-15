@@ -360,7 +360,8 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
 
     // ... unless the policy hands the residual findings to R3.
     const lenient = mk(1, 'ship');
-    r = lenient.next(fx.goal(goal.id), card, { ...run, state: 'SHIP', stop: undefined });
+    // the simulated policy switch is persisted: next reads the stored run and never a caller's snapshot (T0-CARD-TAKEOVER)
+    r = lenient.next(fx.goal(goal.id), card, fx.store.saveCardRun({ ...run, state: 'SHIP', stop: undefined }));
     assert.equal(r.directive.kind, 'close', r.directive.narration);
   } finally {
     fx.cleanup();
