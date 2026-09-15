@@ -972,13 +972,17 @@ export class CardRunner {
     const last = [...run.review.invocations].reverse().find((i) => i.reviewer === cfg.reviewer && i.candidateDigest === digest);
     if (last?.outcome === 'pass') {
       // The ship paths read the canonical document: a publication that did not land at commit time is repaired here.
-      this.repairCanonical(card, run, last);
+      this.repairCanonical(goal, card, run, last);
       return undefined;
     }
     let disputedNote = '';
     if (last?.outcome === 'block') {
-      // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar.
-      if (!this.invocationBlocking(run, card, last)) return undefined;
+      // Only a merge-blocking block is pending; advisory findings are retained and never become a silent merge bar, and the
+      // advisory decision's canonical document (a pass with every finding under advisory) is repaired like a pass.
+      if (!this.invocationBlocking(run, card, last)) {
+        this.repairCanonical(goal, card, run, last);
+        return undefined;
+      }
       const answered = run.candidate?.sha ? this.blockAnswered(run, { stage: 'formal', candidateSha: run.candidate.sha }) : { answered: false, open: [] };
       if (!answered.answered) {
         const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined, blockedReceipt: this.keepReceipt(run, { stage: 'formal', candidateSha: run.candidate?.sha }) });
@@ -1213,44 +1217,71 @@ export class CardRunner {
   }
 
   /**
-   * The canonical verdict document the ship paths read (`.review/<card>.json`), written atomically; an advisory block is
-   * published as a consistent pass with every finding under `advisory`.
+   * The canonical verdict document the ship paths read (`.review/<card>.json`), written atomically and naming the decision
+   * it publishes; an advisory block is published as a consistent pass with every finding under `advisory`.
    */
-  private publishCanonical(card: Card, reviewDir: string, verdict: Verdict, advisoryBlock: boolean): void {
+  private publishCanonical(card: Card, reviewDir: string, verdict: Verdict, advisoryBlock: boolean, invocationId: string): void {
     const canonical = advisoryBlock
       ? { ...verdict, verdict: 'pass' as const, reasons: [], axes: { spec: { verdict: 'pass' as const, reasons: [] }, standards: { verdict: 'pass' as const, reasons: [] } }, advisory: [...new Set([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])])] }
       : verdict;
-    atomicWriteJson(path.join(reviewDir, `${card.id}.json`), { ...canonical, reviewer: this.config.formalReview.reviewer });
+    atomicWriteJson(path.join(reviewDir, `${card.id}.json`), { ...canonical, reviewer: this.config.formalReview.reviewer, invocationId });
   }
 
   /**
-   * The canonical verdict document of the candidate's committed pass, repaired from the committed invocation's retained
-   * verdict when the publication at commit time did not land (the file is missing or names another sha).
+   * The canonical verdict document of a committed, publishable decision (a pass, or an advisory block published as a pass),
+   * repaired when the publication at commit time did not land: the file is missing, names another sha, or still carries an
+   * earlier decision on the same sha (the block a disputed re-review then passed). The document is rebuilt from the
+   * decision's committed result envelope (`<stem>.result.json`, bound to the invocation and agreeing with its outcome) with
+   * the classification the ledger recorded, never from the verdict sidecar beside the envelope; a decision committed before
+   * envelopes existed falls back to a sidecar whose verdict agrees with the recorded outcome. A repair that writes is
+   * journaled once; a document that already publishes this decision is left alone.
    */
-  private repairCanonical(card: Card, run: CardRun, pass: ReviewInvocation): void {
+  private repairCanonical(goal: Goal, card: Card, run: CardRun, decided: ReviewInvocation): void {
+    if (!decided.invocationId.startsWith('r3:')) return;
     const reviewDir = path.join(this.reviewCheckout(run), '.review');
     const canonicalFile = path.join(reviewDir, `${card.id}.json`);
-    const sha = pass.candidateSha ?? run.candidate?.sha;
+    const sha = decided.candidateSha ?? run.candidate?.sha;
     try {
       if (existsSync(canonicalFile)) {
-        const current = JSON.parse(readFileSync(canonicalFile, 'utf8')) as { sha?: string };
-        if (current.sha === sha) return;
+        const current = JSON.parse(readFileSync(canonicalFile, 'utf8')) as { sha?: string; verdict?: string; invocationId?: string };
+        // Intact: this sha, published as a pass, by this decision (a document from before the binding existed is kept when it is a pass for this sha).
+        if (current.sha === sha && current.verdict === 'pass' && (current.invocationId === undefined || current.invocationId === decided.invocationId)) return;
       }
     } catch {
       /* unreadable: repaired below */
     }
-    if (!pass.invocationId.startsWith('r3:')) return;
-    const stem = pass.invocationId.slice(3);
-    const retained = path.join(reviewDir, `${stem}.json`);
-    if (!existsSync(retained)) return;
-    try {
-      const raw = parseVerdict(JSON.parse(readFileSync(retained, 'utf8')));
-      if (!raw) return;
-      const verdict: Verdict = { ...raw, sha: raw.sha ?? sha, branch: raw.branch ?? card.id, run_status: raw.run_status ?? 'success' };
-      this.publishCanonical(card, reviewDir, verdict, verdict.verdict === 'block');
-    } catch {
-      /* the ship path reads the missing file and refuses; the decision stays committed */
+    const stem = decided.invocationId.slice(3);
+    const readDoc = (file: string): Record<string, unknown> | undefined => {
+      try {
+        return existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    let verdict: Verdict | undefined;
+    let source: 'envelope' | 'sidecar' | undefined;
+    const envelope = this.completeEnvelope(readDoc(path.join(reviewDir, `${stem}.result.json`)), decided);
+    if (envelope) {
+      if (envelope.outcome === decided.outcome && envelope.verdict) {
+        verdict = envelope.verdict;
+        source = 'envelope';
+      }
+    } else {
+      const raw = readDoc(path.join(reviewDir, `${stem}.json`));
+      const parsed = raw ? parseVerdict(raw) : undefined;
+      if (parsed && parsed.verdict === decided.outcome) {
+        verdict = parsed;
+        source = 'sidecar';
+      }
     }
+    // No agreeing document: the ship path reads the missing or stale file and refuses; the decision stays committed.
+    if (!verdict || !source) return;
+    try {
+      this.publishCanonical(card, reviewDir, { ...verdict, sha: verdict.sha ?? sha, branch: verdict.branch ?? card.id, run_status: verdict.run_status ?? 'success' }, decided.outcome === 'block', decided.invocationId);
+    } catch {
+      return;
+    }
+    this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { canonicalRepaired: decided.invocationId, file: canonicalFile, source } });
   }
 
   /** The result envelope of a formal review, written atomically (`<stem>.result.json`). */
@@ -1444,8 +1475,18 @@ export class CardRunner {
     // The canonical document the ship paths read is published only for a successful, non-stale decision committed on the
     // current candidate; an advisory block is published as a consistent pass with every finding under `advisory`.
     const publishable = committed.status === 'committed' && verdict !== undefined && !classified.stale && classified.runStatus === 'success' && (classified.outcome === 'pass' || classified.outcome === 'block-defect' || classified.outcome === 'block-advisory');
-    if (publishable && verdict) this.publishCanonical(card, reviewDir, verdict, classified.outcome === 'block-advisory');
-    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(committed.status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: committed.found.raised, reraised: committed.found.reraised, resolved: committed.found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined } });
+    let publication: { published: boolean; error?: string } | undefined;
+    if (publishable && verdict) {
+      try {
+        this.publishCanonical(card, reviewDir, verdict, classified.outcome === 'block-advisory', invocationId);
+        publication = { published: true };
+      } catch (err) {
+        // The decision is committed either way: the event below records that the document did not land, and the gate
+        // repairs it from the envelope before the ship (`repairCanonical`).
+        publication = { published: false, error: (err as Error).message };
+      }
+    }
+    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer: cfg.reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(committed.status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: committed.found.raised, reraised: committed.found.reraised, resolved: committed.found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, canonicalPublished: publication?.published, publicationError: publication?.error } });
     return { run: committed.run, ...result };
   }
 
