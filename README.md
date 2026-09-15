@@ -21,7 +21,7 @@ Version 0.1.0.
 
 ```bash
 npm install
-npm run build                      # optional; bin/aidlc.js falls back to src/ on Node 22
+npm run build                      # optional; bin/aidlc.js runs src/ on Node 22 unless dist/ is at least as new as every source file
 node bin/aidlc.js init             # lays intent/, specs/, plans/, .claude/, REVIEW.md, bands.yaml, evals/, aidlc.config.json over the repo
 node bin/aidlc.js doctor           # toolchain, config, state dir, card registry, provider
 node bin/aidlc.js goal new "fix the null pointer when a claim has no adjuster" --bug-evidence
