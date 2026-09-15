@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-BASE-SYNC-2
 title: The GitHub ship path syncs the candidate with its base before any remote effect, so a conflict returns the card to BUILD with the merge left in the worktree instead of a PR GitHub never runs CI on (replacement of T0-SHIP-BASE-SYNC after its two R3 decisions)
-status: todo
+status: merged
 branch: T0-SHIP-BASE-SYNC-2
 worktree: C:\wt\T0-SHIP-BASE-SYNC-2
 allow_paths:
