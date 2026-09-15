@@ -481,6 +481,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
     });
   card
+    .command('takeover <cardId>')
+    .description("take over the expired card lease of another session once its operations are reconciled; the goal lease is `aidlc goal takeover`'s")
+    .option('--goal <id>')
+    .action((cardId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      const id = latestActiveGoalId(c, o.goal);
+      const goalRec = c.controller.mustGoal(id);
+      // The stored run only: a takeover owns an existing run, it never creates one.
+      const run = c.store.getCardRun(id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
+      const r = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
+      c.controller.writeBoard(goalRec);
+      out(c, { cardId, goalId: id, lease: { generation: r.lease.generation, owner: r.lease.owner, expiresAt: r.lease.expiresAt }, previousOwner: { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration }, run: { state: r.run.state, ownerGeneration: r.run.ownerGeneration, stop: r.run.stop } }, () => `took over ${cardId} from session ${r.previousOwner.session}@${r.previousOwner.host} (generation ${r.previousGeneration} -> ${r.lease.generation}); state=${r.run.state}${r.run.stop ? `\n${formatStop(r.run.stop)}` : ''}\nnext: aidlc card next ${cardId} --goal ${id}`);
+    });
+  card
     .command('fix-task [cardId]')
     .description('set (or clear with --clear) the fix-task marker that locks test files')
     .option('--clear')
