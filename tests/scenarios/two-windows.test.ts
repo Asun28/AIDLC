@@ -854,6 +854,66 @@ test('T0-CARD-TAKEOVER-2, checkpoint: next reads the stored run before its plan-
     assert.equal(stale.directive.kind, 'wait', `the guard applies to the stored run: ${stale.directive.kind}`);
     assert.equal(fx.store.getCardRun(goal.id, 'T2-HELLO')?.state, 'PREPARE', 'nothing dispatched');
     assert.equal(fx.leases.read(resourceKeys.card(fx.repo.key, 'T2-HELLO')), undefined, 'no lease claimed');
+    // the stored run itself stopped for ownership while its lease is gone: the reconciliation lifts the stop, and the guard
+    // still holds afterwards, with an absent lease and with a released one
+    const cardKey = resourceKeys.card(fx.repo.key, 'T2-HELLO');
+    const ownershipStop = () => makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate', { at: fx.now() });
+    fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T2-HELLO')!, state: 'STOP', stop: ownershipStop() });
+    const absent = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T2-HELLO')!);
+    assert.equal(absent.directive.kind, 'wait', `the guard holds after the reconciliation (absent lease): ${absent.directive.kind}`);
+    if (absent.directive.kind === 'wait') assert.equal(absent.directive.on, 'goal:CARDS:plan-checkpoint');
+    assert.equal(fx.leases.read(cardKey), undefined, 'no lease claimed');
+    assert.equal(fx.leases.claim(cardKey, { actor: actorB, now: fx.now(), operation: 'card:T2-HELLO' }).status, 'acquired');
+    fx.leases.release(cardKey, 0, actorB);
+    fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T2-HELLO')!, state: 'STOP', stop: ownershipStop() });
+    const released = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T2-HELLO')!);
+    assert.equal(released.directive.kind, 'wait', `the guard holds after the reconciliation (released lease): ${released.directive.kind}`);
+    assert.equal(fx.leases.read(cardKey)?.released, true, 'no lease claimed');
+    assert.notEqual(fx.store.getCardRun(goal.id, 'T2-HELLO')?.state, 'BUILD', 'nothing dispatched');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-TAKEOVER-2, stale writers: an attempt record and a CI reconciliation from the old owner with the run it kept land on the stored run, never its generation or a persisted stop', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    // window A prepares the card and keeps the run it read (generation 0, no stop); window B takes the card over after the
+    // expiry, and a blocking stop is persisted on the stored run
+    const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    assert.equal(prepared.directive.kind, 'prepare');
+    setActorForTests(actorB);
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const taken = fx.runner().takeover(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(taken.lease.generation, 1);
+    const risk = makeStop('risk', 'a secret-looking value in the candidate', 'rotate it before any push', { at: fx.now(), global: false });
+    fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T1-HELLO')!, state: 'STOP', stop: risk });
+    // A's delayed attempt record with its stale snapshot: it applies no fence, so its receipts and candidate land on the
+    // stored run, but the stored generation and the persisted stop stand
+    setActorForTests(actorA);
+    const recorded = fx.runner().recordAttempt(fx.goal(goal.id), card, prepared.run, { outcome: 'success', dodReceipt: 'dod:stale', redReceipt: 'red:stale', candidateSha: 'sha-stale' });
+    assert.equal(recorded.ownerGeneration, 1, 'the stored generation stands');
+    assert.equal(recorded.stop?.reason, 'risk', 'the persisted stop stands');
+    assert.equal(recorded.dodReceipt, 'dod:stale');
+    assert.equal(recorded.candidate?.sha, 'sha-stale');
+    const stored = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(stored.ownerGeneration, 1);
+    assert.equal(stored.stop?.reason, 'risk');
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-B');
+    // A's CI reconciliation with the same stale snapshot: the same rule
+    const reconciled = fx.runner().ciReconcile(fx.goal(goal.id), card, prepared.run, 'run-1', () => ({ status: 'completed', conclusion: 'success', attempt: 1 }));
+    assert.equal(reconciled.ownerGeneration, 1, 'the stored generation stands');
+    assert.equal(reconciled.stop?.reason, 'risk', 'the persisted stop stands');
+    assert.equal(reconciled.dodReceipt, 'dod:stale', 'and so does what the attempt recorded');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-HELLO')?.ownerGeneration, 1);
+    // B's next call sees the stop the loop knows, not a dispatch of the old owner
+    setActorForTests(actorB);
+    assert.equal(fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!).run.stop?.reason, 'risk');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();

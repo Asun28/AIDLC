@@ -279,11 +279,14 @@ export class CardRunner {
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
     // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
-    if (goal.state === 'CARDS' && goal.routing.size === 'T2' && !run.stop && run.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing') {
-      return { run, directive: { kind: 'wait', cardId: card.id, on: `goal:${goal.state}:plan-checkpoint`, pollSeconds: 60, narration: `goal ${goal.id} is in CARDS without a plan checkpoint for revision ${goal.revision}: run \`aidlc next --goal ${goal.id}\` and record the approval before this card continues` } };
-    }
+    const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
+    const checkpointWait = (r: CardRun): { run: CardRun; directive: CardDirective } => ({ run: r, directive: { kind: 'wait', cardId: card.id, on: `goal:${goal.state}:plan-checkpoint`, pollSeconds: 60, narration: `goal ${goal.id} is in CARDS without a plan checkpoint for revision ${goal.revision}: run \`aidlc next --goal ${goal.id}\` and record the approval before this card continues` } });
+    if (checkpointMissing(run)) return checkpointWait(run);
     const assessed = this.assess(goal, card, run, now);
     run = assessed.run;
+    // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
+    // run as it stands now, before any action.
+    if (checkpointMissing(run)) return checkpointWait(run);
     const { decision } = assessed;
     let next = assessed.next;
 
@@ -1155,8 +1158,10 @@ export class CardRunner {
   }
 
   /** Reconcile a persisted CI rerun by looking up its actual attempt (Q7). */
-  ciReconcile(goal: Goal, card: Card, run: CardRun, runId: string, lookup?: () => { status: string; conclusion: string | null; attempt: number }): CardRun {
+  ciReconcile(goal: Goal, card: Card, caller: CardRun, runId: string, lookup?: () => { status: string; conclusion: string | null; attempt: number }): CardRun {
     const now = this.clock();
+    // The stored run, as every writer of this runner: a caller's snapshot never writes its generation or a stop back.
+    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
     let outcome: 'queued' | 'in_progress' | 'success' | 'failure' | 'lost' = 'lost';
     try {
       const view = lookup ? lookup() : this.config.repository ? this.gh.runView(this.config.repository, runId, this.repo.mainRoot) : undefined;
