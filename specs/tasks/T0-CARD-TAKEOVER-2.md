@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-TAKEOVER-2
 title: The card takeover command with its guarantees stated to the limits of a store without compare-and-set, the three hardenings R3 decision 2 named, and the missing compare-and-set declared a non-goal (replacement of T0-CARD-TAKEOVER after its two R3 decisions)
-status: todo
+status: merged
 branch: T0-CARD-TAKEOVER-2
 worktree: C:\wt\T0-CARD-TAKEOVER-2
 allow_paths:
