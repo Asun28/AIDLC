@@ -90,7 +90,7 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: dist, reason: 'dist' }, 'without the link the build is current');
   });
 
-  it('resolveEntry walks a linked directory and ends a cycle through links', async (t) => {
+  it('resolveEntry walks a linked directory', async (t) => {
     const resolveEntry = await loadResolver();
     const base = path.join(dir, 'linked-dir');
     const srcRoot = path.join(base, 'src');
@@ -114,13 +114,37 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
       return;
     }
     assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a newer source reached through a directory link counts');
-    const back = path.join(outside, 'sub', 'back');
-    const cycled = process.platform === 'win32' ? linkOrRefused(srcRoot, back, 'junction') : linkOrRefused(srcRoot, back, 'dir');
-    assert.ok(cycled, 'fixture: the platform that linked a directory links the cycle too');
-    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a cycle through links ends');
-    fs.rmSync(back);
     at(newerInDir, '2026-09-02T00:00:00Z');
     assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: dist, reason: 'dist' }, 'the linked directory is walked: with nothing newer the build is current');
+  });
+
+  it('resolveEntry ends a cycle through directory links', async (t) => {
+    const resolveEntry = await loadResolver();
+    const base = path.join(dir, 'linked-cycle');
+    const srcRoot = path.join(base, 'src');
+    const outside = path.join(base, 'outside');
+    mkdirSync(path.join(srcRoot, 'cli'), { recursive: true });
+    mkdirSync(path.join(outside, 'sub'), { recursive: true });
+    const src = path.join(srcRoot, 'cli', 'main.ts');
+    writeFileSync(src, '', 'utf8');
+    at(src, '2026-09-01T00:00:00Z');
+    const dist = path.join(base, 'dist', 'cli', 'main.js');
+    mkdirSync(path.dirname(dist), { recursive: true });
+    writeFileSync(dist, '', 'utf8');
+    at(dist, '2026-09-02T00:00:00Z');
+    const newerInDir = path.join(outside, 'sub', 'deep.ts');
+    writeFileSync(newerInDir, '', 'utf8');
+    at(newerInDir, '2026-09-03T00:00:00Z');
+    const kind = process.platform === 'win32' ? 'junction' : 'dir';
+    if (!linkOrRefused(path.join(outside, 'sub'), path.join(srcRoot, 'linked-dir'), kind)) {
+      t.skip('the platform refuses directory links (EPERM)');
+      return;
+    }
+    if (!linkOrRefused(srcRoot, path.join(outside, 'sub', 'back'), kind)) {
+      t.skip('the platform refuses the cycle link (EPERM)');
+      return;
+    }
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a cycle through links ends and the newer source counts');
   });
 
   it('resolveEntry never treats an incomplete scan as freshness: an unreadable descendant or an uninspectable source selects the sources', async () => {
@@ -225,8 +249,14 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     assert.equal(lines.length, 1, `one debug line: ${cli.stderr}`);
     assert.match(lines[0]!, /reason=dist/);
     assert.match(lines[0]!, /target=.*main\.js/);
-    hook = run('aidlc-hook.js');
+    hook = run('aidlc-hook.js', { AIDLC_ENTRY_DEBUG: '1' });
     assert.equal(hook.stdout, 'dist:hook', 'the hook entry runs a current build');
+    const hookLines = hook.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]'));
+    assert.equal(hookLines.length, 1, `one debug line from the hook entry: ${hook.stderr}`);
+    assert.match(hookLines[0]!, /reason=dist/);
+    assert.match(hookLines[0]!, /target=.*entry\.js/);
+    const quiet = run('aidlc-hook.js');
+    assert.equal(quiet.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, 'without the variable the hook entry prints nothing');
     // Both entries share the resolver.
     for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
       const text = readFileSync(path.join(repoRoot, 'bin', entry), 'utf8');
