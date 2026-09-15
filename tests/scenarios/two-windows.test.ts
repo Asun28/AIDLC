@@ -743,6 +743,50 @@ test('T0-CARD-TAKEOVER-2, across goals: the handoff intent and the acquisition a
   }
 });
 
+test('T0-CARD-TAKEOVER-2, goal stopped at PREPARE: a taken-over run without a worktree is dispatched again as run-card after the resume, and the new owner prepares it', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    const goalKey = resourceKeys.goal(fx.repo.key, goal.id);
+    const card = fx.card('T1-HELLO');
+    // window A claimed the card lease as PREPARE does first and ended before the run's generation and worktree were saved
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO');
+    assert.equal(run.worktree, undefined);
+    assert.equal(fx.leases.claim(cardKey, { actor: actorA, now: fx.now(), operation: 'card:T1-HELLO' }).status, 'acquired');
+    // window B takes the goal lease after its expiry; the dispatch offers the card (no worktree: todo), the card-level next
+    // stops it on A's expired lease, and the following dispatch stops the goal on that stop
+    setActorForTests(actorB);
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    fx.leases.takeover(goalKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'coordinate' });
+    assert.equal(fx.controller.next(goal.id).kind, 'run-card');
+    const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stopped.run.stop?.reason, 'ownership');
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).terminal, true);
+    // the takeover owns the run at generation 1 and selects PREPARE; the resumed goal dispatches it again as run-card
+    const taken = fx.runner().takeover(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(taken.lease.generation, 1);
+    assert.equal(taken.run.state, 'PREPARE');
+    const resumed = fx.controller.report({ goalId: goal.id, generation: fx.goal(goal.id).generation, result: 'resume', data: { reason: 'card taken over by win-B' } });
+    assert.equal(resumed.directive.kind, 'run-card', `a run without a worktree is dispatched again: ${resumed.directive.kind} ${resumed.directive.narration}`);
+    if (resumed.directive.kind === 'run-card') {
+      assert.equal(resumed.directive.cardId, 'T1-HELLO');
+      assert.equal(resumed.directive.cardState, 'PREPARE');
+    }
+    // the new owner prepares it: the lease is renewed at generation 1, not acquired again
+    const prepared = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(prepared.directive.kind, 'prepare');
+    assert.equal(prepared.run.ownerGeneration, 1);
+    assert.equal(fx.leases.read(cardKey)?.generation, 1);
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-B');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
 test('T0-CARD-TAKEOVER-2, checkpoint: next reads the stored run before its plan-checkpoint guard, so a caller snapshot carrying a stop does not skip it', () => {
   const fx = makeFixture({ actor: actorA });
   try {
