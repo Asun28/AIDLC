@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-FINDINGS-4
 title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock with a compare-and-set on the run revision, review results recovered only from a complete envelope (replacement of T1-REVIEW-FINDINGS-3 after its two R3 decisions)
-status: todo
+status: merged
 branch: T1-REVIEW-FINDINGS-4
 worktree: C:\wt\T1-REVIEW-FINDINGS-4
 allow_paths:
@@ -77,7 +77,7 @@ RED evidence: the retained REDs of T1-REVIEW-FINDINGS-2 and -3 (`.review/T1-REVI
 Budget 4400: the reviewed branch T1-REVIEW-FINDINGS-3 is 3893 added / 373 removed lines over 18 files after four R2 rounds and two R3 decisions; the result envelope, the whole-output verdict walk and their scenarios brought it to 4238 added / 384 removed; the eight repairs of R3 decision 1 (the envelope contract, the canonical file repair, the transient-CI ledger, the hand-off reload) bring it to 4536 added / 398 removed, hence 5000 for the rounds left. The 17 repairs of R3 decision 2, applied under the human ruling below, bring it to 5348 added / 408 removed, hence 5500.
 
 ## Ruling (2026-09-15)
-R3 decision 2 blocked candidate 69db6fc with 17 findings (`.review/T1-REVIEW-FINDINGS-4.r3.2.9243d2f3.json`): the recovery envelope and its pool request, the canonical document, the reservations, the pre-dispatch reload, the transient-CI ledger, the verdict walk and two tests. Human ruling (user): every finding is applied on the branch with a failing test first (acceptance 17), the DoD and the full check run on the repaired candidate, and the candidate merges without another R2 cycle or R3 decision; the review allowance is not reset. Recorded in the goal journal as a development authorization bound to the ruled candidate and a resume naming the ruling.
+R3 decision 2 blocked candidate 69db6fc with 17 findings (`.review/T1-REVIEW-FINDINGS-4.r3.2.9243d2f3.json`): the recovery envelope and its pool request, the canonical document, the reservations, the pre-dispatch reload, the transient-CI ledger, the verdict walk and two tests. Human ruling (user): every finding is applied on the branch with a failing test first (acceptance 17), the DoD and the full check run on the repaired candidate, and the candidate merges without another R2 cycle or R3 decision; the review allowance is not reset. Recorded in the goal journal as a resume naming the ruling and the ruled candidate (a standalone authorization is refused on a terminal goal); merged as PR #19.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
