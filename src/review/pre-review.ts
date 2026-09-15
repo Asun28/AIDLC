@@ -228,10 +228,12 @@ export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
  */
 export function extractVerdict(output: string): Verdict | undefined {
   // One string-aware pass over the whole output, so a document spanning lines is one document. Outside a document a
-  // JSON-looking brace (`{` followed by a quote or a closing brace) opens one; inside, strings, escapes and depth are
-  // tracked, so a brace in a quoted reason opens nothing. The parseable top-level documents are the candidates and the
-  // last decides. The output is malformed when a document after the decisive one closed without parsing, or when a
-  // document never closes (a block cut short after a nested axis is never its last axis).
+  // JSON-looking brace (`{` followed by a quote or a closing brace) or bracket (`[` followed by an object, a string or an
+  // array) opens one; inside, strings, escapes and the nesting of objects and arrays are tracked, so a brace or bracket in
+  // a quoted reason opens nothing and an object nested in an array is never a document of its own. The parseable
+  // top-level documents are the candidates and the last decides (an array is a document that is not a verdict). The output
+  // is malformed when a document after the decisive one closed without parsing, or when a document never closes (a block
+  // cut short after a nested axis is never its last axis; an unfinished enclosing array never yields its nested object).
   const { spans, unfinished } = topLevelDocuments(output);
   const parseable = spans.filter((s) => s.parses);
   const decisive = parseable[parseable.length - 1];
@@ -245,9 +247,13 @@ export function extractVerdict(output: string): Verdict | undefined {
   }
 }
 
-/** The top-level JSON-looking documents of `text` in order, each with whether it parses, and the start of a document that never closed. */
+/**
+ * The top-level JSON-looking documents of `text` in order (objects and arrays alike: an enclosing array is a document,
+ * never a container to extract a verdict from), each with whether it parses, and the start of a document that never closed.
+ */
 function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
   const spans: Array<{ start: number; end: number; parses: boolean }> = [];
+  // Objects and arrays open and close together: the depth counts both, so `[{...}` is one unfinished document.
   let depth = 0;
   let inString = false;
   let escaped = false;
@@ -255,13 +261,15 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
   for (let i = 0; i < text.length; i++) {
     const c = text[i]!;
     if (depth === 0) {
-      // Outside a document only a JSON-looking brace opens one (whitespace before the first key is unbounded); a brace
-      // followed by nothing but whitespace to the end of the output is a document cut short; prose braces are ignored.
-      if (c === '{') {
+      // Outside a document only a JSON-looking opener starts one: a brace followed by a key or a closing brace (whitespace
+      // before the first key is unbounded; a brace followed by nothing but whitespace to the end of the output is a document
+      // cut short), or a bracket followed by an object, a string or an array. Prose braces and brackets are ignored.
+      if (c === '{' || c === '[') {
         const rest = text.slice(i + 1);
         const next = rest.search(/\S/);
-        if (next < 0) return { spans, unfinished: i };
-        if (rest[next] === '"' || rest[next] === '}') {
+        if (c === '{' && next < 0) return { spans, unfinished: i };
+        const opens = c === '{' ? rest[next] === '"' || rest[next] === '}' : next >= 0 && (rest[next] === '{' || rest[next] === '"' || rest[next] === '[');
+        if (opens) {
           docStart = i;
           depth = 1;
         }
@@ -275,8 +283,9 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       continue;
     }
     if (c === '"') inString = true;
-    else if (c === '{') depth += 1;
-    else if (c === '}') {
+    else if (c === '{' || c === '[') depth += 1;
+    else if (c === '}' || c === ']') {
+      // A mismatched closer still closes one level; whether the span parses is JSON.parse's verdict.
       depth -= 1;
       if (depth === 0) {
         let parses = true;
