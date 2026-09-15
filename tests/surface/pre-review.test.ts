@@ -368,3 +368,37 @@ test('the async runner survives a child that exits before reading its input, and
   assert.deepEqual(tpl.formalReview.command, []);
   for (const id of ['T0-R3-COMMAND', 'T0-R2-PANEL']) assert.match(readFileSync(path.resolve(`specs/tasks/${id}.md`), 'utf8'), /^status: in-progress$/m, `${id} is not pre-set to merged`);
 });
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 3): a panel whose one angle fails before its receipt waits for every other angle before it rejects, so a caller releases nothing while a reviewer is still running', async () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-panel-join-'));
+  const reviewDir = path.join(dir, '.review');
+  let finished = false;
+  const runner = async (c: string, a: string[], o: Parameters<ReturnType<typeof scriptedRunner>>[2] = {}) => {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    finished = true;
+    return scriptedRunner({ 'fake-panel': { stdout: '{"verdict":"pass","reasons":[]}\n' } })(c, a, o);
+  };
+  await assert.rejects(
+    () =>
+      runReviewPanel({
+        runner,
+        command: ['fake-panel', '--focus', '{perspective}'],
+        perspectives: ['bugs', 'security'],
+        promptFor: (p) => {
+          if (p === 'security') throw new Error('the prompt for security could not be built');
+          return 'P';
+        },
+        vars: {},
+        cwd: dir,
+        timeoutMs: 1000,
+        shell: false,
+        reviewDir,
+        fileStem: 'T1-GATE.pre.0.9',
+        head: 'def456',
+        reviewer: 'fake',
+      }),
+    /prompt for security/,
+  );
+  assert.ok(finished, 'the rejection is delivered only after the running angle returned');
+  assert.ok(existsSync(path.join(reviewDir, 'T1-GATE.pre.0.9.bugs.log')), 'the angle that ran is retained');
+});

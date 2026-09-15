@@ -2854,3 +2854,65 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 4): the locked re-read before 
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 5): a release computed from a failed dispatch removes only a reservation still pending on the locked record; a decision another window committed under that invocation stays, and only a released reservation is journaled', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-rl.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-rl.ts b/src/t1-rl.ts\n+export const rl = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => ({ stdout: R3_PASS }),
+    });
+    const mk = (over: Record<string, unknown>) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, ...over }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const runner = mk({});
+    const s = cardAtShip(fx, runner, 'T1-RL');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    // Whatever the locked record holds for the pending reservation, another window has decided it meanwhile.
+    const decideAll = (current: CardRun | undefined): CardRun | undefined =>
+      current && { ...current, review: { ...current.review, substantiveDecisions: current.review.substantiveDecisions + 1, invocations: current.review.invocations.map((i) => (i.outcome === 'pending' && i.invocationId.startsWith('r3:') ? { ...i, outcome: 'pass' as const, runStatus: 'success' as const } : i)) } };
+    const realUpdate = fx.store.updateCardRun.bind(fx.store);
+    const interceptNth = (n: number) => {
+      let updates = 0;
+      fx.store.updateCardRun = ((goalId: string, cardId: string, change: Parameters<typeof realUpdate>[2]) => {
+        updates += 1;
+        return realUpdate(goalId, cardId, updates === n ? (current) => change(decideAll(current)) : change);
+      }) as typeof fx.store.updateCardRun;
+    };
+    // (1) The dispatch fails before any receipt; its release (the second locked write after the reservation) finds the
+    // invocation decided: the decision and its counter stay, nothing is removed.
+    const emptyR3 = mk({ formalReview: { ...fx.config.formalReview, command: [''] } });
+    interceptNth(2);
+    try {
+      await assert.rejects(() => emptyR3.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-RL')!), /review command is empty/);
+    } finally {
+      fx.store.updateCardRun = realUpdate;
+    }
+    let persisted = fx.store.getCardRun(goal.id, 'T1-RL')!;
+    const decided = persisted.review.invocations.filter((i) => i.invocationId.startsWith('r3:'));
+    assert.equal(decided.length, 1, 'the invocation another window decided is never removed by the delayed release');
+    assert.equal(decided[0]?.outcome, 'pass');
+    assert.equal(persisted.review.substantiveDecisions, 1, 'its counter stays with it');
+    // (2) The cleanup of a reservation whose retained failure marker says it never ran: the locked record shows it decided
+    // meanwhile, so it is kept, and no release is journaled for it.
+    persisted = fx.store.updateCardRun(goal.id, 'T1-RL', (current) => ({ ...current!, review: { ...current!.review, substantiveDecisions: 0, invocations: [{ invocationId: 'r3:T1-RL.r3.9.marker', candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] } }));
+    writeFileSync(path.join(reviewDir, 'T1-RL.r3.9.marker.failed.json'), JSON.stringify({ invocationId: 'r3:T1-RL.r3.9.marker', candidateSha: 'sha-1', at: fx.now(), error: 'spawn failed' }), 'utf8');
+    const releasedBefore = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED' && /released/.test(String(e.data['decision'] ?? ''))).length;
+    interceptNth(1);
+    try {
+      await runner.formalReview(g(), card, persisted);
+    } finally {
+      fx.store.updateCardRun = realUpdate;
+    }
+    persisted = fx.store.getCardRun(goal.id, 'T1-RL')!;
+    const marker = persisted.review.invocations.find((i) => i.invocationId === 'r3:T1-RL.r3.9.marker');
+    assert.equal(marker?.outcome, 'pass', 'the reservation decided meanwhile is kept by the cleanup');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED' && /released/.test(String(e.data['decision'] ?? ''))).length, releasedBefore, 'no release is journaled for a reservation that was not released');
+  } finally {
+    fx.cleanup();
+  }
+});
