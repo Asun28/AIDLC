@@ -212,7 +212,7 @@ test('T0-SESSION-IDENTITY-3, unprepared: a run without a recorded ownership gene
     assert.equal(stopped.directive.kind, 'stop');
     assert.equal(stopped.run.stop?.reason, 'ownership');
     // the owner identity does not continue it: the renewal requires the run's generation to equal the lease's, and
-    // the run has none. The docs name this case unsupported until the card takeover follow-up.
+    // the run has none. The card takeover owns that run (T0-CARD-TAKEOVER, unprepared, below).
     setActorForTests(actorA);
     const live = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(live.directive.kind, 'stop');
@@ -224,6 +224,77 @@ test('T0-SESSION-IDENTITY-3, unprepared: a run without a recorded ownership gene
     assert.equal(expired.directive.kind, 'stop');
     assert.equal(expired.run.stop?.reason, 'ownership');
     assert.equal(expired.run.ownerGeneration, undefined);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled lease, takes the expired one, fences the old owner and continues the run', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    const card = fx.card('T1-HELLO');
+    const records = () => ({ run: fx.store.getCardRun(goal.id, 'T1-HELLO'), lease: fx.leases.read(cardKey) });
+    // window A prepares the card: the worktree is recorded and the run carries the lease generation
+    const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    assert.equal(prepared.directive.kind, 'prepare');
+    assert.equal(prepared.run.ownerGeneration, 0);
+    // window B, the session after a /clear, reads the run: stopped for ownership
+    setActorForTests(actorB);
+    const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stopped.run.stop?.reason, 'ownership');
+    // live: refused with the owner and the expiry, nothing written
+    const live = records();
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, live.run!), /still held by win-A until .*expiry alone does not prove the owner stopped/);
+    assert.deepEqual(records(), live);
+    // expired, but a delivery operation of the card is unresolved: refused with its id, nothing written
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const op = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    const pending = records();
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, pending.run!), new RegExp(`not reconciled \\(${op.id}\\)`));
+    assert.deepEqual(records(), pending);
+    // reconciled: the lease is taken at the next generation and the run is owned at it, its ownership stop cleared
+    fx.ops.markResult(op.id, 'succeeded', {}, fx.now());
+    const taken = fx.runner().takeover(fx.goal(goal.id), card, records().run!);
+    assert.equal(taken.lease.generation, 1);
+    assert.equal(taken.lease.owner.session, 'win-B');
+    assert.equal(taken.lease.operation, 'card:T1-HELLO');
+    assert.equal(taken.previousOwner.session, 'win-A');
+    assert.equal(taken.previousGeneration, 0);
+    const owned = records();
+    assert.equal(owned.run?.ownerGeneration, 1);
+    assert.equal(owned.run?.stop, undefined);
+    assert.equal(owned.run?.state, 'BUILD', 'the state is selected again from the persisted evidence: a prepared run without receipts is BUILD');
+    assert.deepEqual(taken.run, owned.run);
+    assert.equal(owned.lease?.generation, 1);
+    assert.equal(owned.lease?.owner.session, 'win-B');
+    const events = fx.events(goal.id);
+    const acquired = events.find((e) => e.type === 'LEASE_ACQUIRED' && e.data['takeover'] === true);
+    assert.deepEqual(acquired?.data, { resource: cardKey, leaseGeneration: 1, takeover: true, previousOwner: 'win-A', previousGeneration: 0 });
+    assert.ok(events.some((e) => e.type === 'LEASE_RENEWED' && e.data['revalidated'] === true), 'the ownership stop is cleared by the renewal that revalidates an owner lease');
+    // window B continues the card
+    const continued = fx.runner().next(fx.goal(goal.id), card, owned.run!);
+    assert.equal(continued.directive.kind, 'build', `B continues: ${continued.directive.narration}`);
+    // window A is fenced at its generation: its write is refused and its dispatch stops, the lease stays with B
+    assert.throws(() => fx.leases.fence(cardKey, 0, actorA, fx.now()), FencedError);
+    setActorForTests(actorA);
+    const stale = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stale.directive.kind, 'stop');
+    assert.equal(stale.run.stop?.reason, 'ownership');
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-B');
+    assert.equal(fx.leases.read(cardKey)?.generation, 1);
+    // the stop A's stale dispatch recorded is revalidated by B's next call, as any owner stop caused by expiry is
+    setActorForTests(actorB);
+    const again = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(again.directive.kind, 'build');
+    assert.equal(again.run.stop, undefined);
+    // B's own lease: nothing to take over
+    const mine = records();
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, mine.run!), /this session owns card T1-HELLO at generation 1/);
+    assert.deepEqual(records(), mine);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
