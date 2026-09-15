@@ -5,10 +5,21 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
-import { CardRunner } from '../../src/loop/card-runner.ts';
+import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
 
 const HEAD = 'a'.repeat(40);
+const BASE_OID = 'd'.repeat(40);
+// The base sync's git calls (T0-SHIP-BASE-SYNC): fetch, resolve and the read-only merge test, scripted clean by default.
+const FETCH = 'git fetch --quiet --no-tags origin +refs/heads/main:refs/remotes/origin/main';
+const RESOLVE_REMOTE = 'git rev-parse --verify --quiet refs/remotes/origin/main^{commit}';
+const RESOLVE_LOCAL = 'git rev-parse --verify --quiet refs/heads/main^{commit}';
+const MERGE_TREE = 'git merge-tree --write-tree HEAD';
+const SYNC_MERGE = 'git merge --no-ff --no-commit';
+/** `git merge-tree --write-tree` on a conflict: the tree, the conflicted file info, a blank line, then the same messages `git merge` prints. */
+const CONFLICT_TREE = `${'e'.repeat(40)}\n100644 ${'1'.repeat(40)} 1\tCHANGELOG.md\n100644 ${'2'.repeat(40)} 2\tCHANGELOG.md\n100644 ${'3'.repeat(40)} 3\tCHANGELOG.md\n\nAuto-merging CHANGELOG.md\nCONFLICT (content): Merge conflict in CHANGELOG.md\n`;
+/** `git merge --no-ff --no-commit <ref>` stopping on the same conflict (stdout, C locale). */
+const CONFLICT_MERGE = 'Auto-merging CHANGELOG.md\nCONFLICT (content): Merge conflict in CHANGELOG.md\nAutomatic merge failed; fix conflicts and then commit the result.\n';
 
 function fixture(verdict?: Record<string, unknown>) {
   const root = mkdtempSync(path.join(tmpdir(), 'aidlc-ghship-'));
@@ -27,6 +38,10 @@ function runnerWith(overrides: Record<string, Partial<ExecReceipt> | ((args: str
     'git diff --cached --quiet': { exitCode: 1 },
     'git commit': {},
     'git rev-parse --verify HEAD': { stdout: HEAD + '\n' },
+    [FETCH]: {},
+    [RESOLVE_REMOTE]: { stdout: BASE_OID + '\n' },
+    [RESOLVE_LOCAL]: { stdout: BASE_OID + '\n' },
+    [MERGE_TREE]: { stdout: 'e'.repeat(40) + '\n' },
     'git push': {},
     'gh pr list': { stdout: '[]' },
     'gh pr create': { stdout: 'https://github.com/o/r/pull/42\n' },
@@ -173,7 +188,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]'), r.receipt.stdout);
   });
 
-  function shipThroughConfig(runsOrPolls: Runs | ((poll: number) => Runs), github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>) {
+  function shipThroughConfig(runsOrPolls: Runs | ((poll: number) => Runs), github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>, extra: Parameters<typeof runnerWith>[0] = {}) {
     let poll = 0;
     const runsFor = () => (typeof runsOrPolls === 'function' ? runsOrPolls(poll++) : runsOrPolls);
     const fx = makeFixture();
@@ -189,15 +204,31 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       if (verdict) writeFileSync(path.join(fx.config.worktreeRoot, 'T1-GATE', '.review', 'T1-GATE.json'), JSON.stringify(verdict));
       let merges = 0;
       let pushes = 0;
-      const script = runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: runsFor() }) }), 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; } });
+      const script = runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: runsFor() }) }), 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; }, ...extra });
       // No ship path is injected: the runner builds it from the config, so the block below is the only way the options reach the gate.
       const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
       const shipped = runner.next(fx.goal(goal.id), card, built);
-      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length };
+      const skills: string[] = shipped.directive.kind === 'build' ? (shipped.directive.skills ?? []) : [];
+      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length, skills, pendingRepair: shipped.run.pendingRepair, dodReceipt: shipped.run.dodReceipt };
     } finally {
       fx.cleanup();
     }
   }
+
+  test('T0-SHIP-BASE-SYNC acceptance 2: a base sync conflict reaches the runner as a build directive naming merge-conflicts, with the repair persisted and the DoD receipt cleared', () => {
+    const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
+    const r = shipThroughConfig([{ name: 'ci', status: 'completed', conclusion: 'success' }], github, undefined, {
+      'git merge-tree --write-tree HEAD': { exitCode: 1, stdout: CONFLICT_TREE },
+      'git merge --no-ff --no-commit refs/remotes/origin/main': { exitCode: 1, stdout: CONFLICT_MERGE },
+    });
+    assert.equal(r.kind, 'build', r.narration);
+    assert.equal(r.state, 'BUILD');
+    assert.equal(r.skills[0], 'merge-conflicts');
+    assert.equal(r.pendingRepair?.kind, 'merge-conflict');
+    assert.equal(r.dodReceipt, undefined, 'the merge commit is a new candidate: the DoD runs again');
+    assert.equal(r.pushes, 0, 'nothing is pushed on a conflict');
+    assert.equal(r.merges, 0);
+  });
 
   test('R8: the card runner builds the GitHub ship path from the project config; an absent required check keeps the merge pending and the verdict rule follows the config', () => {
     const github = { requiredChecks: ['ci', 'Gitleaks (committed history)'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
@@ -246,5 +277,113 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(blocked.merges, 0);
     assert.equal(blocked.kind, 'review-fix', blocked.narration);
     assert.equal(blocked.state, 'REVIEW_FIX');
+  });
+});
+
+describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
+  const dirs: string[] = [];
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+  type Call = { key: string; cwd?: string; env?: NodeJS.ProcessEnv };
+  /** A recording runner over the scripted defaults: every call with its cwd and environment, in order. */
+  function recording(overrides: Parameters<typeof runnerWith>[0] = {}) {
+    const calls: Call[] = [];
+    const scripted = runnerWith(overrides);
+    const runner: typeof scripted = (cmd, args, o) => {
+      calls.push({ key: [cmd, ...args].join(' '), cwd: o?.cwd, env: o?.env });
+      return scripted(cmd, args, o);
+    };
+    return { calls, runner };
+  }
+  const indexOf = (calls: Call[], prefix: string) => calls.findIndex((c) => c.key.startsWith(prefix));
+  const pathFor = (f: ReturnType<typeof fixture>, runner: ReturnType<typeof recording>['runner']) => new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} });
+
+  test('acceptance 1 and 3: remote mode fetches the base, resolves it and tests the merge before any push; a clean test keeps the head, and the token tip is the verdict head', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const { calls, runner } = recording();
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'origin/main', mode: 'remote' });
+    assert.equal(r.outcome, 'merged', r.receipt.stdout);
+    const fetch = indexOf(calls, FETCH);
+    const resolve = indexOf(calls, RESOLVE_REMOTE);
+    const tree = indexOf(calls, `${MERGE_TREE} refs/remotes/origin/main`);
+    const push = indexOf(calls, 'git push');
+    assert.ok(fetch >= 0 && resolve > fetch && tree > resolve && push > tree, `order fetch=${fetch} resolve=${resolve} merge-tree=${tree} push=${push}`);
+    assert.equal(calls[fetch]!.cwd, f.wt, 'the sync runs in the card worktree');
+    assert.equal(calls[tree]!.cwd, f.wt);
+    assert.ok(!calls.some((c) => c.key.startsWith(SYNC_MERGE) || c.key.startsWith('git rebase')), 'a clean sync issues no merge and never a rebase');
+    assert.match(r.receipt.stdout, new RegExp(`^base sync: refs/remotes/origin/main \\(${BASE_OID}\\) merges cleanly into HEAD ${HEAD}$`, 'm'));
+    assert.ok(!r.receipt.stdout.includes('[SHIP-BASE-SYNC'), 'a clean sync prints no sentinel');
+    assert.equal(pathFor(f, runner).readMergeToken('T1-A')?.tip, HEAD, 'the pushed, gated and merged head is the reviewed candidate');
+  });
+
+  test('acceptance 1: local mode issues no fetch, resolves the local base and tests the merge before the merge into the main checkout', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const { calls, runner } = recording({ 'git merge --no-ff --no-edit T1-A': {} });
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'local' });
+    assert.equal(r.outcome, 'merged', r.receipt.stdout);
+    assert.equal(indexOf(calls, 'git fetch'), -1, 'local mode syncs against the local base');
+    const resolve = indexOf(calls, RESOLVE_LOCAL);
+    const tree = indexOf(calls, `${MERGE_TREE} refs/heads/main`);
+    const merge = indexOf(calls, 'git merge --no-ff --no-edit T1-A');
+    assert.ok(resolve >= 0 && tree > resolve && merge > tree, `order resolve=${resolve} merge-tree=${tree} local-merge=${merge}`);
+    assert.equal(calls[merge]!.cwd, f.root, 'the local merge still runs in the main checkout');
+  });
+
+  test('acceptance 2: a conflict starts the merge in the worktree without committing, carries git diagnostic verbatim, is merge-failed with the conflict sentinel, pushes nothing and moves nothing', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const { calls, runner } = recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE } });
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'merge-failed', r.receipt.stdout);
+    assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), r.sentinels.join(' '));
+    assert.ok(hasConflictDiagnostic(r.receipt), 'the runner matches git own diagnostic on the ship output');
+    assert.match(r.receipt.stdout, new RegExp(`^\\[SHIP-BASE-SYNC-CONFLICT\\] refs/remotes/origin/main conflicts with HEAD ${HEAD} in CHANGELOG\\.md; the merge is left in `, 'm'), 'the sentinel line names the ref, the head and the conflicted paths once each');
+    for (const line of CONFLICT_MERGE.trim().split('\n')) assert.ok(r.receipt.stdout.split('\n').includes(line), `verbatim line: ${line}`);
+    const tree = indexOf(calls, MERGE_TREE);
+    const merge = indexOf(calls, `${SYNC_MERGE} refs/remotes/origin/main`);
+    assert.ok(tree >= 0 && merge > tree, `merge-tree=${tree} merge=${merge}`);
+    assert.equal(calls[merge]!.cwd, f.wt, 'the merge is left in the card worktree');
+    assert.equal(calls[merge]!.env?.LC_ALL, 'C', 'the diagnostic is the English line the runner matches');
+    assert.ok(!calls.some((c) => c.key.startsWith('git push') || c.key.startsWith('gh pr') || c.key.startsWith('git merge --no-ff --no-edit') || c.key.startsWith('git merge --abort') || c.key.startsWith('git rebase')), calls.map((c) => c.key).join('\n'));
+    assert.equal(r.resumeCommand, 'aidlc card next T1-A');
+    assert.equal(pathFor(f, runner).readMergeToken('T1-A'), undefined, 'no merge token');
+  });
+
+  test('acceptance 2: a merge that completes although merge-tree reported a conflict is aborted; the ship fails without a diagnostic and the head is untouched', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const { calls, runner } = recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { stdout: 'Automatic merge went well; stopped before committing as requested\n' }, 'git merge --abort': {} });
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'merge-failed', r.receipt.stdout);
+    assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]'), r.sentinels.join(' '));
+    assert.ok(!hasConflictDiagnostic(r.receipt), 'no diagnostic: the runner stops with reason tool instead of a repair the worktree does not carry');
+    const merge = indexOf(calls, SYNC_MERGE);
+    const abort = indexOf(calls, 'git merge --abort');
+    assert.ok(merge >= 0 && abort > merge, `merge=${merge} abort=${abort}`);
+    assert.equal(calls[abort]!.cwd, f.wt);
+    assert.ok(!calls.some((c) => c.key.startsWith('git push')));
+  });
+
+  test('acceptance 4: a failed fetch, an unresolvable base and a merge-tree error are [SHIP-BASE-SYNC-FAIL] (merge-failed, no diagnostic, no merge issued, nothing pushed)', () => {
+    const cases: Array<[string, Parameters<typeof runnerWith>[0], RegExp]> = [
+      ['fetch', { [FETCH]: { exitCode: 128, stderr: "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com\n" } }, /fetch of origin\/main failed: fatal: unable to access/],
+      ['resolve', { [RESOLVE_REMOTE]: { exitCode: 1, stdout: '' } }, /base main does not resolve to a commit/],
+      ['merge-tree', { [MERGE_TREE]: { exitCode: 129, stderr: "error: unknown option `write-tree'\n" } }, /merge-tree exit 129: error: unknown option/],
+    ];
+    for (const [name, overrides, detail] of cases) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+      dirs.push(f.root);
+      const { calls, runner } = recording(overrides);
+      const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'merge-failed', `${name}: ${r.receipt.stdout}`);
+      assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]'), `${name}: ${r.sentinels.join(' ')}`);
+      assert.match(r.receipt.stdout, detail, name);
+      assert.ok(!hasConflictDiagnostic(r.receipt), `${name}: no conflict diagnostic`);
+      assert.ok(!calls.some((c) => c.key.startsWith('git merge ') || c.key.startsWith('git push') || c.key.startsWith('gh pr')), `${name}: the worktree is untouched and nothing is pushed`);
+      assert.equal(r.resumeCommand, 'aidlc card next T1-A', name);
+    }
   });
 });

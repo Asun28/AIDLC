@@ -7,14 +7,14 @@ AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native
 Version 0.1.0.
 
 - The development-only loop (intake, routing, planning gates, card execution, arc selection, integrated acceptance, closure) is implemented and tested (413 tests: unit suites plus end-to-end scenarios for the T0 flow, T1 arc, review block, CI rerun, deadlines, two windows, staging/production release, audit and amendments).
-- Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, push, PR, candidate-bound verdict, CI check runs, squash merge). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
+- Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge; a base that conflicts leaves the merge in the worktree and returns the card to BUILD instead of opening a PR GitHub runs no workflow on). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
 - Release and migration modules are opt-in. Until provider operations are bound in `aidlc.ops.json`, an enabled target stops with `release-config` and prints `NOT CONFIGURED`; a development-only goal never needs them.
 - "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal and an asserted host capture boundary; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
 
 ## Requirements
 
 - Node.js >= 22.18 (the CLI runs TypeScript sources directly through type stripping; `npm run build` emits `dist/`).
-- git (state lives in the main checkout's `.aidlc/` so all worktrees share it).
+- git (state lives in the main checkout's `.aidlc/` so all worktrees share it); 2.38 or newer for the `github` ship path, whose base sync tests the merge with `git merge-tree --write-tree`.
 - Optional: `gh` (remote ship, PR and CI probes), `pwsh` 7 (scaffold ship path), `claude` CLI or an Anthropic API credential (model providers).
 
 ## Quick start

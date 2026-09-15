@@ -1,9 +1,11 @@
 /**
  * Native GitHub ship path for repositories without the PowerShell scaffold.
  *
- * Mirrors the scaffold chain: commit -> push -> PR (reuse retained identity) -> require a fresh
- * candidate-bound verdict written by the reviewer role at `<worktree>/.review/<branch>.json`
- * -> CI check runs green (required names present, every reported check green; the gate lines carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every step
+ * Mirrors the scaffold chain: commit -> require a fresh candidate-bound verdict written by the reviewer role at
+ * `<worktree>/.review/<branch>.json` -> base sync (fetch the base and test the merge; a conflict is left in the
+ * worktree for the merge-conflicts skill and fails the ship with git's own diagnostic) -> push -> PR (reuse retained
+ * identity) -> CI check runs green (required names present, every reported check green; the gate lines carry the
+ * check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every step
  * prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
  * Authentication failure never silently becomes local mode.
  */
@@ -35,6 +37,30 @@ export interface GitHubShipOptions {
 /** Check names travel in the gate lines as JSON with brackets and percent signs encoded: a name can never form a sentinel or break a line. `gateChecks` in core/ci-policy decodes them. */
 function encodeCheckName(name: string): string {
   return name.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+/** Non-empty output lines, line endings normalised, so each git message keeps its own line on the ship output. */
+function lines(text: string): string[] {
+  return text.split(/\r?\n/).filter((l) => l.trim() !== '');
+}
+
+/** A failure detail on one line: git's stderr collapsed so the sentinel line stays one line. */
+function oneLine(text: string): string {
+  return lines(text).join(' | ').trim();
+}
+
+/**
+ * The conflicted paths from `git merge-tree --write-tree` output on a conflict: after the tree oid, one
+ * `<mode> <object> <stage>\t<path>` line per stage up to the first blank line. Unique, in order.
+ */
+function conflictedPaths(stdout: string): string[] {
+  const out: string[] = [];
+  for (const line of stdout.split(/\r?\n/).slice(1)) {
+    if (line.trim() === '') break;
+    const m = line.match(/^\d{6} [0-9a-f]{40,64} [123]\t(.+)$/);
+    if (m && m[1] && !out.includes(m[1])) out.push(m[1]);
+  }
+  return out;
 }
 
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
@@ -97,6 +123,9 @@ export class GitHubShipPath implements ShipPath {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
       if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
     }
+    // Base sync before any remote effect or local merge: the reviewed head must merge cleanly into the base it targets.
+    const sync = this.baseSync(req, wt, head, log);
+    if (sync) return fail(sync.sentinel, sync.detail);
     if (req.mode === 'local') {
       const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });
       if (merge.exitCode !== 0) return fail('[SHIP-LOCAL-MERGE-FAIL]', merge.stderr);
@@ -152,6 +181,45 @@ export class GitHubShipPath implements ShipPath {
     this.writeToken(req.cardId, `tip=${head}\nmerged_pr=#${prNumber}\nutc=${new Date().toISOString()}`);
     log.push('[SAGA-DONE]');
     return { ...classifyShipOutput(this.receipt(log, 0, started)), prNumber };
+  }
+
+  /**
+   * Base sync (T0-SHIP-BASE-SYNC). Remote mode fetches the base into `refs/remotes/origin/<base>`; local mode takes
+   * `refs/heads/<base>`, the branch the local merge targets. `git merge-tree --write-tree HEAD <ref>` (git 2.38+) then
+   * tests the merge without touching a ref or the worktree: exit 0 is clean and the head stays the reviewed candidate,
+   * exit 1 is a conflict, anything else a failure. On a conflict the same merge is started in the worktree without a
+   * commit, so the markers are there for the merge-conflicts skill and the branch head cannot move here, and every
+   * line git printed goes on the ship output verbatim: the card runner matches git's own diagnostic (`CONFLICT (...)`)
+   * to return the card to BUILD. A merge that completes although merge-tree reported a conflict is aborted and
+   * reported as a failure, never pushed. Git runs with `LC_ALL=C` so the diagnostic is the English line the runner
+   * matches. Returns the failure to report, or undefined when the chain may continue.
+   */
+  private baseSync(req: ShipRequest, wt: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
+    const base = req.base.replace(/^origin\//, '');
+    let resolved: { ref: string; oid: string } | undefined;
+    if (req.mode === 'remote') {
+      const fetch = this.git.fetchBase(wt, base);
+      if (fetch.exitCode !== 0) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `fetch of origin/${base} failed: ${oneLine(fetch.stderr)}` };
+      resolved = this.git.resolveBase(wt, `origin/${base}`);
+    } else {
+      resolved = this.git.resolveBase(wt, base, true);
+    }
+    if (!resolved) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `base ${base} does not resolve to a commit` };
+    const env = { ...process.env, LC_ALL: 'C' };
+    const test = this.runner('git', ['merge-tree', '--write-tree', 'HEAD', resolved.ref], { cwd: wt, env });
+    if (test.exitCode === 0) {
+      log.push(`base sync: ${resolved.ref} (${resolved.oid}) merges cleanly into HEAD ${head}`);
+      return undefined;
+    }
+    if (test.exitCode !== 1) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `merge-tree exit ${test.exitCode}: ${oneLine(test.stderr)}` };
+    const paths = conflictedPaths(test.stdout).join(', ') || 'unnamed paths';
+    const merge = this.runner('git', ['merge', '--no-ff', '--no-commit', resolved.ref], { cwd: wt, env });
+    if (merge.exitCode === 0) {
+      this.runner('git', ['merge', '--abort'], { cwd: wt, env });
+      return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged` };
+    }
+    log.push(...lines(merge.stdout), ...lines(merge.stderr));
+    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${resolved.ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
   }
 
   private tokenFile(cardId: string): string {
