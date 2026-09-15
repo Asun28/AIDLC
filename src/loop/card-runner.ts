@@ -392,10 +392,14 @@ export class CardRunner {
     if (lease && !lease.released && lease.owner.session === me.session && lease.owner.host === me.host && run.ownerGeneration === lease.generation) this.leases.claim(key, { operation: lease.operation, now });
   }
 
-  /** Drop a pending formal-review reservation from the persisted run (the dispatch failed before a decision). */
+  /**
+   * Drop a pending formal-review reservation from the persisted run (the dispatch failed before a decision). Only an entry
+   * still pending on the locked record is removed: a decision another window recovered under this invocation meanwhile
+   * stays with its counters.
+   */
   private releaseReservation(goal: Goal, card: Card, invocationId: string): void {
     if (!this.store.getCardRun(goal.id, card.id)) return;
-    this.store.updateCardRun(goal.id, card.id, (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => i.invocationId !== invocationId) } }));
+    this.store.updateCardRun(goal.id, card.id, (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }));
   }
 
   /**
@@ -1361,9 +1365,17 @@ export class CardRunner {
     const failed = persisted.review.invocations.filter((i) => i.outcome === 'pending' && i.invocationId.startsWith('r3:') && existsSync(path.join(reviewDir, `${i.invocationId.slice(3)}.failed.json`)) && !existsSync(path.join(reviewDir, `${i.invocationId.slice(3)}.log`)));
     if (!failed.length) return persisted;
     const ids = new Set(failed.map((i) => i.invocationId));
-    const released = this.store.updateCardRun(goal.id, card.id, (current) => ({ ...(current ?? persisted), review: { ...(current ?? persisted).review, invocations: (current ?? persisted).review.invocations.filter((i) => !ids.has(i.invocationId)) } }));
-    for (const i of failed) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId: i.invocationId, reviewer: i.reviewer, candidateDigest: i.candidateDigest, outcome: 'no-verdict', decision: 'released: the dispatch failed before the reviewer ran', findings: [], reraised: [], resolved: [] } });
-    return released;
+    // Only an entry still pending on the locked record is released (one decided meanwhile keeps its decision), and only a
+    // released entry is journaled.
+    const released: ReviewInvocation[] = [];
+    const next = this.store.updateCardRun(goal.id, card.id, (current) => {
+      const latest = current ?? persisted;
+      released.length = 0;
+      released.push(...latest.review.invocations.filter((i) => ids.has(i.invocationId) && i.outcome === 'pending'));
+      return { ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(ids.has(i.invocationId) && i.outcome === 'pending')) } };
+    });
+    for (const i of released) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId: i.invocationId, reviewer: i.reviewer, candidateDigest: i.candidateDigest, outcome: 'no-verdict', decision: 'released: the dispatch failed before the reviewer ran', findings: [], reraised: [], resolved: [] } });
+    return next;
   }
 
   /**

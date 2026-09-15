@@ -550,12 +550,16 @@ export interface RunReviewPanelOptions extends ReviewRetentionOptions {
   shell?: boolean;
 }
 
-/** Run one reviewer process per perspective concurrently and aggregate them into one round verdict. */
+/**
+ * Run one reviewer process per perspective concurrently and aggregate them into one round verdict. An angle that fails
+ * outside its receipt (a prompt that cannot be built, a retention failure) fails the round, but only once every other
+ * angle has returned: the caller then releases its reservation with no reviewer of the round still running.
+ */
 export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelResult> {
   validatePerspectives(o.perspectives);
   const names: Array<string | undefined> = o.perspectives.length ? o.perspectives : [undefined];
-  const runs: PerspectiveRun[] = await Promise.all(
-    names.map(async (p) => {
+  const settled = await Promise.allSettled(
+    names.map(async (p): Promise<PerspectiveRun> => {
       const prompt = o.promptFor(p);
       const { argv, promptInArgv } = expandCommand(o.command, { ...o.vars, instructions: prompt, perspective: p ?? 'review' });
       const [cmd, ...args] = argv;
@@ -575,6 +579,9 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
       return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
     }),
   );
+  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+  if (failed) throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
+  const runs: PerspectiveRun[] = settled.map((s) => (s as PromiseFulfilledResult<PerspectiveRun>).value);
   const agg = aggregateVerdicts(runs);
   // The round document is always retained, also on a hold, a missing verdict or an inconsistent binding.
   let verdictRef = runs.length === 1 ? runs[0]!.verdictRef : undefined;
