@@ -2646,19 +2646,24 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-o
     assert.equal(ship.requests.length, 0, 'sha-2 is never shipped on sha-1 exhaustion');
     assert.notEqual(r.directive.kind, 'review', `sha-2 has no R2 review: ${r.directive.narration}`);
     assert.notEqual(r.directive.kind, 'close', r.directive.narration);
-    // (2) A pass committed while the canonical file could not be written: the gate repairs the file from the envelope before it opens the ship.
+    // (2) A pass committed while the canonical file could not be written: the fault is at the publication's own seam (the
+    // rename of the atomic write), the decision and its journal event land regardless, and the gate repairs the file from the
+    // envelope before it opens the ship, replacing the stale same-SHA block the earlier decision on this candidate left.
     const reviewDir = path.join(fx.repo.mainRoot, '.review');
     const canonical = path.join(reviewDir, 'T1-HO2.json');
     fx.store.updateCardRun(goal.id, 'T1-HO2', (current) => ({ ...current!, candidate: { sha: 'sha-3', dirty: false, untracked: [], digest: 'sha-3' }, dodReceipt: 'dod:3', preReview: { ...current!.preReview, rounds: [...current!.preReview.rounds, { round: 2, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-3', candidateSha: 'sha-3', requestedAt: fx.now(), durationMs: 0, outcome: 'pass', reasons: [] }] } }));
-    const realWrite = fs.writeFileSync;
-    (fs as unknown as Record<string, unknown>)['writeFileSync'] = ((file: fs.PathOrFileDescriptor, ...rest: unknown[]) => {
-      if (String(file) === canonical) {
-        const err = new Error('EACCES: permission denied, open') as NodeJS.ErrnoException;
+    writeFileSync(canonical, JSON.stringify({ verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-ho2.ts:1: stale block'], sha: 'sha-3', branch: 'T1-HO2', run_status: 'success', reviewer: 'fake-r3', invocationId: 'r3:T1-HO2.r3.0.stale' }), 'utf8');
+    const realRename = fs.renameSync;
+    let faulted = 0;
+    (fs as unknown as Record<string, unknown>)['renameSync'] = ((from: fs.PathLike, to: fs.PathLike) => {
+      if (String(to) === canonical) {
+        faulted += 1;
+        const err = new Error('EACCES: permission denied, rename') as NodeJS.ErrnoException;
         err.code = 'EACCES';
         throw err;
       }
-      return (realWrite as unknown as (...a: unknown[]) => void)(file, ...rest);
-    }) as typeof fs.writeFileSync;
+      return realRename(from, to);
+    }) as typeof fs.renameSync;
     syncBuiltinESMExports();
     let passed: Awaited<ReturnType<typeof runner.formalReview>> | undefined;
     try {
@@ -2666,16 +2671,32 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-o
     } catch {
       /* the publication failure may surface as an error; the decision is committed either way */
     } finally {
-      (fs as unknown as Record<string, unknown>)['writeFileSync'] = realWrite;
+      (fs as unknown as Record<string, unknown>)['renameSync'] = realRename;
       syncBuiltinESMExports();
     }
+    assert.equal(faulted, 1, 'the fault fired at the publication seam');
     const committed = fx.store.getCardRun(goal.id, 'T1-HO2')!;
-    assert.equal(committed.review.invocations.at(-1)?.outcome, 'pass', passed ? 'the pass is committed' : 'the pass is committed even when the publication threw');
-    rmSync(canonical, { force: true });
+    const passInvocation = committed.review.invocations.at(-1)!;
+    assert.equal(passInvocation.outcome, 'pass', passed ? 'the pass is committed' : 'the pass is committed even when the publication threw');
+    const decidedEvent = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').find((e) => e.data['invocationId'] === passInvocation.invocationId);
+    assert.ok(decidedEvent, 'REVIEW_DECIDED is journaled although the publication did not land');
+    assert.equal(decidedEvent.data['canonicalPublished'], false, 'the event says the canonical document was not published');
+    assert.equal((JSON.parse(readFileSync(canonical, 'utf8')) as { verdict?: string }).verdict, 'block', 'fixture: the stale same-SHA block is still the canonical document');
+    // The sidecar of the pass contradicts its envelope (a block): the repair reads the committed envelope, never the sidecar.
+    const stem = passInvocation.invocationId.slice(3);
+    writeFileSync(path.join(reviewDir, `${stem}.json`), JSON.stringify({ verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-ho2.ts:1: conflicting sidecar'], sha: 'sha-3', branch: 'T1-HO2', run_status: 'success' }), 'utf8');
     const after = runner.next(g(), card, committed);
     assert.ok(existsSync(canonical), 'the canonical verdict file is repaired from the committed envelope before the ship');
-    assert.equal((JSON.parse(readFileSync(canonical, 'utf8')) as { sha?: string }).sha, 'sha-3');
+    const repaired = JSON.parse(readFileSync(canonical, 'utf8')) as { sha?: string; verdict?: string; invocationId?: string; advisory?: string[] };
+    assert.equal(repaired.sha, 'sha-3');
+    assert.equal(repaired.verdict, 'pass', 'the stale same-SHA block is replaced by the committed pass');
+    assert.equal(repaired.invocationId, passInvocation.invocationId, 'the canonical document names the decision it publishes');
+    assert.deepEqual(repaired.advisory ?? [], [], 'nothing of the conflicting sidecar reaches the canonical document');
     assert.equal(after.directive.kind, 'close', after.directive.narration);
+    const repairs = () => fx.events(goal.id).filter((e) => e.type === 'NOTE' && e.data['canonicalRepaired'] === passInvocation.invocationId).length;
+    assert.equal(repairs(), 1, 'the repair is journaled');
+    runner.next(g(), card, fx.store.getCardRun(goal.id, 'T1-HO2')!);
+    assert.equal(repairs(), 1, 'an intact canonical document is not repaired again');
   } finally {
     fx.cleanup();
   }
@@ -2912,6 +2933,55 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 5): a release computed from a 
     const marker = persisted.review.invocations.find((i) => i.invocationId === 'r3:T1-RL.r3.9.marker');
     assert.equal(marker?.outcome, 'pass', 'the reservation decided meanwhile is kept by the cleanup');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED' && /released/.test(String(e.data['decision'] ?? ''))).length, releasedBefore, 'no release is journaled for a reservation that was not released');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 11): an advisory block is a publishable decision too; its canonical document is repaired before the ship like a pass', async () => {
+  const fx = makeFixture({ config: { gateRequired: false, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const reason = '[standards] 9 error handling @ src/t1-adv3.ts:1: swallowed error -> rethrow';
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-adv3.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-adv3.ts b/src/t1-adv3.ts\n+export const adv3 = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => ({ stdout: `${JSON.stringify({ verdict: 'block', reasons: [reason], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [reason] } } })}\n` }),
+    });
+    const ship = new DryRunShipPath(['merged']);
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    // A tier 1 card without a required gate: a standards block is advisory.
+    writeCard(fx, { id: 'T1-ADV3', title: 'advisory canonical', tier: '1' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-ADV3', source: 'card', ref: 'T1-ADV3', affectedSurfaces: [] }, { cards: ['T1-ADV3'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-ADV3'] } });
+    const card = fx.card('T1-ADV3');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-ADV3'));
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    const decided = await runner.formalReview(g(), card, r.run);
+    assert.equal(decided.classified.outcome, 'block-advisory');
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    const canonical = path.join(reviewDir, 'T1-ADV3.json');
+    const read = () => JSON.parse(readFileSync(canonical, 'utf8')) as { verdict?: string; advisory?: string[]; invocationId?: string; sha?: string };
+    assert.equal(read().verdict, 'pass', 'an advisory block is published as a consistent pass');
+    assert.deepEqual(read().advisory, [reason]);
+    const invocation = fx.store.getCardRun(goal.id, 'T1-ADV3')!.review.invocations.at(-1)!;
+    assert.equal(invocation.outcome, 'block');
+    assert.equal(invocation.mergeBlocking, false);
+    // The publication is lost; the gate repairs it from the committed envelope with the advisory classification before the ship.
+    rmSync(canonical, { force: true });
+    const after = runner.next(g(), card, fx.store.getCardRun(goal.id, 'T1-ADV3')!);
+    assert.ok(existsSync(canonical), 'the canonical document of an advisory block is repaired before the ship');
+    assert.equal(read().verdict, 'pass');
+    assert.deepEqual(read().advisory, [reason], 'every finding stays under advisory');
+    assert.equal(read().invocationId, invocation.invocationId);
+    assert.equal(read().sha, 'sha-1');
+    assert.equal(ship.requests.length, 1, 'the ship ran after the repair');
+    assert.equal(after.directive.kind, 'close', after.directive.narration);
   } finally {
     fx.cleanup();
   }
