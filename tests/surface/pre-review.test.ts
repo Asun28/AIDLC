@@ -53,6 +53,14 @@ test('extractVerdict takes the last JSON verdict line and ignores reasoning nois
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n{'), undefined, 'a final truncated opener is malformed, never the document before it');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n{   \n'), undefined, 'the same with whitespace after it');
   assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n{' + ' '.repeat(80) + '"verdict":"block","reasons":[]}\n')?.verdict, 'block', 'whitespace before the first key is unbounded');
+  // R3 decision 2 of T1-REVIEW-FINDINGS-4 (finding 2): an enclosing array is a top-level document too. Unfinished, it is a
+  // document cut short; finished, it is not a verdict. A nested object is never extracted from it.
+  assert.equal(extractVerdict('[{"verdict":"pass","reasons":[]}'), undefined, 'an unfinished enclosing array is a document cut short, never its nested object');
+  assert.equal(extractVerdict('[{"verdict":"pass","reasons":[]}]'), undefined, 'a finished enclosing array is not a verdict document');
+  assert.equal(extractVerdict('[{"verdict":"block","reasons":[]}]\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'an array before the decisive document is history');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n[spec] fine; see [1] and [] too\n')?.verdict, 'pass', 'prose brackets after the document are ignored');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: use [ here"]}\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'a quoted bracket never opens a container');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],"axes":{"spec":{"verdict":"block","reasons":["x"]},"standards":{"verdict":"pass","reasons":[]}}}')?.verdict, 'block', 'arrays inside the document are tracked with its objects');
 });
 
 test('buildPreReviewPrompt carries the policy, the card contract, the prior findings and the diff, and demands one JSON last line', () => {

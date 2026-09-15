@@ -618,31 +618,50 @@ class CountingVerdictShipPath extends SequencedVerdictShipPath {
   }
 }
 
-test('T1-REVIEW-FINDINGS-4 acceptance 16: the same ship result applied twice reads the artifact twice and records one decision and one finding', () => {
+test('T1-REVIEW-FINDINGS-4 acceptance 16: the same ship result applied twice through applyShipResult reads the artifact twice and records one decision and one finding', () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: 'T1-ADV2', title: 'advisory re-read', tier: '1', acceptance: ['1. it works. [dod arm 1]'] });
     const goal = goalForCards(fx, ['T1-ADV2']);
     const advisory: Verdict = { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv2.ts:3: duplicated helper -> reuse'], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: ['[standards] 16 de-AI-slop @ src/adv2.ts:3: duplicated helper -> reuse'] } }, sha: candidateShaFor('T1-ADV2'), run_status: 'success' };
-    const ship = new CountingVerdictShipPath(['ci-red', 'merged'], [advisory, advisory]);
+    const ship = new CountingVerdictShipPath(['merged'], [advisory]);
     const runner = fx.runner(ship);
     const card = fx.card('T1-ADV2');
     const g = () => fx.goal(goal.id);
+    // The arguments of the first application are captured: the identical result, operation and key are replayed below.
+    const realApply = runner.applyShipResult.bind(runner);
+    let captured: Parameters<typeof realApply> | undefined;
+    runner.applyShipResult = ((...args: Parameters<typeof realApply>) => {
+      captured ??= args;
+      return realApply(...args);
+    }) as typeof runner.applyShipResult;
     let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-ADV2'));
     r = runner.next(g(), card, r.run);
     const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-ADV2') });
     r = runner.next(g(), card, run);
+    runner.applyShipResult = realApply;
+    assert.ok(captured, 'fixture: the ship result was applied once');
     assert.equal(ship.reads, 1);
     assert.equal(r.run.review.substantiveDecisions, 1);
     assert.equal(r.run.findings.length, 1, 'the advisory block records its cited reason once');
-    // The second ship is persisted as resumable (the CI rerun cleared), so it is dispatched and its verdict file re-read.
-    const resumed = fx.store.updateCardRun(goal.id, 'T1-ADV2', (current) => ({ ...current!, state: 'SHIP', stop: undefined, dodReceipt: 'dod:1', ci: { reruns: [] } }));
-    r = runner.next(g(), card, resumed);
-    assert.equal(ship.requests.length, 2, 'the second ship ran');
-    assert.equal(ship.reads, 2, 'the artifact was re-read');
-    assert.equal(r.run.review.substantiveDecisions, 1, 'a re-read of the same verdict artifact is not a second decision');
-    assert.equal(r.run.findings.length, 1, 'no duplicate finding for the identical reason');
     assert.equal(r.directive.kind, 'close', r.directive.narration);
+    const decidedBefore = fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length;
+    // The same result, operation and key applied again (a replay of the operation): the artifact is re-read, nothing new is recorded.
+    const [, , , result, operationId, reviewKey, candidateDigest] = captured;
+    const replay = runner.applyShipResult(g(), card, fx.store.getCardRun(goal.id, 'T1-ADV2')!, result, operationId, reviewKey, candidateDigest);
+    assert.equal(ship.reads, 2, 'the artifact was re-read');
+    assert.equal(replay.run.review.substantiveDecisions, 1, 'a replay of the same ship result is not a second decision');
+    assert.equal(replay.run.findings.length, 1, 'no duplicate finding for the identical reason');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length, decidedBefore, 'no second REVIEW_DECIDED for the replay');
+    assert.equal(replay.directive.kind, 'close', replay.directive.narration);
+    // The same result under a later operation of the same candidate (a CI retry re-reading the unchanged artifact): the
+    // artifact identity, not the operation, makes it the same decision.
+    const retry = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-ADV2', target: 'main', candidateDigest, ownerGeneration: 0, timeoutMs: 60_000, effects: ['merge'] });
+    const reread = runner.applyShipResult(g(), card, fx.store.getCardRun(goal.id, 'T1-ADV2')!, result, retry.id, reviewKey, candidateDigest);
+    assert.equal(ship.reads, 3, 'the artifact was re-read again');
+    assert.equal(reread.run.review.substantiveDecisions, 1, 'a later operation re-reading the same artifact is not a second decision');
+    assert.equal(reread.run.findings.length, 1, 'no duplicate finding under the later operation');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').length, decidedBefore, 'no REVIEW_DECIDED for the re-read');
   } finally {
     fx.cleanup();
   }
