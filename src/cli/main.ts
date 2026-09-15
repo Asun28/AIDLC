@@ -629,7 +629,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
 
   // ------------------------------------------------------------------ review / ci / ops
-  const review = program.command('review').description('shared review admission queue and the pre-review (R2) stage');
+  const review = program.command('review').description('shared review admission queue, the R2 and R3 review commands, and the findings of a card run');
   review
     .command('status')
     .option('--pool <name>')
@@ -662,6 +662,49 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       c.controller.writeBoard(goalRec);
       const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: c.config.formalReview.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
       out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+    });
+  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; disputes: Array<{ note: string }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
+    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note: ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
+  review
+    .command('findings <cardId>')
+    .description('list the findings of the card run with their dispositions, disputes, re-raises and resolution')
+    .option('--goal <id>')
+    .action((cardId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      // Read only: an existing run is listed, none is created and no deadline starts.
+      const run = runnerFor(c).findRun(cardId, o.goal);
+      if (!run) {
+        out(c, { cardId, findings: [] }, () => `${cardId}: no card run${o.goal ? ` in goal ${o.goal}` : ''}`);
+        return;
+      }
+      const findings = runnerFor(c).listFindings(run);
+      out(c, { cardId, goalId: run.goalId, state: run.state, findings }, () => (findings.length ? findings.map(findingLine).join('\n') : `${cardId}: no findings recorded`));
+    });
+  review
+    .command('dispute <cardId> <findingId>')
+    .description('dispute an open finding with a note; the next round or decision receives the note, and a candidate blocked only by disputed findings is re-reviewed unchanged')
+    .option('--goal <id>')
+    .requiredOption('--note <text>', 'why the finding does not hold (evidence, file:line, the acceptance item)')
+    .action((cardId: string, findingId: string, o: { goal?: string; note: string }) => {
+      const c = ctx(g());
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const next = runnerFor(c).disputeFinding(goalRec, parsed.card, run, findingId, o.note);
+      c.controller.writeBoard(goalRec);
+      const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
+      const shipPathNote = f.stage === 'formal' && !c.config.formalReview.command.length ? '\nnote: the ship-path reviewer re-reads a verdict file and receives no notes; the dispute is recorded for the human adjudicator, and the candidate ships again only once it changes' : '';
+      out(c, { cardId, finding: f }, () => `${findingLine(f)}${shipPathNote}\nnext: dispute or repair the other open findings, then \`aidlc card next ${cardId}\``);
+    });
+  review
+    .command('accept <cardId> <findingId>')
+    .description('withdraw a dispute: the finding is open again and the next round verifies it')
+    .option('--goal <id>')
+    .action((cardId: string, findingId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const next = runnerFor(c).acceptFinding(goalRec, parsed.card, run, findingId);
+      c.controller.writeBoard(goalRec);
+      const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
+      out(c, { cardId, finding: f }, () => `${findingLine(f)}\nnext: repair it, record the attempt with the new candidate sha, then \`aidlc card next ${cardId}\``);
     });
   program
     .command('ci')
