@@ -518,7 +518,9 @@ test('T0-CARD-TAKEOVER, goal stopped: a goal the dispatch stopped on the card ow
     // aidlc goal resume: the next generation dispatches the card, and B continues it
     const resumed = fx.controller.report({ goalId: goal.id, generation: fx.goal(goal.id).generation, result: 'resume', data: { reason: 'card taken over by win-B' } });
     assert.equal(fx.goal(goal.id).terminal, false);
-    assert.ok(resumed.directive.kind === 'run-card' || resumed.directive.kind === 'wait', `the resumed goal dispatches or waits on the card: ${resumed.directive.kind} ${resumed.directive.narration}`);
+    // the dispatch reports the taken-over card as running (it has a worktree): the worker continues it with card next
+    assert.equal(resumed.directive.kind, 'wait', `the resumed goal reports the card running: ${resumed.directive.kind} ${resumed.directive.narration}`);
+    if (resumed.directive.kind === 'wait') assert.equal(resumed.directive.on, 'T1-HELLO:BUILD');
     const continued = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
     assert.equal(continued.directive.kind, 'build', `B continues the card: ${continued.directive.narration}`);
     assert.equal(continued.run.ownerGeneration, 1);
@@ -535,10 +537,19 @@ test('T0-CARD-TAKEOVER, goal stopped: a goal the dispatch stopped on the card ow
 class InterleavedLeaseStore extends LeaseStore {
   readonly meanwhile: () => void;
   readonly afterReconcile: () => void;
-  constructor(dir: string, hooks: { meanwhile?: () => void; afterReconcile?: () => void }) {
+  readonly beforeRead: (n: number) => void;
+  reads = 0;
+  constructor(dir: string, hooks: { meanwhile?: () => void; afterReconcile?: () => void; beforeRead?: (n: number) => void }) {
     super(dir);
     this.meanwhile = hooks.meanwhile ?? (() => undefined);
     this.afterReconcile = hooks.afterReconcile ?? (() => undefined);
+    this.beforeRead = hooks.beforeRead ?? (() => undefined);
+  }
+  /** Every read of the store, the command's own and the ones its claims and fences make, counted; `beforeRead(n)` runs before the n-th. */
+  override read(resourceKey: string): ReturnType<LeaseStore['read']> {
+    this.reads += 1;
+    this.beforeRead(this.reads);
+    return super.read(resourceKey);
   }
   override takeover(resourceKey: string, reconcile: Parameters<LeaseStore['takeover']>[1], options?: Parameters<LeaseStore['takeover']>[2]): ReturnType<LeaseStore['takeover']> {
     this.meanwhile();
@@ -660,6 +671,94 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     assert.equal(claimed.run.state, 'PREPARE');
     assert.deepEqual(takeovers('T1-CLAIM').map((e) => e.data), [{ resource: claimKey, leaseGeneration: 0, takeover: true, completed: true }]);
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-CLAIM'), current('T1-CLAIM')).directive.kind, 'prepare');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-TAKEOVER-2, completion: the lease is read once more before the completion journals and saves, and a record released or taken meanwhile refuses without a write', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const ids = ['T1-RELEASED', 'T1-TAKEN'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    for (const id of ids) fx.controller.ensureCardRun(fx.goal(goal.id), id);
+    const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const snapshot = (id: string) => ({ run: fx.store.getCardRun(goal.id, id), lease: fx.leases.read(key(id)), events: fx.events(goal.id).length });
+    const withHook = (beforeRead: (n: number) => void) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new InterleavedLeaseStore(fx.paths.leases, { beforeRead }), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    // both leases are this session's (B) at generation 0 and the runs carry none: claims whose run update did not land
+    setActorForTests(actorB);
+    for (const id of ids) assert.equal(fx.leases.claim(key(id), { actor: actorB, now: fx.now(), operation: `card:${id}` }).status, 'acquired');
+    // released by another process of this session between the command's first read and the completion's own read
+    const released = snapshot('T1-RELEASED');
+    assert.throws(() => withHook((n) => { if (n === 2) fx.leases.release(key('T1-RELEASED'), 0, actorB); }).takeover(fx.goal(goal.id), fx.card('T1-RELEASED'), released.run!), /lease of card T1-RELEASED is released \(generation 0\)/);
+    assert.deepEqual({ ...snapshot('T1-RELEASED'), lease: undefined }, { ...released, lease: undefined }, 'nothing written');
+    assert.equal(fx.leases.read(key('T1-RELEASED'))?.released, true);
+    // taken by another session between the two reads (the lease expired and A took it): the record is another session's at the next generation
+    const taken = snapshot('T1-TAKEN');
+    assert.throws(
+      () => withHook((n) => { if (n === 2) { fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS); fx.leases.takeover(key('T1-TAKEN'), () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorA, now: fx.now(), operation: 'card:T1-TAKEN' }); } }).takeover(fx.goal(goal.id), fx.card('T1-TAKEN'), taken.run!),
+      /card T1-TAKEN is owned by session win-A \(generation 1\) since the command's first read/,
+    );
+    assert.deepEqual({ ...snapshot('T1-TAKEN'), lease: undefined }, { ...taken, lease: undefined }, 'nothing written');
+    assert.equal(fx.leases.read(key('T1-TAKEN'))?.owner.session, 'win-A');
+    assert.equal(fx.leases.read(key('T1-TAKEN'))?.generation, 1);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-TAKEOVER-2, across goals: the handoff intent and the acquisition are resolved by card resource and generation in every goal journal', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const first = goalForCards(fx, ['T1-HELLO']);
+    const second = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    // window A prepares the card under the first goal and ends; the second goal, which lists the same card, has a run of its own
+    const prepared = fx.runner().next(fx.goal(first.id), card, fx.controller.ensureCardRun(fx.goal(first.id), 'T1-HELLO'));
+    assert.equal(prepared.directive.kind, 'prepare');
+    fx.controller.ensureCardRun(fx.goal(second.id), 'T1-HELLO');
+    setActorForTests(actorB);
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    // B takes the card through the first goal: the intent and the acquisition land in that goal's journal
+    const taken = fx.runner().takeover(fx.goal(first.id), card, fx.store.getCardRun(first.id, 'T1-HELLO')!);
+    assert.equal(taken.lease.generation, 1);
+    assert.equal(taken.previousOwner?.session, 'win-A');
+    // the second goal's run carries no generation: completing it through the second goal names the previous owner from
+    // the first goal's intent and journals no second acquisition of generation 1 anywhere
+    const completed = fx.runner().takeover(fx.goal(second.id), card, fx.store.getCardRun(second.id, 'T1-HELLO')!);
+    assert.equal(completed.completed, true);
+    assert.equal(completed.previousOwner?.session, 'win-A', 'the previous owner comes from the other goal journal');
+    assert.equal(completed.previousGeneration, 0);
+    assert.equal(completed.lease.generation, 1);
+    assert.equal(completed.run.ownerGeneration, 1);
+    const acquisitions = [first.id, second.id].flatMap((g) => fx.events(g).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-HELLO' && e.data['takeover'] === true && e.data['leaseGeneration'] === 1));
+    assert.equal(acquisitions.length, 1, 'one acquisition per generation across goals');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-CARD-TAKEOVER-2, checkpoint: next reads the stored run before its plan-checkpoint guard, so a caller snapshot carrying a stop does not skip it', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T2-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T2-HELLO'], { size: 'T2' });
+    assert.equal(fx.goal(goal.id).state, 'CARDS', 'a T2 goal waits for its plan checkpoint');
+    const card = fx.card('T2-HELLO');
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T2-HELLO');
+    const fresh = fx.runner().next(fx.goal(goal.id), card, run);
+    assert.equal(fresh.directive.kind, 'wait');
+    if (fresh.directive.kind === 'wait') assert.equal(fresh.directive.on, 'goal:CARDS:plan-checkpoint');
+    // a snapshot that carries a stop the stored run does not (a window that read the run before a takeover cleared it)
+    const stale = fx.runner().next(fx.goal(goal.id), card, { ...run, state: 'STOP', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate', { at: fx.now() }) });
+    assert.equal(stale.directive.kind, 'wait', `the guard applies to the stored run: ${stale.directive.kind}`);
+    assert.equal(fx.store.getCardRun(goal.id, 'T2-HELLO')?.state, 'PREPARE', 'nothing dispatched');
+    assert.equal(fx.leases.read(resourceKeys.card(fx.repo.key, 'T2-HELLO')), undefined, 'no lease claimed');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
