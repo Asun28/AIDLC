@@ -35,9 +35,11 @@ function newestSource(root) {
   let unreadable = false;
   const seen = new Set();
   const walk = (dir, top) => {
-    let entries;
+    // Names only: with file types Node may inspect a child itself and report its failure as the directory's, which would
+    // make a child that cannot be inspected look like an unreadable root.
+    let names;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      names = readdirSync(dir);
     } catch {
       if (!top) unreadable = true;
       return;
@@ -51,8 +53,8 @@ function newestSource(root) {
     }
     if (seen.has(real)) return;
     seen.add(real);
-    for (const entry of entries) {
-      const file = path.join(dir, entry.name);
+    for (const name of names) {
+      const file = path.join(dir, name);
       let kind;
       try {
         // statSync follows links: a linked directory is walked, a linked source file counts.
@@ -62,7 +64,7 @@ function newestSource(root) {
         continue;
       }
       if (kind.isDirectory()) walk(file, false);
-      else if (kind.isFile() && entry.name.endsWith('.ts') && kind.mtimeMs > newest) newest = kind.mtimeMs;
+      else if (kind.isFile() && name.endsWith('.ts') && kind.mtimeMs > newest) newest = kind.mtimeMs;
     }
   };
   walk(root, true);
