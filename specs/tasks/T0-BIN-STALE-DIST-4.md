@@ -1,7 +1,7 @@
 ---
 id: T0-BIN-STALE-DIST-4
 title: The bin entries load the sources when the compiled build is older than any source file, so a source checkout never runs stale code (replacement of T0-BIN-STALE-DIST-3 after its CI stop on a conflicting PR)
-status: todo
+status: merged
 branch: T0-BIN-STALE-DIST-4
 worktree: C:\wt\T0-BIN-STALE-DIST-4
 allow_paths:
