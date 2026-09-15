@@ -231,9 +231,12 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
       for (const f of [files.srcCli, files.srcHook]) at(f, '2026-09-01T00:00:00Z');
       at(files.other, source);
     };
-    // The child environment never carries the test process's own AIDLC_ENTRY_DEBUG; only a per-run override sets it.
-    const { AIDLC_ENTRY_DEBUG: _inherited, ...baseEnv } = process.env;
-    const run = (entry: string, env: Record<string, string> = {}) => spawnSync(process.execPath, [path.join(pkg, 'bin', entry)], { cwd: pkg, encoding: 'utf8', input: '', env: { ...baseEnv, ...env } });
+    // The child environment is built at call time and never carries the test process's own AIDLC_ENTRY_DEBUG in any
+    // letter case (Windows looks variables up case-insensitively); only a per-run override sets it.
+    const run = (entry: string, env: Record<string, string> = {}) => {
+      const baseEnv = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'AIDLC_ENTRY_DEBUG'));
+      return spawnSync(process.execPath, [path.join(pkg, 'bin', entry)], { cwd: pkg, encoding: 'utf8', input: '', env: { ...baseEnv, ...env } });
+    };
     // The build is older than one source file: the sources run, for both entries.
     stamp('2026-09-02T00:00:00Z', '2026-09-03T00:00:00Z');
     let cli = run('aidlc.js');
@@ -259,18 +262,23 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     assert.match(hookLines[0]!, /target=.*entry\.js/);
     const quiet = run('aidlc-hook.js');
     assert.equal(quiet.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, 'without the variable the hook entry prints nothing');
-    // The developer's shell may export the variable: a run without an override never inherits it.
-    const parentDebug = process.env['AIDLC_ENTRY_DEBUG'];
-    process.env['AIDLC_ENTRY_DEBUG'] = '1';
-    try {
-      for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
-        const inherited = run(entry);
-        assert.equal(inherited.status, 0, inherited.stderr);
-        assert.equal(inherited.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, `${entry} never inherits AIDLC_ENTRY_DEBUG from the test's environment`);
+    // The developer's shell may export the variable, in any letter case (Windows looks variables up case-insensitively):
+    // a run without an override never inherits it. The variable is set in the test process before each run, so the
+    // check exercises the child environment `run` builds at call time.
+    for (const name of ['AIDLC_ENTRY_DEBUG', 'aidlc_entry_debug', 'Aidlc_Entry_Debug']) {
+      const before = Object.entries(process.env).filter(([k]) => k.toUpperCase() === 'AIDLC_ENTRY_DEBUG');
+      for (const [k] of before) delete process.env[k];
+      process.env[name] = '1';
+      try {
+        for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
+          const inherited = run(entry);
+          assert.equal(inherited.status, 0, inherited.stderr);
+          assert.equal(inherited.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, `${entry} never inherits ${name} from the test's environment`);
+        }
+      } finally {
+        delete process.env[name];
+        for (const [k, v] of before) process.env[k] = v;
       }
-    } finally {
-      if (parentDebug === undefined) delete process.env['AIDLC_ENTRY_DEBUG'];
-      else process.env['AIDLC_ENTRY_DEBUG'] = parentDebug;
     }
     // Both entries share the resolver.
     for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
