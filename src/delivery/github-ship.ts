@@ -2,11 +2,13 @@
  * Native GitHub ship path for repositories without the PowerShell scaffold.
  *
  * Mirrors the scaffold chain: commit -> require a fresh candidate-bound verdict written by the reviewer role at
- * `<worktree>/.review/<branch>.json` -> base sync (fetch the base and test the merge; a conflict is left in the
- * worktree for the merge-conflicts skill and fails the ship with git's own diagnostic) -> push -> PR (reuse retained
- * identity) -> CI check runs green (required names present, every reported check green; the gate lines carry the
- * check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every step
- * prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
+ * `<worktree>/.review/<branch>.json` -> read-only PR reconciliation (a merged PR for the branch ends the ship here,
+ * retained identity is reused later) -> base sync (fetch the base and test the merge; a conflict is left in the
+ * worktree for the merge-conflicts skill and fails the ship with git's own diagnostic, published only once
+ * `MERGE_HEAD` proves the merge is in progress; local mode first checks that the main checkout has the base checked
+ * out) -> push -> PR -> CI check runs green (required names present, every reported check green; the gate lines
+ * carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every
+ * step prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
  * Authentication failure never silently becomes local mode.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -48,9 +50,9 @@ function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
 }
 
-/** A failure detail on one line: git's stderr collapsed (and encoded) so the sentinel line stays one line. */
+/** A failure detail on one line: git's output collapsed (each line trimmed and encoded) so the sentinel line stays one line. */
 function oneLine(text: string): string {
-  return lines(text).join(' | ').trim();
+  return lines(text).map((l) => l.trim()).join(' | ');
 }
 
 /**
@@ -132,6 +134,18 @@ export class GitHubShipPath implements ShipPath {
     }
     // The base name, normalised exactly once: the branch the PR targets and the ref the sync fetches and tests.
     const base = req.base.replace(/^origin\//, '');
+    // Read-only PR reconciliation before the sync: a branch whose PR is already merged ends here (the runner verifies
+    // the merge against the PR head), so a retried candidate never starts a merge against a base that moved since.
+    let prNumber: number | undefined;
+    if (req.mode === 'remote') {
+      const resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
+      if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
+      prNumber = resolved.pr?.number;
+      if (prNumber && resolved.pr?.state === 'MERGED') {
+        log.push(`PR #${prNumber} already MERGED`, '[SAGA-DONE]');
+        return { ...classifyShipOutput(this.receipt(log, 0, started)), resumeCommand: undefined, prNumber };
+      }
+    }
     // Base sync before any remote effect or local merge: the reviewed head must merge cleanly into the base it targets.
     const sync = this.baseSync(req.mode, base, wt, head, log);
     if (sync) return fail(sync.sentinel, sync.detail);
@@ -145,17 +159,11 @@ export class GitHubShipPath implements ShipPath {
     // push + PR
     const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt });
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr);
-    const resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
-    if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
-    let prNumber = resolved.pr?.number;
     if (!prNumber) {
       const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt });
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
       prNumber = Number(create.stdout.match(/\/pull\/(\d+)/)?.[1]);
       if (!prNumber) return fail('[SHIP-PR-NUMBER-FAIL]', create.stdout);
-    } else if (resolved.pr?.state === 'MERGED') {
-      log.push(`PR #${prNumber} already MERGED`, '[SAGA-DONE]');
-      return { ...classifyShipOutput(this.receipt(log, 0, started)), prNumber };
     }
     log.push(`PR #${prNumber}`);
     // CI gate
@@ -199,10 +207,14 @@ export class GitHubShipPath implements ShipPath {
    * failure. On a conflict the same merge is started in the worktree without a commit, so the markers are there for
    * the merge-conflicts skill and the branch head cannot move here, and every line git printed goes on the ship
    * output (encoded, see `encodeUntrusted`): the card runner matches git's own diagnostic (`CONFLICT (...)`) to
-   * return the card to BUILD. A merge that completes although merge-tree reported a conflict is aborted, and the abort
-   * receipt decides what the failure line says: restored, or still mid-merge. Every failed git receipt keeps its
-   * stderr on the failure line. Git runs with `LC_ALL=C` so the diagnostic is the English line the runner matches.
-   * Returns the failure to report, or undefined when the chain may continue.
+   * return the card to BUILD. Those lines are published only once `MERGE_HEAD` proves the merge is in progress: a
+   * conflict is a state git left behind, never a line of text, so an operational failure that happens to name a
+   * file such as `CONFLICT (content).txt` is flattened on the failure line instead. A merge that completes although
+   * merge-tree reported a conflict is aborted, and the abort receipt decides what the failure line says: restored, or
+   * still mid-merge. Local mode first checks that the main checkout has `<base>` checked out, since that checkout is
+   * what the local merge targets. Every failed git receipt keeps its stderr on the failure line. Git runs with
+   * `LC_ALL=C` so the diagnostic is the English line the runner matches. Returns the failure to report, or undefined
+   * when the chain may continue.
    */
   private baseSync(mode: 'local' | 'remote', base: string, wt: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
     const env = { ...process.env, LC_ALL: 'C' };
@@ -212,6 +224,10 @@ export class GitHubShipPath implements ShipPath {
     if (mode === 'remote') {
       const fetch = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:${ref}`]);
       if (fetch.exitCode !== 0) return failed(`fetch of origin/${base} failed: ${oneLine(fetch.stderr)}`);
+    } else {
+      const checkout = this.runner('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: this.options.mainRoot, env, timeoutMs: 60_000 });
+      const branch = checkout.exitCode === 0 ? checkout.stdout.trim() : '';
+      if (branch !== base) return failed(`main checkout has ${branch ? encodeUntrusted(branch) : 'a detached HEAD'} checked out, not ${base}${checkout.stderr.trim() ? `: ${oneLine(checkout.stderr)}` : ''}`);
     }
     const resolve = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     const oid = resolve.stdout.trim();
@@ -228,6 +244,11 @@ export class GitHubShipPath implements ShipPath {
       const abort = git(['merge', '--abort']);
       if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${oneLine(abort.stderr)}); the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship`);
       return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged`);
+    }
+    const inProgress = git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).exitCode === 0;
+    if (merge.exitCode !== 1 || !inProgress) {
+      const flattened = oneLine(`${merge.stdout}\n${merge.stderr}`);
+      return failed(`merge exit ${merge.exitCode}: ${flattened}${inProgress ? `; the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
     }
     log.push(...lines(merge.stdout), ...lines(merge.stderr));
     return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
