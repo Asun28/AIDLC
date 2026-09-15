@@ -3296,8 +3296,12 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     r = runner.next(g(), card, run);
     r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
     assert.equal(r.directive.kind, 'review', r.directive.narration);
+    // Decision 2 receives the delta since sha-2 (src/t1-in.ts): a new finding on src/t1-in2.ts is a first-round miss on the formal stage too, one inside the delta is not; the second block stops the card.
+    r3.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-in.ts:2: the fix has no RED -> add one","[standards] 9 error handling @ src/t1-in2.ts:9: swallowed error -> rethrow"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-in.ts:2: the fix has no RED -> add one"]},"standards":{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-in2.ts:9: swallowed error -> rethrow"]}}}\n');
     f = await runner.formalReview(g(), card, r.run);
-    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.classified.outcome, 'block-defect');
+    assert.equal(f.run.state, 'STOP', 'the second substantive block stops the card');
+    assert.deepEqual(f.run.findings.filter((x) => x.stage === 'formal' && x.round === 2).map((x) => [x.id, x.file, x.outsideDelta ?? false]), [['F6', 'src/t1-in.ts', false], ['F7', 'src/t1-in2.ts', true]], 'the formal stage marks a new finding outside its delta');
     const formal2 = lastPrompt('formal');
     const delta = formal2.slice(formal2.indexOf('## Delta since the last reviewed candidate'), formal2.indexOf('## Diff'));
     assert.ok(delta.includes('sha-2') && delta.includes('+export const fix = 1;'), `decision 2 receives the delta since the candidate decision 1 reviewed: ${delta}`);

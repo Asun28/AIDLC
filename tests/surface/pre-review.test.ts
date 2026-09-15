@@ -6,6 +6,7 @@ import path from 'node:path';
 import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 // Namespace import for the T1-REVIEW-INPUTS helpers: absent on the baseline, so each test fails at its first call rather than at link time.
 import * as inputs from '../../src/review/pre-review.ts';
+import * as cli from '../../src/cli/main.ts';
 import { createHash } from 'node:crypto';
 import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
@@ -476,4 +477,24 @@ test('T1-REVIEW-INPUTS acceptance 4: [question] and [suggestion] reasons are adv
   const panel = await runReviewPanel({ runner: async (c, a, o) => scriptedRunner({ 'fake-panel': { stdout: '{"verdict":"pass","reasons":[]}\n' } })(c, a, o), command: ['fake-panel', '--focus', '{perspective}'], perspectives: ['bugs', 'security'], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-GATE.pre.0.12', head: 'def456', reviewer: 'fake', policyHash: 'b'.repeat(64) });
   assert.equal((JSON.parse(readFileSync(panel.verdictRef!, 'utf8')) as { policy_hash: string }).policy_hash, 'b'.repeat(64), 'the aggregated round document carries it');
   for (const p of panel.perspectives) assert.equal((JSON.parse(readFileSync(p.verdictRef!, 'utf8')) as { policy_hash: string }).policy_hash, 'b'.repeat(64), `${p.perspective}: the angle sidecar carries it`);
+});
+
+test('T1-REVIEW-INPUTS R2 round 1 (F3, F4): the advisory tag counts only where the contract puts it (opening the reason, or its text after the location); a path or prose that contains the bracket text is no tag', () => {
+  assert.equal(citedReason('[spec] 6 tests @ src/[question].ts:1: no RED -> add one', ['src/[question].ts']), true, 'a bracketed path is a location, not a tag');
+  assert.equal(citedReason('[spec] 6 tests @ src/gate.ts:1: the prose mentions [question] and [suggestion] -> fix', ['src/gate.ts']), true, 'prose that mentions the tags is a finding');
+  assert.equal(citedReason('[spec] 6 tests @ src/gate.ts:1: [suggestion] rename the helper -> optional', ['src/gate.ts']), false, 'the tag opening the text after the location');
+  assert.equal(citedReason('[question] @ src/gate.ts:1: is the RED behavioural?', ['src/gate.ts']), false, 'the tag opening the reason');
+  assert.equal(citedReason('  [SPEC] [Question] is this needed? @ src/gate.ts:1', ['src/gate.ts']), false, 'the tag right after the axis tag, any case');
+  const kept = enforceCitations({ verdict: 'block', reasons: ['[spec] 6 tests @ src/[question].ts:1: no RED -> add one'] }, ['src/[question].ts']);
+  assert.equal(kept.verdict.verdict, 'block', 'a block on a bracketed path is never downgraded');
+  assert.deepEqual(kept.advisory, []);
+});
+
+test('T1-REVIEW-INPUTS R2 round 1 (F1): the review pre summary prints the advisory notes of the round', () => {
+  const base = { reviewer: 'deepseek-v4-pro', round: 1, maxRounds: 3, cycle: 0, outcome: 'pass', runStatus: 'success', durationMs: 12, perspectives: ['ac-coverage:pass:12ms'], reasons: [], state: 'SHIP' };
+  const note = '[suggestion] @ src/gate.ts:9: extract the helper -> optional (ac-coverage)';
+  const text = cli.preReviewSummaryText({ ...base, advisory: [note] }, 'T1-GATE');
+  assert.ok(text.includes(`advisory: ${note}`), `the note is printed: ${text}`);
+  assert.ok(text.startsWith('pre-review deepseek-v4-pro round 1/3 (cycle 0): pass') && text.includes('aidlc card next T1-GATE'), 'the verdict line and the next command stay');
+  assert.ok(!cli.preReviewSummaryText({ ...base, advisory: [] }, 'T1-GATE').includes('advisory'), 'no advisory line without notes');
 });
