@@ -478,7 +478,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         lease = { unreadable: code };
         leaseLine = `unreadable (${code})`;
       }
-      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
     });
   card
     .command('fix-task [cardId]')

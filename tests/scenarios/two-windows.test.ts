@@ -185,3 +185,38 @@ test('T0-SESSION-IDENTITY-2: card status prints the lease next to the run, for a
     fx.cleanup();
   }
 });
+
+test('T0-SESSION-IDENTITY-3, unprepared: a run without a recorded ownership generation is not continued by the owner identity, live or expired', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    const card = fx.card('T1-HELLO');
+    // window A claimed the lease as PREPARE does first, and was interrupted before PREPARE saved the run's generation
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO');
+    assert.equal(run.ownerGeneration, undefined);
+    assert.equal(fx.leases.claim(cardKey, { actor: actorA, now: fx.now(), operation: 'card:T1-HELLO' }).status, 'acquired');
+    // window B records the ownership stop
+    setActorForTests(actorB);
+    const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(stopped.directive.kind, 'stop');
+    assert.equal(stopped.run.stop?.reason, 'ownership');
+    // the owner identity does not continue it: the renewal requires the run's generation to equal the lease's, and
+    // the run has none. The docs name this case unsupported until the card takeover follow-up.
+    setActorForTests(actorA);
+    const live = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(live.directive.kind, 'stop');
+    assert.equal(live.run.stop?.reason, 'ownership');
+    assert.equal(live.run.ownerGeneration, undefined);
+    assert.equal(fx.leases.read(cardKey)?.generation, 0);
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const expired = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
+    assert.equal(expired.directive.kind, 'stop');
+    assert.equal(expired.run.stop?.reason, 'ownership');
+    assert.equal(expired.run.ownerGeneration, undefined);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
