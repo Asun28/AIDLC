@@ -394,13 +394,14 @@ test('T0-CARD-TAKEOVER, refusals: a missing, released or own lease refuses the t
 test('T0-CARD-TAKEOVER, command: `aidlc card takeover` refuses a live lease without a write, takes an expired one and prints the generations', () => {
   const fx = makeFixture({ actor: actorA });
   try {
-    const ids = ['T1-HELLO', 'T1-LATE', 'T1-NORUN'];
+    const ids = ['T1-HELLO', 'T1-LATE', 'T1-NORUN', 'T1-OUTSIDE'];
     for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
     const goal = goalForCards(fx, ids);
-    for (const id of ['T1-HELLO', 'T1-LATE']) fx.controller.ensureCardRun(fx.goal(goal.id), id);
+    for (const id of ['T1-HELLO', 'T1-LATE', 'T1-OUTSIDE']) fx.controller.ensureCardRun(fx.goal(goal.id), id);
     const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
-    // the CLI selects the state on the wall clock, so the deadlines are self-evident: T1-HELLO's lies in 2126, T1-LATE's in 2020
+    // the CLI selects the state on the wall clock, so the deadlines are self-evident: T1-HELLO's and T1-OUTSIDE's lie in 2126, T1-LATE's in 2020
     fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T1-HELLO')!, deadline: '2126-01-01T03:00:00.000Z' });
+    fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T1-OUTSIDE')!, deadline: '2126-01-01T03:00:00.000Z' });
     fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, 'T1-LATE')!, deadline: '2020-01-01T03:00:00.000Z' });
     // the ended session's lease as the CLI sees it on the wall clock: claimed in 2126 it is live, renewed in 2020 it is expired
     const ended = { session: 'win-A', pid: 1, processStart: T0, host: hostName() };
@@ -454,6 +455,19 @@ test('T0-CARD-TAKEOVER, command: `aidlc card takeover` refuses a live lease with
     assert.equal(doneJson.lease.generation, 1, 'no second advance');
     assert.deepEqual(doneJson.previousOwner, { session: 'win-A', host: hostName(), generation: 0 });
     assert.deepEqual(doneJson.run, { state: 'PREPARE', ownerGeneration: 1 });
+    // a completion of a lease taken outside the command (no handoff intent journaled): completed, the generation
+    // unchanged, and no previous owner in the output
+    const outsideKey = resourceKeys.card(fx.repo.key, 'T1-OUTSIDE');
+    assert.equal(fx.leases.claim(outsideKey, { actor: ended, now: '2020-01-01T00:00:00.000Z', operation: 'card:T1-OUTSIDE' }).status, 'acquired');
+    fx.leases.takeover(outsideKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: { session: 'win-B', pid: 2, processStart: T0, host: hostName() }, now: '2126-01-01T00:00:00.000Z', operation: 'card:T1-OUTSIDE' });
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-OUTSIDE')?.ownerGeneration, undefined);
+    const outside = takeover('T1-OUTSIDE', 'win-B');
+    assert.equal(outside.status, 0, outside.stderr);
+    const outsideJson = JSON.parse(outside.stdout) as { completed: boolean; lease: { generation: number }; run: { state: string; ownerGeneration?: number } } & Record<string, unknown>;
+    assert.equal(outsideJson.completed, true);
+    assert.equal(outsideJson.lease.generation, 1, 'no second advance');
+    assert.equal('previousOwner' in outsideJson, false, 'no handoff intent, no previous owner');
+    assert.deepEqual(outsideJson.run, { state: 'PREPARE', ownerGeneration: 1 });
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
