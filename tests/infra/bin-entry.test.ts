@@ -22,13 +22,17 @@ const at = (file: string, iso: string) => {
   utimesSync(file, d, d);
 };
 
-/** A symbolic link, or undefined where the platform refuses one (Windows without the privilege): the case is then reported as skipped. */
-function tryLink(target: string, link: string, type: 'file' | 'dir' | 'junction'): boolean {
+/**
+ * A symbolic link (a junction for a directory on Windows). Only the platform's refusal (EPERM: no privilege) is
+ * reported, as false, so the case is skipped explicitly; any other failure is a setup error and fails the test.
+ */
+function linkOrRefused(target: string, link: string, type: 'file' | 'dir' | 'junction'): boolean {
   try {
     symlinkSync(target, link, type);
     return true;
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EPERM') return false;
+    throw err;
   }
 }
 
@@ -60,9 +64,35 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     assert.deepEqual(resolveEntry({ dist, src, srcRoot: path.join(dir, 'missing') }), { target: dist, reason: 'dist' }, 'a source root that cannot be read counts as not newer');
   });
 
-  it('resolveEntry follows linked files and directories, with cycle detection', async () => {
+  it('resolveEntry counts a newer source reached through a linked file', async (t) => {
     const resolveEntry = await loadResolver();
-    const base = path.join(dir, 'linked');
+    const base = path.join(dir, 'linked-file');
+    const srcRoot = path.join(base, 'src');
+    const outside = path.join(base, 'outside');
+    mkdirSync(path.join(srcRoot, 'cli'), { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    const src = path.join(srcRoot, 'cli', 'main.ts');
+    writeFileSync(src, '', 'utf8');
+    at(src, '2026-09-01T00:00:00Z');
+    const dist = path.join(base, 'dist', 'cli', 'main.js');
+    mkdirSync(path.dirname(dist), { recursive: true });
+    writeFileSync(dist, '', 'utf8');
+    at(dist, '2026-09-02T00:00:00Z');
+    const newerFile = path.join(outside, 'newer.ts');
+    writeFileSync(newerFile, '', 'utf8');
+    at(newerFile, '2026-09-03T00:00:00Z');
+    if (!linkOrRefused(newerFile, path.join(srcRoot, 'linked.ts'), 'file')) {
+      t.skip('the platform refuses file links (EPERM)');
+      return;
+    }
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a newer source reached through a file link counts');
+    fs.rmSync(path.join(srcRoot, 'linked.ts'));
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: dist, reason: 'dist' }, 'without the link the build is current');
+  });
+
+  it('resolveEntry walks a linked directory and ends a cycle through links', async (t) => {
+    const resolveEntry = await loadResolver();
+    const base = path.join(dir, 'linked-dir');
     const srcRoot = path.join(base, 'src');
     const outside = path.join(base, 'outside');
     mkdirSync(path.join(srcRoot, 'cli'), { recursive: true });
@@ -74,25 +104,23 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     mkdirSync(path.dirname(dist), { recursive: true });
     writeFileSync(dist, '', 'utf8');
     at(dist, '2026-09-02T00:00:00Z');
-    const newerFile = path.join(outside, 'newer.ts');
-    writeFileSync(newerFile, '', 'utf8');
-    at(newerFile, '2026-09-03T00:00:00Z');
-    // A linked file newer than the build.
-    if (tryLink(newerFile, path.join(srcRoot, 'linked.ts'), 'file')) {
-      assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a newer source reached through a file link counts');
-      fs.rmSync(path.join(srcRoot, 'linked.ts'));
-      assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: dist, reason: 'dist' });
-    }
-    // A linked directory (a junction on Windows) holding a newer source, and a link back to the root that must not loop.
     const newerInDir = path.join(outside, 'sub', 'deep.ts');
     writeFileSync(newerInDir, '', 'utf8');
     at(newerInDir, '2026-09-03T00:00:00Z');
     const linkedDir = path.join(srcRoot, 'linked-dir');
-    if (tryLink(path.join(outside, 'sub'), linkedDir, 'junction') || tryLink(path.join(outside, 'sub'), linkedDir, 'dir')) {
-      assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a newer source reached through a directory link counts');
-      tryLink(srcRoot, path.join(outside, 'sub', 'back'), 'junction') || tryLink(srcRoot, path.join(outside, 'sub', 'back'), 'dir');
-      assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a cycle through links ends');
+    const linked = process.platform === 'win32' ? linkOrRefused(path.join(outside, 'sub'), linkedDir, 'junction') : linkOrRefused(path.join(outside, 'sub'), linkedDir, 'dir');
+    if (!linked) {
+      t.skip('the platform refuses directory links (EPERM)');
+      return;
     }
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a newer source reached through a directory link counts');
+    const back = path.join(outside, 'sub', 'back');
+    const cycled = process.platform === 'win32' ? linkOrRefused(srcRoot, back, 'junction') : linkOrRefused(srcRoot, back, 'dir');
+    assert.ok(cycled, 'fixture: the platform that linked a directory links the cycle too');
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'stale-dist' }, 'a cycle through links ends');
+    fs.rmSync(back);
+    at(newerInDir, '2026-09-02T00:00:00Z');
+    assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: dist, reason: 'dist' }, 'the linked directory is walked: with nothing newer the build is current');
   });
 
   it('resolveEntry never treats an incomplete scan as freshness: an unreadable descendant or an uninspectable source selects the sources', async () => {
@@ -132,6 +160,19 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
       }) as typeof fs.statSync;
       syncBuiltinESMExports();
       assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'src-unreadable' }, 'a source that cannot be inspected is never proof of freshness');
+      // The root enumerates but one of its own children cannot be inspected (readdir with file types would lstat it and fail):
+      // a descendant failure, never an unreadable root.
+      (fs as unknown as Record<string, unknown>)['statSync'] = realStat;
+      (fs as unknown as Record<string, unknown>)['readdirSync'] = ((p: fs.PathLike, options?: unknown) => {
+        if (String(p) === srcRoot && options && typeof options === 'object' && (options as { withFileTypes?: boolean }).withFileTypes) throw failing('EIO');
+        return (realReaddir as unknown as (...a: unknown[]) => unknown)(p, options);
+      }) as typeof fs.readdirSync;
+      (fs as unknown as Record<string, unknown>)['statSync'] = ((p: fs.PathLike, ...rest: unknown[]) => {
+        if (String(p) === path.join(srcRoot, 'cli')) throw failing('EIO');
+        return (realStat as unknown as (...a: unknown[]) => unknown)(p, ...rest);
+      }) as typeof fs.statSync;
+      syncBuiltinESMExports();
+      assert.deepEqual(resolveEntry({ dist, src, srcRoot }), { target: src, reason: 'src-unreadable' }, 'a child of a readable root that cannot be inspected selects the sources');
     } finally {
       (fs as unknown as Record<string, unknown>)['readdirSync'] = realReaddir;
       (fs as unknown as Record<string, unknown>)['statSync'] = realStat;
