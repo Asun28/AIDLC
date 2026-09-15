@@ -2519,7 +2519,7 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a second completion of an already-deci
       const verdict = { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-dbl.ts:1: no RED -> add one'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-dbl.ts:1: no RED -> add one'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-DBL', run_status: 'success' };
       writeFileSync(path.join(reviewDir, `${stem}.json`), JSON.stringify(verdict), 'utf8');
       writeFileSync(path.join(reviewDir, `${stem}.log`), '# review fake-r3 exit=0 timedOut=false durationMs=1 outputSha256=x outcome=block runStatus=success\n', 'utf8');
-      writeFileSync(path.join(reviewDir, `${stem}.result.json`), JSON.stringify({ invocationId: pending.invocationId, candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'block', runStatus: 'success', reasons: verdict.reasons, verdict, advisory: [], verdictRef: path.join(reviewDir, `${stem}.json`), logRef: path.join(reviewDir, `${stem}.log`), durationMs: 1, receiptSha256: 'x' }), 'utf8');
+      writeFileSync(path.join(reviewDir, `${stem}.result.json`), JSON.stringify({ invocationId: pending.invocationId, candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), outcome: 'block', runStatus: 'success', reasons: verdict.reasons, verdict, advisory: [], verdictRef: path.join(reviewDir, `${stem}.json`), logRef: path.join(reviewDir, `${stem}.log`), durationMs: 1, receiptSha256: 'x' }), 'utf8');
       void runner.formalReview(g(), card, now);
     };
     const second = await runner.formalReview(g(), card, r.run);
@@ -2569,12 +2569,12 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: an envelope is recovered only when com
     writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.json'), JSON.stringify(passDoc), 'utf8');
     await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an incomplete envelope recovers nothing');
     // An envelope bound to another reservation is not this one's.
-    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.result.json'), JSON.stringify({ invocationId: 'r3:someone-else', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'pass', runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.7.empty.result.json'), JSON.stringify({ invocationId: 'r3:someone-else', candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), outcome: 'pass', runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
     await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope of another invocation recovers nothing');
     // (2) A complete envelope declaring no-verdict is authoritative over a pass document beside it.
     run = reserve('T1-ENV2.r3.8.novd');
     writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.8.novd.json'), JSON.stringify(passDoc), 'utf8');
-    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.8.novd.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.8.novd', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'no-verdict', runStatus: 'malformed', reasons: ['inconsistent axes'], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.8.novd.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.8.novd', candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), outcome: 'no-verdict', runStatus: 'malformed', reasons: ['inconsistent axes'], advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
     const novd = await runner.formalReview(g(), card, run);
     assert.equal(novd.classified.outcome, 'no-verdict', 'the envelope decides, not the document beside it');
     run = fx.store.getCardRun(goal.id, 'T1-ENV2')!;
@@ -2583,7 +2583,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: an envelope is recovered only when com
     // (3) A recovered hold keeps the deadline the envelope recorded, whenever the recovery runs.
     run = reserve('T1-ENV2.r3.9.hold');
     const recorded = addMs(fx.now(), 60_000);
-    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.9.hold.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.9.hold', candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 60_000, holdUntil: recorded, advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
+    writeFileSync(path.join(reviewDir, 'T1-ENV2.r3.9.hold.result.json'), JSON.stringify({ invocationId: 'r3:T1-ENV2.r3.9.hold', candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 60_000, holdUntil: recorded, advisory: [], durationMs: 1, receiptSha256: 'x' }), 'utf8');
     fx.advance(3_600_000);
     const held = await runner.formalReview(g(), card, run);
     assert.equal(held.classified.outcome, 'quota-hold');
@@ -2722,7 +2722,7 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict 
     const reserve = (id: string) => fx.store.updateCardRun(goal.id, 'T1-ENV3', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations.filter((i) => i.outcome !== 'pending'), { invocationId: `r3:${id}`, candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const }] } }));
     const blockDoc = { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-env3.ts:1: no RED -> add one'], axes: { spec: { verdict: 'block', reasons: ['[spec] 6 tests @ src/t1-env3.ts:1: no RED -> add one'] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV3', run_status: 'success' };
     const passDoc = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-ENV3', run_status: 'success' };
-    const envelope = (id: string, over: Record<string, unknown>) => ({ invocationId: `r3:${id}`, candidateSha: 'sha-1', candidateDigest: 'sha-1', at: fx.now(), runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x', ...over });
+    const envelope = (id: string, over: Record<string, unknown>) => ({ invocationId: `r3:${id}`, candidateSha: 'sha-1', candidateDigest: 'sha-1', key: 'k', seen: {}, at: fx.now(), runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x', ...over });
     // (1) A block envelope with its verdict inside is recovered as that block even when the sidecar beside it says pass.
     let run = reserve('T1-ENV3.r3.5.blk');
     writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.5.blk.json'), JSON.stringify(passDoc), 'utf8');
@@ -2747,6 +2747,17 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict 
     await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a no-verdict envelope with an embedded pass recovers nothing');
     writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'quota-hold', runStatus: 'tool_error', retryAfterMs: 60_000, verdict: passDoc })), 'utf8');
     await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a hold envelope with an embedded pass recovers nothing');
+    // R3 decision 2 (finding 1): the envelope is complete only when every field agrees with the reservation and with itself:
+    // a decided outcome with a run status other than success, another candidate sha, no pool request key or no dispatch
+    // snapshot are inconsistent artifacts, never a decision.
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', runStatus: 'malformed', verdict: passDoc })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'a pass with a malformed run status recovers nothing');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc, candidateSha: 'sha-other' })), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope naming another candidate sha recovers nothing');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify({ ...envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc }), key: undefined }), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope without its pool request key recovers nothing');
+    writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify({ ...envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc }), seen: undefined }), 'utf8');
+    await assert.rejects(() => runner.formalReview(g(), card, run), /in flight/i, 'an envelope without the dispatch snapshot recovers nothing');
     // (3) A pass envelope with its verdict inside and no sidecar at all is recovered as a pass, and the canonical file is published from it.
     writeFileSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.result.json'), JSON.stringify(envelope('T1-ENV3.r3.6.novd', { outcome: 'pass', verdict: passDoc })), 'utf8');
     rmSync(path.join(reviewDir, 'T1-ENV3.r3.6.novd.json'), { force: true });
@@ -2982,6 +2993,155 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 11): an advisory block is a pu
     assert.equal(read().sha, 'sha-1');
     assert.equal(ship.requests.length, 1, 'the ship ran after the repair');
     assert.equal(after.directive.kind, 'close', after.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (findings 6, 12, 13, 14): a retained result settles the pool request under the envelope queue sequence or the reservation own key, is recovered before the stop guard as evidence only, and finishes an unfinished hold', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-rec.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-rec.ts b/src/t1-rec.ts\n+export const rec = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => {
+        dispatched += 1;
+        return { stdout: R3_PASS };
+      },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-REC');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const passDoc = { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: 'sha-1', branch: 'T1-REC', run_status: 'success' };
+    const reserve = (id: string, over: Record<string, unknown> = {}) => fx.store.updateCardRun(goal.id, 'T1-REC', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations.filter((i) => i.outcome !== 'pending'), { invocationId: `r3:${id}`, candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pending' as const, ...over }] } }));
+    // A running pool request under the key of (reviewer, policy); its persisted queue sequence is returned with the key.
+    const request = (reviewer: string, policyVersion = fx.config.reviewPolicyVersion) => {
+      const key = reviewRequestKey({ repository: goal.repository, candidateDigest: 'sha-1', base: 'main', policyVersion, reviewer });
+      const enq = fx.queue.enqueue({ pool: goal.reviewPool, repository: goal.repository, candidateDigest: 'sha-1', base: 'main', policyVersion, reviewer, requester: `${goal.id}:T1-REC`, deadline: addMs(fx.now(), 3_600_000), now: fx.now() });
+      if (enq.status === 'completed') fx.queue.requeue(key, fx.now());
+      const admit = fx.queue.admit(goal.reviewPool, actorA, fx.now());
+      assert.equal(admit.status === 'admitted' ? admit.request.key : admit.status, key, 'fixture: this request runs');
+      return { key, seq: fx.queue.get(key)!.seq };
+    };
+    const envelope = (id: string, key: string, seq: number, over: Record<string, unknown>) => ({ invocationId: `r3:${id}`, candidateSha: 'sha-1', candidateDigest: 'sha-1', key, seq, seen: {}, at: fx.now(), runStatus: 'success', reasons: [], advisory: [], durationMs: 1, receiptSha256: 'x', ...over });
+    // (1) finding 13: the envelope names the queue sequence its review was admitted under; a newer request under the same
+    // reusable key (another attempt of the same candidate) is never the one a late recovery settles.
+    let run = reserve('T1-REC.r3.1.seq');
+    const older = request('fake-r3');
+    writeFileSync(path.join(reviewDir, 'T1-REC.r3.1.seq.result.json'), JSON.stringify(envelope('T1-REC.r3.1.seq', older.key, older.seq - 1, { outcome: 'pass', verdict: passDoc })), 'utf8');
+    const recovered = await runner.formalReview(g(), card, run);
+    assert.equal(recovered.classified.outcome, 'pass');
+    assert.equal(fx.queue.get(older.key)!.state, 'running', 'a request with another queue sequence is not the recovered review request');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 1);
+    run = reserve('T1-REC.r3.2.seqok');
+    writeFileSync(path.join(reviewDir, 'T1-REC.r3.2.seqok.result.json'), JSON.stringify(envelope('T1-REC.r3.2.seqok', older.key, older.seq, { outcome: 'pass', verdict: passDoc })), 'utf8');
+    await runner.formalReview(g(), card, run);
+    assert.equal(fx.queue.get(older.key)!.state, 'completed', 'the request the envelope names is settled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
+    // (2) finding 6: a reservation that expired without an envelope settles the request under its own base, policy version
+    // and reviewer, never under the configuration current at recovery time.
+    run = reserve('T1-REC.r3.3.old', { reviewer: 'r3-old', policyVersion: 'REVIEW.md@1' });
+    const old = request('r3-old', 'REVIEW.md@1');
+    fx.advance(1000 + RECONCILE_GRACE_MS + 1);
+    const expired = await runner.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-REC')!);
+    assert.equal(expired.classified.outcome, 'no-verdict');
+    assert.equal(fx.queue.get(old.key)!.state, 'completed', 'the request the reservation was admitted under is settled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
+    assert.equal(dispatched, 0);
+    // (3) finding 12: a run stopped meanwhile still recovers a completed envelope, as evidence only: the reservation is
+    // released, the pool request settled, no decision counted, and the stop stands; no new review runs.
+    run = reserve('T1-REC.r3.4.stop');
+    const stopReq = request('r3-stop');
+    writeFileSync(path.join(reviewDir, 'T1-REC.r3.4.stop.result.json'), JSON.stringify(envelope('T1-REC.r3.4.stop', stopReq.key, stopReq.seq, { outcome: 'pass', verdict: passDoc })), 'utf8');
+    const stopped = fx.store.updateCardRun(goal.id, 'T1-REC', (current) => ({ ...current!, state: 'STOP', stop: { reason: 'time', detail: 'card deadline', nextAction: 'extend', at: fx.now(), global: false, unresolvedOperations: [] } }));
+    const decisionsBefore = stopped.review.substantiveDecisions;
+    await assert.rejects(() => runner.formalReview(g(), card, stopped), /stopped/, 'no new review runs on a stopped card');
+    const after = fx.store.getCardRun(goal.id, 'T1-REC')!;
+    assert.ok(!after.review.invocations.some((i) => i.outcome === 'pending'), 'the reservation is released');
+    assert.equal(after.state, 'STOP');
+    assert.equal(after.stop?.reason, 'time', 'the stop stands');
+    assert.equal(after.review.substantiveDecisions, decisionsBefore, 'evidence only: no decision is counted on a stopped run');
+    assert.ok(after.evidence.some((e) => e.id === 'r3-T1-REC.r3.4.stop'), 'the result is retained as evidence');
+    assert.equal(fx.queue.get(stopReq.key)!.state, 'completed', 'the pool request is settled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
+    assert.equal(dispatched, 0);
+    // (4) finding 14: a recovered hold finishes the queue bookkeeping the hold left unfinished (the slot still held, the
+    // pool deadline not persisted), idempotently.
+    fx.store.updateCardRun(goal.id, 'T1-REC', (current) => ({ ...current!, state: 'SHIP', stop: undefined }));
+    run = reserve('T1-REC.r3.5.hold');
+    const held = request('r3-hold');
+    const retryAfter = addMs(fx.now(), 120_000);
+    fx.queue.hold(held.key, retryAfter, 'quota', fx.now());
+    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool), active: [held.key], resetAt: undefined });
+    writeFileSync(path.join(reviewDir, 'T1-REC.r3.5.hold.result.json'), JSON.stringify(envelope('T1-REC.r3.5.hold', held.key, held.seq, { outcome: 'quota-hold', runStatus: 'tool_error', retryAfterMs: 120_000, holdUntil: retryAfter })), 'utf8');
+    const hold = await runner.formalReview(g(), card, run);
+    assert.equal(hold.classified.outcome, 'quota-hold');
+    assert.deepEqual(fx.queue.pool(goal.reviewPool).active, [], 'the slot the unfinished hold kept is released');
+    assert.equal(fx.queue.pool(goal.reviewPool).resetAt, retryAfter, 'the pool deadline of the verified hold is persisted');
+    assert.equal(fx.queue.get(held.key)!.state, 'retry-after');
+    assert.equal(fx.queue.get(held.key)!.retryAfter, retryAfter, 'the original hold deadline is kept');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 15): a dispatch that fails before any receipt cancels its pool request before it releases the reservation; a refused cancellation keeps the reservation and its marker as the recoverable state, and the next command cancels the request from the marker before it dispatches', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    let dispatched = 0;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-pc.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-pc.ts b/src/t1-pc.ts\n+export const pc = 1;\n' },
+      'fake-r2': () => ({ stdout: R2_PASS }),
+      'fake-r3': () => {
+        dispatched += 1;
+        return { stdout: R3_PASS };
+      },
+    });
+    const mk = (over: Record<string, unknown>) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, ...over }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const runner = mk({});
+    const s = cardAtShip(fx, runner, 'T1-PC');
+    const { card, g, goal } = s;
+    const reviewDir = path.join(fx.repo.mainRoot, '.review');
+    mkdirSync(reviewDir, { recursive: true });
+    const r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const emptyR3 = mk({ formalReview: { ...fx.config.formalReview, command: [''] } });
+    const realCancel = fx.queue.cancel.bind(fx.queue);
+    let refused = 0;
+    fx.queue.cancel = ((..._args: Parameters<typeof realCancel>) => {
+      refused += 1;
+      throw new Error('queue store unavailable');
+    }) as typeof fx.queue.cancel;
+    try {
+      await assert.rejects(() => emptyR3.formalReview(g(), card, fx.store.getCardRun(goal.id, 'T1-PC')!), /review command is empty/, 'the dispatch error is the one thrown');
+    } finally {
+      fx.queue.cancel = realCancel;
+    }
+    assert.equal(refused, 1, 'fixture: the cancellation was refused');
+    let persisted = fx.store.getCardRun(goal.id, 'T1-PC')!;
+    const pending = persisted.review.invocations.find((i) => i.outcome === 'pending');
+    assert.ok(pending, 'the reservation stays while the pool request of the review that never ran is not settled');
+    const key = reviewRequestKey({ repository: goal.repository, candidateDigest: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3' });
+    assert.equal(fx.queue.get(key)!.state, 'running', 'fixture: the request of the review that never ran is still running');
+    const marker = JSON.parse(readFileSync(path.join(reviewDir, `${pending.invocationId.slice(3)}.failed.json`), 'utf8')) as { key?: string; seq?: number };
+    assert.equal(marker.key, key, 'the marker names the pool request');
+    assert.equal(marker.seq, fx.queue.get(key)!.seq, 'and its queue sequence');
+    // The next command settles the marker request, releases the reservation and dispatches; it never joins the running
+    // request of a reviewer that never started.
+    const decided = await runner.formalReview(g(), card, persisted);
+    assert.equal(decided.classified.outcome, 'pass');
+    assert.equal(dispatched, 1, 'the reviewer ran once');
+    persisted = fx.store.getCardRun(goal.id, 'T1-PC')!;
+    assert.ok(!persisted.review.invocations.some((i) => i.invocationId === pending.invocationId), 'the reservation that never ran is released');
+    assert.equal(fx.queue.get(key)!.state, 'completed', 'the stale request was cancelled from the marker and the dispatch completed its own');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
   } finally {
     fx.cleanup();
   }
