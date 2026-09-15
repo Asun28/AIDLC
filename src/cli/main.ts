@@ -10,6 +10,7 @@ import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../c
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
+import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { CardRunner } from '../loop/card-runner.ts';
 import { ReleaseRunner } from '../loop/release-runner.ts';
@@ -146,6 +147,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
       const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
+      // The session line names the source token (env, claude, default) and what it means; default is a warning.
+      const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
+        source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
         git: gitVersion ?? 'MISSING',
@@ -158,9 +162,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
-        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_SESSION_ID']
-          ? `${currentActor().session} (${resolveSessionId().source === 'default' ? 'DEFAULT: every window shares this identity; set AIDLC_SESSION per window for multi-session coordination' : resolveSessionId().source})`
-          : '(no state dir yet; created on first goal; set AIDLC_SESSION per window for multi-session coordination)',
+        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
+          ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
+          : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
       };
       out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n'));
     });
@@ -457,7 +461,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = latestActiveGoalId(c, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
-      out(c, run, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+      // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
+      // the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md, Sessions). An
+      // unreadable record is named by its store error code only, never by its contents.
+      const me = currentActor();
+      let lease: { owner: { session: string; host: string; pid: number }; generation: number; expiresAt: string; released: boolean; ownedByThisSession: boolean } | { unreadable: string } | null = null;
+      let leaseLine = '-';
+      try {
+        const record = new LeaseStore(c.paths.leases).read(resourceKeys.card(c.repo.key, cardId));
+        if (record) {
+          lease = { owner: record.owner, generation: record.generation, expiresAt: record.expiresAt, released: record.released, ownedByThisSession: !record.released && record.owner.session === me.session && record.owner.host === me.host };
+          leaseLine = `${record.owner.session}@${record.owner.host} gen=${record.generation} expires=${record.expiresAt} released=${record.released} this-session=${lease.ownedByThisSession}`;
+        }
+      } catch (err) {
+        const code = err instanceof StoreError ? err.code : 'UNREADABLE';
+        lease = { unreadable: code };
+        leaseLine = `unreadable (${code})`;
+      }
+      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
     });
   card
     .command('fix-task [cardId]')
