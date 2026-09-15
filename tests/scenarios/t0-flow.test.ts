@@ -2803,3 +2803,54 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 2: a failed dispatch always releases
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 4): the locked re-read before the ship dispatch recomputes the review cycle and the pre-review eligibility; a cycle advanced meanwhile refuses the dispatch', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-cy.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-cy.ts b/src/t1-cy.ts\n+export const cy = 1;\n' },
+      'fake-r2': () => ({ stdout: r2Block('src/t1-cy.ts') }),
+      'fake-r3': () => ({ stdout: R3_PASS }),
+    });
+    const ship = new DryRunShipPath(['merged']);
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-CY');
+    const { card, g, goal } = s;
+    // The only round blocks; the exhausted cycle 0 hands the residual to R3, which passes: the candidate is admitted to the ship
+    // without a pre-review pass of its own.
+    const blocked = (await runner.preReview(g(), card, s.run)).run;
+    const disputed = runner.disputeFinding(g(), card, blocked, 'F1', 'the RED is tests/t1-cy.test.ts');
+    let r = runner.next(g(), card, disputed);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    const passed = (await runner.formalReview(g(), card, r.run)).run;
+    // Between the gates and the locked re-read right before the dispatch (at the operation intent), another window records
+    // a formal block on the ledger: the cycle advances, and cycle 1 holds no round for this candidate.
+    const realIntent = fx.ops.recordIntent.bind(fx.ops);
+    let injected = false;
+    fx.ops.recordIntent = ((...args: Parameters<typeof realIntent>) => {
+      if (!injected) {
+        injected = true;
+        fx.store.updateCardRun(goal.id, 'T1-CY', (current) => ({ ...current!, review: { ...current!.review, substantiveBlocks: current!.review.substantiveBlocks + 1 } }));
+      }
+      return realIntent(...args);
+    }) as typeof fx.ops.recordIntent;
+    try {
+      r = runner.next(g(), card, passed);
+    } finally {
+      fx.ops.recordIntent = realIntent;
+    }
+    assert.ok(injected, 'fixture: the cycle advanced between the gates and the dispatch');
+    assert.equal(ship.requests.length, 0, 'nothing is shipped in a cycle without a pre-review pass or an exhausted hand-off');
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    assert.match(r.directive.narration, /review (ledger|cycle)|eligibility/i, r.directive.narration);
+    assert.equal(fx.ops.unresolved(goal.id, 'T1-CY').length, 0, 'the merge intent is cancelled');
+    assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0, 'the pool admission is released');
+    // The next call reads the record: cycle 1 needs its own pre-review round before any ship.
+    const next = runner.next(g(), card, fx.store.getCardRun(goal.id, 'T1-CY')!);
+    assert.equal(next.directive.kind, 'pre-review', next.directive.narration);
+    assert.equal(ship.requests.length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});

@@ -756,3 +756,34 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the pre-dispatch drift cleanup at
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 16): the transient-CI denial is decided on the ledger locked at completion too; a rerun the snapshot counts as consumed but another window cancelled meanwhile leaves the allowance open', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const card = fx.card('T1-HELLO');
+    const g = () => fx.goal(goal.id);
+    const runner = fx.runner(new InjectedShipPath(['ci-red'], '[CI-GATE-RED] job=build conclusion=failure runs/222\nnpm ERR! network ECONNRESET'));
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
+    r = runner.next(g(), card, r.run);
+    const sha = candidateShaFor('T1-HELLO');
+    runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: sha });
+    // The snapshot the ship is issued from counts a reconciled rerun of this candidate: its allowance is consumed.
+    const run = fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, ci: { reruns: [{ runId: '111', attempt: 1, candidate: sha, requestedAt: fx.now(), outcome: 'failure' as const, reconciledAt: fx.now() }] } }));
+    let after: ReturnType<typeof runner.next> | undefined;
+    duringQueueCompletion(fx, () => {
+      // Another window cancels that rerun while the ship result is being applied: the locked ledger permits one.
+      fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, ci: { reruns: current!.ci.reruns.map((x) => ({ ...x, outcome: 'cancelled' as const })) } }));
+    }, () => {
+      after = runner.next(g(), card, run);
+    });
+    const persisted = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    assert.equal(after!.directive.kind, 'ship', `the rerun is granted from the locked ledger, never denied from the snapshot: ${after!.directive.narration}`);
+    assert.ok(persisted.ci.reruns.some((x) => x.runId === '222' && x.outcome === 'requested'), 'the rerun intent is persisted before the request');
+    assert.notEqual(persisted.state, 'STOP');
+    assert.ok(fx.events(goal.id).some((e) => e.type === 'CI_RERUN' && e.data['runId'] === '222'), 'the grant is journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
