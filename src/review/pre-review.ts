@@ -87,8 +87,13 @@ export function ruleFilesIn(changedPaths: string[]): string[] {
   });
 }
 
-/** A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). */
-export const ADVISORY_TAG = /\[(question|suggestion)\]/i;
+/**
+ * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
+ * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
+ * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
+ * downgraded by its wording.
+ */
+export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
 
 /** The history a line carries after its instruction: the latest re-raise reason and every author note, quoted. */
 function history(f: PriorFinding): string {
@@ -225,7 +230,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
       `You are the independent formal reviewer (R3) for card ${c.id}, decision ${i.round} of ${i.maxRounds}. You did not write this change and you cannot edit it. Default to skepticism: actively try to disprove the change against this card and the review policy below. Must-block dimensions 1-6 block on first hit; when uncertain, block; do not self-excuse. Be exhaustive in this single pass: check every hunk of the diff and report every material finding you can defend (must-block, or Important: breaks behaviour, leaks data, breaches a policy). Do not stop after the first few findings; a partial list wastes one of only two decisions. Every finding needs file:line, why it fails and a concrete fix. No filler; style and naming are nits, at most five. Do not report generated files or anything CI already enforces.${i.perspective ? ' You are one of several concurrent passes: judge from the angle below and report every finding of that angle.' : ''}`,
     );
   }
-  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', VERDICT_CONTRACT, '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion] is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
+  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', VERDICT_CONTRACT, '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
   if (i.perspective) {
     lines.push('', `## This pass: ${i.perspective}`, PERSPECTIVES[i.perspective] ?? `Focus: ${i.perspective}. Report every finding of this angle; other angles are covered by concurrent passes.`, 'Findings outside this angle are welcome only when they hit a must-block dimension.');
   }

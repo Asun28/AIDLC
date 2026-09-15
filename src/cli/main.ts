@@ -106,6 +106,11 @@ function providerFor(name: string | undefined, config: ProjectConfig): ModelProv
   return new ClaudeApiProvider();
 }
 
+/** The text summary of a pre-review round (`aidlc review pre`): the verdict line, the block reasons, the advisory notes and the next command. */
+export function preReviewSummaryText(summary: { reviewer: string; round: number; maxRounds: number; cycle: number; outcome: string; runStatus?: string; durationMs: number; perspectives: string[]; reasons: string[]; advisory: string[]; state: string }, cardId: string): string {
+  return `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``;
+}
+
 export async function main(argv: string[] = process.argv): Promise<void> {
   const program = new Command();
   program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.1.0');
@@ -649,7 +654,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
       const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
-      out(c, summary, () => `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+      out(c, summary, () => preReviewSummaryText(summary, cardId));
     });
   review
     .command('r3 <cardId>')

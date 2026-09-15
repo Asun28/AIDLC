@@ -76,6 +76,6 @@ investigated or dropped, never padded into a nit.
 Last line, one JSON document:
 `{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}`
 Block reasons are formatted `[spec] <dimension #/name> @ <file:location>: <why it violates> -> <how to fix>`.
-A reason tagged `[question]` or `[suggestion]` is advisory in both stages: retained and shown to the author, never a block, and it needs no location.
+A reason tagged `[question]` or `[suggestion]` (the tag opens the reason, after the axis tag if any, or opens its text after the location) is advisory in both stages: retained and shown to the author, never a block, and it needs no location.
 Timeouts, missing or malformed output are `run_status` failures handled by the
 harness: fail-closed, never a pass, never a judgement about the diff.
