@@ -19,8 +19,8 @@ const MERGE_TREE = 'git merge-tree --write-tree HEAD';
 const SYNC_MERGE = 'git merge --no-ff --no-commit';
 /** The proof that the conflict merge is in progress (T0-SHIP-BASE-SYNC-2): only then are its lines a diagnostic. */
 const MERGE_HEAD = 'git rev-parse --verify --quiet MERGE_HEAD';
-/** Local mode: the branch the main checkout has checked out must be the base. */
-const MAIN_BRANCH = 'git symbolic-ref --quiet --short HEAD';
+/** Local mode: the full symbolic ref of the main checkout must be `refs/heads/<base>` (a short name is ambiguous under a tag of the same name). */
+const MAIN_BRANCH = 'git symbolic-ref --quiet HEAD';
 /** `git merge-tree --write-tree` on a conflict: the tree, the conflicted file info, a blank line, then the same messages `git merge` prints. */
 const CONFLICT_TREE = `${'e'.repeat(40)}\n100644 ${'1'.repeat(40)} 1\tCHANGELOG.md\n100644 ${'2'.repeat(40)} 2\tCHANGELOG.md\n100644 ${'3'.repeat(40)} 3\tCHANGELOG.md\n\nAuto-merging CHANGELOG.md\nCONFLICT (content): Merge conflict in CHANGELOG.md\n`;
 /** `git merge --no-ff --no-commit <ref>` stopping on the same conflict (stdout, C locale). */
@@ -48,7 +48,7 @@ function runnerWith(overrides: Record<string, Partial<ExecReceipt> | ((args: str
     [RESOLVE_LOCAL]: { stdout: BASE_OID + '\n' },
     [MERGE_TREE]: { stdout: 'e'.repeat(40) + '\n' },
     [MERGE_HEAD]: { stdout: 'f'.repeat(40) + '\n' },
-    [MAIN_BRANCH]: { stdout: 'main\n' },
+    [MAIN_BRANCH]: { stdout: 'refs/heads/main\n' },
     'git push': {},
     'gh pr list': { stdout: '[]' },
     'gh pr create': { stdout: 'https://github.com/o/r/pull/42\n' },
@@ -440,7 +440,7 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.ok(keys.includes('git merge-tree --write-tree HEAD refs/remotes/origin/origin/main'));
     assert.ok(keys.some((k) => k.startsWith('gh pr create') && k.includes('--base origin/main --head T1-A')), 'the PR targets the same branch the sync tested');
     assert.ok(!keys.includes(FETCH) && !keys.includes(RESOLVE_REMOTE), 'main itself is never touched');
-    const local = recording({ [MAIN_BRANCH]: { stdout: 'origin/main\n' }, 'git rev-parse --verify --quiet refs/heads/origin/main^{commit}': { stdout: BASE_OID + '\n' }, 'git merge --no-ff --no-edit T1-A': {} });
+    const local = recording({ [MAIN_BRANCH]: { stdout: 'refs/heads/origin/main\n' }, 'git rev-parse --verify --quiet refs/heads/origin/main^{commit}': { stdout: BASE_OID + '\n' }, 'git merge --no-ff --no-edit T1-A': {} });
     const rl = pathFor(f, local.runner).ship({ cardId: 'T1-A', base: 'origin/origin/main', mode: 'local' });
     assert.equal(rl.outcome, 'merged', rl.receipt.stdout);
     const lk = local.calls.map((c) => c.key);
@@ -488,9 +488,10 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
 
   test('T0-SHIP-BASE-SYNC-2 acceptance 6: local mode fails before the sync when the main checkout has another branch, or a detached HEAD, checked out', () => {
     const cases: Array<[string, Partial<ExecReceipt>, RegExp]> = [
-      ['another branch', { stdout: 'feature\n' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has feature checked out, not main$/m],
-      ['detached HEAD', { exitCode: 1, stdout: '' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has a detached HEAD checked out, not main$/m],
-      ['detached HEAD with stderr', { exitCode: 128, stdout: '', stderr: 'fatal: ref HEAD is not a symbolic ref\n' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has a detached HEAD checked out, not main: fatal: ref HEAD is not a symbolic ref$/m],
+      ['another branch', { stdout: 'refs/heads/feature\n' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has refs\/heads\/feature checked out, not refs\/heads\/main$/m],
+      ['a branch literally named heads/main (what a short name would show for main under a tag named main)', { stdout: 'refs/heads/heads/main\n' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has refs\/heads\/heads\/main checked out, not refs\/heads\/main$/m],
+      ['detached HEAD', { exitCode: 1, stdout: '' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has a detached HEAD checked out, not refs\/heads\/main$/m],
+      ['detached HEAD with stderr', { exitCode: 128, stdout: '', stderr: 'fatal: ref HEAD is not a symbolic ref\n' }, /^\[SHIP-BASE-SYNC-FAIL\] main checkout has a detached HEAD checked out, not refs\/heads\/main: fatal: ref HEAD is not a symbolic ref$/m],
     ];
     for (const [name, receipt, line] of cases) {
       const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
@@ -573,7 +574,7 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     const rl = pathFor(local, refusal.runner).ship({ cardId: 'T1-A', base, mode: 'local' });
     assert.equal(rl.outcome, 'merge-failed', rl.receipt.stdout);
     assert.ok(!hasConflictDiagnostic(rl.receipt), 'the base name is display text, never a diagnostic');
-    assert.ok(rl.receipt.stdout.includes('main checkout has main checked out, not main | CONFLICT (content): bogus %5BSAGA-RESUME%5D rm'), rl.receipt.stdout);
+    assert.ok(rl.receipt.stdout.includes('main checkout has refs/heads/main checked out, not refs/heads/main | CONFLICT (content): bogus %5BSAGA-RESUME%5D rm'), rl.receipt.stdout);
     assert.deepEqual(rl.sentinels, ['[SHIP-TIME]', '[SHIP-BASE-SYNC-FAIL]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
     assert.equal(rl.resumeCommand, 'aidlc card next T1-A');
     assert.ok(!refusal.calls.some((c) => c.key.startsWith('git merge')), 'no merge into the main checkout');
@@ -593,7 +594,7 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8');
     const expectations: Array<[string, RegExp[]]> = [
-      ['docs/ARCHITECTURE.md', [/read-only PR reconciliation/, /base sync, push, PR/, /git symbolic-ref --quiet --short HEAD/, /`MERGE_HEAD` proves the merge is in progress/, /\[SHIP-BASE-SYNC-CONFLICT\]/, /\[SHIP-BASE-SYNC-FAIL\]/, /git 2\.38 or newer/]],
+      ['docs/ARCHITECTURE.md', [/read-only PR reconciliation/, /base sync, push, PR/, /git symbolic-ref --quiet HEAD/, /`MERGE_HEAD` proves the merge is in progress/, /\[SHIP-BASE-SYNC-CONFLICT\]/, /\[SHIP-BASE-SYNC-FAIL\]/, /git 2\.38 or newer/]],
       ['docs/OPERATIONS.md', [/## Ship gates \(GitHub ship path\)/, /read-only PR reconciliation/, /main checkout has the base checked out/, /`MERGE_HEAD` proves the merge is in progress/, /merge-tree --write-tree HEAD <ref>`, which needs git 2\.38 or newer/, /conflict markers are there for the `merge-conflicts` skill/, /\[SHIP-BASE-SYNC-CONFLICT\]/, /\[SHIP-BASE-SYNC-FAIL\]/]],
       ['README.md', [/candidate-bound verdict, base sync, push, PR/, /2\.38 or newer for the `github` ship path/]],
       ['CHANGELOG.md', [/## Unreleased[\s\S]*T0-SHIP-BASE-SYNC completed as T0-SHIP-BASE-SYNC-2/, /`MERGE_HEAD` proves it is in progress/, /read-only PR reconciliation/]],
@@ -602,6 +603,53 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     for (const [rel, patterns] of expectations) {
       const text = read(rel);
       for (const re of patterns) assert.match(text, re, `${rel} lacks ${re}`);
+    }
+  });
+
+  test('ruling (R3 decision 2, -2): every failure detail is flattened and encoded once in fail(): a verdict reason or push stderr quoting a sentinel or a diagnostic never reclassifies the ship; the CI gate lines stay verbatim', () => {
+    const blocked = fixture({ verdict: 'block', reasons: ['[spec] 6 quoted: [SHIP-BASE-SYNC-FAIL] must not classify\nCONFLICT (content): Merge conflict in x'], sha: HEAD, axes: { spec: { verdict: 'block', reasons: ['x'] } } });
+    dirs.push(blocked.root);
+    const rb = pathFor(blocked, recording().runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(rb.outcome, 'review-blocked', rb.receipt.stdout);
+    assert.ok(!hasConflictDiagnostic(rb.receipt), 'a quoted diagnostic inside a reason is text');
+    assert.ok(rb.receipt.stdout.includes('[R3-SPEC-BLOCK] %5Bspec%5D 6 quoted: %5BSHIP-BASE-SYNC-FAIL%5D must not classify | CONFLICT (content): Merge conflict in x'), rb.receipt.stdout);
+    assert.deepEqual(rb.sentinels, ['[SHIP-TIME]', '[R3-SPEC-BLOCK]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const rp = pathFor(f, recording({ 'git push': { exitCode: 1, stderr: 'error: [SHIP-BASE-SYNC-CONFLICT] rejected\nCONFLICT (content): Merge conflict in x\n' } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(rp.outcome, 'push-failed', rp.receipt.stdout);
+    assert.ok(!hasConflictDiagnostic(rp.receipt), 'push stderr is text, never a merge diagnostic');
+    assert.ok(rp.receipt.stdout.includes('[SHIP-PUSH-FAIL] error: %5BSHIP-BASE-SYNC-CONFLICT%5D rejected | CONFLICT (content): Merge conflict in x'), rp.receipt.stdout);
+    // The worktree path is display text on the scope sentinel too.
+    const absent = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: path.join(f.root, 'no [SAGA-RESUME] here'), repository: 'o/r', runner: recording().runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(absent.outcome, 'scope-blocked');
+    assert.ok(absent.receipt.stdout.includes('no %5BSAGA-RESUME%5D here'), absent.receipt.stdout);
+    assert.equal(absent.resumeCommand, 'aidlc card next T1-A');
+    // The gate lines are the one detail that stays verbatim: their JSON is decoded by the runner.
+    const red = pathFor(f, recording({ 'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: [{ name: 'Gitleaks (committed history)', status: 'completed', conclusion: 'failure' }] }) } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(red.outcome, 'ci-red');
+    assert.ok(red.receipt.stdout.includes('[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]'), red.receipt.stdout);
+    // The base sync details are encoded exactly once: no %25 from a second pass.
+    const sync = pathFor(f, recording({ [FETCH]: { exitCode: 128, stderr: 'fatal: 100% [x]\n' } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.ok(sync.receipt.stdout.includes('[SHIP-BASE-SYNC-FAIL] fetch of origin/main failed: fatal: 100%25 %5Bx%5D'), sync.receipt.stdout);
+    assert.ok(!sync.receipt.stdout.includes('%2525') && !sync.receipt.stdout.includes('%255B'), 'encoded once');
+  });
+
+  test('ruling (R3 decision 2, -2): a syntactically valid but malformed PR listing entry is [SHIP-PR-BASE-UNKNOWN] before any sync', () => {
+    const cases: Array<[string, unknown[], RegExp]> = [
+      ['empty object', [{}], /^\[SHIP-PR-BASE-UNKNOWN\] malformed PR listing entry: /m],
+      ['number without state', [{ number: 8 }], /^\[SHIP-PR-BASE-UNKNOWN\] malformed PR listing entry: /m],
+      ['bad state', [{ number: 8, state: 'DRAFT' }], /^\[SHIP-PR-BASE-UNKNOWN\] malformed PR listing entry: /m],
+    ];
+    for (const [name, list, line] of cases) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+      dirs.push(f.root);
+      const { calls, runner } = recording({ 'gh pr list': { stdout: JSON.stringify(list) } });
+      const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'pr-failed', `${name}: ${r.receipt.stdout}`);
+      assert.match(r.receipt.stdout, line, name);
+      assert.equal(r.prNumber, undefined, name);
+      assert.ok(!calls.some((c) => c.key.startsWith('git fetch') || c.key.startsWith('git merge') || c.key.startsWith('git push') || c.key.startsWith('gh pr create')), `${name}: nothing after the lookup`);
     }
   });
 });

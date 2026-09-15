@@ -18,7 +18,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
-import type { Verdict } from '../core/types.ts';
+import { PrInfo, type Verdict } from '../core/types.ts';
 
 export interface GitHubShipOptions {
   mainRoot: string;
@@ -50,9 +50,13 @@ function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
 }
 
-/** A failure detail on one line: git's output collapsed (each line trimmed and encoded) so the sentinel line stays one line. */
-function oneLine(text: string): string {
-  return lines(text).map((l) => l.trim()).join(' | ');
+/** Git's non-empty output lines trimmed and joined on one line, not encoded: `fail` encodes every detail exactly once. */
+function flat(text: string): string {
+  return text
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l !== '')
+    .join(' | ');
 }
 
 /**
@@ -103,10 +107,12 @@ export class GitHubShipPath implements ShipPath {
     const log: string[] = [];
     const wt = this.worktreePath(req.cardId);
     const resume = `aidlc card next ${req.cardId}`;
-    // The resume command and the PR identity come from this path's own state, never from the output text: git's
-    // lines and paths on the output are encoded, but the classifier's text scan is not the producer of record.
-    const fail = (sentinel: string, detail: string, prNumber?: number): ShipResult => {
-      log.push(`${sentinel} ${detail}`, '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
+    // Every failure detail (verdict reasons, git and gh output, paths, the base name) is flattened to one line and
+    // encoded exactly once here, so no detail can form a sentinel, a resume marker or a merge diagnostic; the CI gate
+    // lines are the one verbatim detail (their JSON already carries encoded names and is decoded by the runner). The
+    // resume command and the PR identity come from this path's own state, never from the output text.
+    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean } = {}): ShipResult => {
+      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
       return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
@@ -144,9 +150,15 @@ export class GitHubShipPath implements ShipPath {
       } catch (err) {
         // A transport failure or a malformed listing is a reconciliation problem the runner records like any other
         // ship failure; an exception here would skip the operation result and the review slot.
-        return fail('[SHIP-PR-BASE-UNKNOWN]', oneLine((err as Error).message));
+        return fail('[SHIP-PR-BASE-UNKNOWN]', (err as Error).message);
       }
-      if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', oneLine(resolved.problem));
+      if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
+      if (resolved.pr) {
+        // A syntactically valid listing can still carry an entry without a number or a state: it is trusted only once
+        // it parses as a PR record, otherwise nothing is reused, synced or pushed on its account.
+        const parsed = PrInfo.safeParse(resolved.pr);
+        if (!parsed.success) return fail('[SHIP-PR-BASE-UNKNOWN]', `malformed PR listing entry: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'entry'} ${i.message}`).join('; ')}`);
+      }
       prNumber = resolved.pr?.number;
       if (prNumber && resolved.pr?.state === 'MERGED') {
         log.push(`PR #${prNumber} already MERGED`, '[SAGA-DONE]');
@@ -190,9 +202,9 @@ export class GitHubShipPath implements ShipPath {
         return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
       };
       const failed = runs.filter((r) => r.status === 'completed' && !green(r));
-      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber);
+      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true });
       if (!pending.length && runs.length > 0) break;
-      if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber);
+      if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber, { verbatim: true });
       log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
       sleep(poll);
     }
@@ -228,40 +240,39 @@ export class GitHubShipPath implements ShipPath {
     const git = (args: string[]): ExecReceipt => this.runner('git', args, { cwd: wt, env, timeoutMs: 60_000 });
     const failed = (detail: string) => ({ sentinel: '[SHIP-BASE-SYNC-FAIL]', detail });
     const ref = mode === 'remote' ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
-    // Display values on the ship output are flattened and encoded (a configured base name or a worktree path could
-    // otherwise place git's diagnostic at the start of a line); the command arguments above and below stay raw.
-    const shown = { base: oneLine(base), ref: oneLine(ref), wt: oneLine(wt), head: oneLine(head) };
+    // Every detail returned here is flattened by `flat` and encoded once by `fail`; a configured base name or a
+    // worktree path never places git's diagnostic at the start of a line. The command arguments stay raw.
     if (mode === 'remote') {
       const fetch = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:${ref}`]);
-      if (fetch.exitCode !== 0) return failed(`fetch of origin/${shown.base} failed: ${oneLine(fetch.stderr)}`);
+      if (fetch.exitCode !== 0) return failed(`fetch of origin/${base} failed: ${flat(fetch.stderr)}`);
     } else {
-      const checkout = this.runner('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: this.options.mainRoot, env, timeoutMs: 60_000 });
-      const branch = checkout.exitCode === 0 ? checkout.stdout.trim() : '';
-      if (branch !== base) return failed(`main checkout has ${branch ? oneLine(branch) : 'a detached HEAD'} checked out, not ${shown.base}${checkout.stderr.trim() ? `: ${oneLine(checkout.stderr)}` : ''}`);
+      // The full symbolic ref, never the short name: under a tag named like the branch the short form is ambiguous.
+      const checkout = this.runner('git', ['symbolic-ref', '--quiet', 'HEAD'], { cwd: this.options.mainRoot, env, timeoutMs: 60_000 });
+      const current = checkout.exitCode === 0 ? checkout.stdout.trim() : '';
+      if (current !== ref) return failed(`main checkout has ${current || 'a detached HEAD'} checked out, not ${ref}${checkout.stderr.trim() ? `: ${flat(checkout.stderr)}` : ''}`);
     }
     const resolve = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     const oid = resolve.stdout.trim();
-    if (resolve.exitCode !== 0 || !oid) return failed(`base ${shown.ref} does not resolve to a commit${resolve.stderr.trim() ? `: ${oneLine(resolve.stderr)}` : ''}`);
+    if (resolve.exitCode !== 0 || !oid) return failed(`base ${ref} does not resolve to a commit${resolve.stderr.trim() ? `: ${flat(resolve.stderr)}` : ''}`);
     const test = git(['merge-tree', '--write-tree', 'HEAD', ref]);
     if (test.exitCode === 0) {
-      log.push(`base sync: ${shown.ref} (${oneLine(oid)}) merges cleanly into HEAD ${shown.head}`);
+      log.push(encodeUntrusted(flat(`base sync: ${ref} (${oid}) merges cleanly into HEAD ${head}`)));
       return undefined;
     }
-    if (test.exitCode !== 1) return failed(`merge-tree exit ${test.exitCode}: ${oneLine(test.stderr)}`);
-    const paths = conflictedPaths(test.stdout).map(oneLine).join(', ') || 'unnamed paths';
+    if (test.exitCode !== 1) return failed(`merge-tree exit ${test.exitCode}: ${flat(test.stderr)}`);
+    const paths = conflictedPaths(test.stdout).map(flat).join(', ') || 'unnamed paths';
     const merge = git(['merge', '--no-ff', '--no-commit', ref]);
     if (merge.exitCode === 0) {
       const abort = git(['merge', '--abort']);
-      if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${oneLine(abort.stderr)}); the index and worktree ${shown.wt} still carry the merge, HEAD ${shown.head} unchanged: run git merge --abort by hand before the next ship`);
-      return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${shown.head} unchanged`);
+      if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${flat(abort.stderr)}); the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship`);
+      return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged`);
     }
     const inProgress = git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).exitCode === 0;
     if (merge.exitCode !== 1 || !inProgress) {
-      const flattened = oneLine(`${merge.stdout}\n${merge.stderr}`);
-      return failed(`merge exit ${merge.exitCode}: ${flattened}${inProgress ? `; the index and worktree ${shown.wt} still carry the merge, HEAD ${shown.head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
+      return failed(`merge exit ${merge.exitCode}: ${flat(`${merge.stdout}\n${merge.stderr}`)}${inProgress ? `; the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
     }
     log.push(...lines(merge.stdout), ...lines(merge.stderr));
-    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${shown.ref} conflicts with HEAD ${shown.head} in ${paths}; the merge is left in ${shown.wt} for the merge-conflicts skill` };
+    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
   }
 
   private tokenFile(cardId: string): string {
