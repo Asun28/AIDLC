@@ -266,8 +266,11 @@ export class CardRunner {
   }
 
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
-  next(goal: Goal, card: Card, run: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
+  next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
+    // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
+    let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
     // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
     if (goal.state === 'CARDS' && goal.routing.size === 'T2' && !run.stop && run.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing') {
@@ -349,11 +352,15 @@ export class CardRunner {
    * keeps any other stop as `card next` keeps it. The record is validated on what the store hands to the reconciliation,
    * not on the earlier read, and the ledger is read there too, so a release, a takeover or an operation that landed
    * meanwhile is seen. A lease this session already holds at a generation the run does not carry is an interrupted
-   * takeover (or an interrupted claim), completed here without another advance; one the run carries refuses, since
-   * `card next` renews it. A missing or released lease, a live lease of another session and an unresolved operation
-   * refuse before any write. The store has no compare-and-set: an operation admitted after the lease write is a WAIT for
-   * the new owner, since the state selection reads the ledger again, and a run write racing the final save is narrowed,
-   * not closed, as the review paths narrow theirs. The goal lease is not touched (`aidlc goal takeover`).
+   * takeover (or an interrupted claim), completed here without another advance once the lease is read again and is
+   * still this session's at that generation; one the run carries refuses, since `card next` renews it. The handoff
+   * intent and the acquisition are resolved by resource and generation in every goal's journal. A missing or released
+   * lease, a live lease of another session and an unresolved operation refuse before any write. The store has no
+   * compare-and-set, and the guarantees end there (docs/OPERATIONS.md, Sessions): a renewal by the old owner landing
+   * inside the lease store's own read-write window is overwritten, a writer that passed its fence before the lease
+   * write and saves after it writes the run at the old generation (this command run again completes it), two
+   * completions of one session may both journal the acquisition, and an operation admitted after the last ledger read
+   * here is left to the assessment of `next`. The goal lease is not touched (`aidlc goal takeover`).
    */
   takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; completed: boolean; previousOwner?: ActorIdentity; previousGeneration?: number } {
     const now = this.clock();
@@ -393,9 +400,18 @@ export class CardRunner {
     }
     const completed = seen.previous === undefined;
     let previous = seen.previous;
+    // The lease is one resource per repository and card, so its handoff intent and its acquisition are looked up in every
+    // goal's journal by resource and generation, not only in the goal this command runs under.
+    const takeoverEvents = (type: 'NOTE' | 'LEASE_ACQUIRED') => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === lease.generation));
     if (completed) {
-      // A completion recovers the previous owner from the intent journaled before the lease write, when the lease was taken here.
-      const intent = [...journal.readAll()].reverse().find((e) => e.type === 'NOTE' && e.cardId === card.id && e.data['kind'] === 'card-takeover-intent' && e.data['leaseGeneration'] === lease.generation);
+      // A completion reads the lease once more right before it writes: the first read is not trusted, since a release or
+      // another session's takeover may have landed since.
+      const again = this.leases.read(key);
+      if (!again) throw new Error(`card ${card.id} has no lease record any more; run \`aidlc card next ${card.id}\` to claim it`);
+      if (again.released) throw new Error(`the lease of card ${card.id} is released (generation ${again.generation}); run \`aidlc card next ${card.id}\` to claim it`);
+      if (!mine(again) || again.generation !== lease.generation) throw new Error(`card ${card.id} is owned by session ${again.owner.session} (generation ${again.generation}) since the command's first read; run \`aidlc card status ${card.id}\` and start over`);
+      // The previous owner comes from the intent journaled before the lease write, when the lease was taken through this command.
+      const intent = takeoverEvents('NOTE').reverse().find((e) => e.data['kind'] === 'card-takeover-intent');
       const owner = intent ? ActorIdentity.safeParse(intent.data['previousOwner']) : undefined;
       if (intent && owner?.success && typeof intent.data['previousGeneration'] === 'number') previous = { owner: owner.data, generation: intent.data['previousGeneration'] };
     }
@@ -406,8 +422,8 @@ export class CardRunner {
     // reconciled; the command run again then completes the takeover.
     const late = unresolvedNow();
     if (late.length) throw new Error(`card ${card.id} is taken at generation ${lease.generation}, but ${late.length} operation(s) of the card landed after the reconciliation (${late.join(',')}); reconcile them, then run \`aidlc card takeover ${card.id}\` again to complete the takeover`);
-    // One acquisition per generation: a completion after an interrupted run update journals nothing twice.
-    const journaled = journal.readAll().some((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === card.id && e.data['takeover'] === true && e.data['leaseGeneration'] === lease.generation);
+    // One acquisition per generation across goals: a completion after an interrupted run update journals nothing twice.
+    const journaled = takeoverEvents('LEASE_ACQUIRED').some((e) => e.data['takeover'] === true);
     if (!journaled) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...(previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {}), ...(completed ? { completed: true } : {}) } });
     const owned = this.save({ ...current, ownerGeneration: lease.generation });
     const assessed = this.assess(goal, card, owned, now);
