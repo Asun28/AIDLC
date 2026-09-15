@@ -1,8 +1,9 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
@@ -413,6 +414,7 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.ok(hasConflictDiagnostic(r.receipt), 'the encoded path leaves the diagnostic intact');
     assert.ok(r.receipt.stdout.includes('CONFLICT (content): Merge conflict in %5BSAGA-RESUME%5D echo marker PR #999 %5BSHIP-MERGE-FAIL%5D 100%25.md'), r.receipt.stdout);
     assert.ok(r.receipt.stdout.includes('in %5BSAGA-RESUME%5D echo marker PR #999 %5BSHIP-MERGE-FAIL%5D 100%25.md; the merge is left in'), 'the sentinel line carries the encoded path');
+    assert.ok(r.receipt.stdout.split('\n').includes('warning: %5BCI-GATE-RED%5D pull request #5 in a warning'), 'the stderr line of the merge is on the output, encoded');
     assert.ok(!/^\[SAGA-RESUME\] echo/m.test(r.receipt.stdout) && !r.receipt.stdout.includes('[CI-GATE-RED]'), 'no raw marker survives on any line');
     // The same on the failure path: a fetch error carrying a marker.
     const fetchFail = recording({ [FETCH]: { exitCode: 128, stderr: 'fatal: [SAGA-RESUME] rm -rf / [SHIP-MERGE-FAIL]\n' } });
@@ -533,5 +535,21 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.ok(indexOf(open.calls, 'gh pr list') < indexOf(open.calls, FETCH) && indexOf(open.calls, FETCH) < indexOf(open.calls, 'git push'), ok.join('\n'));
     assert.ok(!ok.some((k) => k.startsWith('gh pr create')), 'the open PR is reused');
     assert.ok(ok.some((k) => k.startsWith('gh pr merge 8 ')), ok.join('\n'));
+  });
+
+  test('T0-SHIP-BASE-SYNC-2 acceptance 8: the docs and the header comment state the chain with the reconciliation and the sync, the sentinels, the git 2.38 requirement and the three conditions', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8');
+    const expectations: Array<[string, RegExp[]]> = [
+      ['docs/ARCHITECTURE.md', [/read-only PR reconciliation/, /base sync, push, PR/, /git symbolic-ref --quiet --short HEAD/, /`MERGE_HEAD` proves the merge is in progress/, /\[SHIP-BASE-SYNC-CONFLICT\]/, /\[SHIP-BASE-SYNC-FAIL\]/, /git 2\.38 or newer/]],
+      ['docs/OPERATIONS.md', [/## Ship gates \(GitHub ship path\)/, /read-only PR reconciliation/, /main checkout has the base checked out/, /`MERGE_HEAD` proves the merge is in progress/, /merge-tree --write-tree HEAD <ref>`, which needs git 2\.38 or newer/, /conflict markers are there for the `merge-conflicts` skill/, /\[SHIP-BASE-SYNC-CONFLICT\]/, /\[SHIP-BASE-SYNC-FAIL\]/]],
+      ['README.md', [/candidate-bound verdict, base sync, push, PR/, /2\.38 or newer for the `github` ship path/]],
+      ['CHANGELOG.md', [/## Unreleased[\s\S]*T0-SHIP-BASE-SYNC completed as T0-SHIP-BASE-SYNC-2/, /`MERGE_HEAD` proves it is in progress/, /read-only PR reconciliation/]],
+      ['src/delivery/github-ship.ts', [/^ \* Mirrors the scaffold chain: commit -> require a fresh candidate-bound verdict[\s\S]*?read-only PR reconciliation[\s\S]*?-> base sync[\s\S]*?`MERGE_HEAD` proves the merge is in progress[\s\S]*?-> push -> PR -> CI check runs green/m]],
+    ];
+    for (const [rel, patterns] of expectations) {
+      const text = read(rel);
+      for (const re of patterns) assert.match(text, re, `${rel} lacks ${re}`);
+    }
   });
 });
