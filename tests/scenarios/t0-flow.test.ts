@@ -3262,7 +3262,7 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     const round2 = await runner.preReview(g(), card, r.run);
     const prompt2 = lastPrompt('pre');
     const delta2 = prompt2.slice(prompt2.indexOf('## Delta since the last reviewed candidate'), prompt2.indexOf('## Diff'));
-    assert.ok(delta2.includes('sha-1') && delta2.includes('+export const in2 = 1;'), `the delta names sha-1 and carries the delta diff: ${delta2}`);
+    assert.ok(delta2.includes('since: sha-1') && delta2.includes('src/t1-in2.ts') && delta2.includes('git diff sha-1...HEAD'), `an argv prompt names the last reviewed candidate, the delta paths and the pinned command: ${delta2}`);
     assert.deepEqual(round2.run.findings.map((f) => [f.id, f.outsideDelta ?? false, f.resolvedAt !== undefined]), [['F1', false, true], ['F2', true, false], ['F3', false, false]], 'F2 cites a file outside the delta');
     assert.equal(round2.round.policyHash, hash);
 
@@ -3304,7 +3304,7 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     assert.deepEqual(f.run.findings.filter((x) => x.stage === 'formal' && x.round === 2).map((x) => [x.id, x.file, x.outsideDelta ?? false]), [['F6', 'src/t1-in.ts', false], ['F7', 'src/t1-in2.ts', true]], 'the formal stage marks a new finding outside its delta');
     const formal2 = lastPrompt('formal');
     const delta = formal2.slice(formal2.indexOf('## Delta since the last reviewed candidate'), formal2.indexOf('## Diff'));
-    assert.ok(delta.includes('sha-2') && delta.includes('+export const fix = 1;'), `decision 2 receives the delta since the candidate decision 1 reviewed: ${delta}`);
+    assert.ok(delta.includes('since: sha-2') && delta.includes('src/t1-in.ts') && delta.includes('git diff sha-2...HEAD'), `decision 2 receives the delta since the candidate decision 1 reviewed: ${delta}`);
     assert.equal(doc(path.join(fx.repo.mainRoot, '.review', 'T1-IN.json')).policy_hash, hash, 'the canonical verdict document carries the hash');
     assert.ok(f.run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block').every((i) => i.policyHash === hash), 'every decision carries the hash');
   } finally {

@@ -257,7 +257,10 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
     if (i.delta.sinceSha === i.head || (!i.delta.changedPaths.length && !i.delta.diff.trim())) {
       lines.push(`- no change since the last reviewed candidate ${i.delta.sinceSha}: the same commit is reviewed again with the dispositions above; every new finding now is a first-round miss and is recorded as one.`);
     } else {
-      lines.push(`- since: ${i.delta.sinceSha}`, `- changed paths (${i.delta.changedPaths.length}): ${i.delta.changedPaths.join(', ') || 'none'}`, '- review the delta first: a finding inside it is a regression of the repair; a new finding outside it is a first-round miss (report it; it is recorded as one).', '```diff', i.delta.diff.trimEnd(), '```');
+      lines.push(`- since: ${i.delta.sinceSha}`, `- changed paths (${i.delta.changedPaths.length}): ${i.delta.changedPaths.join(', ') || 'none'}`, '- review the delta first: a finding inside it is a regression of the repair; a new finding outside it is a first-round miss (report it; it is recorded as one).');
+      // The delta travels like the diff: embedded for a stdin reviewer, a pinned command for a repository-reading one (an argv prompt has a length limit).
+      if (i.includeDiff) lines.push('```diff', i.delta.diff.trimEnd(), '```');
+      else lines.push(`Run \`git diff ${i.delta.sinceSha}...HEAD\` in the repository working directory for the delta itself.`);
     }
   }
   if (i.includeDiff) lines.push('', '## Diff', '```diff', i.diff.trimEnd(), '```');
@@ -401,6 +404,28 @@ export function enforceCitations(verdict: Verdict, changedPaths?: string[]): { v
   };
   const reasons = keptRoot.length ? keptRoot : dedupe([...keptSpec, ...keptStandards]);
   return { verdict: { ...verdict, reasons, axes }, advisory, inconsistent: false };
+}
+
+/**
+ * A verdict with its tagged reasons moved to advisory notes (R10 on the ship path, whose document is classified without a
+ * prompt): a list or an axis carried only by tags passes, a block with no reason left is a pass, and the notes a pass carries
+ * are advisory. The rest of the citation rule stays with the ship path's own reviewer.
+ */
+export function stripAdvisoryTags(verdict: Verdict): { verdict: Verdict; advisory: string[] } {
+  const all = dedupe([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])]);
+  if (verdict.verdict === 'pass') return { verdict, advisory: all };
+  const tagged = (r: string) => ADVISORY_TAG.test(r);
+  const advisory = all.filter(tagged);
+  if (!advisory.length) return { verdict, advisory: [] };
+  const strip = (axis: { verdict: 'pass' | 'block'; reasons: string[] } | undefined) => {
+    if (!axis) return undefined;
+    const reasons = axis.reasons.filter((r) => !tagged(r));
+    return { ...axis, reasons, verdict: axis.verdict === 'block' && !reasons.length ? ('pass' as const) : axis.verdict };
+  };
+  const axes = verdict.axes ? { spec: strip(verdict.axes.spec), standards: strip(verdict.axes.standards) } : undefined;
+  const reasons = verdict.reasons.filter((r) => !tagged(r));
+  const blocks = reasons.length > 0 || axes?.spec?.verdict === 'block' || axes?.standards?.verdict === 'block';
+  return { verdict: { ...verdict, verdict: blocks ? 'block' : 'pass', reasons, axes }, advisory };
 }
 
 /** Fail-closed: a verdict counts only from a process that exited 0 without timing out. */

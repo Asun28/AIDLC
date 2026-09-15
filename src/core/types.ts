@@ -260,7 +260,7 @@ export const ReviewInvocation = z.object({
   mergeBlocking: z.boolean().optional(),
   /** The committed sha the decision was bound to (the digest also covers uncommitted inputs). */
   candidateSha: z.string().optional(),
-  /** sha256 of the review policy text the decision applied (the prompt's policy section); absent on a ship-path decision, which received no prompt. */
+  /** sha256 of the review policy text the decision applied: the prompt's policy section for a command decision, the `policy_hash` the verdict document names for a ship-path one (absent when the document names none, and on records written before the field existed). */
   policyHash: z.string().optional(),
   /** Digest of the verdict document a ship-path reviewer wrote; a re-read of the same artifact is the same decision. */
   artifactDigest: z.string().optional(),
