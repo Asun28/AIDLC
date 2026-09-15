@@ -17,7 +17,7 @@ import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock,
 import { classifyVerdict, recordReviewOutcome, reviewRequestKey, type ClassifiedVerdict } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type ActorIdentity, type Card, type EffortLevel, type Goal, type Lease, type PreReviewRound, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, addMs, type Card, type EffortLevel, type Goal, type Lease, type PreReviewRound, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -359,6 +359,7 @@ export class CardRunner {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
+    const journal = this.journal(goal.id);
     const mine = (l: Lease): boolean => !l.released && l.owner.session === me.session && l.owner.host === me.host;
     const unresolvedNow = (): string[] => this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
     const first = this.leases.read(key);
@@ -375,8 +376,12 @@ export class CardRunner {
             if (old.released) throw new Error(`the lease of card ${card.id} is released (generation ${old.generation}); run \`aidlc card next ${card.id}\` to claim it`);
             if (mine(old)) throw new AlreadyOwned(old);
             const unresolved = unresolvedNow();
+            if (unresolved.length) return { reconciled: false, unresolvedOperations: unresolved, note: 'reconcile with `aidlc ops reconcile` first' };
+            // The handoff intent precedes the lease write: a process that ends between the write and the run update leaves
+            // the previous owner in the journal, and the completion names it.
             seen.previous = { owner: old.owner, generation: old.generation };
-            return { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
+            journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-intent', resource: key, previousOwner: old.owner, previousGeneration: old.generation, leaseGeneration: old.generation + 1 } });
+            return { reconciled: true, unresolvedOperations: [] };
           },
           { operation: `card:${card.id}`, now },
         ).lease;
@@ -386,15 +391,28 @@ export class CardRunner {
         seen.previous = undefined;
       }
     }
-    const previous = seen.previous;
+    const completed = seen.previous === undefined;
+    let previous = seen.previous;
+    if (completed) {
+      // A completion recovers the previous owner from the intent journaled before the lease write, when the lease was taken here.
+      const intent = [...journal.readAll()].reverse().find((e) => e.type === 'NOTE' && e.cardId === card.id && e.data['kind'] === 'card-takeover-intent' && e.data['leaseGeneration'] === lease.generation);
+      const owner = intent ? ActorIdentity.safeParse(intent.data['previousOwner']) : undefined;
+      if (intent && owner?.success && typeof intent.data['previousGeneration'] === 'number') previous = { owner: owner.data, generation: intent.data['previousGeneration'] };
+    }
     const current = this.store.getCardRun(goal.id, card.id) ?? caller;
-    if (!previous && current.ownerGeneration === lease.generation) throw new Error(`this session owns card ${card.id} at generation ${lease.generation}; run \`aidlc card next ${card.id}\``);
-    const data = previous ? { resource: key, leaseGeneration: lease.generation, takeover: true, previousOwner: previous.owner.session, previousGeneration: previous.generation } : { resource: key, leaseGeneration: lease.generation, takeover: true, completed: true };
-    this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data });
+    if (completed && current.ownerGeneration === lease.generation) throw new Error(`this session owns card ${card.id} at generation ${lease.generation}; run \`aidlc card next ${card.id}\``);
+    // The ledger read inside the reconciliation precedes the store's write: an operation admitted in between is found here.
+    // The lease stays taken (the writer is fenced from now on) and the run stays as it was until the operation is
+    // reconciled; the command run again then completes the takeover.
+    const late = unresolvedNow();
+    if (late.length) throw new Error(`card ${card.id} is taken at generation ${lease.generation}, but ${late.length} operation(s) of the card landed after the reconciliation (${late.join(',')}); reconcile them, then run \`aidlc card takeover ${card.id}\` again to complete the takeover`);
+    // One acquisition per generation: a completion after an interrupted run update journals nothing twice.
+    const journaled = journal.readAll().some((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === card.id && e.data['takeover'] === true && e.data['leaseGeneration'] === lease.generation);
+    if (!journaled) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...(previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {}), ...(completed ? { completed: true } : {}) } });
     const owned = this.save({ ...current, ownerGeneration: lease.generation });
     const assessed = this.assess(goal, card, owned, now);
     const next = this.save(assessed.next);
-    return { run: next, lease: assessed.lease ?? lease, completed: previous === undefined, previousOwner: previous?.owner, previousGeneration: previous?.generation };
+    return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
   private prepare(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
