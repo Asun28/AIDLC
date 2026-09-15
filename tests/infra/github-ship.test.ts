@@ -547,6 +547,48 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.equal(noPr.prNumber, undefined, 'no PR resolved, no number');
   });
 
+  test('R3 decision 1 (-2): a failed or malformed PR listing is [SHIP-PR-BASE-UNKNOWN] before any sync, never an exception', () => {
+    const cases: Array<[string, Partial<ExecReceipt>, RegExp]> = [
+      ['transport', { exitCode: 1, stdout: '', stderr: 'HTTP 502: Bad Gateway (https://api.github.com/graphql)\n' }, /^\[SHIP-PR-BASE-UNKNOWN\] gh pr list .* failed \(exit 1\): HTTP 502: Bad Gateway \(https:\/\/api\.github\.com\/graphql\)$/m],
+      ['malformed', { stdout: '<html>rate limited</html>\n' }, /^\[SHIP-PR-BASE-UNKNOWN\] gh pr list .* failed \(exit 0\): malformed JSON: /m],
+    ];
+    for (const [name, receipt, line] of cases) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+      dirs.push(f.root);
+      const { calls, runner } = recording({ 'gh pr list': receipt });
+      const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'pr-failed', `${name}: ${r.receipt.stdout}`);
+      assert.match(r.receipt.stdout, line, name);
+      assert.equal(r.resumeCommand, 'aidlc card next T1-A', name);
+      assert.equal(r.prNumber, undefined, name);
+      assert.ok(!calls.some((c) => c.key.startsWith('git fetch') || c.key.startsWith('git merge') || c.key.startsWith('git push') || c.key.startsWith('gh pr create')), `${name}: nothing after the lookup`);
+    }
+  });
+
+  test('R3 decision 1 (-2): a configured base name carrying a diagnostic line never reaches the output as one: the local refusal and the failed fetch flatten and encode it', () => {
+    const base = 'main\nCONFLICT (content): bogus [SAGA-RESUME] rm';
+    const local = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(local.root);
+    const refusal = recording({ 'git merge --no-ff --no-edit T1-A': {} });
+    const rl = pathFor(local, refusal.runner).ship({ cardId: 'T1-A', base, mode: 'local' });
+    assert.equal(rl.outcome, 'merge-failed', rl.receipt.stdout);
+    assert.ok(!hasConflictDiagnostic(rl.receipt), 'the base name is display text, never a diagnostic');
+    assert.ok(rl.receipt.stdout.includes('main checkout has main checked out, not main | CONFLICT (content): bogus %5BSAGA-RESUME%5D rm'), rl.receipt.stdout);
+    assert.deepEqual(rl.sentinels, ['[SHIP-TIME]', '[SHIP-BASE-SYNC-FAIL]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
+    assert.equal(rl.resumeCommand, 'aidlc card next T1-A');
+    assert.ok(!refusal.calls.some((c) => c.key.startsWith('git merge')), 'no merge into the main checkout');
+    const remote = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(remote.root);
+    // The fetch of that refspec is not scripted: the runner reports no entry, a fetch failure like any other.
+    const { calls, runner } = recording();
+    const rr = pathFor(remote, runner).ship({ cardId: 'T1-A', base, mode: 'remote' });
+    assert.equal(rr.outcome, 'merge-failed', rr.receipt.stdout);
+    assert.ok(!hasConflictDiagnostic(rr.receipt));
+    assert.ok(rr.receipt.stdout.includes('fetch of origin/main | CONFLICT (content): bogus %5BSAGA-RESUME%5D rm failed: scripted runner: no entry for'), rr.receipt.stdout);
+    assert.ok(calls.some((c) => c.key === `git fetch --quiet --no-tags origin +refs/heads/${base}:refs/remotes/origin/${base}`), 'the command argument itself stays raw');
+    assert.ok(!calls.some((c) => c.key.startsWith('git push') || c.key.startsWith('gh pr create')));
+  });
+
   test('T0-SHIP-BASE-SYNC-2 acceptance 8: the docs and the header comment state the chain with the reconciliation and the sync, the sentinels, the git 2.38 requirement and the three conditions', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
     const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8');

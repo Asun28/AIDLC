@@ -138,8 +138,15 @@ export class GitHubShipPath implements ShipPath {
     // the merge against the PR head), so a retried candidate never starts a merge against a base that moved since.
     let prNumber: number | undefined;
     if (req.mode === 'remote') {
-      const resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
-      if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
+      let resolved: ReturnType<GhProbe['resolvePr']>;
+      try {
+        resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
+      } catch (err) {
+        // A transport failure or a malformed listing is a reconciliation problem the runner records like any other
+        // ship failure; an exception here would skip the operation result and the review slot.
+        return fail('[SHIP-PR-BASE-UNKNOWN]', oneLine((err as Error).message));
+      }
+      if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', oneLine(resolved.problem));
       prNumber = resolved.pr?.number;
       if (prNumber && resolved.pr?.state === 'MERGED') {
         log.push(`PR #${prNumber} already MERGED`, '[SAGA-DONE]');
@@ -221,37 +228,40 @@ export class GitHubShipPath implements ShipPath {
     const git = (args: string[]): ExecReceipt => this.runner('git', args, { cwd: wt, env, timeoutMs: 60_000 });
     const failed = (detail: string) => ({ sentinel: '[SHIP-BASE-SYNC-FAIL]', detail });
     const ref = mode === 'remote' ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+    // Display values on the ship output are flattened and encoded (a configured base name or a worktree path could
+    // otherwise place git's diagnostic at the start of a line); the command arguments above and below stay raw.
+    const shown = { base: oneLine(base), ref: oneLine(ref), wt: oneLine(wt), head: oneLine(head) };
     if (mode === 'remote') {
       const fetch = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:${ref}`]);
-      if (fetch.exitCode !== 0) return failed(`fetch of origin/${base} failed: ${oneLine(fetch.stderr)}`);
+      if (fetch.exitCode !== 0) return failed(`fetch of origin/${shown.base} failed: ${oneLine(fetch.stderr)}`);
     } else {
       const checkout = this.runner('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], { cwd: this.options.mainRoot, env, timeoutMs: 60_000 });
       const branch = checkout.exitCode === 0 ? checkout.stdout.trim() : '';
-      if (branch !== base) return failed(`main checkout has ${branch ? encodeUntrusted(branch) : 'a detached HEAD'} checked out, not ${base}${checkout.stderr.trim() ? `: ${oneLine(checkout.stderr)}` : ''}`);
+      if (branch !== base) return failed(`main checkout has ${branch ? oneLine(branch) : 'a detached HEAD'} checked out, not ${shown.base}${checkout.stderr.trim() ? `: ${oneLine(checkout.stderr)}` : ''}`);
     }
     const resolve = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
     const oid = resolve.stdout.trim();
-    if (resolve.exitCode !== 0 || !oid) return failed(`base ${ref} does not resolve to a commit${resolve.stderr.trim() ? `: ${oneLine(resolve.stderr)}` : ''}`);
+    if (resolve.exitCode !== 0 || !oid) return failed(`base ${shown.ref} does not resolve to a commit${resolve.stderr.trim() ? `: ${oneLine(resolve.stderr)}` : ''}`);
     const test = git(['merge-tree', '--write-tree', 'HEAD', ref]);
     if (test.exitCode === 0) {
-      log.push(`base sync: ${ref} (${oid}) merges cleanly into HEAD ${head}`);
+      log.push(`base sync: ${shown.ref} (${oneLine(oid)}) merges cleanly into HEAD ${shown.head}`);
       return undefined;
     }
     if (test.exitCode !== 1) return failed(`merge-tree exit ${test.exitCode}: ${oneLine(test.stderr)}`);
-    const paths = conflictedPaths(test.stdout).map(encodeUntrusted).join(', ') || 'unnamed paths';
+    const paths = conflictedPaths(test.stdout).map(oneLine).join(', ') || 'unnamed paths';
     const merge = git(['merge', '--no-ff', '--no-commit', ref]);
     if (merge.exitCode === 0) {
       const abort = git(['merge', '--abort']);
-      if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${oneLine(abort.stderr)}); the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship`);
-      return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged`);
+      if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${oneLine(abort.stderr)}); the index and worktree ${shown.wt} still carry the merge, HEAD ${shown.head} unchanged: run git merge --abort by hand before the next ship`);
+      return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${shown.head} unchanged`);
     }
     const inProgress = git(['rev-parse', '--verify', '--quiet', 'MERGE_HEAD']).exitCode === 0;
     if (merge.exitCode !== 1 || !inProgress) {
       const flattened = oneLine(`${merge.stdout}\n${merge.stderr}`);
-      return failed(`merge exit ${merge.exitCode}: ${flattened}${inProgress ? `; the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
+      return failed(`merge exit ${merge.exitCode}: ${flattened}${inProgress ? `; the index and worktree ${shown.wt} still carry the merge, HEAD ${shown.head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
     }
     log.push(...lines(merge.stdout), ...lines(merge.stderr));
-    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
+    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${shown.ref} conflicts with HEAD ${shown.head} in ${paths}; the merge is left in ${shown.wt} for the merge-conflicts skill` };
   }
 
   private tokenFile(cardId: string): string {
