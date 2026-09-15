@@ -10,6 +10,7 @@ import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../c
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
+import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { CardRunner } from '../loop/card-runner.ts';
 import { ReleaseRunner } from '../loop/release-runner.ts';
@@ -109,6 +110,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   const program = new Command();
   program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.1.0');
   program.option('--json', 'print JSON (default when stdout is not a TTY)');
+  program.option('--no-json', 'print the human line even when stdout is not a TTY');
   program.option('-C, --cwd <dir>', 'run as if started in <dir>');
   const g = () => program.opts<{ json?: boolean; cwd?: string }>();
 
@@ -146,6 +148,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ops = loadDeliveryOps(c.root);
       const provider = providerFor(undefined, c.config);
       const [gitVersion, ghVersion, pwshVersion, avail] = await Promise.all([probe('git', ['--version']), probe('gh', ['--version']), probe('pwsh', ['-v']), provider.available()]);
+      // The session line names the source token (env, claude, default) and what it means; default is a warning.
+      const describeSessionSource = (source: 'env' | 'claude' | 'default'): string =>
+        source === 'env' ? 'env: AIDLC_SESSION' : source === 'claude' ? 'claude: the Claude Code session, CLAUDE_CODE_SESSION_ID' : 'default: DEFAULT: every window shares this identity; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination';
       const checks = {
         node: process.version,
         git: gitVersion ?? 'MISSING',
@@ -158,9 +163,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
-        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_SESSION_ID']
-          ? `${currentActor().session} (${resolveSessionId().source === 'default' ? 'DEFAULT: every window shares this identity; set AIDLC_SESSION per window for multi-session coordination' : resolveSessionId().source})`
-          : '(no state dir yet; created on first goal; set AIDLC_SESSION per window for multi-session coordination)',
+        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
+          ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
+          : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
       };
       out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n'));
     });
@@ -457,7 +462,45 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const id = latestActiveGoalId(c, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
-      out(c, run, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+      // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
+      // the owner session is the AIDLC_SESSION value that continues the card (docs/OPERATIONS.md, Sessions). An
+      // unreadable record is named by its store error code only, never by its contents.
+      const me = currentActor();
+      let lease: { owner: { session: string; host: string; pid: number }; generation: number; expiresAt: string; released: boolean; ownedByThisSession: boolean } | { unreadable: string } | null = null;
+      let leaseLine = '-';
+      try {
+        const record = new LeaseStore(c.paths.leases).read(resourceKeys.card(c.repo.key, cardId));
+        if (record) {
+          lease = { owner: record.owner, generation: record.generation, expiresAt: record.expiresAt, released: record.released, ownedByThisSession: !record.released && record.owner.session === me.session && record.owner.host === me.host };
+          leaseLine = `${record.owner.session}@${record.owner.host} gen=${record.generation} expires=${record.expiresAt} released=${record.released} this-session=${lease.ownedByThisSession}`;
+        }
+      } catch (err) {
+        const code = err instanceof StoreError ? err.code : 'UNREADABLE';
+        lease = { unreadable: code };
+        leaseLine = `unreadable (${code})`;
+      }
+      out(c, { ...run, lease }, () => `${cardId} state=${run.state} worktree=${run.worktree ?? '-'} pr=${run.pr?.number ?? '-'} merge=${run.mergeVerified} deadline=${run.deadline} ownerGeneration=${run.ownerGeneration ?? '-'}\nlease=${leaseLine}${run.stop ? `\n${formatStop(run.stop)}` : ''}`);
+    });
+  card
+    .command('takeover <cardId>')
+    .description("take over the expired card lease of another session once its operations are reconciled; the goal lease is `aidlc goal takeover`'s")
+    .option('--goal <id>')
+    .action((cardId: string, o: { goal?: string }) => {
+      const c = ctx(g());
+      const id = latestActiveGoalId(c, o.goal);
+      const goalRec = c.controller.mustGoal(id);
+      // The stored run only: a takeover owns an existing run, it never creates one.
+      const run = c.store.getCardRun(id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
+      const r = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
+      c.controller.writeBoard(goalRec);
+      // A completed takeover finished the run update of one this session had already taken (the lease was already its own).
+      const from = r.previousOwner && r.previousGeneration !== undefined ? { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration } : undefined;
+      // The headline follows `completed`; the previous owner, when the handoff intent names one, is provenance, never an advance.
+      const headline = r.completed
+        ? `completed the takeover of ${cardId}: the lease was already this session's at generation ${r.lease.generation}${from ? ` (taken from session ${from.session}@${from.host}, generation ${from.generation}, as the handoff intent records)` : ''}, the run now carries it`
+        : `took over ${cardId} from session ${from?.session}@${from?.host} (generation ${from?.generation} -> ${r.lease.generation})`;
+      out(c, { cardId, goalId: id, completed: r.completed, lease: { generation: r.lease.generation, owner: r.lease.owner, expiresAt: r.lease.expiresAt }, previousOwner: from, run: { state: r.run.state, ownerGeneration: r.run.ownerGeneration, stop: r.run.stop } }, () => `${headline}; state=${r.run.state}${r.run.stop ? `\n${formatStop(r.run.stop)}` : ''}\nnext: aidlc card next ${cardId} --goal ${id}`);
     });
   card
     .command('fix-task [cardId]')

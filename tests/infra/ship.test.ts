@@ -14,6 +14,8 @@ function receipt(stdout: string, exitCode = 1, extra: Partial<ExecReceipt> = {})
 // One representative sentinel per class of the (module-private) SENTINEL_MAP, in its precedence order.
 const SENTINELS: Array<[string, ShipOutcomeClass]> = [
   ['[SHIP-MERGE-FAIL]', 'merge-failed'],
+  ['[SHIP-BASE-SYNC-CONFLICT]', 'merge-failed'],
+  ['[SHIP-BASE-SYNC-FAIL]', 'merge-failed'],
   ['[CI-GATE-TIMEOUT]', 'ci-timeout'],
   ['[CI-GATE-RED]', 'ci-red'],
   ['[CI-GATE-HEAD-MOVED]', 'ci-red'],

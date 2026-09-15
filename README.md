@@ -7,21 +7,21 @@ AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native
 Version 0.1.0.
 
 - The development-only loop (intake, routing, planning gates, card execution, arc selection, integrated acceptance, closure) is implemented and tested (413 tests: unit suites plus end-to-end scenarios for the T0 flow, T1 arc, review block, CI rerun, deadlines, two windows, staging/production release, audit and amendments).
-- Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, push, PR, candidate-bound verdict, CI check runs, squash merge). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
+- Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge; a base that conflicts leaves the merge in the worktree and returns the card to BUILD instead of opening a PR GitHub runs no workflow on). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
 - Release and migration modules are opt-in. Until provider operations are bound in `aidlc.ops.json`, an enabled target stops with `release-config` and prints `NOT CONFIGURED`; a development-only goal never needs them.
 - "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal and an asserted host capture boundary; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
 
 ## Requirements
 
 - Node.js >= 22.18 (the CLI runs TypeScript sources directly through type stripping; `npm run build` emits `dist/`).
-- git (state lives in the main checkout's `.aidlc/` so all worktrees share it).
+- git (state lives in the main checkout's `.aidlc/` so all worktrees share it); 2.38 or newer for the `github` ship path, whose base sync tests the merge with `git merge-tree --write-tree`.
 - Optional: `gh` (remote ship, PR and CI probes), `pwsh` 7 (scaffold ship path), `claude` CLI or an Anthropic API credential (model providers).
 
 ## Quick start
 
 ```bash
 npm install
-npm run build                      # optional; bin/aidlc.js falls back to src/ on Node 22
+npm run build                      # optional; bin/aidlc.js runs src/ on Node 22 unless dist/ is at least as new as every source file
 node bin/aidlc.js init             # lays intent/, specs/, plans/, .claude/, REVIEW.md, bands.yaml, evals/, aidlc.config.json over the repo
 node bin/aidlc.js doctor           # toolchain, config, state dir, card registry, provider
 node bin/aidlc.js goal new "fix the null pointer when a claim has no adjuster" --bug-evidence
@@ -63,10 +63,10 @@ Card states (`src/core/card-machine.ts`) are selected from evidence in a fixed p
 
 ## Multi-session
 
-Several windows may work on one repository. State is shared through `<main checkout>/.aidlc/`. Each window must identify itself: set `AIDLC_SESSION` per window (or rely on `CLAUDE_SESSION_ID` under Claude Code); without either, every process shares one default token stored in `.aidlc/session-default`, which is the plan's interim single-controller mode and `aidlc doctor` warns about it.
+Several windows may work on one repository. State is shared through `<main checkout>/.aidlc/`. Each window must identify itself: under Claude Code every subprocess carries `CLAUDE_CODE_SESSION_ID` and every hook event its `session_id`, so each Claude Code session is one loop session (a `/clear` starts a new one); elsewhere set `AIDLC_SESSION` per window; without either, every process shares one default token stored in `.aidlc/session-default`, which is the plan's interim single-controller mode and `aidlc doctor` warns about it. Lease records are never rewritten for an identity change: a lease claimed under the default token by an earlier version, or by a session that has ended, stays as recorded and expires after its 10-minute TTL. `aidlc goal takeover <id>` then takes the goal lease once the old owner's operations are reconciled; it does not take card leases. While a card lease is live, the card is continued only by running with `AIDLC_SESSION` set to the owner session id that `aidlc card status <card>` prints as `lease.owner.session`, when the run's `ownerGeneration` equals `lease.generation`, which every completed PREPARE records (a run stopped for ownership before PREPARE carries no owner in its stop text; a run interrupted inside PREPARE has no generation and is not continued this way). Once the lease has expired and no operation of the card is unresolved in any goal, `aidlc card takeover <card> --goal <id>` takes it in the acting session: the generation advances and the old owner is fenced, the run (read again once the lease is held) records the new generation, a run without one included, and its state is selected again with the ownership stop cleared, so `aidlc card next <card>` continues it; a missing or released lease, a lease this session holds at the run's generation, a live lease of another session and an unresolved operation refuse the takeover without a write, and a release, a takeover or an operation that lands after the command's first read is seen at the store's own read; one admitted between that read and the lease write leaves the lease taken and the run untouched until it is reconciled. A handoff intent is journaled before the lease write and one acquisition per generation after it, both resolved across goals, and a takeover whose run update did not land is completed by running the command again, after the lease is read once more. The guarantees end where the store's do: `.aidlc/` writes are atomic but have no compare-and-set, and `docs/OPERATIONS.md` (Sessions) names the four windows that remain (the lease write, the run write, the journal, the ledger) with the recovery for each. A goal the dispatch stopped on the card's stop is resumed with `aidlc goal resume` after the takeover; the dispatch then reports the card running until `aidlc card next` continues it.
 
 - Leases (`src/coordination/lease.ts`): atomic file claims per goal, card, integration base, environment and review pool, with owner session/pid/start, expiry, heartbeat and a monotonically advancing generation. A mutation is fenced against its generation; a stale writer cannot commit.
-- Takeover (`aidlc goal takeover`) is allowed only after the previous owner's operations are reconciled; lease expiry alone does not prove the owner stopped.
+- Takeover (`aidlc goal takeover`, `aidlc card takeover`) is allowed only after the previous owner's operations are reconciled; lease expiry alone does not prove the owner stopped.
 - Review admission (`src/coordination/review-queue.ts`): one shared queue per provider pool, deduplicated by repository + candidate digest + base + policy version + reviewer; a matching running request is joined, admission follows persisted order, a lost response keeps its slot until looked up.
 - Quota holds are WAIT, not defects: a confirmed rate limit records the provider's retry-after on the pool, one notification owner is registered, and other windows do not retry the same signal.
 

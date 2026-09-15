@@ -22,16 +22,17 @@ node --test tests/core/router.test.ts                                   # one fi
 node --test --test-name-pattern "same cause" tests/core/effort.test.ts  # one test by name
 npm run test:watch
 npm run build                  # tsc -> dist/ (rewrites .ts imports to .js)
-node bin/aidlc.js <cmd>        # the CLI (prefers dist/, falls back to src/)
+node bin/aidlc.js <cmd>        # the CLI (dist/ when it is at least as new as src/, else src/)
 npm run dev -- <cmd>           # the CLI from src/cli/main.ts, always current
 ```
 
 There is no linter; strict `tsc` is the only static gate.
 
-Note: `bin/aidlc.js` and `bin/aidlc-hook.js` load `dist/` when it exists
-and only fall back to `src/`. After editing `src/`, run `npm run build` or
-delete `dist/`, otherwise the CLI and the Claude Code hooks in this repo run
-stale code. `npm run dev -- <cmd>` always runs the sources.
+Note: `bin/aidlc.js` and `bin/aidlc-hook.js` load `dist/` only when the
+compiled entry is at least as new as every file under `src/`
+(`bin/resolve-entry.js`, links followed); a build older than any source
+file, or a source tree that cannot be fully inspected, runs the sources. `AIDLC_ENTRY_DEBUG=1` prints the choice.
+`npm run dev -- <cmd>` always runs the sources.
 
 ## Architecture
 

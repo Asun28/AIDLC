@@ -372,7 +372,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
 
     // ... unless the policy hands the residual findings to R3.
     const lenient = mk(1, 'ship');
-    // The resumed state is persisted: a ship reads the record as persisted, and a stop saved there wins over the caller's copy.
+    // The resumed state is persisted: next reads the stored run and never a caller's snapshot (T0-CARD-TAKEOVER), and a stop saved there wins over the caller's copy.
     r = lenient.next(fx.goal(goal.id), card, fx.store.saveCardRun(CardRun.parse({ ...run, state: 'SHIP', stop: undefined, updatedAt: fx.now() })));
     assert.equal(r.directive.kind, 'close', r.directive.narration);
   } finally {
@@ -1598,13 +1598,16 @@ test('T1-REVIEW-FINDINGS-2 acceptance 7: a write computed from a stale read neve
     // Another window reserves a round; this window still holds the earlier snapshot.
     const stale = r.run;
     fx.store.updateCardRun(goal.id, 'T1-STALE', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }] } }));
-    assert.throws(() => runner.next(g(), card, stale), /changed|re-run|run the command again/i, 'the stale write is refused instead of dropping the reservation');
+    // `next` reads the stored run and never the caller's snapshot (T0-CARD-TAKEOVER): the reservation another window
+    // recorded drives the gate (a round in flight parks the card) and nothing of the stale snapshot is written back.
+    const parked = runner.next(g(), card, stale);
+    assert.equal(parked.directive.kind, 'wait', parked.directive.narration);
     assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds.length, 1, 'the reservation survives');
-    // A stale write that lacks a decided round is refused the same way.
+    // A stale snapshot that lacks a decided round is ignored the same way, and a snapshot write elsewhere (a disposition) is refused.
     fx.store.updateCardRun(goal.id, 'T1-STALE', (current) => ({ ...current!, preReview: { ...current!.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'sha-1', candidateSha: 'sha-1', requestedAt: fx.now(), durationMs: 5, outcome: 'pass', reasons: [], reservationId: 'res-1' }] } }));
     assert.throws(() => runner.disputeFinding(g(), card, stale, 'F1', 'x'), /F1|changed/);
-    assert.throws(() => runner.next(g(), card, stale), /changed|re-run|run the command again/i);
-    assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds[0]?.outcome, 'pass');
+    assert.equal(runner.next(g(), card, stale).directive.kind, 'close', 'the decided round on the stored run drives the gate, not the snapshot that lacks it');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-STALE')?.preReview.rounds[0]?.outcome, 'pass', 'the decided round survives');
     // Re-read, the same command proceeds.
     const fresh = fx.store.getCardRun(goal.id, 'T1-STALE')!;
     assert.equal(runner.next(g(), card, fresh).directive.kind, 'close');
