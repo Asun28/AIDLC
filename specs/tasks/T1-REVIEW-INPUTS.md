@@ -37,7 +37,7 @@ acceptance:
   - 5. `REVIEW.md` and `templates/REVIEW.md` stay identical and both configs carry `reviewPolicyVersion: REVIEW.md@3`; `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and CHANGELOG.md record the truncation rule, the hash, the delta and the tags (templates.test.ts, mirror.test.ts). [dod arm 1]
 depends_on: [T1-REVIEW-FINDINGS-4]
 plan_ref: plans/review-findings.md#7
-budget: 350
+budget: 450
 tdd: true
 sweep: "grep -rn 'truncated\|reviewPolicy()\|priorFindings\|advisory' src tests: pre-review.ts collectCandidateDiff, buildReviewPrompt and finalizeReview, card-runner.ts preReview and formalReview, main.ts review pre summary, pre-review.test.ts prompt and panel tests"
 non_goals: [splitting an oversized diff into several reviewer calls, a repository-reading R2, statistics (T1-REVIEW-STATS), new fields in the verdict JSON schema, a human ruling command]
