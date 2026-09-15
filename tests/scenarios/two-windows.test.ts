@@ -273,7 +273,8 @@ test('T0-CARD-TAKEOVER, prepared: the takeover refuses a live or unreconciled le
     assert.equal(taken.lease.generation, 1);
     assert.equal(taken.lease.owner.session, 'win-B');
     assert.equal(taken.lease.operation, 'card:T1-HELLO');
-    assert.equal(taken.previousOwner.session, 'win-A');
+    assert.equal(taken.completed, false);
+    assert.equal(taken.previousOwner?.session, 'win-A');
     assert.equal(taken.previousGeneration, 0);
     const owned = records();
     assert.equal(owned.run?.ownerGeneration, 1);
@@ -538,8 +539,8 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     assert.equal(completed.run.ownerGeneration, 1);
     assert.equal(completed.run.stop, undefined);
     assert.equal(completed.run.state, 'BUILD');
-    const acquisitions = fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-TWICE');
-    assert.equal(acquisitions.length, 1);
+    const acquisitions = fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-TWICE' && e.data['takeover'] === true);
+    assert.equal(acquisitions.length, 1, "one takeover event (A's PREPARE journaled its own acquisition)");
     assert.deepEqual(acquisitions[0]?.data, { resource: twiceKey, leaseGeneration: 1, takeover: true, completed: true });
     // B continues; with the run at the lease generation there is nothing left to take over
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE')).directive.kind, 'build');

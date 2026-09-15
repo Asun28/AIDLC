@@ -74,6 +74,16 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   }
   return new DryRunShipPath();
 }
+
+/** Thrown inside a takeover's reconciliation when the record the store hands over is already the acting session's: the interrupted takeover is completed, not advanced again. */
+class AlreadyOwned extends Error {
+  readonly lease: Lease;
+  constructor(lease: Lease) {
+    super(`lease ${lease.resourceKey} is already this session's at generation ${lease.generation}`);
+    this.lease = lease;
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -181,7 +191,10 @@ export class CardRunner {
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
-  private assess(goal: Goal, card: Card, run: CardRun, now: string): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+    // The stored run is the truth: a caller's snapshot from before another session's takeover (a window that kept the run
+    // it read) never writes its generation or an old disposition back; the generation the store holds is preserved.
+    let run = this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = this.leases.read(key);
@@ -326,31 +339,60 @@ export class CardRunner {
   }
 
   /**
-   * Take over the card lease of another session (MS2): only once that lease has expired and no delivery operation of
-   * the card is unresolved. The generation advances, so the old owner's later writes are fenced; the run records the
-   * new generation (a run interrupted between the lease claim and the PREPARE save, which has none, included) and its
-   * state is selected again through `assess`, whose renewal revalidates the ownership stop as it does for an owner's
-   * own expired lease, so any other stop stays as `card next` keeps it. A missing, released or own lease, a live
-   * lease of another session and an unresolved operation refuse before anything is written. The goal lease is not
-   * touched (`aidlc goal takeover`).
+   * Take over the card lease of another session (MS2): only once that lease has expired and no operation of the card is
+   * unresolved in any goal (the lease is one resource per repository and card). The generation advances, so a write of
+   * the old owner at its generation is fenced; the run, read again once the lease is held, records the new generation (a
+   * run interrupted between the lease claim and the PREPARE save, which has none, included) and its state is selected
+   * again through `assess`, whose renewal revalidates the ownership stop as it does for an owner's own expired lease and
+   * keeps any other stop as `card next` keeps it. The record is validated on what the store hands to the reconciliation,
+   * not on the earlier read, and the ledger is read there too, so a release, a takeover or an operation that landed
+   * meanwhile is seen. A lease this session already holds at a generation the run does not carry is an interrupted
+   * takeover (or an interrupted claim), completed here without another advance; one the run carries refuses, since
+   * `card next` renews it. A missing or released lease, a live lease of another session and an unresolved operation
+   * refuse before any write. The store has no compare-and-set: an operation admitted after the lease write is a WAIT for
+   * the new owner, since the state selection reads the ledger again, and a run write racing the final save is narrowed,
+   * not closed, as the review paths narrow theirs. The goal lease is not touched (`aidlc goal takeover`).
    */
-  takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; previousOwner: ActorIdentity; previousGeneration: number } {
+  takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; completed: boolean; previousOwner?: ActorIdentity; previousGeneration?: number } {
     const now = this.clock();
-    // The stored run is the truth, as in CLOSE: a takeover never rewinds a disposition a concurrent call recorded.
-    const run = this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
-    const existing = this.leases.read(key);
-    if (!existing) throw new Error(`card ${card.id} has no lease record; run \`aidlc card next ${card.id}\` to claim it`);
-    if (existing.released) throw new Error(`the lease of card ${card.id} is released (generation ${existing.generation}); run \`aidlc card next ${card.id}\` to claim it`);
-    if (existing.owner.session === me.session && existing.owner.host === me.host) throw new Error(`this session owns card ${card.id} at generation ${existing.generation}; run \`aidlc card next ${card.id}\``);
-    const unresolved = this.ops.unresolved(goal.id, card.id).map((o) => o.id);
-    const taken = this.leases.takeover(key, () => ({ reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined }), { operation: `card:${card.id}`, now });
-    this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: taken.lease.generation, takeover: true, previousOwner: existing.owner.session, previousGeneration: existing.generation } });
-    const owned = this.save({ ...run, ownerGeneration: taken.lease.generation });
+    const mine = (l: Lease): boolean => !l.released && l.owner.session === me.session && l.owner.host === me.host;
+    const unresolvedNow = (): string[] => this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+    const first = this.leases.read(key);
+    if (!first) throw new Error(`card ${card.id} has no lease record; run \`aidlc card next ${card.id}\` to claim it`);
+    const seen: { previous?: { owner: ActorIdentity; generation: number } } = {};
+    let lease: Lease;
+    if (mine(first)) {
+      lease = first;
+    } else {
+      try {
+        lease = this.leases.takeover(
+          key,
+          (old) => {
+            if (old.released) throw new Error(`the lease of card ${card.id} is released (generation ${old.generation}); run \`aidlc card next ${card.id}\` to claim it`);
+            if (mine(old)) throw new AlreadyOwned(old);
+            const unresolved = unresolvedNow();
+            seen.previous = { owner: old.owner, generation: old.generation };
+            return { reconciled: unresolved.length === 0, unresolvedOperations: unresolved, note: unresolved.length ? 'reconcile with `aidlc ops reconcile` first' : undefined };
+          },
+          { operation: `card:${card.id}`, now },
+        ).lease;
+      } catch (err) {
+        if (!(err instanceof AlreadyOwned)) throw err;
+        lease = err.lease;
+        seen.previous = undefined;
+      }
+    }
+    const previous = seen.previous;
+    const current = this.store.getCardRun(goal.id, card.id) ?? caller;
+    if (!previous && current.ownerGeneration === lease.generation) throw new Error(`this session owns card ${card.id} at generation ${lease.generation}; run \`aidlc card next ${card.id}\``);
+    const data = previous ? { resource: key, leaseGeneration: lease.generation, takeover: true, previousOwner: previous.owner.session, previousGeneration: previous.generation } : { resource: key, leaseGeneration: lease.generation, takeover: true, completed: true };
+    this.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data });
+    const owned = this.save({ ...current, ownerGeneration: lease.generation });
     const assessed = this.assess(goal, card, owned, now);
     const next = this.save(assessed.next);
-    return { run: next, lease: assessed.lease ?? taken.lease, previousOwner: existing.owner, previousGeneration: existing.generation };
+    return { run: next, lease: assessed.lease ?? lease, completed: previous === undefined, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
   private prepare(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {

@@ -493,7 +493,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (!run) fail(`no run record for ${cardId} in ${id}; nothing to take over`);
       const r = runnerFor(c).takeover(goalRec, cardOf(c, cardId).card, run);
       c.controller.writeBoard(goalRec);
-      out(c, { cardId, goalId: id, lease: { generation: r.lease.generation, owner: r.lease.owner, expiresAt: r.lease.expiresAt }, previousOwner: { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration }, run: { state: r.run.state, ownerGeneration: r.run.ownerGeneration, stop: r.run.stop } }, () => `took over ${cardId} from session ${r.previousOwner.session}@${r.previousOwner.host} (generation ${r.previousGeneration} -> ${r.lease.generation}); state=${r.run.state}${r.run.stop ? `\n${formatStop(r.run.stop)}` : ''}\nnext: aidlc card next ${cardId} --goal ${id}`);
+      // A completed takeover finished the run update of one this session had already taken (the lease was already its own).
+      const from = r.previousOwner && r.previousGeneration !== undefined ? { session: r.previousOwner.session, host: r.previousOwner.host, generation: r.previousGeneration } : undefined;
+      const headline = from ? `took over ${cardId} from session ${from.session}@${from.host} (generation ${from.generation} -> ${r.lease.generation})` : `completed the takeover of ${cardId}: the lease was already this session's at generation ${r.lease.generation}, the run now carries it`;
+      out(c, { cardId, goalId: id, completed: r.completed, lease: { generation: r.lease.generation, owner: r.lease.owner, expiresAt: r.lease.expiresAt }, previousOwner: from, run: { state: r.run.state, ownerGeneration: r.run.ownerGeneration, stop: r.run.stop } }, () => `${headline}; state=${r.run.state}${r.run.stop ? `\n${formatStop(r.run.stop)}` : ''}\nnext: aidlc card next ${cardId} --goal ${id}`);
     });
   card
     .command('fix-task [cardId]')
