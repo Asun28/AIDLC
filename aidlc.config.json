@@ -10,7 +10,7 @@
   "mode": "remote",
   "shipPath": "github",
   "reviewPool": "default",
-  "reviewPolicyVersion": "REVIEW.md@2",
+  "reviewPolicyVersion": "REVIEW.md@3",
   "reviewer": "reviewer",
   "maxWorkers": 2,
   "family": "claude",
