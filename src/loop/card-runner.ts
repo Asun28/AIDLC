@@ -16,7 +16,7 @@ import { selectCardState, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
-import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun } from '../core/ci-policy.ts';
+import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, addMs, type BlockedReceipt, type Card, type EffortLevel, type Goal, type PreReviewRound, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
@@ -823,6 +823,21 @@ export class CardRunner {
     const decision = armed.review.invocations.find((i) => i.outcome === 'pending');
     if (decision) return `a formal review was reserved meanwhile (${decision.invocationId})`;
     if (armed.ownerGeneration !== issued.ownerGeneration) return `the owner generation changed (${issued.ownerGeneration ?? 'none'} admitted, ${armed.ownerGeneration ?? 'none'} recorded meanwhile)`;
+    // The review gates are recomputed on the reloaded record, not carried over from the admitted snapshot: a decision
+    // recorded meanwhile moves the ledger (a block advances the cycle, and a candidate admitted on the exhausted hand-off
+    // of the previous cycle holds no round in the new one), and a formal pass recorded meanwhile is not the one admitted.
+    if (armed.review.substantiveBlocks !== issued.review.substantiveBlocks || armed.review.substantiveDecisions !== issued.review.substantiveDecisions) {
+      return `the review ledger changed (cycle ${issued.review.substantiveBlocks}, ${issued.review.substantiveDecisions} decision(s) admitted; cycle ${armed.review.substantiveBlocks}, ${armed.review.substantiveDecisions} decision(s) recorded meanwhile)`;
+    }
+    const digest = armed.candidate?.digest ?? 'unknown';
+    const eligibility = this.preReviewEligibility(armed, digest);
+    if (!eligibility.eligible) return `the candidate lost its pre-review eligibility (${eligibility.reason})`;
+    const formal = this.config.formalReview;
+    if (formal.command.length) {
+      const last = [...armed.review.invocations].reverse().find((i) => i.reviewer === formal.reviewer && i.candidateDigest === digest);
+      const admitted = last?.outcome === 'pass' || (last?.outcome === 'block' && !this.invocationBlocking(armed, card, last));
+      if (!admitted) return `the candidate lost its formal review admission (${last?.outcome ?? 'no decision'} recorded meanwhile)`;
+    }
     return undefined;
   }
 
@@ -1771,8 +1786,8 @@ export class CardRunner {
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
     const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
-    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) =>
-      finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: { kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration } }));
+    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[]): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
+    const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
 
     switch (result.outcome) {
       case 'review-blocked': {
@@ -1811,25 +1826,31 @@ export class CardRunner {
           const finding = cls.evidence.find((e) => e.startsWith('security: '))?.slice('security: '.length) ?? cls.failedJobs.join(',');
           return stopWith(makeStop('risk', `security gate red: ${finding}`, 'remove the finding from the change or the history, then ship a new candidate; the gate is never rerun or bypassed', { at: now, global: false }), { dodReceipt: undefined, blockedReceipt: undefined });
         }
-        // The rerun allowance is decided on the CI ledger locked at completion: a rerun another window persisted meanwhile is kept and counted.
-        let granted = false;
+        // The rerun allowance, granted or denied, and the directive that follows are decided on the CI ledger locked at
+        // completion, never on the snapshot the ship was issued from: a rerun another window persisted meanwhile is kept and
+        // counted (that window's rerun is reconciled first), and one it cancelled meanwhile no longer consumes the allowance.
         const rerunOn = (ci: CardRun['ci']) => canRerun(ci, runId, 1, candidateDigest, cls.class);
-        if (rerunOn(run.ci).allowed) {
-          const applied = finish(
-            (latest) => {
-              granted = rerunOn(latest.ci).allowed;
-              return granted ? { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) } : {};
-            },
-            (next) => ({ run: next, directive: granted ? { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `Transient CI failure (${cls.evidence[0] ?? 'evidence'}): one same-origin rerun permitted and persisted; rerun the ship/CI for the same candidate and reconcile (aidlc card ci-reconcile ${card.id} --run ${runId}).` } : { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The rerun allowance of this candidate was consumed while the ship result was applied (${rerunOn(next.ci).reason}); run \`aidlc card next ${card.id}\` again.` } }),
-          );
-          if (granted) this.journal(goal.id).append({ type: 'CI_RERUN', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { runId, candidateDigest, persistedBeforeRequest: true } });
-          return applied;
-        }
-        const rerun = rerunOn(run.ci);
-        if (cls.class === 'code-defect') {
-          return buildWith(() => ({ dodReceipt: undefined, blockedReceipt: undefined }), `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.`);
-        }
-        return stopWith(makeStop('ci', rerun.reason, 'diagnose the failure before any further rerun', { at: now, global: false }));
+        const snapshotAllowed = rerunOn(run.ci).allowed;
+        let decided: RerunDecision | undefined;
+        const codeDefect = `CI code defect (${cls.evidence[0] ?? ''}): repair in BUILD and ship a new candidate.`;
+        const applied = finish(
+          (latest) => {
+            decided = rerunOn(latest.ci);
+            if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
+            if (cls.class === 'code-defect') return { state: 'BUILD', dodReceipt: undefined, blockedReceipt: undefined };
+            if (snapshotAllowed) return { state: 'WAIT' };
+            return { state: 'STOP', stop: makeStop('ci', decided.reason, 'diagnose the failure before any further rerun', { at: now, global: false }) };
+          },
+          (next) => {
+            if (decided?.allowed) return { run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `Transient CI failure (${cls.evidence[0] ?? 'evidence'}): one same-origin rerun permitted and persisted; rerun the ship/CI for the same candidate and reconcile (aidlc card ci-reconcile ${card.id} --run ${runId}).` } };
+            if (cls.class === 'code-defect') return { run: next, directive: buildDirective(next, codeDefect) };
+            if (snapshotAllowed) return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The rerun allowance of this candidate was consumed while the ship result was applied (${decided?.reason ?? rerunOn(next.ci).reason}); run \`aidlc card next ${card.id}\` again.` } };
+            const stop = next.stop ?? makeStop('ci', decided?.reason ?? rerunOn(next.ci).reason, 'diagnose the failure before any further rerun', { at: now, global: false });
+            return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+          },
+        );
+        if (decided?.allowed && applied.directive.kind === 'ship') this.journal(goal.id).append({ type: 'CI_RERUN', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { runId, candidateDigest, persistedBeforeRequest: true } });
+        return applied;
       }
       case 'dod-failed':
       case 'verify-failed':
