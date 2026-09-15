@@ -192,11 +192,11 @@ export class CardRunner {
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
   private assess(goal: Goal, card: Card, caller: CardRun, now: string): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
-    // Loop-owned evidence comes from the store, never from the caller's snapshot: a window that kept the run it read
-    // before another session's takeover writes neither that generation nor an older merge or closure record back (the
-    // three fields a raw card patch may not set either); everything else the caller passes is the run it means.
-    const stored = this.store.getCardRun(goal.id, card.id);
-    let run: CardRun = stored ? { ...caller, ownerGeneration: stored.ownerGeneration, mergeVerified: stored.mergeVerified, closure: stored.closure } : caller;
+    // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
+    // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
+    // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
+    // when no record exists yet.
+    let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = this.leases.read(key);
