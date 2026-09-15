@@ -231,7 +231,9 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
       for (const f of [files.srcCli, files.srcHook]) at(f, '2026-09-01T00:00:00Z');
       at(files.other, source);
     };
-    const run = (entry: string, env: Record<string, string> = {}) => spawnSync(process.execPath, [path.join(pkg, 'bin', entry)], { cwd: pkg, encoding: 'utf8', input: '', env: { ...process.env, ...env } });
+    // The child environment never carries the test process's own AIDLC_ENTRY_DEBUG; only a per-run override sets it.
+    const { AIDLC_ENTRY_DEBUG: _inherited, ...baseEnv } = process.env;
+    const run = (entry: string, env: Record<string, string> = {}) => spawnSync(process.execPath, [path.join(pkg, 'bin', entry)], { cwd: pkg, encoding: 'utf8', input: '', env: { ...baseEnv, ...env } });
     // The build is older than one source file: the sources run, for both entries.
     stamp('2026-09-02T00:00:00Z', '2026-09-03T00:00:00Z');
     let cli = run('aidlc.js');
@@ -257,6 +259,19 @@ describe('bin entries: the compiled build is loaded only when it is at least as 
     assert.match(hookLines[0]!, /target=.*entry\.js/);
     const quiet = run('aidlc-hook.js');
     assert.equal(quiet.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, 'without the variable the hook entry prints nothing');
+    // The developer's shell may export the variable: a run without an override never inherits it.
+    const parentDebug = process.env['AIDLC_ENTRY_DEBUG'];
+    process.env['AIDLC_ENTRY_DEBUG'] = '1';
+    try {
+      for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
+        const inherited = run(entry);
+        assert.equal(inherited.status, 0, inherited.stderr);
+        assert.equal(inherited.stderr.split(/\r?\n/).filter((l) => l.startsWith('[aidlc entry]')).length, 0, `${entry} never inherits AIDLC_ENTRY_DEBUG from the test's environment`);
+      }
+    } finally {
+      if (parentDebug === undefined) delete process.env['AIDLC_ENTRY_DEBUG'];
+      else process.env['AIDLC_ENTRY_DEBUG'] = parentDebug;
+    }
     // Both entries share the resolver.
     for (const entry of ['aidlc.js', 'aidlc-hook.js']) {
       const text = readFileSync(path.join(repoRoot, 'bin', entry), 'utf8');
