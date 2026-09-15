@@ -46,6 +46,7 @@ diagnosis:
   same_class: "doctor (main.ts:161) tested the same absent variable and is corrected with it. providers/claude-code.ts:58 uses the session_id of a headless claude -p result as the invocation id, not as the actor, and stays. The other five guards read no lease and need no session. card-runner.ts:164 already compares the lease owner's session and host with the acting process; the guard applies the same comparison. No other hook output quotes a file: the frozen-path, secrets and fix-task guards print the path or a pattern name only."
 hygiene: "CLAUDE_CODE_SESSION_ID is absent from the documented Claude Code variable list (code.claude.com/docs/en/env-vars); AIDLC_SESSION stays the explicit override and doctor prints the source, so a Claude Code that stops exporting it shows as source default again instead of failing silently. Test fixtures date expiry self-evidently (2020 expired, 2126 live) because reviewers cannot see the wall clock."
 doc_sync: docs/OPERATIONS.md (Sessions; Hooks table row verify-before-done), docs/ARCHITECTURE.md (state layer; persisted-state row session-default), README.md (Multi-session), CHANGELOG.md
+superseded_by: T0-SESSION-IDENTITY-3
 ---
 
 # T0-SESSION-IDENTITY-2
