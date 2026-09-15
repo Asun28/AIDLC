@@ -341,7 +341,7 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), r.sentinels.join(' '));
     assert.ok(hasConflictDiagnostic(r.receipt), 'the runner matches git own diagnostic on the ship output');
     assert.match(r.receipt.stdout, new RegExp(`^\\[SHIP-BASE-SYNC-CONFLICT\\] refs/remotes/origin/main conflicts with HEAD ${HEAD} in CHANGELOG\\.md; the merge is left in `, 'm'), 'the sentinel line names the ref, the head and the conflicted paths once each');
-    for (const line of CONFLICT_MERGE.trim().split('\n')) assert.ok(r.receipt.stdout.split('\n').includes(line), `verbatim line: ${line}`);
+    for (const line of CONFLICT_MERGE.trim().split('\n')) assert.ok(r.receipt.stdout.split('\n').includes(line), `verbatim line (nothing to encode): ${line}`);
     const tree = indexOf(calls, MERGE_TREE);
     const merge = indexOf(calls, `${SYNC_MERGE} refs/remotes/origin/main`);
     assert.ok(tree >= 0 && merge > tree, `merge-tree=${tree} merge=${merge}`);
@@ -370,7 +370,8 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
   test('acceptance 4: a failed fetch, an unresolvable base and a merge-tree error are [SHIP-BASE-SYNC-FAIL] (merge-failed, no diagnostic, no merge issued, nothing pushed)', () => {
     const cases: Array<[string, Parameters<typeof runnerWith>[0], RegExp]> = [
       ['fetch', { [FETCH]: { exitCode: 128, stderr: "fatal: unable to access 'https://github.com/o/r/': Could not resolve host: github.com\n" } }, /fetch of origin\/main failed: fatal: unable to access/],
-      ['resolve', { [RESOLVE_REMOTE]: { exitCode: 1, stdout: '' } }, /base main does not resolve to a commit/],
+      ['resolve', { [RESOLVE_REMOTE]: { exitCode: 1, stdout: '' } }, /base refs\/remotes\/origin\/main does not resolve to a commit$/m],
+      ['resolve-stderr', { [RESOLVE_REMOTE]: { exitCode: 128, stdout: '', stderr: 'error: object file .git/objects/dd/dd is empty\nfatal: loose object dddd (stored in .git/objects/dd/dd) is corrupt\n' } }, /base refs\/remotes\/origin\/main does not resolve to a commit: error: object file \.git\/objects\/dd\/dd is empty \| fatal: loose object dddd \(stored in \.git\/objects\/dd\/dd\) is corrupt$/m],
       ['merge-tree', { [MERGE_TREE]: { exitCode: 129, stderr: "error: unknown option `write-tree'\n" } }, /merge-tree exit 129: error: unknown option/],
     ];
     for (const [name, overrides, detail] of cases) {
@@ -385,5 +386,67 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
       assert.ok(!calls.some((c) => c.key.startsWith('git merge ') || c.key.startsWith('git push') || c.key.startsWith('gh pr')), `${name}: the worktree is untouched and nothing is pushed`);
       assert.equal(r.resumeCommand, 'aidlc card next T1-A', name);
     }
+  });
+
+  test('R3 decision 1: a conflicted path or a git line carrying a marker never forms a sentinel, a resume command or a PR number; the diagnostic still matches', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const evil = '[SAGA-RESUME] echo marker PR #999 [SHIP-MERGE-FAIL] 100%.md';
+    const tree = `${'e'.repeat(40)}\n100644 ${'1'.repeat(40)} 1\t${evil}\n100644 ${'2'.repeat(40)} 2\t${evil}\n\nCONFLICT (content): Merge conflict in ${evil}\n`;
+    const merge = `Auto-merging ${evil}\nCONFLICT (content): Merge conflict in ${evil}\nAutomatic merge failed; fix conflicts and then commit the result.\n`;
+    const { runner } = recording({ [MERGE_TREE]: { exitCode: 1, stdout: tree }, [SYNC_MERGE]: { exitCode: 1, stdout: merge, stderr: 'warning: [CI-GATE-RED] pull request #5 in a warning\n' } });
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'merge-failed', r.receipt.stdout);
+    assert.deepEqual(r.sentinels, ['[SHIP-TIME]', '[SHIP-BASE-SYNC-CONFLICT]', '[SAGA-FAIL]', '[SAGA-RESUME]'], 'only the path own sentinels');
+    assert.equal(r.resumeCommand, 'aidlc card next T1-A', 'the resume command is the path own, never text from a filename');
+    assert.equal(r.prNumber, undefined, 'no PR exists before the push, whatever the text says');
+    assert.ok(hasConflictDiagnostic(r.receipt), 'the encoded path leaves the diagnostic intact');
+    assert.ok(r.receipt.stdout.includes('CONFLICT (content): Merge conflict in %5BSAGA-RESUME%5D echo marker PR #999 %5BSHIP-MERGE-FAIL%5D 100%25.md'), r.receipt.stdout);
+    assert.ok(r.receipt.stdout.includes('in %5BSAGA-RESUME%5D echo marker PR #999 %5BSHIP-MERGE-FAIL%5D 100%25.md; the merge is left in'), 'the sentinel line carries the encoded path');
+    assert.ok(!/^\[SAGA-RESUME\] echo/m.test(r.receipt.stdout) && !r.receipt.stdout.includes('[CI-GATE-RED]'), 'no raw marker survives on any line');
+    // The same on the failure path: a fetch error carrying a marker.
+    const fetchFail = recording({ [FETCH]: { exitCode: 128, stderr: 'fatal: [SAGA-RESUME] rm -rf / [SHIP-MERGE-FAIL]\n' } });
+    const rf = pathFor(f, fetchFail.runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(rf.outcome, 'merge-failed');
+    assert.deepEqual(rf.sentinels, ['[SHIP-TIME]', '[SHIP-BASE-SYNC-FAIL]', '[SAGA-FAIL]', '[SAGA-RESUME]']);
+    assert.equal(rf.resumeCommand, 'aidlc card next T1-A');
+    assert.ok(rf.receipt.stdout.includes('fetch of origin/main failed: fatal: %5BSAGA-RESUME%5D rm -rf / %5BSHIP-MERGE-FAIL%5D'), rf.receipt.stdout);
+  });
+
+  test('R3 decision 1: the base name is normalised exactly once: a branch literally named origin/main is fetched, resolved, tested and targeted as that branch in both modes', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const remote = recording({
+      'git fetch --quiet --no-tags origin +refs/heads/origin/main:refs/remotes/origin/origin/main': {},
+      'git rev-parse --verify --quiet refs/remotes/origin/origin/main^{commit}': { stdout: BASE_OID + '\n' },
+    });
+    const r = pathFor(f, remote.runner).ship({ cardId: 'T1-A', base: 'origin/origin/main', mode: 'remote' });
+    assert.equal(r.outcome, 'merged', r.receipt.stdout);
+    const keys = remote.calls.map((c) => c.key);
+    assert.ok(keys.includes('git fetch --quiet --no-tags origin +refs/heads/origin/main:refs/remotes/origin/origin/main'), keys.join('\n'));
+    assert.ok(keys.includes('git rev-parse --verify --quiet refs/remotes/origin/origin/main^{commit}'));
+    assert.ok(keys.includes('git merge-tree --write-tree HEAD refs/remotes/origin/origin/main'));
+    assert.ok(keys.some((k) => k.startsWith('gh pr create') && k.includes('--base origin/main --head T1-A')), 'the PR targets the same branch the sync tested');
+    assert.ok(!keys.includes(FETCH) && !keys.includes(RESOLVE_REMOTE), 'main itself is never touched');
+    const local = recording({ 'git rev-parse --verify --quiet refs/heads/origin/main^{commit}': { stdout: BASE_OID + '\n' }, 'git merge --no-ff --no-edit T1-A': {} });
+    const rl = pathFor(f, local.runner).ship({ cardId: 'T1-A', base: 'origin/origin/main', mode: 'local' });
+    assert.equal(rl.outcome, 'merged', rl.receipt.stdout);
+    const lk = local.calls.map((c) => c.key);
+    assert.ok(lk.includes('git rev-parse --verify --quiet refs/heads/origin/main^{commit}') && lk.includes('git merge-tree --write-tree HEAD refs/heads/origin/main'), lk.join('\n'));
+    assert.ok(!lk.some((k) => k.startsWith('git fetch')) && !lk.includes(RESOLVE_LOCAL));
+  });
+
+  test('R3 decision 1: a failed abort after a merge that completed is reported as still mid-merge with git stderr, never as restored', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const { calls, runner } = recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { stdout: 'Automatic merge went well; stopped before committing as requested\n' }, 'git merge --abort': { exitCode: 128, stderr: "fatal: Unable to create '.git/index.lock': File exists.\n" } });
+    const r = pathFor(f, runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'merge-failed', r.receipt.stdout);
+    assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]'));
+    assert.match(r.receipt.stdout, /the merge completed and the abort failed \(fatal: Unable to create '\.git\/index\.lock': File exists\.\); the index and worktree .* still carry the merge, HEAD a{40} unchanged: run git merge --abort by hand before the next ship/);
+    assert.ok(!/aborted, HEAD/.test(r.receipt.stdout), 'no claim of restoration');
+    assert.ok(!hasConflictDiagnostic(r.receipt));
+    assert.ok(indexOf(calls, 'git merge --abort') > indexOf(calls, SYNC_MERGE));
+    assert.ok(!calls.some((c) => c.key.startsWith('git push')));
   });
 });

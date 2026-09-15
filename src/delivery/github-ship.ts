@@ -34,17 +34,21 @@ export interface GitHubShipOptions {
   requireVerdict?: boolean;
 }
 
-/** Check names travel in the gate lines as JSON with brackets and percent signs encoded: a name can never form a sentinel or break a line. `gateChecks` in core/ci-policy decodes them. */
-function encodeCheckName(name: string): string {
-  return name.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+/**
+ * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync) travels
+ * with brackets and percent signs encoded, so it can never form a sentinel or a `[SAGA-RESUME]` marker; everything
+ * else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
+ */
+function encodeUntrusted(text: string): string {
+  return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
 }
 
-/** Non-empty output lines, line endings normalised, so each git message keeps its own line on the ship output. */
+/** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
 function lines(text: string): string[] {
-  return text.split(/\r?\n/).filter((l) => l.trim() !== '');
+  return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
 }
 
-/** A failure detail on one line: git's stderr collapsed so the sentinel line stays one line. */
+/** A failure detail on one line: git's stderr collapsed (and encoded) so the sentinel line stays one line. */
 function oneLine(text: string): string {
   return lines(text).join(' | ').trim();
 }
@@ -64,7 +68,7 @@ function conflictedPaths(stdout: string): string[] {
 }
 
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
-  return JSON.stringify(runs.map((r) => ({ name: encodeCheckName(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
+  return JSON.stringify(runs.map((r) => ({ name: encodeUntrusted(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
     .replace(/\u2028/g, '\\u2028')
     .replace(/\u2029/g, '\\u2029'); // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
 }
@@ -96,9 +100,12 @@ export class GitHubShipPath implements ShipPath {
     const started = new Date();
     const log: string[] = [];
     const wt = this.worktreePath(req.cardId);
-    const fail = (sentinel: string, detail: string): ShipResult => {
-      log.push(`${sentinel} ${detail}`, '[SAGA-FAIL]', `[SAGA-RESUME] aidlc card next ${req.cardId}`);
-      return classifyShipOutput(this.receipt(log, 1, started));
+    const resume = `aidlc card next ${req.cardId}`;
+    // The resume command and the PR identity come from this path's own state, never from the output text: git's
+    // lines and paths on the output are encoded, but the classifier's text scan is not the producer of record.
+    const fail = (sentinel: string, detail: string, prNumber?: number): ShipResult => {
+      log.push(`${sentinel} ${detail}`, '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
+      return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
     // auth guard
@@ -123,20 +130,21 @@ export class GitHubShipPath implements ShipPath {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
       if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
     }
+    // The base name, normalised exactly once: the branch the PR targets and the ref the sync fetches and tests.
+    const base = req.base.replace(/^origin\//, '');
     // Base sync before any remote effect or local merge: the reviewed head must merge cleanly into the base it targets.
-    const sync = this.baseSync(req, wt, head, log);
+    const sync = this.baseSync(req.mode, base, wt, head, log);
     if (sync) return fail(sync.sentinel, sync.detail);
     if (req.mode === 'local') {
       const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });
       if (merge.exitCode !== 0) return fail('[SHIP-LOCAL-MERGE-FAIL]', merge.stderr);
       this.writeToken(req.cardId, `tip=${head}\nmerged=${this.git.head(this.options.mainRoot)}\nutc=${new Date().toISOString()}`);
       log.push('[SAGA-DONE] local merge');
-      return classifyShipOutput(this.receipt(log, 0, started));
+      return { ...classifyShipOutput(this.receipt(log, 0, started)), resumeCommand: undefined, prNumber: undefined };
     }
     // push + PR
     const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt });
     if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr);
-    const base = req.base.replace(/^origin\//, '');
     const resolved = this.gh.resolvePr(this.options.repository, req.cardId, base, undefined, wt);
     if (resolved.problem && !resolved.pr) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem);
     let prNumber = resolved.pr?.number;
@@ -167,59 +175,62 @@ export class GitHubShipPath implements ShipPath {
         return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
       };
       const failed = runs.filter((r) => r.status === 'completed' && !green(r));
-      if (failed.length) return { ...fail('[CI-GATE-RED]', checksJson(failed)), prNumber };
+      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber);
       if (!pending.length && runs.length > 0) break;
-      if (Date.now() > deadline) return { ...fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`), prNumber };
+      if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber);
       log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
       sleep(poll);
     }
     log.push('[CI-GATE-PASS]');
     const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.options.repository, '--squash', '--match-head-commit', head], { cwd: wt });
-    if (merge.exitCode !== 0) return { ...fail('[SHIP-MERGE-FAIL]', merge.stderr), prNumber };
+    if (merge.exitCode !== 0) return fail('[SHIP-MERGE-FAIL]', merge.stderr, prNumber);
     const view = this.gh.prView(this.options.repository, prNumber, wt);
-    if (view.state !== 'MERGED') return { ...fail('[SHIP-MERGE-FAIL]', `PR #${prNumber} state ${view.state} after merge`), prNumber };
+    if (view.state !== 'MERGED') return fail('[SHIP-MERGE-FAIL]', `PR #${prNumber} state ${view.state} after merge`, prNumber);
     this.writeToken(req.cardId, `tip=${head}\nmerged_pr=#${prNumber}\nutc=${new Date().toISOString()}`);
     log.push('[SAGA-DONE]');
     return { ...classifyShipOutput(this.receipt(log, 0, started)), prNumber };
   }
 
   /**
-   * Base sync (T0-SHIP-BASE-SYNC). Remote mode fetches the base into `refs/remotes/origin/<base>`; local mode takes
-   * `refs/heads/<base>`, the branch the local merge targets. `git merge-tree --write-tree HEAD <ref>` (git 2.38+) then
-   * tests the merge without touching a ref or the worktree: exit 0 is clean and the head stays the reviewed candidate,
-   * exit 1 is a conflict, anything else a failure. On a conflict the same merge is started in the worktree without a
-   * commit, so the markers are there for the merge-conflicts skill and the branch head cannot move here, and every
-   * line git printed goes on the ship output verbatim: the card runner matches git's own diagnostic (`CONFLICT (...)`)
-   * to return the card to BUILD. A merge that completes although merge-tree reported a conflict is aborted and
-   * reported as a failure, never pushed. Git runs with `LC_ALL=C` so the diagnostic is the English line the runner
-   * matches. Returns the failure to report, or undefined when the chain may continue.
+   * Base sync (T0-SHIP-BASE-SYNC). `base` is the branch name normalised once by the caller (the PR target). Remote
+   * mode fetches it into `refs/remotes/origin/<base>`; local mode takes `refs/heads/<base>`, the branch the local
+   * merge targets. `git merge-tree --write-tree HEAD <ref>` (git 2.38+) then tests the merge without touching a ref or
+   * the worktree: exit 0 is clean and the head stays the reviewed candidate, exit 1 is a conflict, anything else a
+   * failure. On a conflict the same merge is started in the worktree without a commit, so the markers are there for
+   * the merge-conflicts skill and the branch head cannot move here, and every line git printed goes on the ship
+   * output (encoded, see `encodeUntrusted`): the card runner matches git's own diagnostic (`CONFLICT (...)`) to
+   * return the card to BUILD. A merge that completes although merge-tree reported a conflict is aborted, and the abort
+   * receipt decides what the failure line says: restored, or still mid-merge. Every failed git receipt keeps its
+   * stderr on the failure line. Git runs with `LC_ALL=C` so the diagnostic is the English line the runner matches.
+   * Returns the failure to report, or undefined when the chain may continue.
    */
-  private baseSync(req: ShipRequest, wt: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
-    const base = req.base.replace(/^origin\//, '');
-    let resolved: { ref: string; oid: string } | undefined;
-    if (req.mode === 'remote') {
-      const fetch = this.git.fetchBase(wt, base);
-      if (fetch.exitCode !== 0) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `fetch of origin/${base} failed: ${oneLine(fetch.stderr)}` };
-      resolved = this.git.resolveBase(wt, `origin/${base}`);
-    } else {
-      resolved = this.git.resolveBase(wt, base, true);
-    }
-    if (!resolved) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `base ${base} does not resolve to a commit` };
+  private baseSync(mode: 'local' | 'remote', base: string, wt: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
     const env = { ...process.env, LC_ALL: 'C' };
-    const test = this.runner('git', ['merge-tree', '--write-tree', 'HEAD', resolved.ref], { cwd: wt, env });
+    const git = (args: string[]): ExecReceipt => this.runner('git', args, { cwd: wt, env, timeoutMs: 60_000 });
+    const failed = (detail: string) => ({ sentinel: '[SHIP-BASE-SYNC-FAIL]', detail });
+    const ref = mode === 'remote' ? `refs/remotes/origin/${base}` : `refs/heads/${base}`;
+    if (mode === 'remote') {
+      const fetch = git(['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${base}:${ref}`]);
+      if (fetch.exitCode !== 0) return failed(`fetch of origin/${base} failed: ${oneLine(fetch.stderr)}`);
+    }
+    const resolve = git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    const oid = resolve.stdout.trim();
+    if (resolve.exitCode !== 0 || !oid) return failed(`base ${ref} does not resolve to a commit${resolve.stderr.trim() ? `: ${oneLine(resolve.stderr)}` : ''}`);
+    const test = git(['merge-tree', '--write-tree', 'HEAD', ref]);
     if (test.exitCode === 0) {
-      log.push(`base sync: ${resolved.ref} (${resolved.oid}) merges cleanly into HEAD ${head}`);
+      log.push(`base sync: ${ref} (${oid}) merges cleanly into HEAD ${head}`);
       return undefined;
     }
-    if (test.exitCode !== 1) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `merge-tree exit ${test.exitCode}: ${oneLine(test.stderr)}` };
-    const paths = conflictedPaths(test.stdout).join(', ') || 'unnamed paths';
-    const merge = this.runner('git', ['merge', '--no-ff', '--no-commit', resolved.ref], { cwd: wt, env });
+    if (test.exitCode !== 1) return failed(`merge-tree exit ${test.exitCode}: ${oneLine(test.stderr)}`);
+    const paths = conflictedPaths(test.stdout).map(encodeUntrusted).join(', ') || 'unnamed paths';
+    const merge = git(['merge', '--no-ff', '--no-commit', ref]);
     if (merge.exitCode === 0) {
-      this.runner('git', ['merge', '--abort'], { cwd: wt, env });
-      return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged` };
+      const abort = git(['merge', '--abort']);
+      if (abort.exitCode !== 0) return failed(`merge-tree reported a conflict in ${paths} but the merge completed and the abort failed (${oneLine(abort.stderr)}); the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship`);
+      return failed(`merge-tree reported a conflict in ${paths} but the merge completed; aborted, HEAD ${head} unchanged`);
     }
     log.push(...lines(merge.stdout), ...lines(merge.stderr));
-    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${resolved.ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
+    return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
   }
 
   private tokenFile(cardId: string): string {
