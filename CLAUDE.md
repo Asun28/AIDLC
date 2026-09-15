@@ -30,8 +30,8 @@ There is no linter; strict `tsc` is the only static gate.
 
 Note: `bin/aidlc.js` and `bin/aidlc-hook.js` load `dist/` only when the
 compiled entry is at least as new as every file under `src/`
-(`bin/resolve-entry.js`); a build older than any source file is stale and
-the sources run instead. `AIDLC_ENTRY_DEBUG=1` prints the choice.
+(`bin/resolve-entry.js`, links followed); a build older than any source
+file, or a source tree that cannot be fully inspected, runs the sources. `AIDLC_ENTRY_DEBUG=1` prints the choice.
 `npm run dev -- <cmd>` always runs the sources.
 
 ## Architecture
