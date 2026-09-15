@@ -535,6 +535,16 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.ok(indexOf(open.calls, 'gh pr list') < indexOf(open.calls, FETCH) && indexOf(open.calls, FETCH) < indexOf(open.calls, 'git push'), ok.join('\n'));
     assert.ok(!ok.some((k) => k.startsWith('gh pr create')), 'the open PR is reused');
     assert.ok(ok.some((k) => k.startsWith('gh pr merge 8 ')), ok.join('\n'));
+    // A failure after the open PR was resolved still carries its number: the sync conflict and the push failure.
+    const openPr = { 'gh pr list': { stdout: JSON.stringify([{ number: 8, state: 'OPEN', headRefOid: HEAD, baseRefName: 'main' }]) } };
+    const conflict = pathFor(f, recording({ ...openPr, [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(conflict.outcome, 'merge-failed', conflict.receipt.stdout);
+    assert.equal(conflict.prNumber, 8, 'the resolved open PR is the identity of the conflict result');
+    const pushFail = pathFor(f, recording({ ...openPr, 'git push': { exitCode: 1, stderr: 'remote: rejected\n' } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(pushFail.outcome, 'push-failed', pushFail.receipt.stdout);
+    assert.equal(pushFail.prNumber, 8, 'the resolved open PR is the identity of the push failure');
+    const noPr = pathFor(f, recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(noPr.prNumber, undefined, 'no PR resolved, no number');
   });
 
   test('T0-SHIP-BASE-SYNC-2 acceptance 8: the docs and the header comment state the chain with the reconciliation and the sync, the sentinels, the git 2.38 requirement and the three conditions', () => {

@@ -148,7 +148,7 @@ export class GitHubShipPath implements ShipPath {
     }
     // Base sync before any remote effect or local merge: the reviewed head must merge cleanly into the base it targets.
     const sync = this.baseSync(req.mode, base, wt, head, log);
-    if (sync) return fail(sync.sentinel, sync.detail);
+    if (sync) return fail(sync.sentinel, sync.detail, prNumber);
     if (req.mode === 'local') {
       const merge = this.runner('git', ['merge', '--no-ff', '--no-edit', req.cardId], { cwd: this.options.mainRoot });
       if (merge.exitCode !== 0) return fail('[SHIP-LOCAL-MERGE-FAIL]', merge.stderr);
@@ -158,7 +158,7 @@ export class GitHubShipPath implements ShipPath {
     }
     // push + PR
     const push = this.runner('git', ['push', '-u', 'origin', req.cardId], { cwd: wt });
-    if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr);
+    if (push.exitCode !== 0) return fail('[SHIP-PUSH-FAIL]', push.stderr, prNumber);
     if (!prNumber) {
       const create = this.runner('gh', ['pr', 'create', '--repo', this.options.repository, '--base', base, '--head', req.cardId, '--title', `feat: [${req.cardId}]`, '--body', `Closed loop: worktree + TDD + independent review. DoD in specs/tasks/${req.cardId}.md.`], { cwd: wt });
       if (create.exitCode !== 0) return fail('[SHIP-PR-NUMBER-FAIL]', create.stderr);
