@@ -4,6 +4,7 @@ title: The bin entries load the sources when the compiled build is older than an
 status: todo
 branch: T0-BIN-STALE-DIST
 worktree: C:\wt\T0-BIN-STALE-DIST
+superseded_by: T0-BIN-STALE-DIST-2
 allow_paths:
   - bin/aidlc.js
   - bin/aidlc-hook.js
