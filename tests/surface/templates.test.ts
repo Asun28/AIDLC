@@ -176,4 +176,26 @@ describe('templates (Q14 packaging)', () => {
     assert.match(unreleased, /T1-REVIEW-FINDINGS-2/, 'CHANGELOG Unreleased carries the entry');
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
+
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry REVIEW.md@3, and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+    for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
+      const review = readFileSync(file, 'utf8');
+      assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
+    }
+    for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@3', `${file} policy version`);
+    }
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
+    assert.match(operations, /policy_hash/, 'OPERATIONS.md records the policy hash');
+    assert.match(operations, /## Delta since the last reviewed candidate/, 'OPERATIONS.md records the delta section');
+    assert.match(operations, /first-round miss/, 'OPERATIONS.md records the first-round miss');
+    assert.match(operations, /\[question\][^\n]*\[suggestion\]/, 'OPERATIONS.md records the tags');
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.match(architecture, /policy hash/, 'ARCHITECTURE.md names the policy hash');
+    assert.match(architecture, /first-round miss/, 'ARCHITECTURE.md names the first-round miss');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T1-REVIEW-INPUTS/, 'CHANGELOG Unreleased carries the entry');
+  });
 });

@@ -106,6 +106,11 @@ function providerFor(name: string | undefined, config: ProjectConfig): ModelProv
   return new ClaudeApiProvider();
 }
 
+/** The text summary of a pre-review round (`aidlc review pre`): the verdict line, the block reasons, the advisory notes and the next command. */
+export function preReviewSummaryText(summary: { reviewer: string; round: number; maxRounds: number; cycle: number; outcome: string; runStatus?: string; durationMs: number; perspectives: string[]; reasons: string[]; advisory: string[]; state: string }, cardId: string): string {
+  return `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``;
+}
+
 export async function main(argv: string[] = process.argv): Promise<void> {
   const program = new Command();
   program.name('aidlc').description('AI-native SDLC orchestrator: intent -> spec -> plan -> cards -> verified delivery').version('0.1.0');
@@ -648,8 +653,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
-      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
-      out(c, summary, () => `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
+      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
+      out(c, summary, () => preReviewSummaryText(summary, cardId));
     });
   review
     .command('r3 <cardId>')
@@ -663,8 +668,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: c.config.formalReview.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
       out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
-  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; disputes: Array<{ note: string }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
-    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note: ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
+  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; outsideDelta?: boolean; disputes: Array<{ note: string }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
+    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''}${f.outsideDelta ? ' (first-round miss)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note: ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
   review
     .command('findings <cardId>')
     .description('list the findings of the card run with their dispositions, disputes, re-raises and resolution')

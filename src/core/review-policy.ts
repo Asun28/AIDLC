@@ -251,6 +251,8 @@ export interface RecordFindingsInput {
   seen?: Record<string, FindingSnapshot>;
   /** The angle that wrote each reason, from the structured panel result; takes precedence over a trailing `(<angle>)` tag. */
   perspectiveByReason?: Record<string, string>;
+  /** Paths of the delta since the candidate the stage last reviewed (empty when the candidate is unchanged); absent on a first round. A new finding citing a file outside it is a first-round miss. */
+  deltaPaths?: string[];
 }
 
 /** One finding as a reviewer received it at dispatch. */
@@ -329,6 +331,7 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
     const id = nextFindingId(next);
     const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
     if (input.advisory) finding.advisory = true;
+    if (input.deltaPaths && (!finding.file || !input.deltaPaths.includes(finding.file))) finding.outsideDelta = true;
     next = [...next, finding];
     raised.push(id);
   }

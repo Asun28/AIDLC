@@ -450,3 +450,16 @@ describe('resolution by the deciding stage and the second-dispute window (T1-REV
     assert.equal(policy.disputeFinding(f, 'F1', 'a second answer', LATEST)[0]!.disputes.length, 2, 'the earlier answering re-raise keeps the second dispute open');
   });
 });
+
+describe('first-round misses (T1-REVIEW-INPUTS acceptance 3)', () => {
+  const raise = (findings: ReviewFinding[], round: number, reasons: string[], deltaPaths?: string[]) => policy.recordFindings(findings, { stage: 'pre', cycle: 0, round, candidateSha: `sha-${round}`, at: T0, outcome: 'block', reasons, deltaPaths });
+
+  test('a new finding whose cited file is outside the delta is marked outsideDelta; inside it is not; a first round marks nothing; an empty delta marks every new finding; a re-raise is never marked', () => {
+    const first = raise([], 1, ['[spec] 6 tests @ src/a.ts:1: no RED -> add one']);
+    assert.equal(first.findings[0]!.outsideDelta, undefined, 'a first round has no delta to be outside of');
+    const second = raise(first.findings, 2, ['[spec] 6 tests @ src/a.ts:1: still no RED (re:F1) -> add one', '[standards] 9 error handling @ src/a.ts:9: swallowed -> rethrow', '[standards] 9 error handling @ src/b.ts:3: swallowed -> rethrow'], ['src/b.ts']);
+    assert.deepEqual(second.findings.map((f) => [f.id, f.outsideDelta ?? false]), [['F1', false], ['F2', true], ['F3', false]], 'F2 cites a file the delta did not touch');
+    const same = raise(second.findings, 3, ['[spec] 14 scope @ src/b.ts:5: helper -> remove'], []);
+    assert.equal(same.findings.find((f) => f.id === 'F4')?.outsideDelta, true, 'on an unchanged candidate every new finding is a first-round miss');
+  });
+});

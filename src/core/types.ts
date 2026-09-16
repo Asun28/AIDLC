@@ -260,6 +260,8 @@ export const ReviewInvocation = z.object({
   mergeBlocking: z.boolean().optional(),
   /** The committed sha the decision was bound to (the digest also covers uncommitted inputs). */
   candidateSha: z.string().optional(),
+  /** sha256 of the review policy text the decision applied: the prompt's policy section for a command decision, the `policy_hash` the verdict document names for a ship-path one (absent when the document names none, and on records written before the field existed). */
+  policyHash: z.string().optional(),
   /** Digest of the verdict document a ship-path reviewer wrote; a re-read of the same artifact is the same decision. */
   artifactDigest: z.string().optional(),
 });
@@ -299,6 +301,10 @@ export const PreReviewRound = z.object({
   perspectives: z.array(PerspectiveRecord).optional(),
   /** The reservation id of the dispatch (the retention file stem); a pending record is replaced by the decided one under it. */
   reservationId: z.string().optional(),
+  /** sha256 of the review policy text the round applied. */
+  policyHash: z.string().optional(),
+  /** Reasons the round reported that never block (uncited, or tagged `[question]` or `[suggestion]`); handed to the formal review. Absent on records written before it existed. */
+  advisory: z.array(z.string()).optional(),
 });
 export type PreReviewRound = z.infer<typeof PreReviewRound>;
 
@@ -357,6 +363,8 @@ export const ReviewFinding = z.object({
   resolvedAt: IsoTimestamp.optional(),
   /** Raised by an advisory block (standards-only without a required gate): retained, never a merge bar. */
   advisory: z.boolean().optional(),
+  /** Raised by a later round of its stage on a file the delta since the last reviewed candidate did not touch (every new finding when that delta is empty): a first-round miss. */
+  outsideDelta: z.boolean().optional(),
   /** Bumped by every change (dispute, withdrawal, re-raise, resolution); a round compares it with the revision it received. */
   revision: z.number().int().nonnegative().default(0),
 });
