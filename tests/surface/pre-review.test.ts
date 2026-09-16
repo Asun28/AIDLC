@@ -8,6 +8,7 @@ import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPre
 import * as inputs from '../../src/review/pre-review.ts';
 import * as cli from '../../src/cli/main.ts';
 import { createHash } from 'node:crypto';
+import { classifyVerdict } from '../../src/core/review-policy.ts';
 import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -197,7 +198,7 @@ test('formal review (R3) command: placeholders expand, the prompt is passed in a
   // the formal prompt without an embedded diff tells the reviewer where to look instead
   const formal = buildReviewPrompt({ stage: 'formal', includeDiff: false, reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: 'SHOULD NOT APPEAR', priorFindings: [], round: 1, maxRounds: 2 });
   assert.ok(formal.includes('formal reviewer (R3)'));
-  assert.ok(formal.includes('git diff main...HEAD'));
+  assert.ok(formal.includes('git diff main...def456'), 'the pinned diff command ends at the candidate sha, never at HEAD');
   assert.ok(!formal.includes('SHOULD NOT APPEAR'));
 });
 
@@ -505,7 +506,7 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F8): a repository-reading reviewer (no emb
   const base = { stage: 'formal' as const, reviewPolicy: 'policy', card, base: 'main', head: 'sha-2', changedPaths: ['src/gate.ts'], priorFindings: [] as PriorFinding[], round: 2, maxRounds: 2, delta };
   const argv = buildReviewPrompt({ ...base, includeDiff: false, diff: 'SHOULD NOT APPEAR' });
   const section = argv.slice(argv.indexOf('## Delta since the last reviewed candidate'), argv.indexOf('## Diff'));
-  assert.ok(section.includes('git diff sha-1...HEAD') && section.includes('src/gate.ts'), `the delta names its command and its paths: ${section}`);
+  assert.ok(section.includes('git diff sha-1...sha-2') && section.includes('src/gate.ts') && !section.includes('HEAD'), `the delta names its command pinned to the candidate and its paths: ${section}`);
   assert.ok(!argv.includes('-export const gate = 1;') && !argv.includes('\`\`\`diff'), 'no diff text travels in an argv prompt');
   assert.ok(buildReviewPrompt({ ...base, includeDiff: true, diff: '+x\n' }).includes('-export const gate = 1;'), 'a stdin prompt embeds it');
 });
@@ -524,4 +525,17 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F7): tagged reasons are stripped from a sh
   assert.deepEqual(mixed.advisory, [question]);
   assert.deepEqual(inputs.stripAdvisoryTags({ verdict: 'block', reasons: [cited] }).advisory, [], 'a cited block is untouched');
   assert.deepEqual(inputs.stripAdvisoryTags({ verdict: 'pass', reasons: [question] }).advisory, [question], 'notes on a pass are advisory');
+});
+
+test('T1-REVIEW-INPUTS R3 decision 2 (F12): stripping a tagged reason downgrades only an axis that carried tags and none else; an axis whose reasons live at the root keeps its block', () => {
+  const cited = '[spec] 6 tests @ src/gate.ts:1: no RED -> add one';
+  const suggestion = '[suggestion] @ src/gate.ts:9: extract the helper -> optional';
+  const kept = inputs.stripAdvisoryTags({ verdict: 'block', reasons: [cited, suggestion], axes: { spec: { verdict: 'block', reasons: [] }, standards: { verdict: 'pass', reasons: [] } } });
+  assert.equal(kept.verdict.verdict, 'block');
+  assert.equal(kept.verdict.axes?.spec?.verdict, 'block', 'the spec axis is carried by the surviving root reason');
+  assert.deepEqual(kept.verdict.reasons, [cited]);
+  assert.deepEqual(kept.advisory, [suggestion]);
+  const c = classifyVerdict(kept.verdict, { candidateSha: undefined, tier: 'S' });
+  assert.equal(c.outcome, 'block-defect', 'a Tier-S spec block stays merge-blocking');
+  assert.equal(c.mergeBlocking, true);
 });

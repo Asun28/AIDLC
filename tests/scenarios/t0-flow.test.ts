@@ -3355,8 +3355,10 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F6, F7): a ship-path decision records the 
     const runner = fx.runner(new HashedShipPath(['review-blocked', 'merged'], blockByTag));
     const s = cardAtShip(fx, runner, 'T1-TAG');
     const { goal } = s;
-    assert.equal(s.directive.kind, 'review-fix', `the ship path refused, so the author is handed the notes: ${s.directive.narration}`);
-    if (s.directive.kind === 'review-fix') assert.ok(s.directive.reasons.some((x) => x.includes(question)), 'the advisory note is handed back');
+    assert.equal(s.directive.kind, 'stop', `the ship path refused on advisory notes only: a human decides, no repair is asked: ${s.directive.narration}`);
+    if (s.directive.kind === 'stop') assert.ok(s.directive.stop.reason === 'review' && s.directive.stop.detail.includes(question), 'the stop names the notes');
+    assert.equal(s.run.dodReceipt, 'dod:1', 'the DoD receipt stands');
+    assert.equal(s.run.blockedReceipt, undefined, 'nothing was cleared into a retained receipt');
     assert.equal(s.run.review.substantiveBlocks, 0, 'no block consumed');
     assert.equal(s.run.review.invocations.at(-1)?.outcome, 'pass', 'the ledger records a pass with the notes');
     assert.equal(s.run.review.invocations.at(-1)?.policyHash, 'h'.repeat(64), 'the hash the verdict document names is recorded');
@@ -3392,6 +3394,84 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F9): a result envelope whose policy hash c
     const legacy = await runner.formalReview(g(), card, run);
     assert.equal(legacy.classified.outcome, 'pass');
     assert.equal(legacy.run.review.invocations.at(-1)?.policyHash, 'a'.repeat(64), 'the reserved hash is authoritative');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-INPUTS R3 decision 2 (F5 re-raised): the hand-off is recorded only after the last cap check; a decision landing during the hand-off write refuses in the reservation lock, and the delta the refused review then recollects is capped before any hand-off', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, maxDiffBytes: 100 } } });
+  try {
+    const script = scriptedRunner({
+      'git diff --name-only -z sha-0...HEAD': { stdout: 'src/t1-ho3.ts\n' },
+      'git diff --text sha-0...HEAD': { stdout: 'diff --git a/src/t1-ho3.ts b/src/t1-ho3.ts\n' + '+export const ho3 = 1;\n'.repeat(4) },
+      'git diff --name-only': { stdout: 'src/t1-ho3.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-ho3.ts b/src/t1-ho3.ts\n+export const ho3 = 1;\n' },
+      'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho3.ts:1: no RED -> add one"]}\n' }),
+      'fake-r3': () => ({ stdout: R3_PASS }),
+    });
+    const mk = (formal: number) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, formalReview: { ...fx.config.formalReview, maxDiffBytes: formal } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    const runner = mk(100);
+    const s = cardAtShip(fx, runner, 'T1-HO3');
+    const { card, g, goal } = s;
+    const round = await runner.preReview(g(), card, s.run);
+    assert.equal(round.result.outcome, 'block', 'exhausted after the single round');
+    // Another window commits an older-candidate decision while the hand-off is written (the first locked write of the command).
+    const older = (current: CardRun | undefined): CardRun | undefined =>
+      current && { ...current, review: { ...current.review, substantiveDecisions: current.review.substantiveDecisions + 1, invocations: [...current.review.invocations, { invocationId: 'r3:other-window', candidateDigest: 'sha-0', candidateSha: 'sha-0', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'fake-r3', requestedAt: fx.now(), outcome: 'pass' as const, runStatus: 'success' as const }] } };
+    const realUpdate = fx.store.updateCardRun.bind(fx.store);
+    let updates = 0;
+    fx.store.updateCardRun = ((goalId: string, cardId: string, change: Parameters<typeof realUpdate>[2]) => {
+      updates += 1;
+      return realUpdate(goalId, cardId, updates === 1 ? (current) => change(older(current)) : change);
+    }) as typeof fx.store.updateCardRun;
+    try {
+      await assert.rejects(() => runner.formalReview(g(), card, round.run), /run the command again/, 'the reservation lock sees the moved candidate');
+    } finally {
+      fx.store.updateCardRun = realUpdate;
+    }
+    let stored = fx.store.getCardRun(goal.id, 'T1-HO3')!;
+    assert.equal(stored.preReview.handoffs.length, 1, 'the hand-off is R2 bookkeeping and stays');
+    assert.ok(!stored.review.invocations.some((i) => i.outcome === 'pending'), 'nothing reserved');
+    assert.equal(fx.queue.list(fx.config.reviewPool).filter((q) => q.requesters.includes(`${goal.id}:T1-HO3`) && q.state !== 'cancelled').length, 0, 'the pool request is cancelled');
+    // Run again: the delta since sha-0 is above the cap and refuses before anything is recorded; the hand-off is not recorded twice.
+    await assert.rejects(() => runner.formalReview(g(), card, stored), /bytes[\s\S]*formalReview\.maxDiffBytes[\s\S]*100/, 'the recollected delta is capped');
+    stored = fx.store.getCardRun(goal.id, 'T1-HO3')!;
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED' && e.data['exhausted'] === true).length, 1, 'one hand-off event in total');
+    assert.ok(!stored.review.invocations.some((i) => i.outcome === 'pending'), 'nothing reserved by the refused review');
+    const f = await mk(1000).formalReview(g(), card, stored);
+    assert.equal(f.classified.outcome, 'pass');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-INPUTS R3 decision 2 (F6 re-raised, F10): a ship-path decision whose document names no policy_hash is bound to the policy in force at dispatch, and its findings are marked against the delta since the formal stage last reviewed candidate: on the identical sha every new finding is a first-round miss', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const policy = '# Review instructions\nMust-block 1-6.\n';
+    writeFileSync(path.join(fx.repo.mainRoot, 'REVIEW.md'), policy, 'utf8');
+    const hash = createHash('sha256').update(policy, 'utf8').digest('hex');
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-sd.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-sd.ts b/src/t1-sd.ts\n+export const sd = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    // The ship path's own reviewer wrote a block on the same sha the command decision passed: another document, a second decision.
+    const reason = '[standards] 9 error handling @ src/t1-sd.ts:9: swallowed error -> rethrow';
+    const shipDoc: Verdict = { verdict: 'block', reasons: [reason], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [reason] } }, run_status: 'success' };
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['review-blocked'], shipDoc), now: fx.now, runner: script });
+    const s = cardAtShip(fx, runner, 'T1-SD');
+    const { card, g, goal } = s;
+    let r = runner.next(g(), card, (await runner.preReview(g(), card, s.run)).run);
+    assert.equal(r.directive.kind, 'review');
+    const f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.invocations.at(-1)?.policyHash, hash, 'the command decision carries the hash of the policy it applied');
+    assert.deepEqual(runner.shipBindings(f.run), { policyHash: hash, deltaPaths: [] }, 'the ship is bound at dispatch to the policy in force and to the empty delta of the same commit');
+    r = runner.next(g(), card, f.run);
+    assert.equal(r.directive.kind, 'review-fix', `the ship path's own block is a second decision on the same sha: ${r.directive.narration}`);
+    const decided = r.run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
+    assert.equal(decided.length, 2);
+    assert.equal(decided.at(-1)?.policyHash, hash, 'a document naming no policy_hash is bound to the policy in force at dispatch');
+    assert.deepEqual(r.run.findings.map((x) => [x.id, x.stage, x.outsideDelta ?? false]), [['F1', 'formal', true]], 'a new finding on the identical sha is a first-round miss');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_DECIDED').at(-1)?.data['policyHash'], hash);
   } finally {
     fx.cleanup();
   }
