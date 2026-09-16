@@ -888,6 +888,9 @@ export class CardRunner {
     // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
     const formal = this.formalReviewGate(goal, card, run);
     if (formal) return formal;
+    // A ship-path decision is bound here, before any intent: the policy in force (R8) and the delta since the formal stage's
+    // last reviewed candidate (R9); a delta above the cap refuses the dispatch with nothing recorded.
+    const bindings = this.shipBindings(run);
     // Fence and record intent before the external mutation.
     try {
       if (run.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), run.ownerGeneration, currentActor(), now);
@@ -983,7 +986,20 @@ export class CardRunner {
     this.ops.markIssued(op.id, undefined, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id } });
     const result = this.shipPath.ship({ cardId: card.id, base: this.config.base, mode: armed.mode, skipRed: !card.tdd, timeoutMs: 60 * 60 * 1000, candidateSha: armed.candidate?.sha });
-    return this.applyShipResult(goal, card, armed, result, op.id, key, candidateDigest);
+    return this.applyShipResult(goal, card, armed, result, op.id, key, candidateDigest, bindings);
+  }
+
+  /**
+   * What binds a ship-path decision at dispatch (its reviewer receives no prompt): the sha256 of the REVIEW.md in force, recorded
+   * when the verdict document names no `policy_hash`, and the paths of the delta since the candidate the formal stage last
+   * reviewed, against which its new findings are marked: none before the stage's first decision, empty for the same commit,
+   * the committed diff for another commit in a git repository (a delta above the cap refuses the dispatch), none elsewhere.
+   */
+  shipBindings(run: CardRun): { policyHash: string; deltaPaths?: string[] } {
+    const since = this.lastReviewedSha(run, 'formal');
+    const sha = run.candidate?.sha;
+    const deltaPaths = since === undefined ? undefined : since === sha ? [] : this.repo.isGit && sha ? this.collectDelta(this.reviewCheckout(run), since, sha, this.config.formalReview.maxDiffBytes, 'formalReview.maxDiffBytes').changedPaths : undefined;
+    return { policyHash: policyHash(this.reviewPolicy()), deltaPaths };
   }
 
   /** Why the record re-read before the ship dispatch is not the one the gate admitted; undefined when it still is. */
@@ -1286,15 +1302,17 @@ export class CardRunner {
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     let since = this.lastReviewedSha(persisted, 'formal');
     let delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, 'formalReview.maxDiffBytes') : undefined;
-    // Exhausted rounds reach R3 through the command as through the gate: the hand-off is recorded once either way.
-    const eligibility = this.preReviewEligibility(persisted, candidateDigest);
-    if (eligibility.eligible && eligibility.exhausted) persisted = this.recordResidualHandoff(goal, card, persisted, persisted.review.substantiveBlocks, candidateDigest);
     persisted = this.releaseFailedReservation(goal, card, persisted, reviewDir);
     // The release re-reads the record: a decision another window committed meanwhile moves the last reviewed candidate, and the delta follows it (under the same cap) before anything is reserved.
     if (this.lastReviewedSha(persisted, 'formal') !== since) {
       since = this.lastReviewedSha(persisted, 'formal');
       delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, 'formalReview.maxDiffBytes') : undefined;
     }
+    // Exhausted rounds reach R3 through the command as through the gate: the hand-off is recorded once either way, and only
+    // after the last cap check, so a refused review never records it; a decision landing during its write is caught by the
+    // reservation lock below (the hand-off itself is R2 bookkeeping and stands).
+    const eligibility = this.preReviewEligibility(persisted, candidateDigest);
+    if (eligibility.eligible && eligibility.exhausted) persisted = this.recordResidualHandoff(goal, card, persisted, persisted.review.substantiveBlocks, candidateDigest);
     this.formalAdmission(persisted, card, candidateSha, candidateDigest, now);
     // Only the lease owner at the run's generation may reserve a decision.
     if (persisted.ownerGeneration !== undefined) {
@@ -1962,7 +1980,7 @@ export class CardRunner {
     return admit;
   }
 
-  applyShipResult(goal: Goal, card: Card, run: CardRun, result: ShipResult, operationId: string, reviewKey: string, candidateDigest: string): { run: CardRun; directive: CardDirective } {
+  applyShipResult(goal: Goal, card: Card, run: CardRun, result: ShipResult, operationId: string, reviewKey: string, candidateDigest: string, bindings: { policyHash?: string; deltaPaths?: string[] } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const verdictInfo = this.shipPath.readVerdict(card.id);
     // R10 on the ship path: the document is classified with its tagged reasons moved to advisory notes (a block carried only
@@ -1986,8 +2004,9 @@ export class CardRunner {
         return undefined;
       }
     })();
-    // The hash the document names is the hash of the policy its reviewer applied (R8): recorded as the decision's, none when the document names none.
-    const shipPolicyHash = typeof rawDoc?.policy_hash === 'string' ? rawDoc.policy_hash : undefined;
+    // The hash the document names is the hash of the policy its reviewer applied (R8); a document naming none is bound to the
+    // policy in force at dispatch (only a record from before the field carries none).
+    const shipPolicyHash = typeof rawDoc?.policy_hash === 'string' ? rawDoc.policy_hash : bindings.policyHash;
     const last = run.review.lastVerdict;
     // Identity is the document itself: same reviewer (when the raw document names one), same sha, same verdict and
     // reasons as the command's recorded decision (an advisory block is published as a pass with `advisory`).
@@ -2027,7 +2046,7 @@ export class CardRunner {
         // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included), ids allocated on
         // the locked record (a dispute saved during the ship is kept).
         const decidedOutcome = classified.outcome === 'block-defect' || classified.outcome === 'block-advisory' ? 'block' : classified.outcome === 'pass' ? 'pass' : 'no-verdict'; // a routed skip decides nothing about the findings
-        const input: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && shipVerdict ? citedReasonsOf(shipVerdict) : [], advisory: classified.outcome === 'block-advisory', seen: {} };
+        const input: RecordFindingsInput = { stage: 'formal', round: rec.ledger.substantiveDecisions, candidateSha: run.candidate?.sha, at: now, outcome: decidedOutcome, reasons: decidedOutcome === 'block' && shipVerdict ? citedReasonsOf(shipVerdict) : [], advisory: classified.outcome === 'block-advisory', seen: {}, deltaPaths: bindings.deltaPaths };
         found = recordFindings(current.findings, input);
         return { ...current, review: rec.ledger, findings: found.findings };
       });
@@ -2117,6 +2136,12 @@ export class CardRunner {
         // The action follows the ledger locked at this moment: a block recorded meanwhile makes this one the second.
         return finish(
           (latest) => {
+            if (classified.outcome === 'pass') {
+              // R10: the document blocked on advisory notes only. The loop recorded a pass, no block was consumed and the
+              // candidate keeps its receipts; the ship path still refused the merge, so a human decides, not a repair.
+              const stop = makeStop('review', `the ship path refused the merge on reasons the loop reads as advisory notes, never a block: ${shipAdvisory.join(' | ') || 'none named'}`, 'answer the notes or adjust the ship path reviewer; the candidate and its DoD receipt stand, no decision or block was consumed', { at: now, global: false });
+              return { state: 'STOP', stop };
+            }
             if (latest.review.substantiveBlocks >= 2 || reviewDecision?.action === 'stop-review') {
               const stop = makeStop('review', this.withContest(reviewDecision?.action === 'stop-review' ? reviewDecision.detail : 'second substantive block', latest.findings), 'return the PR and retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
               return { state: 'STOP', stop };
@@ -2128,7 +2153,7 @@ export class CardRunner {
           (next) =>
             next.state === 'STOP' && next.stop
               ? { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } }
-              : { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: classified.reasons.length ? classified.reasons : shipAdvisory.map((n) => `advisory (never a block): ${n}`), remainingDecisions: Math.max(0, 2 - next.review.substantiveDecisions), narration: 'Substantive block: fix within scope or revert; then rebuild and ship the repaired candidate (run `aidlc card next` to open the repair attempt).' } },
+              : { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: classified.reasons, remainingDecisions: Math.max(0, 2 - next.review.substantiveDecisions), narration: 'Substantive block: fix within scope or revert; then rebuild and ship the repaired candidate (run `aidlc card next` to open the repair attempt).' } },
         );
       }
       case 'review-no-verdict': {

@@ -3262,7 +3262,7 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     const round2 = await runner.preReview(g(), card, r.run);
     const prompt2 = lastPrompt('pre');
     const delta2 = prompt2.slice(prompt2.indexOf('## Delta since the last reviewed candidate'), prompt2.indexOf('## Diff'));
-    assert.ok(delta2.includes('since: sha-1') && delta2.includes('src/t1-in2.ts') && delta2.includes('git diff sha-1...HEAD'), `an argv prompt names the last reviewed candidate, the delta paths and the pinned command: ${delta2}`);
+    assert.ok(delta2.includes('since: sha-1') && delta2.includes('src/t1-in2.ts') && delta2.includes('git diff sha-1...sha-2'), `an argv prompt names the last reviewed candidate, the delta paths and the pinned command: ${delta2}`);
     assert.deepEqual(round2.run.findings.map((f) => [f.id, f.outsideDelta ?? false, f.resolvedAt !== undefined]), [['F1', false, true], ['F2', true, false], ['F3', false, false]], 'F2 cites a file outside the delta');
     assert.equal(round2.round.policyHash, hash);
 
@@ -3304,7 +3304,7 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     assert.deepEqual(f.run.findings.filter((x) => x.stage === 'formal' && x.round === 2).map((x) => [x.id, x.file, x.outsideDelta ?? false]), [['F6', 'src/t1-in.ts', false], ['F7', 'src/t1-in2.ts', true]], 'the formal stage marks a new finding outside its delta');
     const formal2 = lastPrompt('formal');
     const delta = formal2.slice(formal2.indexOf('## Delta since the last reviewed candidate'), formal2.indexOf('## Diff'));
-    assert.ok(delta.includes('since: sha-2') && delta.includes('src/t1-in.ts') && delta.includes('git diff sha-2...HEAD'), `decision 2 receives the delta since the candidate decision 1 reviewed: ${delta}`);
+    assert.ok(delta.includes('since: sha-2') && delta.includes('src/t1-in.ts') && delta.includes('git diff sha-2...sha-3'), `decision 2 receives the delta since the candidate decision 1 reviewed: ${delta}`);
     assert.equal(doc(path.join(fx.repo.mainRoot, '.review', 'T1-IN.json')).policy_hash, hash, 'the canonical verdict document carries the hash');
     assert.ok(f.run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block').every((i) => i.policyHash === hash), 'every decision carries the hash');
   } finally {
@@ -3466,7 +3466,8 @@ test('T1-REVIEW-INPUTS R3 decision 2 (F6 re-raised, F10): a ship-path decision w
     assert.equal(f.run.review.invocations.at(-1)?.policyHash, hash, 'the command decision carries the hash of the policy it applied');
     assert.deepEqual(runner.shipBindings(f.run), { policyHash: hash, deltaPaths: [] }, 'the ship is bound at dispatch to the policy in force and to the empty delta of the same commit');
     r = runner.next(g(), card, f.run);
-    assert.equal(r.directive.kind, 'review-fix', `the ship path's own block is a second decision on the same sha: ${r.directive.narration}`);
+    assert.equal(r.directive.kind, 'stop', `the ship path's own block is the second decision on the same sha, the last of the allowance: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
     const decided = r.run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     assert.equal(decided.length, 2);
     assert.equal(decided.at(-1)?.policyHash, hash, 'a document naming no policy_hash is bound to the policy in force at dispatch');

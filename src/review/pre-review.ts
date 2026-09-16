@@ -260,11 +260,11 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
       lines.push(`- since: ${i.delta.sinceSha}`, `- changed paths (${i.delta.changedPaths.length}): ${i.delta.changedPaths.join(', ') || 'none'}`, '- review the delta first: a finding inside it is a regression of the repair; a new finding outside it is a first-round miss (report it; it is recorded as one).');
       // The delta travels like the diff: embedded for a stdin reviewer, a pinned command for a repository-reading one (an argv prompt has a length limit).
       if (i.includeDiff) lines.push('```diff', i.delta.diff.trimEnd(), '```');
-      else lines.push(`Run \`git diff ${i.delta.sinceSha}...HEAD\` in the repository working directory for the delta itself.`);
+      else lines.push(`Run \`git diff ${i.delta.sinceSha}...${i.head}\` in the repository working directory for the delta itself.`);
     }
   }
   if (i.includeDiff) lines.push('', '## Diff', '```diff', i.diff.trimEnd(), '```');
-  else lines.push('', '## Diff', `Run \`git diff ${i.base}...HEAD\` in the repository working directory and review exactly those committed changes; ignore uncommitted files.`);
+  else lines.push('', '## Diff', `Run \`git diff ${i.base}...${i.head}\` in the repository working directory and review exactly those committed changes; ignore uncommitted files.`);
   lines.push('', 'Remember: the last line of your answer must be the JSON verdict document.');
   return lines.join('\n') + '\n';
 }
@@ -417,10 +417,12 @@ export function stripAdvisoryTags(verdict: Verdict): { verdict: Verdict; advisor
   const tagged = (r: string) => ADVISORY_TAG.test(r);
   const advisory = all.filter(tagged);
   if (!advisory.length) return { verdict, advisory: [] };
+  // An axis passes only when tags were all it carried: an axis whose reasons live at the root keeps its block.
   const strip = (axis: { verdict: 'pass' | 'block'; reasons: string[] } | undefined) => {
     if (!axis) return undefined;
     const reasons = axis.reasons.filter((r) => !tagged(r));
-    return { ...axis, reasons, verdict: axis.verdict === 'block' && !reasons.length ? ('pass' as const) : axis.verdict };
+    const carriedTags = reasons.length < axis.reasons.length;
+    return { ...axis, reasons, verdict: axis.verdict === 'block' && carriedTags && !reasons.length ? ('pass' as const) : axis.verdict };
   };
   const axes = verdict.axes ? { spec: strip(verdict.axes.spec), standards: strip(verdict.axes.standards) } : undefined;
   const reasons = verdict.reasons.filter((r) => !tagged(r));
