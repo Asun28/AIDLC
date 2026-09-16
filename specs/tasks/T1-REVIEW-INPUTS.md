@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-INPUTS
 title: Review inputs are bounded and traceable; a diff above the byte cap is never sent, every verdict carries the policy hash, later rounds receive the delta with first-round misses labelled, questions and suggestions never block
-status: todo
+status: merged
 branch: T1-REVIEW-INPUTS
 worktree: C:\wt\T1-REVIEW-INPUTS
 allow_paths:
