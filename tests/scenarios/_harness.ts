@@ -108,6 +108,8 @@ export interface CardSpec extends Omit<NewCardInput, 'allowPaths' | 'dodCommand'
   acceptance?: string[];
   deliverable?: string;
   tier?: 'S' | '1' | '0';
+  /** The registry status the card file records; `merged` stands for a card closed under an earlier goal. */
+  status?: 'todo' | 'in-progress' | 'in-review' | 'merged';
 }
 
 /** Write a card file into the fixture registry. */
@@ -121,8 +123,9 @@ export function writeCard(fx: Fixture, spec: CardSpec): string {
     worktreeRoot: fx.config.worktreeRoot,
   });
   const withTier = spec.tier ? text.replace('dod_exit: 0\n', `dod_exit: 0\ntier: ${spec.tier}\n`) : text;
+  const withStatus = spec.status ? withTier.replace(/^status: .*$/m, `status: ${spec.status}`) : withTier;
   const file = path.join(fx.cardsDir, `${spec.id}.md`);
-  writeFileSync(file, withTier, 'utf8');
+  writeFileSync(file, withStatus, 'utf8');
   return file;
 }
 

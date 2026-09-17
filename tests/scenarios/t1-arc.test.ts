@@ -120,3 +120,36 @@ test('Q9: a child STOP blocks its dependents and the goal stops with the child r
     fx.cleanup();
   }
 });
+
+test('a prerequisite merged under an earlier goal satisfies the gate: the goal dispatches its card instead of stopping on a required gap', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'run-card', d.narration);
+    if (d.kind === 'run-card') {
+      assert.equal(d.cardId, 'T1-NEXT');
+      assert.deepEqual(d.context['wave'], ['T1-NEXT'], 'the merged prerequisite is never dispatched with its dependent');
+    }
+    assert.deepEqual(fx.goal(goal.id).cards, ['T1-NEXT'], 'the projection still holds one card');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a prerequisite outside the projection that has not merged is still a required gap', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-OPEN', title: 'open under no goal', allowPaths: ['src/open.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-OPEN'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    assert.equal(fx.goal(goal.id).stop?.reason, 'card');
+    assert.match(fx.goal(goal.id).stop?.detail ?? '', /required gaps remain/);
+  } finally {
+    fx.cleanup();
+  }
+});
