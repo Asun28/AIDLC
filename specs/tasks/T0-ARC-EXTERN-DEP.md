@@ -21,7 +21,7 @@ requirements:
   - R3. A prerequisite outside the projection shall never enter the topological order, the dispatch wave, the worker count or the board.
 acceptance:
   - 1. `selectArc` leaves a card waiting when its `depends_on` id is absent from `cards` and carries no outcome, and admits it to `ready` when `outcomes` marks that id `closed`; the foreign id appears in neither `ready`, `wave` nor `waitingOn`, and `workers` counts only projected cards (arc.test.ts). [R1] [R3] [dod arm 1]
-  - 2. `ArcInput.outcomes` documents that it may carry ids outside `cards` for prerequisites closed elsewhere, and the caller that fills them is named (arc.ts doc comment, asserted by the arc.test.ts case above reading the documented contract). [R1] [dod arm 1]
+  - 2. `ArcInput.outcomes` documents that it may carry ids outside `cards` for prerequisites closed elsewhere, and names the caller that fills them (arc.ts doc comment; read in review, no test arm). [R1]
   - 3. `GoalController.cardOutcomes` records `closed` for every `depends_on` id outside `goal.cards` whose registry status is `merged`, and records nothing for one that is not merged or not in the registry, so a genuinely open external prerequisite still stops the goal (t1-arc.test.ts). [R1] [R2] [dod arm 1]
   - 4. A goal projected over one card whose prerequisite merged under a different goal returns `run-card` from `aidlc next`, not `stop` with `no admissible work`; the same goal with the prerequisite left `todo` in the registry still returns `stop` (t1-arc.test.ts). [R1] [R2] [dod arm 1]
   - 5. `docs/ARCHITECTURE.md` states the rule on the `arc.ts` line and CHANGELOG.md Unreleased carries the entry (read in review; no test arm). [dod arm 1]
