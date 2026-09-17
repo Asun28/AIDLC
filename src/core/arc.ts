@@ -38,6 +38,24 @@ export interface ArcSelection {
   reasons: string[];
 }
 
+/**
+ * The outcomes a caller can vouch for beyond its own projection: a `depends_on` id outside `cards` that the card
+ * registry records as merged is closed, since this goal can neither schedule it nor close it. An id the registry
+ * does not record as merged is left out, so the dependency gate keeps the gap. This is the rule
+ * `computeRevision` applies when it admits a projection whose prerequisite merged elsewhere.
+ */
+export function prerequisitesClosedElsewhere(cards: Card[], statusOf: (id: CardId) => Card['status'] | undefined): Record<CardId, CardOutcome> {
+  const projected = new Set(cards.map((c) => c.id));
+  const out: Record<CardId, CardOutcome> = {};
+  for (const c of cards) {
+    for (const dep of c.depends_on) {
+      if (projected.has(dep) || out[dep]) continue;
+      if (statusOf(dep) === 'merged') out[dep] = 'closed';
+    }
+  }
+  return out;
+}
+
 export function topologicalOrder(cards: Card[]): { order: CardId[]; cycle?: CardId[] } {
   const byId = new Map(cards.map((c) => [c.id, c]));
   const state = new Map<string, 0 | 1 | 2>();
