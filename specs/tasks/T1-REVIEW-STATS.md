@@ -8,6 +8,7 @@ allow_paths:
   - src/review/stats.ts
   - src/cli/main.ts
   - tests/surface/stats.test.ts
+  - tests/surface/templates.test.ts
   - docs/ARCHITECTURE.md
   - docs/OPERATIONS.md
   - CHANGELOG.md
