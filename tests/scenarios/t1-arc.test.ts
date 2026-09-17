@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, driveCardToDone, goalForCards, T0 } from './_harness.ts';
@@ -172,6 +172,22 @@ test('aidlc board prints the one text it writes: the arc of a projection whose p
     const written = readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8');
     assert.equal(r.stdout, written + '\n', 'the printed board is the board that was written, not a second render');
     assert.match(written, /^- \*\*Arc\*\*: verdict=dispatch workers=\d+ wave=T1-NEXT ready=T1-NEXT$/m);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a prerequisite the registry no longer records is a required gap, never closed by its absence', () => {
+  const fx = makeFixture();
+  try {
+    const prerequisite = writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    assert.equal(fx.controller.next(goal.id).kind, 'run-card', 'admitted while the registry recorded the prerequisite as merged');
+    rmSync(prerequisite);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    assert.match(fx.goal(goal.id).stop?.detail ?? '', /required gaps remain/, 'an id the registry does not record is an open gap, not a closed prerequisite');
   } finally {
     fx.cleanup();
   }

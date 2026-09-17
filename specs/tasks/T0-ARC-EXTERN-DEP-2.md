@@ -30,7 +30,8 @@ acceptance:
   - 4. A goal projected over one card whose prerequisite merged under a different goal returns `run-card` from `aidlc next`, not `stop` with `no admissible work`; the same goal with the prerequisite left `todo` in the registry still returns `stop` (t1-arc.test.ts). [R1] [R2] [dod arm 1]
   - 5. `docs/ARCHITECTURE.md` states the rule on the `arc.ts` line and CHANGELOG.md Unreleased carries the entry (read in review; no test arm). [dod arm 1]
   - 6. `renderBoard` reports the same arc verdict and wave as the directive for a projection whose prerequisite merged elsewhere: it takes the resolved outcomes from its caller instead of rebuilding them from the projected cards alone (board.test.ts), and `aidlc board` prints the one text it writes rather than a second render of its own, asserted by spawning the command over a projection whose prerequisite merged elsewhere and comparing its stdout with the written board file (t1-arc.test.ts). [R3] [dod arm 1]
-budget: 300
+  - 7. A prerequisite the registry no longer records is a required gap: the projection is admitted while the prerequisite is merged, the card file is removed, and `aidlc next` then returns `stop` with required gaps remaining (t1-arc.test.ts). [R1] [dod arm 1]
+budget: 340
 tdd: true
 sweep: "grep -rn 'depends_on' src/core/arc.ts src/loop/controller.ts src/artifacts/card.ts: the gate (arc.ts:98), the projection validator that already admits a merged prerequisite (controller.ts:672), the registry check that makes a dangling depends_on a blocking finding (card.ts:213, so a prerequisite always exists in the registry)"
 non_goals: [scheduling or closing a card outside the goal's projection, reading merge evidence from git or gh instead of the registry status, changing `aidlc goal resume`, removing the resume workaround from past goals]
@@ -56,3 +57,8 @@ npm run typecheck && node --test tests/core/arc.test.ts tests/scenarios/t1-arc.t
 ```
 - Expected exit code: 0
 - Assertion: the arc unit tests pass for the externally closed prerequisite, the still-open gap and the foreign id's absence from wave and worker count; the scenario tests pass for `next` dispatching over a merged out-of-goal prerequisite and stopping over a `todo` one; the board tests pass for the arc line agreeing with the directive.
+
+## Ruling (human, 2026-09-17)
+R2 passed round 2 on all three angles. R3 decision 1 (deepseek-v4-pro-r3, run while the Codex quota was exhausted and both MiMo keys were dead) passed with no findings. R3 decision 2 (codex, once its quota returned) blocked with one cited finding, F3: acceptance 3 names a prerequisite absent from the registry and no test exercised that lookup. The finding is marked `outsideDelta`, a first-round miss on the same candidate. The allowance is spent, so the card stopped for adjudication (STOP/review).
+
+Ruling: apply F3 and merge without another review cycle. The repair is one scenario test, proven to discriminate (with `statusOf(dep) !== 'todo'` in place of `=== 'merged'` the case returns `run-card` instead of `stop`); the code it guards was covered by both passes and is unchanged by the repair. DoD 30/30, full suite 660/660.
