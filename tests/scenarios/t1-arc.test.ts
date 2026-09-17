@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, driveCardToDone, goalForCards, T0 } from './_harness.ts';
+
+/** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
+const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 
 function threeCards(fx: ReturnType<typeof makeFixture>, resources?: string[]) {
   writeCard(fx, { id: 'T1-A', title: 'freeze the interface', freeze: true, allowPaths: ['src/a.ts'] });
@@ -149,6 +156,22 @@ test('a prerequisite outside the projection that has not merged is still a requi
     assert.equal(d.kind, 'stop', d.narration);
     assert.equal(fx.goal(goal.id).stop?.reason, 'card');
     assert.match(fx.goal(goal.id).stop?.detail ?? '', /required gaps remain/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('aidlc board prints the one text it writes: the arc of a projection whose prerequisite merged elsewhere, rendered once', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const r = spawnSync(process.execPath, [MAIN, 'board', '--goal', goal.id], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const written = readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8');
+    assert.equal(r.stdout, written + '\n', 'the printed board is the board that was written, not a second render');
+    assert.match(written, /^- \*\*Arc\*\*: verdict=dispatch workers=\d+ wave=T1-NEXT ready=T1-NEXT$/m);
   } finally {
     fx.cleanup();
   }
