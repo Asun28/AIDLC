@@ -1,7 +1,7 @@
 ---
 id: T0-ARC-EXTERN-DEP-2
 title: The arc dependency gate treats a prerequisite merged outside the goal's projection as satisfied, in the controller and in the board view, so a card-execute goal dispatches instead of stopping with a required gap (replacement of T0-ARC-EXTERN-DEP after the board site was added to a reviewed candidate)
-status: todo
+status: merged
 branch: T0-ARC-EXTERN-DEP-2
 worktree: C:\wt\T0-ARC-EXTERN-DEP-2
 allow_paths:
@@ -45,7 +45,7 @@ doc_sync: docs/ARCHITECTURE.md (src/core/ module line), CHANGELOG.md
 # T0-ARC-EXTERN-DEP-2
 
 ## Deliverable
-Replacement of T0-ARC-EXTERN-DEP (branch T0-ARC-EXTERN-DEP: a0f8cab the controller fix, R2 passed round 1 on all three perspectives with no findings, R3 spent no decision because Codex reported a quota hold; f1d4c9d the board fix, added after the effort episode had succeeded, which the loop will not review under a pinned candidate). This card carries both sites as one candidate and reviews it once. The effects reconciled: the two commits keep, the R2 pass of a0f8cab does not (a fresh round runs on this candidate), no R3 decision was spent, and the formal reviewer is mimo-v2.5-pro while the Codex quota is exhausted.
+Replacement of T0-ARC-EXTERN-DEP (branch T0-ARC-EXTERN-DEP: a0f8cab the controller fix, R2 passed round 1 on all three perspectives with no findings, R3 spent no decision because Codex reported a quota hold; f1d4c9d the board fix, added after the effort episode had succeeded, which the loop will not review under a pinned candidate). This card carries both sites as one candidate and reviews it once. The effects reconciled: the two commits keep, the R2 pass of a0f8cab does not (a fresh round runs on this candidate) and no R3 decision was spent. What reviewed this candidate is recorded in the Ruling below.
 
 A card whose prerequisite merged under a different goal cannot be dispatched: the arc gate reads that prerequisite as `todo` because it is outside the goal's projection, so `aidlc next` stops with `no admissible work: no ready work and required gaps remain`. T1-REVIEW-INPUTS hit this and was worked around with `aidlc goal resume --cards <prerequisite>,<card>`; T1-REVIEW-STATS hits it on intake, and every later card of `plans/review-findings.md` will.
 
