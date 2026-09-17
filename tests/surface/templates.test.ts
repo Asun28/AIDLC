@@ -198,4 +198,19 @@ describe('templates (Q14 packaging)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
     assert.match(unreleased, /T1-REVIEW-INPUTS/, 'CHANGELOG Unreleased carries the entry');
   });
+
+  test('T1-REVIEW-STATS acceptance 4: the operating guide documents the statistics command and its fields, the architecture names the module and the changelog carries the entry', () => {
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.match(operations, /### Review statistics/, 'OPERATIONS.md section');
+    assert.match(operations, /aidlc review stats \[--goal <id>\] \[--card <id>\]/, 'OPERATIONS.md documents the command');
+    assert.match(operations, /blocksByPerspective/, 'OPERATIONS.md names the R2 fields');
+    assert.match(operations, /firstRoundMiss/, 'OPERATIONS.md names the finding fields');
+    assert.match(operations, /wallMs/, 'OPERATIONS.md names the wall time');
+    assert.match(operations, /superseded_by/, 'OPERATIONS.md names the family chain');
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.match(architecture, /review\/stats\.ts/, 'ARCHITECTURE.md names the module');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T1-REVIEW-STATS/, 'CHANGELOG Unreleased carries the entry');
+  });
 });

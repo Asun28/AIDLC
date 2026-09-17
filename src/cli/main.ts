@@ -27,6 +27,7 @@ import { ReviewQueue } from '../coordination/review-queue.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
+import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
@@ -709,6 +710,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       c.controller.writeBoard(goalRec);
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       out(c, { cardId, finding: f }, () => `${findingLine(f)}\nnext: repair it, record the attempt with the new candidate sha, then \`aidlc card next ${cardId}\``);
+    });
+  review
+    .command('stats')
+    .description('review statistics per card and across a superseded card family: rounds, decisions, blocks, durations, findings by disposition, re-raises and first-round misses')
+    .option('--goal <id>', 'one goal (default: every goal)')
+    .option('--card <id>', 'one card, with the family it supersedes; a card without a run reports zeros')
+    .action((o: { goal?: string; card?: string }) => {
+      const c = ctx(g());
+      // Read only: the two review ledgers of each card run and the registry's `superseded_by` chain.
+      const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
+      const goals = o.goal ? [o.goal] : c.store.listGoals().map((x) => x.id);
+      const runs = goals.flatMap((id) => c.store.listCardRuns(id));
+      const summaries = summarizeReviews(runs, registry.cards.map((p) => p.card), o.card ? { include: [o.card] } : {});
+      const cards = o.card ? summaries.filter((s) => s.cardId === o.card) : summaries;
+      out(c, { goalId: o.goal, cards }, () => formatReviewStats(cards));
     });
   program
     .command('ci')

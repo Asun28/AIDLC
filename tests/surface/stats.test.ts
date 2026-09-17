@@ -81,6 +81,79 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.family, undefined, 'a card that supersedes nothing reports no family');
   });
 
+  test('summarizeReviews reports the family of a card that supersedes earlier cards, oldest first, with the family totals', () => {
+    // T1-A -> T1-A-2 -> T1-A-3: each card was superseded by the next, so the third carries the family.
+    const registry = [
+      { id: 'T1-A', superseded_by: 'T1-A-2' },
+      { id: 'T1-A-2', superseded_by: 'T1-A-3' },
+      { id: 'T1-A-3' },
+    ];
+    const first = run({
+      cardId: 'T1-A',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd1', requestedAt: at(0), durationMs: 10_000, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'] }], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 1 @ src/a.ts:1: wrong -> fix', raisedAt: at(10_000), disposition: 'open' }],
+    });
+    const second = run({
+      cardId: 'T1-A-2',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd2', requestedAt: at(60 * MIN), durationMs: 20_000, outcome: 'pass', reasons: [] }], handoffs: [] },
+      review: { substantiveDecisions: 1, substantiveBlocks: 0, scriptCounter: 1, noVerdictRetriesUsed: 0, invocations: [{ invocationId: 'r3:T1-A-2.r3.1.dddddddd', candidateDigest: 'd2', base: 'main', policyVersion: 'REVIEW.md@3', reviewer: 'codex', requestedAt: at(61 * MIN), outcome: 'pass' }] },
+      evidence: [{ id: 'r3-T1-A-2.r3.1.dddddddd', kind: 'artifact', createdAt: at(63 * MIN), candidateDigest: 'd2', note: 'formal review codex pass' }],
+    });
+    const third = run({
+      cardId: 'T1-A-3',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd3', requestedAt: at(120 * MIN), durationMs: 30_000, outcome: 'pass', reasons: [] }], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 6 @ src/c.ts:2: untested -> add the test', raisedAt: at(121 * MIN), disposition: 'open', resolvedAt: at(122 * MIN) }],
+    });
+    const summaries = stats.summarizeReviews([third, first, second], registry);
+    assert.deepEqual(summaries.map((s) => s.cardId), ['T1-A', 'T1-A-2', 'T1-A-3'], 'every card of the family is reported');
+    const family = summaries.find((s) => s.cardId === 'T1-A-3')?.family;
+    assert.deepEqual(family?.members.map((m) => m.cardId), ['T1-A', 'T1-A-2'], 'the predecessors come oldest first');
+    assert.equal(family?.members[0]?.r2.blocks, 1, "the predecessor's own rounds are reported");
+    // The round that blocked carries no panel record, so the block counts under the reviewer that decided it.
+    assert.deepEqual(family?.totals.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 60_000, blocksByPerspective: { deepseek: 1 } });
+    assert.deepEqual(family?.totals.r3, { decisions: 1, blocks: 0, durationMs: 2 * MIN });
+    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1 });
+    // 10s on the first card, 3 min on the second, 30s on the third.
+    assert.equal(family?.totals.wallMs, 220_000);
+    assert.equal(summaries.find((s) => s.cardId === 'T1-A')?.family, undefined, 'the oldest card of a family supersedes nothing');
+    assert.deepEqual(summaries.find((s) => s.cardId === 'T1-A-2')?.family?.members.map((m) => m.cardId), ['T1-A'], 'a middle card carries the part of the family it supersedes');
+  });
+
+  test('formatReviewStats prints one line per card, with the family members and the family total under the card that supersedes them', () => {
+    const line = stats.formatReviewStats(stats.summarizeReviews([reviewedRun()], []));
+    assert.equal(
+      line,
+      'T1-A  R2 3 rounds, 1 block (bugs 1), 1 quota hold, 1m 30s | R3 2 decisions, 1 block, 8m 00s | findings 4: 3 pre, 1 formal, 1 open, 1 disputed, 2 resolved, 1 re-raised, 1 first-round miss | wall 33m 00s',
+    );
+    assert.equal(stats.formatReviewStats(stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], [])), 'T1-QUIET  R2 0 rounds, 0s | R3 0 decisions, 0s | findings 0 | wall 0s');
+    assert.equal(stats.formatReviewStats([]), 'no card runs');
+  });
+
+  test('aidlc review stats prints the summary as JSON when stdout is not a TTY and one line per card with --no-json', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-'));
+    mkdirSync(path.join(dir, 'cards', 'g-stats-cli'), { recursive: true });
+    writeFileSync(path.join(dir, 'cards', 'g-stats-cli', 'T1-A.json'), JSON.stringify({ ...reviewedRun(), goalId: 'g-stats-cli' }, null, 2), 'utf8');
+    const cli = (args: string[]) => spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: dir }, windowsHide: true });
+
+    const json = cli(['review', 'stats', '--goal', 'g-stats-cli']);
+    assert.equal(json.status, 0, json.stderr);
+    const payload = JSON.parse(json.stdout) as { cards: stats.CardReviewStats[] };
+    assert.deepEqual(payload.cards.map((c) => c.cardId), ['T1-A'], 'a piped stdout prints the JSON summary');
+    assert.equal(payload.cards[0]?.r2.rounds, 3);
+    assert.equal(payload.cards[0]?.r3.decisions, 2);
+    assert.equal(payload.cards[0]?.findings.firstRoundMiss, 1);
+
+    const human = cli(['--no-json', 'review', 'stats', '--goal', 'g-stats-cli']);
+    assert.equal(human.status, 0, human.stderr);
+    assert.match(human.stdout.trim(), /^T1-A {2}R2 3 rounds, 1 block \(bugs 1\)/, 'the human output is the formatter line');
+
+    const missing = cli(['review', 'stats', '--goal', 'g-stats-cli', '--card', 'T1-NEVER-RUN']);
+    assert.equal(missing.status, 0, missing.stderr);
+    const asked = (JSON.parse(missing.stdout) as { cards: stats.CardReviewStats[] }).cards;
+    assert.deepEqual(asked.map((c) => c.cardId), ['T1-NEVER-RUN'], 'the card asked for is answered even without a run');
+    assert.equal(asked[0]?.r2.rounds, 0);
+  });
+
   test('summarizeReviews counts an unfinished review: a round still pending and a decision with no artifact add no duration', () => {
     const pending = run({
       preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', requestedAt: at(0), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'res-1' }], handoffs: [] },
