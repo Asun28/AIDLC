@@ -13,6 +13,12 @@ export type CardOutcome = 'closed' | 'running' | 'stopped' | 'waiting' | 'todo';
 
 export interface ArcInput {
   cards: Card[];
+  /**
+   * The outcome of every projected card, plus any `depends_on` id outside `cards` the caller can vouch for:
+   * `GoalController.cardOutcomes` records `closed` for a prerequisite the card registry has as merged. An id
+   * with no entry counts as `todo`, so a prerequisite the caller cannot vouch for stays an open gap, and an id
+   * outside `cards` is never ordered, dispatched or reported.
+   */
   outcomes: Record<string, CardOutcome>;
   maxWorkers?: number;
   /** A single formal reviewer slot forces one worker. */

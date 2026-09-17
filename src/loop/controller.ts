@@ -294,6 +294,15 @@ export class GoalController {
     const runs = this.store.listCardRuns(goal.id);
     const outcomes: Record<string, CardOutcome> = {};
     for (const c of cards) outcomes[c.id] = outcomeOf(runs.find((r) => r.cardId === c.id), c);
+    // A prerequisite outside this projection cannot be scheduled or closed here, so it is closed only by the evidence
+    // `computeRevision` trusts when it admits such a projection: the registry's merged status. An id that is not merged,
+    // or not in the registry at all, is left absent, so the arc gate keeps the gap and the goal stops.
+    for (const c of cards) {
+      for (const dep of c.depends_on) {
+        if (goal.cards.includes(dep) || outcomes[dep]) continue;
+        if (registry.cards.find((r) => r.card.id === dep)?.card.status === 'merged') outcomes[dep] = 'closed';
+      }
+    }
     return { cards, runs, outcomes };
   }
 
