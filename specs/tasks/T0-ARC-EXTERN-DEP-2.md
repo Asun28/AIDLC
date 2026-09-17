@@ -1,10 +1,9 @@
 ---
-id: T0-ARC-EXTERN-DEP
-title: The arc dependency gate treats a prerequisite merged outside the goal's projection as satisfied, so a card-execute goal dispatches instead of stopping with a required gap
+id: T0-ARC-EXTERN-DEP-2
+title: The arc dependency gate treats a prerequisite merged outside the goal's projection as satisfied, in the controller and in the board view, so a card-execute goal dispatches instead of stopping with a required gap (replacement of T0-ARC-EXTERN-DEP after the board site was added to a reviewed candidate)
 status: todo
-branch: T0-ARC-EXTERN-DEP
-worktree: C:\wt\T0-ARC-EXTERN-DEP
-superseded_by: T0-ARC-EXTERN-DEP-2
+branch: T0-ARC-EXTERN-DEP-2
+worktree: C:\wt\T0-ARC-EXTERN-DEP-2
 allow_paths:
   - src/core/arc.ts
   - src/loop/controller.ts
@@ -17,6 +16,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-ARC-EXTERN-DEP.md
+  - specs/tasks/T0-ARC-EXTERN-DEP-2.md
 dod_command: npm run typecheck && node --test tests/core/arc.test.ts tests/scenarios/t1-arc.test.ts tests/infra/board.test.ts
 dod_exit: 0
 requirements:
@@ -41,9 +41,11 @@ hygiene: "The registry's merged status is the same evidence computeRevision trus
 doc_sync: docs/ARCHITECTURE.md (src/core/ module line), CHANGELOG.md
 ---
 
-# T0-ARC-EXTERN-DEP
+# T0-ARC-EXTERN-DEP-2
 
 ## Deliverable
+Replacement of T0-ARC-EXTERN-DEP (branch T0-ARC-EXTERN-DEP: a0f8cab the controller fix, R2 passed round 1 on all three perspectives with no findings, R3 spent no decision because Codex reported a quota hold; f1d4c9d the board fix, added after the effort episode had succeeded, which the loop will not review under a pinned candidate). This card carries both sites as one candidate and reviews it once. The effects reconciled: the two commits keep, the R2 pass of a0f8cab does not (a fresh round runs on this candidate), no R3 decision was spent, and the formal reviewer is mimo-v2.5-pro while the Codex quota is exhausted.
+
 A card whose prerequisite merged under a different goal cannot be dispatched: the arc gate reads that prerequisite as `todo` because it is outside the goal's projection, so `aidlc next` stops with `no admissible work: no ready work and required gaps remain`. T1-REVIEW-INPUTS hit this and was worked around with `aidlc goal resume --cards <prerequisite>,<card>`; T1-REVIEW-STATS hits it on intake, and every later card of `plans/review-findings.md` will.
 
 `GoalController.cardOutcomes` resolves each `depends_on` id outside `goal.cards` against the card registry and records `closed` for a merged one, which is the rule `computeRevision` already applies when it admits the projection. `ArcInput.outcomes` documents that it may carry such ids. A prerequisite that is not merged stays an open gap and the goal still stops.
