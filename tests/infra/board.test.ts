@@ -72,6 +72,15 @@ describe('state/board (regenerated view, never the store of record)', () => {
     assert.match(out, /freeze card T1-C waits for running work to finish/);
   });
 
+  it('reports the arc of a projection whose prerequisite merged elsewhere, not a stop of its own', () => {
+    const projection = [makeCard('T1-NEXT', { depends_on: ['T1-EARLIER'] })];
+    const blind = renderBoard(makeGoal('goal-extern'), projection, [], iso());
+    assert.match(blind, /^- \*\*Arc\*\*: verdict=stop workers=\d+ wave=-/m, 'with no outcome from the caller the view sees an open gap');
+    const vouched = renderBoard(makeGoal('goal-extern'), projection, [], iso(), { 'T1-EARLIER': 'closed' });
+    assert.match(vouched, /^- \*\*Arc\*\*: verdict=dispatch workers=\d+ wave=T1-NEXT ready=T1-NEXT$/m);
+    assert.doesNotMatch(vouched, /^\| \[.\] \| T1-EARLIER \|/m, 'the prerequisite outside the projection is no row of this board');
+  });
+
   it('omits arc notes and STOP when there is nothing to say', () => {
     const quiet = makeGoal('goal-quiet');
     const out = renderBoard(quiet, [makeCard('T1-Q')], [], iso());

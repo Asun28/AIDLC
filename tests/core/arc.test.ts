@@ -26,6 +26,20 @@ describe('arc selection (Q9 / Q10)', () => {
     assert.equal(s.verdict, 'dispatch');
   });
 
+  test('a depends_on id outside the projection is satisfied only by a closed outcome, and never joins the wave', () => {
+    const projection = [card('T1-STATS', { depends_on: ['T1-MERGED-ELSEWHERE'] })];
+    const gap = selectArc({ cards: projection, outcomes: {} });
+    assert.deepEqual(gap.waitingOn, ['T1-STATS'], 'an id the caller vouches for nowhere is an open gap');
+    assert.equal(gap.verdict, 'stop');
+    const vouched = selectArc({ cards: projection, outcomes: { 'T1-MERGED-ELSEWHERE': 'closed' } });
+    assert.deepEqual(vouched.ready, ['T1-STATS']);
+    assert.deepEqual(vouched.wave, ['T1-STATS']);
+    assert.equal(vouched.verdict, 'dispatch');
+    for (const [set, ids] of Object.entries({ ready: vouched.ready, wave: vouched.wave, waitingOn: vouched.waitingOn, blockedByStop: vouched.blockedByStop })) {
+      assert.ok(!ids.includes('T1-MERGED-ELSEWHERE'), `a prerequisite outside the projection is never scheduled or reported: ${set}`);
+    }
+  });
+
   test('Q9: a freeze card runs alone before its dependents', () => {
     const s = selectArc({ cards: [card('T1-IFACE', { freeze: true }), card('T1-B'), card('T1-C')], outcomes: {} });
     assert.deepEqual(s.wave, ['T1-IFACE']);

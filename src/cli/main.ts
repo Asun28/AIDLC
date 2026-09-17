@@ -40,7 +40,6 @@ import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
 import { Goal, type DeliveryTarget, type RequestSize } from '../core/types.ts';
-import { renderBoard } from '../state/board.ts';
 
 interface Ctx {
   root: string;
@@ -372,8 +371,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const goalRec = c.controller.mustGoal(latestActiveGoalId(c, goalId ?? o.goal));
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
       const cards = goalRec.cards.map((id) => registry.cards.find((p) => p.card.id === id)?.card).filter((x): x is NonNullable<typeof x> => Boolean(x));
-      const text = renderBoard(goalRec, cards, c.store.listCardRuns(goalRec.id), new Date().toISOString());
-      c.controller.writeBoard(goalRec, cards);
+      // One render: the text the board file gets is the text the command prints, prerequisites resolved once.
+      const text = c.controller.writeBoard(goalRec, cards);
       process.stdout.write(text + '\n');
     });
 

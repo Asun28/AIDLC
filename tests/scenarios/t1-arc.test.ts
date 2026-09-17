@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import { readFileSync, rmSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, driveCardToDone, goalForCards, T0 } from './_harness.ts';
+
+/** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
+const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 
 function threeCards(fx: ReturnType<typeof makeFixture>, resources?: string[]) {
   writeCard(fx, { id: 'T1-A', title: 'freeze the interface', freeze: true, allowPaths: ['src/a.ts'] });
@@ -116,6 +123,71 @@ test('Q9: a child STOP blocks its dependents and the goal stops with the child r
     assert.equal(g.state, 'STOP');
     assert.equal(g.stop?.reason, 'capability');
     assert.ok(/blocked by stopped dependencies: T1-Y/.test(g.stop?.detail ?? ''), g.stop?.detail);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a prerequisite merged under an earlier goal satisfies the gate: the goal dispatches its card instead of stopping on a required gap', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'run-card', d.narration);
+    if (d.kind === 'run-card') {
+      assert.equal(d.cardId, 'T1-NEXT');
+      assert.deepEqual(d.context['wave'], ['T1-NEXT'], 'the merged prerequisite is never dispatched with its dependent');
+    }
+    assert.deepEqual(fx.goal(goal.id).cards, ['T1-NEXT'], 'the projection still holds one card');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a prerequisite outside the projection that has not merged is still a required gap', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-OPEN', title: 'open under no goal', allowPaths: ['src/open.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-OPEN'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    assert.equal(fx.goal(goal.id).stop?.reason, 'card');
+    assert.match(fx.goal(goal.id).stop?.detail ?? '', /required gaps remain/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('aidlc board prints the one text it writes: the arc of a projection whose prerequisite merged elsewhere, rendered once', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    const r = spawnSync(process.execPath, [MAIN, 'board', '--goal', goal.id], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 60_000 });
+    assert.equal(r.status, 0, r.stderr);
+    const written = readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8');
+    assert.equal(r.stdout, written + '\n', 'the printed board is the board that was written, not a second render');
+    assert.match(written, /^- \*\*Arc\*\*: verdict=dispatch workers=\d+ wave=T1-NEXT ready=T1-NEXT$/m);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a prerequisite the registry no longer records is a required gap, never closed by its absence', () => {
+  const fx = makeFixture();
+  try {
+    const prerequisite = writeCard(fx, { id: 'T1-EARLIER', title: 'merged under an earlier goal', status: 'merged', allowPaths: ['src/earlier.ts'] });
+    writeCard(fx, { id: 'T1-NEXT', title: 'the next card of the plan', dependsOn: ['T1-EARLIER'], allowPaths: ['src/next.ts'] });
+    const goal = goalForCards(fx, ['T1-NEXT']);
+    assert.equal(fx.controller.next(goal.id).kind, 'run-card', 'admitted while the registry recorded the prerequisite as merged');
+    rmSync(prerequisite);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    assert.match(fx.goal(goal.id).stop?.detail ?? '', /required gaps remain/, 'an id the registry does not record is an open gap, not a closed prerequisite');
   } finally {
     fx.cleanup();
   }

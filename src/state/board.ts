@@ -37,9 +37,15 @@ export function outcomeOf(run: CardRun | undefined, card: Card): CardOutcome {
   }
 }
 
-export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string): string {
+/**
+ * `externalOutcomes` carries what the caller vouches for beyond this projection (a prerequisite merged under another
+ * goal, from `prerequisitesClosedElsewhere`), so the Arc line reports the arc the controller decided instead of a gap
+ * of the view's own making. Every projected card is written over it from its own run, and an id outside the projection
+ * is no row of this board.
+ */
+export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string, externalOutcomes: Record<string, CardOutcome> = {}): string {
   const runById = new Map(runs.map((r) => [r.cardId, r]));
-  const outcomes: Record<string, CardOutcome> = {};
+  const outcomes: Record<string, CardOutcome> = { ...externalOutcomes };
   for (const c of cards) outcomes[c.id] = outcomeOf(runById.get(c.id), c);
   const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers });
   const lines: string[] = [];

@@ -13,6 +13,12 @@ export type CardOutcome = 'closed' | 'running' | 'stopped' | 'waiting' | 'todo';
 
 export interface ArcInput {
   cards: Card[];
+  /**
+   * The outcome of every projected card, plus any `depends_on` id outside `cards` the caller can vouch for:
+   * `GoalController.cardOutcomes` records `closed` for a prerequisite the card registry has as merged. An id
+   * with no entry counts as `todo`, so a prerequisite the caller cannot vouch for stays an open gap, and an id
+   * outside `cards` is never ordered, dispatched or reported.
+   */
   outcomes: Record<string, CardOutcome>;
   maxWorkers?: number;
   /** A single formal reviewer slot forces one worker. */
@@ -30,6 +36,24 @@ export interface ArcSelection {
   /** 'done' when everything is closed; 'wait' when work is running; 'stop' when gaps cannot progress. */
   verdict: 'dispatch' | 'wait' | 'done' | 'stop';
   reasons: string[];
+}
+
+/**
+ * The outcomes a caller can vouch for beyond its own projection: a `depends_on` id outside `cards` that the card
+ * registry records as merged is closed, since this goal can neither schedule it nor close it. An id the registry
+ * does not record as merged is left out, so the dependency gate keeps the gap. This is the rule
+ * `computeRevision` applies when it admits a projection whose prerequisite merged elsewhere.
+ */
+export function prerequisitesClosedElsewhere(cards: Card[], statusOf: (id: CardId) => Card['status'] | undefined): Record<CardId, CardOutcome> {
+  const projected = new Set(cards.map((c) => c.id));
+  const out: Record<CardId, CardOutcome> = {};
+  for (const c of cards) {
+    for (const dep of c.depends_on) {
+      if (projected.has(dep) || out[dep]) continue;
+      if (statusOf(dep) === 'merged') out[dep] = 'closed';
+    }
+  }
+  return out;
 }
 
 export function topologicalOrder(cards: Card[]): { order: CardId[]; cycle?: CardId[] } {

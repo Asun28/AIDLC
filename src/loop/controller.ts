@@ -11,7 +11,7 @@
 import path from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { selectArc, canOpenIntegrationRepair, type CardOutcome } from '../core/arc.ts';
+import { selectArc, canOpenIntegrationRepair, prerequisitesClosedElsewhere, type CardOutcome } from '../core/arc.ts';
 import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline } from '../core/deadlines.ts';
 import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/goal-machine.ts';
 import { classifyRequest, formatRouting } from '../core/router.ts';
@@ -292,7 +292,9 @@ export class GoalController {
   private cardOutcomes(goal: Goal, registry: CardRegistry): { cards: Card[]; runs: CardRun[]; outcomes: Record<string, CardOutcome> } {
     const cards = goal.cards.map((id) => registry.cards.find((c) => c.card.id === id)?.card).filter((c): c is Card => Boolean(c));
     const runs = this.store.listCardRuns(goal.id);
-    const outcomes: Record<string, CardOutcome> = {};
+    // A prerequisite outside this projection is resolved first and the projected cards are written over it, so a listed
+    // card always keeps its own run outcome.
+    const outcomes: Record<string, CardOutcome> = prerequisitesClosedElsewhere(cards, (id) => registry.cards.find((r) => r.card.id === id)?.card.status);
     for (const c of cards) outcomes[c.id] = outcomeOf(runs.find((r) => r.cardId === c.id), c);
     return { cards, runs, outcomes };
   }
@@ -303,7 +305,7 @@ export class GoalController {
     const { cards, runs, outcomes } = this.cardOutcomes(goal, registry);
     const poolBusy = this.queue.pool(goal.reviewPool).maxConcurrent <= 1;
     const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers, singleReviewerSlot: poolBusy && goal.maxWorkers > 1 ? false : undefined });
-    this.writeBoard(goal, cards, runs);
+    this.writeBoard(goal, cards, runs, outcomes);
     if (arc.verdict === 'done') {
       // A goal parked in WAIT (polled while its cards were running) resumes to RUN first: the diagram
       // derives VERIFY_ARC from RUN only, never from WAIT.
@@ -718,11 +720,14 @@ export class GoalController {
     return saved;
   }
 
-  writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[]): string {
-    const registry = cards ? undefined : this.registryLoader();
+  writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[], outcomes?: Record<string, CardOutcome>): string {
+    // The view reports the arc the controller decided, so the outcomes travel with the cards; a caller without them
+    // (every caller that also lets the registry supply the cards) resolves the prerequisites here instead.
+    const registry = cards && outcomes ? undefined : this.registryLoader();
     const cs = cards ?? goal.cards.map((id) => registry!.cards.find((c) => c.card.id === id)?.card).filter((c): c is Card => Boolean(c));
     const rs = runs ?? this.store.listCardRuns(goal.id);
-    const text = renderBoard(goal, cs, rs, this.clock());
+    const os = outcomes ?? prerequisitesClosedElsewhere(cs, (id) => registry!.cards.find((r) => r.card.id === id)?.card.status);
+    const text = renderBoard(goal, cs, rs, this.clock(), os);
     mkdirSync(this.paths.board, { recursive: true });
     writeFileSync(path.join(this.paths.board, `${goal.id}.md`), text, 'utf8');
     if (this.boardMirror) {
