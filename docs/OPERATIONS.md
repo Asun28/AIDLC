@@ -195,7 +195,7 @@ Placeholders in argv: `{instructions}` (the prompt; when absent the prompt goes 
 aidlc review stats [--goal <id>] [--card <id>]   # JSON when stdout is not a TTY, one line per card otherwise
 ```
 
-The command reads the card runs of one goal (`--goal`) or of every goal and never writes. `--card` reports that card alone, with the family it supersedes, and answers about it with zeros when it has no run. The line form prints one line per card, each family member under the card that supersedes it (`+`) and then the family total (`=`).
+The command reads every goal's card runs and never writes. `--goal` narrows which cards are reported, never what the family is aggregated from, so a predecessor that ran under another goal keeps its own numbers instead of reading as zeros. `--card` reports that card alone, with the family it supersedes, and answers about it with zeros when it has no run. The line form prints one line per card, each family member under the card that supersedes it (`+`) and then the family total (`=`).
 
 ## Evals
 

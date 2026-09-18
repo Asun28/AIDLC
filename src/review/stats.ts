@@ -25,6 +25,7 @@ export interface R2Stats {
 export interface R3Stats {
   /** Substantive decisions the ledger counted (a no-verdict or a quota hold is not one). */
   decisions: number;
+  /** Recorded block decisions, an advisory block included; the enforcement counter counts only the merge-blocking ones. */
   blocks: number;
   /** Sum of request to decision artifact over the invocations that landed one. */
   durationMs: number;
@@ -76,8 +77,17 @@ interface ReviewEvent {
 
 const ms = (iso: string): number => Date.parse(iso);
 
-function emptyR2(): R2Stats {
-  return { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: {} };
+/** Counters while they are being added up: the angles live in a Map, so an angle named after an Object property is a count and not an inherited value. */
+interface R2Counters extends Omit<R2Stats, 'blocksByPerspective'> {
+  blocksByPerspective: Map<string, number>;
+}
+
+function emptyR2(): R2Counters {
+  return { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: new Map() };
+}
+
+function sealR2(counters: R2Counters): R2Stats {
+  return { ...counters, blocksByPerspective: Object.fromEntries([...counters.blocksByPerspective].sort(([a], [b]) => a.localeCompare(b))) };
 }
 
 function emptyR3(): R3Stats {
@@ -97,7 +107,7 @@ function decidedAt(run: CardRun, invocation: ReviewInvocation): string | undefin
   return run.evidence.find((e) => e.id === `r3-${stem}`)?.createdAt;
 }
 
-function countR2(rounds: readonly PreReviewRound[], into: R2Stats): R2Stats {
+function countR2(rounds: readonly PreReviewRound[], into: R2Counters): R2Counters {
   for (const round of rounds) {
     if (round.outcome === 'pending') continue;
     into.rounds += 1;
@@ -107,7 +117,7 @@ function countR2(rounds: readonly PreReviewRound[], into: R2Stats): R2Stats {
     if (round.outcome !== 'block') continue;
     into.blocks += 1;
     const blocking = (round.perspectives ?? []).filter((p) => p.outcome === 'block');
-    for (const name of blocking.length ? blocking.map((p) => p.name) : [round.reviewer]) into.blocksByPerspective[name] = (into.blocksByPerspective[name] ?? 0) + 1;
+    for (const name of blocking.length ? blocking.map((p) => p.name) : [round.reviewer]) into.blocksByPerspective.set(name, (into.blocksByPerspective.get(name) ?? 0) + 1);
   }
   return into;
 }
@@ -152,15 +162,16 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
     r3.decisions += run.review.substantiveDecisions;
-    r3.blocks += run.review.substantiveBlocks;
     for (const invocation of run.review.invocations) {
+      // Every recorded block, read from the decision itself: the ledger's `substantiveBlocks` counts only the merge-blocking ones.
+      if (invocation.outcome === 'block') r3.blocks += 1;
       const at = decidedAt(run, invocation);
       if (at) r3.durationMs += Math.max(0, ms(at) - ms(invocation.requestedAt));
     }
     events.push(...eventsOf(run));
   }
   const goals = [...new Set(runs.map((r) => r.goalId))];
-  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2, r3, findings, wallMs: wallOf(events) };
+  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, wallMs: wallOf(events) };
 }
 
 /** Predecessors of every card: the reverse of the registry's `superseded_by` links. */
@@ -208,7 +219,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     r2.noVerdict += s.r2.noVerdict;
     r2.quotaHolds += s.r2.quotaHolds;
     r2.durationMs += s.r2.durationMs;
-    for (const [name, count] of Object.entries(s.r2.blocksByPerspective)) r2.blocksByPerspective[name] = (r2.blocksByPerspective[name] ?? 0) + count;
+    for (const [name, count] of Object.entries(s.r2.blocksByPerspective)) r2.blocksByPerspective.set(name, (r2.blocksByPerspective.get(name) ?? 0) + count);
     r3.decisions += s.r3.decisions;
     r3.blocks += s.r3.blocks;
     r3.durationMs += s.r3.durationMs;
@@ -222,21 +233,26 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.resolved += s.findings.resolved;
     wallMs += s.wallMs;
   }
-  return { r2, r3, findings, wallMs };
+  return { r2: sealR2(r2), r3, findings, wallMs };
 }
 
 /**
  * The review statistics of every card the runs cover, by card id, each with the family it supersedes.
  * `include` adds cards that have no run yet, so a command asked about one card always answers about it.
+ * `goals` narrows which cards are reported, never what the family is aggregated from: every run given
+ * feeds the family, so a predecessor that ran under another goal keeps its own numbers.
  */
-export function summarizeReviews(runs: readonly CardRun[], registry: readonly RegistryCard[], options: { include?: readonly string[] } = {}): CardReviewStats[] {
+export function summarizeReviews(runs: readonly CardRun[], registry: readonly RegistryCard[], options: { include?: readonly string[]; goals?: readonly string[] } = {}): CardReviewStats[] {
   const byCard = new Map<string, CardRun[]>();
   for (const run of runs) byCard.set(run.cardId, [...(byCard.get(run.cardId) ?? []), run]);
   for (const id of options.include ?? []) if (!byCard.has(id)) byCard.set(id, []);
   const index = predecessorIndex(registry);
   const own = new Map([...byCard.entries()].map(([cardId, cardRuns]) => [cardId, statsFor(cardId, cardRuns)] as const));
+  const goals = options.goals;
+  const reported = goals ? new Set([...(options.include ?? []), ...runs.filter((run) => goals.includes(run.goalId)).map((run) => run.cardId)]) : undefined;
   const summaries: CardReviewStats[] = [];
   for (const [cardId, summary] of own) {
+    if (reported && !reported.has(cardId)) continue;
     // A predecessor with no run of its own still belongs to the family, with zeros.
     const members = familyOf(cardId, index).map((id) => own.get(id) ?? statsFor(id, []));
     summaries.push(members.length ? { ...summary, family: { members, totals: totalsOf([...members, summary]) } } : summary);

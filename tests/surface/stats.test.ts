@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { CardRun, addMs } from '../../src/core/types.ts';
+import { goal } from '../core/_fixtures.ts';
 // Namespace import: the summary is new, so each test fails at its first call rather than at link time.
 import * as stats from '../../src/review/stats.ts';
 
@@ -119,6 +120,58 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summaries.find((s) => s.cardId === 'T1-A-2')?.family?.members.map((m) => m.cardId), ['T1-A'], 'a middle card carries the part of the family it supersedes');
   });
 
+  test('summarizeReviews keeps a predecessor that ran under another goal whole when the report is scoped to one goal (R3 F1)', () => {
+    const registry = [
+      { id: 'T1-A', superseded_by: 'T1-A-2' },
+      { id: 'T1-A-2' },
+    ];
+    const older = run({
+      goalId: 'g-old',
+      cardId: 'T1-A',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd1', requestedAt: at(0), durationMs: 10_000, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'] }], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 1 @ src/a.ts:1: wrong -> fix', raisedAt: at(10_000), disposition: 'open' }],
+    });
+    const newer = run({
+      goalId: 'g-new',
+      cardId: 'T1-A-2',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd2', requestedAt: at(60 * MIN), durationMs: 20_000, outcome: 'pass', reasons: [] }], handoffs: [] },
+    });
+    const summaries = stats.summarizeReviews([older, newer], registry, { goals: ['g-new'] });
+    assert.deepEqual(summaries.map((s) => s.cardId), ['T1-A-2'], 'only the cards of the goal asked for are reported');
+    const member = summaries[0]?.family?.members[0];
+    assert.equal(member?.cardId, 'T1-A');
+    assert.equal(member?.r2.rounds, 1, 'the predecessor keeps the round it ran under the other goal');
+    assert.equal(member?.findings.total, 1, 'and the findings it raised there');
+    assert.deepEqual(summaries[0]?.family?.totals.r2, { rounds: 2, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 30_000, blocksByPerspective: { deepseek: 1 } });
+  });
+
+  test('summarizeReviews counts a panel angle named after an Object property, per card and in the family totals (R3 F2)', () => {
+    const registry = [{ id: 'T1-A', superseded_by: 'T1-A-2' }, { id: 'T1-A-2' }];
+    const blocked = (cardId: string, requestedAt: string) =>
+      run({
+        cardId,
+        preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd', requestedAt, durationMs: 1_000, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], perspectives: [{ name: 'constructor', outcome: 'block', durationMs: 1_000, reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'] }, { name: 'toString', outcome: 'block', durationMs: 1_000, reasons: ['[spec] 1 @ src/a.ts:2: also wrong -> fix'] }] }], handoffs: [] },
+      });
+    const summaries = stats.summarizeReviews([blocked('T1-A', at(0)), blocked('T1-A-2', at(MIN))], registry);
+    assert.deepEqual(summaries[0]?.r2.blocksByPerspective, { constructor: 1, toString: 1 }, 'the angle name is a count, never an inherited property');
+    assert.deepEqual(summaries[1]?.family?.totals.r2.blocksByPerspective, { constructor: 2, toString: 2 });
+  });
+
+  test('summarizeReviews counts an advisory block, which the enforcement counter leaves out (R3 F3)', () => {
+    const advisory = run({
+      review: {
+        substantiveDecisions: 1,
+        substantiveBlocks: 0,
+        scriptCounter: 1,
+        noVerdictRetriesUsed: 0,
+        invocations: [{ invocationId: 'r3:T1-A.r3.1.eeeeeeee', candidateDigest: 'd1', base: 'main', policyVersion: 'REVIEW.md@3', reviewer: 'codex', requestedAt: at(0), outcome: 'block', mergeBlocking: false, candidateSha: 'sha1' }],
+      },
+      evidence: [{ id: 'r3-T1-A.r3.1.eeeeeeee', kind: 'artifact', createdAt: at(MIN), candidateDigest: 'd1', note: 'formal review codex block-advisory' }],
+    });
+    const [summary] = stats.summarizeReviews([advisory], []);
+    assert.deepEqual(summary?.r3, { decisions: 1, blocks: 1, durationMs: MIN }, 'a block that never barred the merge is still a block');
+  });
+
   test('formatReviewStats prints one line per card, with the family members and the family total under the card that supersedes them', () => {
     const line = stats.formatReviewStats(stats.summarizeReviews([reviewedRun()], []));
     assert.equal(
@@ -132,6 +185,9 @@ describe('review statistics (R11, R12)', () => {
   test('aidlc review stats prints the summary as JSON when stdout is not a TTY and one line per card with --no-json', () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-'));
     mkdirSync(path.join(dir, 'cards', 'g-stats-cli'), { recursive: true });
+    mkdirSync(path.join(dir, 'goals'), { recursive: true });
+    const writeGoal = (id: string) => writeFileSync(path.join(dir, 'goals', `${id}.json`), JSON.stringify(goal({ id }), null, 2), 'utf8');
+    writeGoal('g-stats-cli');
     writeFileSync(path.join(dir, 'cards', 'g-stats-cli', 'T1-A.json'), JSON.stringify({ ...reviewedRun(), goalId: 'g-stats-cli' }, null, 2), 'utf8');
     const cli = (args: string[]) => spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), ...args], { cwd: root, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: dir }, windowsHide: true });
 
@@ -146,6 +202,20 @@ describe('review statistics (R11, R12)', () => {
     const human = cli(['--no-json', 'review', 'stats', '--goal', 'g-stats-cli']);
     assert.equal(human.status, 0, human.stderr);
     assert.match(human.stdout.trim(), /^T1-A {2}R2 3 rounds, 1 block \(bugs 1\)/, 'the human output is the formatter line');
+
+    // The family is aggregated from every goal, not only the one asked for (R3 F1). The chain comes from
+    // this repository's own registry, where T0-ARC-EXTERN-DEP was superseded by T0-ARC-EXTERN-DEP-2.
+    mkdirSync(path.join(dir, 'cards', 'g-stats-old'), { recursive: true });
+    writeGoal('g-stats-old');
+    const blockedRound = { round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd1', requestedAt: at(0), durationMs: 10_000, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'] };
+    writeFileSync(path.join(dir, 'cards', 'g-stats-old', 'T0-ARC-EXTERN-DEP.json'), JSON.stringify(run({ goalId: 'g-stats-old', cardId: 'T0-ARC-EXTERN-DEP', preReview: { rounds: [blockedRound], handoffs: [] } }), null, 2), 'utf8');
+    writeFileSync(path.join(dir, 'cards', 'g-stats-cli', 'T0-ARC-EXTERN-DEP-2.json'), JSON.stringify(run({ goalId: 'g-stats-cli', cardId: 'T0-ARC-EXTERN-DEP-2', preReview: { rounds: [{ ...blockedRound, requestedAt: at(60 * MIN), durationMs: 20_000, outcome: 'pass', reasons: [] }], handoffs: [] } }), null, 2), 'utf8');
+    const family = cli(['review', 'stats', '--goal', 'g-stats-cli', '--card', 'T0-ARC-EXTERN-DEP-2']);
+    assert.equal(family.status, 0, family.stderr);
+    const successor = (JSON.parse(family.stdout) as { cards: stats.CardReviewStats[] }).cards[0];
+    assert.equal(successor?.family?.members[0]?.cardId, 'T0-ARC-EXTERN-DEP');
+    assert.equal(successor?.family?.members[0]?.r2.rounds, 1, 'the predecessor that ran under another goal keeps its rounds');
+    assert.equal(successor?.family?.totals.r2.durationMs, 30_000);
 
     const missing = cli(['review', 'stats', '--goal', 'g-stats-cli', '--card', 'T1-NEVER-RUN']);
     assert.equal(missing.status, 0, missing.stderr);

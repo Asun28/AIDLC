@@ -720,9 +720,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       // Read only: the two review ledgers of each card run and the registry's `superseded_by` chain.
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
-      const goals = o.goal ? [o.goal] : c.store.listGoals().map((x) => x.id);
+      // Every goal is read whatever the filter: a predecessor of the family may have run under another goal.
+      const goals = [...new Set([...(o.goal ? [o.goal] : []), ...c.store.listGoals().map((x) => x.id)])];
       const runs = goals.flatMap((id) => c.store.listCardRuns(id));
-      const summaries = summarizeReviews(runs, registry.cards.map((p) => p.card), o.card ? { include: [o.card] } : {});
+      const summaries = summarizeReviews(runs, registry.cards.map((p) => p.card), { ...(o.goal ? { goals: [o.goal] } : {}), ...(o.card ? { include: [o.card] } : {}) });
       const cards = o.card ? summaries.filter((s) => s.cardId === o.card) : summaries;
       out(c, { goalId: o.goal, cards }, () => formatReviewStats(cards));
     });
