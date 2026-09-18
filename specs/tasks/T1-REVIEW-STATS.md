@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-STATS
 title: aidlc review stats reports rounds, decisions, blocks, durations, findings by disposition, re-raises and first-round misses per card and across a superseded card family
-status: todo
+status: merged
 branch: T1-REVIEW-STATS
 worktree: C:\wt\T1-REVIEW-STATS
 allow_paths:
@@ -43,3 +43,8 @@ npm run typecheck && node --test tests/surface/stats.test.ts tests/surface/templ
 ```
 - Expected exit code: 0
 - Assertion: the stats and template tests pass, including the per-card fields, the zero report, the family totals and the formatter.
+
+## Ruling
+R2 passed twice (three perspectives, cycle 0 on 72776fd and cycle 1 on 71081de). R3 blocked twice: decision 1 (codex) on F1 (`--goal` starved the family of predecessor runs from other goals), F2 (the blocking angles were counted in a plain object, so an angle named `constructor` read the prototype) and F3 (`substantiveBlocks` counts only merge-blocking decisions, so an advisory block reported no block); decision 2 (codex) on F4 (an R2 round was measured one reviewer runtime after its request, which leaves out the wait for pool admission), a first-round miss. Every finding was repaired RED-first. The second substantive block stopped the card; under the human ruling of 2026-09-18 F4 was applied and the candidate merged without another review cycle, as PR #22 (squash 1ac3494), with all four CI checks green and the full suite at 671.
+
+Two windows ran this card: the card lease expired during the first build (the 10-minute TTL is not renewed by `card attempt`) and a second session took it over at 23:43Z, which cost the card an hour and a STOP/ownership. The ruling of 2026-09-18 gave the card back to the first session, which finished it.
