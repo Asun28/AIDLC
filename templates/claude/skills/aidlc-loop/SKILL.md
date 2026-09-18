@@ -18,7 +18,9 @@ the next step.
 
 ## Entry checks (every route, every wakeup)
 1. `aidlc doctor`: git/gh/pwsh present, state dir resolved, no interrupted
-   writes. Red => STOP/tool.
+   writes; it names the goal claiming each uncommitted planning file. Leave
+   another goal's file alone; commit your own goal's planning artifacts on
+   main as soon as they validate and before you stop. Red => STOP/tool.
 2. Identity: canonical repository, base, goal generation, card revision. A
    window path or session id is not ownership; `aidlc goal status` shows the
    lease. Stale generation => `aidlc goal reconcile` before any mutation.
@@ -29,7 +31,7 @@ the next step.
 5. Terminal guard: DONE/STOP goals accept no work; late wakeups exit.
 
 ## Route: `aidlc goal new "<request>" [--size] [--target] [--card] [--issue]`
-Prints size, kind, target, card count (or unknown), modules, next module.
+Prints size, kind, target, card count, modules, next module.
 | Size | Scope | Modules |
 |---|---|---|
 | T0-bugfix | one reproducible defect | diagnosis + one card; card-loop |
@@ -43,7 +45,7 @@ Prints size, kind, target, card count (or unknown), modules, next module.
 - Target defaults to development. "Build a system" does not authorize
   hosting, deploy or production. `release.md` loads only for an explicit
   target; `migrate.md` only on data impact or a migration target.
-- Card-text-only request => validate text; do not execute code.
+- Card-text-only request => validate text; run no code.
 
 ## Authority
 - T0/T1 routine work uses the goal's existing authorization.
@@ -59,22 +61,22 @@ Prints size, kind, target, card count (or unknown), modules, next module.
 - `arc.md`: multi-card dispatch, amendments, integrated acceptance.
 - `release.md`: package/staging/production/recovery. Explicit target only.
 - `migrate.md`: data impact, phase graph, recovery. Data impact only.
-- Companion skills, read by path when the step needs them: `tdd` before
-  any test, `diagnose` on T0-bugfix, `grilling` at T1/T2 intake and the
-  T2 checkpoint, `merge-conflicts` when the base moved. T0 never grills.
-Shared checks above apply even when a T0 route skips arc.md.
+- Companion skills, read by path when needed: `tdd` before any test,
+  `diagnose` on T0-bugfix, `grilling` at T1/T2 intake and the T2
+  checkpoint, `merge-conflicts` when the base moved. T0 never grills.
+Shared checks apply even when T0 skips arc.md.
 
 ## Effort (MA1/MA2)
-Assess each task alone: uncertainty, scope, risk, verification burden. Start
-at that baseline; coordinator effort is irrelevant. At most 4 counted
-attempts: baseline + 2 repairs + 1 justified escalation to the next
-supported level. Same cause twice with no progress => stop early. Quota,
-expected RED, tool outage and env setup do not count. `aidlc card attempt`
-records every attempt; limits persist across session changes.
+Assess each task alone (uncertainty, scope, risk, verification burden);
+coordinator effort is irrelevant. At most 4 counted attempts: baseline + 2
+repairs + 1 justified escalation to the next supported level. Same cause
+twice with no progress => stop early. Quota, expected RED, tool outage and
+env setup do not count. `aidlc card attempt` records every attempt; limits
+persist across session changes.
 
 ## Output
 Concise progress: state, evidence refs, blocker, next action. STOP always
 carries reason, partial effects and the exact next action. Never claim
-"fully audited" without `aidlc audit verify` at the required level. Never
-merge without the required review, never bypass quota, never weaken a test
-to go green, never rebase receipt-bound or published history.
+"fully audited" without `aidlc audit verify`. Never merge without the
+required review, never bypass quota, never weaken a test to go green,
+never rebase receipt-bound or published history.

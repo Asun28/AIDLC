@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DEFAULT_HOOK_CONFIG, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
@@ -325,4 +326,81 @@ test('verify-before-done keeps listing runs when a card lease record cannot be r
   assert.ok(!ctx.includes(leases.file(key('T1-BROKEN'))), `lease paths never enter the context: ${ctx}`);
   // another session is asked about the unreadable ones and the free one, never about the card win-A owns
   assert.deepEqual(stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-B' }, { cwd, env })).sort(), ['T1-BROKEN', 'T1-FREE', 'T1-SHAPE']);
+});
+
+/** A git repository at `cwd` (the main checkout) whose planning file is untracked, plus its state and goal lease. */
+/** A git repository at `cwd` (a main checkout) with one untracked planning file and no aidlc state. */
+function gitRepoWithIntent(intent: string): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void } {
+  const { cwd, env } = envWithState();
+  const git = (args: string[]) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git(['init', '-q', '-b', 'main']);
+  git(['commit', '-q', '--allow-empty', '-m', 'init']);
+  mkdirSync(path.join(cwd, path.dirname(intent)), { recursive: true });
+  writeFileSync(path.join(cwd, intent), '# intent\n', 'utf8');
+  return { cwd, env, git };
+}
+
+function planningRepo(intent = 'intent/review-coverage.md'): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void; leases: LeaseStore; key: string; goal: ReturnType<typeof makeGoal> } {
+  const { cwd, env, git } = gitRepoWithIntent(intent);
+  const paths = resolveStatePaths(cwd, env);
+  const store = new GoalStore(paths);
+  const goal = { ...makeGoal('g-plan'), intentRef: intent };
+  store.saveGoal(goal);
+  mkdirSync(paths.leases, { recursive: true });
+  return { cwd, env, git, leases: new LeaseStore(paths.leases), key: resourceKeys.goal(resolveRepoIdentity(cwd).key, 'g-plan'), goal };
+}
+
+const PLANNING_CONTEXT = /\[aidlc\] Planning artifacts of goal g-plan are uncommitted on main: .+?\. Commit them before the session ends; another session sees only files it does not own\./;
+
+function planningContext(r: HookResult): string | undefined {
+  if (!r.stdout) return undefined;
+  const parsed = JSON.parse(r.stdout) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
+  assert.equal(parsed.hookSpecificOutput.hookEventName, 'Stop');
+  return parsed.hookSpecificOutput.additionalContext.match(PLANNING_CONTEXT)?.[0];
+}
+
+test('T0-PLANNING-CLAIMS acceptance 4: on Stop, a goal whose lease this session holds and whose intent is untracked asks for the commit; four other cases and no state directory add nothing', () => {
+  const { cwd, env, git, leases, key } = planningRepo();
+  const live = { now: '2026-09-15T00:00:00.000Z', ttlMs: 100 * 365 * 24 * 3600_000 };
+  leases.claim(key, { actor: windowActor('win-A'), ...live });
+  const stop = (session: string) => runHook('verify-before-done', { hook_event_name: 'Stop', session_id: session }, { cwd, env });
+  assert.equal(planningContext(stop('win-A')), '[aidlc] Planning artifacts of goal g-plan are uncommitted on main: intent/review-coverage.md. Commit them before the session ends; another session sees only files it does not own.');
+  // the lease held by another session: that session's reminder, not this one's
+  assert.equal(planningContext(stop('win-B')), undefined);
+  assert.deepEqual(stop('win-B'), { exitCode: 0 });
+  // the DoD context and the planning context arrive as one Stop message
+  const store = new GoalStore(resolveStatePaths(cwd, env));
+  const now = nowIso();
+  store.saveCardRun(CardRun.parse({ goalId: 'g-plan', cardId: 'T1-FOO', cardRevision: 0, goalGeneration: 0, state: 'BUILD', startedAt: now, deadline: addMs(now, 3600_000), updatedAt: now }));
+  const both = stop('win-A');
+  assert.deepEqual(stopCards(both), ['T1-FOO']);
+  assert.ok(planningContext(both), 'the planning context is part of the same message');
+  assert.equal(JSON.parse(both.stdout!).hookSpecificOutput.additionalContext.split('[aidlc]').length - 1, 2, 'exactly two [aidlc] contexts in one message');
+  store.saveCardRun(CardRun.parse({ goalId: 'g-plan', cardId: 'T1-FOO', cardRevision: 0, goalGeneration: 0, state: 'BUILD', startedAt: now, deadline: addMs(now, 3600_000), updatedAt: now, dodReceipt: 'evidence/g-plan/dod' }));
+  assert.ok(planningContext(stop('win-A')));
+  // the lease released
+  leases.release(key, 0, windowActor('win-A'));
+  assert.equal(planningContext(stop('win-A')), undefined);
+  leases.claim(key, { actor: windowActor('win-A'), ...live });
+  assert.ok(planningContext(stop('win-A')), 'claimed again: the reminder returns');
+  // the files committed
+  git(['add', 'intent/review-coverage.md']);
+  git(['commit', '-q', '-m', 'intent']);
+  assert.equal(planningContext(stop('win-A')), undefined);
+  writeFileSync(path.join(cwd, 'intent', 'review-coverage.md'), '# intent (edited)\n', 'utf8');
+  assert.ok(planningContext(stop('win-A')), 'a modified planning file counts as uncommitted');
+  // the goal terminal
+  const g = store.getGoal('g-plan')!;
+  store.saveGoal({ ...g, terminal: true, state: 'DONE' });
+  assert.equal(planningContext(stop('win-A')), undefined);
+  // no state directory: a git checkout with an untracked planning file and no aidlc state adds nothing and creates none
+  const bare = gitRepoWithIntent('intent/review-coverage.md');
+  assert.deepEqual(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd: bare.cwd, env: bare.env }), { exitCode: 0 });
+  assert.equal(existsSync(resolveStatePaths(bare.cwd, bare.env).root), false, 'the hook creates no state directory');
+  // and a Stop outside any git repository or aidlc state adds nothing
+  const plain = envWithState();
+  assert.deepEqual(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd: plain.cwd, env: plain.env }), { exitCode: 0 });
 });

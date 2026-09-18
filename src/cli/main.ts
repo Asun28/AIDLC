@@ -9,6 +9,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { workingTreeReport } from '../state/claims.ts';
+import { GitProbe } from '../probes/git.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
@@ -40,7 +42,7 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, type DeliveryTarget, type RequestSize } from '../core/types.ts';
+import { Goal, nowIso, type DeliveryTarget, type RequestSize } from '../core/types.ts';
 
 interface Ctx {
   root: string;
@@ -73,6 +75,23 @@ function out(c: { json: boolean }, data: unknown, human?: () => string): void {
 function fail(message: string, code = 1): never {
   process.stderr.write(`aidlc: ${message}\n`);
   process.exit(code);
+}
+
+/** Doctor's `workingTree` (card T0-PLANNING-CLAIMS): `workingTreeReport` over the main checkout's git status, goals, plans and goal leases. */
+function doctorWorkingTree(c: Ctx): ReturnType<typeof workingTreeReport> {
+  const leases = new LeaseStore(c.paths.leases);
+  return workingTreeReport({
+    isGit: c.repo.isGit,
+    status: () => new GitProbe().status(c.repo.mainRoot),
+    dirs: c.config,
+    goals: () => (existsSync(c.paths.goals) ? c.store.listGoals() : []),
+    readPlan: (ref) => {
+      const file = path.join(c.root, ref);
+      return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+    },
+    leaseOf: (goalId) => leases.read(resourceKeys.goal(c.repo.key, goalId)),
+    now: nowIso(),
+  });
 }
 
 function latestActiveGoalId(c: Ctx, explicit?: string): string {
@@ -171,8 +190,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
           ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
           : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
+        workingTree: doctorWorkingTree(c),
       };
-      out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n'));
+      out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
     });
 
   // ------------------------------------------------------------------ goals
