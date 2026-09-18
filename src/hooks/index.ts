@@ -11,7 +11,8 @@
  *  - protect-paths     (PreToolUse Edit|Write|Bash): frozen paths cannot be edited in place.
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
  *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
- *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done.
+ *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done,
+ *                      and a goal whose lease this session holds commits its planning artifacts first.
  *  - route-new-work    (UserPromptSubmit): print the routing result for a new request.
  *
  * Session: a hook process acts as the session of the event it handles. `hookSession` resolves it as
@@ -25,12 +26,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
-import { AuthorizationRecord, type Lease } from '../core/types.ts';
+import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
 import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
+import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import { loadProjectConfig } from '../config.ts';
+import { GitProbe } from '../probes/git.ts';
 
 export interface HookEvent {
   hook_event_name?: string;
@@ -260,18 +264,77 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
       if (acting === undefined) acting = resolveSessionId(env, cwd).session;
       return lease.owner.session === acting && lease.owner.host === host;
     };
-    const pending: string[] = [];
-    for (const goal of active) {
-      for (const run of store.listCardRuns(goal.id)) {
-        if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
+    const contexts: string[] = [];
+    // The two checks are independent: a card-run record that cannot be read (of any goal) ends the DoD
+    // check alone, and a failure of the planning check ends that reminder alone; neither hides the other.
+    try {
+      const pending: string[] = [];
+      for (const goal of active) {
+        for (const run of store.listCardRuns(goal.id)) {
+          if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
+        }
       }
+      if (pending.length) {
+        const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
+        contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+      }
+    } catch {
+      /* the DoD check is advisory */
     }
-    if (!pending.length) return { exitCode: 0 };
-    const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
-    return stopContext(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+    try {
+      contexts.push(...planningArtifactsContexts(cwd, env, active, leases, repoKey, host, session));
+    } catch (err) {
+      // The session is told the check did not run, by error code only (git, config or a store read).
+      contexts.push(`[aidlc] The planning-artifacts check did not run (${readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
+    }
+    if (!contexts.length) return { exitCode: 0 };
+    return stopContext(contexts.join(' '));
   } catch {
     return { exitCode: 0 };
   }
+}
+
+/**
+ * One context per non-terminal goal whose lease this session holds on this host and whose claimed
+ * planning files (intent, spec, plan, cards; `state/claims.ts`) are uncommitted on the main checkout
+ * (R3). A goal whose lease another session holds, a released lease, a goal without a lease and a
+ * checkout that is not a git repository add nothing (R4); expiry is not consulted, as for the card
+ * leases above. A lease record that cannot be read adds nothing for its goal; a plan that cannot be
+ * read names no extra cards for its goal only (`planningClaims` never throws); a git or config failure
+ * throws and the caller replaces this reminder with a note that the check did not run, keeping the
+ * DoD context: the reminder is advisory. Each path in the context is JSON-quoted and a goal id that
+ * is not a plain identifier is JSON-quoted too, so neither ever forms a second instruction.
+ */
+function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: Goal[], leases: LeaseStore, repoKey: string, host: string, session?: string): string[] {
+  const repo = resolveRepoIdentity(cwd);
+  if (!repo.isGit || !active.length) return [];
+  let acting = session;
+  const owned = active.filter((goal) => {
+    let lease: Lease | undefined;
+    try {
+      lease = leases.read(resourceKeys.goal(repoKey, goal.id));
+    } catch {
+      return false;
+    }
+    if (!lease || lease.released) return false;
+    if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+    return lease.owner.session === acting && lease.owner.host === host;
+  });
+  if (!owned.length) return [];
+  const dirs = loadProjectConfig(repo.mainRoot).config;
+  const claims = planningClaims(active, dirs, (ref) => {
+    const file = path.join(repo.mainRoot, ref);
+    return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+  });
+  const uncommitted = uncommittedPlanningFiles(new GitProbe().status(repo.mainRoot), dirs);
+  const contexts: string[] = [];
+  for (const goal of owned) {
+    const files = uncommitted.filter((file) => claims.get(file) === goal.id);
+    // Each path is JSON-quoted, and so is a goal id that is not a plain identifier: a name carrying a
+    // newline or a `[aidlc]` stays data inside its quotes.
+    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${quoteId(goal.id)} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
+  }
+  return contexts;
 }
 
 export function routeNewWork(event: HookEvent): HookResult {
