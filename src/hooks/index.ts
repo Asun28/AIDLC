@@ -31,7 +31,7 @@ import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
-import { planningClaims, uncommittedPlanningFiles } from '../state/claims.ts';
+import { planningClaims, quotePath, uncommittedPlanningFiles } from '../state/claims.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -293,8 +293,10 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
  * planning files (intent, spec, plan, cards; `state/claims.ts`) are uncommitted on the main checkout
  * (R3). A goal whose lease another session holds, a released lease, a goal without a lease and a
  * checkout that is not a git repository add nothing (R4); expiry is not consulted, as for the card
- * leases above. A lease record that cannot be read adds nothing; a git or config failure throws and
- * the caller drops this reminder alone, keeping the DoD context: the reminder is advisory.
+ * leases above. A lease record that cannot be read adds nothing for its goal; a plan that cannot be
+ * read names no extra cards for its goal only (`planningClaims` never throws); a git or config failure
+ * throws and the caller drops this reminder alone, keeping the DoD context: the reminder is advisory.
+ * Each path in the context is JSON-quoted, so a file name never forms a second instruction.
  */
 function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: Goal[], leases: LeaseStore, repoKey: string, host: string, session?: string): string[] {
   const repo = resolveRepoIdentity(cwd);
@@ -321,7 +323,8 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   const contexts: string[] = [];
   for (const goal of owned) {
     const files = uncommitted.filter((file) => claims.get(file) === goal.id);
-    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${goal.id} are uncommitted on main: ${files.join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
+    // Each path is JSON-quoted: a name carrying a newline or a `[aidlc]` stays data inside its quotes.
+    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${goal.id} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
   }
   return contexts;
 }

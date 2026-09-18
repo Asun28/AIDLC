@@ -12,9 +12,9 @@ description: >-
 # aidlc-loop router
 
 Contract: the `aidlc` CLI owns state (`.aidlc/` outside worktrees). Never
-edit state, board or journal files by hand. Each `aidlc next` prints exactly
-one JSON directive; execute that move, then `aidlc report`. Nothing else is
-the next step.
+edit state, board or journal files by hand. Each `aidlc next` prints one
+JSON directive; execute it, then `aidlc report`. Nothing else is the next
+step.
 
 ## Entry checks (every route, every wakeup)
 1. `aidlc doctor`: git/gh/pwsh present, state dir resolved, no interrupted
@@ -64,7 +64,7 @@ Prints size, kind, target, card count, modules, next module.
 - Companion skills, read by path when needed: `tdd` before any test,
   `diagnose` on T0-bugfix, `grilling` at T1/T2 intake and the T2
   checkpoint, `merge-conflicts` when the base moved. T0 never grills.
-Shared checks apply even when T0 skips arc.md.
+Shared checks apply when T0 skips arc.md.
 
 ## Effort (MA1/MA2)
 Assess each task alone (uncertainty, scope, risk, verification burden);
@@ -77,6 +77,6 @@ persist across session changes.
 ## Output
 Concise progress: state, evidence refs, blocker, next action. STOP always
 carries reason, partial effects and the exact next action. Never claim
-"fully audited" without `aidlc audit verify`. Never merge without the
-required review, never bypass quota, never weaken a test to go green,
-never rebase receipt-bound or published history.
+"fully audited" without `aidlc audit verify` at the required level. Never
+merge without the required review, never bypass quota, never weaken a test
+to go green, never rebase receipt-bound or published history.
