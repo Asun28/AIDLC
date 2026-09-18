@@ -45,12 +45,17 @@ export interface FindingStats {
 
 export interface CardReviewStats {
   cardId: string;
-  /** The goal that ran the card; absent when several goals ran it. */
+  /** The goal that ran the card; absent when several goals ran it, whose runs the numbers below cover together. */
   goalId?: string;
   r2: R2Stats;
   r3: R3Stats;
   findings: FindingStats;
-  /** First review request to the last pass, or to the last review when none passed. */
+  /**
+   * First review request to the last pass, or to the last review when none passed, each review measured
+   * to the completion its artifact records. A pass is a recorded pass of either stage: an advisory block
+   * opens the ship without being one, so a card whose last decision is an advisory block measures to its
+   * last pass, and to that block when nothing passed.
+   */
   wallMs: number;
   family?: FamilyStats;
 }
@@ -136,14 +141,28 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
   return into;
 }
 
+/**
+ * When a pre-review round ended: the artifact `commitPreReviewResult` writes for it
+ * (`pre-review-<cycle>-<round>-<attempt>`, the attempt taken from the round's reservation id), whose
+ * `createdAt` also covers the wait between the request and the reviewer (the diff, the prompt, pool
+ * admission). A round with no such artifact (one still in flight, or a record from before the
+ * reservation id existed) falls back to the measured reviewer runtime after the request.
+ */
+function roundEndedAt(run: CardRun, round: PreReviewRound): string {
+  const measured = ms(round.requestedAt) + round.durationMs;
+  const attempt = round.reservationId?.split('.').at(-2);
+  const artifact = attempt ? run.evidence.find((e) => e.id === `pre-review-${round.cycle}-${round.round}-${attempt}`) : undefined;
+  return new Date(artifact ? Math.max(measured, ms(artifact.createdAt)) : measured).toISOString();
+}
+
 function eventsOf(run: CardRun): ReviewEvent[] {
   const events: ReviewEvent[] = [];
-  for (const round of run.preReview.rounds) events.push({ startedAt: round.requestedAt, endedAt: new Date(ms(round.requestedAt) + round.durationMs).toISOString(), passed: round.outcome === 'pass' });
+  for (const round of run.preReview.rounds) events.push({ startedAt: round.requestedAt, endedAt: roundEndedAt(run, round), passed: round.outcome === 'pass' });
   for (const invocation of run.review.invocations) events.push({ startedAt: invocation.requestedAt, endedAt: decidedAt(run, invocation) ?? invocation.requestedAt, passed: invocation.outcome === 'pass' });
   return events;
 }
 
-/** First request to the last pass, or to the last review when none passed; no reviews is zero. */
+/** First request to the last pass, or to the last review when none passed (an advisory block is not a pass); no reviews is zero. */
 function wallOf(events: readonly ReviewEvent[]): number {
   if (!events.length) return 0;
   const start = Math.min(...events.map((e) => ms(e.startedAt)));

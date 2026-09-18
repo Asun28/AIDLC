@@ -172,6 +172,21 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summary?.r3, { decisions: 1, blocks: 1, durationMs: MIN }, 'a block that never barred the merge is still a block');
   });
 
+  test('summarizeReviews measures an R2 round to the completion its artifact records, not to the reviewer runtime (R3 F4)', () => {
+    // A round waits for the diff, the prompt and pool admission before the reviewer starts, so the round
+    // ends when `commitPreReviewResult` writes `pre-review-<cycle>-<round>-<attempt>`, not one runtime after the request.
+    const delayed = run({
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd1', requestedAt: at(0), durationMs: 5_000, outcome: 'pass', reasons: [], reservationId: 'T1-A.pre.0.1.1.abcd1234' }], handoffs: [] },
+      evidence: [{ id: 'pre-review-0-1-1', kind: 'artifact', createdAt: at(65_000), candidateDigest: 'd1', note: 'pre-review deepseek pass' }],
+    });
+    const [summary] = stats.summarizeReviews([delayed], []);
+    assert.equal(summary?.wallMs, 65_000, 'the round ended when its artifact landed');
+    assert.equal(summary?.r2.durationMs, 5_000, 'the measured reviewer runtime is unchanged');
+    // A record from before the artifact existed carries no reservation id and keeps the measured end.
+    const legacy = run({ preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: 'd1', requestedAt: at(0), durationMs: 5_000, outcome: 'pass', reasons: [] }], handoffs: [] } });
+    assert.equal(stats.summarizeReviews([legacy], [])[0]?.wallMs, 5_000);
+  });
+
   test('formatReviewStats prints one line per card, with the family members and the family total under the card that supersedes them', () => {
     const line = stats.formatReviewStats(stats.summarizeReviews([reviewedRun()], []));
     assert.equal(
