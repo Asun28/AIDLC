@@ -314,104 +314,184 @@ export function extractVerdict(output: string): Verdict | undefined {
 
 /**
  * The top-level JSON-looking documents of `text` in order (objects and arrays alike: an enclosing array is a document,
- * never a container to extract a verdict from), each with whether it parses, and the start of a document that never closed.
+ * never a container to extract a verdict from), and the start of a document that never closed.
  *
- * An opener that never closes runs to the end of the output, so it is a document cut short whenever the text from it
- * completes into valid JSON once its open string and its open containers are closed, and the output is malformed. Prose
- * that merely opens like JSON, which a reviewer quoting a JSON contract in its reasoning writes all the time, completes
- * under nothing: the scan resumes after it, and the complete document that follows decides. A prose opener with no
- * parseable document after it is malformed too, so a corrupt final document is never answered by an earlier draft.
+ * An opener runs to the end of the output or to a character JSON cannot carry there. Reaching the end is a document cut
+ * short, whatever state it stopped in (a dangling separator, a key without its value, a string cut inside an escape, a
+ * literal or a number cut mid-token all complete into valid JSON), and the output is malformed. Hitting an impossible
+ * character means the opener was prose that merely starts like JSON, which a reviewer quoting a JSON contract in its
+ * reasoning writes all the time: it opened nothing, and the scan resumes at that character, so the complete document
+ * that follows still decides. Everything between the opener and that character was inside the discarded text, so the
+ * scan never re-reads it and the walk stays linear in the size of the output. A prose opener with no document after it
+ * leaves the output malformed, so a final document corrupt in its interior is never answered by an earlier draft.
  */
 function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
   const spans: Array<{ start: number; end: number; parses: boolean }> = [];
-  let from = 0;
   let prose: number | undefined;
-  while (from < text.length) {
-    const scan = scanDocuments(text, from);
-    spans.push(...scan.spans);
-    if (scan.open === undefined) break;
-    if (completesAsJson(text.slice(scan.open.start), scan.open.stack, scan.open.inString)) return { spans, unfinished: scan.open.start };
-    // Prose, not a document: nothing it seemed to contain was ever inside it.
-    prose = scan.open.start;
-    from = prose + 1;
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i]!;
+    // Outside a document only a JSON-looking opener starts one: a brace followed by a key or a closing brace (whitespace
+    // before the first key is unbounded; a brace followed by nothing but whitespace to the end of the output opens one
+    // that cannot close), or a bracket followed by an object, a string or an array. Prose braces and brackets are ignored.
+    if (c !== '{' && c !== '[') {
+      i += 1;
+      continue;
+    }
+    const rest = text.slice(i + 1);
+    const next = rest.search(/\S/);
+    const opens = c === '{' ? next < 0 || rest[next] === '"' || rest[next] === '}' : next >= 0 && (rest[next] === '{' || rest[next] === '"' || rest[next] === '[');
+    if (!opens) {
+      i += 1;
+      continue;
+    }
+    const read = readDocument(text, i);
+    if (read.kind === 'truncated') return { spans, unfinished: i };
+    if (read.kind === 'closed') {
+      // The reader accepts exactly JSON, so a document it closed parses; the flag stays for the callers that read it.
+      spans.push({ start: i, end: read.end, parses: true });
+      i = read.end + 1;
+      continue;
+    }
+    prose = i;
+    i = read.at;
   }
-  if (prose !== undefined && !spans.some((s) => s.start > prose! && s.parses)) return { spans, unfinished: prose };
+  if (prose !== undefined && !spans.some((s) => s.start > prose!)) return { spans, unfinished: prose };
   return { spans, unfinished: undefined };
 }
 
-/** One pass from `from` to the end: the closed documents it found, and the opener still open at the end with the state to complete it. */
-function scanDocuments(text: string, from: number): { spans: Array<{ start: number; end: number; parses: boolean }>; open?: { start: number; stack: string[]; inString: boolean } } {
-  const spans: Array<{ start: number; end: number; parses: boolean }> = [];
-  // Objects and arrays open and close together: the stack carries both, so `[{...}` is one unfinished document.
-  const stack: string[] = [];
-  let inString = false;
-  let escaped = false;
-  let docStart = -1;
-  for (let i = from; i < text.length; i++) {
-    const c = text[i]!;
-    if (!stack.length) {
-      // Outside a document only a JSON-looking opener starts one: a brace followed by a key or a closing brace (whitespace
-      // before the first key is unbounded; a brace followed by nothing but whitespace to the end of the output opens one
-      // that cannot close), or a bracket followed by an object, a string or an array. Prose braces and brackets are ignored.
-      if (c === '{' || c === '[') {
-        const rest = text.slice(i + 1);
-        const next = rest.search(/\S/);
-        const opens = c === '{' ? next < 0 || rest[next] === '"' || rest[next] === '}' : next >= 0 && (rest[next] === '{' || rest[next] === '"' || rest[next] === '[');
-        if (opens) {
-          docStart = i;
-          stack.push(c);
-        }
-      }
-      continue;
-    }
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (c === '\\') escaped = true;
-      else if (c === '"') inString = false;
-      continue;
-    }
-    if (c === '"') inString = true;
-    else if (c === '{' || c === '[') stack.push(c);
-    else if (c === '}' || c === ']') {
-      // A mismatched closer still closes one level; whether the span parses is JSON.parse's verdict.
-      stack.pop();
-      if (!stack.length) {
-        let parses = true;
-        try {
-          JSON.parse(text.slice(docStart, i + 1));
-        } catch {
-          parses = false;
-        }
-        spans.push({ start: docStart, end: i, parses });
-      }
-    }
-  }
-  return stack.length ? { spans, open: { start: docStart, stack, inString } } : { spans };
-}
+/** How a document that starts at `start` ends: closed at an index, stopped at a character JSON cannot carry there, or still open at the end of the text. */
+type DocumentEnd = { kind: 'closed'; end: number } | { kind: 'invalid'; at: number } | { kind: 'truncated' };
+
+/** What the JSON grammar allows at the next character of a document. */
+type Expect = 'value' | 'value-or-close' | 'key' | 'key-or-close' | 'colon' | 'comma-or-close';
+
+const WHITESPACE = new Set([' ', '\t', '\n', '\r']);
 
 /**
- * Whether `rest`, the text from an opener that never closed to the end of the output, is a document cut short: closing its
- * open string and every open container yields valid JSON. Output is cut at an arbitrary character, so the tail is resolved
- * first: trailing whitespace is dropped (an output that ends its truncated document with a newline reads the same as one
- * that does not), a separator left dangling by the cut is dropped (`{"verdict":"block",`) and a key left without its value
- * takes `null` (`{"verdict":"block","rea`). Prose that merely opens like JSON completes under none of these.
+ * Read one JSON document from `start`, one character at a time, so that an output cut anywhere is recognised as a
+ * document cut short rather than reparsed. Every state the reader can stop in at the end of the text completes into a
+ * valid document: an open container closes, a dangling `,` or `:` takes a value, a key takes its value, an open string
+ * closes (an escape it was cut inside drops with it), and a partial `tru` or `1e` finishes its token.
  */
-function completesAsJson(rest: string, stack: string[], inString: boolean): boolean {
-  const closers = stack
-    .map((open) => (open === '{' ? '}' : ']'))
-    .reverse()
-    .join('');
-  const closed = rest.trimEnd() + (inString ? '"' : '');
-  for (const tail of ['', ':null']) {
-    const body = (closed + tail).replace(/,\s*$/, '');
-    try {
-      JSON.parse(body + closers);
-      return true;
-    } catch {
-      /* the next repair, then prose */
+function readDocument(text: string, start: number): DocumentEnd {
+  const stack: string[] = [];
+  let expect: Expect = 'value';
+  let i = start;
+  const close = (opener: string, at: number): DocumentEnd | undefined => {
+    if (stack[stack.length - 1] !== opener) return { kind: 'invalid', at };
+    stack.pop();
+    return stack.length ? undefined : { kind: 'closed', end: at };
+  };
+  while (i < text.length) {
+    const c = text[i]!;
+    if (WHITESPACE.has(c)) {
+      i += 1;
+      continue;
     }
+    if (expect === 'colon') {
+      if (c !== ':') return { kind: 'invalid', at: i };
+      expect = 'value';
+      i += 1;
+      continue;
+    }
+    if (expect === 'key' || expect === 'key-or-close') {
+      if (c === '}' && expect === 'key-or-close') {
+        const done = close('{', i);
+        if (done) return done;
+        expect = 'comma-or-close';
+        i += 1;
+        continue;
+      }
+      if (c !== '"') return { kind: 'invalid', at: i };
+      const str = readString(text, i);
+      if (str.kind !== 'closed') return str;
+      expect = 'colon';
+      i = str.end + 1;
+      continue;
+    }
+    if (expect === 'comma-or-close') {
+      if (c === ',') {
+        expect = stack[stack.length - 1] === '{' ? 'key' : 'value';
+        i += 1;
+        continue;
+      }
+      if (c === '}' || c === ']') {
+        const done = close(c === '}' ? '{' : '[', i);
+        if (done) return done;
+        i += 1;
+        continue;
+      }
+      return { kind: 'invalid', at: i };
+    }
+    // A value, or the closer of the container that just opened (`[]` and `{}` are values; `[1,]` is not).
+    if (c === ']' && expect === 'value-or-close') {
+      const done = close('[', i);
+      if (done) return done;
+      expect = 'comma-or-close';
+      i += 1;
+      continue;
+    }
+    if (c === '{' || c === '[') {
+      stack.push(c);
+      expect = c === '{' ? 'key-or-close' : 'value-or-close';
+      i += 1;
+      continue;
+    }
+    if (c === '"') {
+      const str = readString(text, i);
+      if (str.kind !== 'closed') return str;
+      expect = 'comma-or-close';
+      i = str.end + 1;
+      continue;
+    }
+    const token = readToken(text, i);
+    if (token.kind !== 'closed') return token;
+    expect = 'comma-or-close';
+    i = token.end + 1;
+    continue;
   }
-  return false;
+  return { kind: 'truncated' };
+}
+
+/** Read a JSON string from its opening quote at `start`. A raw control character is one JSON cannot carry, so prose that opens a quote and runs into the next line is prose. */
+function readString(text: string, start: number): DocumentEnd {
+  for (let i = start + 1; i < text.length; i += 1) {
+    const c = text[i]!;
+    if (c === '"') return { kind: 'closed', end: i };
+    if (c < ' ') return { kind: 'invalid', at: i };
+    if (c !== '\\') continue;
+    const escape = text[i + 1];
+    if (escape === undefined) return { kind: 'truncated' };
+    if (escape === 'u') {
+      const hex = text.slice(i + 2, i + 6);
+      if (!/^[0-9a-fA-F]*$/.test(hex)) return { kind: 'invalid', at: i + 2 };
+      if (hex.length < 4) return { kind: 'truncated' };
+      i += 5;
+      continue;
+    }
+    if (!'"\\/bfnrt'.includes(escape)) return { kind: 'invalid', at: i + 1 };
+    i += 1;
+  }
+  return { kind: 'truncated' };
+}
+
+const LITERALS = ['true', 'false', 'null'];
+const NUMBER = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
+/** A number the output could still be finishing: `-`, `1.`, `1e` and `1e+` are prefixes of one, `1..` is not. */
+const NUMBER_PREFIX = /^-?(0|[1-9]\d*)?(\.\d*)?([eE][+-]?\d*)?$/;
+
+/** Read a literal or a number from `start`. A token the text ends inside is closed when it is a prefix of a real one. */
+function readToken(text: string, start: number): DocumentEnd {
+  const match = /^[-+0-9a-zA-Z._]+/.exec(text.slice(start));
+  if (!match) return { kind: 'invalid', at: start };
+  const token = match[0];
+  const end = start + token.length - 1;
+  const complete = end < text.length - 1;
+  if (LITERALS.includes(token) || NUMBER.test(token)) return { kind: 'closed', end };
+  if (complete) return { kind: 'invalid', at: start };
+  if (LITERALS.some((l) => l.startsWith(token)) || NUMBER_PREFIX.test(token)) return { kind: 'truncated' };
+  return { kind: 'invalid', at: start };
 }
 
 export interface PreReviewClassification {
