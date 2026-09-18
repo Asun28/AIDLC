@@ -1,7 +1,7 @@
 ---
 id: T0-PLANNING-CLAIMS-2
 title: aidlc doctor names the goal and session that claims each uncommitted planning file, and the Stop hook asks a session to commit its own goal's planning artifacts before it ends (replacement of T0-PLANNING-CLAIMS after its R2 no-verdict allowance was spent on provider read timeouts)
-status: todo
+status: merged
 branch: T0-PLANNING-CLAIMS-2
 worktree: C:\wt\T0-PLANNING-CLAIMS-2
 allow_paths:
@@ -58,3 +58,6 @@ npm run typecheck && node --test tests/infra/claims.test.ts tests/surface/hooks.
 
 ## Notes for PREPARE
 `SKILL.md` is 4394 of 4500 bytes; the entry-check sentence needs an equal cut in the same file. `.claude/settings.json` needs no change: the Stop event already runs `bin/aidlc-hook.js`, and `hookNamesFor` decides which guards run for it.
+
+## Ruling
+Replacement of T0-PLANNING-CLAIMS: that card's candidate (`710eebe`, DoD-green after two repaired R2 blocks) spent the R2 no-verdict allowance of its cycle on two DeepSeek CLI read timeouts (`ERROR: The read operation timed out`), which stopped it for tool; a replacement carries the same candidate through a fresh ledger. On this card R2 passed twice (three perspectives, cycle 0 on `1d0f0c7` and cycle 1 on `50f20f0`; six rounds in all, two more ending in a provider no-verdict). R3 (codex) blocked twice: decision 1 on 13 findings (containment of references and card ids, JSON-quoted paths in doctor lines and the Stop context, read failures by store error code, per-goal isolation of an unreadable plan, the rename arrow read only from R/C status columns, C-quoted names decoded by code point, goal age compared as parsed instants, the audit-level condition restored in SKILL.md, a behavioural RED receipt), every one repaired RED-first with acceptance 2-4 amended on main; decision 2 on 11 findings (absolute and drive checks after normalisation, an intent or plan reference in any planning directory claimed, a backslash a separator only on Windows and never in a git path, goal and session ids quoted, each rename pathname read on its own with both endpoints listed, an unclaimed card file a claim unknown when a plan could not be read, the DoD check and the planning check of the Stop hook failing independently with a note by code). The second substantive block stopped the card; under the human ruling of 2026-09-18 all 11 were applied with acceptance 1-4 amended on main, and the candidate `5204e4a` merged without another review cycle as PR #25 (squash `118c687`), all five CI checks green and the full suite at 695. The retained verdicts are `T0-PLANNING-CLAIMS-2.r3.1.5396a61f` and `T0-PLANNING-CLAIMS-2.r3.2.396f03c2` in the goal evidence tree, with the merge record `T0-PLANNING-CLAIMS-2.pr-25-merge`.
