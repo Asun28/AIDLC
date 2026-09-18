@@ -580,3 +580,67 @@ test('T1-REVIEW-INVARIANTS acceptance 1 and 2: both stages carry the learned inv
   const absent = buildReviewPrompt({ ...base, stage: 'pre', includeDiff: true });
   assert.ok(absent.slice(absent.indexOf('## Learned invariants'), absent.indexOf('## Card contract')).includes('- none'), 'a prompt built without lessons carries the section with none');
 });
+
+test('T0-VERDICT-PROSE acceptance 1-3: prose that opens like JSON opens no document, a text that completes into JSON is still a document cut short, and every truncation case keeps its result', () => {
+  const verdict = '{"verdict":"pass","reasons":[]}';
+  // 1. The captured failure: a reviewer quoting this repository's own JSON contract in its reasoning (.review/
+  // T1-REVIEW-COVERAGE.pre.0.1.1.*.ac-coverage.log line 607), then the verdict document on the last line.
+  const prose = 'The docs line is `"coverage":[{"item"/` and the regex matches it. Good.';
+  assert.equal(extractVerdict(`${prose}\n${verdict}\n`)?.verdict, 'pass', 'the quoted fragment opens nothing; the document decides');
+  assert.equal(extractVerdict(`${verdict}\n`)?.verdict, 'pass', 'the same output without the fragment already did');
+  // The second captured shape, a test literal quoted in prose (.pre.0.1.2.*.edge-cases.log line 998).
+  assert.equal(extractVerdict(`Checking \`{"verdict"'))!;\` in the assertion. Fine.\n${verdict}\n`)?.verdict, 'pass');
+
+  // 3a. An opener whose remainder cannot complete into JSON opens nothing, whatever breaks it.
+  for (const fragment of ['{"item"/', '{"verdict" oops', '{"a":1} then {"b" and prose', '{"a":"x" unquoted words', '["a" and prose']) {
+    assert.equal(extractVerdict(`Reasoning: ${fragment}\nmore prose\n${verdict}\n`)?.verdict, 'pass', `prose fragment ${fragment}`);
+  }
+
+  // 3b. An opener whose remainder completes once its open string and containers are closed is a document cut short:
+  // the output is malformed, whatever parseable document precedes it, and a trailing newline does not change that.
+  const block = '{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED';
+  assert.equal(extractVerdict(`${verdict}\n${block}`), undefined, 'a reason string cut at the end of the output');
+  assert.equal(extractVerdict(`${verdict}\n${block}\n`), undefined, 'the same with a trailing newline');
+  assert.equal(extractVerdict(`${verdict}\n{"verdict":"block","reasons":[],"axes":{"spec":{"verdict":"block","reasons":[]}`), undefined, 'cut short after a nested axis');
+  assert.equal(extractVerdict(`${verdict}\n{"verdict":"block",`), undefined, 'cut short after a separator');
+
+  // 2. Every pre-change extraction case keeps its result.
+  assert.equal(extractVerdict('[{"verdict":"pass","reasons":[]}'), undefined, 'an unfinished enclosing array is never its nested object');
+  assert.equal(extractVerdict(`${verdict}\n{`), undefined, 'a final lone opener');
+  assert.equal(extractVerdict(`${verdict}\n{   \n`), undefined, 'a final opener with only whitespace after it');
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]} {"verdict":"block","reasons":[}'), undefined, 'a final document that does not parse');
+  assert.equal(extractVerdict('note: {"verdict":"block","reasons":[]} was the draft\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'the last complete document decides');
+  assert.equal(extractVerdict('[{"verdict":"block","reasons":[]}]\n{"verdict":"pass","reasons":[]}\n')?.verdict, 'pass', 'a finished array before it is history');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: a { in a string -> keep"],"axes":{"spec":{"verdict":"block","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}')?.verdict, 'block', 'braces inside strings still do not count');
+  assert.equal(extractVerdict('Reasoning.\n{\n  "verdict": "block",\n  "reasons": ["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],\n  "axes": {"spec": {"verdict": "block", "reasons": []}, "standards": {"verdict": "pass", "reasons": []}}\n}\n')?.verdict, 'block', 'a pretty-printed document is one document');
+});
+
+test('T0-VERDICT-PROSE R3 decision 1: an output cut in any JSON state is a document cut short, and the walk stays linear over prose that opens like JSON', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  // F1: cut after a colon, so the value is missing. The nested spec axis is not the verdict.
+  assert.equal(extractVerdict(`${pass}\n{"verdict":"block","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":`), undefined, 'a dangling colon is a document cut short');
+  assert.equal(extractVerdict(`${pass}\n{"verdict":"block",`), undefined, 'a dangling comma is too');
+  assert.equal(extractVerdict(`${pass}\n{"verdict"`), undefined, 'so is a complete key the output ends on, before its colon');
+  assert.equal(extractVerdict(`${pass}\n{"verdict":"block","rea`), undefined, 'a key cut in half is too');
+  // F2: a string cut inside an escape cannot be closed by appending a quote.
+  assert.equal(extractVerdict(`[${pass},"note\\`), undefined, 'a string cut after a backslash');
+  assert.equal(extractVerdict(`[${pass},"note\\u00`), undefined, 'a string cut inside a unicode escape');
+  assert.equal(extractVerdict(`[${pass},"note\\u0041"`), undefined, 'a complete escape in an array still unfinished');
+  // An escape JSON does not define is not a cut-short document: it is prose, and the document after it decides.
+  assert.equal(extractVerdict(`prose {"note":"c:\\path" and on\n${pass}\n`)?.verdict, 'pass', 'an invalid escape makes prose of the opener');
+  // F3: a literal or a number cut mid-token is a document cut short, not prose.
+  for (const partial of ['tru', 'fals', 'nul', '-', '1e', '1e+', '1.']) {
+    assert.equal(extractVerdict(`[${pass},${partial}`), undefined, `a partial ${partial} keeps the array cut short`);
+  }
+  // A token that is no prefix of any JSON value is prose, and the document after it decides.
+  assert.equal(extractVerdict(`see [{"a":1},tx and more\n${pass}\n`)?.verdict, 'pass', 'an impossible token makes prose of the opener');
+  assert.equal(extractVerdict(`see [{"a":1},1..2 and more\n${pass}\n`)?.verdict, 'pass', 'an impossible number too');
+  // F4: a reviewer that prints many documents must not overflow the argument limit of one call.
+  assert.equal(extractVerdict(`${'{} '.repeat(150_000)}${pass}\n`)?.verdict, 'pass', 'a long document sequence is collected without spreading it into one call');
+  // F5: every prose opener is discarded at the character that refuted it, so the walk never rescans the rest of the
+  // output. Quadratic rescanning took about 6.9 s for this input; the ceiling is far above a linear walk and far below that.
+  const started = process.hrtime.bigint();
+  assert.equal(extractVerdict(`${'["x" prose '.repeat(12_000)}${pass}\n`)?.verdict, 'pass');
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 3_000, `12,000 prose openers walked in ${Math.round(elapsedMs)} ms`);
+});
