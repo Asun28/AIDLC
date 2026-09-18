@@ -26,7 +26,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, type LessonsContext } from '../artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
@@ -1295,6 +1295,9 @@ export class CardRunner {
     const candidateDigest = persisted.candidate?.digest ?? candidateSha;
     const reviewPolicy = this.reviewPolicy();
     const hash = policyHash(reviewPolicy);
+    // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
+    // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
+    const lessons = reviewLessons(this.lessonsFile());
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', 'formalReview.maxDiffBytes');
@@ -1370,7 +1373,7 @@ export class CardRunner {
       throw err;
     }
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
     let panel: PanelResult | undefined;
     // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
     // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
@@ -1853,6 +1856,9 @@ export class CardRunner {
     this.preReviewAdmission(persisted, card, candidateSha, candidateDigest, now);
     const reviewPolicy = this.reviewPolicy();
     const hash = policyHash(reviewPolicy);
+    // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
+    // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
+    const lessons = reviewLessons(this.lessonsFile());
     // A diff above the cap is refused here, before the reservation: no round, receipt or event records it (R7).
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', 'preReview.maxDiffBytes');
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
@@ -1899,7 +1905,7 @@ export class CardRunner {
       result = { outcome: 'block', runStatus: 'success', reasons, verdict, perspectives: [{ perspective: 'scope-gate', outcome: 'block', runStatus: 'success', reasons, verdict, durationMs: 0, logRef: '', receiptSha256: '', exitCode: 0 }], durationMs: 0, receiptSha256: '' };
     } else {
       const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
+      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
       try {
         result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash });
       } catch (err) {

@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, LESSON_LINE } from '../../src/artifacts/lessons.ts';
+import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonProblem, parseLessonLine, readLessons, reviewLessons, LESSON_LINE, REVIEW_LESSONS_MAX_BYTES } from '../../src/artifacts/lessons.ts';
 
 const ENTRY = { date: '2026-09-14', ref: 'T1-LOOP-LESSONS', kind: 'NEVER' as const, rule: 'skip the lesson step at CLOSE', source: 'PR #11' };
 const LINE = '- 2026-09-14 T1-LOOP-LESSONS: NEVER skip the lesson step at CLOSE (source: PR #11)';
@@ -118,6 +118,20 @@ describe('lessons artifact (T1-LOOP-LESSONS R6)', () => {
     const ctx = readLessons(many, 3);
     assert.equal(ctx.count, 7);
     assert.deepEqual(ctx.recent.map((l) => parseLessonLine(l)?.rule), ['rule 5', 'rule 6', 'rule 7']);
+  });
+
+  test('T1-REVIEW-INVARIANTS: reviewLessons carries the NEVER and ALWAYS rules newest first, no NOTE line, stops at the byte cap and counts what it left out', () => {
+    const file = path.join(dir(), 'docs', 'LESSONS.md');
+    const never = { ...ENTRY, rule: 'skip the lesson step at CLOSE' };
+    const always = { ...ENTRY, date: '2026-09-15', ref: 'T0-SHIP-BASE-SYNC-2', kind: 'ALWAYS' as const, rule: 'encode every failure detail once at the failure helper', source: 'PR #18' };
+    const note = { ...ENTRY, date: '2026-09-16', ref: 'T1-LOOP-RESUME', kind: 'NOTE' as const, rule: 'amend the card on main before the next round', source: 'PR #13' };
+    for (const entry of [never, always, note]) appendLesson(file, entry);
+    assert.deepEqual(reviewLessons(file), { lines: [formatLesson(always), formatLesson(never)], omitted: 0 }, 'newest first, and a NOTE line is not an invariant');
+    const newest = formatLesson(always);
+    assert.deepEqual(reviewLessons(file, Buffer.byteLength(newest, 'utf8') + 1), { lines: [newest], omitted: 1 }, 'the cap keeps the newest rules and counts the rest as omitted');
+    assert.deepEqual(reviewLessons(file, 1), { lines: [], omitted: 2 }, 'a cap below the newest line leaves every rule out');
+    assert.deepEqual(reviewLessons(path.join(dir(), 'missing.md')), { lines: [], omitted: 0 }, 'an absent file carries no invariants');
+    assert.ok(REVIEW_LESSONS_MAX_BYTES >= 1000, 'the default cap holds several rules');
   });
 });
 
