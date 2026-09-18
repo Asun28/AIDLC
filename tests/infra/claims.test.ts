@@ -269,6 +269,12 @@ describe('workingTreeReport: what aidlc doctor prints (acceptance 3)', () => {
       },
     }));
     assert.equal(probe, 'UNREADABLE: git status failed (exit 128)');
+    const killed = workingTreeReport(inputs({
+      status: () => {
+        throw new GitProbeError(['status'], { ...receipt, exitCode: null, signal: 'SIGTERM', timedOut: true });
+      },
+    }));
+    assert.equal(killed, 'UNREADABLE: git status failed (UNREADABLE)', 'no numeric exit code (signal or timeout)');
     const other = workingTreeReport(inputs({
       status: () => {
         throw new Error(`spawn failed ${secret}`);

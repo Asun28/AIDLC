@@ -285,7 +285,7 @@ export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | s
   return formatWorkingTree(files, claims, input.leaseOf, input.now, planErrors);
 }
 
-/** A git status failure by code: `exit <n>` from the probe's receipt, else `UNREADABLE`; git's text never reaches the line. */
+/** A git status failure by code: `exit <n>` from the probe's receipt when it has a numeric exit code (a signal or timeout has none), else `UNREADABLE`; git's text never reaches the line. */
 function gitErrorCode(err: unknown): string {
-  return err instanceof GitProbeError ? `exit ${err.receipt.exitCode}` : 'UNREADABLE';
+  return err instanceof GitProbeError && typeof err.receipt.exitCode === 'number' ? `exit ${err.receipt.exitCode}` : 'UNREADABLE';
 }
