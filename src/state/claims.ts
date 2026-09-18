@@ -77,8 +77,32 @@ function entryPath(entry: string): string | undefined {
   let p = m[1]!;
   const arrow = p.indexOf(' -> ');
   if (arrow >= 0) p = p.slice(arrow + 4);
-  if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = p.slice(1, -1);
+  if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = unquoteC(p.slice(1, -1));
   return p;
+}
+
+const C_ESCAPES: Record<string, number> = { a: 0x07, b: 0x08, f: 0x0c, n: 0x0a, r: 0x0d, t: 0x09, v: 0x0b, '\\': 0x5c, '"': 0x22 };
+
+/** The bytes of a path git C-quoted (`"..."`): the named escapes and octal `\NNN` bytes, decoded as UTF-8. */
+function unquoteC(quoted: string): string {
+  const bytes: number[] = [];
+  for (let i = 0; i < quoted.length; i++) {
+    const ch = quoted[i]!;
+    if (ch !== '\\' || i + 1 >= quoted.length) {
+      bytes.push(...Buffer.from(ch, 'utf8'));
+      continue;
+    }
+    const octal = /^[0-7]{1,3}/.exec(quoted.slice(i + 1, i + 4));
+    if (octal) {
+      bytes.push(parseInt(octal[0], 8) & 0xff);
+      i += octal[0].length;
+      continue;
+    }
+    const next = quoted[i + 1]!;
+    bytes.push(C_ESCAPES[next] ?? Buffer.from(next, 'utf8')[0]!);
+    i += 1;
+  }
+  return Buffer.from(bytes).toString('utf8');
 }
 
 /**
@@ -142,8 +166,10 @@ export interface WorkingTreeInputs {
 /**
  * The doctor's `workingTree` line (R2): `n/a` outside a git repository; `UNREADABLE: <first line of the
  * git error>` when the status cannot be read (doctor is the entry check, so nothing here throws); else
- * `formatWorkingTree` over the uncommitted planning files and the claims. A plan that cannot be read
- * names no extra cards; a lease that cannot be read is reported on its entry.
+ * `formatWorkingTree` over the uncommitted planning files and the claims. Goal records that cannot be
+ * read (a malformed goal file after an interrupted write) leave every entry `claim unknown` with the
+ * first line of the error; a plan that cannot be read names no extra cards; a lease that cannot be
+ * read is reported on its entry.
  */
 export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | string | string[] {
   if (!input.isGit) return 'n/a';
@@ -151,11 +177,17 @@ export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | s
   try {
     status = input.status();
   } catch (err) {
-    return `UNREADABLE: ${String((err as Error).message ?? err).split(/\r?\n/)[0]}`;
+    return `UNREADABLE: ${firstLine(err)}`;
   }
   const files = uncommittedPlanningFiles(status, input.dirs);
   if (!files.length) return 'clean';
-  const claims = planningClaims(input.goals(), input.dirs, (ref) => {
+  let goals: Goal[];
+  try {
+    goals = input.goals();
+  } catch (err) {
+    return files.map((file) => `${file}: claim unknown (goal records unreadable: ${firstLine(err)})`);
+  }
+  const claims = planningClaims(goals, input.dirs, (ref) => {
     try {
       return input.readPlan(ref);
     } catch {
@@ -163,4 +195,8 @@ export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | s
     }
   });
   return formatWorkingTree(files, claims, input.leaseOf, input.now);
+}
+
+function firstLine(err: unknown): string {
+  return String((err as Error)?.message ?? err).split(/\r?\n/)[0]!;
 }

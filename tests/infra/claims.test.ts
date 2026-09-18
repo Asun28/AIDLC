@@ -107,6 +107,19 @@ describe('uncommittedPlanningFiles (acceptance 2)', () => {
     ]);
     assert.deepEqual(uncommittedPlanningFiles({ dirty: false, entries: [], untracked: [] }, dirs), []);
   });
+
+  test('a path git C-quoted is decoded: named escapes, octal UTF-8 bytes, a quote and a backslash', () => {
+    const entries = [
+      '?? "intent/caf\\303\\251 plan.md"',
+      '?? "intent/a\\"b\\\\c.md"',
+      '?? "intent/tab\\there.md"',
+      '?? "specs/tasks/T0-\\303\\244.md"',
+    ];
+    assert.deepEqual(uncommittedPlanningFiles({ entries }, dirs), ['intent/café plan.md', 'intent/a"b\\c.md', 'intent/tab\there.md', 'specs/tasks/T0-ä.md']);
+    // a decoded path matches its claim
+    const claims = new Map<string, string>([['intent/café plan.md', 'g-a']]);
+    assert.deepEqual(formatWorkingTree(['intent/café plan.md'], claims, () => undefined, iso()), ['intent/café plan.md: claimed by g-a (no lease)']);
+  });
 });
 
 describe('formatWorkingTree (acceptance 3)', () => {
@@ -173,6 +186,19 @@ describe('workingTreeReport: what aidlc doctor prints (acceptance 3)', () => {
       },
     }));
     assert.equal(report, 'UNREADABLE: git status failed: fatal: not a git repository');
+  });
+
+  test('goal records that cannot be read leave every entry claim unknown with the first line of the error; nothing throws', () => {
+    const report = workingTreeReport(inputs({
+      status: () => ({ entries: ['?? intent/a.md', ' M plans/a.md'] }),
+      goals: () => {
+        throw new Error('MALFORMED_JSON: goals/g-a.json\nUnexpected token');
+      },
+    }));
+    assert.deepEqual(report, [
+      'intent/a.md: claim unknown (goal records unreadable: MALFORMED_JSON: goals/g-a.json)',
+      'plans/a.md: claim unknown (goal records unreadable: MALFORMED_JSON: goals/g-a.json)',
+    ]);
   });
 
   test('clean when no planning file is uncommitted, and the goals are not read', () => {
