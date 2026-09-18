@@ -1,9 +1,9 @@
 ---
-id: T0-PLANNING-CLAIMS
-title: aidlc doctor names the goal and session that claims each uncommitted planning file, and the Stop hook asks a session to commit its own goal's planning artifacts before it ends
+id: T0-PLANNING-CLAIMS-2
+title: aidlc doctor names the goal and session that claims each uncommitted planning file, and the Stop hook asks a session to commit its own goal's planning artifacts before it ends (replacement of T0-PLANNING-CLAIMS after its R2 no-verdict allowance was spent on provider read timeouts)
 status: todo
-branch: T0-PLANNING-CLAIMS
-worktree: C:\wt\T0-PLANNING-CLAIMS
+branch: T0-PLANNING-CLAIMS-2
+worktree: C:\wt\T0-PLANNING-CLAIMS-2
 allow_paths:
   - src/state/claims.ts
   - src/cli/main.ts
@@ -18,6 +18,7 @@ allow_paths:
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T0-PLANNING-CLAIMS.md
+  - specs/tasks/T0-PLANNING-CLAIMS-2.md
 dod_command: npm run typecheck && node --test tests/infra/claims.test.ts tests/surface/hooks.test.ts tests/surface/templates.test.ts
 dod_exit: 0
 requirements:
@@ -39,12 +40,13 @@ sweep: "grep -rn 'verify-before-done\|hookNamesFor\|GitProbe.*status\|intentRef\
 forbid: [a claims file or lock under .aidlc (the goal lease is the owner), deleting or moving another goal's file, a hook that denies Stop]
 non_goals: [claiming files outside the four planning directories, committing on the session's behalf, a claim for a file with no goal yet (it stays unclaimed until aidlc goal new records the intent), worktree files (the card lease and the ship scope gate cover them)]
 doc_sync: docs/OPERATIONS.md (Multiple sessions), docs/ARCHITECTURE.md (state module), CHANGELOG.md
-superseded_by: T0-PLANNING-CLAIMS-2
 ---
 
-# T0-PLANNING-CLAIMS
+# T0-PLANNING-CLAIMS-2
 
 ## Deliverable
+Replacement of T0-PLANNING-CLAIMS: its candidate (`710eebe` on branch `T0-PLANNING-CLAIMS`, DoD-green, R2 rounds 1 and 2 blocked and repaired) spent the R2 no-verdict allowance of its cycle on two DeepSeek CLI read timeouts (`ERROR: The read operation timed out`, retained under `.review/T0-PLANNING-CLAIMS.pre.0.3.*.log`), so the loop stopped it for tool; the ledger does not reset, and this card carries the same candidate through a fresh review ledger. Text below unchanged.
+
 Planning artifacts (intent, spec, plan, card files) are drafted on main before the goal reaches RUN, and a second session in the same checkout sees them only as untracked files: on 2026-09-18 one session left `intent/review-coverage.md` alone with "it is not mine", correct by convention but a guess, since nothing named the owner. The goal record already knows its intent, plan and cards and the goal lease already knows the session; this card derives the claim from those two (no claims file, no second lock: the T1-LOOP-LESSONS lesson) and shows it in the two places every session already passes: `aidlc doctor` at entry lists each uncommitted planning file with its claiming goal, session and lease state, and the Stop hook reminds a session that holds a goal lease to commit that goal's planning artifacts before it ends. The skill text carries the rule: another goal's file is left alone; your own goal's files are committed on main as soon as they validate and before you stop.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
