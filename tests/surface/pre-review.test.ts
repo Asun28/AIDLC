@@ -572,6 +572,11 @@ test('T1-REVIEW-INVARIANTS acceptance 1 and 2: both stages carry the learned inv
   const empty = buildReviewPrompt({ ...base, stage: 'formal', includeDiff: false, lessons: { lines: [], omitted: 0 } });
   const emptySection = empty.slice(empty.indexOf('## Learned invariants'), empty.indexOf('## Card contract'));
   assert.ok(emptySection.includes('- none'), `an empty list renders none: ${emptySection}`);
+  // R2 round 1 (edge-cases, advisory): a cap below the newest rule lists nothing, so the omitted line never claims rules are above it.
+  const capped = buildReviewPrompt({ ...base, stage: 'pre', includeDiff: true, lessons: { lines: [], omitted: 2 } });
+  const cappedSection = capped.slice(capped.indexOf('## Learned invariants'), capped.indexOf('## Card contract'));
+  assert.ok(cappedSection.includes('- none') && cappedSection.includes('2 older lessons omitted'), `nothing fit the cap: none, and the count: ${cappedSection}`);
+  assert.ok(!cappedSection.includes('the newest rules are above'), `nothing is listed, so nothing is claimed to be above: ${cappedSection}`);
   const absent = buildReviewPrompt({ ...base, stage: 'pre', includeDiff: true });
   assert.ok(absent.slice(absent.indexOf('## Learned invariants'), absent.indexOf('## Card contract')).includes('- none'), 'a prompt built without lessons carries the section with none');
 });
