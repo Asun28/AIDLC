@@ -31,7 +31,7 @@ import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
-import { planningClaims, quotePath, uncommittedPlanningFiles } from '../state/claims.ts';
+import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -264,22 +264,28 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
       if (acting === undefined) acting = resolveSessionId(env, cwd).session;
       return lease.owner.session === acting && lease.owner.host === host;
     };
-    const pending: string[] = [];
-    for (const goal of active) {
-      for (const run of store.listCardRuns(goal.id)) {
-        if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
-      }
-    }
     const contexts: string[] = [];
-    if (pending.length) {
-      const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
-      contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+    // The two checks are independent: a card-run record that cannot be read (of any goal) ends the DoD
+    // check alone, and a failure of the planning check ends that reminder alone; neither hides the other.
+    try {
+      const pending: string[] = [];
+      for (const goal of active) {
+        for (const run of store.listCardRuns(goal.id)) {
+          if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
+        }
+      }
+      if (pending.length) {
+        const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
+        contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+      }
+    } catch {
+      /* the DoD check is advisory */
     }
-    // A failure of the planning check (git, config, a lease read) drops that reminder only, never the DoD context.
     try {
       contexts.push(...planningArtifactsContexts(cwd, env, active, leases, repoKey, host, session));
-    } catch {
-      /* advisory */
+    } catch (err) {
+      // The session is told the check did not run, by error code only (git, config or a store read).
+      contexts.push(`[aidlc] The planning-artifacts check did not run (${readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
     }
     if (!contexts.length) return { exitCode: 0 };
     return stopContext(contexts.join(' '));
@@ -295,8 +301,9 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
  * checkout that is not a git repository add nothing (R4); expiry is not consulted, as for the card
  * leases above. A lease record that cannot be read adds nothing for its goal; a plan that cannot be
  * read names no extra cards for its goal only (`planningClaims` never throws); a git or config failure
- * throws and the caller drops this reminder alone, keeping the DoD context: the reminder is advisory.
- * Each path in the context is JSON-quoted, so a file name never forms a second instruction.
+ * throws and the caller replaces this reminder with a note that the check did not run, keeping the
+ * DoD context: the reminder is advisory. Each path in the context is JSON-quoted and a goal id that
+ * is not a plain identifier is JSON-quoted too, so neither ever forms a second instruction.
  */
 function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: Goal[], leases: LeaseStore, repoKey: string, host: string, session?: string): string[] {
   const repo = resolveRepoIdentity(cwd);
@@ -323,8 +330,9 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   const contexts: string[] = [];
   for (const goal of owned) {
     const files = uncommitted.filter((file) => claims.get(file) === goal.id);
-    // Each path is JSON-quoted: a name carrying a newline or a `[aidlc]` stays data inside its quotes.
-    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${goal.id} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
+    // Each path is JSON-quoted, and so is a goal id that is not a plain identifier: a name carrying a
+    // newline or a `[aidlc]` stays data inside its quotes.
+    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${quoteId(goal.id)} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
   }
   return contexts;
 }
