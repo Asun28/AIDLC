@@ -9,7 +9,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { formatWorkingTree, planningClaims, uncommittedPlanningFiles } from '../state/claims.ts';
+import { workingTreeReport } from '../state/claims.ts';
 import { GitProbe } from '../probes/git.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
@@ -77,29 +77,21 @@ function fail(message: string, code = 1): never {
   process.exit(code);
 }
 
-/**
- * Doctor's `workingTree` (card T0-PLANNING-CLAIMS): every uncommitted file under the four planning
- * directories of the main checkout with the goal that claims it (derived from the goal record) and that
- * goal's lease owner and expiry, or `unclaimed`; `clean` when there is none; `n/a` outside a git
- * repository. A git failure is reported on the line, never thrown: doctor is the entry check.
- */
-function doctorWorkingTree(c: Ctx): string | string[] {
-  if (!c.repo.isGit) return 'n/a';
-  let status: ReturnType<GitProbe['status']>;
-  try {
-    status = new GitProbe().status(c.repo.mainRoot);
-  } catch (err) {
-    return `UNREADABLE: ${(err as Error).message.split(/\r?\n/)[0]}`;
-  }
-  const files = uncommittedPlanningFiles(status, c.config);
-  if (!files.length) return 'clean';
-  const goals = existsSync(c.paths.goals) ? c.store.listGoals() : [];
-  const claims = planningClaims(goals, c.config, (ref) => {
-    const file = path.join(c.root, ref);
-    return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
-  });
+/** Doctor's `workingTree` (card T0-PLANNING-CLAIMS): `workingTreeReport` over the main checkout's git status, goals, plans and goal leases. */
+function doctorWorkingTree(c: Ctx): ReturnType<typeof workingTreeReport> {
   const leases = new LeaseStore(c.paths.leases);
-  return formatWorkingTree(files, claims, (goalId) => leases.read(resourceKeys.goal(c.repo.key, goalId)), nowIso());
+  return workingTreeReport({
+    isGit: c.repo.isGit,
+    status: () => new GitProbe().status(c.repo.mainRoot),
+    dirs: c.config,
+    goals: () => (existsSync(c.paths.goals) ? c.store.listGoals() : []),
+    readPlan: (ref) => {
+      const file = path.join(c.root, ref);
+      return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+    },
+    leaseOf: (goalId) => leases.read(resourceKeys.goal(c.repo.key, goalId)),
+    now: nowIso(),
+  });
 }
 
 function latestActiveGoalId(c: Ctx, explicit?: string): string {

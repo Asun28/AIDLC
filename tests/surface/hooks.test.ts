@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -329,7 +329,8 @@ test('verify-before-done keeps listing runs when a card lease record cannot be r
 });
 
 /** A git repository at `cwd` (the main checkout) whose planning file is untracked, plus its state and goal lease. */
-function planningRepo(intent = 'intent/review-coverage.md'): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void; leases: LeaseStore; key: string; goal: ReturnType<typeof makeGoal> } {
+/** A git repository at `cwd` (a main checkout) with one untracked planning file and no aidlc state. */
+function gitRepoWithIntent(intent: string): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void } {
   const { cwd, env } = envWithState();
   const git = (args: string[]) => {
     const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, encoding: 'utf8', windowsHide: true });
@@ -339,6 +340,11 @@ function planningRepo(intent = 'intent/review-coverage.md'): { cwd: string; env:
   git(['commit', '-q', '--allow-empty', '-m', 'init']);
   mkdirSync(path.join(cwd, path.dirname(intent)), { recursive: true });
   writeFileSync(path.join(cwd, intent), '# intent\n', 'utf8');
+  return { cwd, env, git };
+}
+
+function planningRepo(intent = 'intent/review-coverage.md'): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void; leases: LeaseStore; key: string; goal: ReturnType<typeof makeGoal> } {
+  const { cwd, env, git } = gitRepoWithIntent(intent);
   const paths = resolveStatePaths(cwd, env);
   const store = new GoalStore(paths);
   const goal = { ...makeGoal('g-plan'), intentRef: intent };
@@ -390,7 +396,11 @@ test('T0-PLANNING-CLAIMS acceptance 4: on Stop, a goal whose lease this session 
   const g = store.getGoal('g-plan')!;
   store.saveGoal({ ...g, terminal: true, state: 'DONE' });
   assert.equal(planningContext(stop('win-A')), undefined);
-  // no state directory: a Stop outside any aidlc state adds nothing
-  const bare = envWithState();
+  // no state directory: a git checkout with an untracked planning file and no aidlc state adds nothing and creates none
+  const bare = gitRepoWithIntent('intent/review-coverage.md');
   assert.deepEqual(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd: bare.cwd, env: bare.env }), { exitCode: 0 });
+  assert.equal(existsSync(resolveStatePaths(bare.cwd, bare.env).root), false, 'the hook creates no state directory');
+  // and a Stop outside any git repository or aidlc state adds nothing
+  const plain = envWithState();
+  assert.deepEqual(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd: plain.cwd, env: plain.env }), { exitCode: 0 });
 });

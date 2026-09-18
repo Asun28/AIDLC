@@ -96,8 +96,14 @@ export function uncommittedPlanningFiles(status: { entries: string[]; dirty?: bo
   return files;
 }
 
-/** The lease state the doctor prints next to a claim. */
-function leaseState(lease: Lease | undefined, now: string): string {
+/** The lease state the doctor prints next to a claim; a lease record that cannot be read is said so, never quoted. */
+function leaseState(leaseOf: (goalId: string) => Lease | undefined, goalId: string, now: string): string {
+  let lease: Lease | undefined;
+  try {
+    lease = leaseOf(goalId);
+  } catch {
+    return 'lease unreadable';
+  }
   if (!lease) return 'no lease';
   if (lease.released) return `session ${lease.owner.session}, lease released`;
   const expired = Date.parse(lease.expiresAt) < Date.parse(now);
@@ -113,6 +119,48 @@ export function formatWorkingTree(files: string[], claims: Map<string, string>, 
   return files.map((file) => {
     const goalId = claims.get(file);
     if (!goalId) return `${file}: unclaimed`;
-    return `${file}: claimed by ${goalId} (${leaseState(leaseOf(goalId), now)})`;
+    return `${file}: claimed by ${goalId} (${leaseState(leaseOf, goalId, now)})`;
   });
+}
+
+/** What `aidlc doctor` reads to print `workingTree`; every read is injected so the report is testable on fixtures. */
+export interface WorkingTreeInputs {
+  /** Whether the checkout is a git repository (`RepoIdentity.isGit`). */
+  isGit: boolean;
+  /** `GitProbe.status` of the main checkout; may throw. */
+  status: () => { entries: string[] };
+  dirs: PlanningDirs;
+  /** The goal records, read only once a planning file is uncommitted. */
+  goals: () => Goal[];
+  /** The plan text by its reference relative to the main checkout, or undefined; may throw. */
+  readPlan: (planRef: string) => string | undefined;
+  /** The goal lease record; may throw. */
+  leaseOf: (goalId: string) => Lease | undefined;
+  now: string;
+}
+
+/**
+ * The doctor's `workingTree` line (R2): `n/a` outside a git repository; `UNREADABLE: <first line of the
+ * git error>` when the status cannot be read (doctor is the entry check, so nothing here throws); else
+ * `formatWorkingTree` over the uncommitted planning files and the claims. A plan that cannot be read
+ * names no extra cards; a lease that cannot be read is reported on its entry.
+ */
+export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | string | string[] {
+  if (!input.isGit) return 'n/a';
+  let status: { entries: string[] };
+  try {
+    status = input.status();
+  } catch (err) {
+    return `UNREADABLE: ${String((err as Error).message ?? err).split(/\r?\n/)[0]}`;
+  }
+  const files = uncommittedPlanningFiles(status, input.dirs);
+  if (!files.length) return 'clean';
+  const claims = planningClaims(input.goals(), input.dirs, (ref) => {
+    try {
+      return input.readPlan(ref);
+    } catch {
+      return undefined;
+    }
+  });
+  return formatWorkingTree(files, claims, input.leaseOf, input.now);
 }

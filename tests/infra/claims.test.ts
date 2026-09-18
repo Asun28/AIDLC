@@ -1,6 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatWorkingTree, planningClaims, uncommittedPlanningFiles, type PlanningDirs } from '../../src/state/claims.ts';
+import { formatWorkingTree, planningClaims, uncommittedPlanningFiles, workingTreeReport, type PlanningDirs, type WorkingTreeInputs } from '../../src/state/claims.ts';
 import type { Lease } from '../../src/core/types.ts';
 import { makeGoal, iso } from './helpers.ts';
 
@@ -132,6 +132,72 @@ describe('formatWorkingTree (acceptance 3)', () => {
       'intent/released.md: claimed by g-released (session sess-C, lease released)',
       'intent/noleaseyet.md: claimed by g-none (no lease)',
       'specs/stray.md: unclaimed',
+    ]);
+  });
+
+  test('a lease record that cannot be read is said so on its entry and never quoted', () => {
+    const claims = new Map<string, string>([['intent/x.md', 'g-x']]);
+    const lines = formatWorkingTree(['intent/x.md'], claims, () => {
+      throw new Error('MALFORMED_JSON: HUSH42XYZ');
+    }, iso());
+    assert.deepEqual(lines, ['intent/x.md: claimed by g-x (lease unreadable)']);
+  });
+});
+
+describe('workingTreeReport: what aidlc doctor prints (acceptance 3)', () => {
+  const inputs = (overrides: Partial<WorkingTreeInputs> = {}): WorkingTreeInputs => ({
+    isGit: true,
+    status: () => ({ entries: [] }),
+    dirs,
+    goals: () => [],
+    readPlan: () => undefined,
+    leaseOf: () => undefined,
+    now: iso(),
+    ...overrides,
+  });
+
+  test('a repository that is not git prints n/a without touching git or the state', () => {
+    let touched = false;
+    const touch = <T,>(value: T) => () => {
+      touched = true;
+      return value;
+    };
+    assert.equal(workingTreeReport(inputs({ isGit: false, status: touch({ entries: ['?? intent/x.md'] }), goals: touch([]) })), 'n/a');
+    assert.equal(touched, false);
+  });
+
+  test('a git status that cannot be read is UNREADABLE with the first line of the error; nothing throws out of the entry check', () => {
+    const report = workingTreeReport(inputs({
+      status: () => {
+        throw new Error('git status failed: fatal: not a git repository\nsecond line');
+      },
+    }));
+    assert.equal(report, 'UNREADABLE: git status failed: fatal: not a git repository');
+  });
+
+  test('clean when no planning file is uncommitted, and the goals are not read', () => {
+    assert.equal(workingTreeReport(inputs({
+      status: () => ({ entries: [' M src/state/claims.ts', '?? _local/notes.md'] }),
+      goals: () => {
+        throw new Error('goals must not be read for a clean tree');
+      },
+    })), 'clean');
+  });
+
+  test('the entries name the claiming goal and its lease; a plan that cannot be read names no extra cards', () => {
+    const goal = makeGoal('g-a', { intentRef: 'intent/a.md', planRef: 'plans/a.md', cards: ['T0-A'] });
+    const report = workingTreeReport(inputs({
+      status: () => ({ entries: ['?? intent/a.md', ' M specs/tasks/T0-A.md', '?? specs/tasks/T0-FROM-PLAN.md'] }),
+      goals: () => [goal],
+      readPlan: () => {
+        throw new Error('EACCES');
+      },
+      leaseOf: (goalId) => lease(goalId, { expiresAt: iso(600_000) }),
+    }));
+    assert.deepEqual(report, [
+      `intent/a.md: claimed by g-a (session sess-A, lease live until ${iso(600_000)})`,
+      `specs/tasks/T0-A.md: claimed by g-a (session sess-A, lease live until ${iso(600_000)})`,
+      'specs/tasks/T0-FROM-PLAN.md: unclaimed',
     ]);
   });
 });
