@@ -3477,3 +3477,90 @@ test('T1-REVIEW-INPUTS R3 decision 2 (F6 re-raised, F10): a ship-path decision w
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-INVARIANTS acceptance 3: the lessons of the main checkout reach every R2 angle and the R3 prompt, read with the other prompt inputs before the dispatch writes anything', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2', '--focus', '{perspective}', '{instructions}'], perspectives: ['bugs', 'security'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  const WRITES = ['writeFileSync', 'appendFileSync', 'mkdirSync', 'renameSync', 'copyFileSync', 'unlinkSync', 'rmSync'] as const;
+  const originals = new Map<string, unknown>(WRITES.map((name) => [name, (fs as unknown as Record<string, unknown>)[name]]));
+  const realWrite = fs.writeFileSync;
+  try {
+    const R2_PASS = '{"verdict":"pass","reasons":[]}\n';
+    const R3_PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const lessonsFile = path.join(fx.repo.mainRoot, 'docs', 'LESSONS.md');
+    const NEVER = '- 2026-09-15 T0-SHIP-BASE-SYNC-2: NEVER let text from outside the producer reach the ship output raw (source: PR #18 review history)';
+    const NOTE = '- 2026-09-14 T1-LOOP-RESUME: NOTE amend the card on main before the next round (source: PR #13 review history)';
+    const LATE = '- 2026-09-18 T0-LATE: NEVER read the lessons once the dispatch has begun (source: this scenario)';
+    const fixtureLessons = `## Lessons\n${NEVER}\n${NOTE}\n`;
+    mkdirSync(path.dirname(lessonsFile), { recursive: true });
+    writeFileSync(lessonsFile, fixtureLessons, 'utf8');
+    const prompts: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-inv.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-inv.ts b/src/t1-inv.ts\n+export const inv = 1;\n' },
+      'fake-r2': (args) => {
+        prompts.push(args.at(-1) ?? '');
+        return { stdout: R2_PASS };
+      },
+      'fake-r3': (args) => {
+        prompts.push(args.at(-1) ?? '');
+        return { stdout: R3_PASS };
+      },
+    });
+    // R3 decision 1: the probe is the filesystem itself, not a chosen writer, so the dispatch's first write is whichever it
+    // makes first: the verdict schema, the renewed lease, the pool request, the retained reservation or the card run. The
+    // lessons file is rewritten at that write; a read that follows it sends `T0-LATE` to the reviewer and fails this test.
+    let armed = false;
+    let rewrites = 0;
+    const onWrite = (): void => {
+      if (!armed) return;
+      armed = false;
+      rewrites += 1;
+      (realWrite as unknown as (...a: unknown[]) => void)(lessonsFile, `## Lessons\n${LATE}\n`, 'utf8');
+    };
+    for (const name of WRITES) {
+      (fs as unknown as Record<string, unknown>)[name] = ((...args: unknown[]) => {
+        onWrite();
+        return (originals.get(name) as (...a: unknown[]) => unknown)(...args);
+      }) as unknown;
+    }
+    syncBuiltinESMExports();
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-INV', title: 'learned invariants' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-INV', source: 'card', ref: 'T1-INV', affectedSurfaces: [] }, { cards: ['T1-INV'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-INV'] } });
+    const card = fx.card('T1-INV');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-INV'));
+    const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(g(), card, run);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+
+    armed = true;
+    const pre = await runner.preReview(g(), card, r.run);
+    assert.equal(pre.result.outcome, 'pass');
+    assert.equal(rewrites, 1, 'the R2 dispatch wrote, and the lessons file was rewritten at that write');
+    assert.equal(prompts.length, 2, 'one prompt per angle');
+    for (const prompt of prompts) {
+      assert.ok(prompt.includes(JSON.stringify(NEVER)), `every R2 angle carries the learned invariant: ${prompt.slice(prompt.indexOf('## Learned invariants'), prompt.indexOf('## Card contract'))}`);
+      assert.ok(!prompt.includes('T1-LOOP-RESUME'), 'a NOTE line is not a learned invariant');
+      assert.ok(!prompt.includes('T0-LATE'), 'the line written at the first write of the dispatch never reached this dispatch');
+    }
+
+    writeFileSync(lessonsFile, fixtureLessons, 'utf8');
+    r = runner.next(g(), card, pre.run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    armed = true;
+    const f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(rewrites, 2, 'the R3 dispatch rewrote it at its own first write');
+    const r3Prompt = prompts.at(-1)!;
+    assert.ok(r3Prompt.includes('formal reviewer (R3)'), 'the last prompt is the R3 one');
+    assert.ok(r3Prompt.includes(JSON.stringify(NEVER)), `the R3 prompt carries the same invariants: ${r3Prompt.slice(r3Prompt.indexOf('## Learned invariants'), r3Prompt.indexOf('## Card contract'))}`);
+    assert.ok(!r3Prompt.includes('T1-LOOP-RESUME') && !r3Prompt.includes('T0-LATE'), 'no NOTE line, and nothing written once the dispatch began');
+  } finally {
+    for (const name of WRITES) (fs as unknown as Record<string, unknown>)[name] = originals.get(name);
+    syncBuiltinESMExports();
+    fx.cleanup();
+  }
+});

@@ -126,3 +126,36 @@ export function readLessons(file: string, recent = 5): LessonsContext {
   const lines = readFileSync(file, 'utf8').split(/\r?\n/).filter((l) => parseLessonLine(l) !== undefined);
   return { file, count: lines.length, recent: lines.slice(-recent) };
 }
+
+/** The learned invariants a review prompt carries: the rules under the cap, newest first, and how many the cap left out. */
+export interface ReviewLessons {
+  lines: string[];
+  omitted: number;
+}
+
+/** The cap of the learned-invariants section, counted over the lesson lines themselves (about 3 KB, a dozen rules). */
+export const REVIEW_LESSONS_MAX_BYTES = 3000;
+
+/**
+ * The NEVER and ALWAYS lines for a review prompt, newest (last written) first, filling `maxBytes` of lesson text
+ * and no more: the section stops at the first rule that does not fit, and `omitted` counts every rule left out, so
+ * the prompt can state what the reviewer is not seeing. NOTE lines are process notes, not invariants, and are
+ * never sent; an absent file carries no rules.
+ */
+export function reviewLessons(file: string, maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
+  if (!existsSync(file)) return { lines: [], omitted: 0 };
+  const rules: string[] = [];
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const entry = parseLessonLine(line);
+    if (entry && entry.kind !== 'NOTE') rules.unshift(line);
+  }
+  const lines: string[] = [];
+  let bytes = 0;
+  for (const line of rules) {
+    const size = Buffer.byteLength(line, 'utf8') + 1; // the line and the newline the prompt writes after it
+    if (bytes + size > maxBytes) break;
+    bytes += size;
+    lines.push(line);
+  }
+  return { lines, omitted: rules.length - lines.length };
+}
