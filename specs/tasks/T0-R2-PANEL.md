@@ -1,7 +1,7 @@
 ---
 id: T0-R2-PANEL
 title: R2 as a concurrent three-angle DeepSeek panel with an aggregated verdict and a citation rule, R3 as one exhaustive pass, a deterministic scope gate, and the review guards from the Codex decisions, on top of the R3 command branch
-status: in-progress
+status: merged
 branch: T0-R2-PANEL
 worktree: C:\wt\T0-R2-PANEL
 allow_paths:

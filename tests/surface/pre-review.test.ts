@@ -375,7 +375,8 @@ test('the async runner survives a child that exits before reading its input, and
   assert.deepEqual(tpl.preReview.perspectives, []);
   assert.deepEqual(tpl.preReview.command, []);
   assert.deepEqual(tpl.formalReview.command, []);
-  for (const id of ['T0-R3-COMMAND', 'T0-R2-PANEL']) assert.match(readFileSync(path.resolve(`specs/tasks/${id}.md`), 'utf8'), /^status: in-progress$/m, `${id} is not pre-set to merged`);
+  // both cards merged in PR #8 (a7bbcae); the status was flipped after the merge, never pre-set
+  for (const id of ['T0-R3-COMMAND', 'T0-R2-PANEL']) assert.match(readFileSync(path.resolve(`specs/tasks/${id}.md`), 'utf8'), /^status: merged$/m, `${id} records its merge`);
 });
 
 test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 3): a panel whose one angle fails before its receipt waits for every other angle before it rejects, so a caller releases nothing while a reviewer is still running', async () => {

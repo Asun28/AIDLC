@@ -25,7 +25,7 @@ acceptance:
   - 4. `docs/OPERATIONS.md` documents the command and its fields, `docs/ARCHITECTURE.md` names the module, CHANGELOG.md Unreleased carries the entry (templates.test.ts). [dod arm 1]
 depends_on: [T1-REVIEW-INPUTS]
 plan_ref: plans/review-findings.md#7
-budget: 250
+budget: 520
 tdd: true
 sweep: "grep -rn 'review status\|superseded_by\|PreReviewRound\|ReviewInvocation' src/cli/main.ts src/artifacts/card.ts src/core/types.ts: the review command group, the card registry field, the two ledgers the summary reads"
 non_goals: [pruning rules for perspectives, cost accounting, statistics for the scaffold ship-path reviewer, persisting the summary]
