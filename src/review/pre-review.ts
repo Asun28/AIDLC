@@ -315,28 +315,51 @@ export function extractVerdict(output: string): Verdict | undefined {
 /**
  * The top-level JSON-looking documents of `text` in order (objects and arrays alike: an enclosing array is a document,
  * never a container to extract a verdict from), each with whether it parses, and the start of a document that never closed.
+ *
+ * An opener that never closes runs to the end of the output, so it is a document cut short whenever the text from it
+ * completes into valid JSON once its open string and its open containers are closed, and the output is malformed. Prose
+ * that merely opens like JSON, which a reviewer quoting a JSON contract in its reasoning writes all the time, completes
+ * under nothing: the scan resumes after it, and the complete document that follows decides. A prose opener with no
+ * parseable document after it is malformed too, so a corrupt final document is never answered by an earlier draft.
  */
 function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
   const spans: Array<{ start: number; end: number; parses: boolean }> = [];
-  // Objects and arrays open and close together: the depth counts both, so `[{...}` is one unfinished document.
-  let depth = 0;
+  let from = 0;
+  let prose: number | undefined;
+  while (from < text.length) {
+    const scan = scanDocuments(text, from);
+    spans.push(...scan.spans);
+    if (scan.open === undefined) break;
+    if (completesAsJson(text.slice(scan.open.start), scan.open.stack, scan.open.inString)) return { spans, unfinished: scan.open.start };
+    // Prose, not a document: nothing it seemed to contain was ever inside it.
+    prose = scan.open.start;
+    from = prose + 1;
+  }
+  if (prose !== undefined && !spans.some((s) => s.start > prose! && s.parses)) return { spans, unfinished: prose };
+  return { spans, unfinished: undefined };
+}
+
+/** One pass from `from` to the end: the closed documents it found, and the opener still open at the end with the state to complete it. */
+function scanDocuments(text: string, from: number): { spans: Array<{ start: number; end: number; parses: boolean }>; open?: { start: number; stack: string[]; inString: boolean } } {
+  const spans: Array<{ start: number; end: number; parses: boolean }> = [];
+  // Objects and arrays open and close together: the stack carries both, so `[{...}` is one unfinished document.
+  const stack: string[] = [];
   let inString = false;
   let escaped = false;
   let docStart = -1;
-  for (let i = 0; i < text.length; i++) {
+  for (let i = from; i < text.length; i++) {
     const c = text[i]!;
-    if (depth === 0) {
+    if (!stack.length) {
       // Outside a document only a JSON-looking opener starts one: a brace followed by a key or a closing brace (whitespace
-      // before the first key is unbounded; a brace followed by nothing but whitespace to the end of the output is a document
-      // cut short), or a bracket followed by an object, a string or an array. Prose braces and brackets are ignored.
+      // before the first key is unbounded; a brace followed by nothing but whitespace to the end of the output opens one
+      // that cannot close), or a bracket followed by an object, a string or an array. Prose braces and brackets are ignored.
       if (c === '{' || c === '[') {
         const rest = text.slice(i + 1);
         const next = rest.search(/\S/);
-        if (c === '{' && next < 0) return { spans, unfinished: i };
-        const opens = c === '{' ? rest[next] === '"' || rest[next] === '}' : next >= 0 && (rest[next] === '{' || rest[next] === '"' || rest[next] === '[');
+        const opens = c === '{' ? next < 0 || rest[next] === '"' || rest[next] === '}' : next >= 0 && (rest[next] === '{' || rest[next] === '"' || rest[next] === '[');
         if (opens) {
           docStart = i;
-          depth = 1;
+          stack.push(c);
         }
       }
       continue;
@@ -348,11 +371,11 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       continue;
     }
     if (c === '"') inString = true;
-    else if (c === '{' || c === '[') depth += 1;
+    else if (c === '{' || c === '[') stack.push(c);
     else if (c === '}' || c === ']') {
       // A mismatched closer still closes one level; whether the span parses is JSON.parse's verdict.
-      depth -= 1;
-      if (depth === 0) {
+      stack.pop();
+      if (!stack.length) {
         let parses = true;
         try {
           JSON.parse(text.slice(docStart, i + 1));
@@ -363,7 +386,32 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       }
     }
   }
-  return { spans, unfinished: depth > 0 ? docStart : undefined };
+  return stack.length ? { spans, open: { start: docStart, stack, inString } } : { spans };
+}
+
+/**
+ * Whether `rest`, the text from an opener that never closed to the end of the output, is a document cut short: closing its
+ * open string and every open container yields valid JSON. Output is cut at an arbitrary character, so the tail is resolved
+ * first: trailing whitespace is dropped (an output that ends its truncated document with a newline reads the same as one
+ * that does not), a separator left dangling by the cut is dropped (`{"verdict":"block",`) and a key left without its value
+ * takes `null` (`{"verdict":"block","rea`). Prose that merely opens like JSON completes under none of these.
+ */
+function completesAsJson(rest: string, stack: string[], inString: boolean): boolean {
+  const closers = stack
+    .map((open) => (open === '{' ? '}' : ']'))
+    .reverse()
+    .join('');
+  const closed = rest.trimEnd() + (inString ? '"' : '');
+  for (const tail of ['', ':null']) {
+    const body = (closed + tail).replace(/,\s*$/, '');
+    try {
+      JSON.parse(body + closers);
+      return true;
+    } catch {
+      /* the next repair, then prose */
+    }
+  }
+  return false;
 }
 
 export interface PreReviewClassification {
