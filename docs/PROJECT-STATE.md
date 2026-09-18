@@ -1,41 +1,52 @@
 # AIDLC project state
 
-Updated: 2026-09-11. Working directory: `D:\Projects\AIDLC`.
+Updated: 2026-09-18 (main at `ab0c1df`). Working directory: `D:\Projects\AIDLC`; remote `Asun28/AIDLC`, ship path `github`.
 
 ## Current deliverable
 
-The v5 plan (`docs/plans/PLAN-aidlc-loop.md`) is now implemented as a TypeScript library and CLI in `src/`, with Claude Code assets in `templates/` that `aidlc init` copies into a target repository. The plan documents, the capability comparison and the session review remain the requirement authority; this implementation is their runtime.
+The v5 plan (`docs/plans/PLAN-aidlc-loop.md`) is implemented as a TypeScript library and CLI in `src/`, with the Claude Code assets in `templates/` that `aidlc init` copies into a target repository. The plan documents, the capability comparison and the session review remain the requirement authority; this implementation is their runtime. Since 2026-09-10 the repository runs the loop on itself: every change is a card in `specs/tasks/`, shipped as a GitHub PR through the loop's own R2 (DeepSeek panel, three angles), R3 (Codex) and the four required CI checks.
 
 ## Verified
 
-- `npx tsc -p tsconfig.json --noEmit` and `npx tsc -p tsconfig.test.json --noEmit`: 0 errors.
-- `node --test "tests/**/*.test.ts"`: 413 tests, 39 suites, 0 failures.
-- Eight defects found by the test suites were fixed before this state was recorded (fail-open unattended-mutation guard, inline card lists, case-insensitive write verbs in the frozen-path hook, `.env.example` allowed, template placeholders rejected in specs, empty journal reported as level `none`, ORM detection regex, router over-matching "build a new <feature>" as T2).
-- Skill file sizes are under the plan's caps and asserted by `tests/surface/templates.test.ts`: SKILL.md 4170, card-loop.md 6134, arc.md 4109, release.md 4488, migrate.md 2267 bytes.
+- `npm run check` on 2026-09-18 at `ab0c1df`: typecheck clean, 671 tests in 62 suites, 0 failures (29 s).
+- CI on every PR: `check (ubuntu-latest, 22)`, `check (windows-latest, 22)`, `build-test`, `Gitleaks (committed history)`; all four required before a squash merge.
+- Skill file sizes under their caps, asserted by `tests/surface/templates.test.ts`: SKILL.md 4394/4500, card-loop.md 6488/6500, arc.md 4109/4500, release.md 4488/4500, migrate.md 2267/3000 bytes. Headroom is small; a sentence added needs an equal cut in the same file.
+- `docs/LESSONS.md`: 12 lessons, each written at CLOSE of the card that learned it.
 
-## Pending
+## Merged through the loop (PRs #1-#22)
 
-1. (done) Scenario tests under `tests/scenarios/` cover the T0 flow, T1 arc, review block then second block, CI rerun, deadline expiry, two sessions on one card, staging/production release with recovery, audit and amendments; they surfaced and fixed four loop defects (re-ship after a completed review request, no exit from REVIEW_FIX, release steps not synced from reconciled operations, production checkpoint bound to the staging environment).
-2. Live qualification on a real repository with the scaffold ship path: Q3 (T1 arc), Q4 (T2 checkpoint with plan-forge), Q23 and Q24 (two windows, shared review pool), Q1 (T0 with real RED receipt).
-3. Provider onboarding: tests and a live run for the native `github` ship path (`src/delivery/github-ship.ts`), real `gh` review admission signals, and at least one bound `aidlc.ops.json` in a downstream project for Q16-Q22.
-4. Tests for the CLI itself (`src/cli/main.ts`); `src/scaffold/init.ts` and the skill-file byte caps are covered by `tests/infra/init.test.ts` and `tests/surface/templates.test.ts`.
+| PR | Card(s) | Change |
+|---|---|---|
+| 1-3 | T0-LOOP-SPEED, T0-LEASE-HEARTBEAT, T0-WAIT-VERIFY | one-process hooks, lease renewal on `card next`, WAIT resumes to RUN before VERIFY_ARC |
+| 4, 8 | T0-PRE-REVIEW, T0-R2-PANEL, T0-R3-COMMAND | bounded R2 pre-review, the three-angle panel, R3 as a Codex command |
+| 7, 9, 10, 12, 13 | T1-LOOP-SKILLS(-2), T1-LOOP-LADDER, T1-LOOP-LESSONS, T1-LOOP-RESUME | companion skills, directives carry skills and open questions, review blocks reopen the episode without spending an attempt, lessons at PREPARE and CLOSE, extension and resume |
+| 11 | T1-LOOP-GATES-2 | the secret scan as a merge gate; required checks and the verdict rule from config to the GitHub ship path |
+| 14, 16, 17, 18 | T0-SESSION-IDENTITY-3, T0-BIN-STALE-DIST-4, T0-CARD-TAKEOVER-2, T0-SHIP-BASE-SYNC-2 | session identity, `bin/` prefers `dist/` only when current, `aidlc card takeover`, merge-based base sync before the ship |
+| 19, 20, 22 | T1-REVIEW-FINDINGS-4, T1-REVIEW-INPUTS, T1-REVIEW-STATS | findings with ids and dispositions, the recovery envelope, bounded and traceable review inputs, `aidlc review stats` |
+| 21 | T0-ARC-EXTERN-DEP-2 | a prerequisite merged under another goal satisfies the arc gate |
 
-Resolved since the first draft: the templates and CLI are aligned (`aidlc op` is an alias of `aidlc ops`, `aidlc goal reconcile <id>` exists, and `next`/`report`/`board` accept `--goal <id>` as well as the positional id).
+Cards with a `-2`, `-3` or `-4` suffix replaced a predecessor stopped after two R3 decisions; the predecessors carry `superseded_by` and stay in the registry. Six of the merges (PRs #17-#22) landed under a human ruling after the second substantive R3 block, with every finding repaired first.
+
+## Active goals (2026-09-18)
+
+- `g-20260918020618-5688de` (T1, RUN): plan `plans/review-coverage.md`, three serial cards. T1-REVIEW-INVARIANTS (the NEVER and ALWAYS lessons in every R2 and R3 prompt, one finding per site) -> T1-REVIEW-COVERAGE (one coverage entry per acceptance item from the `ac-coverage` angle, joined per item, retained in shadow with the outcome unchanged) -> T1-REVIEW-COVERAGE-STATS (coverage completeness in `aidlc review stats`). Source: the GPT6 checked-graph card pack, reduced to briefs 06, 02-04 and 10; briefs 01, 05, 07, 08 and 09 cut or deferred, reasons in `intent/review-coverage.md`.
+- `g-20260918021545-195e85` (T0, RUN): T0-PLANNING-CLAIMS. `aidlc doctor` names the goal and session that claims each uncommitted planning file (derived from the goal record and its lease, no claims file), and the Stop hook asks a session to commit its own goal's planning artifacts before it ends.
+
+Every other goal is terminal (`aidlc goal list`).
 
 ## Accepted decisions (carried from v5)
 
 - Accept dynamic requirements, old-card amendments, new systems and bugs; proportionate routing; automatic execution to integrated acceptance.
 - Development, tests, review and integration are the default; deployment, migration and operations are opt-in per target and never activated by the presence of tools or files.
-- Multiple sessions are a normal target: shared leases, generations, fencing and review admission live in `.aidlc/` under the main checkout; a single controller is an interim mode only.
-- Task-based effort with at most three baseline attempts and one justified escalation; same cause twice stops early; quota and infrastructure failures do not escalate.
+- Multiple sessions are a normal target: shared leases, generations, fencing and review admission live in `.aidlc/` under the main checkout; a single controller is an interim mode only. Planning artifacts drafted on main are claimed through the goal record and its lease (T0-PLANNING-CLAIMS).
+- Task-based effort with at most three baseline attempts and one justified escalation; same cause twice stops early; quota and infrastructure failures do not escalate. A review block never spends an attempt.
 - Development DONE is not board emptiness; full audit claims require the verifier and a host capture boundary.
 - No new external orchestrator; this package is the orchestrator and adapts to project tools (scaffold `task.ps1`, `gh`, bound provider operations).
+- Review policy at `REVIEW.md@3`: findings carry ids, dispositions and re-raise references; an unchanged candidate is never re-reviewed without a dispute; a diff over the byte cap is refused before dispatch; the second substantive R3 block stops the card for a human ruling.
 
 ## Next steps, in order
 
-1. (done) Scenario tests written; four defects fixed.
-2. Run `node bin/aidlc.js init --dry-run` against `D:\Projects\MyInspection` and compare the merged settings and card template with the scaffold's, then run a T0 goal there with `shipPath: "scaffold"` from the main checkout.
-3. Qualify the `github` ship path against a scratch repository (PR, verdict file, check runs, squash merge); the adapter has scripted-runner tests only.
-4. Bind `aidlc.ops.json` in one downstream project and run a staging-only release attempt.
-
-The source repository for scaffold conventions remains `D:\Projects\claude-devops-scaffold`; the downstream reference is `D:\Projects\MyInspection`. No Git repository, remote or deployment was created for AIDLC itself.
+1. Run the two active goals to DONE through the loop (`aidlc next --goal <id>`), one card at a time; they share `docs/OPERATIONS.md` and `CHANGELOG.md`, which the merge-based base sync reconciles.
+2. Once T1-REVIEW-COVERAGE-STATS has merged and a few cards have run in shadow, read `aidlc review stats` and decide on a required coverage mode (the pack's brief 05); keep it off until the numbers say otherwise.
+3. Qualify `aidlc init` and the `scaffold` ship path against `D:\Projects\MyInspection` (dry run, then one T0 goal from the main checkout); `github` is qualified by this repository's own PRs.
+4. Bind `aidlc.ops.json` in one downstream project and run a staging-only release attempt (Q16-Q22 in `docs/REQUIREMENTS-TRACEABILITY.md`).
