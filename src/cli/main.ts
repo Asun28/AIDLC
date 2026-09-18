@@ -9,6 +9,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { formatWorkingTree, planningClaims, uncommittedPlanningFiles } from '../state/claims.ts';
+import { GitProbe } from '../probes/git.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
@@ -40,7 +42,7 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, type DeliveryTarget, type RequestSize } from '../core/types.ts';
+import { Goal, nowIso, type DeliveryTarget, type RequestSize } from '../core/types.ts';
 
 interface Ctx {
   root: string;
@@ -73,6 +75,31 @@ function out(c: { json: boolean }, data: unknown, human?: () => string): void {
 function fail(message: string, code = 1): never {
   process.stderr.write(`aidlc: ${message}\n`);
   process.exit(code);
+}
+
+/**
+ * Doctor's `workingTree` (card T0-PLANNING-CLAIMS): every uncommitted file under the four planning
+ * directories of the main checkout with the goal that claims it (derived from the goal record) and that
+ * goal's lease owner and expiry, or `unclaimed`; `clean` when there is none; `n/a` outside a git
+ * repository. A git failure is reported on the line, never thrown: doctor is the entry check.
+ */
+function doctorWorkingTree(c: Ctx): string | string[] {
+  if (!c.repo.isGit) return 'n/a';
+  let status: ReturnType<GitProbe['status']>;
+  try {
+    status = new GitProbe().status(c.repo.mainRoot);
+  } catch (err) {
+    return `UNREADABLE: ${(err as Error).message.split(/\r?\n/)[0]}`;
+  }
+  const files = uncommittedPlanningFiles(status, c.config);
+  if (!files.length) return 'clean';
+  const goals = existsSync(c.paths.goals) ? c.store.listGoals() : [];
+  const claims = planningClaims(goals, c.config, (ref) => {
+    const file = path.join(c.root, ref);
+    return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
+  });
+  const leases = new LeaseStore(c.paths.leases);
+  return formatWorkingTree(files, claims, (goalId) => leases.read(resourceKeys.goal(c.repo.key, goalId)), nowIso());
 }
 
 function latestActiveGoalId(c: Ctx, explicit?: string): string {
@@ -171,8 +198,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
           ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
           : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
+        workingTree: doctorWorkingTree(c),
       };
-      out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${v}`).join('\n'));
+      out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
     });
 
   // ------------------------------------------------------------------ goals

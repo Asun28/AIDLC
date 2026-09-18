@@ -213,4 +213,24 @@ describe('templates (Q14 packaging)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
     assert.match(unreleased, /T1-REVIEW-STATS/, 'CHANGELOG Unreleased carries the entry');
   });
+
+  test('T0-PLANNING-CLAIMS acceptance 5 and 6: entry check 1 carries the claim rule in both identical copies under the cap; the docs and the changelog record the two surfaces', () => {
+    const live = readFileSync(path.join(root, '.claude', 'skills', 'aidlc-loop', 'SKILL.md'), 'utf8');
+    const template = readFileSync(path.join(tpl, 'claude', 'skills', 'aidlc-loop', 'SKILL.md'), 'utf8');
+    assert.equal(live, template, 'both SKILL.md copies are identical');
+    assert.ok(Buffer.byteLength(template, 'utf8') <= CAPS['SKILL.md']!, `SKILL.md is ${Buffer.byteLength(template, 'utf8')} bytes > cap ${CAPS['SKILL.md']}`);
+    const entry1 = template.slice(template.indexOf('\n1. `aidlc doctor`'), template.indexOf('\n2. ')).replace(/\s+/g, ' ');
+    assert.match(entry1, /names the goal claiming each uncommitted planning file/, 'entry check 1 says doctor names the claiming goal');
+    assert.match(entry1, /another goal's file[^.]*alone/, "entry check 1 says another goal's file is left alone");
+    assert.match(entry1, /commit your own goal's planning artifacts on main as soon as they validate and before you stop/, 'entry check 1 says when to commit');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.match(operations, /derived from the goal record and its lease/, 'OPERATIONS.md states the claim rule');
+    assert.match(operations, /`workingTree`/, 'OPERATIONS.md names the doctor surface');
+    assert.match(operations, /Planning artifacts of goal <id> are uncommitted on main/, 'OPERATIONS.md names the Stop surface');
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.match(architecture, /`claims\.ts`/, 'ARCHITECTURE.md names the module');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T0-PLANNING-CLAIMS/, 'CHANGELOG Unreleased carries the entry');
+  });
 });
