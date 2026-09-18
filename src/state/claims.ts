@@ -20,6 +20,7 @@ import path from 'node:path';
 import { parsePlanCards } from '../artifacts/plan.ts';
 import type { Goal, Lease } from '../core/types.ts';
 import { StoreError } from './store.ts';
+import { GitProbeError } from '../probes/git.ts';
 
 /** The four planning directories of the main checkout (`ProjectConfig` keys of the same names). */
 export interface PlanningDirs {
@@ -49,9 +50,6 @@ function under(p: string, dir: string): boolean {
   return p.startsWith(dir + '/');
 }
 
-/** A card id that forms one file name under the cards directory: no separator, no dot segment. */
-const CARD_ID = /^[A-Za-z0-9][A-Za-z0-9_-]*$/;
-
 /** The four directories in checkout-relative form; a directory that is not one claims nothing under it. */
 function planningRoots(dirs: PlanningDirs): { intent?: string; specs?: string; plans?: string; cards?: string } {
   return { intent: checkoutRelative(dirs.intentDir), specs: checkoutRelative(dirs.specsDir), plans: checkoutRelative(dirs.plansDir), cards: checkoutRelative(dirs.cardsDir) };
@@ -61,10 +59,10 @@ function planningRoots(dirs: PlanningDirs): { intent?: string; specs?: string; p
  * The planning files one non-terminal goal claims, derived from its record alone (R1): its intent
  * (when it lies under the intent directory), the spec and plan of the intent's slug, its plan
  * reference (when it lies under the plans directory), and the card file of every card it lists or
- * its plan's task split names (ids that form one file name). A reference outside its directory is
- * neither claimed nor read.
+ * its plan's task split names (every id whose canonical path stays under the cards directory). A
+ * reference outside its directory is neither claimed nor read.
  */
-export function planningArtifactsOf(goal: Goal, dirs: PlanningDirs, readPlan: (planRef: string) => string | undefined): string[] {
+export function planningArtifactsOf(goal: Goal, dirs: PlanningDirs, readPlan: (planRef: string) => string | undefined, onPlanError?: (code: string) => void): string[] {
   if (goal.terminal) return [];
   const roots = planningRoots(dirs);
   const files = new Set<string>();
@@ -79,18 +77,29 @@ export function planningArtifactsOf(goal: Goal, dirs: PlanningDirs, readPlan: (p
   const plan = goal.planRef ? checkoutRelative(goal.planRef) : undefined;
   if (plan && roots.plans && under(plan, roots.plans)) {
     files.add(plan);
-    for (const row of planRows(plan, readPlan)) cards.add(row.id);
+    for (const row of planRows(plan, readPlan, onPlanError)) cards.add(row.id);
   }
-  if (roots.cards) for (const id of cards) if (CARD_ID.test(id)) files.add(`${roots.cards}/${id}.md`);
+  if (roots.cards) {
+    // every id maps to `<cardsDir>/<id>.md`; the canonical path must stay under the cards directory
+    for (const id of cards) {
+      const file = checkoutRelative(`${roots.cards}/${id}.md`);
+      if (file && under(file, roots.cards)) files.add(file);
+    }
+  }
   return [...files];
 }
 
-/** The task-split rows of a goal's plan; a plan that cannot be read or parsed names no extra cards (the claim never throws). */
-function planRows(planRef: string, readPlan: (planRef: string) => string | undefined): ReturnType<typeof parsePlanCards> {
+/**
+ * The task-split rows of a goal's plan. A plan that cannot be read or parsed names no extra cards and
+ * the failure is reported to `onPlanError` by its store error code (`UNREADABLE` for any other error),
+ * never by the error text; the claim itself never throws.
+ */
+function planRows(planRef: string, readPlan: (planRef: string) => string | undefined, onPlanError?: (code: string) => void): ReturnType<typeof parsePlanCards> {
   try {
     const text = readPlan(planRef);
     return text === undefined ? [] : parsePlanCards(text);
-  } catch {
+  } catch (err) {
+    onPlanError?.(readErrorCode(err));
     return [];
   }
 }
@@ -104,12 +113,14 @@ function byAge(a: Goal, b: Goal): number {
  * Every claimed path (checkout-relative, forward slashes) mapped to the goal that claims it. A
  * terminal goal claims nothing; a path two goals claim keeps the older goal (by the `createdAt`
  * instant, then id), whatever order the goals arrive in. One goal's unreadable plan affects that
- * goal's plan rows only.
+ * goal's plan rows only, and is recorded by store error code in `planErrors` (goal id to code) when
+ * the caller passes one.
  */
-export function planningClaims(goals: Goal[], dirs: PlanningDirs, readPlan: (planRef: string) => string | undefined): Map<string, string> {
+export function planningClaims(goals: Goal[], dirs: PlanningDirs, readPlan: (planRef: string) => string | undefined, planErrors?: Map<string, string>): Map<string, string> {
   const claims = new Map<string, string>();
   for (const goal of [...goals].sort(byAge)) {
-    for (const file of planningArtifactsOf(goal, dirs, readPlan)) if (!claims.has(file)) claims.set(file, goal.id);
+    const files = planningArtifactsOf(goal, dirs, readPlan, (code) => planErrors?.set(goal.id, code));
+    for (const file of files) if (!claims.has(file)) claims.set(file, goal.id);
   }
   return claims;
 }
@@ -214,14 +225,16 @@ function leaseState(leaseOf: (goalId: string) => Lease | undefined, goalId: stri
 
 /**
  * The doctor's `workingTree` value: `clean`, or one entry per uncommitted planning file (the path
- * JSON-quoted) with the goal that claims it and that goal's lease owner and expiry, or `unclaimed`.
+ * JSON-quoted) with the goal that claims it and that goal's lease owner and expiry (and, when the
+ * goal's plan could not be read, `plan unreadable: <code>`), or `unclaimed`.
  */
-export function formatWorkingTree(files: string[], claims: Map<string, string>, leaseOf: (goalId: string) => Lease | undefined, now: string): 'clean' | string[] {
+export function formatWorkingTree(files: string[], claims: Map<string, string>, leaseOf: (goalId: string) => Lease | undefined, now: string, planErrors: Map<string, string> = new Map()): 'clean' | string[] {
   if (!files.length) return 'clean';
   return files.map((file) => {
     const goalId = claims.get(file);
     if (!goalId) return `${quotePath(file)}: unclaimed`;
-    return `${quotePath(file)}: claimed by ${goalId} (${leaseState(leaseOf, goalId, now)})`;
+    const planError = planErrors.get(goalId);
+    return `${quotePath(file)}: claimed by ${goalId} (${leaseState(leaseOf, goalId, now)}${planError ? `; plan unreadable: ${planError}` : ''})`;
   });
 }
 
@@ -243,11 +256,12 @@ export interface WorkingTreeInputs {
 
 /**
  * The doctor's `workingTree` line (R2): `n/a` outside a git repository; `UNREADABLE: git status
- * failed (<first line of git's error>)` when the status cannot be read; else `formatWorkingTree`
+ * failed (exit <n>|UNREADABLE)` when the status cannot be read; else `formatWorkingTree`
  * over the uncommitted planning files and the claims. Doctor is the entry check, so nothing here
  * throws. Goal records that cannot be read (a malformed goal file after an interrupted write) leave
  * every entry `claim unknown` with the store's error code, never the record's contents; a plan that
- * cannot be read names no extra cards; a lease that cannot be read is reported on its entry by code.
+ * cannot be read names no extra cards and its goal's entries say `plan unreadable: <code>`; a lease
+ * that cannot be read is reported on its entry by code.
  */
 export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | string | string[] {
   if (!input.isGit) return 'n/a';
@@ -255,7 +269,7 @@ export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | s
   try {
     status = input.status();
   } catch (err) {
-    return `UNREADABLE: git status failed (${String((err as Error)?.message ?? err).split(/\r?\n/)[0]})`;
+    return `UNREADABLE: git status failed (${gitErrorCode(err)})`;
   }
   const files = uncommittedPlanningFiles(status, input.dirs);
   if (!files.length) return 'clean';
@@ -266,6 +280,12 @@ export function workingTreeReport(input: WorkingTreeInputs): 'clean' | 'n/a' | s
     const code = readErrorCode(err);
     return files.map((file) => `${quotePath(file)}: claim unknown (goal records unreadable: ${code})`);
   }
-  const claims = planningClaims(goals, input.dirs, input.readPlan);
-  return formatWorkingTree(files, claims, input.leaseOf, input.now);
+  const planErrors = new Map<string, string>();
+  const claims = planningClaims(goals, input.dirs, input.readPlan, planErrors);
+  return formatWorkingTree(files, claims, input.leaseOf, input.now, planErrors);
+}
+
+/** A git status failure by code: `exit <n>` from the probe's receipt, else `UNREADABLE`; git's text never reaches the line. */
+function gitErrorCode(err: unknown): string {
+  return err instanceof GitProbeError ? `exit ${err.receipt.exitCode}` : 'UNREADABLE';
 }

@@ -2,6 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { checkoutRelative, formatWorkingTree, planningClaims, quotePath, readErrorCode, uncommittedPlanningFiles, workingTreeReport, type PlanningDirs, type WorkingTreeInputs } from '../../src/state/claims.ts';
 import { StoreError } from '../../src/state/store.ts';
+import { GitProbeError } from '../../src/probes/git.ts';
+import type { ExecReceipt } from '../../src/probes/exec.ts';
 import type { Lease } from '../../src/core/types.ts';
 import { makeGoal, iso } from './helpers.ts';
 
@@ -57,10 +59,11 @@ describe('planningClaims (T0-PLANNING-CLAIMS acceptance 1)', () => {
     const reads: string[] = [];
     const goal = makeGoal('g-a', { intentRef: 'docs/external.md', planRef: '../outside/plan.md', cards: ['T0-OK'] });
     assert.deepEqual([...planningClaims([goal], dirs, (ref) => (reads.push(ref), PLAN)).keys()], ['specs/tasks/T0-OK.md']);
-    // a plan row whose id is not one file name (the goal record's own ids are schema-checked) claims nothing
-    const rows = '## 7. Task split (dependencies and parallel windows)\n| T0-ROW | MUST | x | - | - | no |\n| T0-../escape | MUST | x | - | - | no |\n| T0-sub/nested | MUST | x | - | - | no |\n| T0-dot.md | MUST | x | - | - | no |\n';
+    // every plan row id maps to <cardsDir>/<id>.md; one whose canonical path leaves the cards directory claims nothing
+    const rows = '## 7. Task split (dependencies and parallel windows)\n| T0-ROW | MUST | x | - | - | no |\n| T0-../escape | MUST | x | - | - | no |\n| T0-sub/nested | MUST | x | - | - | no |\n| T0-dot.md | MUST | x | - | - | no |\n| T0-../../../etc/passwd | MUST | x | - | - | no |\n';
     const planned = makeGoal('g-p', { planRef: 'plans/p.md' });
-    assert.deepEqual([...planningClaims([planned], dirs, () => rows).keys()].sort(), ['plans/p.md', 'specs/tasks/T0-ROW.md']);
+    // `T0-..` is a segment name, not a dot segment: it stays under the cards directory; `T0-../../../etc/passwd` resolves to specs/etc/passwd.md and is dropped
+    assert.deepEqual([...planningClaims([planned], dirs, () => rows).keys()].sort(), ['plans/p.md', 'specs/tasks/T0-../escape.md', 'specs/tasks/T0-ROW.md', 'specs/tasks/T0-dot.md.md', 'specs/tasks/T0-sub/nested.md']);
     for (const bad of ['/abs/plans/x.md', 'C:/repo/plans/x.md', 'plans/../../etc/x.md', 'intents/x.md', 'plans']) {
       const g = makeGoal('g-b', { planRef: bad, intentRef: bad });
       assert.deepEqual([...planningClaims([g], dirs, (ref) => (reads.push(ref), PLAN)).keys()], [], bad);
@@ -96,13 +99,20 @@ describe('planningClaims (T0-PLANNING-CLAIMS acceptance 1)', () => {
     assert.equal(planningClaims([b, a], dirs, () => undefined).get('intent/tie.md'), 'g-a', 'the same instant: the lower id');
   });
 
-  test('a plan read that throws names no extra cards for that goal only and never throws out of the claim', () => {
+  test('a plan read that throws names no extra cards for that goal only, is recorded by store error code and never throws out of the claim', () => {
     const bad = makeGoal('g-bad', { planRef: 'plans/bad.md', cards: ['T0-BAD'] });
     const good = makeGoal('g-good', { planRef: 'plans/good.md', createdAt: iso(60_000) });
+    const planErrors = new Map<string, string>();
     const claims = planningClaims([bad, good], dirs, (ref) => {
-      if (ref === 'plans/bad.md') throw new Error('EISDIR');
+      if (ref === 'plans/bad.md') throw new StoreError('READ_FAILED', 'plans/bad.md', 'EISDIR: illegal operation on a directory HUSH42XYZ');
       return PLAN;
-    });
+    }, planErrors);
+    assert.deepEqual([...planErrors.entries()], [['g-bad', 'READ_FAILED']]);
+    const other = new Map<string, string>();
+    planningClaims([bad], dirs, () => {
+      throw new Error('EISDIR HUSH42XYZ');
+    }, other);
+    assert.deepEqual([...other.entries()], [['g-bad', 'UNREADABLE']]);
     assert.deepEqual([...claims.entries()].sort(), [
       ['plans/bad.md', 'g-bad'],
       ['plans/good.md', 'g-good'],
@@ -250,13 +260,21 @@ describe('workingTreeReport: what aidlc doctor prints (acceptance 3)', () => {
     assert.equal(touched, false);
   });
 
-  test("a git status that cannot be read is UNREADABLE with the first line of git's error; nothing throws out of the entry check", () => {
-    const report = workingTreeReport(inputs({
+  test("a git status that cannot be read is UNREADABLE with the probe's exit code, never git's text; nothing throws out of the entry check", () => {
+    const secret = 'HUSH42XYZ';
+    const receipt: ExecReceipt = { command: 'git', args: ['status'], cwd: 'C:/repo', exitCode: 128, signal: null, timedOut: false, stdout: '', stderr: `fatal: ${secret}`, startedAt: iso(), finishedAt: iso(), durationMs: 1, outputSha256: 'x' };
+    const probe = workingTreeReport(inputs({
       status: () => {
-        throw new Error('fatal: not a git repository\nsecond line');
+        throw new GitProbeError(['status', '--porcelain=v1'], receipt);
       },
     }));
-    assert.equal(report, 'UNREADABLE: git status failed (fatal: not a git repository)');
+    assert.equal(probe, 'UNREADABLE: git status failed (exit 128)');
+    const other = workingTreeReport(inputs({
+      status: () => {
+        throw new Error(`spawn failed ${secret}`);
+      },
+    }));
+    assert.equal(other, 'UNREADABLE: git status failed (UNREADABLE)');
   });
 
   test('goal records that cannot be read leave every entry claim unknown with the store error code; the message, which may quote the record, never appears', () => {
@@ -290,20 +308,23 @@ describe('workingTreeReport: what aidlc doctor prints (acceptance 3)', () => {
     })), 'clean');
   });
 
-  test('the entries name the claiming goal and its lease; a plan that cannot be read names no extra cards', () => {
+  test("the entries name the claiming goal and its lease; a plan that cannot be read names no extra cards and is reported on its goal's entries by code", () => {
     const goal = makeGoal('g-a', { intentRef: 'intent/a.md', planRef: 'plans/a.md', cards: ['T0-A'] });
+    const other = makeGoal('g-b', { intentRef: 'intent/b.md', createdAt: iso(60_000) });
     const report = workingTreeReport(inputs({
-      status: () => ({ entries: ['?? intent/a.md', ' M specs/tasks/T0-A.md', '?? specs/tasks/T0-FROM-PLAN.md'] }),
-      goals: () => [goal],
+      status: () => ({ entries: ['?? intent/a.md', ' M specs/tasks/T0-A.md', '?? specs/tasks/T0-FROM-PLAN.md', '?? intent/b.md'] }),
+      goals: () => [goal, other],
       readPlan: () => {
-        throw new Error('EACCES');
+        throw new StoreError('READ_FAILED', 'plans/a.md', 'EACCES HUSH42XYZ');
       },
       leaseOf: (goalId) => lease(goalId, { expiresAt: iso(600_000) }),
     }));
     assert.deepEqual(report, [
-      `"intent/a.md": claimed by g-a (session sess-A, lease live until ${iso(600_000)})`,
-      `"specs/tasks/T0-A.md": claimed by g-a (session sess-A, lease live until ${iso(600_000)})`,
+      `"intent/a.md": claimed by g-a (session sess-A, lease live until ${iso(600_000)}; plan unreadable: READ_FAILED)`,
+      `"specs/tasks/T0-A.md": claimed by g-a (session sess-A, lease live until ${iso(600_000)}; plan unreadable: READ_FAILED)`,
       '"specs/tasks/T0-FROM-PLAN.md": unclaimed',
+      `"intent/b.md": claimed by g-b (session sess-A, lease live until ${iso(600_000)})`,
     ]);
+    assert.ok(!JSON.stringify(report).includes('HUSH42XYZ'));
   });
 });
