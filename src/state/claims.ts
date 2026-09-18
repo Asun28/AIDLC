@@ -43,11 +43,20 @@ export function planningArtifactsOf(goal: Goal, dirs: PlanningDirs, readPlan: (p
   if (goal.planRef) {
     const plan = normalise(goal.planRef);
     files.add(plan);
-    const text = readPlan(plan);
-    if (text !== undefined) for (const row of parsePlanCards(text)) cards.add(row.id);
+    for (const row of planRows(plan, readPlan)) cards.add(row.id);
   }
   for (const id of cards) files.add(`${normalise(dirs.cardsDir)}/${id}.md`);
   return [...files];
+}
+
+/** The task-split rows of a goal's plan; a plan that cannot be read or parsed names no extra cards (the claim never throws). */
+function planRows(planRef: string, readPlan: (planRef: string) => string | undefined): ReturnType<typeof parsePlanCards> {
+  try {
+    const text = readPlan(planRef);
+    return text === undefined ? [] : parsePlanCards(text);
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -72,11 +81,16 @@ export function planningClaims(goals: Goal[], dirs: PlanningDirs, readPlan: (pla
  * two columns after the trim). An entry of neither shape names no path.
  */
 function entryPath(entry: string): string | undefined {
-  const m = /^(?:[ MTADRCU?!]{2}|[MTADRCU?!]) (.+)$/.exec(entry);
+  const m = /^([ MTADRCU?!]{2}|[MTADRCU?!]) (.+)$/.exec(entry);
   if (!m) return undefined;
-  let p = m[1]!;
-  const arrow = p.indexOf(' -> ');
-  if (arrow >= 0) p = p.slice(arrow + 4);
+  let p = m[2]!;
+  // Only a rename or copy (R or C in either column) carries `old -> new`; a quoted path may contain the arrow
+  // itself, so between two quoted names the separator is `" -> "`.
+  if (/[RC]/.test(m[1]!)) {
+    const separator = p.startsWith('"') ? '" -> "' : ' -> ';
+    const arrow = p.indexOf(separator);
+    if (arrow >= 0) p = p.slice(arrow + separator.length - (p.startsWith('"') ? 1 : 0));
+  }
   if (p.length >= 2 && p.startsWith('"') && p.endsWith('"')) p = unquoteC(p.slice(1, -1));
   return p;
 }

@@ -50,6 +50,16 @@ describe('planningClaims (T0-PLANNING-CLAIMS acceptance 1)', () => {
     assert.deepEqual([...claims.keys()].sort(), ['intent/loop.md', 'plans/loop.md', 'plans/other-slug.md', 'specs/loop.md', 'specs/tasks/T0-ONE.md']);
   });
 
+  test('a plan read that throws names no extra cards and never throws out of the claim; malformed front matter still yields its rows', () => {
+    const goal = makeGoal('g-a', { planRef: 'plans/bad.md', cards: ['T0-ONE'] });
+    const throwing = planningClaims([goal], dirs, () => {
+      throw new Error('EACCES');
+    });
+    assert.deepEqual([...throwing.keys()].sort(), ['plans/bad.md', 'specs/tasks/T0-ONE.md']);
+    const malformed = planningClaims([goal], dirs, () => '---\ntitle: [unclosed\n---\n## 7. Task split (dependencies and parallel windows)\n| T0-FROM-PLAN | MUST | x | - | - | no |\n');
+    assert.deepEqual([...malformed.keys()].sort(), ['plans/bad.md', 'specs/tasks/T0-FROM-PLAN.md', 'specs/tasks/T0-ONE.md']);
+  });
+
   test('a terminal goal claims nothing; a goal without an intent claims only its plan and cards', () => {
     const done = makeGoal('g-done', { intentRef: 'intent/done.md', planRef: 'plans/done.md', cards: ['T0-DONE'], terminal: true, state: 'DONE' });
     const bare = makeGoal('g-bare', { planRef: 'plans/bare.md', cards: ['T0-BARE'] });
@@ -114,8 +124,11 @@ describe('uncommittedPlanningFiles (acceptance 2)', () => {
       '?? "intent/a\\"b\\\\c.md"',
       '?? "intent/tab\\there.md"',
       '?? "specs/tasks/T0-\\303\\244.md"',
+      // the arrow inside a quoted path is part of the name; only R or C in the status columns carries `old -> new`
+      '?? "intent/a -> b.md"',
+      'R  "intent/old -> x.md" -> "intent/new -> y.md"',
     ];
-    assert.deepEqual(uncommittedPlanningFiles({ entries }, dirs), ['intent/café plan.md', 'intent/a"b\\c.md', 'intent/tab\there.md', 'specs/tasks/T0-ä.md']);
+    assert.deepEqual(uncommittedPlanningFiles({ entries }, dirs), ['intent/café plan.md', 'intent/a"b\\c.md', 'intent/tab\there.md', 'specs/tasks/T0-ä.md', 'intent/a -> b.md', 'intent/new -> y.md']);
     // a decoded path matches its claim
     const claims = new Map<string, string>([['intent/café plan.md', 'g-a']]);
     assert.deepEqual(formatWorkingTree(['intent/café plan.md'], claims, () => undefined, iso()), ['intent/café plan.md: claimed by g-a (no lease)']);
