@@ -602,7 +602,7 @@ test('T0-VERDICT-PROSE acceptance 1-3: prose that opens like JSON opens no docum
   assert.equal(extractVerdict(`${verdict}\n${block}`), undefined, 'a reason string cut at the end of the output');
   assert.equal(extractVerdict(`${verdict}\n${block}\n`), undefined, 'the same with a trailing newline');
   assert.equal(extractVerdict(`${verdict}\n{"verdict":"block","reasons":[],"axes":{"spec":{"verdict":"block","reasons":[]}`), undefined, 'cut short after a nested axis');
-  assert.equal(extractVerdict(`${verdict}\n{"verdict":"block",`), undefined, 'cut short after a key');
+  assert.equal(extractVerdict(`${verdict}\n{"verdict":"block",`), undefined, 'cut short after a separator');
 
   // 2. Every pre-change extraction case keeps its result.
   assert.equal(extractVerdict('[{"verdict":"pass","reasons":[]}'), undefined, 'an unfinished enclosing array is never its nested object');
@@ -620,6 +620,7 @@ test('T0-VERDICT-PROSE R3 decision 1: an output cut in any JSON state is a docum
   // F1: cut after a colon, so the value is missing. The nested spec axis is not the verdict.
   assert.equal(extractVerdict(`${pass}\n{"verdict":"block","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":`), undefined, 'a dangling colon is a document cut short');
   assert.equal(extractVerdict(`${pass}\n{"verdict":"block",`), undefined, 'a dangling comma is too');
+  assert.equal(extractVerdict(`${pass}\n{"verdict"`), undefined, 'so is a complete key the output ends on, before its colon');
   assert.equal(extractVerdict(`${pass}\n{"verdict":"block","rea`), undefined, 'a key cut in half is too');
   // F2: a string cut inside an escape cannot be closed by appending a quote.
   assert.equal(extractVerdict(`[${pass},"note\\`), undefined, 'a string cut after a backslash');
