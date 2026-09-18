@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-INVARIANTS
 title: The R2 and R3 prompts carry the repository's NEVER and ALWAYS lessons as a learned-invariants checklist with one finding per site
-status: todo
+status: merged
 branch: T1-REVIEW-INVARIANTS
 worktree: C:\wt\T1-REVIEW-INVARIANTS
 allow_paths:
