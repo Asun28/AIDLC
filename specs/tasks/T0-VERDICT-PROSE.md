@@ -1,7 +1,7 @@
 ---
 id: T0-VERDICT-PROSE
 title: An unterminated JSON-looking opener in the reviewer's prose voids the complete verdict document that follows it; only a text that completes into valid JSON is a document cut short
-status: todo
+status: merged
 branch: T0-VERDICT-PROSE
 worktree: C:\wt\T0-VERDICT-PROSE
 allow_paths:
