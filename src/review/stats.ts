@@ -162,7 +162,12 @@ interface DecidedRound {
   goalId: string;
   round: PreReviewRound;
   decidedAt: number;
+  /** The run retained the decision artifact that states when this round was decided. */
+  authoritative: boolean;
 }
+
+/** Code-unit order of two persisted keys: `localeCompare` would answer differently under another locale or ICU build. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Decision order over the decided rounds of a card, from the records alone. A round requested first can
@@ -180,8 +185,8 @@ function byDecision(a: DecidedRound, b: DecidedRound): number {
     ms(a.round.requestedAt) - ms(b.round.requestedAt) ||
     a.round.cycle - b.round.cycle ||
     a.round.round - b.round.round ||
-    a.goalId.localeCompare(b.goalId) ||
-    (a.round.reservationId ?? '').localeCompare(b.round.reservationId ?? '')
+    byCodeUnit(a.goalId, b.goalId) ||
+    byCodeUnit(a.round.reservationId ?? '', b.round.reservationId ?? '')
   );
 }
 
@@ -200,7 +205,8 @@ function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageS
   for (const run of runs) {
     for (const round of run.preReview.rounds) {
       if (round.outcome === 'pending') continue;
-      decided.push({ goalId: run.goalId, round, decidedAt: ms(roundEndedAt(run, round)) });
+      const decision = roundDecision(run, round);
+      decided.push({ goalId: run.goalId, round, decidedAt: ms(decision.at), authoritative: decision.authoritative });
       const coverage = round.coverage;
       if (!coverage) continue;
       into.roundsRequested += 1;
@@ -210,8 +216,18 @@ function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageS
       if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
     }
   }
+  // A round whose decision artifact the run retained states when the decision landed; one without it is
+  // placed by its measured end, which cannot include the wait before the reviewer started, so it can read
+  // as later than a decision that actually followed it. Where a candidate has both, only the rounds that
+  // state their decision settle it; where it has neither (records from before the artifact existed), the
+  // measured ends are all there is and they decide, rather than the candidate losing its answer.
+  const stated = new Set(decided.filter((d) => d.authoritative && d.round.candidateSha).map((d) => d.round.candidateSha));
   const lastDecided = new Map<string, PreReviewRound>();
-  for (const { round } of decided.sort(byDecision)) if (round.candidateSha) lastDecided.set(round.candidateSha, round);
+  for (const d of decided.sort(byDecision)) {
+    const sha = d.round.candidateSha;
+    if (!sha || (stated.has(sha) && !d.authoritative)) continue;
+    lastDecided.set(sha, d.round);
+  }
   const incomplete = new Set([...lastDecided].filter(([, round]) => round.coverage?.unaccounted.length).map(([sha]) => sha));
   for (const run of runs) for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
   return into;
@@ -238,11 +254,15 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
  * admission). A round with no such artifact (one still in flight, or a record from before the
  * reservation id existed) falls back to the measured reviewer runtime after the request.
  */
-function roundEndedAt(run: CardRun, round: PreReviewRound): string {
+function roundDecision(run: CardRun, round: PreReviewRound): { at: string; authoritative: boolean } {
   const measured = ms(round.requestedAt) + round.durationMs;
   const attempt = round.reservationId?.split('.').at(-2);
   const artifact = attempt ? run.evidence.find((e) => e.id === `pre-review-${round.cycle}-${round.round}-${attempt}`) : undefined;
-  return new Date(artifact ? Math.max(measured, ms(artifact.createdAt)) : measured).toISOString();
+  return { at: new Date(artifact ? Math.max(measured, ms(artifact.createdAt)) : measured).toISOString(), authoritative: Boolean(artifact) };
+}
+
+function roundEndedAt(run: CardRun, round: PreReviewRound): string {
+  return roundDecision(run, round).at;
 }
 
 function eventsOf(run: CardRun): ReviewEvent[] {

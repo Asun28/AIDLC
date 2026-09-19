@@ -365,6 +365,37 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(after?.r3SpecFindingsAfterIncomplete, 0, 'but it is the last decided round on shaX, so the question is settled');
   });
 
+  test('summarizeReviews never lets a round that states no decision time outrank one that does (R2 cycle 1 round 1 F1)', () => {
+    // shaY: the unaccounted round retained no decision artifact, so it is placed by its measured end
+    // (40:00) and reads as later than the complete round its artifact puts at 30:00. The measured end
+    // cannot include the wait before the reviewer started, so it never settles the candidate here.
+    const stale = run({
+      goalId: 'g-a',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'dy', candidateSha: 'shaY', requestedAt: at(0), durationMs: 40 * MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [2] }) }], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'shaY', raisedAt: at(45 * MIN), disposition: 'open' }],
+    });
+    const stated = run({
+      goalId: 'g-b',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'dy', candidateSha: 'shaY', requestedAt: at(10 * MIN), durationMs: 5 * MIN, outcome: 'pass', reasons: [], reservationId: 'T1-A.pre.0.1.1.bbbb2222', coverage: coverage() }], handoffs: [] },
+      evidence: [{ id: 'pre-review-0-1-1', kind: 'artifact', createdAt: at(30 * MIN), candidateDigest: 'dy', note: 'pre-review r2 pass' }],
+    });
+    assert.equal(stats.summarizeReviews([stale, stated], [])[0]?.coverage.r3SpecFindingsAfterIncomplete, 0, 'the round that states when it was decided settles shaY');
+
+    // With no artifact anywhere on the candidate the measured ends are all the records carry, and they
+    // still answer: a candidate does not lose its measurement because it predates the artifact.
+    const legacy = run({
+      preReview: {
+        rounds: [
+          { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'dz', candidateSha: 'shaZ', requestedAt: at(0), durationMs: MIN, outcome: 'pass', reasons: [], coverage: coverage() },
+          { round: 2, cycle: 0, reviewer: 'r2', candidateDigest: 'dz', candidateSha: 'shaZ', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [2] }) },
+        ],
+        handoffs: [],
+      },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'shaZ', raisedAt: at(15 * MIN), disposition: 'open' }],
+    });
+    assert.equal(stats.summarizeReviews([legacy], [])[0]?.coverage.r3SpecFindingsAfterIncomplete, 1, 'the later measured end is the last decided round on shaZ');
+  });
+
   test('summarizeReviews reports zeros for a card whose rounds carry no coverage (R12 acceptance 3)', () => {
     const [summary] = stats.summarizeReviews([reviewedRun()], []);
     assert.deepEqual(summary?.coverage, NO_COVERAGE, 'a round that asked for no coverage leaves every field at zero');
