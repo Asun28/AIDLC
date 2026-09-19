@@ -1,9 +1,9 @@
 ---
-id: T1-REVIEW-COVERAGE
+id: T1-REVIEW-COVERAGE-2
 title: The ac-coverage angle's verdict carries one coverage entry per acceptance item, the panel joins them per item and the round retains the result in shadow without changing its outcome
 status: todo
-branch: T1-REVIEW-COVERAGE
-worktree: C:\wt\T1-REVIEW-COVERAGE
+branch: T1-REVIEW-COVERAGE-2
+worktree: C:\wt\T1-REVIEW-COVERAGE-2
 allow_paths:
   - src/core/types.ts
   - src/config.ts
@@ -21,6 +21,7 @@ allow_paths:
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T1-REVIEW-COVERAGE.md
+  - specs/tasks/T1-REVIEW-COVERAGE-2.md
 dod_command: npm run typecheck && node --test tests/core/types.test.ts tests/core/config.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/surface/templates.test.ts
 dod_exit: 0
 requirements:
@@ -35,9 +36,14 @@ acceptance:
   - 1. `PreReviewConfig.coverage` parses `off` (the default) and `shadow`; `ProjectConfig` rejects `shadow` when `preReview.command` carries `{schema}` and accepts it without; `templates/aidlc.config.json` parses with `off` and `aidlc.config.json` with `shadow` (config.test.ts, templates.test.ts). [R9] [R10] [dod arm 1]
   - 2. With coverage `shadow`, `buildReviewPrompt` for the `ac-coverage` angle carries the contract line with `"coverage":[{"item":1,"status":"supported|violated|unknown","impl":"file:line","test":"file:line"}]` and the angle text asks for one entry per numbered acceptance item; the other angles' prompts, the single-pass prompt and the R3 prompt are byte-equal to the `off` prompts, and `off` prompts are byte-equal to the pre-change prompts (pre-review.test.ts). [R4] [R9] [dod arm 1]
   - 3. `Verdict` parses a document with `coverage` (item a positive integer, status one of the three, optional string locations) and without it; `extractVerdict` returns the list when present; `VERDICT_SCHEMA` deep-equals its pre-change value (types.test.ts, pre-review.test.ts). [R5] [dod arm 1]
-  - 4. `joinCoverage(results, expected)` over fixtures reports `expected`, `accounted`, `unaccounted`, `conflicted`, `inconsistent`, `malformed` and `angles`: an item no angle reported is unaccounted; supported by one angle and violated by another is conflicted; `supported` without both locations counts as unknown and is accounted; an item outside `1..expected` or repeated by one angle counts as malformed and joins nothing; a passing angle that marked an item violated lists it as inconsistent; an angle with no `coverage` list is absent from `angles` (pre-review.test.ts). [R6] [R7] [dod arm 1]
+  - 4. `joinCoverage(results, expected)` over fixtures reports `expected`, `accounted`, `unaccounted`, `conflicted`, `inconsistent`, `malformed` and `angles`: an item no angle reported is unaccounted; supported by one angle and violated by another is conflicted; a `supported` entry missing either location alone, the implementation or the test, counts as unknown, so paired against another angle's violated entry for the same item it is accounted and not conflicted, while the same entry with both locations is conflicted; an item outside `1..expected` at either bound, or repeated by one angle, counts as malformed and joins nothing; a passing angle that marked an item violated lists it as inconsistent; an angle with no `coverage` list is absent from `angles` (pre-review.test.ts). [R6] [R7] [dod arm 1]
   - 5. In a scenario in `shadow`, the decided round record and the `PRE_REVIEW_DECIDED` event carry `coverage`, the aggregated round document written under `.review/` carries it, and `preReviewSummaryText` prints `coverage: <accounted>/<expected> accounted` with the unaccounted, conflicted and inconsistent item numbers when any; the round's outcome, its findings, the reasons, the R3 prompt and every allowance equal those of the same scripted round in `off`, whose record carries no `coverage` (t0-flow.test.ts). [R8] [R9] [dod arm 1]
   - 6. `docs/OPERATIONS.md` documents the setting, the contract line, the round field and the summary line, `docs/ARCHITECTURE.md` names `joinCoverage` and the two schemas, CHANGELOG.md Unreleased carries the entry (templates.test.ts). [dod arm 1]
+  - 7. A coverage list is kept, joined and retained only for the angle that was asked: an unsolicited list from a reviewer in `off`, from another angle of a shadow panel, or from an R3 reviewer leaves the verdict and the retained document as they were before this setting existed (pre-review.test.ts). [R9] [dod arm 1]
+  - 8. The join reads what the angle reported, never what the classification left: an angle whose verdict is dropped because its axes contradict it still contributes its entries and its rejected-entry count, and an angle that reported a block is not `inconsistent` for its own violated item after the citation rule classified it a pass; neither changes the round's outcome (pre-review.test.ts). [R6] [R7] [R8] [dod arm 1]
+  - 9. An item one angle reported twice joins nothing however its twin was written, including when one of the two entries is rejected by the bounded shape, so a repeat is never hidden behind an invalid entry (pre-review.test.ts). [R6] [dod arm 1]
+  - 10. Entries the bounded shape rejects reach the round as `malformed` through the whole path: a reviewer output carrying a zero and a negative item number, run through `runReviewPanel`, reports them in the returned coverage and in the retained aggregate document (pre-review.test.ts). [R6] [dod arm 1]
+  - 11. A round that asked for coverage always writes the aggregated round document carrying the join, a single-angle panel included, and keeps that angle's own document beside it (pre-review.test.ts). [R8] [dod arm 1]
 depends_on: [T1-REVIEW-INVARIANTS]
 plan_ref: plans/review-coverage.md#7
 budget: 620
@@ -46,10 +52,12 @@ sweep: "grep -rn 'VERDICT_CONTRACT\|VERDICT_SCHEMA\|aggregateVerdicts\|PreReview
 forbid: [a change to VERDICT_SCHEMA or to the R3 prompt, a coverage effect on the round outcome or the findings, a new model call]
 non_goals: [a required mode, coverage from R3 or from a schema-enforced reviewer, coverage from angles other than ac-coverage, matching findings to items by text, statistics]
 doc_sync: docs/OPERATIONS.md (Pre-review coverage), docs/ARCHITECTURE.md (review module, types), CHANGELOG.md
-superseded_by: T1-REVIEW-COVERAGE-2
 ---
 
-# T1-REVIEW-COVERAGE
+# T1-REVIEW-COVERAGE-2
+
+## History
+T1-REVIEW-COVERAGE stopped at STOP/review with both R3 decisions spent: decision 1 raised eight findings, every one repaired, and decision 2 raised four more (a test that could not tell the missing-location downgrade from its absence, a parse-to-panel path never asserted end to end, a join still reading the enforced verdict instead of the reported one, and duplicate detection running after invalid entries were filtered). This successor carries the same contract with those four settled in its first candidate, under the ruling of 2026-09-18.
 
 ## Deliverable
 The `ac-coverage` angle is asked in prose to name the code and the test for each acceptance item and to block on a gap; its verdict is `pass|block` plus reasons, so an item it skipped looks the same as one it verified, and R3 then spends a decision on the next untested claim of the same list (T0-ARC-EXTERN-DEP-2 lesson). This card adds `preReview.coverage: off|shadow`: in shadow the angle's contract asks for one `{item, status, impl, test}` entry per acceptance item, the zod `Verdict` accepts the optional list, `joinCoverage` labels every item across the angles (accounted, unaccounted, conflicted, inconsistent, malformed) and the round record, the journal event, the round document and the R2 summary carry the result. The outcome, the findings, the R3 prompt, the allowances and the Codex output schema are unchanged; the statistics over these records are T1-REVIEW-COVERAGE-STATS, and a required mode waits for them.
