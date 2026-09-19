@@ -43,3 +43,25 @@ describe('project config: github ship block (T1-LOOP-GATES R8)', () => {
     assert.equal(tpl.github.requireVerdict, true);
   });
 });
+
+describe('project config: pre-review coverage (T1-REVIEW-COVERAGE R9, R10)', () => {
+  test('coverage defaults to off, parses shadow, and rejects any other value', () => {
+    assert.equal(ProjectConfig.parse({}).preReview.coverage, 'off');
+    assert.equal(ProjectConfig.parse({ preReview: { coverage: 'shadow' } }).preReview.coverage, 'shadow');
+    assert.throws(() => ProjectConfig.parse({ preReview: { coverage: 'required' } }));
+  });
+
+  test('shadow conflicts with a {schema} pre-review command: the reviewer never sees a field the schema forbids', () => {
+    const schemaCommand = ['codex', 'exec', '--output-schema', '{schema}', '-'];
+    assert.throws(() => ProjectConfig.parse({ preReview: { coverage: 'shadow', command: schemaCommand } }), /schema/);
+    assert.equal(ProjectConfig.parse({ preReview: { coverage: 'off', command: schemaCommand } }).preReview.coverage, 'off', 'off with a schema command is unchanged');
+    assert.equal(ProjectConfig.parse({ preReview: { coverage: 'shadow', command: ['deepseek', '--model', 'deepseek-v4-pro'] } }).preReview.coverage, 'shadow', 'shadow without the placeholder parses');
+  });
+
+  test('this repository asks its pre-review panel for coverage; the installed template leaves it off', () => {
+    const repo = ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')));
+    assert.equal(repo.preReview.coverage, 'shadow');
+    const tpl = ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, 'templates', 'aidlc.config.json'), 'utf8')));
+    assert.equal(tpl.preReview.coverage, 'off');
+  });
+});

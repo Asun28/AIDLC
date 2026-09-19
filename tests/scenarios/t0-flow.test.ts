@@ -13,6 +13,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
+import * as cli from '../../src/cli/main.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
 import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
@@ -3562,5 +3563,111 @@ test('T1-REVIEW-INVARIANTS acceptance 3: the lessons of the main checkout reach 
     for (const name of WRITES) (fs as unknown as Record<string, unknown>)[name] = originals.get(name);
     syncBuiltinESMExports();
     fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-COVERAGE acceptance 5: in shadow the decided round, its journal event, its round document and the R2 summary carry the coverage join, and the round decides exactly as the same round with coverage off', async () => {
+  const acceptance = ['1. the gate holds. [dod arm 1]', '2. the gate reports its reason. [dod arm 1]', '3. the gate is idempotent. [dod arm 1]'];
+  // One passing angle that accounts for two of the three items (one of them violated, which its own pass contradicts) and
+  // names an item outside the list; one angle that reports no list at all.
+  const coverageVerdict = JSON.stringify({
+    verdict: 'pass',
+    reasons: [],
+    coverage: [
+      { item: 1, status: 'supported', impl: 'src/t1-cov.ts:4', test: 'tests/t1-cov.test.ts:9' },
+      { item: 2, status: 'violated' },
+      { item: 9, status: 'supported', impl: 'src/t1-cov.ts:40', test: 'tests/t1-cov.test.ts:40' },
+    ],
+  });
+  const plain = '{"verdict":"pass","reasons":[]}';
+
+  const round = async (coverage: 'off' | 'shadow') => {
+    const fx = makeFixture({
+      config: {
+        preReview: { command: ['fake-reviewer', '{perspective}'], reviewer: 'fake', rounds: 2, timeoutMs: 1000, shell: false, perspectives: ['ac-coverage', 'edge-cases'], coverage },
+        formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false },
+      },
+    });
+    const prompts: Record<string, string> = {};
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-cov.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t1-cov.ts b/src/t1-cov.ts\n+export const cov = 1;\n' },
+      'fake-reviewer ac-coverage': { stdout: coverageVerdict + '\n' },
+      'fake-reviewer edge-cases': { stdout: plain + '\n' },
+      'fake-r3': { stdout: plain + '\n' },
+    });
+    const runner = new CardRunner({
+      paths: fx.paths,
+      repo: fx.repo,
+      config: fx.config,
+      store: fx.store,
+      leases: fx.leases,
+      queue: fx.queue,
+      ops: fx.ops,
+      shipPath: new DryRunShipPath(['merged']),
+      now: fx.now,
+      // The reviewer process is the boundary: the prompt it receives is what the loop sent it.
+      runner: (command, args, options) => {
+        if (command !== 'git') prompts[[command, ...args].join(' ')] = String(options?.input ?? '');
+        return script(command, args, options);
+      },
+    });
+    writeCard(fx, { id: 'T1-COV', title: 'gate the ship', acceptance });
+    const goal = fx.controller.createGoal({ text: 'implement T1-COV', source: 'card', ref: 'T1-COV', affectedSurfaces: [] }, { cards: ['T1-COV'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-COV'] } });
+    const card = fx.card('T1-COV');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-COV'));
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, built);
+    assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
+    const decided = await runner.preReview(fx.goal(goal.id), card, r.run);
+    const formal = await runner.formalReview(fx.goal(goal.id), card, decided.run);
+    const event = fx.events(goal.id).filter((e) => e.type === 'PRE_REVIEW_DECIDED').at(-1)!;
+    const document = JSON.parse(readFileSync(decided.result.verdictRef!, 'utf8')) as Record<string, unknown>;
+    return { fx, decided, formal, event, document, prompts };
+  };
+
+  const shadow = await round('shadow');
+  const off = await round('off');
+  try {
+    const expected = { expected: 3, accounted: 2, unaccounted: [3], conflicted: [], inconsistent: [2], malformed: 1, angles: ['ac-coverage'] };
+    assert.deepEqual(shadow.decided.round.coverage, expected, 'the round record carries the join');
+    assert.deepEqual(shadow.event.data['coverage'], expected, 'the decision event carries it');
+    assert.deepEqual(shadow.document['coverage'], expected, 'the round document next to the candidate carries it');
+    assert.deepEqual(shadow.decided.result.coverage, expected, 'the panel returns it');
+    assert.equal(off.decided.round.coverage, undefined, 'with coverage off the round record carries none');
+    assert.equal(off.event.data['coverage'], undefined, 'and the event carries none');
+    assert.equal(off.document['coverage'], undefined, 'and the round document carries none');
+
+    // The summary names what the round accounted for and the items it did not, and says nothing when none was asked for.
+    const summaryOf = (r: typeof shadow) =>
+      cli.preReviewSummaryText(
+        { reviewer: r.decided.round.reviewer, round: r.decided.round.round, maxRounds: 2, cycle: r.decided.round.cycle, outcome: r.decided.result.outcome, runStatus: r.decided.result.runStatus, durationMs: r.decided.result.durationMs, perspectives: ['ac-coverage:pass', 'edge-cases:pass'], reasons: r.decided.result.reasons, advisory: [], coverage: r.decided.round.coverage, state: r.decided.run.state },
+        'T1-COV',
+      );
+    assert.match(summaryOf(shadow), /coverage: 2\/3 accounted; unaccounted 3; inconsistent 2/, summaryOf(shadow));
+    // The `ac-coverage` angle is named in every summary; what the off round prints is no coverage line of its own.
+    assert.ok(!/\n\s*coverage: /.test(summaryOf(off)) && !summaryOf(off).includes('accounted'), summaryOf(off));
+
+    // Nothing else about the round differs: the same outcome, the same findings, the same prompts to the other angle and to
+    // R3, and the same allowances.
+    assert.equal(shadow.decided.result.outcome, 'pass');
+    assert.equal(shadow.decided.result.outcome, off.decided.result.outcome);
+    assert.deepEqual(shadow.decided.result.reasons, off.decided.result.reasons);
+    assert.deepEqual(shadow.decided.run.findings, off.decided.run.findings);
+    assert.equal(shadow.decided.run.state, off.decided.run.state);
+    assert.deepEqual(shadow.decided.run.review, off.decided.run.review, 'the review allowances are untouched');
+    assert.deepEqual(shadow.decided.run.effort?.attempts, off.decided.run.effort?.attempts, 'no attempt is spent either way');
+    assert.equal(shadow.decided.run.preReview.rounds.length, off.decided.run.preReview.rounds.length);
+    const prompt = (r: typeof shadow, key: string) => (r.prompts[key] ?? '').split(r.decided.run.worktree ?? '<none>').join('<worktree>');
+    assert.equal(prompt(shadow, 'fake-r3'), prompt(off, 'fake-r3'), 'the R3 prompt is the one coverage off builds');
+    assert.equal(prompt(shadow, 'fake-reviewer edge-cases'), prompt(off, 'fake-reviewer edge-cases'), 'the other angle is asked exactly what it was asked before');
+    assert.ok(prompt(shadow, 'fake-reviewer ac-coverage').includes('"coverage":[{"item":1'), 'the ac-coverage angle is the one asked');
+    assert.ok(!prompt(off, 'fake-reviewer ac-coverage').includes('"coverage"'), 'and it is asked nothing with coverage off');
+    assert.equal(shadow.formal.classified.outcome, off.formal.classified.outcome, 'R3 decides the same');
+  } finally {
+    shadow.fx.cleanup();
+    off.fx.cleanup();
   }
 });

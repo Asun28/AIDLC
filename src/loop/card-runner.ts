@@ -29,7 +29,7 @@ import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { atomicWriteJson } from '../state/store.ts';
@@ -1905,9 +1905,12 @@ export class CardRunner {
       result = { outcome: 'block', runStatus: 'success', reasons, verdict, perspectives: [{ perspective: 'scope-gate', outcome: 'block', runStatus: 'success', reasons, verdict, durationMs: 0, logRef: '', receiptSha256: '', exitCode: 0 }], durationMs: 0, receiptSha256: '' };
     } else {
       const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
+      // Acceptance coverage is asked of the one angle that answers it, so a panel without that angle asks for nothing and
+      // records nothing: an empty record would read as a reviewer that ignored a request nobody made.
+      const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
+      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
@@ -1929,7 +1932,7 @@ export class CardRunner {
     // Timed from the clock after the run: a review can outlast the hold it reports.
     const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
-    const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives };
+    const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives, coverage: result.coverage };
     const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
     // The angle that wrote each reason, from the structured result: every cited reason of the angle's own document (root
     // list and both axes), so a single-angle panel, whose reasons carry no trailing tag, keeps its angle on axis findings too.
@@ -1968,7 +1971,7 @@ export class CardRunner {
       after,
     );
     const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash } });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage } });
     return { run: saved, result, round: record };
   }
 
