@@ -66,8 +66,9 @@ function reviewedRun(): CardRun {
  *   sha3 a round with item 1 unaccounted and item 4 inconsistent, then a complete round -> the later round is last on sha3.
  * The expected numbers below are read off this timeline by hand, never recomputed from the summary.
  */
+const coverage = (over: Record<string, unknown> = {}) => ({ expected: 4, accounted: 4, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'], ...over });
+
 function coveredRun(): CardRun {
-  const coverage = (over: Record<string, unknown>) => ({ expected: 4, accounted: 4, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'], ...over });
   return run({
     preReview: {
       rounds: [
@@ -251,6 +252,41 @@ describe('review statistics (R11, R12)', () => {
       // F6 a candidate a later round completed, F7 bound to no candidate.
       r3SpecFindingsAfterIncomplete: 2,
     });
+  });
+
+  test('summarizeReviews joins the coverage of every run of a card, so the last decided round on a candidate is the last whichever run decided it (R2 cycle 0 round 1 F1)', () => {
+    // The same card under two goals. sha1 is reviewed only in the first run, which left item 2 unaccounted;
+    // sha2 is left incomplete there too, but the second run decides a later round on it that accounts for
+    // every item. Matching findings against the rounds of their own run alone gets both candidates wrong.
+    const first = run({
+      goalId: 'g-a',
+      preReview: {
+        rounds: [
+          { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', candidateSha: 'sha1', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [2] }) },
+          { round: 1, cycle: 1, reviewer: 'r2', candidateDigest: 'd2', candidateSha: 'sha2', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'block', reasons: ['[spec] 3 @ src/a.ts:2: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [3] }) },
+        ],
+        handoffs: [],
+      },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 3 @ src/b.ts:1: missing -> add it', candidateSha: 'sha2', raisedAt: at(11 * MIN), disposition: 'open' }],
+    });
+    const second = run({
+      goalId: 'g-b',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd2', candidateSha: 'sha2', requestedAt: at(20 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], coverage: coverage() }], handoffs: [] },
+      findings: [
+        { id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:3: missing -> add it', candidateSha: 'sha1', raisedAt: at(25 * MIN), disposition: 'open' },
+        { id: 'F2', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:4: also missing -> add it', candidateSha: 'sha1', raisedAt: at(25 * MIN), disposition: 'open' },
+      ],
+    });
+    const [summary, ...rest] = stats.summarizeReviews([first, second], []);
+    assert.equal(rest.length, 0, 'both runs are the one card');
+    assert.equal(summary?.goalId, undefined, 'two goals ran it');
+    assert.equal(summary?.coverage.roundsRequested, 3, 'the rounds of both runs');
+    assert.equal(summary?.coverage.unaccounted, 2, 'and their items');
+    assert.equal(
+      summary?.coverage.r3SpecFindingsAfterIncomplete,
+      2,
+      'the two findings on sha1, whose only round left item 2 unaccounted; the sha2 finding is cleared by the later round the other run decided',
+    );
   });
 
   test('summarizeReviews reports zeros for a card whose rounds carry no coverage (R12 acceptance 3)', () => {

@@ -158,18 +158,20 @@ function countR2(rounds: readonly PreReviewRound[], into: R2Counters): R2Counter
 const SPEC_TAG = /^\s*\[spec\]/i;
 
 /**
- * The coverage of one run: the record each decided round retained, and the formal spec findings raised
- * on a candidate the R2 rounds left incomplete. A candidate is incomplete when the last decided round
- * on it (the last the ledger persisted, whether or not it asked for coverage) reported an unaccounted
- * item, so a later round that accounted for everything ends the question for that candidate. The shas
- * live in a Map and a Set, so a candidate named after an Object property is a record and not an
- * inherited value.
+ * The coverage of a card over every run that carries it, like every other field of `statsFor`: the
+ * record each decided round retained, and the formal spec findings raised on a candidate the R2 rounds
+ * left incomplete. A candidate is incomplete when the last decided round on it reported an unaccounted
+ * item, so a later round that accounted for everything, or asked for no coverage at all, ends the
+ * question for that candidate. The rounds of one run and the findings of another can name the same
+ * candidate, so both sides are joined across the runs before they are matched: the rounds of a card are
+ * requested one at a time, so `requestedAt` orders them, and the sort is stable, which keeps the order
+ * a run's ledger persisted when two rounds carry the same request time. The shas live in a Map and a
+ * Set, so a candidate named after an Object property is a record and not an inherited value.
  */
-function countCoverage(run: CardRun, into: CoverageStats): CoverageStats {
-  const lastDecided = new Map<string, PreReviewRound>();
-  for (const round of run.preReview.rounds) {
-    if (round.outcome === 'pending') continue;
-    if (round.candidateSha) lastDecided.set(round.candidateSha, round);
+function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageStats {
+  const decided: PreReviewRound[] = [];
+  for (const run of runs) for (const round of run.preReview.rounds) if (round.outcome !== 'pending') decided.push(round);
+  for (const round of decided) {
     const coverage = round.coverage;
     if (!coverage) continue;
     into.roundsRequested += 1;
@@ -178,8 +180,10 @@ function countCoverage(run: CardRun, into: CoverageStats): CoverageStats {
     into.inconsistent += coverage.inconsistent.length;
     if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
   }
+  const lastDecided = new Map<string, PreReviewRound>();
+  for (const round of [...decided].sort((a, b) => ms(a.requestedAt) - ms(b.requestedAt))) if (round.candidateSha) lastDecided.set(round.candidateSha, round);
   const incomplete = new Set([...lastDecided].filter(([, round]) => round.coverage?.unaccounted.length).map(([sha]) => sha));
-  for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
+  for (const run of runs) for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
   return into;
 }
 
@@ -234,10 +238,10 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
   const findings = emptyFindings();
   const coverage = emptyCoverage();
   const events: ReviewEvent[] = [];
+  countCoverage(runs, coverage);
   for (const run of runs) {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
-    countCoverage(run, coverage);
     r3.decisions += run.review.substantiveDecisions;
     for (const invocation of run.review.invocations) {
       // Every recorded block, read from the decision itself: the ledger's `substantiveBlocks` counts only the merge-blocking ones.
