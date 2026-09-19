@@ -905,3 +905,88 @@ test('T1-REVIEW-COVERAGE-2 acceptance 8-10 (R3 decision 2): from the reviewer ou
   assert.deepEqual(contradictory.coverage, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [1], malformed: 1, angles: [COVERAGE_ANGLE] }, 'the entries it reported are joined and its rejected entry counted');
   assert.deepEqual(retained(contradictory.verdictRef!), contradictory.coverage, 'and the round document carries them');
 });
+
+test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal stage drops an unsolicited coverage list, and a repeat is not hidden behind a twin written as a string item', async () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const document = (coverage: unknown[]) => JSON.stringify({ verdict: 'pass', reasons: [], coverage });
+  const runnerFor = (stdout: string) => async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${stdout}\n` } })('reviewer', a, {});
+  const retained = (ref: string) => JSON.parse(readFileSync(ref, 'utf8')) as Record<string, unknown>;
+
+  // Acceptance 7, the formal stage: R3 runs the panel with no perspectives and asks for no coverage, exactly as it did
+  // before this setting existed. A reviewer that volunteers a list has it dropped from the verdict and the document.
+  const formal = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }])),
+    command: ['reviewer'],
+    perspectives: [],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'formal',
+    head: 'h',
+    reviewer: 'codex',
+  });
+  assert.equal(formal.outcome, 'pass');
+  assert.equal(formal.verdict?.coverage, undefined, 'the R3 verdict carries no list');
+  assert.equal(formal.coverage, undefined, 'and the round joins none');
+  assert.equal(retained(formal.verdictRef!)['coverage'], undefined, 'and the retained document carries none');
+
+  // Acceptance 9: the twin is written as the string "1". The bounded shape rejects it, and it still counts as a report of
+  // item 1, so the valid entry for that item joins nothing.
+  const panel = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'stringtwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  assert.deepEqual(panel.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
+  // A string that is not exactly an integer names no item, so it cannot make a repeat of one.
+  const noisy = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.0', status: 'violated' }, { item: 'one', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'noisytwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  assert.deepEqual(noisy.coverage, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
+
+  // A panel the coverage angle never ran asks for nothing and records nothing, and leaves the single run's document alone.
+  const other = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported' }])),
+    command: ['reviewer'],
+    perspectives: [],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'noangle',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 3 },
+  });
+  assert.equal(other.coverage, undefined, 'no angle was asked, so no join is recorded');
+  assert.equal(other.verdictRef, other.perspectives[0]!.verdictRef, 'and the run keeps its own document');
+  assert.equal(retained(other.verdictRef!)['coverage'], undefined);
+});

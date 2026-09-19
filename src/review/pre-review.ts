@@ -370,8 +370,8 @@ export function parseCoverage(document: unknown): { entries: CoverageEntryType[]
     // item number, when the element carries a readable one, still counts as a report of that item, so a repeat is not
     // hidden behind a rejected twin.
     rejected.count += 1;
-    const item = (entry as Record<string, unknown> | null)?.['item'];
-    if (typeof item === 'number' && Number.isFinite(item)) rejected.items.push(item);
+    const item = readItemNumber((entry as Record<string, unknown> | null)?.['item']);
+    if (item !== undefined) rejected.items.push(item);
   }
   return { entries, rejected };
 }
@@ -380,6 +380,14 @@ export function parseCoverage(document: unknown): { entries: CoverageEntryType[]
 export interface RejectedEntries {
   count: number;
   items: number[];
+}
+
+/** The item a rejected entry named, however it was written: an integer, or a string that is exactly one (`"1"`, `"-2"`). */
+function readItemNumber(item: unknown): number | undefined {
+  if (typeof item === 'number' && Number.isInteger(item)) return item;
+  if (typeof item !== 'string') return undefined;
+  const parsed = Number(item.trim());
+  return Number.isInteger(parsed) && String(parsed) === item.trim() ? parsed : undefined;
 }
 
 /**
@@ -961,7 +969,9 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
   const runs: PerspectiveRun[] = settled.map((s) => (s as PromiseFulfilledResult<PerspectiveRun>).value);
   const agg = aggregateVerdicts(runs);
   // Retained evidence, joined after the outcome and never an input to it.
-  const coverage = o.coverage ? joinCoverage(runs, o.coverage.expected) : undefined;
+  // A panel the coverage angle did not run asks for nothing and records nothing, so the round document stays the one it
+  // was and no join of entirely unaccounted items is retained.
+  const coverage = o.coverage && names.includes(COVERAGE_ANGLE) ? joinCoverage(runs, o.coverage.expected) : undefined;
   // The round document is always retained, also on a hold, a missing verdict or an inconsistent binding.
   let verdictRef = runs.length === 1 && !coverage ? runs[0]!.verdictRef : undefined;
   if (runs.length > 1 || !verdictRef || coverage) {
