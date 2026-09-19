@@ -3,7 +3,7 @@ id: T1-REVIEW-FINDINGS-4
 title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock with a compare-and-set on the run revision, review results recovered only from a complete envelope (replacement of T1-REVIEW-FINDINGS-3 after its two R3 decisions)
 status: merged
 branch: T1-REVIEW-FINDINGS-4
-worktree: C:\wt\T1-REVIEW-FINDINGS-4
+worktree: D:\wt\AIDLC\T1-REVIEW-FINDINGS-4
 allow_paths:
   - src/core/types.ts
   - src/core/review-policy.ts

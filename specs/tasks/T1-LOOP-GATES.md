@@ -4,7 +4,7 @@ title: The secret scan is a merge gate; a red scan is a security CI class that n
 status: merged
 superseded_by: T1-LOOP-GATES-2
 branch: T1-LOOP-GATES
-worktree: C:\wt\T1-LOOP-GATES
+worktree: D:\wt\AIDLC\T1-LOOP-GATES
 allow_paths:
   - .github/workflows/security-scanners.yml
   - templates/github/workflows/security-scanners.yml

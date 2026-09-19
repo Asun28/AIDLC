@@ -3,7 +3,7 @@ id: T1-REVIEW-COVERAGE-STATS
 title: aidlc review stats reports coverage completeness per card and family and the R3 spec findings that followed an R2 round with unaccounted items
 status: merged
 branch: T1-REVIEW-COVERAGE-STATS
-worktree: C:\wt\T1-REVIEW-COVERAGE-STATS
+worktree: D:\wt\AIDLC\T1-REVIEW-COVERAGE-STATS
 allow_paths:
   - src/review/stats.ts
   - tests/surface/stats.test.ts

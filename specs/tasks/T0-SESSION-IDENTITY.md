@@ -3,7 +3,7 @@ id: T0-SESSION-IDENTITY
 title: The loop's session identity is the Claude Code session (the hooks' `session_id`, `CLAUDE_CODE_SESSION_ID` in CLI processes), so concurrent windows no longer share `.aidlc/session-default` and the Stop guard lists only the acting session's cards
 status: todo
 branch: T0-SESSION-IDENTITY
-worktree: C:\wt\T0-SESSION-IDENTITY
+worktree: D:\wt\AIDLC\T0-SESSION-IDENTITY
 allow_paths:
   - src/state/journal.ts
   - src/hooks/index.ts

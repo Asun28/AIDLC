@@ -3,7 +3,7 @@ id: T0-PLANNING-CLAIMS-2
 title: aidlc doctor names the goal and session that claims each uncommitted planning file, and the Stop hook asks a session to commit its own goal's planning artifacts before it ends (replacement of T0-PLANNING-CLAIMS after its R2 no-verdict allowance was spent on provider read timeouts)
 status: merged
 branch: T0-PLANNING-CLAIMS-2
-worktree: C:\wt\T0-PLANNING-CLAIMS-2
+worktree: D:\wt\AIDLC\T0-PLANNING-CLAIMS-2
 allow_paths:
   - src/state/claims.ts
   - src/cli/main.ts

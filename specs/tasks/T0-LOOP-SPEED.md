@@ -3,7 +3,7 @@ id: T0-LOOP-SPEED
 title: Cut aidlc loop latency: one-process hook dispatch, single repo/session resolution per CLI call, parallel doctor probes, single-pass typecheck
 status: merged
 branch: T0-LOOP-SPEED
-worktree: C:\wt\T0-LOOP-SPEED
+worktree: D:\wt\AIDLC\T0-LOOP-SPEED
 allow_paths:
   - bin/aidlc-hook.js
   - src/hooks/index.ts

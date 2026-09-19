@@ -3,7 +3,7 @@ id: T0-BIN-STALE-DIST-3
 title: The bin entries load the sources when the compiled build is older than any source file, so a source checkout never runs stale code (replacement of T0-BIN-STALE-DIST-2 after its two R3 decisions)
 status: todo
 branch: T0-BIN-STALE-DIST-3
-worktree: C:\wt\T0-BIN-STALE-DIST-3
+worktree: D:\wt\AIDLC\T0-BIN-STALE-DIST-3
 superseded_by: T0-BIN-STALE-DIST-4
 allow_paths:
   - bin/aidlc.js

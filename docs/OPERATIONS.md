@@ -14,6 +14,8 @@ node bin/aidlc.js doctor
 
 `aidlc.config.json` keys (`src/config.ts`): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `worktreeRoot`, `base`, `mode` (`local|remote`), `shipPath` (`scaffold` drives `scripts/task.ps1`; `github` runs the native git/gh chain and needs `repository`; `dry-run` for fixtures), `reviewPool`, `reviewPolicyVersion`, `reviewer`, `gateRequired`, `maxWorkers` (1-2), `family` (`claude|gpt`), `provider` (`claude-api|claude-code|mock`), `repository` (`owner/name` for gh), `userLimitMs`, `hooks.frozenPaths`, `hooks.testPathPatterns`, `hooks.productionPatterns`, `tierPaths.tierS|tier0|frozen`, `preReview.command|reviewer|rounds|timeoutMs|onExhausted|shell|maxDiffBytes` (see Pre-review), `formalReview.command|reviewer|timeoutMs|shell|maxDiffBytes` (see Formal review as a command), `github.requiredChecks|requireVerdict|ciTimeoutMs|ciPollMs` (see Ship gates).
 
+`worktreeRoot` is the directory card worktrees are created under, joined with the card id (`resolveWorktreeRoot`, `src/config.ts`). Empty falls back to `%SystemDrive%\wt` on Windows and `$HOME/.wt` elsewhere, which every repository on the machine then shares: two projects with a card of the same id collide on one directory. Give each repository its own root (this one uses `D:\wt\AIDLC`); the installed template leaves it empty so a downstream repository keeps the platform default until it sets one.
+
 ## Running a goal
 
 ### T0 bugfix

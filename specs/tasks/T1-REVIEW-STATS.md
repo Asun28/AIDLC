@@ -3,7 +3,7 @@ id: T1-REVIEW-STATS
 title: aidlc review stats reports rounds, decisions, blocks, durations, findings by disposition, re-raises and first-round misses per card and across a superseded card family
 status: merged
 branch: T1-REVIEW-STATS
-worktree: C:\wt\T1-REVIEW-STATS
+worktree: D:\wt\AIDLC\T1-REVIEW-STATS
 allow_paths:
   - src/review/stats.ts
   - src/cli/main.ts

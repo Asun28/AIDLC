@@ -3,7 +3,7 @@ id: T0-LEASE-HEARTBEAT
 title: The owner's own `card next` renews the card lease, so a BUILD longer than the 10-minute TTL no longer fences the ship as STOP/ownership
 status: merged
 branch: T0-LEASE-HEARTBEAT
-worktree: C:\wt\T0-LEASE-HEARTBEAT
+worktree: D:\wt\AIDLC\T0-LEASE-HEARTBEAT
 allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/t0-flow.test.ts

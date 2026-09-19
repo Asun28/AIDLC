@@ -3,7 +3,7 @@ id: T0-PRE-REVIEW
 title: Bounded DeepSeek V4 Pro pre-review (R2) before the ship: block => fix => next round, pass => PR review (R3); an R3 block returns to fix and restarts the pre-review cycle
 status: merged
 branch: T0-PRE-REVIEW
-worktree: C:\wt\T0-PRE-REVIEW
+worktree: D:\wt\AIDLC\T0-PRE-REVIEW
 allow_paths:
   - src/config.ts
   - src/core/types.ts

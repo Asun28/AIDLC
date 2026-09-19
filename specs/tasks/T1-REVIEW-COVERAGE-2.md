@@ -3,7 +3,7 @@ id: T1-REVIEW-COVERAGE-2
 title: The ac-coverage angle's verdict carries one coverage entry per acceptance item, the panel joins them per item and the round retains the result in shadow without changing its outcome
 status: merged
 branch: T1-REVIEW-COVERAGE-2
-worktree: C:\wt\T1-REVIEW-COVERAGE-2
+worktree: D:\wt\AIDLC\T1-REVIEW-COVERAGE-2
 allow_paths:
   - src/core/types.ts
   - src/config.ts

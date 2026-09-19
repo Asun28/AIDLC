@@ -4,7 +4,7 @@ title: Every routing result and directive names its companion skills; PLAN names
 status: merged
 superseded_by: T1-LOOP-SKILLS-2
 branch: T1-LOOP-SKILLS
-worktree: C:\wt\T1-LOOP-SKILLS
+worktree: D:\wt\AIDLC\T1-LOOP-SKILLS
 allow_paths:
   - src/core/types.ts
   - src/core/router.ts

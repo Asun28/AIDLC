@@ -3,7 +3,7 @@ id: T1-LOOP-GATES-2
 title: The secret scan is a merge gate; a red scan is a security CI class that never reruns; required checks and verdict policy flow from config to the GitHub ship path (replacement of T1-LOOP-GATES after its two R3 decisions)
 status: merged
 branch: T1-LOOP-GATES-2
-worktree: C:\wt\T1-LOOP-GATES-2
+worktree: D:\wt\AIDLC\T1-LOOP-GATES-2
 allow_paths:
   - .github/workflows/security-scanners.yml
   - templates/github/workflows/security-scanners.yml

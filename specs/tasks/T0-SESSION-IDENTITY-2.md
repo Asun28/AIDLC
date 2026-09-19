@@ -3,7 +3,7 @@ id: T0-SESSION-IDENTITY-2
 title: The loop's session identity is the Claude Code session (the hooks' `session_id`, `CLAUDE_CODE_SESSION_ID` in CLI processes), the Stop guard lists only the acting session's cards and names an unreadable lease by code alone, and the docs promise no card recovery that does not exist (replacement of T0-SESSION-IDENTITY after its two R3 decisions)
 status: todo
 branch: T0-SESSION-IDENTITY-2
-worktree: C:\wt\T0-SESSION-IDENTITY-2
+worktree: D:\wt\AIDLC\T0-SESSION-IDENTITY-2
 allow_paths:
   - src/state/journal.ts
   - src/hooks/index.ts

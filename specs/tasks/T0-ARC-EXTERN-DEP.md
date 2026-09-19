@@ -3,7 +3,7 @@ id: T0-ARC-EXTERN-DEP
 title: The arc dependency gate treats a prerequisite merged outside the goal's projection as satisfied, so a card-execute goal dispatches instead of stopping with a required gap
 status: todo
 branch: T0-ARC-EXTERN-DEP
-worktree: C:\wt\T0-ARC-EXTERN-DEP
+worktree: D:\wt\AIDLC\T0-ARC-EXTERN-DEP
 superseded_by: T0-ARC-EXTERN-DEP-2
 allow_paths:
   - src/core/arc.ts
