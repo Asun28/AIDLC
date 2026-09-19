@@ -3,7 +3,7 @@ id: T0-WAIT-VERIFY
 title: A goal parked in WAIT resumes to RUN before VERIFY_ARC once its required cards are closed, instead of throwing an illegal WAIT -> VERIFY_ARC transition
 status: merged
 branch: T0-WAIT-VERIFY
-worktree: C:\wt\T0-WAIT-VERIFY
+worktree: D:\wt\AIDLC\T0-WAIT-VERIFY
 allow_paths:
   - src/loop/controller.ts
   - tests/scenarios/t0-flow.test.ts

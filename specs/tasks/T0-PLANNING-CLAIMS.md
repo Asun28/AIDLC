@@ -3,7 +3,7 @@ id: T0-PLANNING-CLAIMS
 title: aidlc doctor names the goal and session that claims each uncommitted planning file, and the Stop hook asks a session to commit its own goal's planning artifacts before it ends
 status: todo
 branch: T0-PLANNING-CLAIMS
-worktree: C:\wt\T0-PLANNING-CLAIMS
+worktree: D:\wt\AIDLC\T0-PLANNING-CLAIMS
 allow_paths:
   - src/state/claims.ts
   - src/cli/main.ts

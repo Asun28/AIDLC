@@ -3,7 +3,7 @@ id: T1-LOOP-RESUME
 title: A recorded extension re-admits the goal and its time-stopped cards; goal resume carries a projection revision so a stopped goal continues with replacement cards
 status: merged
 branch: T1-LOOP-RESUME
-worktree: C:\wt\T1-LOOP-RESUME
+worktree: D:\wt\AIDLC\T1-LOOP-RESUME
 allow_paths:
   - src/loop/controller.ts
   - src/loop/card-runner.ts

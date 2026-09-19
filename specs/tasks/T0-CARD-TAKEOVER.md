@@ -3,7 +3,7 @@ id: T0-CARD-TAKEOVER
 title: The card takeover command takes the expired card lease of another session once its operations are reconciled, fences the old owner, records the new generation on the run (a run interrupted inside PREPARE included) and selects the card state again, so a card of an ended session continues in the new session instead of under the old identity (the follow-up T0-SESSION-IDENTITY-3 deferred)
 status: todo
 branch: T0-CARD-TAKEOVER
-worktree: C:\wt\T0-CARD-TAKEOVER
+worktree: D:\wt\AIDLC\T0-CARD-TAKEOVER
 allow_paths:
   - src/loop/card-runner.ts
   - src/cli/main.ts

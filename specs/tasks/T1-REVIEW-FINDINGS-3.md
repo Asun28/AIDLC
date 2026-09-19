@@ -3,7 +3,7 @@ id: T1-REVIEW-FINDINGS-3
 title: Review findings with stable ids and dispositions, an unchanged blocked candidate re-reviewed only when every finding is disputed, deadlocks named, every card-run write serialized through one lock and every snapshot write a compare-and-set on the run revision (replacement of T1-REVIEW-FINDINGS-2 after its two R3 decisions)
 status: todo
 branch: T1-REVIEW-FINDINGS-3
-worktree: C:\wt\T1-REVIEW-FINDINGS-3
+worktree: D:\wt\AIDLC\T1-REVIEW-FINDINGS-3
 superseded_by: T1-REVIEW-FINDINGS-4
 allow_paths:
   - src/core/types.ts

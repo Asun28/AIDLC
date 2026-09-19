@@ -3,7 +3,7 @@ id: T1-REVIEW-FINDINGS
 title: Review findings with stable ids and dispositions; the next prompt carries them; an unchanged blocked candidate is re-reviewed only when every finding is disputed; deadlocks are named
 status: todo
 branch: T1-REVIEW-FINDINGS
-worktree: C:\wt\T1-REVIEW-FINDINGS
+worktree: D:\wt\AIDLC\T1-REVIEW-FINDINGS
 superseded_by: T1-REVIEW-FINDINGS-2
 allow_paths:
   - src/core/types.ts

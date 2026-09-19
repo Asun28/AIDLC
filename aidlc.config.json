@@ -5,7 +5,7 @@
   "intentDir": "intent",
   "specsDir": "specs",
   "plansDir": "plans",
-  "worktreeRoot": "",
+  "worktreeRoot": "D:\\wt\\AIDLC",
   "base": "main",
   "mode": "remote",
   "shipPath": "github",
