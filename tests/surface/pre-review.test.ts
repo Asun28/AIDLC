@@ -952,9 +952,27 @@ test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal s
     coverage: { expected: 1 },
   });
   assert.deepEqual(panel.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
-  // A string that is not exactly an integer names no item, so it cannot make a repeat of one.
+  // Any numeric string whose value is the item names it, however it was typed, so `1.0` and `1e0` make a repeat too.
+  const written = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.0', status: 'violated' }, { item: '1e0', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'writtentwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  // Two rejected twins, and the valid entry they make a repeat of: three entries join nothing.
+  assert.deepEqual(written.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 3, angles: [COVERAGE_ANGLE] });
+  // A string that is no number, and one whose value is not an integer, name no item and make no repeat.
   const noisy = await runReviewPanel({
-    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.0', status: 'violated' }, { item: 'one', status: 'violated' }])),
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.5', status: 'violated' }, { item: 'one', status: 'violated' }])),
     command: ['reviewer', '{perspective}'],
     perspectives: [COVERAGE_ANGLE],
     promptFor: () => 'p',

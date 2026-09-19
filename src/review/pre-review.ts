@@ -382,12 +382,17 @@ export interface RejectedEntries {
   items: number[];
 }
 
-/** The item a rejected entry named, however it was written: an integer, or a string that is exactly one (`"1"`, `"-2"`). */
+/**
+ * The item a rejected entry named, however it was written: an integer, or any numeric string whose value is one
+ * (`"1"`, `"1.0"`, `"1e0"`, `"-2"`). The shape still rejects every one of them; this only decides which item the entry
+ * was a report of, so a repeat is never hidden behind a twin someone typed differently. A string that is not a number,
+ * or one whose value is not an integer, names no item.
+ */
 function readItemNumber(item: unknown): number | undefined {
   if (typeof item === 'number' && Number.isInteger(item)) return item;
-  if (typeof item !== 'string') return undefined;
-  const parsed = Number(item.trim());
-  return Number.isInteger(parsed) && String(parsed) === item.trim() ? parsed : undefined;
+  if (typeof item !== 'string' || !item.trim()) return undefined;
+  const parsed = Number(item);
+  return Number.isInteger(parsed) ? parsed : undefined;
 }
 
 /**
