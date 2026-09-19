@@ -43,6 +43,28 @@ export interface FindingStats {
   resolved: number;
 }
 
+/**
+ * Acceptance coverage over the rounds that asked for it (`preReview.coverage: shadow`), read off the
+ * `coverage` record each round retains and the findings, never off a verdict or a later classification.
+ */
+export interface CoverageStats {
+  /** Decided rounds carrying a coverage record; a round that asked for none is not one. */
+  roundsRequested: number;
+  /** Of those, the rounds with no unaccounted, conflicted or inconsistent item and no malformed entry. */
+  roundsComplete: number;
+  /** Items no angle accounted for, summed over the rounds. */
+  unaccounted: number;
+  /** Items one angle called supported and another violated, summed over the rounds. */
+  conflicted: number;
+  /** Items a passing angle marked violated, summed over the rounds. */
+  inconsistent: number;
+  /**
+   * Formal findings on the spec axis raised on a candidate whose last decided R2 round left an item
+   * unaccounted: the question a required mode would answer, measured per candidate.
+   */
+  r3SpecFindingsAfterIncomplete: number;
+}
+
 export interface CardReviewStats {
   cardId: string;
   /** The goal that ran the card; absent when several goals ran it, whose runs the numbers below cover together. */
@@ -50,6 +72,7 @@ export interface CardReviewStats {
   r2: R2Stats;
   r3: R3Stats;
   findings: FindingStats;
+  coverage: CoverageStats;
   /**
    * First review request to the last pass, or to the last review when none passed, each review measured
    * to the completion its artifact records. A pass is a recorded pass of either stage: an advisory block
@@ -64,7 +87,7 @@ export interface FamilyStats {
   /** The predecessors this card supersedes, oldest first. */
   members: CardReviewStats[];
   /** The members and this card together. */
-  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; wallMs: number };
+  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number };
 }
 
 /** The registry fields the family chain needs. */
@@ -99,6 +122,10 @@ function emptyR3(): R3Stats {
   return { decisions: 0, blocks: 0, durationMs: 0 };
 }
 
+function emptyCoverage(): CoverageStats {
+  return { roundsRequested: 0, roundsComplete: 0, unaccounted: 0, conflicted: 0, inconsistent: 0, r3SpecFindingsAfterIncomplete: 0 };
+}
+
 function emptyFindings(): FindingStats {
   return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0 };
 }
@@ -127,6 +154,85 @@ function countR2(rounds: readonly PreReviewRound[], into: R2Counters): R2Counter
   return into;
 }
 
+/** A reason's axis tag, read the way `enforceCitations` reads the reviewer's own text. */
+const SPEC_TAG = /^\s*\[spec\]/i;
+
+/** A decided round with the goal that ran it and the instant its decision landed (`roundEndedAt`). */
+interface DecidedRound {
+  goalId: string;
+  round: PreReviewRound;
+  decidedAt: number;
+  /** The run retained the decision artifact that states when this round was decided. */
+  authoritative: boolean;
+}
+
+/** Code-unit order of two persisted keys: `localeCompare` would answer differently under another locale or ICU build. */
+const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+
+/**
+ * Decision order over the decided rounds of a card, from the records alone. A round requested first can
+ * be decided last (a dispatch held for pool admission, a slower reviewer), so the request never orders
+ * them by itself, and nothing outside the records does either: the card lease is renewed, not held, for
+ * a session that runs the card under two goals, so two runs of one card can be in flight together. The
+ * keys after the decision are the ones the loop persists (the request, the cycle and round the ledger
+ * numbered, the goal that ran it, the reservation of the dispatch), so the order never depends on the
+ * order the caller passed the runs in, and two rounds this comparison cannot separate are
+ * indistinguishable in the record.
+ */
+function byDecision(a: DecidedRound, b: DecidedRound): number {
+  return (
+    a.decidedAt - b.decidedAt ||
+    ms(a.round.requestedAt) - ms(b.round.requestedAt) ||
+    a.round.cycle - b.round.cycle ||
+    a.round.round - b.round.round ||
+    byCodeUnit(a.goalId, b.goalId) ||
+    byCodeUnit(a.round.reservationId ?? '', b.round.reservationId ?? '')
+  );
+}
+
+/**
+ * The coverage of a card over every run that carries it, like every other field of `statsFor`: the
+ * record each decided round retained, and the formal spec findings raised on a candidate the R2 rounds
+ * left incomplete. A candidate is incomplete when the round decided last on it reported an unaccounted
+ * item, so a later decision on it ends the question, whether that round accounted for every item or
+ * asked for no coverage at all. The rounds of one run and the findings of another can name the same
+ * candidate, so both sides are joined across the runs before they are matched, in `byDecision` order.
+ * The shas live in a Map and a Set, so a candidate named after an Object property is a record and not
+ * an inherited value.
+ */
+function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageStats {
+  const decided: DecidedRound[] = [];
+  for (const run of runs) {
+    for (const round of run.preReview.rounds) {
+      if (round.outcome === 'pending') continue;
+      const decision = roundDecision(run, round);
+      decided.push({ goalId: run.goalId, round, decidedAt: ms(decision.at), authoritative: decision.authoritative });
+      const coverage = round.coverage;
+      if (!coverage) continue;
+      into.roundsRequested += 1;
+      into.unaccounted += coverage.unaccounted.length;
+      into.conflicted += coverage.conflicted.length;
+      into.inconsistent += coverage.inconsistent.length;
+      if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
+    }
+  }
+  // A round whose decision artifact the run retained states when the decision landed; one without it is
+  // placed by its measured end, which cannot include the wait before the reviewer started, so it can read
+  // as later than a decision that actually followed it. Where a candidate has both, only the rounds that
+  // state their decision settle it; where it has neither (records from before the artifact existed), the
+  // measured ends are all there is and they decide, rather than the candidate losing its answer.
+  const stated = new Set(decided.filter((d) => d.authoritative && d.round.candidateSha).map((d) => d.round.candidateSha));
+  const lastDecided = new Map<string, PreReviewRound>();
+  for (const d of decided.sort(byDecision)) {
+    const sha = d.round.candidateSha;
+    if (!sha || (stated.has(sha) && !d.authoritative)) continue;
+    lastDecided.set(sha, d.round);
+  }
+  const incomplete = new Set([...lastDecided].filter(([, round]) => round.coverage?.unaccounted.length).map(([sha]) => sha));
+  for (const run of runs) for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
+  return into;
+}
+
 function countFindings(findings: readonly ReviewFinding[], into: FindingStats): FindingStats {
   for (const f of findings) {
     into.total += 1;
@@ -148,11 +254,15 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
  * admission). A round with no such artifact (one still in flight, or a record from before the
  * reservation id existed) falls back to the measured reviewer runtime after the request.
  */
-function roundEndedAt(run: CardRun, round: PreReviewRound): string {
+function roundDecision(run: CardRun, round: PreReviewRound): { at: string; authoritative: boolean } {
   const measured = ms(round.requestedAt) + round.durationMs;
   const attempt = round.reservationId?.split('.').at(-2);
   const artifact = attempt ? run.evidence.find((e) => e.id === `pre-review-${round.cycle}-${round.round}-${attempt}`) : undefined;
-  return new Date(artifact ? Math.max(measured, ms(artifact.createdAt)) : measured).toISOString();
+  return { at: new Date(artifact ? Math.max(measured, ms(artifact.createdAt)) : measured).toISOString(), authoritative: Boolean(artifact) };
+}
+
+function roundEndedAt(run: CardRun, round: PreReviewRound): string {
+  return roundDecision(run, round).at;
 }
 
 function eventsOf(run: CardRun): ReviewEvent[] {
@@ -176,7 +286,9 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
   const r2 = emptyR2();
   const r3 = emptyR3();
   const findings = emptyFindings();
+  const coverage = emptyCoverage();
   const events: ReviewEvent[] = [];
+  countCoverage(runs, coverage);
   for (const run of runs) {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
@@ -190,7 +302,7 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
     events.push(...eventsOf(run));
   }
   const goals = [...new Set(runs.map((r) => r.goalId))];
-  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, wallMs: wallOf(events) };
+  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, coverage, wallMs: wallOf(events) };
 }
 
 /** Predecessors of every card: the reverse of the registry's `superseded_by` links. */
@@ -231,6 +343,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
   const r2 = emptyR2();
   const r3 = emptyR3();
   const findings = emptyFindings();
+  const coverage = emptyCoverage();
   let wallMs = 0;
   for (const s of summaries) {
     r2.rounds += s.r2.rounds;
@@ -250,9 +363,15 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.reraised += s.findings.reraised;
     findings.firstRoundMiss += s.findings.firstRoundMiss;
     findings.resolved += s.findings.resolved;
+    coverage.roundsRequested += s.coverage.roundsRequested;
+    coverage.roundsComplete += s.coverage.roundsComplete;
+    coverage.unaccounted += s.coverage.unaccounted;
+    coverage.conflicted += s.coverage.conflicted;
+    coverage.inconsistent += s.coverage.inconsistent;
+    coverage.r3SpecFindingsAfterIncomplete += s.coverage.r3SpecFindingsAfterIncomplete;
     wallMs += s.wallMs;
   }
-  return { r2: sealR2(r2), r3, findings, wallMs };
+  return { r2: sealR2(r2), r3, findings, coverage, wallMs };
 }
 
 /**
@@ -322,8 +441,14 @@ function findingsText(s: FindingStats): string {
   return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }
 
-function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; wallMs: number }): string {
-  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)} | wall ${durationText(s.wallMs)}`;
+/** `not requested` when no round asked for coverage; otherwise the completeness of the rounds that did. */
+function coverageText(s: CoverageStats): string {
+  if (!s.roundsRequested) return 'coverage: not requested';
+  return `coverage: ${s.roundsComplete}/${s.roundsRequested} complete, unaccounted ${s.unaccounted}, conflicted ${s.conflicted}, inconsistent ${s.inconsistent}, r3 spec findings after incomplete ${s.r3SpecFindingsAfterIncomplete}`;
+}
+
+function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number }): string {
+  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)} | ${coverageText(s.coverage)} | wall ${durationText(s.wallMs)}`;
 }
 
 /** One line per card, each family member under the card that supersedes it, then the family total. */
