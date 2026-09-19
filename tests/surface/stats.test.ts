@@ -289,6 +289,82 @@ describe('review statistics (R11, R12)', () => {
     );
   });
 
+  test('summarizeReviews settles a candidate by the round decided last, not the one requested last (R3 decision 1 F1)', () => {
+    // The first round is requested first and decided last: its artifact lands at 30:00, while the round
+    // the other run requested at 10:00 is measured out at 20:00. Ordering by the request calls the
+    // complete round last and loses the finding.
+    const slow = run({
+      goalId: 'g-a',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', candidateSha: 'sha1', requestedAt: at(0), durationMs: 5 * MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], reservationId: 'T1-A.pre.0.1.1.aaaa1111', coverage: coverage({ accounted: 3, unaccounted: [2] }) }], handoffs: [] },
+      evidence: [{ id: 'pre-review-0-1-1', kind: 'artifact', createdAt: at(30 * MIN), candidateDigest: 'd1', note: 'pre-review r2 block' }],
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'sha1', raisedAt: at(31 * MIN), disposition: 'open' }],
+    });
+    const quick = run({
+      goalId: 'g-b',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', candidateSha: 'sha1', requestedAt: at(10 * MIN), durationMs: 10 * MIN, outcome: 'pass', reasons: [], coverage: coverage() }], handoffs: [] },
+    });
+    const [summary] = stats.summarizeReviews([slow, quick], []);
+    assert.equal(summary?.coverage.r3SpecFindingsAfterIncomplete, 1, 'the round decided at 30:00 is the last on sha1, and it left item 2 unaccounted');
+  });
+
+  test('summarizeReviews orders two rounds decided at the same instant from the records, never from the order the runs were passed in (R3 decision 1 F1)', () => {
+    // Same request time, same measured runtime, same candidate: only the persisted cycle, round and goal
+    // separate them, and the summary must not change when the caller hands the runs over in either order.
+    const round = (over: Record<string, unknown>) => ({ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', candidateSha: 'sha1', requestedAt: at(0), durationMs: MIN, reasons: [], ...over });
+    const first = run({
+      goalId: 'g-a',
+      preReview: { rounds: [round({ outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [2] }) })], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'sha1', raisedAt: at(5 * MIN), disposition: 'open' }],
+    });
+    const second = run({ goalId: 'g-b', preReview: { rounds: [round({ outcome: 'pass', coverage: coverage() })], handoffs: [] } });
+    const forwards = stats.summarizeReviews([first, second], [])[0]?.coverage;
+    const backwards = stats.summarizeReviews([second, first], [])[0]?.coverage;
+    assert.deepEqual(forwards, backwards, 'the caller order decides nothing');
+    assert.equal(forwards?.r3SpecFindingsAfterIncomplete, 0, 'g-b decided the last round on sha1 and accounted for every item');
+  });
+
+  test('summarizeReviews treats a conflicted, an inconsistent and a malformed round as incomplete without counting a finding after them (R3 decision 1 F2)', () => {
+    // Each round accounted for every item, so none of them leaves the question an unaccounted item asks;
+    // each is still short of complete, for a different reason.
+    const only = run({
+      preReview: {
+        rounds: [
+          { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'dc', candidateSha: 'shaC', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ conflicted: [2] }) },
+          { round: 1, cycle: 1, reviewer: 'r2', candidateDigest: 'di', candidateSha: 'shaI', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'block', reasons: ['[spec] 3 @ src/a.ts:2: wrong -> fix'], coverage: coverage({ inconsistent: [3] }) },
+          { round: 1, cycle: 2, reviewer: 'r2', candidateDigest: 'dm', candidateSha: 'shaM', requestedAt: at(20 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], coverage: coverage({ malformed: 1 }) },
+        ],
+        handoffs: [],
+      },
+      findings: [
+        { id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'shaC', raisedAt: at(MIN), disposition: 'open' },
+        { id: 'F2', stage: 'formal', round: 2, reason: '[spec] 3 @ src/b.ts:2: missing -> add it', candidateSha: 'shaI', raisedAt: at(11 * MIN), disposition: 'open' },
+        { id: 'F3', stage: 'formal', round: 3, reason: '[spec] 4 @ src/b.ts:3: missing -> add it', candidateSha: 'shaM', raisedAt: at(21 * MIN), disposition: 'open' },
+      ],
+    });
+    assert.deepEqual(stats.summarizeReviews([only], [])[0]?.coverage, {
+      roundsRequested: 3,
+      roundsComplete: 0,
+      unaccounted: 0,
+      conflicted: 1,
+      inconsistent: 1,
+      r3SpecFindingsAfterIncomplete: 0,
+    });
+  });
+
+  test('summarizeReviews lets a decided round that asked for no coverage end the question an unaccounted item left (R3 decision 1 F3)', () => {
+    const rounds = [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'dx', candidateSha: 'shaX', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 2 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [2] }) }];
+    const finding = [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'shaX', raisedAt: at(30 * MIN), disposition: 'open' }];
+    const open = run({ preReview: { rounds, handoffs: [] }, findings: finding });
+    assert.equal(stats.summarizeReviews([open], [])[0]?.coverage.r3SpecFindingsAfterIncomplete, 1, 'the unaccounted round is the last on shaX');
+    const closed = run({
+      preReview: { rounds: [...rounds, { round: 2, cycle: 0, reviewer: 'r2', candidateDigest: 'dx', candidateSha: 'shaX', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'pass', reasons: [] }], handoffs: [] },
+      findings: finding,
+    });
+    const after = stats.summarizeReviews([closed], [])[0]?.coverage;
+    assert.equal(after?.roundsRequested, 1, 'the later round retained no coverage record');
+    assert.equal(after?.r3SpecFindingsAfterIncomplete, 0, 'but it is the last decided round on shaX, so the question is settled');
+  });
+
   test('summarizeReviews reports zeros for a card whose rounds carry no coverage (R12 acceptance 3)', () => {
     const [summary] = stats.summarizeReviews([reviewedRun()], []);
     assert.deepEqual(summary?.coverage, NO_COVERAGE, 'a round that asked for no coverage leaves every field at zero');

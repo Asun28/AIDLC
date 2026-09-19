@@ -157,33 +157,61 @@ function countR2(rounds: readonly PreReviewRound[], into: R2Counters): R2Counter
 /** A reason's axis tag, read the way `enforceCitations` reads the reviewer's own text. */
 const SPEC_TAG = /^\s*\[spec\]/i;
 
+/** A decided round with the goal that ran it and the instant its decision landed (`roundEndedAt`). */
+interface DecidedRound {
+  goalId: string;
+  round: PreReviewRound;
+  decidedAt: number;
+}
+
+/**
+ * Decision order over the decided rounds of a card, from the records alone. A round requested first can
+ * be decided last (a dispatch held for pool admission, a slower reviewer), so the request never orders
+ * them by itself, and nothing outside the records does either: the card lease is renewed, not held, for
+ * a session that runs the card under two goals, so two runs of one card can be in flight together. The
+ * keys after the decision are the ones the loop persists (the request, the cycle and round the ledger
+ * numbered, the goal that ran it, the reservation of the dispatch), so the order never depends on the
+ * order the caller passed the runs in, and two rounds this comparison cannot separate are
+ * indistinguishable in the record.
+ */
+function byDecision(a: DecidedRound, b: DecidedRound): number {
+  return (
+    a.decidedAt - b.decidedAt ||
+    ms(a.round.requestedAt) - ms(b.round.requestedAt) ||
+    a.round.cycle - b.round.cycle ||
+    a.round.round - b.round.round ||
+    a.goalId.localeCompare(b.goalId) ||
+    (a.round.reservationId ?? '').localeCompare(b.round.reservationId ?? '')
+  );
+}
+
 /**
  * The coverage of a card over every run that carries it, like every other field of `statsFor`: the
  * record each decided round retained, and the formal spec findings raised on a candidate the R2 rounds
- * left incomplete. A candidate is incomplete when the last decided round on it reported an unaccounted
- * item, so a later round that accounted for everything, or asked for no coverage at all, ends the
- * question for that candidate. The rounds of one run and the findings of another can name the same
- * candidate, so both sides are joined across the runs before they are matched, ordered by the request
- * each round records. That order is the decision order: the card lease (`resourceKeys.card`, keyed by
- * repository and card id and not by goal) admits one run of a card at a time, so no second run decides a
- * round on the same candidate while the first is in flight, whichever goal owns it. The sort is stable,
- * so a run's ledger order survives two rounds that carry the same request time. The shas live in a Map and a
- * Set, so a candidate named after an Object property is a record and not an inherited value.
+ * left incomplete. A candidate is incomplete when the round decided last on it reported an unaccounted
+ * item, so a later decision on it ends the question, whether that round accounted for every item or
+ * asked for no coverage at all. The rounds of one run and the findings of another can name the same
+ * candidate, so both sides are joined across the runs before they are matched, in `byDecision` order.
+ * The shas live in a Map and a Set, so a candidate named after an Object property is a record and not
+ * an inherited value.
  */
 function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageStats {
-  const decided: PreReviewRound[] = [];
-  for (const run of runs) for (const round of run.preReview.rounds) if (round.outcome !== 'pending') decided.push(round);
-  for (const round of decided) {
-    const coverage = round.coverage;
-    if (!coverage) continue;
-    into.roundsRequested += 1;
-    into.unaccounted += coverage.unaccounted.length;
-    into.conflicted += coverage.conflicted.length;
-    into.inconsistent += coverage.inconsistent.length;
-    if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
+  const decided: DecidedRound[] = [];
+  for (const run of runs) {
+    for (const round of run.preReview.rounds) {
+      if (round.outcome === 'pending') continue;
+      decided.push({ goalId: run.goalId, round, decidedAt: ms(roundEndedAt(run, round)) });
+      const coverage = round.coverage;
+      if (!coverage) continue;
+      into.roundsRequested += 1;
+      into.unaccounted += coverage.unaccounted.length;
+      into.conflicted += coverage.conflicted.length;
+      into.inconsistent += coverage.inconsistent.length;
+      if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
+    }
   }
   const lastDecided = new Map<string, PreReviewRound>();
-  for (const round of [...decided].sort((a, b) => ms(a.requestedAt) - ms(b.requestedAt))) if (round.candidateSha) lastDecided.set(round.candidateSha, round);
+  for (const { round } of decided.sort(byDecision)) if (round.candidateSha) lastDecided.set(round.candidateSha, round);
   const incomplete = new Set([...lastDecided].filter(([, round]) => round.coverage?.unaccounted.length).map(([sha]) => sha));
   for (const run of runs) for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
   return into;
