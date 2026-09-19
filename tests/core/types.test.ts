@@ -10,10 +10,13 @@ import {
   Goal,
   IsoTimestamp,
   RECONCILE_GRACE_MS,
+  PreReviewRound,
   ReleaseAttempt,
   ReviewLedger,
+  RoundCoverage,
   RoutingResult,
   StopRecord,
+  Verdict,
   addMs,
   minIso,
   nowIso,
@@ -97,6 +100,26 @@ describe('types: schema round-trips', () => {
     const finding = { id: 'F1', stage: 'pre', round: 1, reason: '[spec] 6 tests @ src/a.ts:1: no RED -> add one', raisedAt: T0 };
     const parsed = CardRun.parse({ ...r, findings: [finding] }).findings[0]!;
     assert.deepEqual({ disposition: parsed.disposition, disputes: parsed.disputes, reraised: parsed.reraised }, { disposition: 'open', disputes: [], reraised: [] }, 'finding sub-records default');
+  });
+
+  test('T1-REVIEW-COVERAGE acceptance 3: Verdict carries an optional bounded coverage list and parses documents written without one', () => {
+    const base = { verdict: 'pass' as const, reasons: [] };
+    assert.equal(Verdict.parse(base).coverage, undefined, 'a verdict document without the list parses unchanged');
+    const withCoverage = Verdict.parse({ ...base, coverage: [{ item: 1, status: 'supported', impl: 'src/a.ts:10', test: 'tests/a.test.ts:4' }, { item: 2, status: 'unknown' }] });
+    assert.deepEqual(withCoverage.coverage, [{ item: 1, status: 'supported', impl: 'src/a.ts:10', test: 'tests/a.test.ts:4' }, { item: 2, status: 'unknown' }], 'the locations are optional, the item and the status are not');
+    assert.equal(Verdict.safeParse({ ...base, coverage: [{ item: 0, status: 'supported' }] }).success, false, 'the item is a positive integer');
+    assert.equal(Verdict.safeParse({ ...base, coverage: [{ item: 1.5, status: 'supported' }] }).success, false, 'the item is an integer');
+    assert.equal(Verdict.safeParse({ ...base, coverage: [{ item: 1, status: 'partial' }] }).success, false, 'the status is one of the three');
+    assert.equal(Verdict.safeParse({ ...base, coverage: [{ item: 1, status: 'violated', impl: 3 }] }).success, false, 'a location is a string');
+  });
+
+  test('T1-REVIEW-COVERAGE acceptance 5: a pre-review round carries the optional round coverage and rounds written before it parse unchanged', () => {
+    const round = { round: 1, cycle: 0, reviewer: 'fake', candidateDigest: 'sha-1', requestedAt: T0, outcome: 'pass' as const };
+    assert.equal(PreReviewRound.parse(round).coverage, undefined, 'a round persisted before this change carries no coverage');
+    const coverage = { expected: 4, accounted: 3, unaccounted: [4], conflicted: [2], inconsistent: [3], malformed: 1, angles: ['ac-coverage'] };
+    assert.deepEqual(PreReviewRound.parse({ ...round, coverage }).coverage, coverage);
+    assert.deepEqual(RoundCoverage.parse({ expected: 2 }), { expected: 2, accounted: 0, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: [] }, 'the lists and the counters default to empty');
+    assert.equal(RoundCoverage.safeParse({ expected: 1, accounted: -1 }).success, false, 'the counters are non-negative');
   });
 
   test('ReviewLedger / CiLedger parse from empty objects', () => {

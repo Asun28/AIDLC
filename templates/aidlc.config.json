@@ -41,6 +41,7 @@
   "preReview": {
     "command": [],
     "reviewer": "deepseek-v4-pro",
+    "coverage": "off",
     "rounds": 2,
     "timeoutMs": 600000,
     "onExhausted": "stop",

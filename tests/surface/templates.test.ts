@@ -233,4 +233,20 @@ describe('templates (Q14 packaging)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
     assert.match(unreleased, /T0-PLANNING-CLAIMS/, 'CHANGELOG Unreleased carries the entry');
   });
+
+  test('T1-REVIEW-COVERAGE acceptance 6: the operating guide documents the coverage setting, its contract line, the round field and the summary line; the architecture names the join and the schemas; the changelog carries the entry', () => {
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    assert.match(operations, /preReview\.coverage/, 'OPERATIONS.md names the setting');
+    assert.match(operations, /"coverage":\[\{"item"/, 'OPERATIONS.md quotes the contract line');
+    assert.match(operations, /PreReviewRound\.coverage|round record[^\n]*coverage/, 'OPERATIONS.md names the round field');
+    assert.match(operations, /coverage: <accounted>\/<expected> accounted|coverage: \d+\/\d+ accounted/, 'OPERATIONS.md shows the summary line');
+    for (const label of ['unaccounted', 'conflicted', 'inconsistent', 'malformed']) assert.match(operations, new RegExp(label), `OPERATIONS.md names ${label}`);
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.match(architecture, /joinCoverage/, 'ARCHITECTURE.md names the join');
+    assert.match(architecture, /CoverageEntry/, 'ARCHITECTURE.md names the verdict schema');
+    assert.match(architecture, /RoundCoverage/, 'ARCHITECTURE.md names the round schema');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T1-REVIEW-COVERAGE/, 'CHANGELOG Unreleased carries the entry');
+  });
 });

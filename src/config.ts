@@ -15,6 +15,8 @@ export const PreReviewConfig = z.object({
   perspectives: z.array(z.string()).default([]),
   /** Blocks allowed per R3 cycle before onExhausted applies. */
   rounds: z.number().int().min(1).max(3).default(2),
+  /** Acceptance coverage from the `ac-coverage` angle: `off` asks for nothing; `shadow` asks for one entry per acceptance item and records the join without changing any outcome. */
+  coverage: z.enum(['off', 'shadow']).default('off'),
   timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
   onExhausted: z.enum(['stop', 'ship']).default('stop'),
   /** Run through a shell (script wrappers on Windows); default: win32 only. */
@@ -87,6 +89,11 @@ export const ProjectConfig = z.object({
     // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.
     if (config.gateRequired && config.github.requireVerdict === false) {
       ctx.addIssue({ code: 'custom', path: ['github', 'requireVerdict'], message: 'github.requireVerdict false conflicts with gateRequired true: a required review is never waived at the ship' });
+    }
+    // The coverage request lives in the prompt contract only: a reviewer whose output is pinned to VERDICT_SCHEMA (the
+    // `{schema}` placeholder) rejects the extra field, so the two settings would ask for a document the reviewer cannot emit.
+    if (config.preReview.coverage === 'shadow' && config.preReview.command.some((a) => a.includes('{schema}'))) {
+      ctx.addIssue({ code: 'custom', path: ['preReview', 'coverage'], message: 'preReview.coverage shadow conflicts with a {schema} pre-review command: the frozen verdict schema forbids the coverage field' });
     }
   });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;

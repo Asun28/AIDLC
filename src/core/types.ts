@@ -212,6 +212,39 @@ export type RunStatus = z.infer<typeof RunStatus>;
 
 const Axis = z.object({ verdict: VerdictValue, reasons: z.array(z.string()).default([]) });
 
+/**
+ * One acceptance item as a review angle accounted for it: the item number, whether the candidate supports it, and the
+ * implementation and test the angle names. An entry that does not satisfy this shape is no entry at all; the item it
+ * meant falls to `unaccounted` unless another entry covers it. The Codex output schema (`VERDICT_SCHEMA`) is frozen
+ * and never carries the list, so only a prompt-contract reviewer reports one.
+ */
+export const CoverageEntry = z.object({
+  item: z.number().int().positive(),
+  status: z.enum(['supported', 'violated', 'unknown']),
+  impl: z.string().optional(),
+  test: z.string().optional(),
+});
+export type CoverageEntry = z.infer<typeof CoverageEntry>;
+
+/** The coverage entries of one pre-review round joined per acceptance item; retained, never read for a decision. */
+export const RoundCoverage = z.object({
+  /** Acceptance items on the card the round reviewed. */
+  expected: z.number().int().nonnegative(),
+  /** Items at least one angle reported a well-formed entry for. */
+  accounted: z.number().int().nonnegative().default(0),
+  /** Items no angle reported, ascending. */
+  unaccounted: z.array(z.number().int().positive()).default([]),
+  /** Items one angle called supported and another violated, ascending. */
+  conflicted: z.array(z.number().int().positive()).default([]),
+  /** Items a passing angle marked violated, ascending. */
+  inconsistent: z.array(z.number().int().positive()).default([]),
+  /** Entries outside the acceptance list or repeated for one item by one angle; counted, never joined. */
+  malformed: z.number().int().nonnegative().default(0),
+  /** The angles that reported a coverage list, in panel order. */
+  angles: z.array(z.string()).default([]),
+});
+export type RoundCoverage = z.infer<typeof RoundCoverage>;
+
 export const Verdict = z.object({
   verdict: VerdictValue,
   reasons: z.array(z.string()).default([]),
@@ -219,6 +252,8 @@ export const Verdict = z.object({
   sha: z.string().optional(),
   branch: z.string().optional(),
   run_status: RunStatus.optional(),
+  /** One entry per acceptance item, from an angle asked for coverage (`preReview.coverage: shadow`); absent everywhere else. */
+  coverage: z.array(CoverageEntry).optional(),
   routed_skip: z
     .object({ predicate: z.string(), reason: z.string(), changed_paths: z.array(z.string()).default([]) })
     .optional(),
@@ -305,6 +340,8 @@ export const PreReviewRound = z.object({
   policyHash: z.string().optional(),
   /** Reasons the round reported that never block (uncited, or tagged `[question]` or `[suggestion]`); handed to the formal review. Absent on records written before it existed. */
   advisory: z.array(z.string()).optional(),
+  /** The acceptance coverage the round's angles reported, joined per item. Absent when the round asked for none. */
+  coverage: RoundCoverage.optional(),
 });
 export type PreReviewRound = z.infer<typeof PreReviewRound>;
 

@@ -42,7 +42,7 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, nowIso, type DeliveryTarget, type RequestSize } from '../core/types.ts';
+import { Goal, nowIso, type DeliveryTarget, type RequestSize, type RoundCoverage } from '../core/types.ts';
 
 interface Ctx {
   root: string;
@@ -125,9 +125,16 @@ function providerFor(name: string | undefined, config: ProjectConfig): ModelProv
   return new ClaudeApiProvider();
 }
 
-/** The text summary of a pre-review round (`aidlc review pre`): the verdict line, the block reasons, the advisory notes and the next command. */
-export function preReviewSummaryText(summary: { reviewer: string; round: number; maxRounds: number; cycle: number; outcome: string; runStatus?: string; durationMs: number; perspectives: string[]; reasons: string[]; advisory: string[]; state: string }, cardId: string): string {
-  return `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``;
+/** The acceptance coverage line of a pre-review round: what the angles accounted for, and the items left over. Absent when the round asked for no coverage. */
+function coverageLine(coverage: RoundCoverage | undefined): string {
+  if (!coverage) return '';
+  const items = (label: string, list: number[]) => (list.length ? `; ${label} ${list.join(', ')}` : '');
+  return `\n  coverage: ${coverage.accounted}/${coverage.expected} accounted${items('unaccounted', coverage.unaccounted)}${items('conflicted', coverage.conflicted)}${items('inconsistent', coverage.inconsistent)}`;
+}
+
+/** The text summary of a pre-review round (`aidlc review pre`): the verdict line, the acceptance coverage, the block reasons, the advisory notes and the next command. */
+export function preReviewSummaryText(summary: { reviewer: string; round: number; maxRounds: number; cycle: number; outcome: string; runStatus?: string; durationMs: number; perspectives: string[]; reasons: string[]; advisory: string[]; coverage?: RoundCoverage; state: string }, cardId: string): string {
+  return `pre-review ${summary.reviewer} round ${summary.round}/${summary.maxRounds} (cycle ${summary.cycle}): ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms) [${summary.perspectives.join(' ')}]${coverageLine(summary.coverage)}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``;
 }
 
 export async function main(argv: string[] = process.argv): Promise<void> {
@@ -673,7 +680,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const r = await runnerFor(c).preReview(goalRec, parsed.card, run);
       c.controller.writeBoard(goalRec);
-      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
+      const summary = { outcome: r.result.outcome, runStatus: r.result.runStatus, cycle: r.round.cycle, round: r.round.round, maxRounds: c.config.preReview.rounds, reviewer: r.round.reviewer, candidateSha: r.round.candidateSha, durationMs: r.result.durationMs, perspectives: (r.round.perspectives ?? []).map((p) => `${p.name}:${p.outcome}:${p.durationMs}ms`), reasons: r.result.reasons, advisory: r.result.advisory ?? [], coverage: r.round.coverage, policyHash: r.round.policyHash, verdictRef: r.result.verdictRef, logRef: r.result.logRef, state: r.run.state };
       out(c, summary, () => preReviewSummaryText(summary, cardId));
     });
   review

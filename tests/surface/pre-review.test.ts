@@ -6,9 +6,11 @@ import path from 'node:path';
 import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 // Namespace import for the T1-REVIEW-INPUTS helpers: absent on the baseline, so each test fails at its first call rather than at link time.
 import * as inputs from '../../src/review/pre-review.ts';
+import { COVERAGE_ANGLE } from '../../src/review/pre-review.ts';
 import * as cli from '../../src/cli/main.ts';
 import { createHash } from 'node:crypto';
 import { classifyVerdict } from '../../src/core/review-policy.ts';
+import type { CoverageEntry } from '../../src/core/types.ts';
 import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 
@@ -581,6 +583,109 @@ test('T1-REVIEW-INVARIANTS acceptance 1 and 2: both stages carry the learned inv
   assert.ok(absent.slice(absent.indexOf('## Learned invariants'), absent.indexOf('## Card contract')).includes('- none'), 'a prompt built without lessons carries the section with none');
 });
 
+test('T1-REVIEW-COVERAGE acceptance 2: in shadow the ac-coverage angle is asked for one entry per acceptance item; every other prompt is byte-equal to the one built with coverage off', () => {
+  const { card } = fixtureCard();
+  const base = { reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
+  const prompt = (stage: 'pre' | 'formal', perspective: string | undefined, coverage: boolean) => buildReviewPrompt({ ...base, stage, perspective, coverage });
+
+  const asked = prompt('pre', 'ac-coverage', true);
+  assert.ok(asked.includes('"coverage":[{"item":1,"status":"supported|violated|unknown","impl":"file:line","test":"file:line"}]'), `the contract line carries the coverage list: ${asked.slice(0, 900)}`);
+  const contractLine = asked.split('\n').find((l) => l.startsWith('{"verdict"'))!;
+  assert.ok(contractLine.startsWith(inputs.VERDICT_CONTRACT.slice(0, -1)) && contractLine.endsWith('}'), 'the coverage list is appended to the frozen contract, which is otherwise unchanged');
+  const angle = asked.slice(asked.indexOf('## This pass: ac-coverage'), asked.indexOf('## Review policy'));
+  assert.match(angle, /one .{0,20}entry per .{0,30}acceptance item/i, `the angle text asks for one entry per numbered item: ${angle}`);
+  assert.match(angle, /never changes|not .{0,20}verdict|no effect on/i, `the angle is told the list decides nothing: ${angle}`);
+
+  // Every other prompt is the one the `off` setting builds, byte for byte: the request reaches one angle of one stage.
+  for (const perspective of [undefined, 'bugs', 'security', 'compliance', 'spec-deviations', 'edge-cases']) {
+    assert.equal(prompt('pre', perspective, true), prompt('pre', perspective, false), `pre/${perspective ?? 'single pass'} is unchanged`);
+  }
+  for (const perspective of [undefined, 'ac-coverage']) {
+    assert.equal(prompt('formal', perspective, true), prompt('formal', perspective, false), `formal/${perspective ?? 'single pass'} is unchanged: R3 never asks for coverage`);
+  }
+  // With coverage off nothing about coverage reaches any prompt, so the `off` prompts are the pre-change prompts.
+  for (const stage of ['pre', 'formal'] as const) {
+    for (const perspective of [undefined, 'ac-coverage', 'bugs']) {
+      const text = prompt(stage, perspective, false);
+      // The pre-change `ac-coverage` angle text already names the acceptance coverage pass; what must be absent is the request:
+      // the contract field and the instruction to report entries.
+      assert.ok(!text.includes('"coverage"'), `${stage}/${perspective ?? 'single pass'} carries no coverage field`);
+      assert.ok(!new RegExp('coverage[^\n]{0,40}entry', 'i').test(text), `${stage}/${perspective ?? 'single pass'} asks for no entry`);
+      assert.ok(text.includes(inputs.VERDICT_CONTRACT), 'the frozen contract line is the one the reviewer receives');
+    }
+  }
+  const absent = buildReviewPrompt({ ...base, stage: 'pre', perspective: 'ac-coverage' });
+  assert.equal(absent, prompt('pre', 'ac-coverage', false), 'a prompt built without the flag is the off prompt');
+});
+
+test('T1-REVIEW-COVERAGE acceptance 3: extractVerdict returns the coverage list when the document carries one, and the Codex output schema is frozen', () => {
+  const doc = '{"verdict":"pass","reasons":[],"coverage":[{"item":1,"status":"supported","impl":"src/gate.ts:3","test":"tests/gate.test.ts:9"},{"item":2,"status":"unknown"}]}\n';
+  assert.deepEqual(extractVerdict(doc)?.coverage, [
+    { item: 1, status: 'supported', impl: 'src/gate.ts:3', test: 'tests/gate.test.ts:9' },
+    { item: 2, status: 'unknown' },
+  ]);
+  assert.equal(extractVerdict('{"verdict":"pass","reasons":[]}\n')?.coverage, undefined, 'a document without the list parses as it did before');
+  assert.equal(extractVerdict('{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add one"],"coverage":"all of them"}\n')?.coverage, undefined, 'a coverage value that is not a list is no list');
+  assert.deepEqual(extractVerdict('{"verdict":"pass","reasons":[],"coverage":[{"item":1,"status":"supported"},{"item":"two","status":"supported"},{"item":3,"status":"partial"}]}\n')?.coverage, [{ item: 1, status: 'supported' }], 'entries outside the bounded shape are no entries; the items they meant stay unreported');
+  // The `{schema}` reviewers stay pinned to the pre-change document: the coverage request never reaches them.
+  assert.deepEqual(inputs.VERDICT_SCHEMA, {
+    type: 'object',
+    properties: {
+      verdict: { type: 'string', enum: ['pass', 'block'] },
+      reasons: { type: 'array', items: { type: 'string' } },
+      axes: {
+        type: 'object',
+        properties: {
+          spec: { type: 'object', properties: { verdict: { type: 'string', enum: ['pass', 'block'] }, reasons: { type: 'array', items: { type: 'string' } } }, required: ['verdict', 'reasons'], additionalProperties: false },
+          standards: { type: 'object', properties: { verdict: { type: 'string', enum: ['pass', 'block'] }, reasons: { type: 'array', items: { type: 'string' } } }, required: ['verdict', 'reasons'], additionalProperties: false },
+        },
+        required: ['spec', 'standards'],
+        additionalProperties: false,
+      },
+    },
+    required: ['verdict', 'reasons', 'axes'],
+    additionalProperties: false,
+  });
+});
+
+test('T1-REVIEW-COVERAGE acceptance 4: joinCoverage labels every acceptance item across the angles that reported one, and counts what it cannot join', () => {
+  const angle = (perspective: string, verdict: 'pass' | 'block', coverage?: CoverageEntry[]) => ({
+    perspective,
+    outcome: verdict === 'pass' ? ('pass' as const) : ('block' as const),
+    runStatus: 'success' as const,
+    reasons: [],
+    verdict: coverage ? { verdict, reasons: [], coverage } : { verdict, reasons: [] },
+  });
+  const located = (item: number, status: CoverageEntry['status']): CoverageEntry => ({ item, status, impl: `src/a.ts:${item}`, test: `tests/a.test.ts:${item}` });
+  const joined = inputs.joinCoverage(
+    [
+      // A passing angle that marks an item violated, one supported item without its locations, and an item off the list.
+      angle('ac-coverage', 'pass', [located(1, 'supported'), { item: 2, status: 'violated' }, { item: 3, status: 'supported' }, located(9, 'supported')]),
+      // The same item twice from one angle: the angle contradicts itself, so it joins nothing for that item.
+      angle('edge-cases', 'block', [located(2, 'supported'), located(1, 'supported'), { item: 1, status: 'violated' }]),
+      angle('bugs', 'block'),
+    ],
+    4,
+  );
+  assert.deepEqual(joined, {
+    expected: 4,
+    accounted: 3,
+    unaccounted: [4],
+    conflicted: [2],
+    inconsistent: [2],
+    malformed: 3,
+    angles: ['ac-coverage', 'edge-cases'],
+  });
+
+  // Nobody reported: every item is unaccounted and no angle is named.
+  assert.deepEqual(inputs.joinCoverage([angle('ac-coverage', 'pass'), angle('bugs', 'block')], 2), { expected: 2, accounted: 0, unaccounted: [1, 2], conflicted: [], inconsistent: [], malformed: 0, angles: [] });
+  // An angle that reported an empty list is an angle that answered: it is named, and it accounts for nothing.
+  assert.deepEqual(inputs.joinCoverage([angle('ac-coverage', 'pass', [])], 1), { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] });
+  // A blocking angle that marks an item violated is consistent with itself; a supported item with only one location is unknown, never supported.
+  const blocked = inputs.joinCoverage([angle('ac-coverage', 'block', [{ item: 1, status: 'violated' }, { item: 2, status: 'supported', impl: 'src/a.ts:2' }])], 2);
+  assert.deepEqual(blocked, { expected: 2, accounted: 2, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] });
+});
+
 test('T0-VERDICT-PROSE acceptance 1-3: prose that opens like JSON opens no document, a text that completes into JSON is still a document cut short, and every truncation case keeps its result', () => {
   const verdict = '{"verdict":"pass","reasons":[]}';
   // 1. The captured failure: a reviewer quoting this repository's own JSON contract in its reasoning (.review/
@@ -643,4 +748,263 @@ test('T0-VERDICT-PROSE R3 decision 1: an output cut in any JSON state is a docum
   assert.equal(extractVerdict(`${'["x" prose '.repeat(12_000)}${pass}\n`)?.verdict, 'pass');
   const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
   assert.ok(elapsedMs < 3_000, `12,000 prose openers walked in ${Math.round(elapsedMs)} ms`);
+});
+
+test('T1-REVIEW-COVERAGE R3 decision 1 (F2): the off prompts are byte-equal to the pre-change prompts, pinned by their hashes, and only the shadow ac-coverage prompt differs', () => {
+  const { card } = fixtureCard();
+  const input = { reviewPolicy: 'policy', card, base: 'main@abc', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
+  const sha = (text: string) => createHash('sha256').update(text, 'utf8').digest('hex');
+  // Taken from buildReviewPrompt at bfacb1f, the commit this card branched from, over exactly this input. A change to any
+  // generated prompt breaks these, which comparing the implementation with itself could not.
+  const PRE_CHANGE: Record<string, string> = {
+    'pre/single': '727bbd904778c866035add3f46e11b5269fc37b3e2a1d9efdeb6d46e2695b1f0',
+    'pre/ac-coverage': '900fb0dd38e5dbc5d6e94babd47c67fa408601131087a3abc692bcaae7b21a17',
+    'pre/bugs': '37350d4e422113e6dbde80309628f7328c28b69487e106f22a871cdb5b789460',
+    'formal/single': '7ae5d0d43fbb6bd0bbe5c2485fcad080f63afc5314eb1390e94c7f860e226bfb',
+    'formal/ac-coverage': '6b052c79c3941a5ee352115cf93ffb8801cd997bbeed56c4d2ba0fe248f11417',
+    'formal/bugs': 'b7ccb90552a2ad43ec4417adcceed2c234822ce1af810fbbe9be9f39d3d78e84',
+  };
+  for (const stage of ['pre', 'formal'] as const) {
+    for (const perspective of [undefined, 'ac-coverage', 'bugs']) {
+      const key = `${stage}/${perspective ?? 'single'}`;
+      const off = buildReviewPrompt({ ...input, stage, perspective });
+      assert.equal(sha(off), PRE_CHANGE[key], `${key} with coverage off is the pre-change prompt`);
+      const on = buildReviewPrompt({ ...input, stage, perspective, coverage: true });
+      if (stage === 'pre' && perspective === 'ac-coverage') assert.notEqual(sha(on), PRE_CHANGE[key], 'the asked angle differs');
+      else assert.equal(sha(on), PRE_CHANGE[key], `${key} is the pre-change prompt with coverage requested too`);
+    }
+  }
+});
+
+test('T1-REVIEW-COVERAGE R3 decision 1 (F3, F6): a supported entry without both locations joins as unknown against another angle that violated the same item, and an item outside the acceptance list is malformed at either bound', () => {
+  const angle = (perspective: string, verdict: 'pass' | 'block', coverage?: CoverageEntry[], malformed = 0) => ({
+    perspective,
+    outcome: verdict === 'pass' ? ('pass' as const) : ('block' as const),
+    runStatus: 'success' as const,
+    reasons: [],
+    verdict: coverage ? { verdict, reasons: [], coverage } : { verdict, reasons: [] },
+    coverageRejected: { count: malformed, items: [] },
+  });
+  // Item 1: supported without its locations (so: unknown) from one angle, violated from another. Unknown never conflicts
+  // with violated, so the item is accounted and not conflicted; removing the downgrade would make it conflicted.
+  const downgraded = inputs.joinCoverage([angle('ac-coverage', 'block', [{ item: 1, status: 'supported' }]), angle('edge-cases', 'block', [{ item: 1, status: 'violated' }])], 1);
+  assert.deepEqual(downgraded, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage', 'edge-cases'] });
+  // The same pair with both locations named is a real disagreement: supported against violated is conflicted.
+  const conflict = inputs.joinCoverage([angle('ac-coverage', 'block', [{ item: 1, status: 'supported', impl: 'src/a.ts:1', test: 'tests/a.test.ts:1' }]), angle('edge-cases', 'block', [{ item: 1, status: 'violated' }])], 1);
+  assert.deepEqual(conflict.conflicted, [1], 'a located supported entry does conflict with a violated one');
+  // An item below the list is as malformed as one above it, and neither joins anything.
+  const outside = inputs.joinCoverage([angle('ac-coverage', 'pass', [{ item: 0, status: 'violated' }, { item: -1, status: 'supported' }, { item: 5, status: 'supported' }, { item: 1, status: 'supported', impl: 'src/a.ts:1', test: 'tests/a.test.ts:1' }])], 2);
+  assert.deepEqual(outside, { expected: 2, accounted: 1, unaccounted: [2], conflicted: [], inconsistent: [], malformed: 3, angles: ['ac-coverage'] });
+  // Entries the verdict parser rejected are counted by the round, not lost.
+  const rejected = inputs.joinCoverage([angle('ac-coverage', 'pass', [], 2)], 1);
+  assert.deepEqual(rejected, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 2, angles: ['ac-coverage'] });
+});
+
+test('T1-REVIEW-COVERAGE R3 decision 1 (F1, F5, F7, F8): coverage is kept only for the angle that was asked, a single-angle shadow round retains the join in its own document, the parser counts the entries it rejects, and R7 reads the reported verdict', async () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const withCoverage = (verdict: 'pass' | 'block', coverage: unknown[], reasons: string[] = []) => JSON.stringify({ verdict, reasons, coverage });
+
+  // F7: the parser keeps the entries of the bounded shape and counts the rest.
+  const read = inputs.readVerdict(`${withCoverage('pass', [{ item: 1, status: 'supported' }, { item: 0, status: 'supported' }, { item: 2, status: 'partial' }])}\n`);
+  assert.deepEqual(read.verdict?.coverage, [{ item: 1, status: 'supported' }]);
+  assert.equal(read.rejected.count, 2, 'a non-positive item and an unknown status are counted, not dropped silently');
+  assert.deepEqual(read.rejected.items, [0, 2], 'and every item number a rejected entry named is kept, so a repeat cannot hide behind one');
+
+  // F1: an unsolicited list is retained by nobody. The same output through a pass that asked for none keeps the verdict
+  // and loses the list, in the returned verdict and in the document written next to the candidate.
+  const unsolicited = { stdout: `${withCoverage('pass', [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }])}\n` };
+  const off = runPreReview({ runner: scriptedRunner({ 'reviewer': unsolicited }), command: ['reviewer'], cwd: dir, prompt: 'p', timeoutMs: 1000, reviewDir, fileStem: 'off', head: 'h', reviewer: 'r', shell: false });
+  assert.equal(off.verdict?.coverage, undefined, 'the verdict of an angle that was not asked carries no list');
+  assert.equal((JSON.parse(readFileSync(off.verdictRef!, 'utf8')) as Record<string, unknown>)['coverage'], undefined, 'and neither does its document');
+  const asked = runPreReview({ runner: scriptedRunner({ 'reviewer': unsolicited }), command: ['reviewer'], cwd: dir, prompt: 'p', timeoutMs: 1000, reviewDir, fileStem: 'asked', head: 'h', reviewer: 'r', shell: false, coverage: true });
+  assert.deepEqual(asked.verdict?.coverage, [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }], 'the angle that was asked keeps it');
+
+  // F1 in a panel: only the ac-coverage angle may carry a list, whatever the others report.
+  const panelRunner = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: a[0] === 'ac-coverage' ? `${withCoverage('pass', [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }])}\n` : `${withCoverage('pass', [{ item: 1, status: 'violated' }])}\n` } })('reviewer', a, {});
+  const panel = await runReviewPanel({ runner: panelRunner, command: ['reviewer', '{perspective}'], perspectives: ['ac-coverage', 'edge-cases'], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'panel', head: 'h', reviewer: 'r', coverage: { expected: 2 } });
+  assert.deepEqual(panel.coverage, { expected: 2, accounted: 1, unaccounted: [2], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] }, 'the other angle is absent from the join');
+  const edgeDoc = JSON.parse(readFileSync(panel.perspectives.find((p) => p.perspective === 'edge-cases')!.verdictRef!, 'utf8')) as Record<string, unknown>;
+  assert.equal(edgeDoc['coverage'], undefined, 'and its document carries no list');
+
+  // F5: one angle in shadow still writes an aggregated round document carrying the join, and keeps the angle's own file.
+  const single = await runReviewPanel({ runner: panelRunner, command: ['reviewer', '{perspective}'], perspectives: ['ac-coverage'], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'single', head: 'h', reviewer: 'r', coverage: { expected: 2 } });
+  assert.notEqual(single.verdictRef, single.perspectives[0]!.verdictRef, 'the round document is its own file');
+  const roundDoc = JSON.parse(readFileSync(single.verdictRef!, 'utf8')) as Record<string, unknown>;
+  assert.deepEqual(roundDoc['coverage'], single.coverage, 'and it carries the join, not the raw list');
+  assert.ok(existsSync(single.perspectives[0]!.verdictRef!), 'the angle artifact is preserved');
+
+  // F8: the citation rule turns a block carried only by uncited reasons into a pass. The measurement reads the verdict the
+  // reviewer reported, so that angle's violated item is not called inconsistent.
+  const uncited = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${withCoverage('block', [{ item: 1, status: 'violated' }], ['the coverage is thin'])}\n` } })('reviewer', a, {});
+  const rewritten = await runReviewPanel({ runner: uncited, command: ['reviewer', '{perspective}'], perspectives: ['ac-coverage'], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'uncited', head: 'h', reviewer: 'r', changedPaths: ['src/gate.ts'], coverage: { expected: 1 } });
+  assert.equal(rewritten.outcome, 'pass', 'an uncited block is a pass with the note');
+  assert.deepEqual(rewritten.coverage?.inconsistent, [], 'the angle reported a block, so its violated item is consistent');
+});
+
+test('T1-REVIEW-COVERAGE R3 decision 1 (F4): the R2 summary prints every coverage segment it has, and each segment disappears with its list', () => {
+  const summary = (coverage?: { expected: number; accounted: number; unaccounted: number[]; conflicted: number[]; inconsistent: number[]; malformed: number; angles: string[] }) =>
+    cli.preReviewSummaryText({ reviewer: 'fake', round: 1, maxRounds: 2, cycle: 0, outcome: 'pass', runStatus: 'success', durationMs: 0, perspectives: ['ac-coverage:pass'], reasons: [], advisory: [], coverage, state: 'SHIP' }, 'T1-COV');
+  const line = (text: string) => text.split('\n').find((l) => l.trim().startsWith('coverage:'))?.trim();
+  // Every segment at once, in the order the operating guide documents: an item nobody accounted for, one two angles
+  // disagreed on, and one a passing angle called violated.
+  assert.equal(
+    line(summary({ expected: 6, accounted: 5, unaccounted: [6], conflicted: [2, 3], inconsistent: [4], malformed: 1, angles: ['ac-coverage'] })),
+    'coverage: 5/6 accounted; unaccounted 6; conflicted 2, 3; inconsistent 4',
+  );
+  // Each list prints only when it has numbers, so a clean round reads as one short line.
+  assert.equal(line(summary({ expected: 3, accounted: 3, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] })), 'coverage: 3/3 accounted');
+  assert.equal(line(summary({ expected: 3, accounted: 2, unaccounted: [], conflicted: [1], inconsistent: [], malformed: 0, angles: ['ac-coverage'] })), 'coverage: 2/3 accounted; conflicted 1');
+  // A round that asked for no coverage prints no such line at all.
+  assert.equal(line(summary()), undefined);
+});
+
+test('T1-REVIEW-COVERAGE-2 acceptance 4 (R3 decision 2, re:F3): a supported entry missing either location alone joins as unknown, so the item is accounted and not conflicted', () => {
+  const angle = (perspective: string, coverage: CoverageEntry[]) => ({
+    perspective,
+    outcome: 'block' as const,
+    runStatus: 'success' as const,
+    reasons: [],
+    verdict: { verdict: 'block' as const, reasons: [], coverage },
+  });
+  const violated = angle('edge-cases', [{ item: 1, status: 'violated' }]);
+  // Each half of the location pair on its own is not a verified item: the downgrade holds for impl-only and test-only
+  // alike, so neither conflicts with another angle's violated entry. Requiring only one location would make both conflict.
+  for (const partial of [{ item: 1, status: 'supported' as const, impl: 'src/a.ts:1' }, { item: 1, status: 'supported' as const, test: 'tests/a.test.ts:1' }]) {
+    const joined = inputs.joinCoverage([angle('ac-coverage', [partial]), violated], 1);
+    assert.deepEqual(joined, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage', 'edge-cases'] }, `${partial.impl ? 'impl' : 'test'} alone is not supported`);
+  }
+  // Both locations named is a verified item, and then the two angles do disagree.
+  assert.deepEqual(inputs.joinCoverage([angle('ac-coverage', [{ item: 1, status: 'supported', impl: 'src/a.ts:1', test: 'tests/a.test.ts:1' }]), violated], 1).conflicted, [1]);
+});
+
+test('T1-REVIEW-COVERAGE-2 acceptance 8-10 (R3 decision 2): from the reviewer output to the retained round, entries are read as reported, a repeat behind a rejected twin joins nothing, and rejected entries reach the round as malformed', async () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const panelOf = async (document: string, expected: number, stem: string) => {
+    const runner = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${document}\n` } })('reviewer', a, {});
+    return runReviewPanel({ runner, command: ['reviewer', '{perspective}'], perspectives: [COVERAGE_ANGLE], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: stem, head: 'h', reviewer: 'r', changedPaths: ['src/gate.ts'], coverage: { expected } });
+  };
+  const retained = (ref: string) => (JSON.parse(readFileSync(ref, 'utf8')) as { coverage?: unknown }).coverage;
+
+  // Acceptance 10: a zero and a negative item number are rejected by the bounded shape and still counted, in the join the
+  // panel returns and in the document it retains.
+  const outOfRange = await panelOf(JSON.stringify({ verdict: 'pass', reasons: [], coverage: [{ item: 0, status: 'supported' }, { item: -2, status: 'violated' }, { item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }] }), 2, 'range');
+  assert.deepEqual(outOfRange.coverage, { expected: 2, accounted: 1, unaccounted: [2], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
+  assert.deepEqual(retained(outOfRange.verdictRef!), outOfRange.coverage, 'the retained round document carries the same join');
+
+  // Acceptance 9: item 1 twice, the second entry rejected by the shape. The repeat is counted and neither entry joins.
+  const hidden = await panelOf(JSON.stringify({ verdict: 'pass', reasons: [], coverage: [{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: 1, status: 'supported', impl: 3 }] }), 1, 'hidden');
+  assert.deepEqual(hidden.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] }, 'a repeat behind a rejected twin joins nothing');
+
+  // Acceptance 8: an angle whose verdict contradicts its axes has no verdict at all, and its coverage is still measured.
+  const contradictory = await panelOf(JSON.stringify({ verdict: 'pass', reasons: [], axes: { spec: { verdict: 'block', reasons: ['[spec] 1 scope @ src/gate.ts:1: out -> revert'] }, standards: { verdict: 'pass', reasons: [] } }, coverage: [{ item: 1, status: 'violated' }, { item: 9, status: 'bogus' }] }), 1, 'contradictory');
+  assert.equal(contradictory.outcome, 'no-verdict', 'the round still refuses a verdict that contradicts its axes');
+  // Its reported verdict is a pass while its coverage marks item 1 violated, so R7 lists the item as inconsistent: the
+  // measurement reads the document the reviewer wrote, whatever the round then did with it.
+  assert.deepEqual(contradictory.coverage, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [1], malformed: 1, angles: [COVERAGE_ANGLE] }, 'the entries it reported are joined and its rejected entry counted');
+  assert.deepEqual(retained(contradictory.verdictRef!), contradictory.coverage, 'and the round document carries them');
+});
+
+test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal stage drops an unsolicited coverage list, and a repeat is not hidden behind a twin written as a string item', async () => {
+  const { dir, card } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const document = (coverage: unknown[]) => JSON.stringify({ verdict: 'pass', reasons: [], coverage });
+  const runnerFor = (stdout: string) => async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${stdout}\n` } })('reviewer', a, {});
+  const retained = (ref: string) => JSON.parse(readFileSync(ref, 'utf8')) as Record<string, unknown>;
+
+  // Acceptance 7, the formal stage: R3 runs the panel with no perspectives and asks for no coverage, exactly as it did
+  // before this setting existed. A reviewer that volunteers a list has it dropped from the verdict and the document.
+  const formal = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }])),
+    command: ['reviewer'],
+    perspectives: [],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'formal',
+    head: 'h',
+    reviewer: 'codex',
+  });
+  assert.equal(formal.outcome, 'pass');
+  assert.equal(formal.verdict?.coverage, undefined, 'the R3 verdict carries no list');
+  assert.equal(formal.coverage, undefined, 'and the round joins none');
+  assert.equal(retained(formal.verdictRef!)['coverage'], undefined, 'and the retained document carries none');
+
+  // Acceptance 9: the twin is written as the string "1". The bounded shape rejects it, and it still counts as a report of
+  // item 1, so the valid entry for that item joins nothing.
+  const panel = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'stringtwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  assert.deepEqual(panel.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
+  // Any numeric string whose value is the item names it, however it was typed, so `1.0` and `1e0` make a repeat too.
+  const written = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.0', status: 'violated' }, { item: '1e0', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'writtentwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  // Two rejected twins, and the valid entry they make a repeat of: three entries join nothing.
+  assert.deepEqual(written.coverage, { expected: 1, accounted: 0, unaccounted: [1], conflicted: [], inconsistent: [], malformed: 3, angles: [COVERAGE_ANGLE] });
+  // A string that is no number, and one whose value is not an integer, name no item and make no repeat.
+  const noisy = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported', impl: 'src/gate.ts:1', test: 'tests/gate.test.ts:1' }, { item: '1.5', status: 'violated' }, { item: 'one', status: 'violated' }])),
+    command: ['reviewer', '{perspective}'],
+    perspectives: [COVERAGE_ANGLE],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'noisytwin',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 1 },
+  });
+  assert.deepEqual(noisy.coverage, { expected: 1, accounted: 1, unaccounted: [], conflicted: [], inconsistent: [], malformed: 2, angles: [COVERAGE_ANGLE] });
+
+  // A panel the coverage angle never ran asks for nothing and records nothing, and leaves the single run's document alone.
+  const other = await runReviewPanel({
+    runner: runnerFor(document([{ item: 1, status: 'supported' }])),
+    command: ['reviewer'],
+    perspectives: [],
+    promptFor: () => 'p',
+    vars: {},
+    cwd: dir,
+    timeoutMs: 1000,
+    shell: false,
+    reviewDir,
+    fileStem: 'noangle',
+    head: 'h',
+    reviewer: 'r',
+    coverage: { expected: 3 },
+  });
+  assert.equal(other.coverage, undefined, 'no angle was asked, so no join is recorded');
+  assert.equal(other.verdictRef, other.perspectives[0]!.verdictRef, 'and the run keeps its own document');
+  assert.equal(retained(other.verdictRef!)['coverage'], undefined);
 });

@@ -51,6 +51,7 @@
       "deepseek-v4-pro"
     ],
     "reviewer": "deepseek-v4-pro",
+    "coverage": "shadow",
     "rounds": 3,
     "timeoutMs": 1200000,
     "onExhausted": "ship",

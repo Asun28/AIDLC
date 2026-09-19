@@ -17,8 +17,9 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectQuotaHold, findingLocation, parseVerdict } from '../core/review-policy.ts';
+import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
-import type { Card, FindingDisposition, PreReviewOutcome, RunStatus, Verdict } from '../core/types.ts';
+import type { Card, CoverageEntry as CoverageEntryType, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 
 export interface ReviewPromptInput {
@@ -42,6 +43,8 @@ export interface ReviewPromptInput {
   advisoryNotes?: string[];
   /** The repository's learned invariants (the NEVER and ALWAYS lessons) under their cap; absent renders the section with `none`. */
   lessons?: ReviewLessons;
+  /** Ask for acceptance coverage (`preReview.coverage: shadow`); it reaches the pre-review's `ac-coverage` angle alone and every other prompt is unchanged. */
+  coverage?: boolean;
   round: number;
   maxRounds: number;
 }
@@ -140,6 +143,17 @@ export function citedReasonsOf(verdict: Verdict, changedPaths?: string[]): strin
 export const VERDICT_CONTRACT =
   '{"verdict":"pass|block","reasons":["[spec|standards] <dimension> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}';
 
+/** The one angle asked to account for the acceptance list; the coverage request reaches no other angle and no other stage. */
+export const COVERAGE_ANGLE = 'ac-coverage';
+
+/** The coverage list as the contract line asks for it: one entry per numbered acceptance item. */
+export const COVERAGE_CONTRACT = '"coverage":[{"item":1,"status":"supported|violated|unknown","impl":"file:line","test":"file:line"}]';
+
+/** The output contract line: the frozen verdict document, with the coverage list appended for an angle asked to account for the acceptance items. */
+export function verdictContract(coverage = false): string {
+  return coverage ? `${VERDICT_CONTRACT.slice(0, -1)},${COVERAGE_CONTRACT}}` : VERDICT_CONTRACT;
+}
+
 /** JSON schema of the verdict document, for reviewers that enforce structured output (`codex exec --output-schema`). */
 export const VERDICT_SCHEMA = {
   type: 'object',
@@ -233,9 +247,17 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
       `You are the independent formal reviewer (R3) for card ${c.id}, decision ${i.round} of ${i.maxRounds}. You did not write this change and you cannot edit it. Default to skepticism: actively try to disprove the change against this card and the review policy below. Must-block dimensions 1-6 block on first hit; when uncertain, block; do not self-excuse. Be exhaustive in this single pass: check every hunk of the diff and report every material finding you can defend (must-block, or Important: breaks behaviour, leaks data, breaches a policy). Do not stop after the first few findings; a partial list wastes one of only two decisions. Every finding needs file:line, why it fails and a concrete fix. No filler; style and naming are nits, at most five. Do not report generated files or anything CI already enforces.${i.perspective ? ' You are one of several concurrent passes: judge from the angle below and report every finding of that angle.' : ''}`,
     );
   }
-  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', VERDICT_CONTRACT, '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
+  // The coverage request is one angle of one stage: R3 and every other angle receive the frozen contract line, byte for byte.
+  const coverage = i.coverage === true && i.stage === 'pre' && i.perspective === COVERAGE_ANGLE;
+  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', verdictContract(coverage), '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
   if (i.perspective) {
     lines.push('', `## This pass: ${i.perspective}`, PERSPECTIVES[i.perspective] ?? `Focus: ${i.perspective}. Report every finding of this angle; other angles are covered by concurrent passes.`, 'Findings outside this angle are welcome only when they hit a must-block dimension.');
+    if (coverage) {
+      lines.push(
+        `Also report one \`coverage\` entry per numbered acceptance item below (${c.acceptance.length} ${c.acceptance.length === 1 ? 'item' : 'items'}, numbered from 1), each with the item number, a status of "supported", "violated" or "unknown", and for a supported item the implementation and the behavioural test as file:line. Report no entry for an item that is not on the list and no second entry for an item.`,
+        'The coverage list is recorded as evidence and never changes your verdict: the reasons decide it, exactly as they do without the list.',
+      );
+    }
   }
   const hash = policyHash(i.reviewPolicy);
   lines.push('', `## Review policy (REVIEW.md, sha256 ${hash})`);
@@ -292,6 +314,16 @@ export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
  * the reasoning.
  */
 export function extractVerdict(output: string): Verdict | undefined {
+  return readVerdict(output).verdict;
+}
+
+const NO_REJECTS: RejectedEntries = { count: 0, items: [] };
+
+/**
+ * The verdict of an output with the coverage entries its document carried that the bounded shape rejected: the retention
+ * needs that count, since an entry the parser drops would otherwise leave its item silently unaccounted in the round.
+ */
+export function readVerdict(output: string): { verdict?: Verdict; rejected: RejectedEntries } {
   // One string-aware pass over the whole output, so a document spanning lines is one document. Outside a document a
   // JSON-looking brace (`{` followed by a quote or a closing brace) or bracket (`[` followed by an object, a string or an
   // array) opens one; inside, strings, escapes and the nesting of objects and arrays are tracked, so a brace or bracket in
@@ -302,14 +334,65 @@ export function extractVerdict(output: string): Verdict | undefined {
   const { spans, unfinished } = topLevelDocuments(output);
   const parseable = spans.filter((s) => s.parses);
   const decisive = parseable[parseable.length - 1];
-  if (!decisive) return undefined;
-  if (spans.some((s) => s.start > decisive.start && !s.parses)) return undefined;
-  if (unfinished !== undefined) return undefined;
+  if (!decisive) return { rejected: NO_REJECTS };
+  if (spans.some((s) => s.start > decisive.start && !s.parses)) return { rejected: NO_REJECTS };
+  if (unfinished !== undefined) return { rejected: NO_REJECTS };
   try {
-    return parseVerdict(JSON.parse(output.slice(decisive.start, decisive.end + 1)));
+    const document: unknown = JSON.parse(output.slice(decisive.start, decisive.end + 1));
+    const verdict = parseVerdict(document);
+    if (!verdict) return { rejected: NO_REJECTS };
+    const coverage = parseCoverage(document);
+    return coverage ? { verdict: { ...verdict, coverage: coverage.entries }, rejected: coverage.rejected } : { verdict, rejected: NO_REJECTS };
   } catch {
-    return undefined;
+    return { rejected: NO_REJECTS };
   }
+}
+
+/**
+ * The `coverage` list of a raw verdict document: the entries that satisfy the bounded shape, in the order given.
+ * A document with no list (or a `coverage` value that is not a list) has none; an entry that does not satisfy the
+ * shape is dropped, and the item it meant stays unreported unless another entry covers it.
+ */
+export function parseCoverage(document: unknown): { entries: CoverageEntryType[]; rejected: RejectedEntries } | undefined {
+  if (!document || typeof document !== 'object') return undefined;
+  const raw = (document as Record<string, unknown>)['coverage'];
+  if (!Array.isArray(raw)) return undefined;
+  const entries: CoverageEntryType[] = [];
+  const rejected: RejectedEntries = { count: 0, items: [] };
+  for (const entry of raw) {
+    const parsed = CoverageEntry.safeParse(entry);
+    if (parsed.success) {
+      entries.push(parsed.data);
+      continue;
+    }
+    // An entry the bounded shape rejects (an item that is not a positive integer, an unknown status, a location that is
+    // not a string) is no entry, and the round counts it: the item it meant is never silently absent from the join. Its
+    // item number, when the element carries a readable one, still counts as a report of that item, so a repeat is not
+    // hidden behind a rejected twin.
+    rejected.count += 1;
+    const item = readItemNumber((entry as Record<string, unknown> | null)?.['item']);
+    if (item !== undefined) rejected.items.push(item);
+  }
+  return { entries, rejected };
+}
+
+/** Coverage entries of one angle that the bounded shape rejected, with the item numbers they named. */
+export interface RejectedEntries {
+  count: number;
+  items: number[];
+}
+
+/**
+ * The item a rejected entry named, however it was written: an integer, or any numeric string whose value is one
+ * (`"1"`, `"1.0"`, `"1e0"`, `"-2"`). The shape still rejects every one of them; this only decides which item the entry
+ * was a report of, so a repeat is never hidden behind a twin someone typed differently. A string that is not a number,
+ * or one whose value is not an integer, names no item.
+ */
+function readItemNumber(item: unknown): number | undefined {
+  if (typeof item === 'number' && Number.isInteger(item)) return item;
+  if (typeof item !== 'string' || !item.trim()) return undefined;
+  const parsed = Number(item);
+  return Number.isInteger(parsed) ? parsed : undefined;
 }
 
 /**
@@ -625,10 +708,16 @@ export interface ReviewRetentionOptions {
   changedPaths?: string[];
   /** sha256 of the applied policy text, written as `policy_hash` on every retained verdict document (R8). */
   policyHash?: string;
+  /** This angle was asked for acceptance coverage; only then is a coverage list kept, joined and retained (R4, R9). */
+  coverage?: boolean;
 }
 
 export interface PreReviewResult extends PreReviewClassification {
   verdict?: Verdict;
+  /** The verdict as the reviewer reported it, before the citation rule rewrote it; the coverage measurement reads this one. */
+  reported?: Verdict;
+  /** Coverage entries of this angle's document that the bounded shape rejected; counted by the round, never joined. */
+  coverageRejected?: RejectedEntries;
   receipt: ExecReceipt;
   verdictRef?: string;
   logRef: string;
@@ -639,7 +728,11 @@ export interface PreReviewResult extends PreReviewClassification {
 
 /** Classify one reviewer receipt and retain verdict + raw output next to the candidate. */
 export function finalizeReview(receipt: ExecReceipt, o: ReviewRetentionOptions): PreReviewResult {
-  const raw = extractVerdict(receipt.stdout);
+  const read = readVerdict(receipt.stdout);
+  // A coverage list reaches the round only from the angle that was asked for one: an angle answering in `off`, any other
+  // angle of a shadow panel, and every formal (R3) reviewer are retained exactly as they were before this setting existed.
+  const requested = o.coverage === true;
+  const raw = requested ? read.verdict : withoutCoverage(read.verdict);
   const enforced = raw ? enforceCitations(raw, o.changedPaths) : undefined;
   const verdict = enforced && !enforced.inconsistent ? enforced.verdict : undefined;
   const cls: PreReviewClassification = enforced?.inconsistent
@@ -658,7 +751,14 @@ export function finalizeReview(receipt: ExecReceipt, o: ReviewRetentionOptions):
     const doc = { ...verdict, sha: verdict.sha ?? o.head, reviewer: o.reviewer, perspective: o.perspective, policy_hash: o.policyHash, outcome: cls.outcome, run_status: cls.runStatus, advisory: cls.advisory, requestedAt: receipt.startedAt, durationMs: receipt.durationMs, receiptSha256: receipt.outputSha256 };
     writeFileSync(verdictRef, JSON.stringify(doc, null, 2) + '\n', 'utf8');
   }
-  return { ...cls, verdict, receipt, verdictRef, logRef, durationMs: Math.max(0, Math.round(receipt.durationMs)), receiptSha256: receipt.outputSha256, exitCode: receipt.exitCode };
+  return { ...cls, verdict, reported: raw, coverageRejected: requested ? read.rejected : NO_REJECTS, receipt, verdictRef, logRef, durationMs: Math.max(0, Math.round(receipt.durationMs)), receiptSha256: receipt.outputSha256, exitCode: receipt.exitCode };
+}
+
+/** The verdict without the coverage list, for every reader that did not ask for one. */
+function withoutCoverage(verdict: Verdict | undefined): Verdict | undefined {
+  if (!verdict?.coverage) return verdict;
+  const { coverage: _dropped, ...rest } = verdict;
+  return rest;
 }
 
 export interface RunPreReviewOptions extends ReviewRetentionOptions {
@@ -699,10 +799,70 @@ export function validatePerspectives(perspectives: string[]): void {
 export interface PerspectiveResult extends PreReviewClassification {
   perspective: string;
   verdict?: Verdict;
+  /** The verdict as this angle reported it, before the citation rule rewrote it (R7 reads the reported one). */
+  reported?: Verdict;
+  /** Coverage entries of this angle that the bounded shape rejected. */
+  coverageRejected?: RejectedEntries;
 }
 
 export interface AggregatedVerdict extends PreReviewClassification {
   verdict?: Verdict;
+}
+
+/**
+ * Join the coverage entries of a round's angles per acceptance item (R6, R7). Retained evidence only: nothing here
+ * changes the round's outcome, its findings or any allowance.
+ *
+ * An item is accounted when at least one angle reported a well-formed entry for it, and unaccounted when none did.
+ * `supported` without both the implementation and the test named is an item the angle did not verify, so it joins as
+ * `unknown`. One angle reports one entry per item: an entry outside `1..expected`, and every entry of an item one
+ * angle reported twice, is counted malformed and joins nothing, so a self-contradicting angle never decides an item.
+ * An item one angle supported and another violated is conflicted; an item a passing angle marked violated (its own
+ * document's verdict, not the classification of its run) is inconsistent.
+ */
+export function joinCoverage(results: readonly PerspectiveResult[], expected: number): RoundCoverage {
+  const angles: string[] = [];
+  const statuses = new Map<number, Set<CoverageEntryType['status']>>();
+  const inconsistent = new Set<number>();
+  let malformed = 0;
+  for (const result of results) {
+    // What the angle reported, never what the classification left: a verdict dropped because its axes contradict it, or
+    // rewritten by the citation rule, still carries the entries the reviewer wrote and the count of those it botched.
+    const reported = (result.reported ?? result.verdict)?.coverage;
+    const rejected = result.coverageRejected ?? { count: 0, items: [] };
+    if (!reported && !rejected.count) continue;
+    const entries = reported ?? [];
+    angles.push(result.perspective);
+    // Entries the verdict parser rejected never reach the list; the round counts them so the items they meant are not
+    // silently absent from the join.
+    malformed += rejected.count;
+    // One angle reports one entry per item. Every item it named counts towards that, the items of rejected entries
+    // included, so a repeat is not hidden behind a twin the bounded shape threw away.
+    const reports = new Map<number, number>();
+    for (const item of [...entries.map((e) => e.item), ...rejected.items]) reports.set(item, (reports.get(item) ?? 0) + 1);
+    // R7 reads the verdict the reviewer reported, for the same reason: an angle that reported a block is consistent with
+    // its own violated item however the round classified it.
+    const passing = (result.reported ?? result.verdict)?.verdict === 'pass';
+    for (const entry of entries) {
+      if (!Number.isInteger(entry.item) || entry.item < 1 || entry.item > expected || (reports.get(entry.item) ?? 0) > 1) {
+        malformed += 1;
+        continue;
+      }
+      const status = entry.status === 'supported' && !(entry.impl && entry.test) ? 'unknown' : entry.status;
+      const seen = statuses.get(entry.item) ?? new Set<CoverageEntryType['status']>();
+      seen.add(status);
+      statuses.set(entry.item, seen);
+      if (passing && status === 'violated') inconsistent.add(entry.item);
+    }
+  }
+  const unaccounted: number[] = [];
+  const conflicted: number[] = [];
+  for (let item = 1; item <= expected; item += 1) {
+    const seen = statuses.get(item);
+    if (!seen?.size) unaccounted.push(item);
+    else if (seen.has('supported') && seen.has('violated')) conflicted.push(item);
+  }
+  return { expected, accounted: expected - unaccounted.length, unaccounted, conflicted, inconsistent: [...inconsistent].sort((a, b) => a - b), malformed, angles };
 }
 
 const dedupe = (xs: string[]): string[] => [...new Set(xs)];
@@ -755,6 +915,8 @@ export interface PerspectiveRun extends PerspectiveResult {
 
 export interface PanelResult extends AggregatedVerdict {
   perspectives: PerspectiveRun[];
+  /** The acceptance coverage the angles reported, joined per item; present only when the round asked for it. */
+  coverage?: RoundCoverage;
   /** The round verdict file: the single verdict, or the aggregated document for a panel. */
   verdictRef?: string;
   logRef?: string;
@@ -764,7 +926,7 @@ export interface PanelResult extends AggregatedVerdict {
   receiptSha256: string;
 }
 
-export interface RunReviewPanelOptions extends ReviewRetentionOptions {
+export interface RunReviewPanelOptions extends Omit<ReviewRetentionOptions, 'coverage'> {
   runner: Runner;
   command: string[];
   /** Empty = one full pass. */
@@ -774,6 +936,8 @@ export interface RunReviewPanelOptions extends ReviewRetentionOptions {
   cwd: string;
   timeoutMs: number;
   shell?: boolean;
+  /** Join the angles' acceptance coverage over this many items and retain it (`preReview.coverage: shadow`); absent asks for none. */
+  coverage?: { expected: number };
 }
 
 /**
@@ -801,21 +965,25 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
         const stderr = `[spawn error] ${(err as Error).message}`;
         receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
       }
-      const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash });
-      return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
+      const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE });
+      return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, reported: fin.reported, coverageRejected: fin.coverageRejected, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
     }),
   );
   const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
   if (failed) throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
   const runs: PerspectiveRun[] = settled.map((s) => (s as PromiseFulfilledResult<PerspectiveRun>).value);
   const agg = aggregateVerdicts(runs);
+  // Retained evidence, joined after the outcome and never an input to it.
+  // A panel the coverage angle did not run asks for nothing and records nothing, so the round document stays the one it
+  // was and no join of entirely unaccounted items is retained.
+  const coverage = o.coverage && names.includes(COVERAGE_ANGLE) ? joinCoverage(runs, o.coverage.expected) : undefined;
   // The round document is always retained, also on a hold, a missing verdict or an inconsistent binding.
-  let verdictRef = runs.length === 1 ? runs[0]!.verdictRef : undefined;
-  if (runs.length > 1 || !verdictRef) {
+  let verdictRef = runs.length === 1 && !coverage ? runs[0]!.verdictRef : undefined;
+  if (runs.length > 1 || !verdictRef || coverage) {
     verdictRef = path.join(o.reviewDir, `${o.fileStem}.json`);
-    const doc = { ...(agg.verdict ?? {}), sha: agg.verdict?.sha ?? o.head, reviewer: o.reviewer, stage: runs.length > 1 ? 'panel' : 'review', policy_hash: o.policyHash, outcome: agg.outcome, run_status: agg.runStatus, reasons: agg.reasons, advisory: agg.advisory ?? [], perspectives: runs.map((r) => ({ name: r.perspective, outcome: r.outcome, runStatus: r.runStatus, reasons: r.reasons, advisory: r.advisory ?? [], durationMs: r.durationMs, verdictRef: r.verdictRef, logRef: r.logRef, receiptSha256: r.receiptSha256 })) };
+    const doc = { ...(agg.verdict ?? {}), sha: agg.verdict?.sha ?? o.head, reviewer: o.reviewer, stage: runs.length > 1 ? 'panel' : 'review', policy_hash: o.policyHash, outcome: agg.outcome, run_status: agg.runStatus, reasons: agg.reasons, advisory: agg.advisory ?? [], coverage, perspectives: runs.map((r) => ({ name: r.perspective, outcome: r.outcome, runStatus: r.runStatus, reasons: r.reasons, advisory: r.advisory ?? [], durationMs: r.durationMs, verdictRef: r.verdictRef, logRef: r.logRef, receiptSha256: r.receiptSha256 })) };
     writeFileSync(verdictRef, JSON.stringify(doc, null, 2) + '\n', 'utf8');
   }
   const receiptSha256 = runs.length === 1 ? runs[0]!.receiptSha256 : createHash('sha256').update(runs.map((r) => `${r.perspective}:${r.receiptSha256}`).join('\n')).digest('hex');
-  return { ...agg, perspectives: runs, verdictRef, logRef: runs.length === 1 ? runs[0]!.logRef : undefined, durationMs: Math.max(0, ...runs.map((r) => r.durationMs)), receiptSha256 };
+  return { ...agg, perspectives: runs, coverage, verdictRef, logRef: runs.length === 1 ? runs[0]!.logRef : undefined, durationMs: Math.max(0, ...runs.map((r) => r.durationMs)), receiptSha256 };
 }
