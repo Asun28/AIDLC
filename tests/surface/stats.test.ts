@@ -59,6 +59,44 @@ function reviewedRun(): CardRun {
   });
 }
 
+/**
+ * A card run whose shadow coverage records were retained, over three candidates:
+ *   sha1 one decided round, item 3 unaccounted, item 2 conflicted, one malformed entry -> incomplete, and last on sha1;
+ *   sha2 one round that accounted for everything, then a round that asked for no coverage -> last on sha2, no unaccounted item;
+ *   sha3 a round with item 1 unaccounted and item 4 inconsistent, then a complete round -> the later round is last on sha3.
+ * The expected numbers below are read off this timeline by hand, never recomputed from the summary.
+ */
+function coveredRun(): CardRun {
+  const coverage = (over: Record<string, unknown>) => ({ expected: 4, accounted: 4, unaccounted: [], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'], ...over });
+  return run({
+    preReview: {
+      rounds: [
+        { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', candidateSha: 'sha1', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [3], conflicted: [2], malformed: 1 }) },
+        { round: 1, cycle: 1, reviewer: 'r2', candidateDigest: 'd2', candidateSha: 'sha2', requestedAt: at(20 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], coverage: coverage({}) },
+        // A round that asked for no coverage is not a requested round, and it is still the last decided round on sha2.
+        { round: 2, cycle: 1, reviewer: 'r2', candidateDigest: 'd2', candidateSha: 'sha2', requestedAt: at(25 * MIN), durationMs: MIN, outcome: 'pass', reasons: [] },
+        { round: 1, cycle: 2, reviewer: 'r2', candidateDigest: 'd3', candidateSha: 'sha3', requestedAt: at(40 * MIN), durationMs: MIN, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], coverage: coverage({ accounted: 3, unaccounted: [1], inconsistent: [4] }) },
+        { round: 2, cycle: 2, reviewer: 'r2', candidateDigest: 'd3', candidateSha: 'sha3', requestedAt: at(50 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], coverage: coverage({}) },
+        // A reserved round carries no decision, so its record is no round of any kind.
+        { round: 3, cycle: 2, reviewer: 'r2', candidateDigest: 'd3', candidateSha: 'sha3', requestedAt: at(55 * MIN), durationMs: 0, outcome: 'pending', reasons: [], coverage: coverage({ accounted: 0, unaccounted: [1, 2, 3, 4] }) },
+      ],
+      handoffs: [],
+    },
+    findings: [
+      { id: 'F1', stage: 'formal', round: 1, reason: '[spec] 6 @ src/b.ts:3: untested -> add the test', candidateSha: 'sha1', raisedAt: at(10 * MIN), disposition: 'open' },
+      // The axis tag is read as `enforceCitations` reads it: the leading space and the case are the reviewer's, not a different axis.
+      { id: 'F2', stage: 'formal', round: 1, reason: ' [Spec] 9 @ src/b.ts:11: contract deviation -> restore it', candidateSha: 'sha1', raisedAt: at(10 * MIN), disposition: 'open' },
+      { id: 'F3', stage: 'formal', round: 1, reason: '[standards] 4 @ src/b.ts:9: naming -> rename', candidateSha: 'sha1', raisedAt: at(10 * MIN), disposition: 'open' },
+      { id: 'F4', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 1 @ src/a.ts:1: wrong -> fix', candidateSha: 'sha1', raisedAt: at(MIN), disposition: 'open' },
+      { id: 'F5', stage: 'formal', round: 2, reason: '[spec] 2 @ src/b.ts:5: missing -> add it', candidateSha: 'sha2', raisedAt: at(30 * MIN), disposition: 'open' },
+      { id: 'F6', stage: 'formal', round: 3, reason: '[spec] 3 @ src/b.ts:7: missing -> add it', candidateSha: 'sha3', raisedAt: at(60 * MIN), disposition: 'open' },
+      { id: 'F7', stage: 'formal', round: 3, reason: '[spec] 5 @ src/b.ts:8: missing -> add it', raisedAt: at(60 * MIN), disposition: 'open' },
+    ],
+  });
+}
+
+const NO_COVERAGE = { roundsRequested: 0, roundsComplete: 0, unaccounted: 0, conflicted: 0, inconsistent: 0, r3SpecFindingsAfterIncomplete: 0 };
+
 describe('review statistics (R11, R12)', () => {
   test('summarizeReviews reports the R2 rounds, the R3 decisions, the findings by disposition and the wall time of one card', () => {
     const [summary, ...rest] = stats.summarizeReviews([reviewedRun()], []);
@@ -191,10 +229,57 @@ describe('review statistics (R11, R12)', () => {
     const line = stats.formatReviewStats(stats.summarizeReviews([reviewedRun()], []));
     assert.equal(
       line,
-      'T1-A  R2 3 rounds, 1 block (bugs 1), 1 quota hold, 1m 30s | R3 2 decisions, 1 block, 8m 00s | findings 4: 3 pre, 1 formal, 1 open, 1 disputed, 2 resolved, 1 re-raised, 1 first-round miss | wall 33m 00s',
+      'T1-A  R2 3 rounds, 1 block (bugs 1), 1 quota hold, 1m 30s | R3 2 decisions, 1 block, 8m 00s | findings 4: 3 pre, 1 formal, 1 open, 1 disputed, 2 resolved, 1 re-raised, 1 first-round miss | coverage: not requested | wall 33m 00s',
     );
-    assert.equal(stats.formatReviewStats(stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], [])), 'T1-QUIET  R2 0 rounds, 0s | R3 0 decisions, 0s | findings 0 | wall 0s');
+    assert.equal(stats.formatReviewStats(stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], [])), 'T1-QUIET  R2 0 rounds, 0s | R3 0 decisions, 0s | findings 0 | coverage: not requested | wall 0s');
     assert.equal(stats.formatReviewStats([]), 'no card runs');
+  });
+
+  test('summarizeReviews reports the coverage of the rounds that requested it and the R3 spec findings that followed an unaccounted item (R11 acceptance 1)', () => {
+    const [summary] = stats.summarizeReviews([coveredRun()], []);
+    assert.deepEqual(summary?.coverage, {
+      // Four decided rounds carry a coverage record; the pending one and the round that asked for none do not.
+      roundsRequested: 4,
+      // The two rounds with no unaccounted, conflicted or inconsistent item and no malformed entry.
+      roundsComplete: 2,
+      // Item 3 on sha1 and item 1 on sha3.
+      unaccounted: 2,
+      conflicted: 1,
+      inconsistent: 1,
+      // F1 and F2: formal, spec-tagged, on sha1, whose last decided round left item 3 unaccounted. F3 is
+      // another axis, F4 another stage, F5 a candidate whose last decided round accounted for everything,
+      // F6 a candidate a later round completed, F7 bound to no candidate.
+      r3SpecFindingsAfterIncomplete: 2,
+    });
+  });
+
+  test('summarizeReviews reports zeros for a card whose rounds carry no coverage (R12 acceptance 3)', () => {
+    const [summary] = stats.summarizeReviews([reviewedRun()], []);
+    assert.deepEqual(summary?.coverage, NO_COVERAGE, 'a round that asked for no coverage leaves every field at zero');
+    const [quiet] = stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], []);
+    assert.deepEqual(quiet?.coverage, NO_COVERAGE, 'and so does a card that was never reviewed');
+  });
+
+  test('the family totals sum the coverage fields over the members and the card (R11 acceptance 2)', () => {
+    const registry = [{ id: 'T1-A', superseded_by: 'T1-A-2' }, { id: 'T1-A-2' }];
+    const older = coveredRun();
+    const newer = run({
+      cardId: 'T1-A-2',
+      preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd9', candidateSha: 'sha9', requestedAt: at(90 * MIN), durationMs: MIN, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], coverage: { expected: 2, accounted: 1, unaccounted: [2], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] } }], handoffs: [] },
+      findings: [{ id: 'F1', stage: 'formal', round: 1, reason: '[spec] 2 @ src/b.ts:1: missing -> add it', candidateSha: 'sha9', raisedAt: at(95 * MIN), disposition: 'open' }],
+    });
+    const summaries = stats.summarizeReviews([older, newer], registry);
+    const successor = summaries.find((s) => s.cardId === 'T1-A-2');
+    assert.deepEqual(successor?.coverage, { roundsRequested: 1, roundsComplete: 0, unaccounted: 1, conflicted: 0, inconsistent: 0, r3SpecFindingsAfterIncomplete: 1 }, 'the card reports its own rounds');
+    assert.equal(successor?.family?.members[0]?.coverage.roundsRequested, 4, 'the predecessor keeps its own');
+    assert.deepEqual(successor?.family?.totals.coverage, { roundsRequested: 5, roundsComplete: 2, unaccounted: 3, conflicted: 1, inconsistent: 1, r3SpecFindingsAfterIncomplete: 3 });
+  });
+
+  test('formatReviewStats prints the coverage segment, and `coverage: not requested` for a card with no coverage round (R12 acceptance 3)', () => {
+    const covered = stats.formatReviewStats(stats.summarizeReviews([coveredRun()], []));
+    assert.match(covered, /\| coverage: 2\/4 complete, unaccounted 2, conflicted 1, inconsistent 1, r3 spec findings after incomplete 2 \|/);
+    const quiet = stats.formatReviewStats(stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], []));
+    assert.equal(quiet, 'T1-QUIET  R2 0 rounds, 0s | R3 0 decisions, 0s | findings 0 | coverage: not requested | wall 0s');
   });
 
   test('aidlc review stats prints the summary as JSON when stdout is not a TTY and one line per card with --no-json', () => {

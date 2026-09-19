@@ -249,4 +249,18 @@ describe('templates (Q14 packaging)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
     assert.match(unreleased, /T1-REVIEW-COVERAGE/, 'CHANGELOG Unreleased carries the entry');
   });
+
+  test('T1-REVIEW-COVERAGE-STATS acceptance 4: the operating guide documents the coverage fields under Review statistics and the changelog carries the entry', () => {
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    const section = operations.slice(operations.indexOf('### Review statistics'), operations.indexOf('## Evals'));
+    assert.ok(section.length, 'OPERATIONS.md keeps the Review statistics section');
+    for (const field of ['roundsRequested', 'roundsComplete', 'unaccounted', 'conflicted', 'inconsistent', 'r3SpecFindingsAfterIncomplete']) {
+      assert.ok(section.includes('`' + field + '`'), `OPERATIONS.md names ${field} under Review statistics`);
+    }
+    assert.match(section, /coverage: <roundsComplete>\/<roundsRequested> complete, unaccounted <n>, conflicted <n>, inconsistent <n>, r3 spec findings after incomplete <n>/, 'OPERATIONS.md shows the line form');
+    assert.match(section, /coverage: not requested/, 'OPERATIONS.md shows the line for a card without coverage rounds');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.match(unreleased, /T1-REVIEW-COVERAGE-STATS/, 'CHANGELOG Unreleased carries the entry');
+  });
 });

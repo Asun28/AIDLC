@@ -43,6 +43,28 @@ export interface FindingStats {
   resolved: number;
 }
 
+/**
+ * Acceptance coverage over the rounds that asked for it (`preReview.coverage: shadow`), read off the
+ * `coverage` record each round retains and the findings, never off a verdict or a later classification.
+ */
+export interface CoverageStats {
+  /** Decided rounds carrying a coverage record; a round that asked for none is not one. */
+  roundsRequested: number;
+  /** Of those, the rounds with no unaccounted, conflicted or inconsistent item and no malformed entry. */
+  roundsComplete: number;
+  /** Items no angle accounted for, summed over the rounds. */
+  unaccounted: number;
+  /** Items one angle called supported and another violated, summed over the rounds. */
+  conflicted: number;
+  /** Items a passing angle marked violated, summed over the rounds. */
+  inconsistent: number;
+  /**
+   * Formal findings on the spec axis raised on a candidate whose last decided R2 round left an item
+   * unaccounted: the question a required mode would answer, measured per candidate.
+   */
+  r3SpecFindingsAfterIncomplete: number;
+}
+
 export interface CardReviewStats {
   cardId: string;
   /** The goal that ran the card; absent when several goals ran it, whose runs the numbers below cover together. */
@@ -50,6 +72,7 @@ export interface CardReviewStats {
   r2: R2Stats;
   r3: R3Stats;
   findings: FindingStats;
+  coverage: CoverageStats;
   /**
    * First review request to the last pass, or to the last review when none passed, each review measured
    * to the completion its artifact records. A pass is a recorded pass of either stage: an advisory block
@@ -64,7 +87,7 @@ export interface FamilyStats {
   /** The predecessors this card supersedes, oldest first. */
   members: CardReviewStats[];
   /** The members and this card together. */
-  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; wallMs: number };
+  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number };
 }
 
 /** The registry fields the family chain needs. */
@@ -99,6 +122,10 @@ function emptyR3(): R3Stats {
   return { decisions: 0, blocks: 0, durationMs: 0 };
 }
 
+function emptyCoverage(): CoverageStats {
+  return { roundsRequested: 0, roundsComplete: 0, unaccounted: 0, conflicted: 0, inconsistent: 0, r3SpecFindingsAfterIncomplete: 0 };
+}
+
 function emptyFindings(): FindingStats {
   return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0 };
 }
@@ -124,6 +151,35 @@ function countR2(rounds: readonly PreReviewRound[], into: R2Counters): R2Counter
     const blocking = (round.perspectives ?? []).filter((p) => p.outcome === 'block');
     for (const name of blocking.length ? blocking.map((p) => p.name) : [round.reviewer]) into.blocksByPerspective.set(name, (into.blocksByPerspective.get(name) ?? 0) + 1);
   }
+  return into;
+}
+
+/** A reason's axis tag, read the way `enforceCitations` reads the reviewer's own text. */
+const SPEC_TAG = /^\s*\[spec\]/i;
+
+/**
+ * The coverage of one run: the record each decided round retained, and the formal spec findings raised
+ * on a candidate the R2 rounds left incomplete. A candidate is incomplete when the last decided round
+ * on it (the last the ledger persisted, whether or not it asked for coverage) reported an unaccounted
+ * item, so a later round that accounted for everything ends the question for that candidate. The shas
+ * live in a Map and a Set, so a candidate named after an Object property is a record and not an
+ * inherited value.
+ */
+function countCoverage(run: CardRun, into: CoverageStats): CoverageStats {
+  const lastDecided = new Map<string, PreReviewRound>();
+  for (const round of run.preReview.rounds) {
+    if (round.outcome === 'pending') continue;
+    if (round.candidateSha) lastDecided.set(round.candidateSha, round);
+    const coverage = round.coverage;
+    if (!coverage) continue;
+    into.roundsRequested += 1;
+    into.unaccounted += coverage.unaccounted.length;
+    into.conflicted += coverage.conflicted.length;
+    into.inconsistent += coverage.inconsistent.length;
+    if (!coverage.unaccounted.length && !coverage.conflicted.length && !coverage.inconsistent.length && !coverage.malformed) into.roundsComplete += 1;
+  }
+  const incomplete = new Set([...lastDecided].filter(([, round]) => round.coverage?.unaccounted.length).map(([sha]) => sha));
+  for (const f of run.findings) if (f.stage === 'formal' && f.candidateSha && incomplete.has(f.candidateSha) && SPEC_TAG.test(f.reason)) into.r3SpecFindingsAfterIncomplete += 1;
   return into;
 }
 
@@ -176,10 +232,12 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
   const r2 = emptyR2();
   const r3 = emptyR3();
   const findings = emptyFindings();
+  const coverage = emptyCoverage();
   const events: ReviewEvent[] = [];
   for (const run of runs) {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
+    countCoverage(run, coverage);
     r3.decisions += run.review.substantiveDecisions;
     for (const invocation of run.review.invocations) {
       // Every recorded block, read from the decision itself: the ledger's `substantiveBlocks` counts only the merge-blocking ones.
@@ -190,7 +248,7 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
     events.push(...eventsOf(run));
   }
   const goals = [...new Set(runs.map((r) => r.goalId))];
-  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, wallMs: wallOf(events) };
+  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, coverage, wallMs: wallOf(events) };
 }
 
 /** Predecessors of every card: the reverse of the registry's `superseded_by` links. */
@@ -231,6 +289,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
   const r2 = emptyR2();
   const r3 = emptyR3();
   const findings = emptyFindings();
+  const coverage = emptyCoverage();
   let wallMs = 0;
   for (const s of summaries) {
     r2.rounds += s.r2.rounds;
@@ -250,9 +309,15 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.reraised += s.findings.reraised;
     findings.firstRoundMiss += s.findings.firstRoundMiss;
     findings.resolved += s.findings.resolved;
+    coverage.roundsRequested += s.coverage.roundsRequested;
+    coverage.roundsComplete += s.coverage.roundsComplete;
+    coverage.unaccounted += s.coverage.unaccounted;
+    coverage.conflicted += s.coverage.conflicted;
+    coverage.inconsistent += s.coverage.inconsistent;
+    coverage.r3SpecFindingsAfterIncomplete += s.coverage.r3SpecFindingsAfterIncomplete;
     wallMs += s.wallMs;
   }
-  return { r2: sealR2(r2), r3, findings, wallMs };
+  return { r2: sealR2(r2), r3, findings, coverage, wallMs };
 }
 
 /**
@@ -322,8 +387,14 @@ function findingsText(s: FindingStats): string {
   return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}`;
 }
 
-function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; wallMs: number }): string {
-  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)} | wall ${durationText(s.wallMs)}`;
+/** `not requested` when no round asked for coverage; otherwise the completeness of the rounds that did. */
+function coverageText(s: CoverageStats): string {
+  if (!s.roundsRequested) return 'coverage: not requested';
+  return `coverage: ${s.roundsComplete}/${s.roundsRequested} complete, unaccounted ${s.unaccounted}, conflicted ${s.conflicted}, inconsistent ${s.inconsistent}, r3 spec findings after incomplete ${s.r3SpecFindingsAfterIncomplete}`;
+}
+
+function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number }): string {
+  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)} | ${coverageText(s.coverage)} | wall ${durationText(s.wallMs)}`;
 }
 
 /** One line per card, each family member under the card that supersedes it, then the family total. */
