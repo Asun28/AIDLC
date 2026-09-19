@@ -163,9 +163,11 @@ const SPEC_TAG = /^\s*\[spec\]/i;
  * left incomplete. A candidate is incomplete when the last decided round on it reported an unaccounted
  * item, so a later round that accounted for everything, or asked for no coverage at all, ends the
  * question for that candidate. The rounds of one run and the findings of another can name the same
- * candidate, so both sides are joined across the runs before they are matched: the rounds of a card are
- * requested one at a time, so `requestedAt` orders them, and the sort is stable, which keeps the order
- * a run's ledger persisted when two rounds carry the same request time. The shas live in a Map and a
+ * candidate, so both sides are joined across the runs before they are matched, ordered by the request
+ * each round records. That order is the decision order: the card lease (`resourceKeys.card`, keyed by
+ * repository and card id and not by goal) admits one run of a card at a time, so no second run decides a
+ * round on the same candidate while the first is in flight, whichever goal owns it. The sort is stable,
+ * so a run's ledger order survives two rounds that carry the same request time. The shas live in a Map and a
  * Set, so a candidate named after an Object property is a record and not an inherited value.
  */
 function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageStats {
