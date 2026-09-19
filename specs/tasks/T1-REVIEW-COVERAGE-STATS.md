@@ -20,7 +20,7 @@ acceptance:
   - 2. The family totals sum the coverage fields over the members and the card (stats.test.ts). [R11] [dod arm 1]
   - 3. A card whose rounds carry no `coverage` reports zeros in every field, and `formatReviewStats` prints `coverage: not requested` for it and `coverage: <roundsComplete>/<roundsRequested> complete, unaccounted <n>, conflicted <n>, inconsistent <n>, r3 spec findings after incomplete <n>` otherwise (stats.test.ts). [R11] [R12] [dod arm 1]
   - 4. `docs/OPERATIONS.md` documents the fields under Review statistics and CHANGELOG.md Unreleased carries the entry (templates.test.ts). [dod arm 1]
-depends_on: [T1-REVIEW-COVERAGE, T1-REVIEW-STATS]
+depends_on: [T1-REVIEW-COVERAGE-2, T1-REVIEW-STATS]
 plan_ref: plans/review-coverage.md#7
 budget: 260
 tdd: true
