@@ -107,8 +107,19 @@ export function loadProjectConfig(root: string): { config: ProjectConfig; file: 
   return { config: parsed, file, found: true };
 }
 
-export function resolveWorktreeRoot(config: ProjectConfig, env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * The directory card worktrees are created under, joined with the card id by every caller.
+ * An explicit `worktreeRoot` wins; an empty one resolves to the platform root scoped to this
+ * repository, `%SystemDrive%\wt\<name>` on Windows and `$HOME/.wt/<name>` elsewhere, where
+ * `<name>` is the base name of the main checkout, so two repositories with a card of the same
+ * id never share one directory. A repository whose worktrees already sit under the unscoped root
+ * sets `worktreeRoot` to that root; the loop does not look there (docs/OPERATIONS.md). The
+ * platform's own path rules apply whatever host runs this, so the result is testable anywhere.
+ */
+export function resolveWorktreeRoot(config: ProjectConfig, mainRoot: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
   if (config.worktreeRoot) return config.worktreeRoot;
-  if (process.platform === 'win32') return path.join(env['SystemDrive'] ?? 'C:', 'wt');
-  return path.join(env['HOME'] ?? '/tmp', '.wt');
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const name = p.basename(mainRoot);
+  if (platform === 'win32') return p.join(env['SystemDrive'] ?? 'C:', 'wt', name);
+  return p.join(env['HOME'] ?? '/tmp', '.wt', name);
 }

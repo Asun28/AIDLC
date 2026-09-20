@@ -134,10 +134,10 @@ function discardedDecision(status: CommitReviewStatus): string | undefined {
 
 /** The ship path a project config selects; the `github` block carries the required checks, the verdict rule and the CI polling limits. */
 export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: SyncRunner): ShipPath {
-  if (config.shipPath === 'scaffold') return new ScaffoldShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config), runner });
+  if (config.shipPath === 'scaffold') return new ScaffoldShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), runner });
   if (config.shipPath === 'github') {
     const gh = config.github;
-    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
+    return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
   }
   return new DryRunShipPath();
 }
@@ -193,7 +193,7 @@ export class CardRunner {
   }
 
   worktreePath(cardId: string): string {
-    return path.join(resolveWorktreeRoot(this.config), cardId);
+    return path.join(resolveWorktreeRoot(this.config, this.repo.mainRoot), cardId);
   }
 
   /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
@@ -748,7 +748,7 @@ export class CardRunner {
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     this.journal(goal.id).append({ type: claim.status === 'acquired' ? 'LEASE_ACQUIRED' : 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: claim.lease.generation } });
-    const worktreeRoot = resolveWorktreeRoot(this.config);
+    const worktreeRoot = resolveWorktreeRoot(this.config, this.repo.mainRoot);
     let decision: ReturnType<typeof decideWorktree>;
     if (this.config.shipPath === 'dry-run') {
       decision = { action: run.worktree ? 'attach' : 'start', path: path.join(worktreeRoot, card.id), head: '', reason: 'dry-run' } as ReturnType<typeof decideWorktree>;

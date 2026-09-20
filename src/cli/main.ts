@@ -589,7 +589,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const dir = path.join(c.root, c.config.cardsDir);
       const drafted: string[] = [];
       for (const row of rows) {
-        const text = renderCard({ id: row.id, title: row.output || row.id, allowPaths: ['path/to/change'], dodCommand: o.dod, acceptance: [`1. ${row.output || 'the requested behaviour holds'}. [dod arm 1]`], dependsOn: row.dependsOn, planRef: `${path.relative(c.root, o.plan).replace(/\\/g, '/')}#7`, worktreeRoot: resolveWorktreeRoot(c.config), deliverable: row.output, freeze: row.freezePoint });
+        const text = renderCard({ id: row.id, title: row.output || row.id, allowPaths: ['path/to/change'], dodCommand: o.dod, acceptance: [`1. ${row.output || 'the requested behaviour holds'}. [dod arm 1]`], dependsOn: row.dependsOn, planRef: `${path.relative(c.root, o.plan).replace(/\\/g, '/')}#7`, worktreeRoot: resolveWorktreeRoot(c.config, c.root), deliverable: row.output, freeze: row.freezePoint });
         const file = path.join(dir, `${row.id}.md`);
         if (o.write && !existsSync(file)) {
           mkdirSync(dir, { recursive: true });
