@@ -1,7 +1,7 @@
 ---
 id: T0-WORKTREE-ROOT-DEFAULT
 title: An empty worktreeRoot resolves to <platform root>\<repository name> instead of the machine-wide <platform root>, so two repositories with a card of the same id no longer share one worktree directory
-status: todo
+status: merged
 branch: T0-WORKTREE-ROOT-DEFAULT
 worktree: D:\wt\AIDLC\T0-WORKTREE-ROOT-DEFAULT
 allow_paths:
