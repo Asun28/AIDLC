@@ -115,11 +115,15 @@ export function loadProjectConfig(root: string): { config: ProjectConfig; file: 
  * id never share one directory. A repository whose worktrees already sit under the unscoped root
  * sets `worktreeRoot` to that root; the loop does not look there (docs/OPERATIONS.md). The
  * platform's own path rules apply whatever host runs this, so the result is testable anywhere.
+ * A checkout at a filesystem root has no name to scope by and is refused rather than resolved
+ * to the unscoped root; an empty `SystemDrive` or `HOME` counts as missing, since `path.join`
+ * would otherwise turn it into a relative root.
  */
 export function resolveWorktreeRoot(config: ProjectConfig, mainRoot: string, env: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): string {
   if (config.worktreeRoot) return config.worktreeRoot;
   const p = platform === 'win32' ? path.win32 : path.posix;
   const name = p.basename(mainRoot);
-  if (platform === 'win32') return p.join(env['SystemDrive'] ?? 'C:', 'wt', name);
-  return p.join(env['HOME'] ?? '/tmp', '.wt', name);
+  if (!name) throw new Error(`the main checkout '${mainRoot}' has no directory name to scope the worktree root by; set worktreeRoot in ${CONFIG_FILE}`);
+  if (platform === 'win32') return p.join(env['SystemDrive'] || 'C:', 'wt', name);
+  return p.join(env['HOME'] || '/tmp', '.wt', name);
 }
