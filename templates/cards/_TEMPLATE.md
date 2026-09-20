@@ -7,7 +7,7 @@ id: T?-EXAMPLE
 title: one-sentence deliverable
 status: todo            # todo | in-progress | in-review | merged
 branch: T?-EXAMPLE
-worktree: C:\wt\T?-EXAMPLE   # = <WorktreeRoot>\<id>; see aidlc.config.json worktreeRoot
+worktree: C:\wt\<repository>\T?-EXAMPLE   # = <WorktreeRoot>\<id>; empty worktreeRoot = <platform root>\<main checkout name>, see aidlc.config.json
 allow_paths:            # the paths this card may change; the ship scope gate blocks anything outside them
   - path/to/...
 dod_command: npm test -- --run <tests>   # only tools CI already has, or that the card installs

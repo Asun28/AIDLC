@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, driveCardToDone, candidateShaFor, InjectedShipPath, T0 } from './_harness.ts';
+import { makeFixture, writeCard, driveCardToDone, candidateShaFor, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
 import { DryRunShipPath, ScaffoldShipPath } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
@@ -18,6 +18,7 @@ import { countedFailures } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
 import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
+import { resolveWorktreeRoot } from '../../src/config.ts';
 
 /** Test-only: write a run record wholesale, past the store's stale-write check, to rewind a scenario to an earlier ledger state. */
 function rewindCardRun(fx: ReturnType<typeof makeFixture>, run: CardRun): CardRun {
@@ -3669,5 +3670,22 @@ test('T1-REVIEW-COVERAGE acceptance 5: in shadow the decided round, its journal 
   } finally {
     shadow.fx.cleanup();
     off.fx.cleanup();
+  }
+});
+
+test('T0-WORKTREE-ROOT-DEFAULT: an empty worktreeRoot places a dry-run PREPARE under <platform root>/<checkout name>/<card>, and creates nothing there', () => {
+  const fx = makeFixture({ config: { worktreeRoot: '' } });
+  try {
+    writeCard(fx, { id: 'T1-ROOT', title: 'per-repository worktree root' });
+    const goal = goalForCards(fx, ['T1-ROOT']);
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const r = runner.next(goal, fx.card('T1-ROOT'), fx.controller.ensureCardRun(goal, 'T1-ROOT'));
+    assert.equal(r.directive.kind, 'prepare');
+    const worktree = r.run.worktree ?? '';
+    assert.deepEqual(worktree.split(path.sep).slice(-3), [process.platform === 'win32' ? 'wt' : '.wt', path.basename(fx.tmp), 'T1-ROOT'], 'the last three segments are the platform root name, the checkout name and the card id');
+    assert.equal(worktree, path.join(resolveWorktreeRoot(fx.config, fx.repo.mainRoot), 'T1-ROOT'));
+    assert.ok(!existsSync(path.dirname(worktree)), 'dry-run PREPARE never creates the directory');
+  } finally {
+    fx.cleanup();
   }
 });
