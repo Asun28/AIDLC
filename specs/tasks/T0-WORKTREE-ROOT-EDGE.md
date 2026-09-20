@@ -1,7 +1,7 @@
 ---
 id: T0-WORKTREE-ROOT-EDGE
 title: An empty worktreeRoot refuses a main checkout with no directory name (a filesystem root) with an error naming worktreeRoot instead of resolving to the unscoped root, and an empty SystemDrive or HOME counts as missing so the C: and /tmp fallbacks apply instead of a relative path
-status: todo
+status: merged
 branch: T0-WORKTREE-ROOT-EDGE
 worktree: D:\wt\AIDLC\T0-WORKTREE-ROOT-EDGE
 allow_paths:
