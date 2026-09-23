@@ -84,8 +84,8 @@ hold => WAIT within the deadline through the shared queue (`aidlc review
 status`); unknown output alone is not quota. Dedupe by invocation id, not
 file count; script counters stay separate. Introduced defect: fix in scope
 or revert, never a deferred nit. Unrelated finding: deduplicated issue
-keyed by card/PR/SHA marker. No self-approval, reviewer fan-out, account
-switch, or effort/family switch to dodge quota.
+keyed by card/PR/SHA marker. No self-approval, fan-out, account or effort/family
+switch on quota; only formalReview.fallback may.
 
 ## CI
 Classify first (`aidlc ci classify`): code defect => BUILD with a new
