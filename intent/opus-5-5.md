@@ -1,19 +1,18 @@
 ---
 slug: opus-5-5
-title: Run R3 on Claude Opus 5.5 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
+title: Run R3 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
 author: asun28 (engineer)
 status: accepted
 created: 2026-09-23T22:50:00Z
 source: human
 ---
 
-# Intent: Run R3 on Claude Opus 5.5 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
+# Intent: Run R3 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
 Author: asun28 (engineer). Status: accepted.
 
 ## Problem
-R3 runs on Codex gpt-6-sol, which is out of quota until it is restored.
-Claude Opus 5.5 is configured only as the fallback, at `--effort max`
-for every candidate. The Opus 5.5 guides say that `medium`, the model's
+R3 runs on Codex gpt-6-sol with Claude Opus 5.5 as the fallback, the
+fallback at `--effort max` for every candidate. The Opus 5.5 guides say that `medium`, the model's
 default, matches or beats Opus 5 at `high` on coding work, and that
 Opus 5.5 thinks more per turn at `xhigh` and `max`, so those two levels
 should be used only where a gain has been measured. A fixed `max` makes
@@ -29,9 +28,8 @@ instead of the requested output, which in a headless reviewer is a
 missing verdict.
 
 ## Proposed outcome
-- R3 runs on headless Claude Opus 5.5. Codex gpt-6-sol stays configured
-  as the fallback, and restoring it as primary means swapping the two
-  blocks in `aidlc.config.json`.
+- Codex gpt-6-sol stays the R3 primary and headless Claude Opus 5.5 the
+  fallback; each receives the chosen effort through its own flag.
 - The R3 effort is chosen per candidate: `medium` by default, raised to
   `high` for a large diff or a diff that touches the core modules, never
   `low`. The chosen level is recorded with the decision.
@@ -58,5 +56,5 @@ mirrors, `docs/`, `CHANGELOG.md`; every downstream repository on its next
   platform.claude.com, read 2026-09-24.
 
 ## Open questions
-- (none: the user chose medium as the default R3 effort, raised
-  dynamically, with Codex kept for restoration)
+- (none: the engineer chose medium as the default R3 effort, raised
+  dynamically, Codex primary and Opus 5.5 fallback)

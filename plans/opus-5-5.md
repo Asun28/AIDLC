@@ -1,25 +1,26 @@
 ---
 slug: opus-5-5
-title: Run R3 on Claude Opus 5.5 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
+title: Run R3 at an effort that follows the diff, and bring the Claude defaults and prompts in line with the Opus 5.5 guides
 spec: specs/opus-5-5.md
 size: T1
 status: draft
 created: 2026-09-23T22:50:00Z
 ---
 
-# Plan: Run R3 on Claude Opus 5.5 at an effort that follows the diff (from specs/opus-5-5.md)
+# Plan: Run R3 at an effort that follows the diff (from specs/opus-5-5.md)
 
 ## 1. Goal and boundaries
-R3 runs automatically on headless Claude Opus 5.5 at an effort chosen
-per candidate (medium by default, high for a large or core diff), Codex
-stays as the restorable fallback, and the Claude defaults and prompts
+R3 runs automatically at an effort chosen per candidate (medium by
+default, high for a large or core diff) on Codex as the primary and
+Claude Opus 5.5 as the fallback, and the Claude defaults and prompts
 follow the Opus 5 and 5.5 guides. Three cards, one PR each. Cut: R2
 effort, per-decision effort changes, eval sweeps, archived plans.
 
 ## 2. Minimal acceptable loop
-T1-OPUS55-R3 merged: the next card's R3 dispatch runs
-`claude -p --model claude-opus-5-5 --effort medium|high ...` with the
-level in the invocation record. The two later cards are reviewed by it.
+T1-OPUS55-R3 merged: the next card's R3 dispatch runs Codex with
+`-c model_reasoning_effort=medium|high`, or on a Codex quota hold the
+Opus fallback with `--effort medium|high`, with the level in the
+invocation record. The two later cards are reviewed by it.
 
 ## 3. Tech stack
 none this version
@@ -72,7 +73,7 @@ One optional field, `ReviewInvocation.effort`. No state machine change.
 - CHANGELOG.md
 
 ## Order of work
-1. T1-OPUS55-R3: config field, policy, dispatch, record; switch this repository's R3 to Opus 5.5 with Codex fallback.
+1. T1-OPUS55-R3: config field, policy, dispatch, record; this repository's Codex primary and Opus fallback receive `{effort}`.
 2. T1-OPUS55-MODELS: model ids, ladder, provider request rules.
 3. T1-OPUS55-PROMPTS: end-of-turn rule in the review prompts and reviewer agent; guide audit of the agent and skill files.
 
@@ -80,7 +81,7 @@ One optional field, `ReviewInvocation.effort`. No state machine change.
 
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-OPUS55-R3 | MUST | R3 on Opus 5.5 with a per-candidate effort (medium default, high for large or core diffs); Codex fallback | - | W1 | yes |
+| T1-OPUS55-R3 | MUST | R3 per-candidate effort (medium default, high for large or core diffs) on the Codex primary and the Opus 5.5 fallback | - | W1 | yes |
 | T1-OPUS55-MODELS | MUST | Claude role defaults and API provider on claude-opus-5-5; xhigh on the Claude ladder; only accepted request settings | T1-OPUS55-R3 | W2 | - |
 | T1-OPUS55-PROMPTS | MUST | review prompts and agents end on the verdict line; agent and skill files audited against the Opus 5 and 5.5 guides | T1-OPUS55-MODELS | W3 | - |
 
@@ -88,8 +89,8 @@ The three cards share `CHANGELOG.md` and `docs/`, so they run one at a
 time.
 
 ## Risks
-- Author and reviewer share the model family while Codex is out
-  (flagged in the spec; accepted by the engineer).
+- Author and reviewer share the model family while Codex is on a quota
+  hold and the Opus fallback reviews (flagged in the spec; accepted).
 - `high` on a large diff may approach the 20-minute timeout; the
   threshold is a config value and the timeout is unchanged.
 - The skill files have byte caps (tests/surface/templates.test.ts); the
