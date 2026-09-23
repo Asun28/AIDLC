@@ -30,13 +30,23 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
  * {card} {schema} {cwd}; without {instructions} the prompt goes to stdin. Empty command = the R3
  * verdict comes from the ship path (scaffold ReviewGate) or nowhere.
  */
-export const FormalReviewConfig = z.object({
+const FormalReviewerConfig = z.object({
   command: z.array(z.string()).default([]),
   reviewer: z.string().default('codex'),
   timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),
 });
+/**
+ * The reviewer R3 dispatches while the primary holds an unexpired quota hold; it shares the primary's allowance. No
+ * argument may be empty: a reviewer runs through a shell on Windows, which drops an empty argument (write `--flag=`).
+ */
+export const FormalReviewFallback = FormalReviewerConfig.extend({
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.fallback.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
+  reviewer: z.string().min(1),
+});
+export type FormalReviewFallback = z.infer<typeof FormalReviewFallback>;
+export const FormalReviewConfig = FormalReviewerConfig.extend({ fallback: FormalReviewFallback.optional() });
 export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
 /** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */
@@ -94,6 +104,10 @@ export const ProjectConfig = z.object({
     // `{schema}` placeholder) rejects the extra field, so the two settings would ask for a document the reviewer cannot emit.
     if (config.preReview.coverage === 'shadow' && config.preReview.command.some((a) => a.includes('{schema}'))) {
       ctx.addIssue({ code: 'custom', path: ['preReview', 'coverage'], message: 'preReview.coverage shadow conflicts with a {schema} pre-review command: the frozen verdict schema forbids the coverage field' });
+    }
+    // Invocations are told apart by reviewer name: a fallback under the primary's name could never be dispatched.
+    if (config.formalReview.fallback && config.formalReview.fallback.reviewer === config.formalReview.reviewer) {
+      ctx.addIssue({ code: 'custom', path: ['formalReview', 'fallback', 'reviewer'], message: 'formalReview.fallback.reviewer must differ from formalReview.reviewer: the ledger tells the two reviewers apart by name' });
     }
   });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;

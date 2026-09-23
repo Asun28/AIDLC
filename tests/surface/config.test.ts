@@ -1,6 +1,8 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { readFileSync } from 'node:fs';
+import { ZodError } from 'zod';
 import { ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
@@ -53,5 +55,52 @@ describe('resolveWorktreeRoot (T0-WORKTREE-ROOT-DEFAULT)', () => {
     const resolved = resolveWorktreeRoot(empty, path.join('some', 'where', 'REPO-X'));
     assert.equal(path.basename(resolved), 'REPO-X');
     assert.equal(path.basename(path.dirname(resolved)), process.platform === 'win32' ? 'wt' : '.wt');
+  });
+});
+
+/** A ZodError, not a crash, whose issue names formalReview.fallback.command. */
+const fallbackCommandIssue = (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'formalReview.fallback.command');
+
+describe('formalReview.fallback (T0-R3-FALLBACK)', () => {
+  test('a fallback with only command and reviewer is accepted and defaulted like formalReview [R1]', () => {
+    const c = ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'p', fallback: { command: ['backup', '-p'], reviewer: 'b' } } });
+    assert.deepEqual(c.formalReview.fallback?.command, ['backup', '-p']);
+    assert.equal(c.formalReview.fallback?.reviewer, 'b');
+    assert.equal(c.formalReview.fallback?.timeoutMs, 20 * 60 * 1000);
+    assert.equal(c.formalReview.fallback?.maxDiffBytes, 300_000);
+  });
+
+  test('a fallback with an empty command is rejected with an issue naming formalReview.fallback.command, not a crash [R1]', () => {
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], fallback: { command: [], reviewer: 'b' } } }), fallbackCommandIssue);
+  });
+
+  test('a config without a fallback parses to fallback undefined [R1]', () => {
+    assert.equal(empty.formalReview.fallback, undefined);
+    assert.equal(ProjectConfig.parse({ formalReview: { command: ['primary'] } }).formalReview.fallback, undefined);
+  });
+});
+
+describe('formalReview.fallback validation and this repository config (T0-R3-FALLBACK)', () => {
+  test('a fallback with an empty argument anywhere (the Windows shell drops it), an empty reviewer, or the primary name is rejected [R1]', () => {
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: [''], reviewer: 'b' } } }), fallbackCommandIssue);
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources', ''], reviewer: 'b' } } }), fallbackCommandIssue);
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b'], reviewer: '' } } }), (err: unknown) => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'formalReview.fallback.reviewer'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'same', fallback: { command: ['b'], reviewer: 'same' } } }), /must differ/);
+    assert.deepEqual(ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources='], reviewer: 'b' } } }).formalReview.fallback?.command, ['b', '--setting-sources=']);
+  });
+
+  test('aidlc.config.json runs R3 on Codex gpt-6-sol with a read-only Claude Opus 5.5 fallback [R1]', () => {
+    const repoConfig = ProjectConfig.parse(JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', 'aidlc.config.json'), 'utf8')));
+    assert.deepEqual(repoConfig.formalReview.command, ['codex', 'exec', '-m', 'gpt-6-sol', '--sandbox', 'read-only', '--output-schema', '{schema}']);
+    assert.equal(repoConfig.formalReview.reviewer, 'codex');
+    const fallback = repoConfig.formalReview.fallback;
+    assert.ok(fallback);
+    assert.equal(fallback.reviewer, 'claude-opus-5-5');
+    assert.deepEqual(fallback.command.slice(0, 4), ['claude', '-p', '--model', 'claude-opus-5-5']);
+    const tools = fallback.command[fallback.command.indexOf('--tools') + 1];
+    assert.equal(tools, 'Read,Grep,Glob', 'the fallback reviewer can only read');
+    assert.ok(fallback.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
+    assert.ok(fallback.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
+    assert.ok(fallback.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
   });
 });
