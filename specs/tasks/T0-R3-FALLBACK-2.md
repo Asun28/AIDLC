@@ -1,7 +1,7 @@
 ---
 id: T0-R3-FALLBACK-2
 title: An optional formalReview.fallback reviewer runs R3 while the primary formal reviewer is on an unexpired quota hold for the card, instead of parking the card in WAIT; this repository's primary is Codex gpt-6-sol and its fallback Claude Opus 5.5
-status: todo
+status: merged
 branch: T0-R3-FALLBACK-2
 worktree: D:\wt\AIDLC\T0-R3-FALLBACK-2
 allow_paths:
