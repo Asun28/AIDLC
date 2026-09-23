@@ -65,14 +65,19 @@
   "gateRequired": true,
   "formalReview": {
     "command": [
-      "codex",
-      "exec",
-      "--sandbox",
-      "read-only",
-      "--output-schema",
-      "{schema}"
+      "claude",
+      "-p",
+      "--model",
+      "claude-opus-5-5",
+      "--effort",
+      "max",
+      "--tools",
+      "Read,Grep,Glob",
+      "--setting-sources",
+      "",
+      "--no-session-persistence"
     ],
-    "reviewer": "codex",
+    "reviewer": "claude-opus-5-5",
     "timeoutMs": 1200000,
     "maxDiffBytes": 800000
   }
