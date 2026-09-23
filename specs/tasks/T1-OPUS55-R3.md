@@ -10,6 +10,7 @@ allow_paths:
   - src/core/types.ts
   - src/loop/card-runner.ts
   - tests/core/review-effort.test.ts
+  - tests/core/types.test.ts
   - tests/surface/config.test.ts
   - tests/scenarios/r3-fallback.test.ts
   - aidlc.config.json
