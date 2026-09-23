@@ -101,6 +101,8 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     assert.equal(tools, 'Read,Grep,Glob', 'the fallback reviewer can only read');
     assert.ok(fallback.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
     assert.ok(fallback.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
+    assert.equal(fallback.command[fallback.command.indexOf('--effort') + 1], 'max');
+    assert.ok(fallback.command.includes('--no-session-persistence'));
     assert.ok(fallback.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
   });
 });

@@ -1028,8 +1028,7 @@ export class CardRunner {
     if (!eligibility.eligible) return `the candidate lost its pre-review eligibility (${eligibility.reason})`;
     const formal = this.config.formalReview;
     if (formal.command.length) {
-      const names = new Set([formal.reviewer, ...(formal.fallback ? [formal.fallback.reviewer] : [])]);
-      const last = [...armed.review.invocations].reverse().find((i) => names.has(i.reviewer) && i.candidateDigest === digest);
+      const last = this.lastFormalInvocation(armed.review.invocations, digest);
       const admitted = last?.outcome === 'pass' || (last?.outcome === 'block' && !this.invocationBlocking(armed, card, last));
       if (!admitted) return `the candidate lost its formal review admission (${last?.outcome ?? 'no decision'} recorded meanwhile)`;
     }
@@ -1153,7 +1152,8 @@ export class CardRunner {
   /**
    * R3 gate inside SHIP when the formal reviewer is a configured command. The existing ledger rules
    * apply unchanged (two substantive decisions, one no-verdict retry); a block was already handed to
-   * REVIEW_FIX by `formalReview`; a quota hold parks the card until `holdUntil`.
+   * REVIEW_FIX by `formalReview`; a quota hold dispatches the fallback when one is configured and not held, else parks the card
+   * until the earlier hold clears.
    */
   private formalReviewGate(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } | undefined {
     const primary = this.config.formalReview;
@@ -1161,8 +1161,7 @@ export class CardRunner {
     const now = this.clock();
     const digest = run.candidate?.digest;
     // A decision by either configured reviewer decides the candidate; the reviewer that runs next is resolved below.
-    const names = new Set([primary.reviewer, ...(primary.fallback ? [primary.fallback.reviewer] : [])]);
-    const last = [...run.review.invocations].reverse().find((i) => names.has(i.reviewer) && i.candidateDigest === digest);
+    const last = this.lastFormalInvocation(run.review.invocations, digest);
     if (last?.outcome === 'pass') {
       // The ship paths read the canonical document: a publication that did not land at commit time is repaired here.
       this.repairCanonical(goal, card, run, last);
@@ -1212,10 +1211,33 @@ export class CardRunner {
     return this.config.formalReview.fallback ? `${goal.reviewPool}/${cfg.reviewer}` : goal.reviewPool;
   }
 
-  /** The latest invocation on a candidate by either configured formal reviewer. */
-  private lastFormalDecision(invocations: ReviewInvocation[], candidateDigest: string): ReviewInvocation | undefined {
+  /**
+   * R7: once one formal reviewer is admitted for a candidate, the card will not run the other one for it again unless its
+   * hold passes, so the other reviewer's queued or held request for the candidate (the one a hold left behind) is cancelled
+   * when this card is its only requester: left in its pool, it would be admitted by the next card's review once the hold
+   * passes and occupy the slot with no one to run it. The pool's reset time is kept; a request another card joined stays.
+   */
+  private cancelOtherReviewerRequest(goal: Goal, card: Card, candidateDigest: string, cfg: FormalReviewer, now: string): void {
     const formal = this.config.formalReview;
-    const names = new Set([formal.reviewer, ...(formal.fallback ? [formal.fallback.reviewer] : [])]);
+    if (!formal.fallback) return;
+    const other = cfg.reviewer === formal.reviewer ? formal.fallback : formal;
+    const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: other.reviewer });
+    const request = this.queue.get(key);
+    const requester = `${goal.id}:${card.id}`;
+    if (!request || (request.state !== 'queued' && request.state !== 'retry-after') || !request.requesters.every((r) => r === requester)) return;
+    this.queue.cancel(key, `formal review of ${card.id} continued on ${cfg.reviewer}`, now);
+    this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { reviewRequestCancelled: key, reviewer: other.reviewer, continuedOn: cfg.reviewer } });
+  }
+
+  /** The names of the configured formal reviewers: the primary, and the fallback when one is configured. */
+  private formalReviewerNames(): Set<string> {
+    const formal = this.config.formalReview;
+    return new Set([formal.reviewer, ...(formal.fallback ? [formal.fallback.reviewer] : [])]);
+  }
+
+  /** The latest invocation on a candidate by either configured formal reviewer, whatever its outcome (pending included). */
+  private lastFormalInvocation(invocations: ReviewInvocation[], candidateDigest: string | undefined): ReviewInvocation | undefined {
+    const names = this.formalReviewerNames();
     return [...invocations].reverse().find((i) => names.has(i.reviewer) && i.candidateDigest === candidateDigest);
   }
 
@@ -1307,7 +1329,7 @@ export class CardRunner {
     // A decision in flight for another candidate is spent as far as the allowance is concerned.
     const pendingDecisions = ledger.invocations.filter((i) => i.outcome === 'pending').length;
     if (ledger.substantiveDecisions + pendingDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS) {
-      throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalDecision(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
+      throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
     if (ledger.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES) {
       throw new Error(`no verdict after the single retry (${ledger.noVerdictRetriesUsed} used); the card is STOP/review, not another run`);
@@ -1349,7 +1371,8 @@ export class CardRunner {
     const baseRef = persisted.base?.oid ?? this.config.base;
     const candidateSha = this.pinnedCandidate(persisted, cwd);
     const candidateDigest = persisted.candidate?.digest ?? candidateSha;
-    // The primary, or the fallback while the primary holds a quota hold on this candidate; admission re-checks it under the lock.
+    // The primary, or the fallback while the primary holds a quota hold (on the card when a fallback is configured); admission
+    // re-checks it under the lock.
     const cfg = this.formalReviewerNow(persisted, candidateDigest, now).cfg;
     const capName = cfg === this.config.formalReview ? 'formalReview.maxDiffBytes' : 'formalReview.fallback.maxDiffBytes';
     const reviewPolicy = this.reviewPolicy();
@@ -1393,8 +1416,9 @@ export class CardRunner {
     if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
     if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${pool}; join it, do not dispatch another`);
     const admit = this.admitReview(goal, card, key, now, pool);
-    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${pool} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status --pool ${pool})`);
+    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${pool} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
     const admittedSeq = admit.request.seq;
+    this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
     // Reserve the invocation under the card-run lock before dispatch so a concurrent call cannot spend the same decision.
     // The guards are re-checked on the locked record (a dispute withdrawn or a decision recorded since the first read
@@ -2065,7 +2089,7 @@ export class CardRunner {
     // The document the command-run formal reviewer already decided for this candidate, re-read by the ship
     // path, is the same artifact and never a second decision; any other ship review outcome is recorded.
     const formal = this.config.formalReview;
-    const commandReviewers = formal.command.length ? new Set([formal.reviewer, ...(formal.fallback ? [formal.fallback.reviewer] : [])]) : undefined;
+    const commandReviewers = formal.command.length ? this.formalReviewerNames() : undefined;
     const decidedByCommand = commandReviewers !== undefined && run.review.invocations.some((i) => commandReviewers.has(i.reviewer) && i.candidateDigest === candidateDigest && (i.outcome === 'pass' || i.outcome === 'block'));
     const rawDoc = (() => {
       try {
