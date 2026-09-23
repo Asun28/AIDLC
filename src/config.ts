@@ -43,9 +43,8 @@ const FormalReviewerConfig = z.object({
  */
 export const FormalReviewFallback = FormalReviewerConfig.extend({
   command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.fallback.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
-  reviewer: z.string().min(1),
+  reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.fallback.reviewer must name the reviewer'),
 });
-export type FormalReviewFallback = z.infer<typeof FormalReviewFallback>;
 export const FormalReviewConfig = FormalReviewerConfig.extend({ fallback: FormalReviewFallback.optional() });
 export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
@@ -105,8 +104,10 @@ export const ProjectConfig = z.object({
     if (config.preReview.coverage === 'shadow' && config.preReview.command.some((a) => a.includes('{schema}'))) {
       ctx.addIssue({ code: 'custom', path: ['preReview', 'coverage'], message: 'preReview.coverage shadow conflicts with a {schema} pre-review command: the frozen verdict schema forbids the coverage field' });
     }
-    // Invocations are told apart by reviewer name: a fallback under the primary's name could never be dispatched.
-    if (config.formalReview.fallback && config.formalReview.fallback.reviewer === config.formalReview.reviewer) {
+    // Invocations are told apart by reviewer name, and request keys and pool files fold case and surrounding blanks: a
+    // fallback under the primary's name in any such spelling would share its request and pool and never be dispatched.
+    const fold = (name: string) => name.trim().toLowerCase();
+    if (config.formalReview.fallback && fold(config.formalReview.fallback.reviewer) === fold(config.formalReview.reviewer)) {
       ctx.addIssue({ code: 'custom', path: ['formalReview', 'fallback', 'reviewer'], message: 'formalReview.fallback.reviewer must differ from formalReview.reviewer: the ledger tells the two reviewers apart by name' });
     }
   });

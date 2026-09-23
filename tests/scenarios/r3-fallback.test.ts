@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -336,6 +336,45 @@ test('dispatching the fallback cancels the card\'s held primary request, so anot
     const fb = await runner.formalReview(b.g(), b.card, rb.run);
     assert.equal(fb.classified.outcome, 'pass');
     assert.deepEqual(calls, ['primary', 'backup', 'primary']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a failure cancelling the other reviewer\'s request never fails the admitted review: it is journaled and the review runs [R7]', async () => {
+  const { fx, runner, card, g, primary, calls, run, goalId } = await atReview();
+  try {
+    primary.push(HOLD_60);
+    let f = await runner.formalReview(g(), card, run);
+    const r = runner.next(g(), card, f.run);
+    const cancel = fx.queue.cancel.bind(fx.queue);
+    fx.queue.cancel = (key: string, reason: string, now?: string) => {
+      if (key.endsWith('|primary')) throw new Error('queue store unavailable');
+      return cancel(key, reason, now);
+    };
+    f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.deepEqual(calls, ['primary', 'backup']);
+    const failed = fx.events(goalId).filter((e) => e.type === 'NOTE' && (e.data as { reviewRequestCancelFailed?: string }).reviewRequestCancelFailed);
+    assert.equal(failed.length, 1, 'the failed cancellation is journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a missing canonical document of a fallback pass is repaired under the fallback name before the ship [R5]', async () => {
+  const { fx, runner, card, g, primary, run } = await atReview();
+  try {
+    primary.push(HOLD_60);
+    let f = await runner.formalReview(g(), card, run);
+    const r = runner.next(g(), card, f.run);
+    f = await runner.formalReview(g(), card, r.run);
+    assert.ok(f.verdictRef);
+    const canonical = path.join(path.dirname(f.verdictRef), `${card.id}.json`);
+    rmSync(canonical);
+    const shipped = runner.next(g(), card, f.run);
+    assert.equal(shipped.directive.kind, 'close', shipped.directive.narration);
+    assert.equal((JSON.parse(readFileSync(canonical, 'utf8')) as { reviewer: string }).reviewer, 'backup');
   } finally {
     fx.cleanup();
   }

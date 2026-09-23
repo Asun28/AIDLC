@@ -1216,17 +1216,26 @@ export class CardRunner {
    * hold passes, so the other reviewer's queued or held request for the candidate (the one a hold left behind) is cancelled
    * when this card is its only requester: left in its pool, it would be admitted by the next card's review once the hold
    * passes and occupy the slot with no one to run it. The pool's reset time is kept; a request another card joined stays.
+   * Best-effort, like the other pool cancellations: a failure is journaled and never fails the review this card reserved.
    */
   private cancelOtherReviewerRequest(goal: Goal, card: Card, candidateDigest: string, cfg: FormalReviewer, now: string): void {
     const formal = this.config.formalReview;
     if (!formal.fallback) return;
     const other = cfg.reviewer === formal.reviewer ? formal.fallback : formal;
     const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: other.reviewer });
-    const request = this.queue.get(key);
     const requester = `${goal.id}:${card.id}`;
-    if (!request || (request.state !== 'queued' && request.state !== 'retry-after') || !request.requesters.every((r) => r === requester)) return;
-    this.queue.cancel(key, `formal review of ${card.id} continued on ${cfg.reviewer}`, now);
-    this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { reviewRequestCancelled: key, reviewer: other.reviewer, continuedOn: cfg.reviewer } });
+    try {
+      const request = this.queue.get(key);
+      if (!request || (request.state !== 'queued' && request.state !== 'retry-after') || !request.requesters.every((r) => r === requester)) return;
+      this.queue.cancel(key, `formal review of ${card.id} continued on ${cfg.reviewer}`, now);
+      this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { reviewRequestCancelled: key, reviewer: other.reviewer, continuedOn: cfg.reviewer } });
+    } catch (err) {
+      try {
+        this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { reviewRequestCancelFailed: key, reviewer: other.reviewer, error: (err as Error).message } });
+      } catch {
+        /* the request stays; the review this card reserved goes on */
+      }
+    }
   }
 
   /** The names of the configured formal reviewers: the primary, and the fallback when one is configured. */
@@ -1414,11 +1423,10 @@ export class CardRunner {
     const pool = this.queue.get(key)?.pool ?? this.formalPool(goal, cfg);
     let enq = this.queue.enqueue({ pool, repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requester: `${goal.id}:${card.id}`, deadline: run.deadline, now });
     if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
-    if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${pool}; join it, do not dispatch another`);
+    if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${JSON.stringify(pool)}; join it, do not dispatch another`);
     const admit = this.admitReview(goal, card, key, now, pool);
-    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${pool} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
+    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${JSON.stringify(pool)} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
     const admittedSeq = admit.request.seq;
-    this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
     // Reserve the invocation under the card-run lock before dispatch so a concurrent call cannot spend the same decision.
     // The guards are re-checked on the locked record (a dispute withdrawn or a decision recorded since the first read
@@ -1457,6 +1465,8 @@ export class CardRunner {
       this.queue.cancel(key, `formal review not dispatched: ${(err as Error).message}`, now);
       throw err;
     }
+    // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
+    this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
     const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: MAX_SUBSTANTIVE_REVIEW_DECISIONS });
     let panel: PanelResult | undefined;
