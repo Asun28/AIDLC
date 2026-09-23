@@ -73,8 +73,7 @@
       "max",
       "--tools",
       "Read,Grep,Glob",
-      "--setting-sources",
-      "",
+      "--setting-sources=",
       "--no-session-persistence"
     ],
     "reviewer": "claude-opus-5-5",
