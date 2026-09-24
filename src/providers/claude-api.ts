@@ -19,26 +19,30 @@ export interface ClaudeApiOptions {
   timeoutMs?: number;
   /** Return summarized thinking in the result text (debug only). */
   showThinking?: boolean;
+  /** A messages client to use instead of one built from the SDK (tests inject a fake; no network). */
+  client?: ClaudeMessagesClient;
 }
 
 type AnthropicModule = typeof import('@anthropic-ai/sdk');
+/** The part of the SDK client the provider calls. */
+export type ClaudeMessagesClient = Pick<InstanceType<AnthropicModule['default']>, 'messages'>;
 
 export class ClaudeApiProvider implements ModelProvider {
   readonly name = 'claude-api';
   private readonly opts: ClaudeApiOptions;
   private sdk: AnthropicModule | undefined;
-  private client: InstanceType<AnthropicModule['default']> | undefined;
+  private client: ClaudeMessagesClient | undefined;
 
   constructor(opts: ClaudeApiOptions = {}) {
     this.opts = opts;
   }
 
-  private async load(): Promise<{ sdk: AnthropicModule; client: InstanceType<AnthropicModule['default']> }> {
+  private async load(): Promise<{ sdk: AnthropicModule; client: ClaudeMessagesClient }> {
     if (!this.sdk || !this.client) {
       const sdk = await import('@anthropic-ai/sdk');
       const Anthropic = sdk.default;
       this.sdk = sdk;
-      this.client = new Anthropic({
+      this.client = this.opts.client ?? new Anthropic({
         apiKey: this.opts.apiKey,
         maxRetries: this.opts.maxRetries ?? 2,
         timeout: this.opts.timeoutMs ?? 10 * 60 * 1000,

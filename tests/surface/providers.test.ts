@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { extractJson, newInvocationId } from '../../src/providers/types.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { ClaudeCodeProvider } from '../../src/providers/claude-code.ts';
-import { ClaudeApiProvider } from '../../src/providers/claude-api.ts';
+import { ClaudeApiProvider, type ClaudeMessagesClient } from '../../src/providers/claude-api.ts';
+import type { CompletionRequest } from '../../src/providers/types.ts';
 import type { ExecReceipt, Runner } from '../../src/probes/exec.ts';
 
 test('extractJson handles fenced, bare, embedded and absent JSON', () => {
@@ -115,4 +116,47 @@ test('ClaudeApiProvider.available is false without credentials', async () => {
   } finally {
     for (const k of keys) if (saved[k] !== undefined) process.env[k] = saved[k];
   }
+});
+
+/** A messages client that records each request it is sent and answers with one fixed message; no network. */
+function fakeClaudeClient(message: Record<string, unknown>): { sent: Record<string, unknown>[]; client: ClaudeMessagesClient } {
+  const sent: Record<string, unknown>[] = [];
+  const client = { messages: { stream: (params: Record<string, unknown>) => { sent.push(params); return { finalMessage: async () => message }; } } };
+  return { sent, client: client as unknown as ClaudeMessagesClient };
+}
+const claudeMessage = (content: unknown[], stopReason = 'end_turn') => ({ model: 'claude-opus-5-5', content, stop_reason: stopReason, usage: { input_tokens: 10, output_tokens: 5 } });
+const REQUEST: CompletionRequest = { role: 'planner', system: 'sys', prompt: 'plan it', effort: 'xhigh' };
+
+test('T1-OPUS55-MODELS acceptance 3: with no model and no defaultModel the provider sends claude-opus-5-5 [R5]', async () => {
+  const { sent, client } = fakeClaudeClient(claudeMessage([{ type: 'text', text: 'ok' }]));
+  await new ClaudeApiProvider({ client }).complete(REQUEST);
+  assert.equal(sent[0]!['model'], 'claude-opus-5-5');
+});
+
+test('T1-OPUS55-MODELS acceptance 3: the request carries the effort and no setting Opus 5.5 rejects [R6]', async () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    const { sent, client } = fakeClaudeClient(claudeMessage([{ type: 'text', text: 'ok' }]));
+    await new ClaudeApiProvider({ client }).complete({ ...REQUEST, effort });
+    const params = sent[0]!;
+    assert.deepEqual(params['output_config'], { effort }, `output_config.effort is the request's effort (${effort})`);
+    const thinking = params['thinking'] as { type?: string } | undefined;
+    assert.ok(thinking === undefined || thinking.type === 'adaptive', `thinking absent or adaptive: ${JSON.stringify(thinking)}`);
+    assert.ok(thinking === undefined || !('budget_tokens' in thinking), 'no thinking budget');
+    for (const rejected of ['temperature', 'top_p', 'top_k', 'tool_choice']) assert.equal(rejected in params, false, `no ${rejected}`);
+    const messages = params['messages'] as Array<{ role: string }>;
+    assert.equal(messages.at(-1)?.role, 'user', 'no assistant prefill');
+  }
+});
+
+test('T1-OPUS55-MODELS acceptance 4: an empty thinking block before the text yields the text only [R6]', async () => {
+  const { client } = fakeClaudeClient(claudeMessage([{ type: 'thinking', thinking: '', signature: 'sig' }, { type: 'text', text: 'the answer' }]));
+  const r = await new ClaudeApiProvider({ client }).complete(REQUEST);
+  assert.equal(r.text, 'the answer');
+  assert.equal(r.outcome, 'ok');
+});
+
+test('T1-OPUS55-MODELS acceptance 4: stop_reason refusal yields outcome refusal [R6]', async () => {
+  const { client } = fakeClaudeClient(claudeMessage([{ type: 'text', text: '' }], 'refusal'));
+  const r = await new ClaudeApiProvider({ client }).complete(REQUEST);
+  assert.equal(r.outcome, 'refusal');
 });
