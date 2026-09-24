@@ -22,7 +22,7 @@ export interface ClaudeApiOptions {
   timeoutMs?: number;
   /** Return summarized thinking in the result text (debug only). */
   showThinking?: boolean;
-  /** A messages client to use instead of one built from the SDK (tests inject a fake; no network). */
+  /** Test-only: a messages client to use instead of one built from the SDK, so tests inject a fake with no network. It bypasses `maxRetries` and `timeoutMs`, which configure only the SDK client. */
   client?: ClaudeMessagesClient;
 }
 

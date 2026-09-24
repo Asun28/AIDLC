@@ -91,3 +91,24 @@ describe('Claude defaults on Opus 5.5 (T1-OPUS55-MODELS acceptance 1 and 2)', ()
     assert.equal(seen.has('xhigh'), true, 'the hardest task assesses at xhigh');
   });
 });
+
+describe('Claude defaults documentation (T1-OPUS55-MODELS acceptance 5)', () => {
+  const read = (...parts: string[]) => readFileSync(path.join(import.meta.dirname, '..', '..', ...parts), 'utf8');
+
+  test('docs/OPERATIONS.md names claude-opus-5-5 as the Claude role default [R5]', () => {
+    assert.ok(read('docs', 'OPERATIONS.md').includes('the Claude role defaults are `claude-opus-5-5`'));
+  });
+
+  test('docs/ARCHITECTURE.md names claude-opus-5-5 for the roles and the API provider [R5]', () => {
+    const architecture = read('docs', 'ARCHITECTURE.md');
+    assert.ok(architecture.includes('Claude defaults: `claude-opus-5-5` for planner'), 'roles.ts line');
+    assert.ok(architecture.includes('default model `claude-opus-5-5`'), 'claude-api.ts line');
+  });
+
+  test('CHANGELOG.md carries the entry under Unreleased [R5]', () => {
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## Unreleased');
+    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    assert.match(unreleased, /T1-OPUS55-MODELS/);
+  });
+});
