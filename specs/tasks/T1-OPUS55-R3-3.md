@@ -1,7 +1,7 @@
 ---
 id: T1-OPUS55-R3-3
 title: R3 runs at an effort chosen per candidate (medium by default, high for a large or core diff, never low) and recorded with the decision, on Codex gpt-6-sol as the primary and headless Claude Opus 5.5 as the fallback, each with its own effort flag (replacement of T1-OPUS55-R3-2 after its two R3 decisions: every branch of the effort selection and its dispatch pinned by a test that turns red when that branch alone is removed)
-status: todo
+status: merged
 branch: T1-OPUS55-R3-3
 worktree: D:\wt\AIDLC\T1-OPUS55-R3-3
 allow_paths:
