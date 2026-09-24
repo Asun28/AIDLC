@@ -1,7 +1,7 @@
 ---
 id: T1-RENAME-PATHS
 title: Renamed files are listed by both their source and destination path, unquoted, so the scope gate refuses a file moved out of allow_paths and the effort path rule matches a non-ASCII rename source
-status: todo
+status: merged
 branch: T1-RENAME-PATHS
 worktree: D:\wt\AIDLC\T1-RENAME-PATHS
 allow_paths:
