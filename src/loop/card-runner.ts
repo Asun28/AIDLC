@@ -849,6 +849,9 @@ export class CardRunner {
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
     // writer applies no fence (see docs/OPERATIONS.md, Sessions): what it records lands on the stored run as it is.
     run = this.store.getCardRun(goal.id, card.id) ?? run;
+    // A success on a tdd card binds the candidate and ends the episode; without a RED receipt the card could never ship, so
+    // it is refused before anything is recorded and the caller records it again with the receipt.
+    if (input.outcome === 'success' && card.tdd && !run.redReceipt && !input.redReceipt) throw new Error(`a successful attempt on tdd card ${card.id} needs a RED receipt: none is recorded on the run and the attempt carries none; record it again with --red-receipt "<sha>:<test>"`);
     const ladder = goal.roleProfiles.find((p) => p.role === 'implementer')?.supportedEfforts ?? ['low', 'medium', 'high'];
     let episode = run.effort ?? createEpisode(card.id, 'implementer', ladder.includes('medium') ? 'medium' : ladder[0]!, ladder);
     if (!episode.attempts.some((a) => a.outcome === 'running')) {

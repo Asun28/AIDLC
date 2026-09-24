@@ -339,6 +339,7 @@ export function readVerdict(output: string): { verdict?: Verdict; rejected: Reje
   if (!decisive) return { rejected: NO_REJECTS };
   if (spans.some((s) => s.start > decisive.start && !s.parses)) return { rejected: NO_REJECTS };
   if (unfinished !== undefined) return { rejected: NO_REJECTS };
+  if (inUnclosedFence(output, decisive.start, decisive.end)) return { rejected: NO_REJECTS };
   try {
     const document: unknown = JSON.parse(output.slice(decisive.start, decisive.end + 1));
     const verdict = parseVerdict(document);
@@ -395,6 +396,28 @@ function readItemNumber(item: unknown): number | undefined {
   if (typeof item !== 'string' || !item.trim()) return undefined;
   const parsed = Number(item);
   return Number.isInteger(parsed) ? parsed : undefined;
+}
+
+/** A line that opens a Markdown code fence: up to three spaces, three backticks, an info string without a backtick. */
+const FENCE_OPEN = /^ {0,3}```[^`]*$/;
+/** A line that closes an open fence: up to three spaces, three backticks, nothing but whitespace after them. */
+const FENCE_CLOSE = /^ {0,3}```\s*$/;
+
+/**
+ * Whether the document at `start..end` sits inside a Markdown code fence that never closes. The scanner already reads a
+ * document inside a ```json or bare ``` fence, since backticks open nothing; this rule keeps a fence cut before its
+ * closing line malformed, like a document cut short. The fences before the document are paired line by line (a line
+ * inside a JSON string cannot start a line, since a JSON string carries no raw newline); a fence open at the document is
+ * closed by backticks right after it or by a closing fence line anywhere later.
+ */
+function inUnclosedFence(text: string, start: number, end: number): boolean {
+  let open = false;
+  for (const line of text.slice(0, start).split('\n')) {
+    if (!open ? FENCE_OPEN.test(line) : FENCE_CLOSE.test(line)) open = !open;
+  }
+  if (!open) return false;
+  const after = text.slice(end + 1);
+  return !/^[ \t]*```/.test(after) && !after.split('\n').slice(1).some((line) => FENCE_CLOSE.test(line));
 }
 
 /**

@@ -1038,7 +1038,9 @@ test('R4: a RED receipt the ship path rejected is never reloaded from the scaffo
     assert.equal(failed.pendingRepair?.rejectedReceipt, 'abc:0', 'a failed repair keeps the pending repair and the rejected receipt');
     r = runner.next(fx.goal(goal.id), card, failed);
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a failed repair');
-    const noReplacement = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:x', candidateSha: 'sha-x' });
+    // T1-REVIEW-LOOP-GUARDS: a success without a replacement receipt is refused and records nothing.
+    assert.throws(() => runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:x', candidateSha: 'sha-x' }), /RED receipt/);
+    const noReplacement = fx.store.getCardRun(goal.id, 'T1-SCAF')!;
     assert.equal(noReplacement.pendingRepair?.rejectedReceipt, 'abc:0', 'a success without a replacement receipt keeps the rejected one out');
     r = runner.next(fx.goal(goal.id), card, noReplacement);
     if (r.directive.kind === 'build') assert.equal(r.directive.redReceipt, undefined, 'still not reloaded after a success without a replacement');
