@@ -65,18 +65,24 @@ describe('prose (writing density)', () => {
   });
 });
 
+/** Where one sentence ends and another may begin: `.`, `!` or `?` before whitespace, a blank line, or a new list item. */
+const SENTENCE_BREAK = String.raw`[.!?](?=\s)|\n[ \t]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s`;
+/** "subagent" in each spelling and spacing, singular or plural. */
+const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
+
 /**
  * Instructions the Opus 5 and 5.5 guides say to remove from agent prompts (T1-OPUS55-PROMPTS R8): a request to
  * double-check or re-verify the answer, "think carefully", "think step by step", "use a subagent to verify", and the
- * review limits "be conservative" and "only report high-severity".
+ * review limits "be conservative" and "only report high-severity" (T1-PROMPT-CHECK-2 R5 widened three of them).
  */
 const REMOVED_INSTRUCTIONS: Array<[string, RegExp]> = [
   ['double-check', /double(?:-|\s+)?check/i],
-  ['re-verify', /re-?verify|verify\s+again/i],
+  ['re-verify', /re-?verify|\bre\s+verify|verify\s+again/i],
   ['think carefully', /think\s+(?:very\s+)?carefully/i],
   ['think step by step', /think\s+step(?:-|\s+)by(?:-|\s+)step/i],
-  ['use a subagent to verify', /subagent\s+to\s+verify|verify\s+(?:\S+\s+){0,3}?with\s+a\s+subagent/i],
-  ['be conservative', /(?:be|stay)\s+conservative/i],
+  // "verify ... with a subagent" with any number of words between, inside one sentence.
+  ['use a subagent to verify', new RegExp(String.raw`${SUBAGENT}\s+to\s+verify|verify(?:(?!${SENTENCE_BREAK})[\s\S])*?with\s+(?:a\s+)?${SUBAGENT}`, 'i')],
+  ['be conservative', /(?:be|stay)\s+conservative|\b(?:be|stay)\s+(?:(?:very|more|even|extra)\s+){1,2}conservative/i],
   ['only report high-severity', /(?:only\s+report|report\s+only)\s+(?:the\s+)?high(?:-|\s+)severity/i],
 ];
 
@@ -150,6 +156,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       ['Verify every step of the result with a subagent.', 'use a subagent to verify'],
       ['Verify src/a.ts and every other changed file of the candidate, line by line, with a subagent.', 'use a subagent to verify'],
       ['Verify the answer\nwith a subagent.', 'use a subagent to verify'],
+      ['Verify the change from version\n1.5 to 2.0 with a subagent.', 'use a subagent to verify'],
       ['Verify the answer with a sub-agent.', 'use a subagent to verify'],
       ['Verify the answer with a sub agent.', 'use a subagent to verify'],
       ['Verify the answers with subagents.', 'use a subagent to verify'],
@@ -165,7 +172,9 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       'Verify the output! Run the tests with a subagent.',
       'Verify the output?\nRun the tests with a subagent.',
       'Verify the output\n\nRun the tests with a subagent',
+      'Verify the output\n \t\nRun the tests with a subagent',
       '- verify the output\n- run the tests with a subagent',
+      '  - verify the output\n  - run the tests with a subagent',
       '* verify the output\n+ run the tests with a subagent',
       '1) verify the output\n2) run the tests with a subagent',
       'Where verify steps run, nothing changes.',
