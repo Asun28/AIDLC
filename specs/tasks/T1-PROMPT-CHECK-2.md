@@ -1,7 +1,7 @@
 ---
 id: T1-PROMPT-CHECK-2
 title: The end-of-turn wording says a note after the verdict line is ignored only when it holds no JSON, and the removed-instruction check catches the phrasings the T1-OPUS55-PROMPTS reviews found missing
-status: todo
+status: merged
 branch: T1-PROMPT-CHECK-2
 worktree: D:\wt\AIDLC\T1-PROMPT-CHECK-2
 allow_paths:
