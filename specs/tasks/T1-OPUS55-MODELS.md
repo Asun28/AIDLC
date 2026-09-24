@@ -1,7 +1,7 @@
 ---
 id: T1-OPUS55-MODELS
 title: The Claude role defaults and the Claude API provider use claude-opus-5-5, the Claude effort ladder includes xhigh, and every provider request carries an explicit effort and no setting Opus 5.5 rejects
-status: todo
+status: merged
 branch: T1-OPUS55-MODELS
 worktree: D:\wt\AIDLC\T1-OPUS55-MODELS
 allow_paths:
