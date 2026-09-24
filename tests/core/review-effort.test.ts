@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countDiffLines, renameSources, selectReviewEffort, selectReviewEffortFromDiff } from '../../src/core/review-effort.ts';
+import { countDiffLines, selectReviewEffort, selectReviewEffortFromDiff } from '../../src/core/review-effort.ts';
+import * as effortModule from '../../src/core/review-effort.ts';
 import { pathAllowed } from '../../src/review/pre-review.ts';
 import type { ReviewEffortPolicy } from '../../src/core/types.ts';
 
@@ -96,14 +97,31 @@ describe('selectReviewEffortFromDiff (T1-OPUS55-R3-2 acceptance 7 and 9)', () =>
     assert.equal(selectReviewEffortFromDiff(POLICY, 'diff --git a/src/loop/x.ts b/src/loop/x.ts\n--- a/src/loop/x.ts\n+++ b/src/loop/x.ts\n@@ -1 +1 @@\n-a\n+b\n', ['src/loop/x.ts'], pathAllowed), 'medium');
   });
 
-  test('a rename out of src/core under the threshold selects high: the path rule matches the rename from source [R6]', () => {
+  test('a rename out of src/core under the threshold selects high: the changed paths name the source [R6]', () => {
     const renamed = 'diff --git a/src/core/old.ts b/src/loop/new.ts\nsimilarity index 90%\nrename from src/core/old.ts\nrename to src/loop/new.ts\n@@ -1 +1 @@\n-a\n+b\n';
-    assert.equal(selectReviewEffortFromDiff(POLICY, renamed, ['src/loop/new.ts'], pathAllowed), 'high');
+    assert.equal(selectReviewEffortFromDiff(POLICY, renamed, ['src/core/old.ts', 'src/loop/new.ts'], pathAllowed), 'high');
+  });
+});
+
+describe('the path rule reads the changed-path list alone (T1-RENAME-PATHS acceptance 3)', () => {
+  test('a small candidate renaming a non-ASCII file out of src/core/*.ts selects high through its unquoted source [R3]', () => {
+    const quoted = 'diff --git "a/src/core/\\303\\251.ts" "b/src/loop/\\303\\251.ts"\nsimilarity index 100%\nrename from "src/core/\\303\\251.ts"\nrename to "src/loop/\\303\\251.ts"\n';
+    const single: ReviewEffortPolicy = { default: 'medium', high: { minChangedLines: 500, paths: ['src/core/*.ts'] } };
+    assert.equal(selectReviewEffortFromDiff(single, quoted, ['src/core/é.ts', 'src/loop/é.ts'], pathAllowed), 'high');
   });
 
-  test('a C-quoted rename from source is matched with its quotes removed [R6]', () => {
-    const quoted = 'diff --git "a/src/core/\\303\\251.ts" b/src/loop/e.ts\nsimilarity index 100%\nrename from "src/core/\\303\\251.ts"\nrename to src/loop/e.ts\n';
-    assert.equal(selectReviewEffortFromDiff(POLICY, quoted, ['src/loop/e.ts'], pathAllowed), 'high');
+  test('a rename from line the changed paths do not carry selects nothing: the default is kept [R3]', () => {
+    const renamed = 'diff --git a/src/core/old.ts b/src/loop/new.ts\nsimilarity index 100%\nrename from src/core/old.ts\nrename to src/loop/new.ts\n';
+    assert.equal(selectReviewEffortFromDiff(POLICY, renamed, ['src/loop/new.ts'], pathAllowed), 'medium');
+  });
+
+  test('renameSources is removed [R3]', () => {
+    assert.equal('renameSources' in effortModule, false);
+  });
+
+  test('a hunk line with a high path at column 12 selects nothing: a small docs edit keeps the default [R6]', () => {
+    const docs = 'diff --git a/docs/x.md b/docs/x.md\n--- a/docs/x.md\n+++ b/docs/x.md\n@@ -1 +1 @@\n-old\n+' + ' '.repeat(11) + 'src/core/x.ts\n';
+    assert.equal(selectReviewEffortFromDiff(POLICY, docs, ['docs/x.md'], pathAllowed), 'medium');
   });
 });
 
@@ -125,28 +143,7 @@ describe('selectReviewEffortFromDiff fail-closed scope (T1-OPUS55-R3-3 acceptanc
   });
 });
 
-describe('renameSources (T1-OPUS55-R3-3 acceptance 12, R3 decision 1)', () => {
-  test('returns exactly the rename from paths of a diff, and nothing for a diff without a rename [R6]', () => {
-    assert.deepEqual(renameSources(PINNED_DIFF), ['docs/old.md']);
-    assert.deepEqual(renameSources('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n'), []);
-  });
-
-  test('a C-quoted source loses exactly its two quotes; a path with a quote on one side only is kept whole [R6]', () => {
-    assert.deepEqual(renameSources('rename from "src/core/\\303\\251.ts"\n'), ['src/core/\\303\\251.ts']);
-    assert.deepEqual(renameSources('rename from "src/core/a\nrename from src/core/b"\nrename from "\n'), ['"src/core/a', 'src/core/b"', '"']);
-  });
-
-  test('a hunk line with a high path at column 12 is not a rename source: a small docs edit keeps the default [R6]', () => {
-    const docs = 'diff --git a/docs/x.md b/docs/x.md\n--- a/docs/x.md\n+++ b/docs/x.md\n@@ -1 +1 @@\n-old\n+' + ' '.repeat(11) + 'src/core/x.ts\n';
-    assert.equal(selectReviewEffortFromDiff(POLICY, docs, ['docs/x.md'], pathAllowed), 'medium');
-  });
-});
-
 describe('review-effort survivors of the wider mutation sweep (T1-OPUS55-R3-3 acceptance 12)', () => {
-  test('a quoted source of two characters is stripped to its content: the length guard is 2, not 3 [R6]', () => {
-    assert.deepEqual(renameSources('rename from ""\n'), ['']);
-  });
-
   test('a diff of blank lines only is empty, not decorated: the default is kept [R5]', () => {
     assert.equal(selectReviewEffortFromDiff(POLICY, '\n  \n', ['src/loop/x.ts'], pathAllowed), 'medium');
   });

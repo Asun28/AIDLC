@@ -1,8 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GitProbe, GitProbeError } from '../../src/probes/git.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner } from '../../src/probes/exec.ts';
+import { collectCandidateDiff } from '../../src/review/pre-review.ts';
 
 // Drive-neutral fixture paths: Windows keeps a drive letter, POSIX runners use an absolute root.
 const D = process.platform === 'win32' ? 'C:' : '';
@@ -109,7 +113,7 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
         'git rev-list --left-right --count refs/remotes/origin/main...HEAD': { stdout: '2\t3\n' },
         'git merge-base --is-ancestor deadbeef refs/remotes/origin/main': { exitCode: 0 },
         'git merge-base --is-ancestor cafebabe refs/remotes/origin/main': { exitCode: 1 },
-        'git diff --name-only base...HEAD': { stdout: 'src/a.ts\ndocs/b.md\n' },
+        'git diff --name-only -z --no-renames base...HEAD': { stdout: 'src/a.ts\u0000docs/b.md\u0000' },
         'git diff --numstat base...HEAD': { stdout: '10\t2\tsrc/a.ts\n-\t-\tbin/blob\n3\t0\tdocs/b.md\n' },
         'git rev-parse --git-common-dir': { stdout: `${D}/repo/.git\n` },
         'git fetch --quiet --no-tags origin +refs/heads/main:refs/remotes/origin/main': { exitCode: 0 },
@@ -122,5 +126,38 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
     assert.deepEqual(probe.numstat(`${D}/wt`, 'base'), { added: 13, deleted: 2, files: 3 });
     assert.equal(probe.commonDir(`${D}/wt`), path.resolve(`${D}/repo/.git`));
     assert.equal(probe.fetchBase(`${D}/wt`, 'origin/main').exitCode, 0);
+  });
+
+  it('lists a renamed file by its source and its destination, unquoted, in GitProbe and in the review listing (T1-RENAME-PATHS acceptance 1) [R3]', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-rename-'));
+    const git = (args: string[]) => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8', windowsHide: true });
+      assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+      return r.stdout;
+    };
+    try {
+      git(['init', '-q', '-b', 'main']);
+      // git's defaults, set in the repository so no user configuration changes them: quoted non-ASCII names, rename detection.
+      git(['config', 'core.quotepath', 'true']);
+      git(['config', 'diff.renames', 'true']);
+      mkdirSync(path.join(repo, 'src', 'core'), { recursive: true });
+      mkdirSync(path.join(repo, 'src', 'loop'));
+      writeFileSync(path.join(repo, 'src', 'core', 'é.ts'), 'export const e = 1;\n', 'utf8');
+      git(['add', '-A']);
+      git(['commit', '-q', '-m', 'base']);
+      git(['checkout', '-q', '-b', 'feature']);
+      renameSync(path.join(repo, 'src', 'core', 'é.ts'), path.join(repo, 'src', 'loop', 'é.ts'));
+      // A name that starts with a space: the listing is split on NUL and never trimmed.
+      writeFileSync(path.join(repo, ' lead.md'), 'lead\n', 'utf8');
+      git(['add', '-A']);
+      git(['commit', '-q', '-m', 'rename']);
+      // With rename detection git names the rename by its destination only, C-quoted with octal escapes.
+      assert.equal(git(['diff', '--name-only', 'main...HEAD']), ' lead.md\n"src/loop/\\303\\251.ts"\n');
+      const expected = [' lead.md', 'src/core/é.ts', 'src/loop/é.ts'];
+      assert.deepEqual(new GitProbe().changedPaths(repo, 'main'), expected);
+      assert.deepEqual(collectCandidateDiff(runSync, repo, 'main', 1_000_000).changedPaths, expected);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
