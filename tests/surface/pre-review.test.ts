@@ -1068,6 +1068,9 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 2: a verdict inside a closed ```json or b
   assert.equal(read(REASONING + '```\n' + pass), undefined, 'a bare fence that never closes is malformed');
   assert.equal(read('```json\n{"verdict":"pass","reasons":[\n```\n'), undefined, 'a fenced document cut short is malformed');
   assert.equal(read('```json\n' + pass + '\n```json\n'), undefined, 'a fence line with an info string closes nothing');
+  assert.equal(read('```json\n' + pass + '```json\n'), undefined, 'backticks with an info string right after the document close nothing');
+  assert.equal(read('```json\n' + pass + ' ```x'), undefined, 'backticks with any text after them right after the document close nothing');
+  assert.equal(read('```json\n' + pass + '``` \r\nNo further notes.'), 'pass', 'backticks and whitespace right after the document close the fence before a later line');
   assert.equal(read('```diff\n-old\n+new\n```\n' + pass + '\n'), 'pass', 'a closed fence earlier in the reasoning leaves the unfenced verdict outside any fence');
   assert.equal(read('```diff\n-old\n+new\n' + pass + '\n'), undefined, 'a verdict inside an earlier fence that never closes is malformed');
   assert.equal(read('```a``` is inline code, not a fence\n' + pass + '\n'), 'pass', 'a line with backticks in its info string opens no fence');
