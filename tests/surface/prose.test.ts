@@ -66,17 +66,43 @@ describe('prose (writing density)', () => {
 });
 
 /**
+ * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes, brackets,
+ * backticks or emphasis marks, whitespace and a capital letter; a blank line; or a new list item. The dot of an ellipsis or of
+ * e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends no sentence, and any other abbreviation before a lowercase word stays
+ * inside it.
+ */
+const SENTENCE_BREAK = /(?:(?<!\.|\b(?:e\.g|i\.e|etc|vs|cf|Mrs?|Ms|Dr))\.|[!?])["'`)\]*_]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
+/** "subagent" in each spelling and spacing, singular or plural. */
+const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
+const SUBAGENT_TO_VERIFY = new RegExp(String.raw`${SUBAGENT}\s+to\s+verify`, 'i');
+const WITH_SUBAGENT = new RegExp(String.raw`with\s+(?:a\s+)?${SUBAGENT}`, 'i');
+
+/** "use a subagent to verify", or "verify" (verifying too) and a later "with a subagent" with no sentence break between them. */
+function verifiesWithSubagent(text: string): boolean {
+  if (SUBAGENT_TO_VERIFY.test(text)) return true;
+  for (const verify of text.matchAll(/verify/gi)) {
+    const rest = text.slice(verify.index + verify[0].length);
+    const tool = WITH_SUBAGENT.exec(rest);
+    if (!tool) return false;
+    // The first letter of the phrase comes along: a capital there starts a new sentence.
+    if (!SENTENCE_BREAK.test(rest.slice(0, tool.index + 1))) return true;
+  }
+  return false;
+}
+
+/**
  * Instructions the Opus 5 and 5.5 guides say to remove from agent prompts (T1-OPUS55-PROMPTS R8): a request to
  * double-check or re-verify the answer, "think carefully", "think step by step", "use a subagent to verify", and the
- * review limits "be conservative" and "only report high-severity".
+ * review limits "be conservative" and "only report high-severity" (T1-PROMPT-CHECK-2 R5 widened three of them).
  */
-const REMOVED_INSTRUCTIONS: Array<[string, RegExp]> = [
+const REMOVED_INSTRUCTIONS: Array<[string, { test(text: string): boolean }]> = [
   ['double-check', /double(?:-|\s+)?check/i],
-  ['re-verify', /re-?verify|verify\s+again/i],
+  ['re-verify', /re-?verify|\bre\s+verify|verify\s+again/i],
   ['think carefully', /think\s+(?:very\s+)?carefully/i],
   ['think step by step', /think\s+step(?:-|\s+)by(?:-|\s+)step/i],
-  ['use a subagent to verify', /subagent\s+to\s+verify|verify\s+(?:\S+\s+){0,3}?with\s+a\s+subagent/i],
-  ['be conservative', /(?:be|stay)\s+conservative/i],
+  // "verify ... with a subagent" with any number of words between, inside one sentence.
+  ['use a subagent to verify', { test: verifiesWithSubagent }],
+  ['be conservative', /(?:be|stay)\s+conservative|\b(?:be|stay)\s+(?:(?:very|more|even|extra)\s+){1,2}conservative/i],
   ['only report high-severity', /(?:only\s+report|report\s+only)\s+(?:the\s+)?high(?:-|\s+)severity/i],
 ];
 
@@ -136,6 +162,80 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
   });
 
+  test('T1-PROMPT-CHECK-2 acceptance 2: removedInstructions catches the phrasings the T1-OPUS55-PROMPTS reviews found missing [R5]', () => {
+    const cases: Array<[string, string]> = [
+      ['Be very conservative.', 'be conservative'],
+      ['Be more conservative.', 'be conservative'],
+      ['Stay more conservative.', 'be conservative'],
+      ['Stay very conservative.', 'be conservative'],
+      ['Be even more conservative.', 'be conservative'],
+      ['Be extra conservative.', 'be conservative'],
+      ['Be very\nconservative.', 'be conservative'],
+      ['Re verify the result.', 're-verify'],
+      ['Re\nverify the result.', 're-verify'],
+      ['Verify every step of the result with a subagent.', 'use a subagent to verify'],
+      ['Verify src/a.ts and every other changed file of the candidate, line by line, with a subagent.', 'use a subagent to verify'],
+      ['Verify the answer\nwith a subagent.', 'use a subagent to verify'],
+      ['Verify the change from version\n1.5 to 2.0 with a subagent.', 'use a subagent to verify'],
+      // R3 decision 1: an abbreviation or an ellipsis before a lowercase word is inside the sentence, as the old pattern read it.
+      ['Verify e.g. the diff with a subagent.', 'use a subagent to verify'],
+      ['Verify i.e. the diff with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff etc. with a subagent.', 'use a subagent to verify'],
+      ['Verify the result... with a subagent.', 'use a subagent to verify'],
+      ['Verify it. then run the tests with a subagent.', 'use a subagent to verify'],
+      // R2 cycle 1: the dot of a listed abbreviation or of an ellipsis ends no sentence, a capital after it included.
+      ['Verify e.g. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify i.e. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify Bob, Alice etc. The rest with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff vs. Main with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff (cf. Section 2) with a subagent.', 'use a subagent to verify'],
+      ['Verify it for Mr. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify it for Mrs. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify it for Ms. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify it for Dr. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify the result... Bob runs it with a subagent.', 'use a subagent to verify'],
+      ['Verify it. Then verify the diff with a subagent.', 'use a subagent to verify'],
+      ['Verify, with a subagent, the diff.', 'use a subagent to verify'],
+      ['Try verifying the output with a subagent.', 'use a subagent to verify'],
+      ['Verify the answer with a sub-agent.', 'use a subagent to verify'],
+      ['Verify the answer with a sub agent.', 'use a subagent to verify'],
+      ['Verify the answers with subagents.', 'use a subagent to verify'],
+      ['Use a sub-agent to verify the answer.', 'use a subagent to verify'],
+      ['Use subagents to verify the answers.', 'use a subagent to verify'],
+    ];
+    for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
+  });
+
+  test('T1-PROMPT-CHECK-2 acceptance 2: a verify and a with a subagent in two sentences, paragraphs or list items stay clean, and so do look-alike words [R5]', () => {
+    const clean = [
+      'Verify it. Then with a subagent, run the tests.',
+      'Verify it. With a subagent, run the tests.',
+      'Verify it.  Then run the tests with a subagent.',
+      '"Verify it." Then run the tests with a subagent.',
+      "'Verify it.' Then run the tests with a subagent.",
+      '(Verify it.) Then run the tests with a subagent.',
+      '[Verify it.] Then run the tests with a subagent.',
+      '`Verify it.` Then run the tests with a subagent.',
+      '**Verify it.** Then run the tests with a subagent.',
+      '_Verify it._ Then run the tests with a subagent.',
+      'Verify it! Then run the tests with a subagent.',
+      'Verify the devs. Then run the diff with a subagent.',
+      'Verify the output\r\n\r\nRun the tests with a subagent',
+      'Verify the output! Run the tests with a subagent.',
+      'Verify the output?\nRun the tests with a subagent.',
+      'Verify the output\n\nRun the tests with a subagent',
+      'Verify the output\n \t\nRun the tests with a subagent',
+      '- verify the output\n- run the tests with a subagent',
+      '  - verify the output\n  - run the tests with a subagent',
+      '* verify the output\n+ run the tests with a subagent',
+      '+ verify the output\n* run the tests with a subagent',
+      '1) verify the output\n2) run the tests with a subagent',
+      'Where verify steps run, nothing changes.',
+      'Maybe more conservative estimates hold.',
+    ];
+    for (const text of clean) assert.deepEqual(removedInstructions(text), [], text);
+  });
+
   test('acceptance 5: no agent, skill, REVIEW.md or review prompt carries an instruction the guides say to remove [R8]', () => {
     assert.ok(PROMPT_FILES.length >= 20, `agent and skill files resolved to ${PROMPT_FILES.length}`);
     for (const policy of ['REVIEW.md', path.join('templates', 'REVIEW.md')]) assert.ok(PROMPT_FILES.includes(path.join(root, policy)), `${policy} is scanned`);
@@ -152,6 +252,17 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     assert.deepEqual(offenders, []);
   });
 
+  test('T1-PROMPT-CHECK-2 acceptance 3: CHANGELOG.md Unreleased carries the entry, every sentence of it [R4] [R5]', () => {
+    const changelog = read('CHANGELOG.md').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const sentences = [
+      '- End-of-turn wording and removed-instruction patterns, card T1-PROMPT-CHECK-2: the end-of-turn line of every R2 and R3 prompt and the end-of-turn rule in `docs/OPERATIONS.md` now say that a note after the verdict line is ignored only when it contains no JSON, since the reader takes the last JSON document that parses; `docs/OPERATIONS.md` said that any note after the verdict line is ignored.',
+      '`removedInstructions` (`tests/surface/prose.test.ts`) also catches "be very conservative", "be more conservative", "stay more conservative", "re verify" and "verify ... with a subagent" with any number of words between, and "subagent" spelled "sub-agent" or "sub agent", each with a self-test case.',
+      'A "verify" and a "with a subagent" in two sentences, paragraphs or list items no longer match, where the old pattern matched across a sentence end within three words; a sentence ends at `.`, `!` or `?`, after any closing quote, bracket, backtick or emphasis mark, followed by whitespace and a capital letter; the dot of an ellipsis or of e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends none, and any other abbreviation before a lowercase word stays inside the sentence.',
+    ];
+    for (const sentence of sentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+  });
+
   test('acceptance 3: the reviewer agent ends its turn only on the verdict line, as a numbered procedure step [R7]', () => {
     assert.ok(flat(read('.claude', 'agents', 'reviewer.md')).includes('8. End your turn with the JSON verdict line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review.'));
   });
@@ -166,7 +277,8 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
 
   test('acceptance 6: docs/OPERATIONS.md names the end-of-turn rule and CHANGELOG.md Unreleased carries the entry [R7]', () => {
     // The whole paragraph this card adds, every sentence of it.
-    assert.ok(read('docs', 'OPERATIONS.md').split(/\r?\n/).includes('End-of-turn rule (card T1-OPUS55-PROMPTS): every review prompt and the reviewer agent say that the reply ends with the verdict JSON line and that a progress note, a summary that announces a next step or an offer to continue is not the end of the review; a headless reviewer whose reply ends on such a note with no verdict line before it has returned no verdict, which spends a no-verdict retry (a note after the verdict line is ignored, since the verdict is the last JSON line of the output). The R2 prompt also asks for every finding the reviewer can defend: its block rule decides only whether a finding blocks, not whether it is reported.'));
+    // The note rule sentence is T1-PROMPT-CHECK-2's (acceptance 1): it replaced the parenthesis that said any note after the verdict line is ignored.
+    assert.ok(read('docs', 'OPERATIONS.md').split(/\r?\n/).includes('End-of-turn rule (card T1-OPUS55-PROMPTS): every review prompt and the reviewer agent say that the reply ends with the verdict JSON line and that a progress note, a summary that announces a next step or an offer to continue is not the end of the review; a headless reviewer whose reply ends on such a note with no verdict line before it has returned no verdict, which spends a no-verdict retry. Every review prompt says that a note after the verdict line is ignored only when it contains no JSON, since the reader takes the last JSON document that parses: a JSON document in the note is read instead of the verdict, and one that does not parse leaves no verdict (card T1-PROMPT-CHECK-2). The R2 prompt also asks for every finding the reviewer can defend: its block rule decides only whether a finding blocks, not whether it is reported.'));
     // In the formal review section: after its heading, before the placeholder paragraph and the next section.
     const ops = read('docs', 'OPERATIONS.md');
     const at = ops.indexOf('\n' + 'End-of-turn rule (card T1-OPUS55-PROMPTS): every review prom');

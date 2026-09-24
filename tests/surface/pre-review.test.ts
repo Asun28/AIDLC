@@ -1074,8 +1074,11 @@ test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal s
   assert.equal(retained(other.verdictRef!)['coverage'], undefined);
 });
 
-/** The end-of-turn sentence every review prompt carries, on its own line after the output contract (T1-OPUS55-PROMPTS R7). */
-const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict.';
+/**
+ * The end-of-turn line every review prompt carries, on its own line after the output contract (T1-OPUS55-PROMPTS R7), with
+ * the rule for a note after the verdict line (T1-PROMPT-CHECK-2 R4).
+ */
+const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict. A note after the verdict line is ignored only when it contains no JSON: the reader takes the last JSON document that parses as the verdict, and a JSON document after it that does not parse leaves no verdict.';
 /** The R2 sentence that asks for every finding (T1-OPUS55-PROMPTS R8). */
 const EVERY_FINDING = 'Report every finding you can defend, not only the ones that block: the block rule above decides only whether a finding blocks, not whether it is reported.';
 
@@ -1093,6 +1096,13 @@ test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single
       assert.ok(lines.includes(END_OF_TURN), `${stage}/${perspective ?? 'single'} carries the end-of-turn line`);
     }
   }
+});
+
+test('T1-PROMPT-CHECK-2 acceptance 1: the reader keeps the end-of-turn rule, a note after the verdict line is ignored only when it contains no JSON [R4]', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  assert.equal(extractVerdict(pass + '\nNo further notes; the diff is small.\n')?.verdict, 'pass', 'a note with no JSON is ignored');
+  assert.equal(extractVerdict(pass + '\nSummary: {"findings":0}\n'), undefined, 'a JSON document in the note is read instead of the verdict');
+  assert.equal(extractVerdict(pass + '\nNext: {"step":}\n'), undefined, 'a JSON document in the note that does not parse leaves no verdict');
 });
 
 test('T1-OPUS55-PROMPTS acceptance 2: the pre-review prompt asks for every finding and says the block rule decides only blocking; the formal prompt is not given a second copy [R8]', () => {
