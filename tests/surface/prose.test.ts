@@ -65,23 +65,42 @@ describe('prose (writing density)', () => {
   });
 });
 
-/** Where one sentence ends and another may begin: `.`, `!` or `?` before whitespace, a blank line, or a new list item. */
-const SENTENCE_BREAK = String.raw`[.!?](?=\s)|\n[ \t]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s`;
+/**
+ * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes or brackets,
+ * whitespace and a capital letter (so e.g., i.e., etc. or an ellipsis before a lowercase word stay inside the sentence); a
+ * blank line; or a new list item.
+ */
+const SENTENCE_BREAK = /[.!?]["')\]]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
 /** "subagent" in each spelling and spacing, singular or plural. */
 const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
+const SUBAGENT_TO_VERIFY = new RegExp(String.raw`${SUBAGENT}\s+to\s+verify`, 'i');
+const WITH_SUBAGENT = new RegExp(String.raw`with\s+(?:a\s+)?${SUBAGENT}`, 'i');
+
+/** "use a subagent to verify", or "verify" (verifying too) and a later "with a subagent" with no sentence break between them. */
+function verifiesWithSubagent(text: string): boolean {
+  if (SUBAGENT_TO_VERIFY.test(text)) return true;
+  for (const verify of text.matchAll(/verify/gi)) {
+    const rest = text.slice(verify.index + verify[0].length);
+    const tool = WITH_SUBAGENT.exec(rest);
+    if (!tool) return false;
+    // The first letter of the phrase comes along: a capital there starts a new sentence.
+    if (!SENTENCE_BREAK.test(rest.slice(0, tool.index + 1))) return true;
+  }
+  return false;
+}
 
 /**
  * Instructions the Opus 5 and 5.5 guides say to remove from agent prompts (T1-OPUS55-PROMPTS R8): a request to
  * double-check or re-verify the answer, "think carefully", "think step by step", "use a subagent to verify", and the
  * review limits "be conservative" and "only report high-severity" (T1-PROMPT-CHECK-2 R5 widened three of them).
  */
-const REMOVED_INSTRUCTIONS: Array<[string, RegExp]> = [
+const REMOVED_INSTRUCTIONS: Array<[string, { test(text: string): boolean }]> = [
   ['double-check', /double(?:-|\s+)?check/i],
   ['re-verify', /re-?verify|\bre\s+verify|verify\s+again/i],
   ['think carefully', /think\s+(?:very\s+)?carefully/i],
   ['think step by step', /think\s+step(?:-|\s+)by(?:-|\s+)step/i],
   // "verify ... with a subagent" with any number of words between, inside one sentence.
-  ['use a subagent to verify', new RegExp(String.raw`${SUBAGENT}\s+to\s+verify|verify(?:(?!${SENTENCE_BREAK})[\s\S])*?with\s+(?:a\s+)?${SUBAGENT}`, 'i')],
+  ['use a subagent to verify', { test: verifiesWithSubagent }],
   ['be conservative', /(?:be|stay)\s+conservative|\b(?:be|stay)\s+(?:(?:very|more|even|extra)\s+){1,2}conservative/i],
   ['only report high-severity', /(?:only\s+report|report\s+only)\s+(?:the\s+)?high(?:-|\s+)severity/i],
 ];
@@ -165,6 +184,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       ['Verify it. then run the tests with a subagent.', 'use a subagent to verify'],
       ['Verify it. Then verify the diff with a subagent.', 'use a subagent to verify'],
       ['Verify, with a subagent, the diff.', 'use a subagent to verify'],
+      ['Try verifying the output with a subagent.', 'use a subagent to verify'],
       ['Verify the answer with a sub-agent.', 'use a subagent to verify'],
       ['Verify the answer with a sub agent.', 'use a subagent to verify'],
       ['Verify the answers with subagents.', 'use a subagent to verify'],
@@ -184,7 +204,6 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       '(Verify it.) Then run the tests with a subagent.',
       '[Verify it.] Then run the tests with a subagent.',
       'Verify the output\r\n\r\nRun the tests with a subagent',
-      'Run the verification with a subagent.',
       'Verify the output! Run the tests with a subagent.',
       'Verify the output?\nRun the tests with a subagent.',
       'Verify the output\n\nRun the tests with a subagent',
@@ -192,6 +211,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       '- verify the output\n- run the tests with a subagent',
       '  - verify the output\n  - run the tests with a subagent',
       '* verify the output\n+ run the tests with a subagent',
+      '+ verify the output\n* run the tests with a subagent',
       '1) verify the output\n2) run the tests with a subagent',
       'Where verify steps run, nothing changes.',
       'Maybe more conservative estimates hold.',
@@ -221,7 +241,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     const sentences = [
       '- End-of-turn wording and removed-instruction patterns, card T1-PROMPT-CHECK-2: the end-of-turn line of every R2 and R3 prompt and the end-of-turn rule in `docs/OPERATIONS.md` now say that a note after the verdict line is ignored only when it contains no JSON, since the reader takes the last JSON document that parses; `docs/OPERATIONS.md` said that any note after the verdict line is ignored.',
       '`removedInstructions` (`tests/surface/prose.test.ts`) also catches "be very conservative", "be more conservative", "stay more conservative", "re verify" and "verify ... with a subagent" with any number of words between, and "subagent" spelled "sub-agent" or "sub agent", each with a self-test case.',
-      'A "verify" and a "with a subagent" in two sentences, paragraphs or list items no longer match, where the old pattern matched across a sentence end within three words.',
+      'A "verify" and a "with a subagent" in two sentences, paragraphs or list items no longer match, where the old pattern matched across a sentence end within three words; a sentence ends at `.`, `!` or `?`, after any closing quote or bracket, followed by whitespace and a capital letter, so e.g., i.e., etc. or an ellipsis before a lowercase word stay inside one sentence.',
     ];
     for (const sentence of sentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
