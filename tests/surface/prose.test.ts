@@ -70,11 +70,19 @@ describe('prose (writing density)', () => {
  * double-check or re-verify the answer, "think carefully", "think step by step", "use a subagent to verify", and the
  * review limits "be conservative" and "only report high-severity".
  */
-const REMOVED_INSTRUCTIONS: RegExp[] = [/double[- ]check/i, /re-?verify/i, /think carefully/i, /think step by step/i, /subagent to verify/i, /be conservative/i, /only report high[- ]severity/i];
+const REMOVED_INSTRUCTIONS: Array<[string, RegExp]> = [
+  ['double-check', /double(?:-|\s+)check/i],
+  ['re-verify', /re-?verify/i],
+  ['think carefully', /think\s+carefully/i],
+  ['think step by step', /think\s+step\s+by\s+step/i],
+  ['use a subagent to verify', /subagent\s+to\s+verify/i],
+  ['be conservative', /be\s+conservative/i],
+  ['only report high-severity', /only\s+report\s+high(?:-|\s+)severity/i],
+];
 
-/** The instructions of REMOVED_INSTRUCTIONS that `text` carries. */
+/** The instructions of REMOVED_INSTRUCTIONS that `text` carries; words may be separated by any whitespace, a line break included. */
 export function removedInstructions(text: string): string[] {
-  return REMOVED_INSTRUCTIONS.filter((re) => re.test(text)).map((re) => re.source);
+  return REMOVED_INSTRUCTIONS.filter(([, re]) => re.test(text)).map(([name]) => name);
 }
 
 /** Every agent and skill file, both copies. */
@@ -95,11 +103,13 @@ const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'ut
 
 describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
   test('removedInstructions flags each removed instruction, whatever the case, and passes the review wording in use', () => {
-    assert.deepEqual(removedInstructions('Please Double-check your answer'), ['double[- ]check']);
-    assert.deepEqual(removedInstructions('re-verify it; reverify it'), ['re-?verify']);
+    assert.deepEqual(removedInstructions('Please Double-check your answer'), ['double-check']);
+    assert.deepEqual(removedInstructions('re-verify it; reverify it'), ['re-verify']);
     assert.deepEqual(removedInstructions('Think carefully. Think step by step.'), ['think carefully', 'think step by step']);
-    assert.deepEqual(removedInstructions('use a subagent to verify the result'), ['subagent to verify']);
-    assert.deepEqual(removedInstructions('Be conservative and only report high-severity issues'), ['be conservative', 'only report high[- ]severity']);
+    assert.deepEqual(removedInstructions('use a subagent to verify the result'), ['use a subagent to verify']);
+    assert.deepEqual(removedInstructions('Be conservative and only report high-severity issues'), ['be conservative', 'only report high-severity']);
+    // An instruction wrapped across a line break, as Markdown prose wraps, is still the instruction.
+    assert.deepEqual(removedInstructions('you should double\ncheck, think\n  step by\nstep, use a subagent\n  to verify, be\nconservative and only report\nhigh severity findings'), ['double-check', 'think step by step', 'use a subagent to verify', 'be conservative', 'only report high-severity']);
     assert.deepEqual(removedInstructions('report every material finding you can defend'), []);
   });
 
@@ -130,9 +140,11 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
   });
 
   test('acceptance 6: docs/OPERATIONS.md names the end-of-turn rule and CHANGELOG.md Unreleased carries the entry [R7]', () => {
-    assert.ok(read('docs', 'OPERATIONS.md').includes('End-of-turn rule (card T1-OPUS55-PROMPTS): every review prompt and the reviewer agent say that the reply ends with the verdict JSON line and that a progress note, a summary that announces a next step or an offer to continue is not the end of the review; a headless reviewer whose turn ends on one has returned no verdict, which spends a no-verdict retry.'));
+    // The whole paragraph this card adds, every sentence of it.
+    assert.ok(read('docs', 'OPERATIONS.md').split(/\r?\n/).includes('End-of-turn rule (card T1-OPUS55-PROMPTS): every review prompt and the reviewer agent say that the reply ends with the verdict JSON line and that a progress note, a summary that announces a next step or an offer to continue is not the end of the review; a headless reviewer whose turn ends on one has returned no verdict, which spends a no-verdict retry. The R2 prompt also asks for every finding the reviewer can defend: its block rule decides only whether a finding blocks, not whether it is reported.'));
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    assert.ok(unreleased.includes('- Review and agent prompts for Opus 5.5, card T1-OPUS55-PROMPTS: every R2 and R3 prompt and the reviewer agent end the turn only on the verdict JSON line'));
+    // The whole entry this card adds, every clause of it.
+    assert.ok(unreleased.split(/\r?\n/).includes('- Review and agent prompts for Opus 5.5, card T1-OPUS55-PROMPTS: every R2 and R3 prompt and the reviewer agent end the turn only on the verdict JSON line; a progress note, a summary that announces a next step or an offer to continue is not the end of the review. The R2 prompt asks for every finding the reviewer can defend and says its block rule decides only whether a finding blocks. The implementer agent ends its turn only with the report or a named blocker, and `arc.md` gives a child the elapsed time against its deadline (`elapsed <s> / <s>`). `tests/surface/prose.test.ts` keeps every agent, skill and review prompt free of the instructions the Opus 5 and 5.5 guides say to remove (double-check or re-verify, "think carefully", "think step by step", "use a subagent to verify", "be conservative", "only report high-severity").'));
   });
 });

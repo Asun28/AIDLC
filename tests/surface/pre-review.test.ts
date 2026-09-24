@@ -6,7 +6,7 @@ import path from 'node:path';
 import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 // Namespace import for the T1-REVIEW-INPUTS helpers: absent on the baseline, so each test fails at its first call rather than at link time.
 import * as inputs from '../../src/review/pre-review.ts';
-import { COVERAGE_ANGLE } from '../../src/review/pre-review.ts';
+import { COVERAGE_ANGLE, PERSPECTIVES } from '../../src/review/pre-review.ts';
 import * as cli from '../../src/cli/main.ts';
 import { createHash } from 'node:crypto';
 import { classifyVerdict } from '../../src/core/review-policy.ts';
@@ -1031,7 +1031,7 @@ test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single
   const { card } = fixtureCard();
   const input = { reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
   for (const stage of ['pre', 'formal'] as const) {
-    for (const perspective of [undefined, 'bugs', 'security', 'compliance', 'ac-coverage', 'spec-deviations', 'edge-cases']) {
+    for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
       const lines = buildReviewPrompt({ ...input, stage, perspective, coverage: perspective === 'ac-coverage' }).split('\n');
       assert.ok(lines.includes(END_OF_TURN), `${stage}/${perspective ?? 'single'} carries the end-of-turn line`);
     }
@@ -1041,7 +1041,7 @@ test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single
 test('T1-OPUS55-PROMPTS acceptance 2: the pre-review prompt asks for every finding and says the block rule decides only blocking; the formal prompt is not given a second copy [R8]', () => {
   const { card } = fixtureCard();
   const input = { reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
-  for (const perspective of [undefined, 'bugs', 'ac-coverage']) {
+  for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
     assert.ok(buildReviewPrompt({ ...input, stage: 'pre', perspective }).split('\n')[0]!.includes(EVERY_FINDING), `pre/${perspective ?? 'single'} asks for every finding`);
     assert.equal(buildReviewPrompt({ ...input, stage: 'formal', perspective }).includes(EVERY_FINDING), false, 'R3 already asks for every material finding');
   }
