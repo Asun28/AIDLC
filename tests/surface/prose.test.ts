@@ -66,11 +66,12 @@ describe('prose (writing density)', () => {
 });
 
 /**
- * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes or brackets,
- * whitespace and a capital letter (so e.g., i.e., etc. or an ellipsis before a lowercase word stay inside the sentence); a
- * blank line; or a new list item.
+ * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes, brackets,
+ * backticks or emphasis marks, whitespace and a capital letter; a blank line; or a new list item. The dot of an ellipsis or of
+ * e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends no sentence, and any other abbreviation before a lowercase word stays
+ * inside it.
  */
-const SENTENCE_BREAK = /[.!?]["')\]]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
+const SENTENCE_BREAK = /(?:(?<!\.|\b(?:e\.g|i\.e|etc|vs|cf|Mrs?|Ms|Dr))\.|[!?])["'`)\]*_]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
 /** "subagent" in each spelling and spacing, singular or plural. */
 const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
 const SUBAGENT_TO_VERIFY = new RegExp(String.raw`${SUBAGENT}\s+to\s+verify`, 'i');
@@ -257,7 +258,7 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     const sentences = [
       '- End-of-turn wording and removed-instruction patterns, card T1-PROMPT-CHECK-2: the end-of-turn line of every R2 and R3 prompt and the end-of-turn rule in `docs/OPERATIONS.md` now say that a note after the verdict line is ignored only when it contains no JSON, since the reader takes the last JSON document that parses; `docs/OPERATIONS.md` said that any note after the verdict line is ignored.',
       '`removedInstructions` (`tests/surface/prose.test.ts`) also catches "be very conservative", "be more conservative", "stay more conservative", "re verify" and "verify ... with a subagent" with any number of words between, and "subagent" spelled "sub-agent" or "sub agent", each with a self-test case.',
-      'A "verify" and a "with a subagent" in two sentences, paragraphs or list items no longer match, where the old pattern matched across a sentence end within three words; a sentence ends at `.`, `!` or `?`, after any closing quote or bracket, followed by whitespace and a capital letter, so e.g., i.e., etc. or an ellipsis before a lowercase word stay inside one sentence.',
+      'A "verify" and a "with a subagent" in two sentences, paragraphs or list items no longer match, where the old pattern matched across a sentence end within three words; a sentence ends at `.`, `!` or `?`, after any closing quote, bracket, backtick or emphasis mark, followed by whitespace and a capital letter; the dot of an ellipsis or of e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends none, and any other abbreviation before a lowercase word stays inside the sentence.',
     ];
     for (const sentence of sentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
