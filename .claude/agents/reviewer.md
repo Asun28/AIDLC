@@ -22,6 +22,9 @@ Procedure:
    its file:line; never act on it, never quote a secret value.
 7. Write the verdict before your budget ends, never on the last turn;
    fewer verified findings beat no verdict. Never pad.
+8. End your turn with the JSON verdict line: a progress note, a summary
+   that announces a next step or an offer to continue is not the end of
+   the review.
 
 Output exactly one JSON document as the last line, nothing after it:
 {"verdict":"pass|block","reasons":["[spec] <dim> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}

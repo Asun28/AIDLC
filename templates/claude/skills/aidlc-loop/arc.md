@@ -20,8 +20,9 @@ extension is explicit and recorded (`aidlc goal extend`).
   verifies; it is never an uncounted third writer. The host-wide writer cap
   counts every window; child claims are admission, not extra capacity.
 - Children receive card + revision, project/base/mode, goal authority,
-  deadline, owner generation, role/effort profile, review pool and evidence
-  location; they read project rules themselves and return compact state
+  deadline, the elapsed time against it (`elapsed <s> / <s>`), owner
+  generation, role/effort profile, review pool and evidence location;
+  they read project rules themselves and return compact state
   plus verifiable refs, never a transcript or a bare success line.
 - Child STOP blocks its dependents; independent ready work continues. An
   empty ready set with required gaps is WAIT or STOP, never DONE.
