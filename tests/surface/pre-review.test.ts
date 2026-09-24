@@ -1100,6 +1100,7 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG U
     '- Review loop guards, card T1-REVIEW-LOOP-GUARDS: `aidlc card attempt --outcome success` on a `tdd: true` card whose run and attempt carry no RED receipt is refused with an error naming the missing RED receipt and records nothing, where it used to bind the candidate and leave the card in BUILD with every later attempt refused.',
     'A verdict document inside a closed ```json or bare ``` fence is read as the verdict, and a document inside a fence that never closes is malformed.',
     'Backticks right after the document close its fence only when nothing but whitespace follows them on that line.',
+    'The reader already read a closed fence before this card, so the cause of the no-verdict round T1-OPUS55-PROMPTS lost is not established; the new rule only makes an unclosed fence fail closed like a document cut short (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
