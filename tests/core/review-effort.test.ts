@@ -13,7 +13,7 @@ describe('selectReviewEffort (T1-OPUS55-R3 acceptance 1)', () => {
   });
 
   test('below the threshold with no path matching, the policy default is selected [R2]', () => {
-    assert.equal(selectReviewEffort({ ...POLICY, default: 'xhigh' }, { changedLines: 499, changedPaths: ['src/loop/card-runner.ts', 'docs/OPERATIONS.md'] }, pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffort(POLICY, { changedLines: 499, changedPaths: ['src/loop/card-runner.ts', 'docs/OPERATIONS.md'] }, pathAllowed), 'medium');
   });
 
   test('changed lines equal to the threshold select high [R2]', () => {
@@ -104,5 +104,23 @@ describe('selectReviewEffortFromDiff (T1-OPUS55-R3-2 acceptance 7 and 9)', () =>
   test('a C-quoted rename from source is matched with its quotes removed [R6]', () => {
     const quoted = 'diff --git "a/src/core/\\303\\251.ts" b/src/loop/e.ts\nsimilarity index 100%\nrename from "src/core/\\303\\251.ts"\nrename to src/loop/e.ts\n';
     assert.equal(selectReviewEffortFromDiff(POLICY, quoted, ['src/loop/e.ts'], pathAllowed), 'high');
+  });
+});
+
+describe('selectReviewEffortFromDiff matches the changed paths (T1-OPUS55-R3-3 acceptance 11)', () => {
+  test('a two-line plain edit of src/core/x.ts selects high through its changed path [R2]', () => {
+    const edited = 'diff --git a/src/core/x.ts b/src/core/x.ts\n--- a/src/core/x.ts\n+++ b/src/core/x.ts\n@@ -1 +1 @@\n-a\n+b\n';
+    assert.equal(selectReviewEffortFromDiff(POLICY, edited, ['src/core/x.ts'], pathAllowed), 'high');
+  });
+
+  test('a rename into src/core selects high through its destination, the changed path [R6]', () => {
+    const renamed = 'diff --git a/src/loop/a.ts b/src/core/a.ts\nsimilarity index 100%\nrename from src/loop/a.ts\nrename to src/core/a.ts\n';
+    assert.equal(selectReviewEffortFromDiff(POLICY, renamed, ['src/core/a.ts'], pathAllowed), 'high');
+  });
+});
+
+describe('selectReviewEffortFromDiff fail-closed scope (T1-OPUS55-R3-3 acceptance 12)', () => {
+  test('an empty diff is not a decorated one: the default is kept [R5]', () => {
+    assert.equal(selectReviewEffortFromDiff(POLICY, '', ['src/loop/x.ts'], pathAllowed), 'medium');
   });
 });

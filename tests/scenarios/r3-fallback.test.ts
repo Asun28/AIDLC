@@ -462,14 +462,21 @@ function reviewDirOf(fx: { repo: { mainRoot: string } }, run: CardRun): string {
 async function retainedHigh() {
   const s = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: THRESHOLD_DIFF });
   const lock = `${s.fx.store.cardFile(s.goalId, s.card.id)}.lock`;
-  s.hooks.onPrimary = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
-  await assert.rejects(() => s.runner.formalReview(s.g(), s.card, s.run), /locked/i);
-  rmSync(lock, { force: true });
-  s.hooks.onPrimary = undefined;
-  const persisted = s.fx.store.getCardRun(s.goalId, s.card.id)!;
-  const pending = persisted.review.invocations.find((i) => i.outcome === 'pending');
-  assert.equal(pending?.effort, 'high', 'the reservation records the level');
-  return { ...s, persisted, stem: pending!.invocationId.slice(3) };
+  // The caller cleans the fixture once it has the result; a failure here cleans it (and the lock) before it propagates.
+  let handedOver = false;
+  try {
+    s.hooks.onPrimary = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+    await assert.rejects(() => s.runner.formalReview(s.g(), s.card, s.run), /locked/i);
+    s.hooks.onPrimary = undefined;
+    const persisted = s.fx.store.getCardRun(s.goalId, s.card.id)!;
+    const pending = persisted.review.invocations.find((i) => i.outcome === 'pending');
+    assert.equal(pending?.effort, 'high', 'the reservation records the level');
+    handedOver = true;
+    return { ...s, persisted, stem: pending!.invocationId.slice(3) };
+  } finally {
+    rmSync(lock, { force: true });
+    if (!handedOver) s.fx.cleanup();
+  }
 }
 
 test('a result retained from its envelope is committed with the effort its reservation recorded [T1-OPUS55-R3 R3]', async () => {
@@ -550,3 +557,14 @@ for (const [diff, level] of [[THRESHOLD_DIFF, 'high'], [SMALL_DIFF, 'medium']] a
     }
   });
 }
+
+test('a small candidate whose changed path matches high.paths runs at high without a rename [T1-OPUS55-R3-3 acceptance 11] [R2]', async () => {
+  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: { ...EFFORT_PRIMARY, effort: { default: 'medium', high: { minChangedLines: 500, paths: ['src/t0-fb.ts'] } } }, diff: SMALL_DIFF });
+  try {
+    const f = await runner.formalReview(g(), card, run);
+    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
