@@ -408,7 +408,8 @@ const FENCE_CLOSE = /^ {0,3}```\s*$/;
  * document inside a ```json or bare ``` fence, since backticks open nothing; this rule keeps a fence cut before its
  * closing line malformed, like a document cut short. The fences before the document are paired line by line (a line
  * inside a JSON string cannot start a line, since a JSON string carries no raw newline); a fence open at the document is
- * closed by backticks right after it or by a closing fence line anywhere later.
+ * closed by backticks right after it with nothing but whitespace after them on that line, or by a closing fence line
+ * anywhere later.
  */
 function inUnclosedFence(text: string, start: number, end: number): boolean {
   let open = false;
@@ -417,7 +418,7 @@ function inUnclosedFence(text: string, start: number, end: number): boolean {
   }
   if (!open) return false;
   const after = text.slice(end + 1);
-  return !/^[ \t]*```/.test(after) && !after.split('\n').slice(1).some((line) => FENCE_CLOSE.test(line));
+  return !/^[ \t]*```[ \t]*(\r?\n|$)/.test(after) && !after.split('\n').slice(1).some((line) => FENCE_CLOSE.test(line));
 }
 
 /**

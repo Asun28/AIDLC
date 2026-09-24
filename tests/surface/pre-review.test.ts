@@ -1071,6 +1071,7 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 2: a verdict inside a closed ```json or b
   assert.equal(read('```json\n' + pass + '```json\n'), undefined, 'backticks with an info string right after the document close nothing');
   assert.equal(read('```json\n' + pass + ' ```x'), undefined, 'backticks with any text after them right after the document close nothing');
   assert.equal(read('```json\n' + pass + '``` \r\nNo further notes.'), 'pass', 'backticks and whitespace right after the document close the fence before a later line');
+  assert.equal(read('```json\n' + pass + ' \t```\n'), 'pass', 'backticks after spaces and tabs right after the document close the fence');
   assert.equal(read('```diff\n-old\n+new\n```\n' + pass + '\n'), 'pass', 'a closed fence earlier in the reasoning leaves the unfenced verdict outside any fence');
   assert.equal(read('```diff\n-old\n+new\n' + pass + '\n'), undefined, 'a verdict inside an earlier fence that never closes is malformed');
   assert.equal(read('```a``` is inline code, not a fence\n' + pass + '\n'), 'pass', 'a line with backticks in its info string opens no fence');
@@ -1092,11 +1093,13 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG U
   const docSentences = [
     'A success attempt on a `tdd: true` card is refused when neither the stored run nor the attempt carries a RED receipt: `aidlc card attempt` names the missing RED receipt and records nothing (no attempt, no effort change, no candidate), so record the success again with `--red-receipt`.',
     'A verdict document inside a Markdown code fence (```json or a bare ```) is read as the verdict when the fence closes after it; a document inside a fence that never closes makes the output malformed, and the last document still decides, fenced or not.',
+    'A fence opens on a line of up to three spaces, three backticks and an info string without a backtick, and closes on a line of up to three spaces and three backticks alone, or with backticks right after the document and nothing but whitespace after them on that line (card T1-REVIEW-LOOP-GUARDS).',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelogSentences = [
     '- Review loop guards, card T1-REVIEW-LOOP-GUARDS: `aidlc card attempt --outcome success` on a `tdd: true` card whose run and attempt carry no RED receipt is refused with an error naming the missing RED receipt and records nothing, where it used to bind the candidate and leave the card in BUILD with every later attempt refused.',
     'A verdict document inside a closed ```json or bare ``` fence is read as the verdict, and a document inside a fence that never closes is malformed.',
+    'Backticks right after the document close its fence only when nothing but whitespace follows them on that line.',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
