@@ -687,8 +687,9 @@ export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: s
   // NUL-separated names: git never quotes or escapes them, so non-ASCII paths compare exactly.
   const names = runner('git', ['diff', '--name-only', '-z', range], { cwd });
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);
-  // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer.
-  const full = runner('git', ['diff', '--text', range], { cwd });
+  // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer. --no-color,
+  // --no-ext-diff and --no-textconv: the reviewer and the effort count read a plain unified diff under any user git configuration.
+  const full = runner('git', ['diff', '--text', range, '--no-color', '--no-ext-diff', '--no-textconv'], { cwd });
   if (full.exitCode !== 0) throw new Error(`git diff ${range} failed in ${cwd}: ${full.stderr.trim() || `exit ${full.exitCode}`}`);
   const changedPaths = names.stdout
     .split(/\u0000|\r?\n/)

@@ -50,6 +50,9 @@
   "formalReview": {
     "command": [],
     "reviewer": "codex",
-    "timeoutMs": 1200000
+    "timeoutMs": 1200000,
+    "effort": {
+      "default": "medium"
+    }
   }
 }

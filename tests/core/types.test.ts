@@ -4,6 +4,7 @@ import {
   ARC_LIMIT_MS,
   CARD_LIMIT_MS,
   Card,
+  EffortLevel,
   CardId,
   CardRun,
   CiLedger,
@@ -12,6 +13,8 @@ import {
   RECONCILE_GRACE_MS,
   PreReviewRound,
   ReleaseAttempt,
+  ReviewEffortLevel,
+  ReviewInvocation,
   ReviewLedger,
   RoundCoverage,
   RoutingResult,
@@ -166,5 +169,24 @@ describe('types: schema round-trips', () => {
     const s = StopRecord.parse({ reason: 'time', detail: 'x', nextAction: 'y', global: true, at: T0 });
     assert.deepEqual(s.unresolvedOperations, []);
     assert.equal(StopRecord.safeParse({ reason: 'bogus', detail: 'x', nextAction: 'y', global: true, at: T0 }).success, false);
+  });
+});
+
+describe('types: ReviewInvocation effort (T1-OPUS55-R3 acceptance 4)', () => {
+  const record = { invocationId: 'r3:T1-X.r3.1.abcd1234', candidateDigest: 'digest-1', base: 'main', policyVersion: 'REVIEW.md@3', reviewer: 'claude-opus-5-5', requestedAt: T0, outcome: 'pass' };
+
+  test('a record with effort parses and keeps the level [R3]', () => {
+    assert.equal(ReviewInvocation.parse({ ...record, effort: 'high' }).effort, 'high');
+  });
+
+  test('a record written before the field parses unchanged, with no effort [R3]', () => {
+    assert.deepEqual(ReviewInvocation.parse(record), record);
+  });
+});
+
+describe('types: ReviewEffortLevel (T1-OPUS55-R3-2 acceptance 10)', () => {
+  test('the R3 levels are the effort levels without low [R1]', () => {
+    assert.deepEqual(ReviewEffortLevel.options, EffortLevel.options.filter((l) => l !== 'low'));
+    assert.equal(ReviewEffortLevel.safeParse('low').success, false);
   });
 });
