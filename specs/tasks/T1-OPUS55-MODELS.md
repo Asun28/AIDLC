@@ -26,12 +26,12 @@ acceptance:
   - 3. `ClaudeApiProvider.complete` with no `model` and no `defaultModel` sends `claude-opus-5-5`; the request sent (captured through an injected client) carries `output_config.effort` equal to the request's effort, `thinking` either absent or `{ type: 'adaptive' }`, no `temperature`, `top_p`, `top_k` or `tool_choice`, and a last message whose role is `user` (providers.test.ts). [R5] [R6] [dod arm 1]
   - 4. A response whose first content block is a `thinking` block with empty text, followed by a `text` block, yields the text block's text only; a `stop_reason: "refusal"` yields outcome `refusal` (providers.test.ts). [R6] [dod arm 1]
   - 5. `docs/OPERATIONS.md` and `docs/ARCHITECTURE.md` name `claude-opus-5-5` wherever they name the Claude defaults; CHANGELOG.md Unreleased carries the entry. [R5] [dod arm 1]
-depends_on: [T1-OPUS55-R3-2]
+depends_on: [T1-OPUS55-R3-3]
 plan_ref: plans/opus-5-5.md#7
 budget: 250
 tdd: true
 sweep: "grep -rn 'claude-opus-5\\b\|EFFORT_LADDERS\|output_config\|thinking:' src/ docs/OPERATIONS.md docs/ARCHITECTURE.md: roles.ts:24-30, claude-api.ts:4 and :63 and :74-75, effort.ts:170"
-non_goals: [the R3 reviewer command (T1-OPUS55-R3-2), prompt text (T1-OPUS55-PROMPTS), the gpt family defaults, max_tokens retuning, progress-update display, per-message effort, archived plans under docs/plans]
+non_goals: [the R3 reviewer command (T1-OPUS55-R3-3), prompt text (T1-OPUS55-PROMPTS), the gpt family defaults, max_tokens retuning, progress-update display, per-message effort, archived plans under docs/plans]
 forbid: [network calls in tests, credentials]
 hygiene: "Opus 5.5 rejects thinking disabled, thinking budgets, forced tool_choice, non-default sampling and a prefill (migration guide, read 2026-09-24); the provider sends none today, so acceptance 3 pins that. The provider may need a client injection seam for the test; a seam is the only structural change allowed."
 doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md

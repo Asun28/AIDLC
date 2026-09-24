@@ -17,7 +17,7 @@ follow the Opus 5 and 5.5 guides. Three cards, one PR each. Cut: R2
 effort, per-decision effort changes, eval sweeps, archived plans.
 
 ## 2. Minimal acceptable loop
-T1-OPUS55-R3-2 merged: the next card's R3 dispatch runs Codex with
+T1-OPUS55-R3-3 merged: the next card's R3 dispatch runs Codex with
 `-c model_reasoning_effort=medium|high`, or on a Codex quota hold the
 Opus fallback with `--effort medium|high`, with the level in the
 invocation record. The two later cards are reviewed by it.
@@ -73,7 +73,7 @@ One optional field, `ReviewInvocation.effort`. No state machine change.
 - CHANGELOG.md
 
 ## Order of work
-1. T1-OPUS55-R3-2 (replaces T1-OPUS55-R3, stopped after two R3 decisions): config field, policy, dispatch, record; this repository's Codex primary and Opus fallback receive `{effort}`.
+1. T1-OPUS55-R3-3 (replaces T1-OPUS55-R3 and T1-OPUS55-R3-2, each stopped after two R3 decisions): config field, policy, dispatch, record; this repository's Codex primary and Opus fallback receive `{effort}`.
 2. T1-OPUS55-MODELS: model ids, ladder, provider request rules.
 3. T1-OPUS55-PROMPTS: end-of-turn rule in the review prompts and reviewer agent; guide audit of the agent and skill files.
 
@@ -82,8 +82,9 @@ One optional field, `ReviewInvocation.effort`. No state machine change.
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-OPUS55-R3 | MUST | R3 per-candidate effort (medium default, high for large or core diffs) on the Codex primary and the Opus 5.5 fallback (stopped after two R3 decisions; superseded by T1-OPUS55-R3-2) | - | W1 | yes |
-| T1-OPUS55-R3-2 | MUST | R3 per-candidate effort (medium default, high for large or core diffs) on the Codex primary and the Opus 5.5 fallback; the review diff undecorated, the counted range pinned by a test, rename sources matched | - | W1 | yes |
-| T1-OPUS55-MODELS | MUST | Claude role defaults and API provider on claude-opus-5-5; xhigh on the Claude ladder; only accepted request settings | T1-OPUS55-R3-2 | W2 | - |
+| T1-OPUS55-R3-2 | MUST | R3 per-candidate effort (medium default, high for large or core diffs) on the Codex primary and the Opus 5.5 fallback; the review diff undecorated, the counted range pinned by a test, rename sources matched (stopped after two R3 decisions; superseded by T1-OPUS55-R3-3) | - | W1 | yes |
+| T1-OPUS55-R3-3 | MUST | R3 per-candidate effort (medium default, high for large or core diffs) on the Codex primary and the Opus 5.5 fallback; the review diff undecorated, the counted range pinned by a test, rename sources matched; every branch pinned by a mutation-checked test | - | W1 | yes |
+| T1-OPUS55-MODELS | MUST | Claude role defaults and API provider on claude-opus-5-5; xhigh on the Claude ladder; only accepted request settings | T1-OPUS55-R3-3 | W2 | - |
 | T1-OPUS55-PROMPTS | MUST | review prompts and agents end on the verdict line; agent and skill files audited against the Opus 5 and 5.5 guides | T1-OPUS55-MODELS | W3 | - |
 
 The three cards share `CHANGELOG.md` and `docs/`, so they run one at a
