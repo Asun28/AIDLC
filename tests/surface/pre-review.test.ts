@@ -1018,7 +1018,7 @@ test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal s
 });
 
 /** The end-of-turn sentence every review prompt carries, on its own line after the output contract (T1-OPUS55-PROMPTS R7). */
-const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one has returned no verdict.';
+const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict.';
 /** The R2 sentence that asks for every finding (T1-OPUS55-PROMPTS R8). */
 const EVERY_FINDING = 'Report every finding you can defend, not only the ones that block: the block rule above decides only whether a finding blocks, not whether it is reported.';
 
