@@ -1,7 +1,7 @@
 ---
 id: T1-OPUS55-PROMPTS
 title: The R2 and R3 prompts and the reviewer agent end only on the verdict line and ask for every finding with the block rule deciding only the verdict, the implementer ends only on its report or a named blocker, and arc children receive the elapsed time against their deadline, per the Opus 5 and 5.5 prompting guides
-status: todo
+status: merged
 branch: T1-OPUS55-PROMPTS
 worktree: D:\wt\AIDLC\T1-OPUS55-PROMPTS
 allow_paths:
