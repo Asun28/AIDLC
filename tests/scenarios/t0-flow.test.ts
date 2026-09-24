@@ -3689,3 +3689,49 @@ test('T0-WORKTREE-ROOT-DEFAULT: an empty worktreeRoot places a dry-run PREPARE u
     fx.cleanup();
   }
 });
+
+test('T1-REVIEW-LOOP-GUARDS acceptance 1: a success attempt on a tdd card without a RED receipt is refused and records nothing; with the receipt, on a tdd: false card, or on a run that holds one it is accepted', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-NORED', title: 'success without a RED receipt' });
+    writeCard(fx, { id: 'T1-NOTDD', title: 'a card exempt from RED', tdd: false });
+    writeCard(fx, { id: 'T1-HASRED', title: 'a run that already holds RED' });
+    const goal = goalForCards(fx, ['T1-NORED', 'T1-NOTDD', 'T1-HASRED']);
+    const runner = fx.runner(new DryRunShipPath(['merged']));
+    const toBuild = (id: string): CardRun => {
+      const card = fx.card(id);
+      const r = runner.next(goal, card, fx.controller.ensureCardRun(goal, id));
+      return runner.next(goal, card, r.run).run;
+    };
+
+    const card = fx.card('T1-NORED');
+    let run = toBuild('T1-NORED');
+    run = runner.recordAttempt(goal, card, run, { outcome: 'fail', cause: 'red first' });
+    assert.equal(run.effort?.attempts.at(-1)?.outcome, 'fail', 'a failed attempt needs no RED receipt');
+    run = runner.next(goal, card, run).run;
+    const before = fx.store.getCardRun(goal.id, 'T1-NORED')!;
+    assert.throws(() => runner.recordAttempt(goal, card, run, { outcome: 'success', dodReceipt: 'dod:1', candidateSha: 'sha-1' }), /RED receipt/);
+    const after = fx.store.getCardRun(goal.id, 'T1-NORED')!;
+    assert.deepEqual(after, before, 'the refused success leaves the stored run unchanged');
+    assert.deepEqual(after.effort, before.effort, 'the effort episode is unchanged');
+    assert.equal(after.candidate, before.candidate, 'no candidate is bound');
+    assert.equal(after.dodReceipt, undefined);
+    const accepted = runner.recordAttempt(goal, card, after, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
+    assert.equal(accepted.effort?.terminal, 'succeeded');
+    assert.equal(accepted.redReceipt, 'red:2');
+    assert.equal(accepted.candidate?.sha, 'sha-2');
+
+    const noTdd = runner.recordAttempt(goal, fx.card('T1-NOTDD'), toBuild('T1-NOTDD'), { outcome: 'success', dodReceipt: 'dod:1', candidateSha: 'sha-1' });
+    assert.equal(noTdd.effort?.terminal, 'succeeded', 'a tdd: false card records a success without a RED receipt');
+
+    const hasCard = fx.card('T1-HASRED');
+    let has = runner.recordAttempt(goal, hasCard, toBuild('T1-HASRED'), { outcome: 'fail', cause: 'green pending', redReceipt: 'red:held' });
+    has = runner.next(goal, hasCard, has).run;
+    assert.equal(has.redReceipt, 'red:held');
+    has = runner.recordAttempt(goal, hasCard, has, { outcome: 'success', dodReceipt: 'dod:1', candidateSha: 'sha-1' });
+    assert.equal(has.effort?.terminal, 'succeeded', 'a run that already holds a RED receipt records a success without a new one');
+    assert.equal(has.redReceipt, 'red:held');
+  } finally {
+    fx.cleanup();
+  }
+});

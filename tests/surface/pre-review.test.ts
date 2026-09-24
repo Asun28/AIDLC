@@ -1046,3 +1046,48 @@ test('T1-OPUS55-PROMPTS acceptance 2: the pre-review prompt asks for every findi
     assert.equal(buildReviewPrompt({ ...input, stage: 'formal', perspective }).includes(EVERY_FINDING), false, 'R3 already asks for every material finding');
   }
 });
+
+test('T1-REVIEW-LOOP-GUARDS acceptance 2: a verdict inside a closed ```json or bare ``` fence is the verdict; the last document still decides and an unclosed fence is malformed', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  const block = '{"verdict":"block","reasons":["[spec] 6 tests @ src/gate.ts:1: no RED -> add a failing test first"]}';
+  const read = (output: string): string | undefined => {
+    const verdict = inputs.readVerdict(output).verdict?.verdict;
+    assert.equal(extractVerdict(output)?.verdict, verdict, 'extractVerdict answers as readVerdict');
+    return verdict;
+  };
+  assert.equal(read(REASONING + '```json\n' + block + '\n```\n'), 'block', 'a ```json fence');
+  assert.equal(read(REASONING + '```\n' + pass + '\n```'), 'pass', 'a bare ``` fence');
+  assert.equal(read('```json\r\n' + JSON.stringify(JSON.parse(block), null, 2).replace(/\n/g, '\r\n') + '\r\n```\r\n'), 'block', 'a pretty-printed document in a CRLF fence');
+  assert.equal(read('```json' + pass + '```'), 'pass', 'a fence closed on the line of the document');
+  assert.equal(read('```json\n' + pass + '\n  ```  \nNo further notes.'), 'pass', 'an indented closing fence with prose after it');
+  assert.equal(read('```json\n' + block + '\n```\nFinal answer:\n' + pass + '\n'), 'pass', 'a later unfenced verdict decides over a fenced one');
+  assert.equal(read('```json\n' + pass + '\n```\n```json\n' + block + '\n```\n'), 'block', 'the last of two fenced verdicts decides');
+  assert.equal(read(pass + '\n```json\n{"summary":"no findings"}\n```\n'), undefined, 'a fenced non-verdict document is the last document and no verdict');
+  assert.equal(read('```json\n' + pass + '\n```\n' + '```json\n{"summary":"no findings"}\n```\n'), undefined, 'a fenced verdict before a fenced non-verdict is not read');
+  assert.equal(read('```json\n' + pass + '\n'), undefined, 'a fence that never closes is malformed');
+  assert.equal(read(REASONING + '```\n' + pass), undefined, 'a bare fence that never closes is malformed');
+  assert.equal(read('```json\n{"verdict":"pass","reasons":[\n```\n'), undefined, 'a fenced document cut short is malformed');
+  assert.equal(read('```json\n' + pass + '\n```json\n'), undefined, 'a fence line with an info string closes nothing');
+  assert.equal(read('```diff\n-old\n+new\n```\n' + pass + '\n'), 'pass', 'a closed fence earlier in the reasoning leaves the unfenced verdict outside any fence');
+  assert.equal(read('```diff\n-old\n+new\n' + pass + '\n'), undefined, 'a verdict inside an earlier fence that never closes is malformed');
+  assert.equal(read('```a``` is inline code, not a fence\n' + pass + '\n'), 'pass', 'a line with backticks in its info string opens no fence');
+  assert.equal(read('    ```\n' + pass + '\n'), 'pass', 'a line indented four spaces opens no fence');
+  assert.equal(read('   ```json\n' + pass + '\n   ```\n'), 'pass', 'a fence indented three spaces opens and closes');
+});
+
+test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the RED receipt refusal and the fenced verdict rule', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A success attempt on a `tdd: true` card is refused when neither the stored run nor the attempt carries a RED receipt: `aidlc card attempt` names the missing RED receipt and records nothing (no attempt, no effort change, no candidate), so record the success again with `--red-receipt`.',
+    'A verdict document inside a Markdown code fence (```json or a bare ```) is read as the verdict when the fence closes after it; a document inside a fence that never closes makes the output malformed, and the last document still decides, fenced or not.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Review loop guards, card T1-REVIEW-LOOP-GUARDS: `aidlc card attempt --outcome success` on a `tdd: true` card whose run and attempt carry no RED receipt is refused with an error naming the missing RED receipt and records nothing, where it used to bind the candidate and leave the card in BUILD with every later attempt refused.',
+    'A verdict document inside a closed ```json or bare ``` fence is read as the verdict, and a document inside a fence that never closes is malformed.',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
