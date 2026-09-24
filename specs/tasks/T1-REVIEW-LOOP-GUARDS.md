@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-LOOP-GUARDS
 title: A success attempt on a tdd card without a RED receipt is refused before it binds the candidate, and a reviewer verdict wrapped in a Markdown code fence is read as the verdict
-status: todo
+status: merged
 branch: T1-REVIEW-LOOP-GUARDS
 worktree: D:\wt\AIDLC\T1-REVIEW-LOOP-GUARDS
 allow_paths:
