@@ -240,7 +240,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   const lines: string[] = [];
   if (i.stage === 'pre') {
     lines.push(
-      `You are the independent pre-reviewer (R2) for card ${c.id}, round ${i.round} of ${i.maxRounds}. You did not write this change and you cannot edit it. Judge only this diff against this card and the review policy below. The formal reviewer (R3) runs after you, so block only on a must-block dimension (1-6) or an Important finding that would break behaviour, leak data or breach a policy; style and naming are nits and never block. Do not report generated files or anything CI already enforces. Cap nits at five.${i.perspective ? ' You are one of several concurrent passes: judge from the angle below and report every finding of that angle.' : ''}`,
+      `You are the independent pre-reviewer (R2) for card ${c.id}, round ${i.round} of ${i.maxRounds}. You did not write this change and you cannot edit it. Judge only this diff against this card and the review policy below. The formal reviewer (R3) runs after you, so block only on a must-block dimension (1-6) or an Important finding that would break behaviour, leak data or breach a policy; style and naming are nits and never block. Do not report generated files or anything CI already enforces. Cap nits at five. Report every finding you can defend, not only the ones that block: the block rule above decides only whether a finding blocks, not whether it is reported.${i.perspective ? ' You are one of several concurrent passes: judge from the angle below and report every finding of that angle.' : ''}`,
     );
   } else {
     lines.push(
@@ -249,7 +249,9 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   }
   // The coverage request is one angle of one stage: R3 and every other angle receive the frozen contract line, byte for byte.
   const coverage = i.coverage === true && i.stage === 'pre' && i.perspective === COVERAGE_ANGLE;
-  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', verdictContract(coverage), '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
+  // The end-of-turn line (Opus 5.5 guide, unattended runs): a turn can end on a progress note, which for a headless reviewer is a
+  // missing verdict.
+  lines.push('', 'Reason as much as you need, then output exactly one JSON document as the LAST line of your answer, nothing after it:', verdictContract(coverage), 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict.', '`verdict` is the worse of the two axes; `reasons` is empty on pass.', 'A reason tagged [question] or [suggestion], the tag opening the reason (after the axis tag if any) or opening its text after the location, is advisory in both stages: it is retained and shown to the author, never a block, and it needs no location; a pass may carry such reasons.');
   if (i.perspective) {
     lines.push('', `## This pass: ${i.perspective}`, PERSPECTIVES[i.perspective] ?? `Focus: ${i.perspective}. Report every finding of this angle; other angles are covered by concurrent passes.`, 'Findings outside this angle are welcome only when they hit a must-block dimension.');
     if (coverage) {

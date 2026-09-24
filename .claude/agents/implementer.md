@@ -27,3 +27,5 @@ Report (compact, verifiable, no transcript):
   code + output digest), files changed, attempt outcome and cause if failed,
   checks gained/lost, next hypothesis.
 Do not claim done; the loop verifies and ships.
+Your turn ends only with the report or a named blocker, never with a
+summary that announces the next step without taking it.

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 // Namespace import for the T1-REVIEW-INPUTS helpers: absent on the baseline, so each test fails at its first call rather than at link time.
 import * as inputs from '../../src/review/pre-review.ts';
-import { COVERAGE_ANGLE } from '../../src/review/pre-review.ts';
+import { COVERAGE_ANGLE, PERSPECTIVES } from '../../src/review/pre-review.ts';
 import * as cli from '../../src/cli/main.ts';
 import { createHash } from 'node:crypto';
 import { classifyVerdict } from '../../src/core/review-policy.ts';
@@ -773,9 +773,11 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F2): the off prompts are byte-equal to t
   for (const stage of ['pre', 'formal'] as const) {
     for (const perspective of [undefined, 'ac-coverage', 'bugs']) {
       const key = `${stage}/${perspective ?? 'single'}`;
-      const off = buildReviewPrompt({ ...input, stage, perspective });
+      // T1-OPUS55-PROMPTS adds two sentences on purpose (the end-of-turn line, and for R2 the every-finding sentence);
+      // with exactly those removed each prompt is still the pre-change prompt, byte for byte.
+      const off = withoutOpus55Sentences(buildReviewPrompt({ ...input, stage, perspective }));
       assert.equal(sha(off), PRE_CHANGE[key], `${key} with coverage off is the pre-change prompt`);
-      const on = buildReviewPrompt({ ...input, stage, perspective, coverage: true });
+      const on = withoutOpus55Sentences(buildReviewPrompt({ ...input, stage, perspective, coverage: true }));
       if (stage === 'pre' && perspective === 'ac-coverage') assert.notEqual(sha(on), PRE_CHANGE[key], 'the asked angle differs');
       else assert.equal(sha(on), PRE_CHANGE[key], `${key} is the pre-change prompt with coverage requested too`);
     }
@@ -1013,4 +1015,34 @@ test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal s
   assert.equal(other.coverage, undefined, 'no angle was asked, so no join is recorded');
   assert.equal(other.verdictRef, other.perspectives[0]!.verdictRef, 'and the run keeps its own document');
   assert.equal(retained(other.verdictRef!)['coverage'], undefined);
+});
+
+/** The end-of-turn sentence every review prompt carries, on its own line after the output contract (T1-OPUS55-PROMPTS R7). */
+const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict.';
+/** The R2 sentence that asks for every finding (T1-OPUS55-PROMPTS R8). */
+const EVERY_FINDING = 'Report every finding you can defend, not only the ones that block: the block rule above decides only whether a finding blocks, not whether it is reported.';
+
+/** A prompt with exactly the sentences T1-OPUS55-PROMPTS added removed, for the pre-change hash pins. */
+function withoutOpus55Sentences(prompt: string): string {
+  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '');
+}
+
+test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single pass and each perspective, carries the end-of-turn line [R7]', () => {
+  const { card } = fixtureCard();
+  const input = { reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
+  for (const stage of ['pre', 'formal'] as const) {
+    for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
+      const lines = buildReviewPrompt({ ...input, stage, perspective, coverage: perspective === 'ac-coverage' }).split('\n');
+      assert.ok(lines.includes(END_OF_TURN), `${stage}/${perspective ?? 'single'} carries the end-of-turn line`);
+    }
+  }
+});
+
+test('T1-OPUS55-PROMPTS acceptance 2: the pre-review prompt asks for every finding and says the block rule decides only blocking; the formal prompt is not given a second copy [R8]', () => {
+  const { card } = fixtureCard();
+  const input = { reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
+  for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
+    assert.ok(buildReviewPrompt({ ...input, stage: 'pre', perspective }).split('\n')[0]!.includes(EVERY_FINDING), `pre/${perspective ?? 'single'} asks for every finding`);
+    assert.equal(buildReviewPrompt({ ...input, stage: 'formal', perspective }).includes(EVERY_FINDING), false, 'R3 already asks for every material finding');
+  }
 });
