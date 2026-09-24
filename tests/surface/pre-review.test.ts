@@ -306,6 +306,12 @@ test('panel: perspectives run concurrently with their own prompt section and fil
   const diffArgs: string[][] = [];
   collectCandidateDiff((c, a, o = {}) => { diffArgs.push(a); return scriptedRunner({ 'git diff --name-only': { stdout: 'src/a.ts' }, 'git diff': { stdout: 'x' } })(c, a, o); }, dir, 'main', 100);
   assert.ok(diffArgs.some((a) => a.includes('--text')), 'git diff runs with --text');
+  // T1-OPUS55-R3-2 acceptance 7: the collected diff is undecorated whatever the user's git configuration (no colour, no external driver)
+  const textDiff = diffArgs.find((a) => a.includes('--text'));
+  assert.ok(textDiff?.includes('--no-color'), `git diff runs with --no-color: ${textDiff?.join(' ')}`);
+  assert.ok(textDiff?.includes('--no-ext-diff'), `git diff runs with --no-ext-diff: ${textDiff?.join(' ')}`);
+  assert.ok(textDiff?.includes('--no-textconv'), `git diff runs with --no-textconv: ${textDiff?.join(' ')}`);
+  assert.ok(textDiff?.includes('main...HEAD'), 'on the pinned range');
 
   // fail-closed: a reviewer that exits non-zero never passes, even with a pass document on stdout
   const bad = classifyPreReview({ verdict: 'pass', reasons: [] }, { exitCode: 1, timedOut: false, stdout: '{"verdict":"pass","reasons":[]}', stderr: 'boom' });

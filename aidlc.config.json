@@ -69,6 +69,8 @@
       "exec",
       "-m",
       "gpt-6-sol",
+      "-c",
+      "model_reasoning_effort={effort}",
       "--sandbox",
       "read-only",
       "--output-schema",
@@ -77,6 +79,17 @@
     "reviewer": "codex",
     "timeoutMs": 1200000,
     "maxDiffBytes": 800000,
+    "effort": {
+      "default": "medium",
+      "high": {
+        "minChangedLines": 500,
+        "paths": [
+          "src/core/**",
+          "src/coordination/**",
+          "src/state/**"
+        ]
+      }
+    },
     "fallback": {
       "command": [
         "claude",
@@ -84,7 +97,7 @@
         "--model",
         "claude-opus-5-5",
         "--effort",
-        "max",
+        "{effort}",
         "--tools",
         "Read,Grep,Glob",
         "--setting-sources=",
@@ -93,7 +106,18 @@
       ],
       "reviewer": "claude-opus-5-5",
       "timeoutMs": 1200000,
-      "maxDiffBytes": 800000
+      "maxDiffBytes": 800000,
+      "effort": {
+        "default": "medium",
+        "high": {
+          "minChangedLines": 500,
+          "paths": [
+            "src/core/**",
+            "src/coordination/**",
+            "src/state/**"
+          ]
+        }
+      }
     }
   }
 }

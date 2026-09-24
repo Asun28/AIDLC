@@ -279,6 +279,24 @@ export const PerspectiveRecord = z.object({
 });
 export type PerspectiveRecord = z.infer<typeof PerspectiveRecord>;
 
+export const EffortLevel = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+/** The effort a formal reviewer runs at; `low` is not offered for R3. */
+export const ReviewEffortLevel = EffortLevel.exclude(['low']);
+export type ReviewEffortLevel = z.infer<typeof ReviewEffortLevel>;
+/** How a formal reviewer's `{effort}` placeholder is chosen per candidate (src/core/review-effort.ts). */
+export const ReviewEffortPolicy = z.object({
+  default: ReviewEffortLevel.default('medium'),
+  /** `high` when the candidate's added plus deleted lines reach `minChangedLines` or a changed path matches a `paths` glob. */
+  high: z.object({ minChangedLines: z.number().int().min(0), paths: z.array(z.string()).default([]) }).optional(),
+}).superRefine((policy, ctx) => {
+  // The rule selects `high`; above a default of `xhigh` or `max` it would lower the level for the larger or riskier candidate.
+  if (policy.high && (policy.default === 'xhigh' || policy.default === 'max')) {
+    ctx.addIssue({ code: 'custom', path: ['high'], message: `effort.high would lower the level below the default ${policy.default}: drop the high rule or lower the default` });
+  }
+});
+export type ReviewEffortPolicy = z.infer<typeof ReviewEffortPolicy>;
+
 export const ReviewInvocation = z.object({
   invocationId: z.string().min(1),
   candidateDigest: z.string().min(1),
@@ -299,6 +317,8 @@ export const ReviewInvocation = z.object({
   policyHash: z.string().optional(),
   /** Digest of the verdict document a ship-path reviewer wrote; a re-read of the same artifact is the same decision. */
   artifactDigest: z.string().optional(),
+  /** The level `{effort}` expanded to for this decision; absent when the reviewer's argv carried no `{effort}`, and on records written before the field. */
+  effort: ReviewEffortLevel.optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
@@ -444,9 +464,6 @@ export type CiLedger = z.infer<typeof CiLedger>;
 // ---------------------------------------------------------------------------
 // Effort / model policy (MA1-MA3)
 // ---------------------------------------------------------------------------
-
-export const EffortLevel = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
-export type EffortLevel = z.infer<typeof EffortLevel>;
 
 export const Role = z.enum(['planner', 'implementer', 'investigator', 'reviewer', 'release-specialist']);
 export type Role = z.infer<typeof Role>;

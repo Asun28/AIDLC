@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
+import { ReviewEffortPolicy } from './core/types.ts';
 
 /** Pre-review (R2): a second-model review before the ship. An empty command disables the stage. */
 export const PreReviewConfig = z.object({
@@ -27,7 +28,8 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 
 /**
  * Formal review (R3) as a command before the ship. Placeholders in argv: {instructions} {base} {head}
- * {card} {schema} {cwd}; without {instructions} the prompt goes to stdin. Empty command = the R3
+ * {card} {schema} {cwd} {effort}; without {instructions} the prompt goes to stdin. {effort} expands to the level `effort`
+ * selects for the candidate (src/core/review-effort.ts). Empty command = the R3
  * verdict comes from the ship path (scaffold ReviewGate) or nowhere.
  */
 const FormalReviewerConfig = z.object({
@@ -36,6 +38,8 @@ const FormalReviewerConfig = z.object({
   timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),
+  /** How `{effort}` in the command is chosen per candidate; absent = `medium`. */
+  effort: ReviewEffortPolicy.optional(),
 });
 /**
  * The reviewer R3 dispatches while the primary holds an unexpired quota hold; it shares the primary's allowance. No

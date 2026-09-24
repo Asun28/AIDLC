@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
-import type { CardRun, Verdict } from '../../src/core/types.ts';
+import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
+import { RECONCILE_GRACE_MS, type CardRun, type Verdict } from '../../src/core/types.ts';
 
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-fb.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -29,32 +29,43 @@ class RawShipPath extends DryRunShipPath {
 }
 
 /** A card at the R3 review directive with a primary (`fake-p`) and a fallback (`fake-b`) formal reviewer, each fed from its own queue. */
-async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict } = {}) {
+async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict; formalReview?: Record<string, unknown>; fallback?: Record<string, unknown>; diff?: string; script?: Record<string, Partial<ExecReceipt>> } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: opts.gateRequired ?? true,
       preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false },
-      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...(withFallback ? { fallback: FALLBACK } : {}) },
+      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...opts.formalReview, ...(withFallback ? { fallback: { ...FALLBACK, ...opts.fallback } } : {}) },
     },
   });
   const primary: string[] = [];
   const backup: string[] = [];
   const calls: string[] = [];
+  /** The argv each reviewer received, one entry per run. */
+  const argv: { primary: string[][]; backup: string[][] } = { primary: [], backup: [] };
+  /** Runs inside the primary reviewer, before it answers. */
+  const hooks: { onPrimary?: () => void } = {};
   const script = scriptedRunner({
+    // Keys of a scenario come first: the runner answers the first key the command starts with.
+    ...opts.script,
+    // A numstat of any range says 0 lines: the effort level must come from the diff the reviewer receives.
+    'git diff --numstat': { stdout: '0\t0\tsrc/t0-fb.ts\n' },
     'git diff --name-only': { stdout: 'src/t0-fb.ts\n' },
-    'git diff': { stdout: 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n+export const fb = 1;\n' },
+    'git diff': { stdout: opts.diff ?? 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n+export const fb = 1;\n' },
     'fake-r2': () => ({ stdout: PASS }),
-    'fake-p': () => {
+    'fake-p': (args) => {
       calls.push('primary');
+      argv.primary.push(args);
+      hooks.onPrimary?.();
       return { stdout: primary.shift() ?? PASS };
     },
-    'fake-b': () => {
+    'fake-b': (args) => {
       calls.push('backup');
+      argv.backup.push(args);
       return { stdout: backup.shift() ?? PASS };
     },
   });
   const ship = new RawShipPath(['merged', 'merged', 'merged', 'merged'], opts.shipVerdict);
-  const makeRunner = (config = fx.config) => new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+  const makeRunner = (config = fx.config, repo = fx.repo) => new CardRunner({ paths: fx.paths, repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
   const runner = makeRunner();
   /** Open a card of its own goal and bring it to the review directive; every card reviews the same stubbed diff. */
   const open = async (id: string, sha: string) => {
@@ -72,7 +83,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
     return { card, goalId: goal.id, g: () => fx.goal(goal.id), run: r.run };
   };
   const a = await open('T0-FB', 'sha-1');
-  return { fx, runner, makeRunner, ship, open, card: a.card, goalId: a.goalId, g: a.g, primary, backup, calls, run: a.run };
+  return { fx, runner, makeRunner, ship, open, card: a.card, goalId: a.goalId, g: a.g, primary, backup, calls, argv, hooks, run: a.run };
 }
 
 function reviewerOf(d: { kind: string; reviewer?: string }): string | undefined {
@@ -379,3 +390,163 @@ test('a missing canonical document of a fallback pass is repaired under the fall
     fx.cleanup();
   }
 });
+
+/** A primary that carries `--effort {effort}`, high from 3 changed lines or a change under src/core. */
+const EFFORT_PRIMARY = { command: ['fake-p', '--effort', '{effort}', '{instructions}'], effort: { default: 'medium', high: { minChangedLines: 3, paths: ['src/core/**'] } } };
+/** Two changed lines in one hunk: below the threshold. */
+const SMALL_DIFF = 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n--- a/src/t0-fb.ts\n+++ b/src/t0-fb.ts\n@@ -1 +1 @@\n-export const fb = 0;\n+export const fb = 1;\n';
+/** Three changed lines, one of them an added line reading `+++x`: at the threshold. */
+const THRESHOLD_DIFF = 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n--- a/src/t0-fb.ts\n+++ b/src/t0-fb.ts\n@@ -1 +1,2 @@\n-export const fb = 0;\n+export const fb = 1;\n+++x\n';
+
+test('a small candidate runs a primary carrying {effort} at medium, and the invocation records medium [T1-OPUS55-R3 R2] [R3]', async () => {
+  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: SMALL_DIFF });
+  try {
+    const f = await runner.formalReview(g(), card, run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'medium']);
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'medium');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a candidate whose added plus deleted lines in the pinned diff the reviewer receives reach the threshold runs at high, whatever numstat says, and the invocation records high [T1-OPUS55-R3 R2] [R3]', async () => {
+  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: THRESHOLD_DIFF });
+  try {
+    const f = await runner.formalReview(g(), card, run);
+    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('an argv without {effort} is passed unchanged and the invocation records no effort, even with a policy [T1-OPUS55-R3 R3]', async () => {
+  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: { effort: { default: 'max' } }, diff: THRESHOLD_DIFF });
+  try {
+    const f = await runner.formalReview(g(), card, run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(argv.primary[0]!.length, 3);
+    assert.equal(argv.primary[0]![0], '--schema');
+    assert.ok(!argv.primary[0]!.includes('max'));
+    assert.equal('effort' in f.run.review.invocations.at(-1)!, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test("a fallback dispatch expands {effort} with the fallback's own policy [T1-OPUS55-R3 R2] [R3]", async () => {
+  const { fx, runner, card, g, primary, argv, run } = await atReview(true, { formalReview: EFFORT_PRIMARY, fallback: { command: ['fake-b', '--effort', '{effort}', '{instructions}'], effort: { default: 'xhigh' } } });
+  try {
+    primary.push(HOLD_60);
+    let f = await runner.formalReview(g(), card, run);
+    assert.equal(f.classified.outcome, 'quota-hold');
+    const r = runner.next(g(), card, f.run);
+    assert.equal(reviewerOf(r.directive), 'backup');
+    f = await runner.formalReview(g(), card, r.run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.deepEqual(argv.backup[0]!.slice(0, 2), ['--effort', 'xhigh']);
+    assert.equal(f.run.review.invocations.at(-1)?.reviewer, 'backup');
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'xhigh');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** The `.review` directory a formal review of the run writes to: the card worktree when it exists, else the main checkout. */
+function reviewDirOf(fx: { repo: { mainRoot: string } }, run: CardRun): string {
+  return path.join(run.worktree && existsSync(run.worktree) ? run.worktree : fx.repo.mainRoot, '.review');
+}
+
+/** Dispatch the primary while a live writer holds the card-run lock at commit time: the result is retained, the reservation stays. */
+async function retainedHigh() {
+  const s = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: THRESHOLD_DIFF });
+  const lock = `${s.fx.store.cardFile(s.goalId, s.card.id)}.lock`;
+  s.hooks.onPrimary = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+  await assert.rejects(() => s.runner.formalReview(s.g(), s.card, s.run), /locked/i);
+  rmSync(lock, { force: true });
+  s.hooks.onPrimary = undefined;
+  const persisted = s.fx.store.getCardRun(s.goalId, s.card.id)!;
+  const pending = persisted.review.invocations.find((i) => i.outcome === 'pending');
+  assert.equal(pending?.effort, 'high', 'the reservation records the level');
+  return { ...s, persisted, stem: pending!.invocationId.slice(3) };
+}
+
+test('a result retained from its envelope is committed with the effort its reservation recorded [T1-OPUS55-R3 R3]', async () => {
+  const { fx, runner, card, g, calls, persisted } = await retainedHigh();
+  try {
+    const f = await runner.formalReview(g(), card, persisted);
+    assert.deepEqual(calls, ['primary'], 'committed from the envelope, not run again');
+    assert.equal(f.run.review.invocations.at(-1)?.outcome, 'pass');
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a reservation with no envelope past the timeout and the grace is charged as a no-verdict with the effort it recorded [T1-OPUS55-R3 R3]', async () => {
+  const { fx, runner, card, g, calls, persisted, stem } = await retainedHigh();
+  try {
+    const dir = reviewDirOf(fx, persisted);
+    rmSync(path.join(dir, `${stem}.result.json`), { force: true });
+    rmSync(path.join(dir, `${stem}.log`), { force: true });
+    fx.advance(1000 + RECONCILE_GRACE_MS + 1);
+    const f = await runner.formalReview(g(), card, persisted);
+    assert.deepEqual(calls, ['primary'], 'charged, not run again');
+    assert.equal(f.run.review.invocations.at(-1)?.outcome, 'no-verdict');
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** Three changed lines of a file git treats as binary (NUL bytes), shown as text: at the threshold. */
+const NUL_THRESHOLD_DIFF = 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n--- a/src/t0-fb.ts\n+++ b/src/t0-fb.ts\n@@ -1 +1,2 @@\n-a\u0000b\n+a\u0000c\n+d\n';
+
+test('in a git repository the level is counted from the pinned candidate range, never from HEAD, NUL-byte hunks included [T1-OPUS55-R3-2 acceptance 8] [R2] [R5]', async () => {
+  const { fx, makeRunner, card, g, argv, run } = await atReview(false, {
+    formalReview: EFFORT_PRIMARY,
+    script: {
+      'git rev-parse': { stdout: 'sha-1\n' },
+      'git status': { stdout: '' },
+      'git diff --text main...sha-1': { stdout: NUL_THRESHOLD_DIFF },
+      'git diff --text main...HEAD': { stdout: SMALL_DIFF },
+    },
+  });
+  try {
+    const f = await makeRunner(fx.config, { ...fx.repo, isGit: true }).formalReview(g(), card, run);
+    assert.equal(f.classified.outcome, 'pass');
+    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('a candidate that renames a file out of src/core under the threshold runs at high: the rename from source matches high.paths [T1-OPUS55-R3-2 acceptance 9] [R6]', async () => {
+  const renamed = 'diff --git a/src/core/old.ts b/src/t0-fb.ts\nsimilarity index 95%\nrename from src/core/old.ts\nrename to src/t0-fb.ts\n--- a/src/core/old.ts\n+++ b/src/t0-fb.ts\n@@ -1 +1 @@\n-a\n+b\n';
+  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: renamed });
+  try {
+    const f = await runner.formalReview(g(), card, run);
+    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
+    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** The Codex primary form: `{effort}` inside a longer argument. */
+const EMBEDDED_PRIMARY = { ...EFFORT_PRIMARY, command: ['fake-p', '-c', 'model_reasoning_effort={effort}', '{instructions}'] };
+
+for (const [diff, level] of [[THRESHOLD_DIFF, 'high'], [SMALL_DIFF, 'medium']] as const) {
+  test(`an argv carrying {effort} inside a longer argument receives model_reasoning_effort=${level} and records ${level} [T1-OPUS55-R3-2 acceptance 3] [R2] [R3]`, async () => {
+    const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: EMBEDDED_PRIMARY, diff });
+    try {
+      const f = await runner.formalReview(g(), card, run);
+      assert.deepEqual(argv.primary[0]!.slice(0, 2), ['-c', `model_reasoning_effort=${level}`]);
+      assert.equal(f.run.review.invocations.at(-1)?.effort, level);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
