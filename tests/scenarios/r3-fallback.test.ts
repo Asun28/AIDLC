@@ -29,7 +29,7 @@ class RawShipPath extends DryRunShipPath {
 }
 
 /** A card at the R3 review directive with a primary (`fake-p`) and a fallback (`fake-b`) formal reviewer, each fed from its own queue. */
-async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict; formalReview?: Record<string, unknown>; fallback?: Record<string, unknown>; diff?: string; script?: Record<string, Partial<ExecReceipt>> } = {}) {
+async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict; formalReview?: Record<string, unknown>; fallback?: Record<string, unknown>; diff?: string; script?: Record<string, Partial<ExecReceipt> | ((args: string[]) => Partial<ExecReceipt>)>; allowPaths?: string[] } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: opts.gateRequired ?? true,
@@ -69,7 +69,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
   const runner = makeRunner();
   /** Open a card of its own goal and bring it to the review directive; every card reviews the same stubbed diff. */
   const open = async (id: string, sha: string) => {
-    writeCard(fx, { id, title: 'formal review fallback', allowPaths: ['src/t0-fb.ts'] });
+    writeCard(fx, { id, title: 'formal review fallback', allowPaths: opts.allowPaths ?? ['src/t0-fb.ts'] });
     const goal = fx.controller.createGoal({ text: `implement ${id}`, source: 'card', ref: id, affectedSurfaces: [] }, { cards: [id] });
     fx.controller.next(goal.id);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: [id] } });
@@ -530,17 +530,31 @@ test('in a git repository the level is counted from the pinned candidate range, 
   }
 });
 
-test('a candidate that renames a file out of src/core under the threshold runs at high: the rename from source matches high.paths [T1-OPUS55-R3-2 acceptance 9] [R6]', async () => {
-  const renamed = 'diff --git a/src/core/old.ts b/src/t0-fb.ts\nsimilarity index 95%\nrename from src/core/old.ts\nrename to src/t0-fb.ts\n--- a/src/core/old.ts\n+++ b/src/t0-fb.ts\n@@ -1 +1 @@\n-a\n+b\n';
-  const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: EFFORT_PRIMARY, diff: renamed });
-  try {
-    const f = await runner.formalReview(g(), card, run);
-    assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
-    assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
-  } finally {
-    fx.cleanup();
-  }
-});
+/**
+ * A two-line candidate renaming `source` to src/t0-fb.ts, its diff headers as git writes them (a non-ASCII name C-quoted with
+ * octal escapes). The scripted git lists it as git does: with rename detection by the destination only, with --no-renames by
+ * the source and the destination.
+ */
+const RENAMES_OUT_OF_CORE = [
+  { name: 'a file out of src/core/** [T1-OPUS55-R3-2 acceptance 9] [R6]', source: 'src/core/old.ts', headers: 'diff --git a/src/core/old.ts b/src/t0-fb.ts\nsimilarity index 95%\nrename from src/core/old.ts', glob: 'src/core/**' },
+  { name: 'a non-ASCII file out of the single-segment glob src/core/*.ts [T1-RENAME-PATHS acceptance 3] [R3]', source: 'src/core/é.ts', headers: 'diff --git "a/src/core/\\303\\251.ts" b/src/t0-fb.ts\nsimilarity index 95%\nrename from "src/core/\\303\\251.ts"', glob: 'src/core/*.ts' },
+];
+
+for (const { name, source, headers, glob } of RENAMES_OUT_OF_CORE) {
+  test(`a candidate that renames ${name} under the threshold runs at high: the changed paths name the rename source`, async () => {
+    const renamed = `${headers}\nrename to src/t0-fb.ts\n@@ -1 +1 @@\n-a\n+b\n`;
+    const script = { 'git diff --name-only -z': (args: string[]) => ({ stdout: args.includes('--no-renames') ? `${source}\u0000src/t0-fb.ts\u0000` : 'src/t0-fb.ts\u0000' }) };
+    const effort = { default: 'medium', high: { minChangedLines: 3, paths: [glob] } };
+    const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: { ...EFFORT_PRIMARY, effort }, diff: renamed, script, allowPaths: ['src/t0-fb.ts', source] });
+    try {
+      const f = await runner.formalReview(g(), card, run);
+      assert.deepEqual(argv.primary[0]!.slice(0, 2), ['--effort', 'high']);
+      assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
 
 /** The Codex primary form: `{effort}` inside a longer argument. */
 const EMBEDDED_PRIMARY = { ...EFFORT_PRIMARY, command: ['fake-p', '-c', 'model_reasoning_effort={effort}', '{instructions}'] };

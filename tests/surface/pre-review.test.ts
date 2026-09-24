@@ -13,6 +13,9 @@ import { classifyVerdict } from '../../src/core/review-policy.ts';
 import type { CoverageEntry } from '../../src/core/types.ts';
 import { run, scriptedRunner } from '../../src/probes/exec.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { makeFixture, writeCard } from '../scenarios/_harness.ts';
 
 function fixtureCard() {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-prereview-'));
@@ -336,6 +339,60 @@ test('scope gate: allow_paths match exact paths, directory prefixes and globs, n
   assert.equal(pathAllowed('docs/a.md', ['src/**']), false);
   assert.equal(pathAllowed(String.raw`src\loop\a.ts`, ['src/loop/a.ts']), true);
 });
+
+test('T1-RENAME-PATHS acceptance 1: the review listing runs git diff --name-only -z on the pinned range with --no-renames [R3]', () => {
+  const calls: string[][] = [];
+  collectCandidateDiff((c, a, o = {}) => { calls.push(a); return scriptedRunner({ 'git diff --name-only': { stdout: 'src/a.ts\u0000' }, 'git diff': { stdout: 'x' } })(c, a, o); }, tmpdir(), 'main', 100, 'sha-1');
+  assert.deepEqual(calls.find((a) => a.includes('--name-only')), ['diff', '--name-only', '-z', 'main...sha-1', '--no-renames']);
+});
+
+/**
+ * A card allowed `src/gate.ts` whose candidate renames `from` to `to`, at its first R2 (`pre`) or R3 (`formal`) directive. The
+ * scripted git lists the candidate as git does: with rename detection by the destination only, with --no-renames by both paths.
+ */
+function renameAtGate(stage: 'pre' | 'formal', from: string, to: string) {
+  const pass = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  const fx = makeFixture({
+    config: stage === 'pre'
+      ? { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } }
+      : { gateRequired: true, formalReview: { command: ['fake-p', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false } },
+  });
+  const script = scriptedRunner({
+    'git diff --name-only': (args) => ({ stdout: args.includes('--no-renames') ? `${from}\u0000${to}\u0000` : `${to}\u0000` }),
+    'git diff': { stdout: `diff --git a/${from} b/${to}\nsimilarity index 100%\nrename from ${from}\nrename to ${to}\n` },
+    'fake-r2': { stdout: pass },
+    'fake-p': { stdout: pass },
+  });
+  writeCard(fx, { id: 'T1-MOVE', title: 'move a file', allowPaths: ['src/gate.ts'] });
+  const goalId = fx.controller.createGoal({ text: 'implement T1-MOVE', source: 'card', ref: 'T1-MOVE', affectedSurfaces: [] }, { cards: ['T1-MOVE'] }).id;
+  fx.controller.next(goalId);
+  fx.controller.report({ goalId, generation: 0, result: 'cards-projected', data: { cards: ['T1-MOVE'] } });
+  const card = fx.card('T1-MOVE');
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+  const opened = runner.next(fx.goal(goalId), card, fx.controller.ensureCardRun(fx.goal(goalId), card.id));
+  const r = runner.next(fx.goal(goalId), card, runner.recordAttempt(fx.goal(goalId), card, opened.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-move' }));
+  assert.equal(r.directive.kind, stage === 'pre' ? 'pre-review' : 'review', r.directive.narration);
+  return { fx, runner, card, goal: () => fx.goal(goalId), run: r.run };
+}
+
+for (const [from, to, outside] of [['src/gate.ts', 'src/moved.ts', 'src/moved.ts'], ['src/other.ts', 'src/gate.ts', 'src/other.ts']] as const) {
+  test(`T1-RENAME-PATHS acceptance 2: the scope gate refuses a rename from ${from} to ${to} at R2 and R3, naming ${outside} [R3]`, async () => {
+    const pre = renameAtGate('pre', from, to);
+    try {
+      const { result } = await pre.runner.preReview(pre.goal(), pre.card, pre.run);
+      assert.equal(result.outcome, 'block');
+      assert.deepEqual(result.reasons, [`[spec] 1 out of scope @ ${outside}: outside allow_paths -> revert the change or amend the card (scope-gate)`]);
+    } finally {
+      pre.fx.cleanup();
+    }
+    const formal = renameAtGate('formal', from, to);
+    try {
+      await assert.rejects(formal.runner.formalReview(formal.goal(), formal.card, formal.run), { message: `out of scope: ${outside} outside allow_paths; revert the change or amend the card before the formal review (no decision consumed)` });
+    } finally {
+      formal.fx.cleanup();
+    }
+  });
+}
 
 test('citation rule: a block reason without an axis tag and a diff location is advisory and never blocks', () => {
   const cited = '[spec] 6 tests @ src/a.ts:1: no RED -> add a failing test first';
@@ -1101,6 +1158,26 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG U
     'A verdict document inside a closed ```json or bare ``` fence is read as the verdict, and a document inside a fence that never closes is malformed.',
     'Backticks right after the document close its fence only when nothing but whitespace follows them on that line.',
     'The reader already read a closed fence before this card, so the cause of the no-verdict round T1-OPUS55-PROMPTS lost is not established; the new rule only makes an unclosed fence fail closed like a document cut short (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+test('T1-RENAME-PATHS acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the rename-aware listing, and the rename-limit sentence is gone', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A renamed file is a changed path at its source and at its destination, so a rename from inside `allow_paths` to a path outside it, or from outside into it, is refused, and every R2 and R3 prompt lists both paths of a rename among the changed paths (card T1-RENAME-PATHS).',
+    'The path rule matches the changed paths the scope gate uses, `git diff --name-only -z <base>...<candidateSha> --no-renames`, which name a renamed file by its source and its destination, each as written and never C-quoted, so moving a file out of `src/core` counts as touching it and a non-ASCII name matches a single-segment glob such as `src/core/*.ts` (card T1-RENAME-PATHS).',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  assert.ok(!operations.includes('which name a renamed file by its destination'), 'the rename-limit sentence of card T1-OPUS55-R3-3 is replaced');
+  const changelogSentences = [
+    '- Rename-aware changed paths, card T1-RENAME-PATHS: the changed-path list of R2 and R3 (`collectCandidateDiff`) and `GitProbe.changedPaths` run `git diff --name-only -z --no-renames`, so a renamed file is listed by its source and its destination, and a non-ASCII name as written, never C-quoted.',
+    'The scope gate now refuses a rename from a path outside `allow_paths` into it, which it passed while git named a rename by its destination only.',
+    'The effort path rule reads the same list, so `renameSources` is removed, and renaming a non-ASCII file out of a single-segment glob such as `src/core/*.ts` now selects `high`, where the octal escapes of the `rename from` line never matched it.',
+    'Every R2 and R3 prompt lists both paths of a rename among the changed paths (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });

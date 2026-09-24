@@ -133,9 +133,15 @@ export class GitProbe {
     return path.resolve(cwd, this.must(cwd, ['rev-parse', '--git-common-dir']));
   }
 
+  /**
+   * The paths HEAD changes against the base. `-z`: git never quotes or escapes a name; `--no-renames`: a renamed file is
+   * listed by its source and its destination. The output is split on NUL and never trimmed, since a name may start with a space.
+   */
   changedPaths(cwd: string, baseOid: string): string[] {
-    const out = this.must(cwd, ['diff', '--name-only', `${baseOid}...HEAD`]);
-    return out.split(/\r?\n/).filter((l) => l.length > 0);
+    const args = ['diff', '--name-only', '-z', `${baseOid}...HEAD`, '--no-renames'];
+    const r = this.git(cwd, args);
+    if (r.exitCode !== 0) throw new GitProbeError(args, r);
+    return r.stdout.split('\u0000').filter((l) => l.length > 0);
   }
 
   numstat(cwd: string, baseOid: string): { added: number; deleted: number; files: number } {

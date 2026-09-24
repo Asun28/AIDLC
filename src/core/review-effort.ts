@@ -39,26 +39,13 @@ export function countDiffLines(diff: string): number {
 }
 
 /**
- * The source paths of the renames in a unified diff (`rename from <path>` header lines; a hunk line always starts with a
- * space, `+`, `-` or `\`, so none is one). A path git C-quotes is returned with its quotes removed and its escapes as written.
- */
-export function renameSources(diff: string): string[] {
-  const sources: string[] = [];
-  for (const line of diff.split(/\r?\n/)) {
-    if (!line.startsWith('rename from ')) continue;
-    const p = line.slice('rename from '.length);
-    sources.push(p.length >= 2 && p.startsWith('"') && p.endsWith('"') ? p.slice(1, -1) : p);
-  }
-  return sources;
-}
-
-/**
  * The level for the collected candidate diff: its hunk lines counted, and the path rule matched against the changed paths
- * and the rename sources. Fail closed: a non-empty diff with no `diff --git ` section (coloured, or written by an external
- * driver) is not a count of zero and selects `high`, or the policy's `xhigh` or `max` default when that is higher.
+ * alone, which name a renamed file by its source and its destination (`collectCandidateDiff` lists them with `--no-renames`).
+ * Fail closed: a non-empty diff with no `diff --git ` section (coloured, or written by an external driver) is not a count of
+ * zero and selects `high`, or the policy's `xhigh` or `max` default when that is higher.
  */
 export function selectReviewEffortFromDiff(policy: ReviewEffortPolicy | undefined, diff: string, changedPaths: string[], matches: PathMatcher): ReviewEffortLevel {
   const lines = diff.split(/\r?\n/);
   if (diff.trim() && !lines.some((l) => l.startsWith('diff --git '))) return policy?.default === 'xhigh' || policy?.default === 'max' ? policy.default : 'high';
-  return selectReviewEffort(policy, { changedLines: countDiffLines(diff), changedPaths: [...changedPaths, ...renameSources(diff)] }, matches);
+  return selectReviewEffort(policy, { changedLines: countDiffLines(diff), changedPaths }, matches);
 }
