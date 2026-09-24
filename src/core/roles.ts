@@ -21,13 +21,13 @@ export interface ProfileRequest {
 
 export const DEFAULT_MODELS: Record<'gpt' | 'claude', Record<Role, { provider: string; model: string }>> = {
   claude: {
-    // Opus 5 is the default for consequential roles; a project may pin `claude-fable-5-1` for the
+    // Opus 5.5 is the default for consequential roles; a project may pin `claude-fable-5-1` for the
     // planner/reviewer seats once its availability and retention requirements are verified (MA1).
-    planner: { provider: 'anthropic', model: 'claude-opus-5' },
-    implementer: { provider: 'anthropic', model: 'claude-opus-5' },
+    planner: { provider: 'anthropic', model: 'claude-opus-5-5' },
+    implementer: { provider: 'anthropic', model: 'claude-opus-5-5' },
     investigator: { provider: 'anthropic', model: 'claude-sonnet-5' },
-    reviewer: { provider: 'anthropic', model: 'claude-opus-5' },
-    'release-specialist': { provider: 'anthropic', model: 'claude-opus-5' },
+    reviewer: { provider: 'anthropic', model: 'claude-opus-5-5' },
+    'release-specialist': { provider: 'anthropic', model: 'claude-opus-5-5' },
   },
   gpt: {
     planner: { provider: 'openai', model: 'gpt-5.6-sol' },

@@ -230,8 +230,17 @@ describe('effort episodes (MA2 / Q25)', () => {
     assert.notEqual(normaliseCause('TypeError'), normaliseCause('ReferenceError'));
   });
 
-  test('ladders: Claude uses its own levels, never a translation of GPT strings', () => {
-    assert.deepEqual(EFFORT_LADDERS['claude'], ['low', 'medium', 'high', 'max']);
+  test('an episode at baseline high on the Claude ladder escalates to xhigh, not max [T1-OPUS55-MODELS R5]', () => {
+    let ep = createEpisode('t', 'implementer', 'high', EFFORT_LADDERS['claude']!);
+    assert.equal(nextSupportedEffort(ep), 'xhigh');
+    ep = fail(ep, 1, 'a', true);
+    ep = fail(ep, 2, 'b', true);
+    ep = fail(ep, 3, 'c', true);
+    assert.deepEqual(nextEffortAction(ep, JUSTIFIED), { action: 'attempt', effort: 'xhigh', n: 4, escalated: true });
+  });
+
+  test('ladders: Claude uses its own levels, never a translation of GPT strings [T1-OPUS55-MODELS R5]', () => {
+    assert.deepEqual(EFFORT_LADDERS['claude'], ['low', 'medium', 'high', 'xhigh', 'max']);
     assert.deepEqual(GPT, ['low', 'medium', 'high', 'xhigh']);
   });
 });

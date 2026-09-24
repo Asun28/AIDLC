@@ -1,8 +1,11 @@
 /**
  * Claude API provider via the official `@anthropic-ai/sdk`.
  *
- * - Default model `claude-opus-5`; adaptive thinking; `output_config.effort` maps the task's
- *   effort level (MA2) directly to the API effort.
+ * - Default model `claude-opus-5-5`; adaptive thinking; `output_config.effort` maps the task's
+ *   effort level (MA2) directly to the API effort on every request. Opus 5.5 rejects thinking
+ *   disabled or with a budget, a forced `tool_choice`, non-default sampling and an assistant
+ *   prefill, so the request sends none of them; text is read from `text` blocks only, since a
+ *   response may begin with thinking blocks.
  * - Streaming with `finalMessage()` so long planning/review outputs never hit HTTP timeouts.
  * - Rate limits (429) are reported as `quota` with the provider's retry-after so the caller
  *   WAITs (MS4) instead of treating them as reasoning failures.
@@ -19,26 +22,30 @@ export interface ClaudeApiOptions {
   timeoutMs?: number;
   /** Return summarized thinking in the result text (debug only). */
   showThinking?: boolean;
+  /** Test-only: a messages client to use instead of one built from the SDK, so tests inject a fake with no network. It bypasses `maxRetries` and `timeoutMs`, which configure only the SDK client. */
+  client?: ClaudeMessagesClient;
 }
 
 type AnthropicModule = typeof import('@anthropic-ai/sdk');
+/** The part of the SDK client the provider calls. */
+export type ClaudeMessagesClient = Pick<InstanceType<AnthropicModule['default']>, 'messages'>;
 
 export class ClaudeApiProvider implements ModelProvider {
   readonly name = 'claude-api';
   private readonly opts: ClaudeApiOptions;
   private sdk: AnthropicModule | undefined;
-  private client: InstanceType<AnthropicModule['default']> | undefined;
+  private client: ClaudeMessagesClient | undefined;
 
   constructor(opts: ClaudeApiOptions = {}) {
     this.opts = opts;
   }
 
-  private async load(): Promise<{ sdk: AnthropicModule; client: InstanceType<AnthropicModule['default']> }> {
+  private async load(): Promise<{ sdk: AnthropicModule; client: ClaudeMessagesClient }> {
     if (!this.sdk || !this.client) {
       const sdk = await import('@anthropic-ai/sdk');
       const Anthropic = sdk.default;
       this.sdk = sdk;
-      this.client = new Anthropic({
+      this.client = this.opts.client ?? new Anthropic({
         apiKey: this.opts.apiKey,
         maxRetries: this.opts.maxRetries ?? 2,
         timeout: this.opts.timeoutMs ?? 10 * 60 * 1000,
@@ -60,7 +67,7 @@ export class ClaudeApiProvider implements ModelProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const started = Date.now();
-    const model = request.model ?? this.opts.defaultModel ?? 'claude-opus-5';
+    const model = request.model ?? this.opts.defaultModel ?? 'claude-opus-5-5';
     const invocationId = newInvocationId('claude-api');
     const { sdk, client } = await this.load();
     const system = request.jsonSchema
