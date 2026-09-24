@@ -22,7 +22,7 @@ export function selectReviewEffort(policy: ReviewEffortPolicy | undefined, input
 }
 
 /**
- * Added plus deleted lines of a unified diff, counted from the diff text the reviewer receives: inside a hunk (from an
+ * Added plus deleted lines of a unified diff, counted from the pinned --text diff collected for the review: inside a hunk (from an
  * `@@ ` line to the next `diff --git ` line) every line starting with `+` or `-`, so an added line whose content begins
  * with `++` counts; the file headers before a section's first hunk (`---`, `+++`, rename, mode, `Binary files`) and
  * `\ No newline at end of file` never do.

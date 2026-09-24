@@ -58,8 +58,8 @@ describe('resolveWorktreeRoot (T0-WORKTREE-ROOT-DEFAULT)', () => {
   });
 });
 
-/** A ZodError, not a crash, whose issue names formalReview.fallback.command. */
-const fallbackCommandIssue = (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'formalReview.fallback.command');
+/** A ZodError, not a crash, whose issue names the given path. */
+const issueAt = (at: string) => (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === at);
 
 describe('formalReview.fallback (T0-R3-FALLBACK-2)', () => {
   test('a fallback with only command and reviewer is accepted and defaulted like formalReview [R1]', () => {
@@ -71,7 +71,7 @@ describe('formalReview.fallback (T0-R3-FALLBACK-2)', () => {
   });
 
   test('a fallback with an empty command is rejected with an issue naming formalReview.fallback.command, not a crash [R1]', () => {
-    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], fallback: { command: [], reviewer: 'b' } } }), fallbackCommandIssue);
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], fallback: { command: [], reviewer: 'b' } } }), issueAt('formalReview.fallback.command'));
   });
 
   test('a config without a fallback parses to fallback undefined [R1]', () => {
@@ -82,8 +82,8 @@ describe('formalReview.fallback (T0-R3-FALLBACK-2)', () => {
 
 describe('formalReview.fallback validation and this repository config (T0-R3-FALLBACK-2)', () => {
   test('a fallback with an empty argument anywhere (the Windows shell drops it), an empty reviewer, or the primary name is rejected [R1]', () => {
-    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: [''], reviewer: 'b' } } }), fallbackCommandIssue);
-    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources', ''], reviewer: 'b' } } }), fallbackCommandIssue);
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: [''], reviewer: 'b' } } }), issueAt('formalReview.fallback.command'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources', ''], reviewer: 'b' } } }), issueAt('formalReview.fallback.command'));
     assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b'], reviewer: '' } } }), (err: unknown) => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'formalReview.fallback.reviewer'));
     assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'same', fallback: { command: ['b'], reviewer: 'same' } } }), /must differ/);
     // Request keys and pool files fold case and surrounding blanks, so a case or blank variant is the same reviewer.
@@ -117,9 +117,6 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     assert.deepEqual(raw.formalReview, { command: [], reviewer: 'codex', timeoutMs: 1200000, effort: { default: 'medium' } });
   });
 });
-
-/** A ZodError, not a crash, whose issue names the given path. */
-const issueAt = (at: string) => (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === at);
 
 describe('formalReview effort (T1-OPUS55-R3 acceptance 2)', () => {
   const effort = { default: 'high', high: { minChangedLines: 500, paths: ['src/core/**'] } };

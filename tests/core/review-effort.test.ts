@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { countDiffLines, selectReviewEffort, selectReviewEffortFromDiff } from '../../src/core/review-effort.ts';
+import { countDiffLines, renameSources, selectReviewEffort, selectReviewEffortFromDiff } from '../../src/core/review-effort.ts';
 import { pathAllowed } from '../../src/review/pre-review.ts';
 import type { ReviewEffortPolicy } from '../../src/core/types.ts';
 
@@ -122,5 +122,32 @@ describe('selectReviewEffortFromDiff matches the changed paths (T1-OPUS55-R3-3 a
 describe('selectReviewEffortFromDiff fail-closed scope (T1-OPUS55-R3-3 acceptance 12)', () => {
   test('an empty diff is not a decorated one: the default is kept [R5]', () => {
     assert.equal(selectReviewEffortFromDiff(POLICY, '', ['src/loop/x.ts'], pathAllowed), 'medium');
+  });
+});
+
+describe('renameSources (T1-OPUS55-R3-3 acceptance 12, R3 decision 1)', () => {
+  test('returns exactly the rename from paths of a diff, and nothing for a diff without a rename [R6]', () => {
+    assert.deepEqual(renameSources(PINNED_DIFF), ['docs/old.md']);
+    assert.deepEqual(renameSources('diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-a\n+b\n'), []);
+  });
+
+  test('a C-quoted source loses exactly its two quotes; a path with a quote on one side only is kept whole [R6]', () => {
+    assert.deepEqual(renameSources('rename from "src/core/\\303\\251.ts"\n'), ['src/core/\\303\\251.ts']);
+    assert.deepEqual(renameSources('rename from "src/core/a\nrename from src/core/b"\nrename from "\n'), ['"src/core/a', 'src/core/b"', '"']);
+  });
+
+  test('a hunk line with a high path at column 12 is not a rename source: a small docs edit keeps the default [R6]', () => {
+    const docs = 'diff --git a/docs/x.md b/docs/x.md\n--- a/docs/x.md\n+++ b/docs/x.md\n@@ -1 +1 @@\n-old\n+' + ' '.repeat(11) + 'src/core/x.ts\n';
+    assert.equal(selectReviewEffortFromDiff(POLICY, docs, ['docs/x.md'], pathAllowed), 'medium');
+  });
+});
+
+describe('review-effort survivors of the wider mutation sweep (T1-OPUS55-R3-3 acceptance 12)', () => {
+  test('a quoted source of two characters is stripped to its content: the length guard is 2, not 3 [R6]', () => {
+    assert.deepEqual(renameSources('rename from ""\n'), ['']);
+  });
+
+  test('a diff of blank lines only is empty, not decorated: the default is kept [R5]', () => {
+    assert.equal(selectReviewEffortFromDiff(POLICY, '\n  \n', ['src/loop/x.ts'], pathAllowed), 'medium');
   });
 });

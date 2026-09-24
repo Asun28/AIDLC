@@ -1396,8 +1396,8 @@ export class CardRunner {
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
-    // The effort level is an input like the diff and is counted from that same pinned diff text (`--text`, so a file git
-    // treats as binary counts the hunks the reviewer is shown), with the dispatched reviewer's policy, before the first
+    // The effort level is an input like the diff and is counted from the pinned --text diff collected for the review (so a
+    // file git treats as binary counts its shown hunks), with the dispatched reviewer's policy, before the first
     // mutation: a retry of the candidate on that reviewer runs at the same level, and a moved HEAD changes nothing.
     const effort: ReviewEffortLevel | undefined = cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
