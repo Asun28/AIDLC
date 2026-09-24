@@ -1,8 +1,11 @@
 /**
  * Claude API provider via the official `@anthropic-ai/sdk`.
  *
- * - Default model `claude-opus-5`; adaptive thinking; `output_config.effort` maps the task's
- *   effort level (MA2) directly to the API effort.
+ * - Default model `claude-opus-5-5`; adaptive thinking; `output_config.effort` maps the task's
+ *   effort level (MA2) directly to the API effort on every request. Opus 5.5 rejects thinking
+ *   disabled or with a budget, a forced `tool_choice`, non-default sampling and an assistant
+ *   prefill, so the request sends none of them; text is read from `text` blocks only, since a
+ *   response may begin with thinking blocks.
  * - Streaming with `finalMessage()` so long planning/review outputs never hit HTTP timeouts.
  * - Rate limits (429) are reported as `quota` with the provider's retry-after so the caller
  *   WAITs (MS4) instead of treating them as reasoning failures.
@@ -64,7 +67,7 @@ export class ClaudeApiProvider implements ModelProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const started = Date.now();
-    const model = request.model ?? this.opts.defaultModel ?? 'claude-opus-5';
+    const model = request.model ?? this.opts.defaultModel ?? 'claude-opus-5-5';
     const invocationId = newInvocationId('claude-api');
     const { sdk, client } = await this.load();
     const system = request.jsonSchema

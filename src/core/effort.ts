@@ -169,5 +169,6 @@ export function normaliseCause(cause: string): string {
 /** Host effort ladders; a Claude host uses its own verified levels, never a translation of GPT strings. */
 export const EFFORT_LADDERS: Record<string, EffortLevel[]> = {
   gpt: ['low', 'medium', 'high', 'xhigh'],
-  claude: ['low', 'medium', 'high', 'max'],
+  // Opus 5.5 supports all five levels; max stays the escalation top, so an escalation from high goes to xhigh.
+  claude: ['low', 'medium', 'high', 'xhigh', 'max'],
 };

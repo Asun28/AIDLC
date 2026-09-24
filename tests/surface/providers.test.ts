@@ -160,3 +160,12 @@ test('T1-OPUS55-MODELS acceptance 4: stop_reason refusal yields outcome refusal 
   const r = await new ClaudeApiProvider({ client }).complete(REQUEST);
   assert.equal(r.outcome, 'refusal');
 });
+
+test('T1-OPUS55-MODELS acceptance 3: a request model wins over defaultModel, and defaultModel over the built-in default [R5]', async () => {
+  const withDefault = fakeClaudeClient(claudeMessage([{ type: 'text', text: 'ok' }]));
+  await new ClaudeApiProvider({ client: withDefault.client, defaultModel: 'claude-opus-5' }).complete(REQUEST);
+  assert.equal(withDefault.sent[0]!['model'], 'claude-opus-5', 'an explicit defaultModel passes through');
+  const withBoth = fakeClaudeClient(claudeMessage([{ type: 'text', text: 'ok' }]));
+  await new ClaudeApiProvider({ client: withBoth.client, defaultModel: 'claude-opus-5' }).complete({ ...REQUEST, model: 'claude-sonnet-5' });
+  assert.equal(withBoth.sent[0]!['model'], 'claude-sonnet-5', 'the request model wins');
+});
