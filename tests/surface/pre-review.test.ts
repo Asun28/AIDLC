@@ -1073,6 +1073,12 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 2: a verdict inside a closed ```json or b
   assert.equal(read('```a``` is inline code, not a fence\n' + pass + '\n'), 'pass', 'a line with backticks in its info string opens no fence');
   assert.equal(read('    ```\n' + pass + '\n'), 'pass', 'a line indented four spaces opens no fence');
   assert.equal(read('   ```json\n' + pass + '\n   ```\n'), 'pass', 'a fence indented three spaces opens and closes');
+  assert.equal(read('  ```json\n' + pass + '\n'), undefined, 'a fence indented two spaces that never closes is malformed');
+  assert.equal(read('```diff\n+x\n```json\n' + pass + '\n'), undefined, 'a fence line with an info string inside an open fence closes nothing before the document');
+  assert.equal(read('```' + pass + '\n'), undefined, 'a bare fence opened on the line of the document that never closes is malformed');
+  assert.equal(read('   ```json\n' + pass + '\n'), undefined, 'a fence indented three spaces that never closes is malformed');
+  assert.equal(read('```json\n' + pass + '\n    ```\n'), undefined, 'a line indented four spaces closes no fence');
+  assert.equal(read('```json\n{"draft":1}\n```' + pass + '\n'), 'pass', 'a document right after the closing backticks of a fence is outside it');
 });
 
 test('T1-REVIEW-LOOP-GUARDS acceptance 3: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the RED receipt refusal and the fenced verdict rule', () => {

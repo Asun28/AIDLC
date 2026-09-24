@@ -3727,11 +3727,13 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 1: a success attempt on a tdd card withou
     assert.equal(noTdd.effort?.terminal, 'succeeded', 'a tdd: false card records a success without a RED receipt');
 
     const hasCard = fx.card('T1-HASRED');
-    let has = runner.recordAttempt(goal, hasCard, toBuild('T1-HASRED'), { outcome: 'fail', cause: 'green pending', redReceipt: 'red:held' });
+    const stale = toBuild('T1-HASRED');
+    let has = runner.recordAttempt(goal, hasCard, stale, { outcome: 'fail', cause: 'green pending', redReceipt: 'red:held' });
     has = runner.next(goal, hasCard, has).run;
     assert.equal(has.redReceipt, 'red:held');
-    has = runner.recordAttempt(goal, hasCard, has, { outcome: 'success', dodReceipt: 'dod:1', candidateSha: 'sha-1' });
-    assert.equal(has.effort?.terminal, 'succeeded', 'a run that already holds a RED receipt records a success without a new one');
+    assert.equal(stale.redReceipt, undefined);
+    has = runner.recordAttempt(goal, hasCard, stale, { outcome: 'success', dodReceipt: 'dod:1', candidateSha: 'sha-1' });
+    assert.equal(has.effort?.terminal, 'succeeded', 'a stored run that already holds a RED receipt records a success without a new one, whatever the caller snapshot says');
     assert.equal(has.redReceipt, 'red:held');
   } finally {
     fx.cleanup();
