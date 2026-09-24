@@ -29,7 +29,7 @@ class RawShipPath extends DryRunShipPath {
 }
 
 /** A card at the R3 review directive with a primary (`fake-p`) and a fallback (`fake-b`) formal reviewer, each fed from its own queue. */
-async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict; formalReview?: Record<string, unknown>; fallback?: Record<string, unknown>; diff?: string; script?: Record<string, Partial<ExecReceipt>>; allowPaths?: string[] } = {}) {
+async function atReview(withFallback = true, opts: { gateRequired?: boolean; shipVerdict?: Verdict; formalReview?: Record<string, unknown>; fallback?: Record<string, unknown>; diff?: string; script?: Record<string, Partial<ExecReceipt> | ((args: string[]) => Partial<ExecReceipt>)>; allowPaths?: string[] } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: opts.gateRequired ?? true,
@@ -543,7 +543,7 @@ const RENAMES_OUT_OF_CORE = [
 for (const { name, source, headers, glob } of RENAMES_OUT_OF_CORE) {
   test(`a candidate that renames ${name} under the threshold runs at high: the changed paths name the rename source`, async () => {
     const renamed = `${headers}\nrename to src/t0-fb.ts\n@@ -1 +1 @@\n-a\n+b\n`;
-    const script = { 'git diff --name-only -z --no-renames': { stdout: `${source}\u0000src/t0-fb.ts\u0000` }, 'git diff --name-only': { stdout: 'src/t0-fb.ts\u0000' } };
+    const script = { 'git diff --name-only -z': (args: string[]) => ({ stdout: args.includes('--no-renames') ? `${source}\u0000src/t0-fb.ts\u0000` : 'src/t0-fb.ts\u0000' }) };
     const effort = { default: 'medium', high: { minChangedLines: 3, paths: [glob] } };
     const { fx, runner, card, g, argv, run } = await atReview(false, { formalReview: { ...EFFORT_PRIMARY, effort }, diff: renamed, script, allowPaths: ['src/t0-fb.ts', source] });
     try {

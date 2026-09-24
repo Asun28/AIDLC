@@ -113,7 +113,7 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
         'git rev-list --left-right --count refs/remotes/origin/main...HEAD': { stdout: '2\t3\n' },
         'git merge-base --is-ancestor deadbeef refs/remotes/origin/main': { exitCode: 0 },
         'git merge-base --is-ancestor cafebabe refs/remotes/origin/main': { exitCode: 1 },
-        'git diff --name-only -z --no-renames base...HEAD': { stdout: 'src/a.ts\u0000docs/b.md\u0000' },
+        'git diff --name-only -z base...HEAD --no-renames': { stdout: 'src/a.ts\u0000docs/b.md\u0000' },
         'git diff --numstat base...HEAD': { stdout: '10\t2\tsrc/a.ts\n-\t-\tbin/blob\n3\t0\tdocs/b.md\n' },
         'git rev-parse --git-common-dir': { stdout: `${D}/repo/.git\n` },
         'git fetch --quiet --no-tags origin +refs/heads/main:refs/remotes/origin/main': { exitCode: 0 },
@@ -126,6 +126,13 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
     assert.deepEqual(probe.numstat(`${D}/wt`, 'base'), { added: 13, deleted: 2, files: 3 });
     assert.equal(probe.commonDir(`${D}/wt`), path.resolve(`${D}/repo/.git`));
     assert.equal(probe.fetchBase(`${D}/wt`, 'origin/main').exitCode, 0);
+  });
+
+  it('changedPaths splits on NUL only, so a name with a newline stays whole, and a failing listing throws (T1-RENAME-PATHS acceptance 1) [R3]', () => {
+    const listed = new GitProbe(scriptedRunner({ 'git diff --name-only -z base...HEAD --no-renames': { stdout: 'docs/line\nbreak.md\u0000src/a.ts\u0000' } }));
+    assert.deepEqual(listed.changedPaths(`${D}/wt`, 'base'), ['docs/line\nbreak.md', 'src/a.ts']);
+    const failing = new GitProbe(scriptedRunner({ 'git diff --name-only -z base...HEAD --no-renames': { exitCode: 128, stderr: 'fatal: bad revision' } }));
+    assert.throws(() => failing.changedPaths(`${D}/wt`, 'base'), (e: unknown) => e instanceof GitProbeError && /bad revision/.test(e.message) && e.receipt.exitCode === 128);
   });
 
   it('lists a renamed file by its source and its destination, unquoted, in GitProbe and in the review listing (T1-RENAME-PATHS acceptance 1) [R3]', () => {

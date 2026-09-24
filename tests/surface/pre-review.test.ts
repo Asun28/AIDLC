@@ -340,10 +340,10 @@ test('scope gate: allow_paths match exact paths, directory prefixes and globs, n
   assert.equal(pathAllowed(String.raw`src\loop\a.ts`, ['src/loop/a.ts']), true);
 });
 
-test('T1-RENAME-PATHS acceptance 1: the review listing runs git diff --name-only -z --no-renames on the pinned range [R3]', () => {
+test('T1-RENAME-PATHS acceptance 1: the review listing runs git diff --name-only -z on the pinned range with --no-renames [R3]', () => {
   const calls: string[][] = [];
   collectCandidateDiff((c, a, o = {}) => { calls.push(a); return scriptedRunner({ 'git diff --name-only': { stdout: 'src/a.ts\u0000' }, 'git diff': { stdout: 'x' } })(c, a, o); }, tmpdir(), 'main', 100, 'sha-1');
-  assert.deepEqual(calls.find((a) => a.includes('--name-only')), ['diff', '--name-only', '-z', '--no-renames', 'main...sha-1']);
+  assert.deepEqual(calls.find((a) => a.includes('--name-only')), ['diff', '--name-only', '-z', 'main...sha-1', '--no-renames']);
 });
 
 /**
@@ -358,8 +358,7 @@ function renameAtGate(stage: 'pre' | 'formal', from: string, to: string) {
       : { gateRequired: true, formalReview: { command: ['fake-p', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false } },
   });
   const script = scriptedRunner({
-    'git diff --name-only -z --no-renames': { stdout: `${from}\u0000${to}\u0000` },
-    'git diff --name-only': { stdout: `${to}\u0000` },
+    'git diff --name-only': (args) => ({ stdout: args.includes('--no-renames') ? `${from}\u0000${to}\u0000` : `${to}\u0000` }),
     'git diff': { stdout: `diff --git a/${from} b/${to}\nsimilarity index 100%\nrename from ${from}\nrename to ${to}\n` },
     'fake-r2': { stdout: pass },
     'fake-p': { stdout: pass },
@@ -1170,7 +1169,7 @@ test('T1-RENAME-PATHS acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unrelea
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const docSentences = [
     'A renamed file is a changed path at its source and at its destination, so a rename from inside `allow_paths` to a path outside it, or from outside into it, is refused, and every R2 and R3 prompt lists both paths of a rename among the changed paths (card T1-RENAME-PATHS).',
-    'The path rule matches the changed paths the scope gate uses, `git diff --name-only -z --no-renames <base>...<candidateSha>`, which name a renamed file by its source and its destination, each as written and never C-quoted, so moving a file out of `src/core` counts as touching it and a non-ASCII name matches a single-segment glob such as `src/core/*.ts` (card T1-RENAME-PATHS).',
+    'The path rule matches the changed paths the scope gate uses, `git diff --name-only -z <base>...<candidateSha> --no-renames`, which name a renamed file by its source and its destination, each as written and never C-quoted, so moving a file out of `src/core` counts as touching it and a non-ASCII name matches a single-segment glob such as `src/core/*.ts` (card T1-RENAME-PATHS).',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   assert.ok(!operations.includes('which name a renamed file by its destination'), 'the rename-limit sentence of card T1-OPUS55-R3-3 is replaced');

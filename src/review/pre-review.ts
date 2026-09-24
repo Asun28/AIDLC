@@ -710,8 +710,9 @@ export interface CandidateDiff {
 export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: string, maxBytes: number, head = 'HEAD', cap = 'maxDiffBytes'): CandidateDiff {
   // Diff the pinned candidate, not whatever HEAD is by the time git runs.
   const range = `${baseRef}...${head}`;
-  // NUL-separated names: git never quotes or escapes them, so non-ASCII paths compare exactly.
-  const names = runner('git', ['diff', '--name-only', '-z', range], { cwd });
+  // NUL-separated names: git never quotes or escapes them, so non-ASCII paths compare exactly. --no-renames: a renamed file is
+  // listed by its source and its destination, so the scope gate and the effort path rule see both sides of the move.
+  const names = runner('git', ['diff', '--name-only', '-z', range, '--no-renames'], { cwd });
   if (names.exitCode !== 0) throw new Error(`git diff --name-only ${range} failed in ${cwd}: ${names.stderr.trim() || `exit ${names.exitCode}`}`);
   // --text: a file that is binary on the base (a stray NUL byte) still shows its hunks to the reviewer. --no-color,
   // --no-ext-diff and --no-textconv: the reviewer and the effort count read a plain unified diff under any user git configuration.
