@@ -92,24 +92,40 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     assert.deepEqual(ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources='], reviewer: 'b' } } }).formalReview.fallback?.command, ['b', '--setting-sources=']);
   });
 
-  test('aidlc.config.json runs R3 on Codex gpt-6-sol with a read-only Claude Opus 5.5 fallback, each at {effort} [R1] [T1-OPUS55-R3 R4]', () => {
+  test('aidlc.config.json runs R3 on a read-only Claude Opus 5.5 at {effort} with no fallback while Codex is unavailable [T0-R3-OPUS-PRIMARY R1]', () => {
     const repoConfig = ProjectConfig.parse(JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', 'aidlc.config.json'), 'utf8')));
     const effort = { default: 'medium', high: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } };
-    assert.deepEqual(repoConfig.formalReview.command, ['codex', 'exec', '-m', 'gpt-6-sol', '-c', 'model_reasoning_effort={effort}', '--sandbox', 'read-only', '--output-schema', '{schema}']);
-    assert.equal(repoConfig.formalReview.reviewer, 'codex');
-    assert.deepEqual(repoConfig.formalReview.effort, effort);
-    const fallback = repoConfig.formalReview.fallback;
-    assert.ok(fallback);
-    assert.equal(fallback.reviewer, 'claude-opus-5-5');
-    assert.deepEqual(fallback.command, ['claude', '-p', '--model', 'claude-opus-5-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'], 'every argument of the former fallback is unchanged apart from the effort');
-    const tools = fallback.command[fallback.command.indexOf('--tools') + 1];
-    assert.equal(tools, 'Read,Grep,Glob', 'the fallback reviewer can only read');
-    assert.ok(fallback.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
-    assert.ok(fallback.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
-    assert.equal(fallback.command[fallback.command.indexOf('--effort') + 1], '{effort}');
-    assert.ok(fallback.command.includes('--no-session-persistence'));
-    assert.ok(fallback.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
-    assert.deepEqual(fallback.effort, effort);
+    const r3 = repoConfig.formalReview;
+    assert.deepEqual(r3.command, ['claude', '-p', '--model', 'claude-opus-5-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'], 'the arguments of the former fallback, unchanged');
+    assert.equal(r3.reviewer, 'claude-opus-5-5');
+    assert.equal(r3.timeoutMs, 1_200_000);
+    assert.deepEqual(r3.effort, effort);
+    assert.equal(r3.fallback, undefined, 'no fallback: a Codex fallback would be dispatched on an Opus quota hold and fail while Codex is unavailable');
+    assert.equal(r3.command[r3.command.indexOf('--tools') + 1], 'Read,Grep,Glob', 'the reviewer can only read');
+    assert.ok(r3.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
+    assert.ok(r3.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
+    assert.ok(r3.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
+  });
+
+  test('docs/OPERATIONS.md, CLAUDE.md and CHANGELOG.md name Opus 5.5 as the R3 reviewer and keep the Codex restore path [T0-R3-OPUS-PRIMARY R2]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(import.meta.dirname, '..', '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const flat = (text: string) => text.replace(/\s+/g, ' ');
+    const ops = read('docs', 'OPERATIONS.md');
+    const opsSentences = [
+      'In this repository R3 is a headless Claude Opus 5.5 with no fallback (card T0-R3-OPUS-PRIMARY), limited to the Read, Grep and Glob tools, with no setting sources (no hooks or plugins) and no MCP servers (`--strict-mcp-config`, which also drops the account connectors); it receives the effort level `{effort}` expands to as `--effort <level>`:',
+      'Codex `gpt-6-sol` was the primary, with Opus 5.5 as its fallback, until Codex became unavailable. No Codex fallback is configured: the fallback runs while the primary is held on quota, and a Codex run would fail as well.',
+      'To restore Codex, put its command back as `formalReview.command` with `"reviewer": "codex"` and move the Opus 5.5 command to `formalReview.fallback`; Codex takes the level as `-c model_reasoning_effort=<level>`:',
+    ];
+    for (const sentence of opsSentences) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    assert.ok(ops.includes('"command": ["codex", "exec", "-m", "gpt-6-sol", "-c", "model_reasoning_effort={effort}", "--sandbox", "read-only", "--output-schema", "{schema}"], "reviewer": "codex"'), 'docs/OPERATIONS.md keeps the Codex command');
+    assert.ok(flat(read('CLAUDE.md')).includes('this repo uses DeepSeek for R2 and Claude Opus 5.5 for R3 while Codex is unavailable)'), 'CLAUDE.md names the R3 reviewer');
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const changelogSentences = [
+      '- Formal review on Opus 5.5, card T0-R3-OPUS-PRIMARY: Codex is unavailable, so this repository runs R3 on the headless Claude Opus 5.5 reviewer that was its fallback, with the same read-only flags, effort policy and timeout, and with no fallback, since a Codex fallback would be dispatched on an Opus quota hold and fail.',
+      '`docs/OPERATIONS.md` keeps the Codex `gpt-6-sol` command as the way to restore it, and `CLAUDE.md` names Opus 5.5 for R3.',
+    ];
+    for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
 
   test('templates/aidlc.config.json gains only formalReview.effort medium; its command and reviewer are unchanged [T1-OPUS55-R3 acceptance 5]', () => {
