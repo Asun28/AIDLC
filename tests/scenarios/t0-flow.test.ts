@@ -3799,7 +3799,9 @@ test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verd
       assert.equal(ship.requests.length, 1, label);
       assert.deepEqual(r.run.review.invocations.map((i) => i.outcome), [expected], label);
       assert.equal(r.run.review.noVerdictRetriesUsed, expected === 'no-verdict' ? 1 : 0, label);
-      assert.equal(r.directive.kind, expected === 'no-verdict' ? 'ship' : 'wait', `${label}: ${r.directive.narration}`);
+      // Held: the review pool slot is held for the reviewer's quota; a no-verdict completes it and re-runs the same ship.
+      assert.equal(fx.events(goal.id).some((e) => e.type === 'REVIEW_HOLD'), expected === 'quota-hold', label);
+      if (expected === 'no-verdict') assert.equal(r.directive.kind, 'ship', `${label}: ${r.directive.narration}`);
     } finally {
       fx.cleanup();
     }

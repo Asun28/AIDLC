@@ -34,7 +34,17 @@ export interface ClassifyOptions {
   rawOutput?: string;
 }
 
-const QUOTA_PATTERNS = [/rate[- ]?limit/i, /quota/i, /usage limit/i, /429/, /retry[- ]after/i, /too many requests/i, /capacity/i, /overloaded/i];
+/** A whole word or phrase: no letter or digit directly before or after it, so `Quotation` or `4290` never match (`_` separates). */
+const word = (source: string) => new RegExp(`(?<![a-z0-9])(?:${source})(?![a-z0-9])`, 'i');
+const QUOTA_PATTERNS = [word('rate[- ]?limit(?:s|ed|er|ing)?'), word('quotas?'), word('usage limits?'), word('429'), word('retry[- ]after'), word('too many requests'), word('capacity'), word('overloaded')];
+
+/**
+ * The reviewer output a quota hold is read from: a process that exited 0 wrote its answer to stdout, where its reasoning can
+ * name a quota word, so only its stderr reports a hold; any other process reports one on either stream.
+ */
+export function quotaOutput(receipt: { exitCode: number | null; stdout: string; stderr: string }): string {
+  return receipt.exitCode === 0 ? receipt.stderr : `${receipt.stdout}\n${receipt.stderr}`;
+}
 
 export function detectQuotaHold(text: string | undefined): { hold: boolean; retryAfterMs?: number } {
   if (!text) return { hold: false };
