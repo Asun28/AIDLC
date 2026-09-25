@@ -1,9 +1,9 @@
 ---
-id: T0-QUOTA-FALSE-HOLD
-title: A reviewer that exits 0 without a readable verdict is a no-verdict round, not a quota hold, when its own reasoning text happens to contain a quota word, and the quota patterns match whole words only
+id: T0-QUOTA-FALSE-HOLD-2
+title: A reviewer that exits 0 without a readable verdict is a no-verdict round, not a quota hold, when its own reasoning text happens to contain a quota word, and the quota patterns match whole words only (replacement of T0-QUOTA-FALSE-HOLD after its R2 no-verdict allowance was spent on provider read timeouts)
 status: todo
-branch: T0-QUOTA-FALSE-HOLD
-worktree: D:\wt\AIDLC\T0-QUOTA-FALSE-HOLD
+branch: T0-QUOTA-FALSE-HOLD-2
+worktree: D:\wt\AIDLC\T0-QUOTA-FALSE-HOLD-2
 allow_paths:
   - src/core/review-policy.ts
   - src/review/pre-review.ts
@@ -14,7 +14,7 @@ allow_paths:
   - tests/scenarios/r3-fallback.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
-  - specs/tasks/T0-QUOTA-FALSE-HOLD.md
+  - specs/tasks/T0-QUOTA-FALSE-HOLD-2.md
 dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/r3-fallback.test.ts
 dod_exit: 0
 requirements:
@@ -37,10 +37,9 @@ diagnosis:
   same_class: "classifyVerdict on the ship path receives the same stdout-plus-stderr raw output (card-runner.ts:2105); R3 through runReviewPanel reaches classifyPreReview, so R2 covers it. No other reader of reviewer output looks for quota text (sweep)."
 hygiene: "Follow-up from goal g-20260924103834-4b1732. Run the mutation sweep over every added branch and the word-boundary regexes before the first review (docs/LESSONS.md 2026-09-24 and 2026-09-25)."
 doc_sync: docs/OPERATIONS.md (quota hold paragraph), CHANGELOG.md
-superseded_by: T0-QUOTA-FALSE-HOLD-2
 ---
 
-# T0-QUOTA-FALSE-HOLD
+# T0-QUOTA-FALSE-HOLD-2
 
 ## Deliverable
 A reviewer that exits 0 with no readable verdict is a no-verdict round even when its reasoning mentions a quota word, and the quota patterns match whole words, so `Quotation` or a sha containing `429` never holds a card. A real quota message on stderr, or on any stream of a process that exited non-zero, still holds.
@@ -51,3 +50,6 @@ npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Ruling
+Replacement of T0-QUOTA-FALSE-HOLD: that card's candidate (`f212ad1`, DoD-green, RED `799171e`, mutation sweep 40/40 killed) spent the R2 no-verdict allowance of cycle 0 on two rounds in which all three DeepSeek angles failed with `ERROR: The read operation timed out` (the CLI read timeout was 180 s on a request that does not stream; it is now 1100 s), which stopped it for tool before any R2 or R3 decision. A replacement carries the same commits through a fresh ledger, merged with main for T0-R3-OPUS-PRIMARY (PR #42), which moved the base and made Opus 5.5 the committed R3 reviewer.
