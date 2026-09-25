@@ -1,9 +1,9 @@
 ---
-id: T0-BASE-SYNC-CHANGELOG
-title: A base-sync conflict whose only hunks are entries both sides added at the top of the CHANGELOG Unreleased section is merged by keeping both, and the merge is always a new candidate that is verified and reviewed from scratch, never shipped on the reviews of the candidate it replaces
+id: T0-BASE-SYNC-CHANGELOG-2
+title: A base-sync conflict whose only hunks are entries both sides added at the top of the CHANGELOG Unreleased section is merged by keeping both, and the merge is always a new candidate that is verified and reviewed from scratch, never shipped on the reviews of the candidate it replaces (replacement of T0-BASE-SYNC-CHANGELOG, whose first candidate was recorded with a wrong full-check claim)
 status: todo
-branch: T0-BASE-SYNC-CHANGELOG
-worktree: D:\wt\AIDLC\T0-BASE-SYNC-CHANGELOG
+branch: T0-BASE-SYNC-CHANGELOG-2
+worktree: D:\wt\AIDLC\T0-BASE-SYNC-CHANGELOG-2
 allow_paths:
   - src/delivery/github-ship.ts
   - src/delivery/ship.ts
@@ -12,7 +12,7 @@ allow_paths:
   - tests/scenarios/t0-flow.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
-  - specs/tasks/T0-BASE-SYNC-CHANGELOG.md
+  - specs/tasks/T0-BASE-SYNC-CHANGELOG-2.md
 dod_command: npm run typecheck && node --test tests/infra/github-ship.test.ts tests/scenarios/t0-flow.test.ts
 dod_exit: 0
 requirements:
@@ -35,10 +35,9 @@ diagnosis:
   same_class: "The same union applies to any append-only list, but only CHANGELOG.md is named here; every other path stays with the skill."
 hygiene: "Found while shipping T0-AUDIT-READMIT (PR #55). Run the mutation sweep over the hunk classifier (empty base part, section bounds, path set) before the first review (docs/LESSONS.md 2026-09-24)."
 doc_sync: docs/OPERATIONS.md (base sync paragraph), CHANGELOG.md
-superseded_by: T0-BASE-SYNC-CHANGELOG-2
 ---
 
-# T0-BASE-SYNC-CHANGELOG
+# T0-BASE-SYNC-CHANGELOG-2
 
 ## Deliverable
 When the only conflict of a base sync is two sets of new entries at the top of the CHANGELOG `## Unreleased` section, the ship path keeps both, commits the merge and stops the ship there: the merge is a new candidate, and it goes through the DoD, R2 and R3 like any other. Any other conflict stays with the merge-conflicts skill, and nothing reviewed on the old candidate is carried to the merge.
@@ -49,3 +48,6 @@ npm run typecheck && node --test tests/infra/github-ship.test.ts tests/scenarios
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Ruling
+Replacement of T0-BASE-SYNC-CHANGELOG: its attempt 1 recorded candidate 7c2210b with a receipt saying `npm run check` passed, but one test failed (tests/surface/templates.test.ts:88: the CHANGELOG entry quoted a heading marker, which cut the Unreleased slice short). The DoD itself was green. A succeeded episode takes no new attempt, and reviewing a candidate known to fail would spend an R3 decision on it, so the fixed commits (e341b99) go through a fresh ledger here.
