@@ -77,7 +77,7 @@ describe('classifyVerdict (Q6)', () => {
     assert.deepEqual(detectQuotaHold(undefined), { hold: false });
   });
 
-  test('T0-QUOTA-FALSE-HOLD acceptance 1: each quota pattern holds only as a whole word or phrase, with no letter or digit directly before or after it', () => {
+  test('T0-QUOTA-FALSE-HOLD acceptance 1: each quota pattern holds only as a whole word or phrase: no letter or digit directly before or after it, except across a lowercase-to-uppercase change', () => {
     const cases: Array<[string, boolean]> = [
       ['quota', true],
       ['Quota exceeded', true],
@@ -136,7 +136,8 @@ describe('classifyVerdict (Q6)', () => {
       ['incapacity', false],
       ['capacityless', false],
       ['overloadedness', false],
-      ['too many requestsX', false],
+      ['too many requests2', false],
+      ['too many requestsX', true], // a lowercase-to-uppercase change ends the word
       ['all good', false],
     ];
     for (const [text, hold] of cases) assert.equal(detectQuotaHold(text).hold, hold, `${JSON.stringify(text)} holds: ${hold}`);

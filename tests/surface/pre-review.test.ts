@@ -1222,12 +1222,14 @@ test('T0-QUOTA-FALSE-HOLD acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unr
     'The ship path reads the receipt of its ship command by the same stream rule, and records a missing verdict without a quota message as `malformed`.',
     'Each quota pattern matches in any letter case and only as a whole word: `quota` or `quotas`, `429` or `429s`, `too many requests`, `rate limit` (also `rate-limit` or `ratelimit`, and with `s`, `ed`, `er` or `ing`), `usage limit` or `usage limits`, `retry after` or `retry-after`, `capacity` and `overloaded`.',
     'A word ends at the start or end of the text, at any character other than a letter or digit (`_` included) and at a change from a lowercase to an uppercase letter, so `insufficient_quota`, `rateLimitExceeded`, `RateLimitError` and `QuotaExceeded` hold; any other letter or digit next to the word joins it, so `Quotation`, `4290`, `HTTP429`, `E429`, a sha containing `429` and a compound written in one letter case such as `quotaexceeded` never hold (card T0-QUOTA-FALSE-HOLD-2).',
+    'The same split makes the camelCase phrases `retryAfter`, `tooManyRequests` and `usageLimit` hold, which no pattern matched before that card.',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelogSentences = [
     '- Quota holds, card T0-QUOTA-FALSE-HOLD completed as T0-QUOTA-FALSE-HOLD-2 (the replacement after two R2 rounds lost to DeepSeek CLI read timeouts): a reviewer that exits 0 without a readable verdict is now a no-verdict round when a quota word appears only on its stdout, where it was a quota hold; a process that exits 0 is held only on a quota message in its stderr, and any other process on a message in its stdout or stderr, as before.',
     'The ship path reads the receipt of its ship command by the same rule.',
     'The quota patterns of `detectQuotaHold` match whole words only: a word ends at any character other than a letter or digit and at a change from a lowercase to an uppercase letter, so `Quotation`, `4290`, `HTTP429`, `E429`, a sha containing `429` or a one-case compound such as `quotaexceeded` never hold, while `quotas`, `429s`, `rate-limited`, `insufficient_quota`, `rateLimitExceeded` and `RateLimitError` still do.',
+    'The camelCase phrases `retryAfter`, `tooManyRequests` and `usageLimit` now hold, which no pattern matched before.',
     'On T1-REVIEW-LOOP-GUARDS an R2 angle that exited 0 with a verdict cut before its last brace and `Quotation marks` in its reasoning was held as a quota hold instead of taking the no-verdict retry (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
