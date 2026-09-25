@@ -37,8 +37,12 @@ export interface ClassifyOptions {
 /** A whole word or phrase: no letter or digit directly before or after it, so `Quotation` or `4290` never match (`_` separates). */
 const word = (source: string) => new RegExp(`(?<![a-z0-9])(?:${source})(?![a-z0-9])`, 'i');
 const QUOTA_PATTERNS = [word('rate[- ]?limit(?:s|ed|er|ing)?'), word('quotas?'), word('usage limits?'), word('429s?'), word('retry[- ]after'), word('too many requests'), word('capacity'), word('overloaded')];
-/** A lowercase-to-uppercase change also ends a word, so camelCase codes (`rateLimitExceeded`, `insufficientQuota`) still match. */
-const CAMEL_SPLIT = /([a-z])(?=[A-Z])/g;
+/**
+ * The text as words: `_`, a lowercase-to-uppercase change and the last capital of a run before a capitalised word separate
+ * words like a space, so provider codes (`RATE_LIMIT_EXCEEDED`, `rateLimitExceeded`, `APIQuotaExceeded`) still match.
+ */
+const CAMEL_SPLIT = /([a-z])(?=[A-Z])|([A-Z])(?=[A-Z][a-z])/g;
+const asWords = (text: string) => text.replace(/_/g, ' ').replace(CAMEL_SPLIT, '$1$2 ');
 
 /**
  * The reviewer output a quota hold is read from: a process that exited 0 wrote its answer to stdout, where its reasoning can
@@ -50,7 +54,7 @@ export function quotaOutput(receipt: { exitCode: number | null; stdout: string; 
 
 export function detectQuotaHold(text: string | undefined): { hold: boolean; retryAfterMs?: number } {
   if (!text) return { hold: false };
-  const words = text.replace(CAMEL_SPLIT, '$1 ');
+  const words = asWords(text);
   const hold = QUOTA_PATTERNS.some((p) => p.test(words));
   if (!hold) return { hold: false };
   const m = text.match(/retry[- ]after[:=\s]+(\d+)\s*(ms|s|sec|seconds|m|min|minutes)?/i);
