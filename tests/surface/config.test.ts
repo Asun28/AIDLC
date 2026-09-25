@@ -200,3 +200,20 @@ describe('review effort documentation (T1-OPUS55-R3 acceptance 6)', () => {
     assert.match(unreleased, /T1-OPUS55-R3/);
   });
 });
+
+describe('preReview.answerMarker (T0-R2-ANSWER-MARKER)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const configOf = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8')) as { preReview: Record<string, unknown>; formalReview?: Record<string, unknown> };
+  test('acceptance 3: the setting is a string that defaults to empty, and a non-string is refused [R1] [R3]', () => {
+    assert.equal(empty.preReview.answerMarker, '');
+    assert.equal(ProjectConfig.parse({ preReview: { answerMarker: '=== answer ===' } }).preReview.answerMarker, '=== answer ===');
+    assert.throws(() => ProjectConfig.parse({ preReview: { answerMarker: 1 } }), (err: unknown) => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'preReview.answerMarker'));
+  });
+  test('acceptance 3: this repository sets the DeepSeek answer line, the installed template leaves it empty, and the formal review has no such setting [R1] [R3]', () => {
+    assert.equal(configOf('aidlc.config.json').preReview['answerMarker'], '=== answer ===');
+    assert.equal(ProjectConfig.parse(configOf('aidlc.config.json')).preReview.answerMarker, '=== answer ===');
+    assert.equal(configOf('templates/aidlc.config.json').preReview['answerMarker'], '');
+    assert.equal(ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview.answerMarker, '');
+    assert.equal('answerMarker' in ProjectConfig.parse({ formalReview: { command: ['r3'], answerMarker: '=== answer ===' } }).formalReview, false, 'the formal review keeps no marker');
+  });
+});

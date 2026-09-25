@@ -3808,3 +3808,52 @@ test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verd
     }
   }
 });
+
+test('T0-R2-ANSWER-MARKER acceptance 4: a pre-review round with the answer marker configured reads every angle after the marker and passes; without it the same output is a no-verdict round, and R3 ignores the setting', async () => {
+  // The shape of the four retained DeepSeek outputs: a closing fence line with no opener in the reasoning leaves a fence
+  // open to the end, and the verdict follows `=== answer ===`.
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}';
+  const fenced = ['=== reasoning ===', '```diff', '+export const gate = 1;', '```', '+  return gate;', '```', 'Fine.', '=== answer ===', 'All items hold.', '', PASS, ''].join('\n');
+  for (const answerMarker of ['=== answer ===', undefined]) {
+    const label = answerMarker ? 'with the marker' : 'without the marker';
+    const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2', '--focus', '{perspective}'], perspectives: ['bugs', 'security'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false, ...(answerMarker ? { answerMarker } : {}) }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+    try {
+      let r2Calls = 0;
+      const script = scriptedRunner({
+        'git diff --name-only': { stdout: 'src/t0-mark.ts\n' },
+        'git diff': { stdout: 'diff --git a/src/t0-mark.ts b/src/t0-mark.ts\n+export const gate = 1;\n' },
+        'fake-r2': () => {
+          r2Calls += 1;
+          return { stdout: fenced };
+        },
+        'fake-r3': () => ({ stdout: fenced }),
+      });
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+      writeCard(fx, { id: 'T0-MARK', title: 'answer marker' });
+      const goal = goalForCards(fx, ['T0-MARK']);
+      const card = fx.card('T0-MARK');
+      const g = () => fx.goal(goal.id);
+      let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T0-MARK'));
+      r = runner.next(g(), card, r.run);
+      const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+      r = runner.next(g(), card, run);
+      assert.equal(r.directive.kind, 'pre-review', `${label}: ${r.directive.narration}`);
+      const round = await runner.preReview(g(), card, r.run);
+      assert.equal(r2Calls, 2, `${label}: one reviewer run per angle`);
+      if (!answerMarker) {
+        assert.equal(round.result.outcome, 'no-verdict', `${label}: every angle is malformed`);
+        assert.equal(round.result.runStatus, 'malformed', label);
+        continue;
+      }
+      assert.equal(round.result.outcome, 'pass', `${label}: ${JSON.stringify(round.result.reasons)}`);
+      assert.deepEqual(round.result.perspectives?.map((p) => `${p.perspective}:${p.outcome}`), ['bugs:pass', 'security:pass'], label);
+      // R3 reads the same output with the formal reader, which ignores the pre-review marker: a no-verdict, never a pass.
+      r = runner.next(g(), card, round.run);
+      assert.equal(r.directive.kind, 'review', `${label}: ${r.directive.narration}`);
+      const formal = await runner.formalReview(g(), card, r.run);
+      assert.equal(formal.classified.outcome, 'no-verdict', `${label}: R3 is unchanged by preReview.answerMarker`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
