@@ -877,8 +877,12 @@ export class CardRunner {
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
-      // The success that clears a merge-conflict repair records the merge of a moved base: a base-sync candidate (T0-BASE-SYNC-REVIEW).
-      if (candidate && run.pendingRepair?.kind === 'merge-conflict' && clearsPendingRepair(run.pendingRepair, input)) candidate = { ...candidate, baseSync: true };
+      // The success that clears a merge-conflict repair records the merge of a moved base: a base-sync candidate
+      // (T0-BASE-SYNC-REVIEW). So does the repair of a base-sync candidate no R3 decision has decided yet (an R2 block after
+      // the merge): the base moved all the same, and the repaired merge is reviewed rather than stopped.
+      const prior = run.candidate;
+      const repairsBaseSync = prior?.baseSync === true && !run.review.invocations.some((i) => i.candidateDigest === prior.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+      if (candidate && ((run.pendingRepair?.kind === 'merge-conflict' && clearsPendingRepair(run.pendingRepair, input)) || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
     }
     // A failed check, or lost checks, leave no DoD evidence: neither the active receipt nor the one a block retained.
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;
@@ -1223,7 +1227,9 @@ export class CardRunner {
    * the ship's own admission stays in the goal's pool either way.
    */
   private formalPool(goal: Goal, cfg: FormalReviewer): string {
-    return this.config.formalReview.fallback || this.config.formalReview.baseSync ? `${goal.reviewPool}/${cfg.reviewer}` : goal.reviewPool;
+    // The base-sync reviewer always queues in its own pool (its quota is its own); the primary moves only with a fallback,
+    // so a base-sync reviewer alone leaves the primary, its pool limits and its holds where they were (T0-BASE-SYNC-REVIEW).
+    return this.config.formalReview.fallback !== undefined || cfg === this.config.formalReview.baseSync ? `${goal.reviewPool}/${cfg.reviewer}` : goal.reviewPool;
   }
 
   /**
