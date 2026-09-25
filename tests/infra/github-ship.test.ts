@@ -810,7 +810,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     ];
     for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelogSentences = [
-      '- Base-sync CHANGELOG merge, card T0-BASE-SYNC-CHANGELOG: a base-sync conflict whose only unmerged path is `CHANGELOG.md` and whose every hunk is lines both sides added to `## Unreleased` is now merged by keeping both, the card\'s lines first, and the ship ends with `[SHIP-BASE-SYNC-MERGED]` instead of `[SHIP-BASE-SYNC-CONFLICT]`; every other conflict is left to the merge-conflicts skill as before.',
+      '- Base-sync CHANGELOG merge, card T0-BASE-SYNC-CHANGELOG: a base-sync conflict whose only unmerged path is `CHANGELOG.md` and whose every hunk is lines both sides added to the Unreleased section is now merged by keeping both, the card\'s lines first, and the ship ends with `[SHIP-BASE-SYNC-MERGED]` instead of `[SHIP-BASE-SYNC-CONFLICT]`; every other conflict is left to the merge-conflicts skill as before.',
       'The merge commit is a new candidate that goes through the DoD, R2 and R3; the ship never pushes it on the reviews of the candidate it replaces (docs/OPERATIONS.md).',
     ];
     for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
