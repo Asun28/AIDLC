@@ -109,6 +109,9 @@ test('T0-AUDIT-READMIT acceptance 4: a goal stopped, resumed with a replacement 
     fx.controller.next(goal.id);
     fx.controller.report({ goalId: goal.id, generation: 1, result: 'arc-verified', data: {} });
     assert.equal(fx.goal(goal.id).state, 'DONE');
+    const takeover = fx.events(goal.id).find((e) => e.type === 'GOAL_TAKEOVER');
+    assert.equal(takeover?.generation, 1, 'the resume journals its takeover in the new generation');
+    assert.equal(takeover?.data['linkedFrom'], `${goal.id}@0`, 'the resume names the generation it links from');
     const types = fx.events(goal.id).map((e) => e.type);
     assert.ok(types.indexOf('GOAL_STOPPED') < types.indexOf('GOAL_TAKEOVER') && types.lastIndexOf('CARD_DISPATCHED') > types.indexOf('GOAL_TAKEOVER'), `the journal carries a stop, a resume and work after it: ${types.join(', ')}`);
     const report = verifyAudit({ goalId: goal.id, journal: fx.journal(goal.id), operations: fx.ops, now: fx.now() });

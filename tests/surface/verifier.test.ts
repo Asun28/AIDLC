@@ -181,6 +181,10 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
     ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
     ['a GOAL_STATE from STOP of another generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(1)], 1],
     ['a GOAL_STATE that is not from STOP re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_STATE', 0, { from: 'RUN', to: 'CARDS' }], attempt(0)], 1],
+    // R2 cycle 0 round 1: only the extension's transition, STOP to CARDS after a time stop, re-admits.
+    ['a GOAL_STATE from STOP to anything but CARDS re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'DONE' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP to CARDS after a stop that is not for time re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'review' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP to CARDS after a stop that names no reason re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
   ];
   for (const [name, events, count] of cases) {
     const report = journalOf(events, `g-${cases.findIndex((c) => c[0] === name)}`);
