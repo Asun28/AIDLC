@@ -11,10 +11,11 @@ allow_paths:
   - tests/core/review-policy.test.ts
   - tests/surface/pre-review.test.ts
   - tests/scenarios/t0-flow.test.ts
+  - tests/scenarios/r3-fallback.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T0-QUOTA-FALSE-HOLD.md
-dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts
+dod_command: npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/r3-fallback.test.ts
 dod_exit: 0
 requirements:
   - R1. `detectQuotaHold` shall match each quota pattern as a whole word or phrase, so `Quotation`, `4290` or a hex sha containing `429` never hold, while `quota`, `Quota exceeded`, `429 Too Many Requests`, `rate limit`, `rate-limited`, `usage limit`, `retry after 30 seconds`, `overloaded` and `capacity` still hold (`quotas` included, since a provider may write the plural).
@@ -28,7 +29,7 @@ acceptance:
 depends_on: []
 budget: 120
 tdd: true
-sweep: "grep -rn 'detectQuotaHold\\|rawOutput' src/: detectQuotaHold at review-policy.ts:39 with QUOTA_PATTERNS at :37; callers classifyVerdict at review-policy.ts:91 (fed rawOutput only by card-runner.ts:2105, the ship path) and classifyPreReview at pre-review.ts:693, which also serves R3 through runReviewPanel and classifyFormal (card-runner.ts:1640). No test fixture reports a quota message on stdout with exit 0 (grep tests/ for quota, 429, rate limit with exitCode 0)."
+sweep: "grep -rn 'detectQuotaHold\\|rawOutput' src/: detectQuotaHold at review-policy.ts:39 with QUOTA_PATTERNS at :37; callers classifyVerdict at review-policy.ts:91 (fed rawOutput only by card-runner.ts:2105, the ship path) and classifyPreReview at pre-review.ts:693, which also serves R3 through runReviewPanel and classifyFormal (card-runner.ts:1640). Fixtures that report a quota message on the stdout of a reviewer that exits 0 (scriptedRunner defaults exitCode to 0) and expect a hold: the fake reviewers of tests/scenarios/t0-flow.test.ts (the pre-review gate, formal review command and T1-REVIEW-FINDINGS-3 R2 cycle 1 round 2 scenarios) and HOLD_60 and HOLD_120 of tests/scenarios/r3-fallback.test.ts (13 scenarios); under R2 they report the hold on stderr with a non-zero exit, as a quota-held CLI does."
 forbid: [weakening the fail-closed verdict rule, treating a quota hold as a pass, a round consumed by a real quota hold, changing the retry-after parsing]
 non_goals: [provider-specific quota detection, reading quota state from an API, changing QUOTA_PATTERNS beyond word boundaries, the no-verdict retry allowance]
 diagnosis:
@@ -45,7 +46,7 @@ A reviewer that exits 0 with no readable verdict is a no-verdict round even when
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts
+npm run typecheck && node --test tests/core/review-policy.test.ts tests/surface/pre-review.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/r3-fallback.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
