@@ -18,7 +18,7 @@ requirements:
   - R2. WHEN that hold has passed, `aidlc card next` shall issue the ship again for the same candidate, within the card deadline.
 acceptance:
   - 1. A ship result `review-no-verdict` whose receipt exits 0 with `429 Too Many Requests` on stderr returns `wait` on `review-quota`, the run is not STOP, `noVerdictRetriesUsed` and `substantiveDecisions` stay 0, and a `REVIEW_HOLD` is journaled (tests/scenarios/t0-flow.test.ts). [R1] [dod arm 1]
-  - 2. After the clock passes the hold, `card next` returns `ship` for the same candidate, and a second ship that merges closes the card (tests/scenarios/t0-flow.test.ts). [R2] [dod arm 1]
+  - 2. After the clock passes the hold, `card next` issues the ship again for the same candidate, observed at the ship path's dispatch (candidate sha, no stop, no retry or decision spent), since `card next` dispatches the ship within that call and returns the directive of its result, not a `ship` directive; a second ship that merges closes the card (tests/scenarios/t0-flow.test.ts). [R2] [dod arm 1]
   - 3. A `review-no-verdict` ship outcome with no quota message still takes the single retry and then STOP/review, as in review-block.test.ts Q6 (unchanged). [R1] [dod arm 1]
   - 4. `docs/OPERATIONS.md` states that a ship-path quota hold is WAIT on `review-quota`; CHANGELOG.md Unreleased carries the entry under this card id; a test reads the exact sentences this card adds and fails with any one removed. [R1] [R2] [dod arm 1]
 depends_on: [T0-QUOTA-FALSE-HOLD-2]
