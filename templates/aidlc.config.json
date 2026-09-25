@@ -45,7 +45,8 @@
     "rounds": 2,
     "timeoutMs": 600000,
     "onExhausted": "stop",
-    "perspectives": []
+    "perspectives": [],
+    "answerMarker": ""
   },
   "formalReview": {
     "command": [],

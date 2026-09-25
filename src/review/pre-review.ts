@@ -738,6 +738,21 @@ export interface ReviewRetentionOptions {
   policyHash?: string;
   /** This angle was asked for acceptance coverage; only then is a coverage list kept, joined and retained (R4, R9). */
   coverage?: boolean;
+  /** `preReview.answerMarker`: when non-empty, the verdict is read only from the stdout after the last line equal to it. */
+  answerMarker?: string;
+}
+
+/**
+ * The answer of a reviewer that prints its reasoning first: the text after the last line that equals `marker`, both
+ * compared with their surrounding whitespace trimmed. A marker that is empty reads the whole output; an output with no
+ * marker line has no answer (cut before it started), so it can never pass on a verdict its reasoning drafted.
+ */
+export function answerSection(output: string, marker: string | undefined): string | undefined {
+  const wanted = marker?.trim();
+  if (!wanted) return output;
+  const lines = output.split('\n');
+  for (let i = lines.length - 1; i >= 0; i -= 1) if (lines[i]!.trim() === wanted) return lines.slice(i + 1).join('\n');
+  return undefined;
 }
 
 export interface PreReviewResult extends PreReviewClassification {
@@ -756,7 +771,8 @@ export interface PreReviewResult extends PreReviewClassification {
 
 /** Classify one reviewer receipt and retain verdict + raw output next to the candidate. */
 export function finalizeReview(receipt: ExecReceipt, o: ReviewRetentionOptions): PreReviewResult {
-  const read = readVerdict(receipt.stdout);
+  const answer = answerSection(receipt.stdout, o.answerMarker);
+  const read = answer === undefined ? { rejected: NO_REJECTS } : readVerdict(answer);
   // A coverage list reaches the round only from the angle that was asked for one: an angle answering in `off`, any other
   // angle of a shadow panel, and every formal (R3) reviewer are retained exactly as they were before this setting existed.
   const requested = o.coverage === true;
@@ -993,7 +1009,7 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
         const stderr = `[spawn error] ${(err as Error).message}`;
         receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
       }
-      const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE });
+      const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE, answerMarker: o.answerMarker });
       return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, reported: fin.reported, coverageRejected: fin.coverageRejected, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
     }),
   );
