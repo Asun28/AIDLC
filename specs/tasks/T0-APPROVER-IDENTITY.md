@@ -1,7 +1,7 @@
 ---
 id: T0-APPROVER-IDENTITY
 title: aidlc authorize, aidlc plan approve and aidlc report --result approved record the git identity of the repository as the approver when no --by is given, instead of the literal user
-status: todo
+status: merged
 branch: T0-APPROVER-IDENTITY
 worktree: D:\wt\AIDLC\T0-APPROVER-IDENTITY
 allow_paths:
