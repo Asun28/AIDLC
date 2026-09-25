@@ -3809,14 +3809,16 @@ test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verd
   }
 });
 
-/** A dry-run ship path whose receipt exits 0 with the given stderr per call (empty past the list). */
+/** A dry-run ship path whose receipt exits 0 with the given stderr per call (empty past the list); `onShip` runs at dispatch. */
 class StderrShipPath extends DryRunShipPath {
   private readonly stderrs: string[];
+  onShip: ((req: ShipRequest) => void) | undefined;
   constructor(outcomes: ShipOutcomeClass[], stderrs: string[]) {
     super(outcomes);
     this.stderrs = stderrs;
   }
   override ship(req: ShipRequest): ShipResult {
+    this.onShip?.(req);
     const r = super.ship(req);
     return { ...r, receipt: { ...r.receipt, exitCode: 0, stderr: this.stderrs[this.requests.length - 1] ?? '' } };
   }
@@ -3863,20 +3865,29 @@ test('T0-SHIP-QUOTA-WAIT acceptance 1: a review-no-verdict ship result that exit
   }
 });
 
-test('T0-SHIP-QUOTA-WAIT acceptance 2: once the hold has passed, card next ships the same candidate again and a merge closes the card; before that it ships nothing', () => {
+test('T0-SHIP-QUOTA-WAIT acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
   const fx = makeFixture();
   try {
     const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
     const { goal, runner, card, g, r: held, deadline } = shipOnce(fx, ship);
+    // `card next` dispatches the ship within the call: the run as stored at that dispatch is the observation of the issued
+    // ship, apart from the merge result the same call then applies.
+    const dispatched: Array<{ candidateSha?: string; stopped: boolean; noVerdictRetriesUsed?: number; substantiveDecisions?: number }> = [];
+    ship.onShip = (req) => {
+      const at = fx.store.getCardRun(goal.id, 'T0-SQW');
+      dispatched.push({ candidateSha: req.candidateSha, stopped: at?.stop !== undefined, noVerdictRetriesUsed: at?.review.noVerdictRetriesUsed, substantiveDecisions: at?.review.substantiveDecisions });
+    };
     fx.advance(14 * 60_000);
     let r = runner.next(g(), card, held.run);
     assert.equal(r.directive.kind, 'wait', `still held: ${r.directive.narration}`);
     assert.equal(ship.requests.length, 1, 'no ship while the hold stands');
+    assert.deepEqual(dispatched, []);
     fx.advance(2 * 60_000);
     r = runner.next(g(), card, r.run);
     assert.equal(ship.requests.length, 2, `the hold passed, so the ship is issued again: ${r.directive.narration}`);
+    assert.deepEqual(dispatched, [{ candidateSha: candidateShaFor('T0-SQW'), stopped: false, noVerdictRetriesUsed: 0, substantiveDecisions: 0 }], 'card next issued the ship for the same candidate, not stopped, with no retry or decision spent');
     assert.equal(ship.requests[1]!.candidateSha, ship.requests[0]!.candidateSha, 'the same candidate');
-    assert.equal(ship.requests[1]!.candidateSha, candidateShaFor('T0-SQW'));
+    // The merge result of that ship then closes the card.
     assert.equal(r.directive.kind, 'close', r.directive.narration);
     assert.equal(r.run.state, 'CLOSE');
     assert.equal(r.run.mergeVerified, true);
