@@ -77,6 +77,47 @@ describe('classifyVerdict (Q6)', () => {
     assert.deepEqual(detectQuotaHold(undefined), { hold: false });
   });
 
+  test('T0-QUOTA-FALSE-HOLD acceptance 1: each quota pattern holds only as a whole word or phrase, with no letter or digit directly before or after it', () => {
+    const cases: Array<[string, boolean]> = [
+      ['quota', true],
+      ['Quota exceeded', true],
+      ['monthly quotas reached', true],
+      ['429 Too Many Requests', true],
+      ['HTTP/1.1 429', true],
+      ['too many requests', true],
+      ['rate limit', true],
+      ['rate-limited', true],
+      ['ratelimit hit', true],
+      ['rate limits apply', true],
+      ['rate limiting in effect', true],
+      ['rate limiter rejected the call', true],
+      ['usage limit', true],
+      ['usage limits reached', true],
+      ['retry after 30 seconds', true],
+      ['Retry-After: 30', true],
+      ['overloaded', true],
+      ['at capacity', true],
+      ['error code insufficient_quota', true],
+      ['type overloaded_error', true],
+      ['Quotation marks around pass need escape', false],
+      ['commit 1429abf', false],
+      ['4290 lines', false],
+      ['sha abc429 and 429def', false],
+      ['a subquota of the plan', false],
+      ['an accurate limit on lines', false],
+      ['rate limitation of the parser', false],
+      ['misusage limit', false],
+      ['usage limitation', false],
+      ['retry afterwards', false],
+      ['incapacity', false],
+      ['capacityless', false],
+      ['overloadedness', false],
+      ['too many requestsX', false],
+      ['all good', false],
+    ];
+    for (const [text, hold] of cases) assert.equal(detectQuotaHold(text).hold, hold, `${JSON.stringify(text)} holds: ${hold}`);
+  });
+
   test('routed skip is not a review that passed but does not block', () => {
     const c = classifyVerdict({ verdict: 'pass', reasons: [], routed_skip: { predicate: 'AllPathsMatch', reason: 'docs only', changed_paths: ['README.md'] } });
     assert.equal(c.outcome, 'routed-skip');

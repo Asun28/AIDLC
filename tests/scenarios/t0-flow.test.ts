@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
-import { DryRunShipPath, ScaffoldShipPath } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, ScaffoldShipPath, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -270,8 +270,9 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
       'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
       'fake-reviewer': () => {
         const out = verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n';
-        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
-        return { stdout: out };
+        if (!out.includes('429')) return { stdout: out };
+        fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stderr: out, exitCode: 1 }; // a held reviewer reports the hold on stderr and exits non-zero
       },
     });
     const mk = (rounds: number, onExhausted: 'stop' | 'ship' = 'stop') =>
@@ -395,8 +396,9 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
       'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
       'fake-r3': () => {
         const out = r3.shift() ?? PASS;
-        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
-        return { stdout: out };
+        if (!out.includes('429')) return { stdout: out };
+        fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stderr: out, exitCode: 1 }; // a held reviewer reports the hold on stderr and exits non-zero
       },
     });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged']), now: fx.now, runner: script });
@@ -484,8 +486,9 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
       'fake-r3': () => {
         r3Calls += 1;
         const out = r3.shift() ?? PASS;
-        if (out.includes('429')) fx.advance(90_000); // the review itself outlasts the hold it reports
-        return { stdout: out };
+        if (!out.includes('429')) return { stdout: out };
+        fx.advance(90_000); // the review itself outlasts the hold it reports
+        return { stderr: out, exitCode: 1 }; // a held reviewer reports the hold on stderr and exits non-zero
       },
     });
     // What the ship path re-reads: the published advisory document, a consistent pass with the findings under advisory.
@@ -2160,7 +2163,12 @@ test('T1-REVIEW-FINDINGS-3 acceptance 12: a failed attempt clears the active rec
       'git diff --name-only': { stdout: 'src/t1-tw.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-tw.ts b/src/t1-tw.ts\n+export const tw = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: r2.shift() ?? R2_PASS }; },
-      'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: r3.shift() ?? R3_PASS }; },
+      'fake-r3': () => {
+        dispatched += 1;
+        onDispatch?.();
+        const out = r3.shift() ?? R3_PASS;
+        return out.includes('429') ? { stderr: out, exitCode: 1 } : { stdout: out }; // a held reviewer reports the hold on stderr
+      },
     });
     const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const s = cardAtShip(fx, runner, 'T1-TW');
@@ -2350,7 +2358,12 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 2: a retained formal result is commi
       'git diff --name-only': { stdout: 'src/t1-rt.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-rt.ts b/src/t1-rt.ts\n+export const rt = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
-      'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: r3.shift() ?? R3_PASS }; },
+      'fake-r3': () => {
+        dispatched += 1;
+        onDispatch?.();
+        const out = r3.shift() ?? R3_PASS;
+        return out.includes('429') ? { stderr: out, exitCode: 1 } : { stdout: out }; // a held reviewer reports the hold on stderr
+      },
     });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const s = cardAtShip(fx, runner, 'T1-RT');
@@ -2412,7 +2425,12 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a formal result is recovered only from
       'git diff --name-only': { stdout: 'src/t1-env.ts\n' },
       'git diff': { stdout: 'diff --git a/src/t1-env.ts b/src/t1-env.ts\n+export const env = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
-      'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: r3.shift() ?? R3_PASS }; },
+      'fake-r3': () => {
+        dispatched += 1;
+        onDispatch?.();
+        const out = r3.shift() ?? R3_PASS;
+        return out.includes('429') ? { stderr: out, exitCode: 1 } : { stdout: out }; // a held reviewer reports the hold on stderr
+      },
     });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const s = cardAtShip(fx, runner, 'T1-ENV');
@@ -3737,5 +3755,53 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 1: a success attempt on a tdd card withou
     assert.equal(has.redReceipt, 'red:held');
   } finally {
     fx.cleanup();
+  }
+});
+
+/** A dry-run ship path whose receipt exits with `exitCode` and carries `text` on one stream (T0-QUOTA-FALSE-HOLD). */
+class StreamShipPath extends DryRunShipPath {
+  private readonly stream: 'stdout' | 'stderr';
+  private readonly text: string;
+  private readonly exitCode: number;
+  constructor(outcomes: ShipOutcomeClass[], stream: 'stdout' | 'stderr', text: string, exitCode: number) {
+    super(outcomes);
+    this.stream = stream;
+    this.text = text;
+    this.exitCode = exitCode;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    const r = super.ship(req);
+    return { ...r, receipt: { ...r.receipt, exitCode: this.exitCode, [this.stream]: this.text } };
+  }
+}
+
+test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verdict and a quota word on stdout is a no-verdict that takes the retry; on stderr, or on stdout of a non-zero exit, it is a quota hold', () => {
+  // Reviewer reasoning that names the whole word, so only the stream rule (R3) can tell these cases apart.
+  const text = 'reasoning: the quota hold rule is unchanged\n';
+  const cases: Array<['stdout' | 'stderr', number, 'no-verdict' | 'quota-hold']> = [
+    ['stdout', 0, 'no-verdict'],
+    ['stderr', 0, 'quota-hold'],
+    ['stdout', 1, 'quota-hold'],
+  ];
+  for (const [stream, exitCode, expected] of cases) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T0-QH', title: 'quota hold on the ship path' });
+      const goal = goalForCards(fx, ['T0-QH']);
+      const ship = new StreamShipPath(['review-no-verdict', 'merged'], stream, text, exitCode);
+      const runner = fx.runner(ship);
+      const card = fx.card('T0-QH');
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T0-QH'));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T0-QH') });
+      r = runner.next(fx.goal(goal.id), card, run);
+      const label = `${stream}, exit ${exitCode}`;
+      assert.equal(ship.requests.length, 1, label);
+      assert.deepEqual(r.run.review.invocations.map((i) => i.outcome), [expected], label);
+      assert.equal(r.run.review.noVerdictRetriesUsed, expected === 'no-verdict' ? 1 : 0, label);
+      assert.equal(r.directive.kind, expected === 'no-verdict' ? 'ship' : 'wait', `${label}: ${r.directive.narration}`);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
