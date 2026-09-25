@@ -1281,6 +1281,8 @@ test('T0-R2-ANSWER-MARKER acceptance 1: a reasoning section that leaves a fence 
 test('T0-R2-ANSWER-MARKER acceptance 2: with the marker set, an output without a marker line, an unclosed fence after it, or a verdict only before it is malformed; the last marker line decides', () => {
   const malformed = { outcome: 'no-verdict', runStatus: 'malformed', verdict: undefined };
   assert.deepEqual(readAngle(`reasoning without the marker\n${MARKER_PASS}\n`, MARKER), malformed, 'no marker line: an output cut before its answer never passes');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n${MARKER}\n`, MARKER), malformed, 'a marker line at the end of the output: an empty answer never passes');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n${MARKER}`, MARKER), malformed, 'a marker line with no newline after it: an empty answer never passes');
   assert.deepEqual(readAngle(`the ${MARKER} line comes next\n${MARKER_PASS}\n`, MARKER), malformed, 'a line that only contains the marker is not the marker line');
   assert.deepEqual(readAngle(`${MARKER}\n\`\`\`json\n${MARKER_PASS}\n`, MARKER), malformed, 'the fence rule applies after the marker');
   assert.equal(readAngle(`${MARKER}\n\`\`\`json\n${MARKER_PASS}\n\`\`\`\n`, MARKER).outcome, 'pass', 'a closed fence after the marker is read as before');
