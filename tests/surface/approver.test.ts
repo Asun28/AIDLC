@@ -104,6 +104,18 @@ describe('approver identity (T0-APPROVER-IDENTITY)', () => {
       const viaData = f.cli(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":"data approver"}']);
       assert.equal(viaData.status, 0, String(viaData.stderr));
       assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['data approver'], 'a by in --data is recorded as given');
+      const nullData = f.cli(['report', '--goal', goalId, '--result', 'approved', '--data', '{"by":null}']);
+      assert.equal(nullData.status, 0, String(nullData.stderr));
+      assert.deepEqual(f.lastAuthorizations(goalId, 1).map((a) => a.grantedBy), ['user'], 'a by key in --data is given, so the git identity is not read');
+
+      // An empty --by is given too: each command passes it on and the empty approver is refused, never replaced.
+      const before = f.lastAuthorizations(goalId, 100).length;
+      for (const args of [
+        ['plan', 'approve', goalId, '--by', ''],
+        ['authorize', 'development', '--goal', goalId, '--by', ''],
+        ['report', '--goal', goalId, '--result', 'approved', '--by', ''],
+      ]) assert.notEqual(f.cli(args).status, 0, `aidlc ${args.join(' ')} refuses the empty approver`);
+      assert.equal(f.lastAuthorizations(goalId, 100).length, before, 'no authorization recorded for an empty --by');
 
       f.git(['config', '--unset', 'user.email']);
       approveThreeWays(f, goalId, []);

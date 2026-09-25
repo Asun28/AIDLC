@@ -364,8 +364,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (o.planRef) data['planRef'] = o.planRef;
       if (o.cards) data[o.result === 'arc-failed' ? 'repairCards' : 'cards'] = o.cards.split(',').map((s) => s.trim());
       if (o.kind) data['kind'] = o.kind;
-      if (o.by) data['by'] = o.by;
-      else if (o.result === 'approved' && typeof data['by'] !== 'string') data['by'] = defaultApprover(c);
+      if (o.by !== undefined) data['by'] = o.by;
+      else if (o.result === 'approved' && !('by' in data)) data['by'] = defaultApprover(c);
       if (o.env) data['environment'] = o.env;
       if (o.candidate) data['candidateDigest'] = o.candidate;
       if (o.ops) data['operations'] = o.ops.split(',').map((s) => s.trim());
