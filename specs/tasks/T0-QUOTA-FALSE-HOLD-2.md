@@ -1,7 +1,7 @@
 ---
 id: T0-QUOTA-FALSE-HOLD-2
 title: A reviewer that exits 0 without a readable verdict is a no-verdict round, not a quota hold, when its own reasoning text happens to contain a quota word, and the quota patterns match whole words only (replacement of T0-QUOTA-FALSE-HOLD after its R2 no-verdict allowance was spent on provider read timeouts)
-status: todo
+status: merged
 branch: T0-QUOTA-FALSE-HOLD-2
 worktree: D:\wt\AIDLC\T0-QUOTA-FALSE-HOLD-2
 allow_paths:
