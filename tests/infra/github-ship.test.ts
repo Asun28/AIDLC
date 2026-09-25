@@ -1,6 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -674,7 +674,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
   const RESOLVED = [HEAD_OF(['- Card entry, card T1-A: one line.', '', '- Base entry, card T0-OTHER: another line.', '']), TAIL].join('\n');
 
   type Call = { key: string; args: string[]; cwd?: string };
-  function recording(unmerged: Partial<ExecReceipt>, onDiff3: () => void) {
+  function recording(unmerged: Partial<ExecReceipt>, onDiff3: () => void, headAfterCommit: Partial<ExecReceipt> = { stdout: MERGE_SHA + '\n' }) {
     const calls: Call[] = [];
     let added = false;
     const scripted = runnerWith({
@@ -690,7 +690,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
         return {};
       },
       // The merge commit is HEAD only once the resolution is staged and committed.
-      'git rev-parse --verify HEAD': () => ({ stdout: (added ? MERGE_SHA : HEAD) + '\n' }),
+      'git rev-parse --verify HEAD': () => (added ? headAfterCommit : { stdout: HEAD + '\n' }),
     });
     const runner: typeof scripted = (cmd, args, o) => {
       calls.push({ key: [cmd, ...args].join(' '), args, cwd: o?.cwd });
@@ -701,14 +701,26 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
   /** What the merge wrote before the diff3 rewrite: distinct from the diff3 text, so a restored file is observable. */
   const asMerged = (diff3: string) => `as the merge wrote it\n${diff3}`;
   /** Ship with CHANGELOG.md as the merge wrote it; the scripted `git checkout --conflict=diff3` writes `diff3` over it. */
-  const shipWith = (diff3: string, unmerged: Partial<ExecReceipt> = { stdout: 'CHANGELOG.md\u0000' }) => {
+  const shipWith = (diff3: string, unmerged: Partial<ExecReceipt> = { stdout: 'CHANGELOG.md\u0000' }, opts: { readOnlyAfterDiff3?: boolean; headAfterCommit?: Partial<ExecReceipt> } = {}) => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
     const file = path.join(f.wt, 'CHANGELOG.md');
     writeFileSync(file, asMerged(diff3), 'utf8');
-    const { calls, runner } = recording(unmerged, () => writeFileSync(file, diff3, 'utf8'));
-    const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
-    return { r, calls, file: readFileSync(path.join(f.wt, 'CHANGELOG.md'), 'utf8') };
+    const { calls, runner } = recording(
+      unmerged,
+      () => {
+        writeFileSync(file, diff3, 'utf8');
+        // A file the path cannot write (a lock, EACCES): every later write of it throws.
+        if (opts.readOnlyAfterDiff3) chmodSync(file, 0o444);
+      },
+      opts.headAfterCommit,
+    );
+    try {
+      const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      return { r, calls, file: readFileSync(file, 'utf8') };
+    } finally {
+      chmodSync(file, 0o666);
+    }
   };
   const remoteEffects = (calls: Call[]) => calls.filter((c) => c.key.startsWith('git push') || c.key.startsWith('gh pr create') || c.key.startsWith('gh pr merge')).map((c) => c.key);
   /** Calls made after the base-sync merge started. */
@@ -752,6 +764,30 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
       assert.ok(!afterMerge(calls).some((c) => c.key.startsWith(ADD) || c.key.startsWith('git commit')), `${name}: nothing is staged or committed after the merge`);
       assert.deepEqual(remoteEffects(calls), [], name);
     }
+  });
+
+  test('R3 decision 1: a file the path cannot write, a failed or empty merge-commit read and the recorded detail all end as a failure the runner records, never an exception or a MERGED without its commit', () => {
+    // The resolution cannot be written: [SHIP-BASE-SYNC-FAIL], nothing staged or committed, no exception out of ship.
+    const write = shipWith(INSERTIONS, undefined, { readOnlyAfterDiff3: true });
+    assert.ok(write.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !write.r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), write.r.sentinels.join(' '));
+    assert.match(write.r.receipt.stdout, /writing the CHANGELOG\.md resolution failed/);
+    assert.ok(!afterMerge(write.calls).some((c) => c.key.startsWith(ADD) || c.key.startsWith('git commit')), 'nothing staged or committed');
+    // The restore of an unresolvable file cannot be written: [SHIP-BASE-SYNC-FAIL] naming that the markers may be gone.
+    const outside = [HEAD_OF([]), TAIL.replace('- Released entry.', ['<<<<<<< HEAD', '- Card entry.', '||||||| 1a2b3c4', '=======', '- Base entry.', '>>>>>>> refs/remotes/origin/main', '- Released entry.'].join('\n'))].join('\n');
+    const restore = shipWith(outside, undefined, { readOnlyAfterDiff3: true });
+    assert.ok(restore.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !restore.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), restore.r.sentinels.join(' '));
+    assert.match(restore.r.receipt.stdout, /restoring CHANGELOG\.md as the merge wrote it failed/);
+    assert.deepEqual(remoteEffects(restore.calls), []);
+    // The merge commit cannot be read back: a failure, never a MERGED naming no commit.
+    for (const [name, headAfterCommit] of [['a failed read', { exitCode: 128, stdout: '', stderr: 'fatal: bad HEAD' }], ['an empty read', { stdout: '\n' }]] as const) {
+      const read = shipWith(INSERTIONS, undefined, { headAfterCommit });
+      assert.ok(read.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !read.r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), `${name}: ${read.r.sentinels.join(' ')}`);
+      assert.match(read.r.receipt.stdout, /the merge commit could not be read back/, name);
+    }
+    // The recorded detail of a MERGED result names MERGED, not the conflict sentinel.
+    const merged = shipWith(INSERTIONS);
+    assert.match(merged.r.detail, /SHIP-BASE-SYNC-MERGED/, merged.r.detail);
+    assert.doesNotMatch(merged.r.detail, /SHIP-BASE-SYNC-CONFLICT/);
   });
 
   test('the resolver keeps several hunks, CRLF lines and ### subsections, and refuses malformed markers', () => {
