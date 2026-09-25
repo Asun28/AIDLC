@@ -57,6 +57,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   });
   const primary: string[] = [];
   const cx: string[] = [];
+  const r2: string[] = [];
   const cxArgs: string[][] = [];
   const pArgs: string[][] = [];
   /** Runs inside the base-sync reviewer, before it answers. */
@@ -64,7 +65,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   const script = scriptedRunner({
     'git diff --name-only': { stdout: 'src/t0-bsr.ts\n' },
     'git diff': { stdout: 'diff --git a/src/t0-bsr.ts b/src/t0-bsr.ts\n+export const bsr = 1;\n' },
-    'fake-r2': { stdout: PASS },
+    'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
     'fake-p': (args) => {
       pArgs.push(args);
       return answer(primary.shift() ?? PASS);
@@ -103,7 +104,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   };
   let r = await reviewed('sha-1');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
-  const handle = { fx, runner, card, g, goal, ship, primary, cx, cxArgs, pArgs, hooks, reviewed, decide, state };
+  const handle = { fx, runner, card, g, goal, ship, primary, cx, r2, cxArgs, pArgs, hooks, reviewed, decide, state };
   if (opts.blockFirst) {
     // Decision 1 blocks: the card returns to REVIEW_FIX, and the caller records the repair.
     primary.push(BLOCK);
@@ -133,6 +134,8 @@ test('acceptance 1: with both decisions used, a base-sync candidate gets a revie
     assert.equal((inv as { baseSync?: boolean }).baseSync, true, 'the invocation is marked as a base-sync decision');
     assert.equal(inv.effort, 'medium');
     assert.ok(s.fx.queue.list().some((q) => q.reviewer === 'codex-bs' && q.pool === `${s.goal.reviewPool}/codex-bs`), 'the base-sync reviewer queues in its own review pool, apart from the primary\'s quota');
+    const primaryPools = s.fx.queue.list().filter((q) => q.reviewer === 'primary').map((q) => q.pool);
+    assert.ok(primaryPools.length > 0 && primaryPools.every((p) => p === s.goal.reviewPool), `the primary stays in the goal pool with no fallback configured: ${primaryPools.join(', ')}`);
     assert.equal(after.directive.kind, 'close', `the pass ships: ${after.directive.narration}`);
   } finally {
     s.fx.cleanup();
@@ -255,7 +258,7 @@ test('acceptance 6: docs/OPERATIONS.md and the CHANGELOG Unreleased section stat
   const docSentences = [
     'Base-sync decision (card T0-BASE-SYNC-REVIEW): a candidate recorded by the successful attempt that cleared a `merge-conflict` repair is a base-sync candidate; when it needs R3 after both decisions are used and `formalReview.baseSync` is configured, the SHIP gate issues one more decision on it by that reviewer, with its own command, effort policy (default `medium`) and review pool, instead of stopping for review.',
     'The prompt carries the delta since the candidate the last decision reviewed and says that the base moved; the invocation is recorded under the base-sync reviewer\'s name and marked `baseSync`.',
-    'A base-sync candidate gets at most one base-sync decision: its pass ships, its block stops the card for review with the findings retained, a no-verdict takes the single retry and a quota hold of the base-sync reviewer waits; a later base-sync candidate gets its own.',
+    'A base-sync candidate gets at most one base-sync decision: its pass ships, its block stops the card for review with the findings retained, a no-verdict takes the card\'s single no-verdict retry and a quota hold of the base-sync reviewer waits; a later base-sync candidate gets its own.',
     'Without `formalReview.baseSync`, and for any other candidate past the allowance, the gate stops for review as before; this repository configures Codex (`codex exec -m gpt-6-astra -c model_reasoning_effort={effort}`, read-only, reviewer `codex`) at `medium`.',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
@@ -295,5 +298,25 @@ test('R3: a base-sync decision whose commit lost the lock is recovered as a base
     assert.equal(slow.cxArgs.length, 0);
   } finally {
     slow.fx.cleanup();
+  }
+});
+
+test('acceptance 1: a base-sync candidate that R2 blocks is repaired into a candidate that still gets the base-sync decision', async () => {
+  const s = await atBaseSync();
+  try {
+    // sha-3 is the merge; R2 blocks it before any R3 decision.
+    s.r2.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-bsr.ts:1: the merge drops a guard -> restore it"],"axes":{"spec":{"verdict":"block","reasons":["guard"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    const blocked = await s.reviewed('sha-3');
+    assert.equal(blocked.directive.kind, 'build', `R2 blocked the merge: ${blocked.directive.narration}`);
+    // The repair of the merge still answers the moved base: it gets the base-sync decision, not a stop.
+    const r = await s.reviewed('sha-4');
+    assert.equal(s.fx.store.getCardRun(s.goal.id, 'T0-BSR')?.candidate?.baseSync, true, 'the repair of an undecided base-sync candidate is a base-sync candidate');
+    assert.equal(r.directive.kind, 'review', `a base-sync decision, not a stop: ${r.directive.narration}`);
+    if (r.directive.kind === 'review') assert.equal(r.directive.reviewer, 'codex-bs');
+    const { f } = await s.decide();
+    assert.equal(f.classified.outcome, 'pass');
+    assert.equal(f.run.review.invocations.at(-1)?.candidateSha, 'sha-4');
+  } finally {
+    s.fx.cleanup();
   }
 });
