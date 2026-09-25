@@ -1234,3 +1234,81 @@ test('T0-QUOTA-FALSE-HOLD acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unr
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
+
+// T0-R2-ANSWER-MARKER: the shape of the four retained DeepSeek outputs. The reasoning quotes diff lines with a closing fence
+// line and no opener, so the fence that line opens never closes and the verdict after `=== answer ===` sits inside it.
+const MARKER = '=== answer ===';
+const MARKER_PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}';
+const MARKER_BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests missing @ src/gate.ts:1: no test -> add one"],"axes":{"spec":{"verdict":"block","reasons":["tests missing"]},"standards":{"verdict":"pass","reasons":[]}}}';
+const REASONING_FENCED = [
+  '=== reasoning ===',
+  'The hunk under review:',
+  '```diff',
+  '+export const gate = 1;',
+  '```',
+  'The context it sits in, quoted without an opening fence:',
+  '+  return gate;',
+  '+}',
+  '```',
+  'So every acceptance item holds.',
+  '',
+  MARKER,
+  'All acceptance items are implemented and tested.',
+  '',
+  MARKER_PASS,
+  '',
+].join('\n');
+
+function readAngle(stdout: string, answerMarker?: string) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-answer-marker-'));
+  const at = '2026-09-11T00:00:00.000Z';
+  const receipt = { command: 'reviewer', args: [], cwd: dir, exitCode: 0, signal: null, timedOut: false, stdout, stderr: '', startedAt: at, finishedAt: at, durationMs: 0, outputSha256: createHash('sha256').update(stdout).digest('hex') };
+  const fin = inputs.finalizeReview(receipt, { reviewDir: dir, fileStem: 'angle', head: 'sha-1', reviewer: 'deepseek', answerMarker });
+  return { outcome: fin.outcome, runStatus: fin.runStatus, verdict: fin.verdict?.verdict };
+}
+
+test('T0-R2-ANSWER-MARKER acceptance 1: a reasoning section that leaves a fence open no longer voids the verdict after the answer marker; without the marker it still does', () => {
+  assert.deepEqual(readAngle(REASONING_FENCED, MARKER), { outcome: 'pass', runStatus: 'success', verdict: 'pass' });
+  assert.deepEqual(readAngle(REASONING_FENCED), { outcome: 'no-verdict', runStatus: 'malformed', verdict: undefined }, 'unchanged without the marker');
+  assert.deepEqual(readAngle(REASONING_FENCED, ''), { outcome: 'no-verdict', runStatus: 'malformed', verdict: undefined }, 'an empty marker is off');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n`, ''), { outcome: 'pass', runStatus: 'success', verdict: 'pass' }, 'an empty marker reads the whole output as before');
+  // The same answer after a balanced reasoning section reads the same with or without the marker.
+  const balanced = REASONING_FENCED.replace('+}\n```\n', '+}\n');
+  assert.equal(readAngle(balanced).outcome, 'pass');
+  assert.equal(readAngle(balanced, MARKER).outcome, 'pass');
+});
+
+test('T0-R2-ANSWER-MARKER acceptance 2: with the marker set, an output without a marker line, an unclosed fence after it, or a verdict only before it is malformed; the last marker line decides', () => {
+  const malformed = { outcome: 'no-verdict', runStatus: 'malformed', verdict: undefined };
+  assert.deepEqual(readAngle(`reasoning without the marker\n${MARKER_PASS}\n`, MARKER), malformed, 'no marker line: an output cut before its answer never passes');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n${MARKER}\n`, MARKER), malformed, 'a marker line at the end of the output: an empty answer never passes');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n${MARKER}`, MARKER), malformed, 'a marker line with no newline after it: an empty answer never passes');
+  assert.deepEqual(readAngle(`the ${MARKER} line comes next\n${MARKER_PASS}\n`, MARKER), malformed, 'a line that only contains the marker is not the marker line');
+  assert.deepEqual(readAngle(`${MARKER}\n\`\`\`json\n${MARKER_PASS}\n`, MARKER), malformed, 'the fence rule applies after the marker');
+  assert.equal(readAngle(`${MARKER}\n\`\`\`json\n${MARKER_PASS}\n\`\`\`\n`, MARKER).outcome, 'pass', 'a closed fence after the marker is read as before');
+  assert.deepEqual(readAngle(`${MARKER_PASS}\n${MARKER}\nI could not finish the review.\n`, MARKER), malformed, 'a verdict before the marker never decides');
+  assert.deepEqual(readAngle(`${MARKER}\n${MARKER_BLOCK}\n${MARKER}\n${MARKER_PASS}\n`, MARKER), { outcome: 'pass', runStatus: 'success', verdict: 'pass' }, 'only the text after the last marker line is read');
+  assert.deepEqual(readAngle(`${MARKER}\n${MARKER_PASS}\n${MARKER}\nno verdict here\n`, MARKER), malformed, 'a verdict before the last marker line never decides');
+  assert.equal(readAngle(`${MARKER}\n${MARKER_BLOCK}\n`, MARKER).outcome, 'block', 'a block after the marker is a block');
+  assert.equal(readAngle(`  ${MARKER}  \r\n${MARKER_PASS}\r\n`, MARKER).outcome, 'pass', 'the marker line is compared with its surrounding whitespace trimmed');
+  assert.equal(readAngle(`${MARKER}\n${MARKER_PASS}\n`, `  ${MARKER} `).outcome, 'pass', 'the configured marker is trimmed as well');
+});
+
+test('T0-R2-ANSWER-MARKER acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the answer marker rule', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    '`preReview.answerMarker` (default empty) names the line that separates a pre-reviewer\'s reasoning from its answer: when it is set, each angle is read from the stdout after the last line that equals the marker once the surrounding whitespace of both is trimmed, so fence lines and JSON-looking text in the reasoning never decide the verdict, and the fence rule and the last-document rule apply to that answer alone (card T0-R2-ANSWER-MARKER).',
+    'With the marker set, an output with no marker line is a `malformed` no-verdict round even when its last line is a verdict, so an output cut before its answer never passes; the formal review (R3) reader ignores the setting.',
+    'This repository sets `=== answer ===`, the line the DeepSeek CLI prints between its reasoning and its answer.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Pre-review answer marker, card T0-R2-ANSWER-MARKER: `preReview.answerMarker` (default empty, which reads as before) makes the pre-review reader read each angle only after the last stdout line equal to the marker, and makes an output with no marker line a `malformed` no-verdict round; this repository sets `=== answer ===`.',
+    'Four DeepSeek angle outputs on T0-SHIP-QUOTA-WAIT and T0-SHIP-QUOTA-WAIT-2 ended on a pass verdict line and were read as no verdict, since their reasoning quotes diffs with a closing fence line and no opener and so left a fence open to the end of the output; every fence line was before `=== answer ===` (docs/OPERATIONS.md).',
+    'The formal review (R3) reader is unchanged.',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});

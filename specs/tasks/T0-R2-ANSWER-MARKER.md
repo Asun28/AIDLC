@@ -1,7 +1,7 @@
 ---
 id: T0-R2-ANSWER-MARKER
 title: A pre-review reviewer that prints its reasoning before its answer is read only after a configured answer marker, so a code fence its reasoning leaves open no longer voids the verdict line
-status: todo
+status: merged
 branch: T0-R2-ANSWER-MARKER
 worktree: D:\wt\AIDLC\T0-R2-ANSWER-MARKER
 allow_paths:

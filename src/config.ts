@@ -23,6 +23,8 @@ export const PreReviewConfig = z.object({
   /** Run through a shell (script wrappers on Windows); default: win32 only. */
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),
+  /** The stdout line after which a reviewer's answer starts (its reasoning comes before it); empty reads the whole stdout. */
+  answerMarker: z.string().default(''),
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 

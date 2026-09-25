@@ -60,7 +60,8 @@
       "spec-deviations",
       "edge-cases"
     ],
-    "maxDiffBytes": 800000
+    "maxDiffBytes": 800000,
+    "answerMarker": "=== answer ==="
   },
   "gateRequired": true,
   "formalReview": {
