@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
+import * as ship from '../../src/delivery/github-ship.ts';
+import { spawnSync } from 'node:child_process';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
@@ -651,5 +653,151 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
       assert.equal(r.prNumber, undefined, name);
       assert.ok(!calls.some((c) => c.key.startsWith('git fetch') || c.key.startsWith('git merge') || c.key.startsWith('git push') || c.key.startsWith('gh pr create')), `${name}: nothing after the lookup`);
     }
+  });
+});
+
+describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)', () => {
+  const dirs: string[] = [];
+  after(() => {
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  });
+  // Namespace import: on the baseline the resolver is absent and each test fails on its behaviour, not on a link error.
+  const union = (text: string): string | undefined => (ship as { unionUnreleasedInsertions?: (t: string) => string | undefined }).unionUnreleasedInsertions?.(text);
+  const MERGE_SHA = 'c'.repeat(40);
+  const UNMERGED = 'git diff --name-only --diff-filter=U -z';
+  const DIFF3 = 'git checkout --conflict=diff3 -- CHANGELOG.md';
+  const ADD = 'git add -- CHANGELOG.md';
+  const HEAD_OF = (entries: string[]) => ['# Changelog', '', '## Unreleased', '', ...entries].join('\n');
+  const TAIL = ['- Older entry, card T0-OLD: kept.', '', '## 0.1.0', '', '- Released entry.', ''].join('\n');
+  /** A CHANGELOG as `git checkout --conflict=diff3` writes it: the card's entry and the base's at the top of Unreleased. */
+  const INSERTIONS = [HEAD_OF([]), '<<<<<<< HEAD', '- Card entry, card T1-A: one line.', '', '||||||| 1a2b3c4', '=======', '- Base entry, card T0-OTHER: another line.', '', '>>>>>>> refs/remotes/origin/main', TAIL].join('\n');
+  const RESOLVED = [HEAD_OF(['- Card entry, card T1-A: one line.', '', '- Base entry, card T0-OTHER: another line.', '']), TAIL].join('\n');
+
+  type Call = { key: string; args: string[]; cwd?: string };
+  function recording(unmerged = 'CHANGELOG.md\u0000') {
+    const calls: Call[] = [];
+    let added = false;
+    const scripted = runnerWith({
+      [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE },
+      [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE },
+      [UNMERGED]: { stdout: unmerged },
+      [DIFF3]: {},
+      [ADD]: () => {
+        added = true;
+        return {};
+      },
+      // The merge commit is HEAD only once the resolution is staged and committed.
+      'git rev-parse --verify HEAD': () => ({ stdout: (added ? MERGE_SHA : HEAD) + '\n' }),
+    });
+    const runner: typeof scripted = (cmd, args, o) => {
+      calls.push({ key: [cmd, ...args].join(' '), args, cwd: o?.cwd });
+      return scripted(cmd, args, o);
+    };
+    return { calls, runner };
+  }
+  const shipWith = (changelog: string, unmerged?: string) => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    writeFileSync(path.join(f.wt, 'CHANGELOG.md'), changelog, 'utf8');
+    const { calls, runner } = recording(unmerged);
+    const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    return { r, calls, file: readFileSync(path.join(f.wt, 'CHANGELOG.md'), 'utf8') };
+  };
+  const remoteEffects = (calls: Call[]) => calls.filter((c) => c.key.startsWith('git push') || c.key.startsWith('gh pr create') || c.key.startsWith('gh pr merge')).map((c) => c.key);
+  /** Calls made after the base-sync merge started. */
+  const afterMerge = (calls: Call[]) => calls.slice(calls.findIndex((c) => c.key.startsWith(SYNC_MERGE)) + 1);
+
+  test('acceptance 1: entries both sides added at the top of Unreleased are kept, the card\'s first, the merge is committed and returned as [SHIP-BASE-SYNC-MERGED], and nothing is pushed or merged', () => {
+    const { r, calls, file } = shipWith(INSERTIONS);
+    assert.equal(file, RESOLVED, 'each side byte-identical, the card\'s entry first');
+    assert.equal(r.outcome, 'merge-failed', r.receipt.stdout);
+    assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]') && !r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), r.sentinels.join(' '));
+    assert.match(r.receipt.stdout, new RegExp(`^\\[SHIP-BASE-SYNC-MERGED\\] .*${MERGE_SHA}`, 'm'), 'the sentinel line names the merge commit');
+    assert.ok(hasConflictDiagnostic(r.receipt), 'git own conflict lines stay on the output, so the runner opens the merge-conflict repair');
+    assert.deepEqual(remoteEffects(calls), [], 'the merge is a new candidate: nothing is pushed, opened or merged');
+    const later = afterMerge(calls).map((c) => c.key);
+    const order = [UNMERGED, DIFF3, ADD, 'git commit'].map((k) => later.findIndex((key) => key.startsWith(k)));
+    assert.ok(order.every((i, n) => i >= 0 && (n === 0 || i > order[n - 1]!)), `unmerged list, diff3 rewrite, add, commit in order: ${order.join(',')} in ${later.join(' | ')}`);
+    const commit = afterMerge(calls).find((c) => c.key.startsWith('git commit'))!;
+    assert.ok(commit.args.includes('-m') && /CHANGELOG\.md/.test(commit.args.join(' ')) && /refs\/remotes\/origin\/main/.test(commit.args.join(' ')), `the merge message names the base, the file and the rule: ${commit.key}`);
+    assert.ok(!commit.args.includes('--no-verify'), 'hooks run');
+  });
+
+  test('acceptance 2: another conflicted path, a hunk outside Unreleased, a hunk with a base part, a hunk the card rewrites and a hunk adding a heading are left for the skill', () => {
+    const rest = TAIL.split('\n').slice(1).join('\n');
+    const outside = [HEAD_OF([]), TAIL.replace('- Released entry.', ['<<<<<<< HEAD', '- Card entry.', '||||||| 1a2b3c4', '=======', '- Base entry.', '>>>>>>> refs/remotes/origin/main', '- Released entry.'].join('\n'))].join('\n');
+    const baseEdits = [HEAD_OF([]), '<<<<<<< HEAD', '- Older entry, card T0-OLD: kept.', '||||||| 1a2b3c4', '- Older entry, card T0-OLD: kept.', '=======', '- Older entry, card T0-OLD: reworded on main.', '>>>>>>> refs/remotes/origin/main', rest].join('\n');
+    const cardRewrites = [HEAD_OF([]), '<<<<<<< HEAD', '- Older entry, card T0-OLD: rewritten by the card.', '||||||| 1a2b3c4', '- Older entry, card T0-OLD: kept.', '=======', '- Base entry, card T0-OTHER: another line.', '- Older entry, card T0-OLD: kept.', '>>>>>>> refs/remotes/origin/main', rest].join('\n');
+    const heading = [HEAD_OF([]), '<<<<<<< HEAD', '- Card entry.', '', '## 0.2.0', '||||||| 1a2b3c4', '=======', '- Base entry.', '>>>>>>> refs/remotes/origin/main', TAIL].join('\n');
+    const cases: Array<[string, string, string | undefined]> = [
+      ['a conflict in another path besides CHANGELOG.md', INSERTIONS, 'CHANGELOG.md\u0000src/other.ts\u0000'],
+      ['a CHANGELOG hunk outside ## Unreleased', outside, undefined],
+      ['a CHANGELOG hunk where the base side edits a line', baseEdits, undefined],
+      ['a CHANGELOG hunk where the card rewrites an existing entry', cardRewrites, undefined],
+      ['a CHANGELOG hunk that adds a ## heading', heading, undefined],
+    ];
+    for (const [name, text, unmerged] of cases) {
+      const { r, calls, file } = shipWith(text, unmerged);
+      assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]') && !r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), `${name}: ${r.sentinels.join(' ')}`);
+      assert.equal(file, text, `${name}: the file is left as it was`);
+      assert.ok(!afterMerge(calls).some((c) => c.key.startsWith(ADD) || c.key.startsWith('git commit')), `${name}: nothing is staged or committed after the merge`);
+      assert.deepEqual(remoteEffects(calls), [], name);
+    }
+  });
+
+  test('the resolver keeps several hunks, CRLF lines and ### subsections, and refuses malformed markers', () => {
+    const two = [HEAD_OF([]), '<<<<<<< HEAD', '- A1.', '||||||| x', '=======', '- B1.', '>>>>>>> y', '### Fixed', '<<<<<<< HEAD', '- A2.', '||||||| x', '=======', '- B2.', '>>>>>>> y', TAIL].join('\n');
+    assert.equal(union(two), [HEAD_OF(['- A1.', '- B1.', '### Fixed', '- A2.', '- B2.']), TAIL].join('\n'));
+    const crlf = INSERTIONS.replace(/\n/g, '\r\n');
+    assert.equal(union(crlf), RESOLVED.replace(/\n/g, '\r\n'), 'CRLF lines keep their bytes');
+    assert.equal(union(INSERTIONS.replace('>>>>>>> refs/remotes/origin/main\n', '')), undefined, 'a hunk that never closes');
+    assert.equal(union(INSERTIONS.replace('||||||| 1a2b3c4\n', '')), undefined, 'a hunk without its base part (not diff3)');
+    assert.equal(union([HEAD_OF(['=======']), TAIL].join('\n')), undefined, 'a stray separator outside a hunk');
+    assert.equal(union(RESOLVED), undefined, 'a file with no hunk resolves nothing');
+    assert.equal(union(INSERTIONS.replace('## Unreleased', '## Unreleased (next)')), undefined, 'only the ## Unreleased section');
+  });
+
+  test('the resolver reads the diff3 file real git writes for two entries added at the top of Unreleased', () => {
+    const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-changelog-union-'));
+    dirs.push(repo);
+    const git = (...args: string[]) => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.invalid', '-c', 'core.autocrlf=false', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });
+      return { code: r.status, out: `${r.stdout}${r.stderr}` };
+    };
+    const base = [HEAD_OF(['- Older entry, card T0-OLD: kept.', '']), '## 0.1.0', '', '- Released entry.', ''].join('\n');
+    const withEntry = (entry: string) => base.replace('## Unreleased\n\n', `## Unreleased\n\n${entry}\n\n`);
+    git('init', '-q', '-b', 'main');
+    writeFileSync(path.join(repo, 'CHANGELOG.md'), base, 'utf8');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'base');
+    git('checkout', '-q', '-b', 'card');
+    writeFileSync(path.join(repo, 'CHANGELOG.md'), withEntry('- Card entry, card T1-A: one line.'), 'utf8');
+    git('commit', '-q', '-am', 'card');
+    git('checkout', '-q', 'main');
+    writeFileSync(path.join(repo, 'CHANGELOG.md'), withEntry('- Base entry, card T0-OTHER: another line.'), 'utf8');
+    git('commit', '-q', '-am', 'main');
+    git('checkout', '-q', 'card');
+    assert.equal(git('merge', '--no-ff', '--no-commit', 'main').code, 1, 'the two insertions conflict');
+    assert.equal(git('checkout', '--conflict=diff3', '--', 'CHANGELOG.md').code, 0);
+    const resolved = union(readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8'));
+    assert.equal(resolved, base.replace('## Unreleased\n\n', '## Unreleased\n\n- Card entry, card T1-A: one line.\n\n- Base entry, card T0-OTHER: another line.\n\n'));
+  });
+
+  test('acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the rule, what it leaves to the skill and that the merge is a new candidate', () => {
+    const root = path.resolve(import.meta.dirname, '..', '..');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const docSentences = [
+      'When the only unmerged path of a base-sync conflict is `CHANGELOG.md`, the path rewrites it with `git checkout --conflict=diff3` and resolves it only when every hunk lies in `## Unreleased`, has an empty base part (both sides only added lines there) and adds no `## ` heading: each hunk keeps the card\'s lines, then the base\'s, the merge is committed, and the ship ends with `[SHIP-BASE-SYNC-MERGED]` naming the merge commit, pushing and merging nothing (card T0-BASE-SYNC-CHANGELOG).',
+      'Any other conflict, another path, a hunk outside `## Unreleased`, a hunk with a base part or one that adds a heading, is left whole for the merge-conflicts skill.',
+      'The merge is a new candidate either way: the runner opens the merge-conflict repair with the DoD and retained receipts cleared, so the DoD, R2 and R3 run on the merge and nothing reviewed on the candidate it replaces carries over.',
+    ];
+    for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelogSentences = [
+      '- Base-sync CHANGELOG merge, card T0-BASE-SYNC-CHANGELOG: a base-sync conflict whose only unmerged path is `CHANGELOG.md` and whose every hunk is lines both sides added to `## Unreleased` is now merged by keeping both, the card\'s lines first, and the ship ends with `[SHIP-BASE-SYNC-MERGED]` instead of `[SHIP-BASE-SYNC-CONFLICT]`; every other conflict is left to the merge-conflicts skill as before.',
+      'The merge commit is a new candidate that goes through the DoD, R2 and R3; the ship never pushes it on the reviews of the candidate it replaces (docs/OPERATIONS.md).',
+    ];
+    for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
-import { DryRunShipPath, ScaffoldShipPath, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -4093,4 +4093,86 @@ test('T0-SHIP-HOLD-OUTCOME acceptance 4: docs/OPERATIONS.md and the CHANGELOG Un
     'A merged ship with `429 Too Many Requests` on stderr used to hold the pool for 15 minutes and leave its request in `retry-after`; the pool then admitted that request of a closed card as running, so in a pool with one slot no other card was admitted to ship (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+/**
+ * A ship path whose base sync merged the CHANGELOG entries of both sides (T0-BASE-SYNC-CHANGELOG): the first `merges` ships
+ * end with `[SHIP-BASE-SYNC-MERGED]` and git's own conflict lines, as the GitHub path prints them; later ships merge.
+ */
+class ChangelogMergeShipPath extends DryRunShipPath {
+  private merges: number;
+  constructor(merges: number) {
+    super(['merged']);
+    this.merges = merges;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    if (this.merges <= 0) return super.ship(req);
+    this.merges -= 1;
+    this.requests.push(req);
+    const now = new Date().toISOString();
+    const stdout = [
+      'Auto-merging CHANGELOG.md',
+      'CONFLICT (content): Merge conflict in CHANGELOG.md',
+      'Automatic merge failed; fix conflicts and then commit the result.',
+      `[SHIP-BASE-SYNC-MERGED] refs/remotes/origin/main conflicted with HEAD ${req.candidateSha ?? 'unknown'} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged as ${'c'.repeat(40)}`,
+      '[SAGA-FAIL]',
+    ].join('\n');
+    return classifyShipOutput({ command: 'dry-run', args: [req.cardId], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout, stderr: '', startedAt: now, finishedAt: now, durationMs: 0, outputSha256: '' });
+  }
+}
+
+test('T0-BASE-SYNC-CHANGELOG acceptance 3: a CHANGELOG base-sync merge is a new candidate: BUILD with the merge-conflict repair and no receipt, then a fresh R2 and R3; with both R3 decisions used the gate stops for review instead of shipping', async () => {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t0-bs.ts\n' },
+      'git diff': { stdout: 'diff --git a/src/t0-bs.ts b/src/t0-bs.ts\n+export const bs = 1;\n' },
+      'fake-r2': { stdout: PASS },
+      'fake-r3': { stdout: PASS },
+    });
+    const ship = new ChangelogMergeShipPath(2);
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    writeCard(fx, { id: 'T0-BS', title: 'base-sync changelog merge', allowPaths: ['src/t0-bs.ts'] });
+    const goal = fx.controller.createGoal({ text: 'implement T0-BS', source: 'card', ref: 'T0-BS', affectedSurfaces: [] }, { cards: ['T0-BS'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T0-BS'] } });
+    const card = fx.card('T0-BS');
+    const g = () => fx.goal(goal.id);
+    let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T0-BS'));
+    /** Record `sha` as a successful attempt, then take its R2 pass and its R3 decision (or the gate's answer to it). */
+    const reviewed = async (sha: string) => {
+      let run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha });
+      r = runner.next(g(), card, run);
+      assert.equal(r.directive.kind, 'pre-review', `${sha}: a new candidate starts with R2, never the ship: ${r.directive.narration}`);
+      run = (await runner.preReview(g(), card, r.run)).run;
+      r = runner.next(g(), card, run);
+      return r;
+    };
+
+    // Decision 1 on sha-1 passes; the ship's base sync merges the CHANGELOG entries into a new candidate.
+    r = await reviewed('sha-1');
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    r = runner.next(g(), card, (await runner.formalReview(g(), card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', `the merge is a new candidate to build and record, not a stop: ${r.directive.narration}`);
+    assert.equal(r.run.pendingRepair?.kind, 'merge-conflict');
+    assert.equal(r.run.dodReceipt, undefined, 'no DoD receipt carries over to the merge');
+    assert.equal(r.run.blockedReceipt, undefined, 'no retained receipt carries over to the merge');
+    assert.equal(fx.ops.list({ goalId: goal.id, kind: 'merge' }).filter((o) => o.status === 'succeeded').length, 0, 'nothing merged');
+
+    // The merge commit gets its own R2 pass and its own R3 decision (decision 2), never the pass of sha-1.
+    r = await reviewed('sha-2');
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    if (r.directive.kind === 'review') assert.equal(r.directive.decision, 2, 'the merge takes a decision of its own');
+    r = runner.next(g(), card, (await runner.formalReview(g(), card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+
+    // A second merge after both decisions: its R2 passes, and the gate stops for review instead of shipping it.
+    r = await reviewed('sha-3');
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'review');
+    assert.equal(ship.requests.length, 2, 'the unreviewed merge was never shipped');
+  } finally {
+    fx.cleanup();
+  }
 });
