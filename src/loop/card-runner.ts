@@ -882,7 +882,7 @@ export class CardRunner {
       // the merge): the base moved all the same, and the repaired merge is reviewed rather than stopped.
       const prior = run.candidate;
       const repairsBaseSync = prior?.baseSync === true && !run.review.invocations.some((i) => i.candidateDigest === prior.digest && (i.outcome === 'pass' || i.outcome === 'block'));
-      if (candidate && ((run.pendingRepair?.kind === 'merge-conflict' && clearsPendingRepair(run.pendingRepair, input)) || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
+      if (candidate && (run.pendingRepair?.kind === 'merge-conflict' || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
     }
     // A failed check, or lost checks, leave no DoD evidence: neither the active receipt nor the one a block retained.
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;

@@ -218,7 +218,12 @@ test('acceptance 4: no base-sync reviewer, a RED-receipt repair and a second bas
   try {
     assert.equal(repair.state.r.directive.kind, 'build', `the rejected RED receipt opens a repair: ${repair.state.r.directive.narration}`);
     assert.equal(repair.state.r.run.pendingRepair?.kind, 'red-missing');
-    const r = await repair.reviewed('sha-3', 'red:2');
+    // R2 blocks the RED repair too; its own repair is still not a base-sync candidate (only a base-sync candidate carries the mark).
+    repair.r2.push('{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-bsr.ts:1: a guard is missing -> add it"],"axes":{"spec":{"verdict":"block","reasons":["guard"]},"standards":{"verdict":"pass","reasons":[]}}}\n');
+    const blocked = await repair.reviewed('sha-3', 'red:2');
+    assert.equal(blocked.directive.kind, 'build', `R2 blocked the RED repair: ${blocked.directive.narration}`);
+    const r = await repair.reviewed('sha-4', 'red:2');
+    assert.equal(repair.fx.store.getCardRun(repair.goal.id, 'T0-BSR')?.candidate?.baseSync, undefined, 'the repair of an undecided candidate that is not a base-sync candidate carries no mark');
     assert.equal(r.directive.kind, 'stop', `a RED-receipt repair past the allowance is not a base-sync candidate: ${r.directive.narration}`);
   } finally {
     repair.fx.cleanup();
