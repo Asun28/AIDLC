@@ -178,9 +178,9 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
     ['a generation-0 dispatch after a generation-1 resume with no stop journaled before it', [resume(1), dispatch(0), dispatch(1)], 1],
     ['work after a lease takeover that follows GOAL_STOPPED', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', undefined, { leaseGeneration: 2, report: {} }], dispatch(0)], 1],
     ['a resume that does not move the generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(1)], 1],
-    ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
-    ['a GOAL_STATE from STOP of another generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(1)], 1],
-    ['a GOAL_STATE that is not from STOP re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_STATE', 0, { from: 'RUN', to: 'CARDS' }], attempt(0)], 1],
+    ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP of another generation re-admits nothing', [['GOAL_STOPPED', 1, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(1)], 1],
+    ['a GOAL_STATE that is not from STOP re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'RUN', to: 'CARDS' }], attempt(0)], 1],
     // R2 cycle 0 round 1: only the extension's transition, STOP to CARDS after a time stop, re-admits.
     ['a GOAL_STATE from STOP to anything but CARDS re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'DONE' }], dispatch(0)], 1],
     ['a GOAL_STATE from STOP to CARDS after a stop that is not for time re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'review' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
