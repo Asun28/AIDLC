@@ -30,7 +30,7 @@ aidlc next                                  # run-card T0-CLAIM-NPE
 aidlc card fix-task T0-CLAIM-NPE            # locks test files for the agent (protect-tests hook)
 aidlc card next T0-CLAIM-NPE                # prepare -> build
 # establish RED, implement, run the DoD, then:
-aidlc card attempt T0-CLAIM-NPE --outcome success --dod-receipt "pytest exit 0" --red-receipt "<sha>:1"
+aidlc card attempt T0-CLAIM-NPE --outcome success --dod-receipt "pytest exit 0: 12 passed" --red-receipt "<sha>:1"
 aidlc card fix-task --clear
 aidlc card next T0-CLAIM-NPE                # ship (dry-run or scaffold task.ps1)
 aidlc card next T0-CLAIM-NPE                # close: lists missing closure steps
@@ -42,6 +42,8 @@ aidlc next                                  # close -> done
 ```
 
 A success attempt on a `tdd: true` card is refused when neither the stored run nor the attempt carries a RED receipt: `aidlc card attempt` names the missing RED receipt and records nothing (no attempt, no effort change, no candidate), so record the success again with `--red-receipt`. A failed attempt is recorded with `--outcome fail --cause "<normalised cause>" [--progress]`; the same cause twice without progress stops the branch, and only an evidenced third failure can justify the single escalated attempt.
+
+A DoD receipt names the command, its exit code and the count of tests that passed, as in `pytest exit 0: 12 passed`. An exit code alone proves nothing about the tests: on Node 22, `node --test` exits 0 on a test file that holds no test (it reports `# tests 1` and `# pass 1`), on a file whose every test is skipped, and on a glob that matches no file; only a named file that does not exist exits 1.
 
 ### T1 feature
 
@@ -95,6 +97,24 @@ aidlc monitor check --bands bands.yaml --data samples.json --file-intent
 ```
 
 `samples.json` is `{"baseline":[...numbers...],"recent":[{"at":"<iso>","value":n},...]}`. Deterministic Western Electric rules decide the tier; `diagnose`/`propose` breaches file `intent/incident-<metric>-<rule>-<date>.md` once per dedupe window and record the identity in `.aidlc/incidents/incidents.json`. The intent then enters the normal loop with `aidlc goal new`.
+
+### Unattended runs (`/goal`, `/loop`)
+
+`/goal` in Claude Code keeps a session working toward a condition: after each turn a small model reads the conversation and, while the condition does not hold, Claude starts the next turn without a prompt. The evaluator runs no command and reads no file, so the condition names what `aidlc next` prints:
+
+```text
+/goal Drive aidlc goal <id>: run `aidlc next --goal <id>`, do that directive, then `aidlc report`. Met when the latest `aidlc next` JSON shown in this conversation has "kind" of "done", "stop", "ask", "checkpoint" or "wait"; print that JSON line as the last line of your reply. Stop after 40 turns and name the next directive.
+```
+
+The goal ends on `wait` because a turn that only repeats `aidlc next` during a quota hold or a running CI job spends tokens and changes nothing; `ask`, `checkpoint` and `stop` need a person. `/goal` grants no permission and changes no gate: the hooks, the review allowances and the deadlines apply to each goal turn as they do to a prompted one, and turns run unattended only in a permission mode that already allows their tool calls. While a background command such as `aidlc review pre` is still running at the end of a turn, the evaluation of that turn is skipped; Claude Code delivers the result as a new turn, so the condition is judged after the result is read.
+
+A `wait` directive carries `until` or `pollSeconds`. A self-paced `/loop` (no interval) waits on it in the same session, which stays open; Esc stops it:
+
+```text
+/loop Run `aidlc next --goal <id>`. While "kind" is "wait", wait until its `until` (or `pollSeconds`). When it is anything else, show that JSON and stop this loop.
+```
+
+A `/schedule` cloud routine cannot drive a goal: it runs in a fresh clone of the repository, and `.aidlc/` is local to the main checkout and gitignored, so the routine sees no goal, lease or journal.
 
 ## Sessions
 
