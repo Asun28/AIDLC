@@ -6,6 +6,7 @@ branch: T0-BASE-SYNC-CHANGELOG
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-CHANGELOG
 allow_paths:
   - src/delivery/github-ship.ts
+  - src/delivery/ship.ts
   - src/loop/card-runner.ts
   - tests/infra/github-ship.test.ts
   - tests/scenarios/t0-flow.test.ts
@@ -26,7 +27,7 @@ acceptance:
 depends_on: []
 budget: 250
 tdd: true
-sweep: "grep -n 'baseSync\\|SHIP-BASE-SYNC\\|merge-conflict' src/: github-ship.ts:238-276 baseSync tests the merge with merge-tree (clean: logs and ships the reviewed head, :257-260), otherwise runs git merge --no-commit and returns [SHIP-BASE-SYNC-CONFLICT] with the merge left in the worktree (:275); ship.ts:68 classifies that sentinel as merge-failed; card-runner.ts:2360-2372 turns a merge-failed outcome with a conflict diagnostic into BUILD with pendingRepair merge-conflict and the receipts cleared; card-runner.ts:1199-1203 stops a third R3 decision (MAX_SUBSTANTIVE_REVIEW_DECISIONS = 2, types.ts:1002). Tests: tests/infra/github-ship.test.ts:350-352 (conflict in CHANGELOG.md), t0-flow.test.ts (merge-conflict repair)."
+sweep: "grep -n 'baseSync\\|SHIP-BASE-SYNC\\|merge-conflict' src/: github-ship.ts:238-276 baseSync tests the merge with merge-tree (clean: logs and ships the reviewed head, :257-260), otherwise runs git merge --no-commit and returns [SHIP-BASE-SYNC-CONFLICT] with the merge left in the worktree (:275); ship.ts:68 classifies that sentinel as merge-failed (SENTINEL_MAP, where the new sentinel is classified too); card-runner.ts:2360-2372 turns a merge-failed outcome with a conflict diagnostic into BUILD with pendingRepair merge-conflict and the receipts cleared; card-runner.ts:1199-1203 stops a third R3 decision (MAX_SUBSTANTIVE_REVIEW_DECISIONS = 2, types.ts:1002). Tests: tests/infra/github-ship.test.ts:350-352 (conflict in CHANGELOG.md), t0-flow.test.ts (merge-conflict repair)."
 forbid: [shipping or merging a candidate whose base sync conflicted without a new DoD, R2 and R3 on the merge result, carrying a receipt, pass or decision of the replaced candidate to the merge, resolving a hunk that removes or changes a line, resolving any path other than CHANGELOG.md, reordering or rewording either side's entries]
 non_goals: [the scaffold ship path, a clean base sync (it ships the reviewed head; CI on the PR runs on the merge ref), the two-decision R3 allowance, other files with append-only sections]
 diagnosis:
