@@ -208,7 +208,7 @@ test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
   const changelogSentences = [
     '- Audit re-admission, card T0-AUDIT-READMIT: `aidlc audit verify` no longer reports `WORK_AFTER_TERMINAL` for the work of a goal the user re-admitted with `aidlc goal resume` or with `aidlc goal extend` after a time stop, which dropped such a goal to `recorded`; it counts a dispatch, an issued operation or an attempt only when the latest disposition before it is `GOAL_DONE` or `GOAL_STOPPED`.',
     'Work after the final disposition, work of a generation below the latest resume and work after a lease takeover still block.',
-    'On 2026-09-25, of the 47 goals in this repository\'s state, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; the other 43 report what they reported before (docs/OPERATIONS.md).',
+    'Of the goals in this repository\'s state when this card ran, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; every other goal reports what it reported before (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
