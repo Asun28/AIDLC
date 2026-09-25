@@ -9,7 +9,9 @@ const root = path.resolve(import.meta.dirname, '..', '..');
 const read = (...parts: string[]): string => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
 
 const GOAL_PROMPT =
-  '/goal Drive aidlc goal <id>: run `aidlc next --goal <id>`, do that directive, then `aidlc report`. Met when the latest `aidlc next` JSON shown in this conversation has "kind" of "done", "stop", "ask", "checkpoint" or "wait"; print that JSON line as the last line of your reply. Stop after 40 turns and name the next directive.';
+  '/goal Drive aidlc goal <id>: run `aidlc next --goal <id>`, do that directive, then `aidlc report`. When the kind is "done", "stop", "ask", "checkpoint" or "wait", do not act on it and do not run `aidlc report`: print that JSON line as the last line of your reply and end the turn. Met when the latest `aidlc next` JSON shown in this conversation has one of those five kinds. Stop after 40 turns and name the next directive.';
+/** R3 decision 1: a goal turn never acts on or reports a directive that ends the goal, so it never approves a checkpoint or answers an ask. */
+const HANDS_OFF = 'When the kind is "done", "stop", "ask", "checkpoint" or "wait", do not act on it and do not run `aidlc report`';
 const LOOP_PROMPT =
   '/loop Run `aidlc next --goal <id>`. While "kind" is "wait", wait until its `until` (or `pollSeconds`). When it is anything else, show that JSON and stop this loop.';
 const GOAL_KINDS = ['done', 'stop', 'ask', 'checkpoint', 'wait'];
@@ -17,6 +19,7 @@ const GOAL_KINDS = ['done', 'stop', 'ask', 'checkpoint', 'wait'];
 describe('T0-UNATTENDED-RUNS', () => {
   it('docs/OPERATIONS.md carries the /goal condition and its three rules (acceptance 1)', () => {
     const ops = read('docs', 'OPERATIONS.md');
+    assert.ok(GOAL_PROMPT.includes(HANDS_OFF), 'the /goal condition keeps its hands off the directives that end the goal');
     for (const sentence of [
       GOAL_PROMPT,
       'The goal ends on `wait` because a turn that only repeats `aidlc next` during a quota hold or a running CI job spends tokens and changes nothing; `ask`, `checkpoint` and `stop` need a person.',
@@ -68,9 +71,11 @@ describe('T0-UNATTENDED-RUNS', () => {
   it('CHANGELOG.md Unreleased carries the entry under the card id (acceptance 5)', () => {
     const changelog = read('CHANGELOG.md');
     const start = changelog.indexOf('## Unreleased');
-    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    const end = changelog.indexOf('\n## ', start + 1);
+    const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
     for (const sentence of [
       '- Unattended runs, card T0-UNATTENDED-RUNS: `docs/OPERATIONS.md` documents a `/goal` condition that drives a goal through `aidlc next` and `aidlc report` until the latest directive is `done`, `stop`, `ask`, `checkpoint` or `wait`, and a self-paced `/loop` that waits on a `wait` directive by its `until` or `pollSeconds`; a `/schedule` cloud routine cannot drive a goal, since `.aidlc/` is local and gitignored.',
+      'The condition tells the agent not to act on or report those five kinds, so no goal turn approves a checkpoint or answers an ask.',
       'Every `--dod-receipt` example in `docs/OPERATIONS.md` and `README.md` names the test count, since `node --test` exits 0 on a file with no test, on a file whose every test is skipped and on a glob that matches no file.',
     ]) {
       assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
