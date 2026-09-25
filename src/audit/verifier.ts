@@ -81,7 +81,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let afterTerminal = 0;
   for (const e of events) {
     if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') terminal = e;
-    else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string' && (!terminal || generationOf(e) > generationOf(terminal))) {
+    else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string' && terminal && generationOf(e) > generationOf(terminal)) {
       terminal = undefined;
       resumedGeneration = generationOf(e);
     } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && terminal?.type === 'GOAL_STOPPED' && generationOf(e) === generationOf(terminal)) terminal = undefined;

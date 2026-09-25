@@ -162,11 +162,17 @@ test('T0-AUDIT-READMIT acceptance 2: the continuation of a time stop re-admitted
   const report = journalOf([['GOAL_CREATED', 0], dispatch(0), ['GOAL_STOPPED', 0, { reason: 'time' }], ['NOTE', 0, { extension: { by: 'user', newDeadline: '2026-09-11T06:00:00.000Z' } }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0), attempt(0), ['GOAL_DONE', 0]]);
   assert.equal(afterTerminal(report), undefined, JSON.stringify(report.findings));
   assert.equal(report.level, 'traceable', JSON.stringify(report.findings));
+  // The latest terminal disposition is the one the extension ends, not the first one journaled.
+  const latest = journalOf([['GOAL_DONE', 0], ['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 'g-latest');
+  assert.equal(afterTerminal(latest), undefined, JSON.stringify(latest.findings));
 });
 
 test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, late work of the stopped generation and work after a lease takeover still block', () => {
   const cases: Array<[string, Array<[string, number | undefined, Record<string, unknown>?]>, number]> = [
     ['work after GOAL_DONE with no re-admission', [['GOAL_CREATED', 0], ['GOAL_DONE', 0], dispatch(0)], 1],
+    ['every kind of work after GOAL_DONE counts', [['GOAL_DONE', 0], dispatch(0), attempt(0), ['OPERATION_ISSUED', 0, { operationId: 'op-9' }]], 3],
+    ['a work event that names no generation after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), ['CARD_DISPATCHED', undefined, { childRef: 'card:T0-X' }]], 1],
+    ['a lease takeover that names a later generation re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', 1, { leaseGeneration: 3 }], dispatch(1)], 1],
     ['work after the final GOAL_DONE of a resumed goal', [['GOAL_STOPPED', 0], resume(1), dispatch(1), ['GOAL_DONE', 1], attempt(1)], 1],
     ['a generation-0 dispatch after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), dispatch(0), dispatch(1)], 1],
     ['work after a lease takeover that follows GOAL_STOPPED', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', undefined, { leaseGeneration: 2, report: {} }], dispatch(0)], 1],
