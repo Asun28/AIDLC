@@ -1,7 +1,7 @@
 ---
 id: T0-R3-OPUS-PRIMARY
 title: This repository runs its formal review (R3) on a headless Claude Opus 5.5 with no fallback while Codex is unavailable, and the docs keep the Codex gpt-6-sol command as the restore path
-status: todo
+status: merged
 branch: T0-R3-OPUS-PRIMARY
 worktree: D:\wt\AIDLC\T0-R3-OPUS-PRIMARY
 allow_paths:
