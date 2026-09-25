@@ -1,16 +1,16 @@
 ---
-id: T0-SHIP-QUOTA-WAIT
-title: A quota hold the ship path reads on a review-no-verdict ship outcome is WAIT until the hold passes, not STOP/review, and spends no retry or decision
+id: T0-SHIP-QUOTA-WAIT-2
+title: A quota hold the ship path reads on a review-no-verdict ship outcome is WAIT until the hold passes, not STOP/review, and spends no retry or decision (replacement of T0-SHIP-QUOTA-WAIT after its R2 no-verdict allowance was spent on two reviewer outputs whose verdict line sat inside an unclosed code fence)
 status: todo
-branch: T0-SHIP-QUOTA-WAIT
-worktree: D:\wt\AIDLC\T0-SHIP-QUOTA-WAIT
+branch: T0-SHIP-QUOTA-WAIT-2
+worktree: D:\wt\AIDLC\T0-SHIP-QUOTA-WAIT-2
 allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/review-block.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
-  - specs/tasks/T0-SHIP-QUOTA-WAIT.md
+  - specs/tasks/T0-SHIP-QUOTA-WAIT-2.md
 dod_command: npm run typecheck && node --test tests/scenarios/t0-flow.test.ts tests/scenarios/review-block.test.ts
 dod_exit: 0
 requirements:
@@ -30,12 +30,11 @@ non_goals: [the command-run R3 and R2 quota paths, quota detection (T0-QUOTA-FAL
 diagnosis:
   root_cause: "applyShipResult switches on the ship outcome, not on the ledger decision: a review-no-verdict outcome goes to STOP/review unless the decision is retry-review, so a verified quota hold (decision wait-quota) stops the card with a no-verdict message, although the review policy makes a quota hold WAIT (evidence: T0-QUOTA-FALSE-HOLD acceptance 3, the stderr exit-0 case returned stop 'missing/malformed/stale verdict after the single retry')."
   same_class: "review-blocked with a quota-hold decision cannot occur (a hold carries no verdict). The command-run R3 (card-runner.ts:1197) and R2 (card-runner.ts:1140) paths already wait."
-hygiene: "Found while running T0-QUOTA-FALSE-HOLD; the ship path is the scaffold/GitHub R3 reviewer path used when formalReview.command is empty. Run the mutation sweep over the new branch before the first review (docs/LESSONS.md 2026-09-24)."
+hygiene: "Found while running T0-QUOTA-FALSE-HOLD; the ship path is the scaffold/GitHub R3 reviewer path used when formalReview.command is empty. Run the mutation sweep over the new branch before the first review (docs/LESSONS.md 2026-09-24). Replacement of T0-SHIP-QUOTA-WAIT (goal g-20260925101837-61f56b): R2 cycle 0 round 1 (edge-cases) and round 2 (ac-coverage) each ended on a pass verdict line inside a code fence the reviewer reasoning left open, which the reader takes as malformed, and the retry of round 1 blocked on the acceptance 2 wording amended in PR #47. The candidate carries over, merged with main."
 doc_sync: docs/OPERATIONS.md (quota hold paragraph), CHANGELOG.md
-superseded_by: T0-SHIP-QUOTA-WAIT-2
 ---
 
-# T0-SHIP-QUOTA-WAIT
+# T0-SHIP-QUOTA-WAIT-2
 
 ## Deliverable
 A verified quota hold on the ship path parks the card in WAIT on `review-quota` until the review-pool hold passes, then ships again; it no longer stops the card for review with a no-verdict message.
