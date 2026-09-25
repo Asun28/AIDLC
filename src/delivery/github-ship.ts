@@ -355,12 +355,24 @@ export class GitHubShipPath implements ShipPath {
     } catch {
       resolved = undefined;
     }
+    // A write that throws (a locked file, EACCES, a full disk) must end as a failure the runner records: `ship` is called
+    // without a catch, and an exception would leave the ship operation without a result.
+    const write = (text: string): string | undefined => {
+      try {
+        writeFileSync(file, text, 'utf8');
+        return undefined;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      }
+    };
     if (resolved === undefined) {
       // Not this shape: the file goes back to the markers the merge wrote, for the skill.
-      writeFileSync(file, before, 'utf8');
+      const code = write(before);
+      if (code) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `restoring CHANGELOG.md as the merge wrote it failed in ${wt} (${code}): the file may carry the diff3 markers instead; the merge is still in progress, HEAD ${head} unchanged` };
       return undefined;
     }
-    writeFileSync(file, resolved, 'utf8');
+    const code = write(resolved);
+    if (code) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `writing the CHANGELOG.md resolution failed in ${wt} (${code}); the merge is still in progress with its conflict, HEAD ${head} unchanged` };
     const failed = (step: string, r: ExecReceipt) => ({ sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `${step} of the CHANGELOG.md merge failed in ${wt} (exit ${r.exitCode}): ${flat(r.stderr || r.stdout)}; the resolution is written and the merge is still in progress, HEAD ${head} unchanged` });
     const add = git(['add', '--', 'CHANGELOG.md']);
     if (add.exitCode !== 0) return failed('git add', add);
@@ -368,7 +380,8 @@ export class GitHubShipPath implements ShipPath {
     const commit = git(['commit', '-m', message]);
     if (commit.exitCode !== 0) return failed('git commit', commit);
     const sha = git(['rev-parse', '--verify', 'HEAD']);
-    const mergeSha = sha.exitCode === 0 ? sha.stdout.trim() : 'unknown';
+    const mergeSha = sha.exitCode === 0 ? sha.stdout.trim() : '';
+    if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `the CHANGELOG.md merge is committed in ${wt} but the merge commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; record the worktree HEAD by hand` };
     log.push(encodeUntrusted(flat(`base sync: CHANGELOG.md resolved by keeping the entries both sides added to Unreleased; merge ${mergeSha}`)));
     return { sentinel: '[SHIP-BASE-SYNC-MERGED]', detail: `${ref} conflicted with HEAD ${head} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${mergeSha}: a new candidate, not shipped; run the DoD on it and record it as the next attempt` };
   }
