@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath, classifyShipOutput, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
+import { MINUTE_MS, addMs, type ReviewInvocation } from '../../src/core/types.ts';
 
 // Card T0-BASE-SYNC-REVIEW: a candidate made by resolving a base-sync conflict after both R3 decisions gets one more decision
 // by the configured base-sync reviewer, instead of a STOP.
@@ -46,24 +47,31 @@ class SequenceShip extends DryRunShipPath {
  * passes on sha-2, and whose next ship merges again into sha-3: both decisions are used and sha-3 is a base-sync candidate.
  * `primary` and `cx` feed the primary and the base-sync reviewer; `cxArgs` records each base-sync dispatch's argv.
  */
-async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'> } = {}) {
+async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: true,
       preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false },
-      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...(opts.baseSync === false ? {} : { baseSync: BASE_SYNC }) },
+      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...(opts.baseSync === false ? {} : { baseSync: { ...BASE_SYNC, ...(opts.baseSyncTimeoutMs ? { timeoutMs: opts.baseSyncTimeoutMs } : {}) } }) },
     },
   });
   const primary: string[] = [];
   const cx: string[] = [];
   const cxArgs: string[][] = [];
+  const pArgs: string[][] = [];
+  /** Runs inside the base-sync reviewer, before it answers. */
+  const hooks: { onCx?: () => void } = {};
   const script = scriptedRunner({
     'git diff --name-only': { stdout: 'src/t0-bsr.ts\n' },
     'git diff': { stdout: 'diff --git a/src/t0-bsr.ts b/src/t0-bsr.ts\n+export const bsr = 1;\n' },
     'fake-r2': { stdout: PASS },
-    'fake-p': () => answer(primary.shift() ?? PASS),
+    'fake-p': (args) => {
+      pArgs.push(args);
+      return answer(primary.shift() ?? PASS);
+    },
     'fake-cx': (args) => {
       cxArgs.push(args);
+      hooks.onCx?.();
       const out = cx.shift() ?? PASS;
       if (out === HOLD) fx.advance(90_000); // the review itself outlasts the hold it reports
       return answer(out);
@@ -100,7 +108,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   r = await reviewed('sha-2');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
   r = (await decide()).r;
-  return { fx, runner, card, g, goal, ship, primary, cx, cxArgs, reviewed, decide, state };
+  return { fx, runner, card, g, goal, ship, primary, cx, cxArgs, pArgs, hooks, reviewed, decide, state };
 }
 
 test('acceptance 1: with both decisions used, a base-sync candidate gets a review directive naming the base-sync reviewer, which runs at medium effort; its pass ships', async () => {
@@ -117,6 +125,7 @@ test('acceptance 1: with both decisions used, a base-sync candidate gets a revie
     assert.equal(inv.reviewer, 'codex-bs');
     assert.equal((inv as { baseSync?: boolean }).baseSync, true, 'the invocation is marked as a base-sync decision');
     assert.equal(inv.effort, 'medium');
+    assert.ok(s.fx.queue.list().some((q) => q.reviewer === 'codex-bs' && q.pool === `${s.goal.reviewPool}/codex-bs`), 'the base-sync reviewer queues in its own review pool, apart from the primary\'s quota');
     assert.equal(after.directive.kind, 'close', `the pass ships: ${after.directive.narration}`);
   } finally {
     s.fx.cleanup();
@@ -130,6 +139,8 @@ test('acceptance 2: the base-sync prompt carries the delta since the candidate t
     await s.decide();
     const prompt = s.cxArgs[0]?.at(-1) ?? '';
     assert.ok(prompt.includes('## Delta since the last reviewed candidate') && prompt.includes('- since: sha-2'), 'the delta since sha-2, the candidate decision 2 reviewed');
+    assert.equal(s.pArgs.length, 2);
+    assert.ok(s.pArgs.every((a) => !(a.at(-1) ?? '').includes('## Base sync')), 'decisions 1 and 2 (a base-sync candidate within the allowance included) carry no base-sync section');
     assert.ok(prompt.includes('## Base sync\n- The base moved under this card: this candidate merges the new base into the candidate the last decision reviewed. Review the merged result against the new base, including how the base\'s changes meet the card\'s; no decision on an earlier candidate carries to this one.'), prompt.slice(prompt.indexOf('## Candidate'), prompt.indexOf('## Candidate') + 600));
   } finally {
     s.fx.cleanup();
@@ -234,4 +245,36 @@ test('acceptance 6: docs/OPERATIONS.md and the CHANGELOG Unreleased section stat
     'The decision is taken once per base-sync candidate, its prompt says the base moved, and every other candidate past the two-decision allowance stops as before (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+test('R3: a base-sync decision whose commit lost the lock is recovered as a base-sync decision; a base-sync reservation without an envelope is timed by the base-sync reviewer', async () => {
+  const lost = await atBaseSync();
+  const lock = `${lost.fx.store.cardFile(lost.goal.id, 'T0-BSR')}.lock`;
+  try {
+    await lost.reviewed('sha-3');
+    lost.hooks.onCx = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+    await assert.rejects(() => lost.runner.formalReview(lost.g(), lost.card, lost.state.r.run), /locked/i);
+    lost.hooks.onCx = undefined;
+    rmSync(lock, { force: true });
+    const f = await lost.runner.formalReview(lost.g(), lost.card, lost.fx.store.getCardRun(lost.goal.id, 'T0-BSR')!);
+    assert.equal(lost.cxArgs.length, 1, 'the retained result is committed without running the reviewer again');
+    const decided = f.run.review.invocations.filter((i) => i.reviewer === 'codex-bs' && i.outcome === 'pass');
+    assert.equal(decided.length, 1);
+    assert.equal(decided[0]!.baseSync, true, 'the recovered decision keeps its base-sync mark');
+  } finally {
+    rmSync(lock, { force: true });
+    lost.fx.cleanup();
+  }
+  // The primary times out after 1 s, the base-sync reviewer after 20 minutes: a base-sync reservation 10 minutes old with no
+  // envelope is still finishing (primary timeout plus grace would have dropped it as abandoned).
+  const slow = await atBaseSync({ baseSyncTimeoutMs: 20 * MINUTE_MS });
+  try {
+    await slow.reviewed('sha-3');
+    const pending: ReviewInvocation = { invocationId: 'r3:T0-BSR.r3.3.aaaaaaaa', candidateDigest: 'sha-3', candidateSha: 'sha-3', base: 'main', policyVersion: slow.fx.config.reviewPolicyVersion, reviewer: 'codex-bs', requestedAt: addMs(slow.fx.now(), -10 * MINUTE_MS), outcome: 'pending', baseSync: true };
+    slow.fx.store.updateCardRun(slow.goal.id, 'T0-BSR', (cur) => ({ ...cur!, review: { ...cur!.review, invocations: [...cur!.review.invocations, pending] } }));
+    await assert.rejects(() => slow.runner.formalReview(slow.g(), slow.card, slow.fx.store.getCardRun(slow.goal.id, 'T0-BSR')!), /in flight/, 'the base-sync reservation is within its own reviewer timeout');
+    assert.equal(slow.cxArgs.length, 0);
+  } finally {
+    slow.fx.cleanup();
+  }
 });

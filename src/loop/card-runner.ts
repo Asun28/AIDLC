@@ -1202,7 +1202,7 @@ export class CardRunner {
     }
     // R3 policy: a further required review beyond the two-decision allowance is STOP/review, never a third run, except the
     // one base-sync decision a base-sync candidate gets from `formalReview.baseSync` (T0-BASE-SYNC-REVIEW).
-    const baseSyncDecision = this.baseSyncDue(run, digest);
+    const baseSyncDecision = this.baseSyncDue(run);
     if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS && !baseSyncDecision) {
       const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the two-decision allowance (${run.review.substantiveDecisions} used)`, 'return the retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
@@ -1260,15 +1260,15 @@ export class CardRunner {
   }
 
   /**
-   * A base-sync decision is due (T0-BASE-SYNC-REVIEW): `formalReview.baseSync` is configured, the candidate is a base-sync
-   * candidate, both decisions are used, and no base-sync decision was taken on it yet. A base that moved makes a new
-   * solution, and it is reviewed rather than carried; any other candidate past the allowance still stops for review.
+   * A base-sync decision is due on the run's candidate (T0-BASE-SYNC-REVIEW): `formalReview.baseSync` is configured, the
+   * candidate is a base-sync candidate, both decisions are used, and no decision was taken on it yet. A base that moved makes
+   * a new solution, and it is reviewed rather than carried; any other candidate past the allowance still stops for review.
    */
-  private baseSyncDue(run: CardRun, candidateDigest: string | undefined): boolean {
-    if (!this.config.formalReview.baseSync || !run.candidate?.baseSync || candidateDigest === undefined) return false;
-    if ((run.candidate.digest ?? run.candidate.sha) !== candidateDigest) return false;
+  private baseSyncDue(run: CardRun): boolean {
+    const candidate = run.candidate;
+    if (!this.config.formalReview.baseSync || !candidate?.baseSync) return false;
     if (run.review.substantiveDecisions < MAX_SUBSTANTIVE_REVIEW_DECISIONS) return false;
-    return !run.review.invocations.some((i) => i.baseSync === true && i.candidateDigest === candidateDigest && (i.outcome === 'pass' || i.outcome === 'block'));
+    return !run.review.invocations.some((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'));
   }
 
   /** The latest invocation on a candidate by either configured formal reviewer, whatever its outcome (pending included). */
@@ -1295,7 +1295,7 @@ export class CardRunner {
     const primary = this.config.formalReview;
     // A due base-sync decision goes to the base-sync reviewer alone; its hold is its latest invocation on the card.
     const baseSync = primary.baseSync;
-    if (baseSync && this.baseSyncDue(run, candidateDigest)) {
+    if (baseSync && this.baseSyncDue(run)) {
       const last = [...run.review.invocations].reverse().find((i) => i.reviewer === baseSync.reviewer);
       const hold = last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now) ? last.holdUntil : undefined;
       return hold ? { cfg: baseSync, waitUntil: hold } : { cfg: baseSync };
@@ -1372,9 +1372,9 @@ export class CardRunner {
     }
     // A decision in flight for another candidate is spent as far as the allowance is concerned.
     const pendingDecisions = ledger.invocations.filter((i) => i.outcome === 'pending').length;
-    // The one base-sync decision of a base-sync candidate is outside the allowance (T0-BASE-SYNC-REVIEW); `active` above
-    // already requires it to be the reviewer prepared for.
-    const baseSyncDecision = cfg === this.config.formalReview.baseSync && this.baseSyncDue(current, candidateDigest);
+    // The one base-sync decision of a base-sync candidate is outside the allowance (T0-BASE-SYNC-REVIEW): `active` above
+    // resolves the base-sync reviewer only for a due base-sync decision and requires it to be the reviewer prepared for.
+    const baseSyncDecision = cfg === this.config.formalReview.baseSync;
     if (ledger.substantiveDecisions + pendingDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS && !baseSyncDecision) {
       throw new Error(`the two-decision review allowance is used (${ledger.substantiveDecisions} decided${pendingDecisions ? `, ${pendingDecisions} in flight` : ''}); ${this.lastFormalInvocation(ledger.invocations, candidateDigest)?.outcome === 'pass' ? 'the current candidate already holds its pass, ship it' : 'a further required review is STOP/review'}, not another run`);
     }
