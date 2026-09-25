@@ -103,6 +103,8 @@ describe('classifyVerdict (Q6)', () => {
       ['commit 1429abf', false],
       ['4290 lines', false],
       ['sha abc429 and 429def', false],
+      ['build 1429 finished', false],
+      ['2quota left', false],
       ['a subquota of the plan', false],
       ['an accurate limit on lines', false],
       ['rate limitation of the parser', false],
