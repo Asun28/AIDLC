@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-QUOTA-WAIT-3
 title: A quota hold the ship path reads on a review-no-verdict ship outcome is WAIT until the hold passes, not STOP/review, and spends no retry or decision (second replacement of T0-SHIP-QUOTA-WAIT: the R2 no-verdict allowance of T0-SHIP-QUOTA-WAIT and T0-SHIP-QUOTA-WAIT-2 was each spent on reviewer outputs whose verdict line sat inside an unclosed code fence, which T0-R2-ANSWER-MARKER fixes)
-status: todo
+status: merged
 branch: T0-SHIP-QUOTA-WAIT-3
 worktree: D:\wt\AIDLC\T0-SHIP-QUOTA-WAIT-3
 allow_paths:
