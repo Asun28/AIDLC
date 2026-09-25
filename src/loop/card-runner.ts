@@ -2171,9 +2171,11 @@ export class CardRunner {
       reviewDecision = rec ? rec.decision : standing ? (standing.outcome === 'block' && classified.mergeBlocking ? ({ action: review.substantiveBlocks >= 2 ? 'stop-review' : 'review-fix', remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - review.substantiveDecisions), detail: 'second substantive block' } as LedgerDecision) : { action: 'proceed-merge' }) : undefined;
       if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash } });
     }
-    // The queue slot and the operation are settled before the outcome is applied.
+    // The queue slot and the operation are settled before the outcome is applied. Only a review-no-verdict outcome holds the
+    // pool on a quota message: the receipt is the output of the whole ship command (git, gh, the CI gate log), so any other
+    // outcome settles its request whatever quota words it carries, and a merged or CI-red ship never leaves its request held.
     const holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
-    if (classified.outcome === 'quota-hold') {
+    if (result.outcome === 'review-no-verdict' && classified.outcome === 'quota-hold') {
       this.queue.hold(reviewKey, holdUntil, 'reviewer reported rate limit/quota', now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
     } else if (result.outcome === 'unclassified' && result.receipt.timedOut) {
