@@ -84,6 +84,8 @@ aidlc authorize production --goal <goalId> --env production --candidate <digest>
 aidlc release next <attemptId>              # apply -> observe (health window) -> close -> done
 ```
 
+Without `--by`, `aidlc authorize`, `aidlc plan approve` and `aidlc report --result approved` record the git identity of the repository as the approver (`git config user.email`, else `user.name`), and `user` when neither is set; no other command reads the git identity.
+
 A BREACH routes to RECOVER only with a `recovery` authorization (`aidlc authorize recovery --env production --ops rollback --recovery '{"eligibleBaseline":"v1.4.2","healthTrigger":"5xx>2%","procedure":"rollback","migrationCompatibility":"expand-only","windowMs":1800000,"owner":"oncall"}'`); the attempt closes as `recovered`, and the goal stops with `release-health` so a new candidate re-enters with fresh approval.
 
 ### Incident -> intent

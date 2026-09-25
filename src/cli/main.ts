@@ -102,6 +102,11 @@ function latestActiveGoalId(c: Ctx, explicit?: string): string {
   return active.id;
 }
 
+/** The approver of an approval recorded without --by (card T0-APPROVER-IDENTITY): the git identity of the main checkout, else `user`. */
+function defaultApprover(c: Ctx): string {
+  return new GitProbe().userIdentity(c.root) ?? 'user';
+}
+
 function parseData(raw: string | undefined): Record<string, unknown> {
   if (!raw) return {};
   try {
@@ -359,7 +364,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (o.planRef) data['planRef'] = o.planRef;
       if (o.cards) data[o.result === 'arc-failed' ? 'repairCards' : 'cards'] = o.cards.split(',').map((s) => s.trim());
       if (o.kind) data['kind'] = o.kind;
-      if (o.by) data['by'] = o.by;
+      if (o.by !== undefined) data['by'] = o.by;
+      else if (o.result === 'approved' && !('by' in data)) data['by'] = defaultApprover(c);
       if (o.env) data['environment'] = o.env;
       if (o.candidate) data['candidateDigest'] = o.candidate;
       if (o.ops) data['operations'] = o.ops.split(',').map((s) => s.trim());
@@ -373,7 +379,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('authorize <kind>')
     .description('record an authorization (development|plan-checkpoint|staging|production|recovery) bound to candidate/environment/operations')
     .option('--goal <id>')
-    .option('--by <who>', 'who granted it', 'user')
+    .option('--by <who>', 'who granted it (default: git user.email, else user.name, else user)')
     .option('--ref <ref>', 'host/project permission record reference')
     .option('--env <environment>')
     .option('--candidate <digest>')
@@ -382,10 +388,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--ops <list>')
     .option('--migrations <list>')
     .option('--recovery <json>', 'recovery specifics: eligibleBaseline, healthTrigger, procedure, migrationCompatibility, windowMs, owner')
-    .action((kind: string, o: { goal?: string; by: string; ref?: string; env?: string; candidate?: string; sha?: string; configDigest?: string; ops?: string; migrations?: string; recovery?: string }) => {
+    .action((kind: string, o: { goal?: string; by?: string; ref?: string; env?: string; candidate?: string; sha?: string; configDigest?: string; ops?: string; migrations?: string; recovery?: string }) => {
       const c = ctx(g());
       const id = latestActiveGoalId(c, o.goal);
-      const data: Record<string, unknown> = { kind, by: o.by, ref: o.ref, environment: o.env, candidateDigest: o.candidate, sourceSha: o.sha, configDigest: o.configDigest, operations: o.ops?.split(',').map((s) => s.trim()) ?? [], migrations: o.migrations?.split(',').map((s) => s.trim()) ?? [], recovery: o.recovery ? JSON.parse(o.recovery) : undefined };
+      const data: Record<string, unknown> = { kind, by: o.by ?? defaultApprover(c), ref: o.ref, environment: o.env, candidateDigest: o.candidate, sourceSha: o.sha, configDigest: o.configDigest, operations: o.ops?.split(',').map((s) => s.trim()) ?? [], migrations: o.migrations?.split(',').map((s) => s.trim()) ?? [], recovery: o.recovery ? JSON.parse(o.recovery) : undefined };
       const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'approved', data });
       out(c, { authorizations: r.goal.authorizations, directive: r.directive }, () => `recorded ${kind} authorization; next: ${r.directive.kind} — ${r.directive.narration}`);
     });
@@ -653,10 +659,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   plan
     .command('approve <goalId>')
     .description('record the T2 plan+projection checkpoint approval')
-    .option('--by <who>', 'approver', 'user')
-    .action((goalId: string, o: { by: string }) => {
+    .option('--by <who>', 'approver (default: git user.email, else user.name, else user)')
+    .action((goalId: string, o: { by?: string }) => {
       const c = ctx(g());
-      const r = c.controller.report({ goalId, generation: c.controller.mustGoal(goalId).generation, result: 'approved', data: { kind: 'plan-checkpoint', by: o.by } });
+      const r = c.controller.report({ goalId, generation: c.controller.mustGoal(goalId).generation, result: 'approved', data: { kind: 'plan-checkpoint', by: o.by ?? defaultApprover(c) } });
       out(c, r.directive, () => `[${r.directive.kind}] ${r.directive.narration}`);
     });
 

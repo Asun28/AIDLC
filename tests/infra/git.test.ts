@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { GitProbe, GitProbeError } from '../../src/probes/git.ts';
-import { runSync, scriptedRunner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { collectCandidateDiff } from '../../src/review/pre-review.ts';
 
 // Drive-neutral fixture paths: Windows keeps a drive letter, POSIX runners use an absolute root.
@@ -61,6 +61,17 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
     const probe = new GitProbe(scriptedRunner({ 'git rev-parse --verify HEAD': { exitCode: 128, stderr: 'fatal: not a git repository' } }));
     assert.throws(() => probe.head(`${D}/nowhere`), (e: unknown) => e instanceof GitProbeError && /not a git repository/.test(e.message) && e.receipt.exitCode === 128);
     assert.equal(probe.currentBranch(`${D}/nowhere`), undefined);
+  });
+
+  it('userIdentity reads user.email, else user.name, trimmed; a failed or blank read is unset and never throws (T0-APPROVER-IDENTITY acceptance 1)', () => {
+    const identity = (email: Partial<ExecReceipt>, name: Partial<ExecReceipt>) =>
+      new GitProbe(scriptedRunner({ 'git config user.email': email, 'git config user.name': name })).userIdentity(`${D}/repo`);
+    assert.equal(identity({ stdout: ' approver@example.com\n' }, { stdout: 'Approver Name\n' }), 'approver@example.com', 'the email wins over the name');
+    assert.equal(identity({ exitCode: 1 }, { stdout: 'Approver Name\n' }), 'Approver Name', 'an unset email falls back to the name');
+    assert.equal(identity({ stdout: ' \n' }, { stdout: 'Approver Name\n' }), 'Approver Name', 'a blank email falls back to the name');
+    assert.equal(identity({ exitCode: 1 }, { exitCode: 1 }), undefined, 'neither set');
+    assert.equal(identity({ stdout: '\n' }, { stdout: '\t\n' }), undefined, 'both blank');
+    assert.equal(identity({ exitCode: 128, stdout: 'approver@example.com\n' }, { exitCode: 128, stderr: 'fatal: not a git repository' }), undefined, 'a failed read is unset even with output');
   });
 
   it('candidate digest binds HEAD to the working-tree status and input manifest', () => {
