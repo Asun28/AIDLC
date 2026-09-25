@@ -7,6 +7,8 @@ worktree: D:\wt\AIDLC\T0-BASE-SYNC-REVIEW
 allow_paths:
   - src/config.ts
   - src/core/types.ts
+  - src/core/review-policy.ts
+  - src/review/pre-review.ts
   - src/loop/card-runner.ts
   - templates/aidlc.config.json
   - aidlc.config.json
