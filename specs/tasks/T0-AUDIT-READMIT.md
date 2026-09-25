@@ -1,7 +1,7 @@
 ---
 id: T0-AUDIT-READMIT
 title: aidlc audit verify counts work after a terminal disposition only when no user-authorised re-admission (goal resume, or a deadline extension of a time stop) came between them
-status: todo
+status: merged
 branch: T0-AUDIT-READMIT
 worktree: D:\wt\AIDLC\T0-AUDIT-READMIT
 allow_paths:
