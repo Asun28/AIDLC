@@ -47,7 +47,7 @@ class SequenceShip extends DryRunShipPath {
  * passes on sha-2, and whose next ship merges again into sha-3: both decisions are used and sha-3 is a base-sync candidate.
  * `primary` and `cx` feed the primary and the base-sync reviewer; `cxArgs` records each base-sync dispatch's argv.
  */
-async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number } = {}) {
+async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number; blockFirst?: boolean } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: true,
@@ -103,12 +103,19 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   };
   let r = await reviewed('sha-1');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
+  const handle = { fx, runner, card, g, goal, ship, primary, cx, cxArgs, pArgs, hooks, reviewed, decide, state };
+  if (opts.blockFirst) {
+    // Decision 1 blocks: the card returns to REVIEW_FIX, and the caller records the repair.
+    primary.push(BLOCK);
+    await decide();
+    return handle;
+  }
   r = (await decide()).r;
   assert.equal(r.directive.kind, 'build', `the first ship merged the base into a new candidate: ${r.directive.narration}`);
   r = await reviewed('sha-2');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
   r = (await decide()).r;
-  return { fx, runner, card, g, goal, ship, primary, cx, cxArgs, pArgs, hooks, reviewed, decide, state };
+  return handle;
 }
 
 test('acceptance 1: with both decisions used, a base-sync candidate gets a review directive naming the base-sync reviewer, which runs at medium effort; its pass ships', async () => {
@@ -195,7 +202,7 @@ test('acceptance 3: a base-sync block stops for review with its findings; a no-v
   }
 });
 
-test('acceptance 4: no base-sync reviewer, a review-repair candidate and a second base-sync decision still stop; a later base-sync candidate gets its own decision', async () => {
+test('acceptance 4: no base-sync reviewer, a RED-receipt repair and a second base-sync decision still stop; a review repair is not a base-sync candidate; a later base-sync candidate gets its own decision', async () => {
   const unset = await atBaseSync({ baseSync: false });
   try {
     const r = await unset.reviewed('sha-3');
@@ -209,9 +216,21 @@ test('acceptance 4: no base-sync reviewer, a review-repair candidate and a secon
     assert.equal(repair.state.r.directive.kind, 'build', `the rejected RED receipt opens a repair: ${repair.state.r.directive.narration}`);
     assert.equal(repair.state.r.run.pendingRepair?.kind, 'red-missing');
     const r = await repair.reviewed('sha-3', 'red:2');
-    assert.equal(r.directive.kind, 'stop', `a RED repair past the allowance is not a base-sync candidate: ${r.directive.narration}`);
+    assert.equal(r.directive.kind, 'stop', `a RED-receipt repair past the allowance is not a base-sync candidate: ${r.directive.narration}`);
   } finally {
     repair.fx.cleanup();
+  }
+  // A candidate repaired after a formal block is not a base-sync candidate: its decision (2) is the primary's.
+  const fixed = await atBaseSync({ blockFirst: true });
+  try {
+    assert.equal(fixed.state.r.directive.kind, 'build', fixed.state.r.directive.narration);
+    assert.match(fixed.state.r.directive.narration, /Review block to repair/);
+    const r = await fixed.reviewed('sha-2');
+    assert.equal(fixed.fx.store.getCardRun(fixed.goal.id, 'T0-BSR')?.candidate?.baseSync, undefined, 'a review repair is not a base-sync candidate');
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    if (r.directive.kind === 'review') assert.equal(r.directive.reviewer, 'primary');
+  } finally {
+    fixed.fx.cleanup();
   }
   const twice = await atBaseSync({ steps: ['base-sync', 'base-sync', 'base-sync'] });
   try {
