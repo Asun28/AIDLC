@@ -79,6 +79,16 @@ export class GitProbe {
     return r.exitCode === 0 ? r.stdout.trim() : undefined;
   }
 
+  /** The git identity of the repository (card T0-APPROVER-IDENTITY): `user.email`, else `user.name`; a failed or blank read is unset. */
+  userIdentity(cwd: string): string | undefined {
+    for (const key of ['user.email', 'user.name']) {
+      const r = this.git(cwd, ['config', key]);
+      const value = r.exitCode === 0 ? r.stdout.trim() : '';
+      if (value) return value;
+    }
+    return undefined;
+  }
+
   status(cwd: string): { dirty: boolean; entries: string[]; untracked: string[] } {
     const out = this.must(cwd, ['status', '--porcelain=v1', '--untracked-files=all']);
     const entries = out.split(/\r?\n/).filter((l) => l.length > 0);
