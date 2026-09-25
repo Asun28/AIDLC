@@ -97,7 +97,7 @@ export function unionUnreleasedInsertions(text: string): string | undefined {
     const line = lines[i]!;
     if (!isMarker(line, '<<<<<<<')) {
       if (anyMarker(line)) return undefined;
-      if (heading(line)) section = line.replace(/\r$/, '').trimEnd();
+      if (heading(line)) section = line.trimEnd();
       out.push(line);
       continue;
     }

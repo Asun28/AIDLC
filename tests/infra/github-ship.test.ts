@@ -674,14 +674,17 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
   const RESOLVED = [HEAD_OF(['- Card entry, card T1-A: one line.', '', '- Base entry, card T0-OTHER: another line.', '']), TAIL].join('\n');
 
   type Call = { key: string; args: string[]; cwd?: string };
-  function recording(unmerged = 'CHANGELOG.md\u0000') {
+  function recording(unmerged: Partial<ExecReceipt>, onDiff3: () => void) {
     const calls: Call[] = [];
     let added = false;
     const scripted = runnerWith({
       [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE },
       [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE },
-      [UNMERGED]: { stdout: unmerged },
-      [DIFF3]: {},
+      [UNMERGED]: unmerged,
+      [DIFF3]: () => {
+        onDiff3();
+        return {};
+      },
       [ADD]: () => {
         added = true;
         return {};
@@ -695,11 +698,15 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     };
     return { calls, runner };
   }
-  const shipWith = (changelog: string, unmerged?: string) => {
+  /** What the merge wrote before the diff3 rewrite: distinct from the diff3 text, so a restored file is observable. */
+  const asMerged = (diff3: string) => `as the merge wrote it\n${diff3}`;
+  /** Ship with CHANGELOG.md as the merge wrote it; the scripted `git checkout --conflict=diff3` writes `diff3` over it. */
+  const shipWith = (diff3: string, unmerged: Partial<ExecReceipt> = { stdout: 'CHANGELOG.md\u0000' }) => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
-    writeFileSync(path.join(f.wt, 'CHANGELOG.md'), changelog, 'utf8');
-    const { calls, runner } = recording(unmerged);
+    const file = path.join(f.wt, 'CHANGELOG.md');
+    writeFileSync(file, asMerged(diff3), 'utf8');
+    const { calls, runner } = recording(unmerged, () => writeFileSync(file, diff3, 'utf8'));
     const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     return { r, calls, file: readFileSync(path.join(f.wt, 'CHANGELOG.md'), 'utf8') };
   };
@@ -729,8 +736,10 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     const baseEdits = [HEAD_OF([]), '<<<<<<< HEAD', '- Older entry, card T0-OLD: kept.', '||||||| 1a2b3c4', '- Older entry, card T0-OLD: kept.', '=======', '- Older entry, card T0-OLD: reworded on main.', '>>>>>>> refs/remotes/origin/main', rest].join('\n');
     const cardRewrites = [HEAD_OF([]), '<<<<<<< HEAD', '- Older entry, card T0-OLD: rewritten by the card.', '||||||| 1a2b3c4', '- Older entry, card T0-OLD: kept.', '=======', '- Base entry, card T0-OTHER: another line.', '- Older entry, card T0-OLD: kept.', '>>>>>>> refs/remotes/origin/main', rest].join('\n');
     const heading = [HEAD_OF([]), '<<<<<<< HEAD', '- Card entry.', '', '## 0.2.0', '||||||| 1a2b3c4', '=======', '- Base entry.', '>>>>>>> refs/remotes/origin/main', TAIL].join('\n');
-    const cases: Array<[string, string, string | undefined]> = [
-      ['a conflict in another path besides CHANGELOG.md', INSERTIONS, 'CHANGELOG.md\u0000src/other.ts\u0000'],
+    const cases: Array<[string, string, Partial<ExecReceipt> | undefined]> = [
+      ['a conflict in another path besides CHANGELOG.md', INSERTIONS, { stdout: 'CHANGELOG.md\u0000src/other.ts\u0000' }],
+      ['a single unmerged path that is not CHANGELOG.md', INSERTIONS, { stdout: 'src/other.ts\u0000' }],
+      ['an unmerged listing that fails', INSERTIONS, { exitCode: 128, stdout: 'CHANGELOG.md\u0000', stderr: 'fatal: index unreadable' }],
       ['a CHANGELOG hunk outside ## Unreleased', outside, undefined],
       ['a CHANGELOG hunk where the base side edits a line', baseEdits, undefined],
       ['a CHANGELOG hunk where the card rewrites an existing entry', cardRewrites, undefined],
@@ -739,7 +748,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     for (const [name, text, unmerged] of cases) {
       const { r, calls, file } = shipWith(text, unmerged);
       assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]') && !r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), `${name}: ${r.sentinels.join(' ')}`);
-      assert.equal(file, text, `${name}: the file is left as it was`);
+      assert.equal(file, asMerged(text), `${name}: the file is left as the merge wrote it`);
       assert.ok(!afterMerge(calls).some((c) => c.key.startsWith(ADD) || c.key.startsWith('git commit')), `${name}: nothing is staged or committed after the merge`);
       assert.deepEqual(remoteEffects(calls), [], name);
     }
@@ -755,6 +764,12 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     assert.equal(union([HEAD_OF(['=======']), TAIL].join('\n')), undefined, 'a stray separator outside a hunk');
     assert.equal(union(RESOLVED), undefined, 'a file with no hunk resolves nothing');
     assert.equal(union(INSERTIONS.replace('## Unreleased', '## Unreleased (next)')), undefined, 'only the ## Unreleased section');
+    // Sweep survivors: a marker is the seven characters alone or before a space; markers out of place refuse the file.
+    assert.equal(union(INSERTIONS.replace('## Unreleased\n', '## Unreleased\n========\n')), RESOLVED.replace('## Unreleased\n', '## Unreleased\n========\n'), 'eight equals signs are content, not a separator');
+    assert.equal(union([INSERTIONS, '=======', ''].join('\n')), undefined, 'a stray separator after a valid hunk');
+    assert.equal(union([HEAD_OF([]), '<<<<<<< HEAD', '- A.', '<<<<<<< x', '- B.', '||||||| b', '=======', '- C.', '>>>>>>> y', TAIL].join('\n')), undefined, 'a hunk opening inside the card side');
+    assert.equal(union([HEAD_OF([]), '<<<<<<< HEAD', '- A.', '||||||| b', '=======', '- C.', '<<<<<<< z', '>>>>>>> y', TAIL].join('\n')), undefined, 'a hunk opening inside the base side');
+    assert.equal(union([HEAD_OF([]), '<<<<<<< HEAD', '- A.', '||||||| b', '=======', '- C.', '- D.', ''].join('\n')), undefined, 'a hunk that never closes, with no heading after it');
   });
 
   test('the resolver reads the diff3 file real git writes for two entries added at the top of Unreleased', () => {
