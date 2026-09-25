@@ -140,3 +140,79 @@ test('an empty journal is level none, not traceable', () => {
   assert.equal(report.journal.events, 0);
   assert.equal(report.level, 'none');
 });
+
+/** Journal a sequence of [type, generation, data] events for one goal and verify it. */
+function journalOf(events: Array<[string, number | undefined, Record<string, unknown>?]>, goalId = 'g-readmit') {
+  const f = fixture(goalId);
+  for (const [type, generation, data] of events) f.journal.append({ type, goalId: f.goalId, generation, data: data ?? {} } as Parameters<Journal['append']>[0]);
+  return verifyAudit({ goalId: f.goalId, journal: f.journal, now });
+}
+const afterTerminal = (report: ReturnType<typeof verifyAudit>) => report.findings.find((x) => x.code === 'WORK_AFTER_TERMINAL');
+const dispatch = (generation: number): [string, number, Record<string, unknown>] => ['CARD_DISPATCHED', generation, { childRef: 'card:T0-X' }];
+const attempt = (generation: number): [string, number, Record<string, unknown>] => ['ATTEMPT_STARTED', generation, { n: 1 }];
+const resume = (generation: number): [string, number, Record<string, unknown>] => ['GOAL_TAKEOVER', generation, { linkedFrom: `g-readmit@${generation - 1}`, reason: 'user resume' }];
+
+test('T0-AUDIT-READMIT acceptance 1: the continuation of a resumed goal is not work after a terminal disposition', () => {
+  const report = journalOf([['GOAL_CREATED', 0], dispatch(0), ['GOAL_STOPPED', 0, { reason: 'tool' }], resume(1), dispatch(1), attempt(1), ['OPERATION_ISSUED', 1, { operationId: 'op-1' }], ['GOAL_DONE', 1]]);
+  assert.equal(afterTerminal(report), undefined, JSON.stringify(report.findings));
+  assert.equal(report.level, 'traceable', JSON.stringify(report.findings));
+});
+
+test('T0-AUDIT-READMIT acceptance 2: the continuation of a time stop re-admitted by a deadline extension is not work after a terminal disposition', () => {
+  const report = journalOf([['GOAL_CREATED', 0], dispatch(0), ['GOAL_STOPPED', 0, { reason: 'time' }], ['NOTE', 0, { extension: { by: 'user', newDeadline: '2026-09-11T06:00:00.000Z' } }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0), attempt(0), ['GOAL_DONE', 0]]);
+  assert.equal(afterTerminal(report), undefined, JSON.stringify(report.findings));
+  assert.equal(report.level, 'traceable', JSON.stringify(report.findings));
+  // The latest terminal disposition is the one the extension ends, not the first one journaled.
+  const latest = journalOf([['GOAL_DONE', 0], ['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 'g-latest');
+  assert.equal(afterTerminal(latest), undefined, JSON.stringify(latest.findings));
+});
+
+test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, late work of the stopped generation and work after a lease takeover still block', () => {
+  const cases: Array<[string, Array<[string, number | undefined, Record<string, unknown>?]>, number]> = [
+    ['work after GOAL_DONE with no re-admission', [['GOAL_CREATED', 0], ['GOAL_DONE', 0], dispatch(0)], 1],
+    ['every kind of work after GOAL_DONE counts', [['GOAL_DONE', 0], dispatch(0), attempt(0), ['OPERATION_ISSUED', 0, { operationId: 'op-9' }]], 3],
+    ['a work event that names no generation after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), ['CARD_DISPATCHED', undefined, { childRef: 'card:T0-X' }]], 1],
+    ['a lease takeover that names a later generation re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', 1, { leaseGeneration: 3 }], dispatch(1)], 1],
+    ['work after the final GOAL_DONE of a resumed goal', [['GOAL_STOPPED', 0], resume(1), dispatch(1), ['GOAL_DONE', 1], attempt(1)], 1],
+    ['a generation-0 dispatch after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), dispatch(0), dispatch(1)], 1],
+    ['a generation-0 dispatch after a generation-1 resume with no stop journaled before it', [resume(1), dispatch(0), dispatch(1)], 1],
+    // R2 cycle 0 round 2: a later takeover naming a lower generation never lowers the generation work is checked against,
+    // and never ends a stop of a higher generation.
+    ['a generation-0 dispatch after a resume to 1 and a later takeover naming generation 0', [['GOAL_STOPPED', 0], resume(1), ['GOAL_TAKEOVER', 0, { linkedFrom: 'g-readmit@0' }], dispatch(0)], 1],
+    ['a takeover naming generation 1 after a resume to 2 and a stop of generation 2', [['GOAL_STOPPED', 0], resume(2), ['GOAL_STOPPED', 2], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(2)], 1],
+    ['work after a lease takeover that follows GOAL_STOPPED', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', undefined, { leaseGeneration: 2, report: {} }], dispatch(0)], 1],
+    ['a resume that does not move the generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(1)], 1],
+    ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP of another generation re-admits nothing', [['GOAL_STOPPED', 1, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(1)], 1],
+    ['a GOAL_STATE that is not from STOP re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'RUN', to: 'CARDS' }], attempt(0)], 1],
+    // R2 cycle 0 round 1: only the extension's transition, STOP to CARDS after a time stop, re-admits.
+    ['a GOAL_STATE from STOP to anything but CARDS re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'DONE' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP to CARDS after a stop that is not for time re-admits nothing', [['GOAL_STOPPED', 0, { reason: 'review' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
+    ['a GOAL_STATE from STOP to CARDS after a stop that names no reason re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
+  ];
+  for (const [name, events, count] of cases) {
+    const report = journalOf(events, `g-${cases.findIndex((c) => c[0] === name)}`);
+    const finding = afterTerminal(report);
+    assert.ok(finding && finding.severity === 'block', `${name}: ${JSON.stringify(report.findings)}`);
+    assert.equal(finding.detail, `${count} mutation event(s) after terminal disposition`, name);
+    assert.equal(report.level, 'recorded', name);
+  }
+});
+
+test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state which events re-admit a goal for WORK_AFTER_TERMINAL', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    '`WORK_AFTER_TERMINAL` counts a dispatch, an issued operation or an attempt only when the latest disposition journaled before it is terminal (`GOAL_DONE` or `GOAL_STOPPED`); a user-authorised re-admission ends that state: the `GOAL_TAKEOVER` of `aidlc goal resume`, which names the generation it links from and moves to a later one, or the `GOAL_STATE` from `STOP` to `CARDS` that `aidlc goal extend` writes in the stopped generation when it re-admits a time stop, so the continuation of a resumed or extended goal is not work after a terminal disposition (card T0-AUDIT-READMIT).',
+    'A lease takeover (`aidlc goal takeover`) re-admits nothing, and work journaled by a generation below the highest one a resume moved to still blocks.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Audit re-admission, card T0-AUDIT-READMIT: `aidlc audit verify` no longer reports `WORK_AFTER_TERMINAL` for the work of a goal the user re-admitted with `aidlc goal resume` or with `aidlc goal extend` after a time stop, which dropped such a goal to `recorded`; it counts a dispatch, an issued operation or an attempt only when the latest disposition before it is `GOAL_DONE` or `GOAL_STOPPED`.',
+    'Work after the final disposition, work of a generation below the highest one a resume moved to and work after a lease takeover still block.',
+    'Of the goals in this repository\'s state when this card ran, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; every other goal reports what it reported before (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
