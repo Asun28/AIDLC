@@ -3762,8 +3762,8 @@ test('T1-REVIEW-LOOP-GUARDS acceptance 1: a success attempt on a tdd card withou
 class StreamShipPath extends DryRunShipPath {
   private readonly stream: 'stdout' | 'stderr';
   private readonly text: string;
-  private readonly exitCode: number;
-  constructor(outcomes: ShipOutcomeClass[], stream: 'stdout' | 'stderr', text: string, exitCode: number) {
+  private readonly exitCode: number | null;
+  constructor(outcomes: ShipOutcomeClass[], stream: 'stdout' | 'stderr', text: string, exitCode: number | null) {
     super(outcomes);
     this.stream = stream;
     this.text = text;
@@ -3778,10 +3778,11 @@ class StreamShipPath extends DryRunShipPath {
 test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verdict and a quota word on stdout is a no-verdict that takes the retry; on stderr, or on stdout of a non-zero exit, it is a quota hold', () => {
   // Reviewer reasoning that names the whole word, so only the stream rule (R3) can tell these cases apart.
   const text = 'reasoning: the quota hold rule is unchanged\n';
-  const cases: Array<['stdout' | 'stderr', number, 'no-verdict' | 'quota-hold']> = [
+  const cases: Array<['stdout' | 'stderr', number | null, 'no-verdict' | 'quota-hold']> = [
     ['stdout', 0, 'no-verdict'],
     ['stderr', 0, 'quota-hold'],
     ['stdout', 1, 'quota-hold'],
+    ['stdout', null, 'quota-hold'], // killed by a signal: no exit code, so not an exit 0 (R3 decision 1 F2)
   ];
   for (const [stream, exitCode, expected] of cases) {
     const fx = makeFixture();
