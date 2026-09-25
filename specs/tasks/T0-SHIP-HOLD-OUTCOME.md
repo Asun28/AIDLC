@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-HOLD-OUTCOME
 title: Only a review-no-verdict ship outcome holds the review pool; a merged or CI-red ship settles its pool request whatever quota words its receipt carries
-status: todo
+status: merged
 branch: T0-SHIP-HOLD-OUTCOME
 worktree: D:\wt\AIDLC\T0-SHIP-HOLD-OUTCOME
 allow_paths:
