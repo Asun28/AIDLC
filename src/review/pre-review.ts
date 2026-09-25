@@ -16,7 +16,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { detectQuotaHold, findingLocation, parseVerdict } from '../core/review-policy.ts';
+import { detectQuotaHold, findingLocation, parseVerdict, quotaOutput } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
 import type { Card, CoverageEntry as CoverageEntryType, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
@@ -690,7 +690,7 @@ export function classifyPreReview(verdict: Verdict | undefined, receipt: Pick<Ex
     const reasons = verdict.verdict === 'pass' ? [] : verdict.reasons.length ? verdict.reasons : [...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])];
     return { outcome: verdict.verdict, runStatus: 'success', reasons };
   }
-  const quota = detectQuotaHold(`${receipt.stdout}\n${receipt.stderr}`);
+  const quota = detectQuotaHold(quotaOutput(receipt));
   if (quota.hold) return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: quota.retryAfterMs };
   if (receipt.exitCode !== 0) return { outcome: 'no-verdict', runStatus: 'tool_error', reasons: [] };
   return { outcome: 'no-verdict', runStatus: receipt.stdout.trim() ? 'malformed' : 'no_output', reasons: [] };

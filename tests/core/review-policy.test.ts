@@ -77,6 +77,85 @@ describe('classifyVerdict (Q6)', () => {
     assert.deepEqual(detectQuotaHold(undefined), { hold: false });
   });
 
+  test('T0-QUOTA-FALSE-HOLD acceptance 1: each quota pattern holds only as a whole word or phrase: no letter or digit directly before or after it, except across a lowercase-to-uppercase change', () => {
+    const cases: Array<[string, boolean]> = [
+      ['quota', true],
+      ['Quota exceeded', true],
+      ['monthly quotas reached', true],
+      ['429 Too Many Requests', true],
+      ['HTTP/1.1 429', true],
+      ['too many requests', true],
+      ['rate limit', true],
+      ['rate-limited', true],
+      ['ratelimit hit', true],
+      ['rate limits apply', true],
+      ['rate limiting in effect', true],
+      ['rate limiter rejected the call', true],
+      ['usage limit', true],
+      ['usage limits reached', true],
+      ['retry after 30 seconds', true],
+      ['Retry-After: 30', true],
+      ['overloaded', true],
+      ['at capacity', true],
+      ['error code insufficient_quota', true],
+      ['type overloaded_error', true],
+      // A lowercase-to-uppercase change ends a word: camelCase provider codes hold (R3 decision 1 F1).
+      ['reason: quotaExceeded', true],
+      ['QuotaExceeded', true],
+      ['rateLimitExceeded', true],
+      ['userRateLimitExceeded', true],
+      ['openai.RateLimitError', true],
+      ['insufficientQuota', true],
+      ['OverloadedError', true],
+      ['tooManyRequests', true],
+      ['usageLimitReached', true],
+      ['serverAtCapacity', true],
+      ['{"retryAfter": 30}', true],
+      ['seeing 429s from the API', true],
+      ['subQuotas', true],
+      // All capitals stay one word; the last capital of a run before a capitalised word starts that word.
+      ['QUOTA EXCEEDED', true],
+      ['HTTP 429 TOO MANY REQUESTS', true],
+      ['RATE_LIMIT_EXCEEDED', true],
+      ['type rate_limit_error', true],
+      ['code too_many_requests', true],
+      ['usage_limit_reached', true],
+      ['retry_after: 30', true],
+      ['APIQuotaExceeded', true],
+      ['QUOTAExceeded', true],
+      ['XQuota', true],
+      ['Quotation marks around pass need escape', false],
+      ['commit 1429abf', false],
+      ['4290 lines', false],
+      ['sha abc429 and 429def', false],
+      ['build 1429 finished', false],
+      ['2quota left', false],
+      // Named dropped classes: a letter or digit touching `429`, a one-case compound, a same-case letter across a camel split.
+      ['HTTP429', false],
+      ['error E429', false],
+      ['4290s', false],
+      ['quotaexceeded', false],
+      ['QUOTAEXCEEDED', false],
+      ['someQuotation', false],
+      ['2Quota left', false],
+      ['XQUOTA', false],
+      ['QUOTAS2', false],
+      ['a subquota of the plan', false],
+      ['an accurate limit on lines', false],
+      ['rate limitation of the parser', false],
+      ['misusage limit', false],
+      ['usage limitation', false],
+      ['retry afterwards', false],
+      ['incapacity', false],
+      ['capacityless', false],
+      ['overloadedness', false],
+      ['too many requests2', false],
+      ['too many requestsX', true], // a lowercase-to-uppercase change ends the word
+      ['all good', false],
+    ];
+    for (const [text, hold] of cases) assert.equal(detectQuotaHold(text).hold, hold, `${JSON.stringify(text)} holds: ${hold}`);
+  });
+
   test('routed skip is not a review that passed but does not block', () => {
     const c = classifyVerdict({ verdict: 'pass', reasons: [], routed_skip: { predicate: 'AllPathsMatch', reason: 'docs only', changed_paths: ['README.md'] } });
     assert.equal(c.outcome, 'routed-skip');

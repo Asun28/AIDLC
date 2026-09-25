@@ -12,6 +12,8 @@ const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","r
 const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-fb.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const HOLD_60 = '429 Too Many Requests, retry after 60 seconds\n';
 const HOLD_120 = '429 Too Many Requests, retry after 120 seconds\n';
+/** A held reviewer reports the hold on stderr and exits non-zero; any other answer is its stdout (card T0-QUOTA-FALSE-HOLD). */
+const answer = (out: string): Partial<ExecReceipt> => (out === HOLD_60 || out === HOLD_120 ? { stderr: out, exitCode: 1 } : { stdout: out });
 
 /** The fallback formal reviewer the scenarios configure. */
 const FALLBACK = { command: ['fake-b', '{instructions}'], reviewer: 'backup', timeoutMs: 1000, shell: false, maxDiffBytes: 300_000 };
@@ -56,12 +58,12 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
       calls.push('primary');
       argv.primary.push(args);
       hooks.onPrimary?.();
-      return { stdout: primary.shift() ?? PASS };
+      return answer(primary.shift() ?? PASS);
     },
     'fake-b': (args) => {
       calls.push('backup');
       argv.backup.push(args);
-      return { stdout: backup.shift() ?? PASS };
+      return answer(backup.shift() ?? PASS);
     },
   });
   const ship = new RawShipPath(['merged', 'merged', 'merged', 'merged'], opts.shipVerdict);

@@ -171,6 +171,25 @@ test('runPreReview classifies pass, block, malformed and quota output and writes
   assert.ok(!('truncated' in diff), 'no truncation flag: a diff is sent whole or not at all');
 });
 
+test('T0-QUOTA-FALSE-HOLD acceptance 2: a reviewer that exits 0 is held only on a quota message in stderr; one that exits non-zero is held on one in either stream', () => {
+  // The T1-REVIEW-LOOP-GUARDS edge-cases round: reasoning that names a quota word, then a verdict cut before its last brace.
+  const stdout = 'Line 812: Quotation marks around pass need escape, and the quota hold rule is unchanged.\n{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}\n';
+  const clean = { exitCode: 0, timedOut: false, stdout, stderr: '' };
+  assert.deepEqual(classifyPreReview(undefined, clean), { outcome: 'no-verdict', runStatus: 'malformed', reasons: [] });
+  assert.deepEqual(classifyPreReview(undefined, { ...clean, stderr: '429 Too Many Requests, retry after 30 seconds' }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 30_000 });
+  assert.equal(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: 'Error: quota exceeded, retry after 30 seconds', stderr: '' }).outcome, 'quota-hold');
+  // A process that did not exit 0 (killed by a signal, no exit code) reports a hold on either stream (R3 decision 1 F2).
+  assert.equal(classifyPreReview(undefined, { exitCode: null, timedOut: false, stdout: 'Error: quota exceeded', stderr: '' }).outcome, 'quota-hold');
+  assert.equal(classifyPreReview(undefined, { exitCode: 0, timedOut: false, stdout: '', stderr: 'warning: the quota hold rule is unchanged' }).outcome, 'quota-hold','stderr of a process that exited 0 is still read');
+  assert.deepEqual(classifyPreReview(undefined, { exitCode: 0, timedOut: false, stdout: '', stderr: 'warning: deprecated flag' }), { outcome: 'no-verdict', runStatus: 'no_output', reasons: [] });
+  // The same output end to end: the reader finds no verdict in the cut document, and the round is a no-verdict round.
+  const { dir } = fixtureCard();
+  const r = runPreReview({ runner: scriptedRunner({ 'fake-reviewer': { stdout, exitCode: 0 } }), command: ['fake-reviewer'], cwd: dir, prompt: 'PROMPT', timeoutMs: 1000, shell: false, reviewDir: path.join(dir, '.review'), fileStem: 'T0-QH.pre.0.1', head: 'def456', reviewer: 'fake' });
+  assert.equal(r.verdict, undefined);
+  assert.equal(r.outcome, 'no-verdict');
+  assert.equal(r.runStatus, 'malformed');
+});
+
 test('formal review (R3) command: placeholders expand, the prompt is passed in argv when {instructions} is present and on stdin otherwise, the verdict schema is materialised', () => {
   const { dir, card } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
@@ -1188,6 +1207,30 @@ test('T1-RENAME-PATHS acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unrelea
     'The scope gate now refuses a rename from a path outside `allow_paths` into it, which it passed while git named a rename by its destination only.',
     'The effort path rule reads the same list, so `renameSources` is removed, and renaming a non-ASCII file out of a single-segment glob such as `src/core/*.ts` now selects `high`, where the octal escapes of the `rename from` line never matched it.',
     'Every R2 and R3 prompt lists both paths of a rename among the changed paths (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+test('T0-QUOTA-FALSE-HOLD acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the stderr-only quota rule for a process that exited 0 and the whole-word patterns', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A review whose process returns no verdict that counts (none was read, or the process did not exit 0) is a quota hold only on a quota message: from a process that exited 0, in its stderr alone, since its stdout is its answer and the reasoning there can name a quota word; from any other process (a non-zero exit, or no exit code after a signal), in its stdout or its stderr.',
+    'For a review command (R2, and R3 run by `aidlc review r3`), a process that timed out is a `timeout` no-verdict round and never a hold, and without a quota message the round is a no-verdict round: `tool_error` for a process that did not exit 0, `malformed` for one that exited 0 with text on stdout, `no_output` for one without.',
+    'The ship path reads the receipt of its ship command by the same stream rule, and records a missing verdict without a quota message as `malformed`.',
+    'Each quota pattern matches in any letter case and only as a whole word: `quota` or `quotas`, `429` or `429s`, `too many requests`, `rate limit` (also `rate-limit` or `ratelimit`, and with `s`, `ed`, `er` or `ing`), `usage limit` or `usage limits`, `retry after` or `retry-after`, `capacity` and `overloaded`.',
+    'A word ends at the start or end of the text, at any character other than a letter or digit, at a change from a lowercase to an uppercase letter, and before the last capital of a run of capitals that a lowercase letter follows; `_` and those two case changes also separate the words of a phrase, so `insufficient_quota`, `RATE_LIMIT_EXCEEDED`, `rateLimitExceeded`, `RateLimitError`, `QuotaExceeded` and `APIQuotaExceeded` hold; any other letter or digit next to the word joins it, so `Quotation`, `4290`, `HTTP429`, `E429`, a sha containing `429` and a compound written in one letter case such as `quotaexceeded` or `XQUOTA` never hold (card T0-QUOTA-FALSE-HOLD-2).',
+    'The same separators make `retryAfter`, `tooManyRequests`, `usageLimit` and the `_` forms such as `rate_limit` and `too_many_requests` hold, which no pattern matched before that card.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Quota holds, card T0-QUOTA-FALSE-HOLD completed as T0-QUOTA-FALSE-HOLD-2 (the replacement after two R2 rounds lost to DeepSeek CLI read timeouts): a reviewer that exits 0 without a readable verdict is now a no-verdict round when a quota word appears only on its stdout, where it was a quota hold; a process that exits 0 is held only on a quota message in its stderr, and any other process on a message in its stdout or stderr, as before.',
+    'The ship path reads the receipt of its ship command by the same rule.',
+    'The quota patterns of `detectQuotaHold` match whole words only: a word ends at any character other than a letter or digit and at a camelCase change of case, and `_` separates the words of a phrase, so `Quotation`, `4290`, `HTTP429`, `E429`, a sha containing `429` or a one-case compound such as `quotaexceeded` never hold, while `quotas`, `429s`, `rate-limited`, `insufficient_quota`, `rateLimitExceeded`, `RateLimitError` and `APIQuotaExceeded` still do.',
+    'The camelCase and `_` forms of the phrases, such as `retryAfter`, `tooManyRequests`, `usageLimit`, `rate_limit` and `too_many_requests`, now hold, which no pattern matched before.',
+    'On T1-REVIEW-LOOP-GUARDS an R2 angle that exited 0 with a verdict cut before its last brace and `Quotation marks` in its reasoning was held as a quota hold instead of taking the no-verdict retry (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
