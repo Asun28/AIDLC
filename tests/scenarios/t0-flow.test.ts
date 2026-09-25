@@ -3839,7 +3839,7 @@ function shipOnce(fx: ReturnType<typeof makeFixture>, ship: DryRunShipPath) {
   return { goal, runner, card, g, r, deadline };
 }
 
-test('T0-SHIP-QUOTA-WAIT acceptance 1: a review-no-verdict ship result that exits 0 with 429 Too Many Requests on stderr waits on review-quota, is not STOP, spends no retry or decision and journals REVIEW_HOLD', () => {
+test('T0-SHIP-QUOTA-WAIT-2 acceptance 1: a review-no-verdict ship result that exits 0 with 429 Too Many Requests on stderr waits on review-quota, is not STOP, spends no retry or decision and journals REVIEW_HOLD', () => {
   const fx = makeFixture();
   try {
     const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
@@ -3865,7 +3865,7 @@ test('T0-SHIP-QUOTA-WAIT acceptance 1: a review-no-verdict ship result that exit
   }
 });
 
-test('T0-SHIP-QUOTA-WAIT acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
+test('T0-SHIP-QUOTA-WAIT-2 acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
   const fx = makeFixture();
   try {
     const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
@@ -3900,7 +3900,7 @@ test('T0-SHIP-QUOTA-WAIT acceptance 2: once the hold has passed, card next issue
   }
 });
 
-test('T0-SHIP-QUOTA-WAIT acceptance 3: a review-no-verdict ship result that exits 0 without a quota message on stderr still takes the single retry, then STOP/review', () => {
+test('T0-SHIP-QUOTA-WAIT-2 acceptance 3: a review-no-verdict ship result that exits 0 without a quota message on stderr still takes the single retry, then STOP/review', () => {
   const fx = makeFixture();
   try {
     const ship = new StderrShipPath(['review-no-verdict', 'review-no-verdict'], ['connection reset by peer\n', 'connection reset by peer\n']);
@@ -3919,18 +3919,18 @@ test('T0-SHIP-QUOTA-WAIT acceptance 3: a review-no-verdict ship result that exit
   }
 });
 
-test('T0-SHIP-QUOTA-WAIT acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state that a ship-path quota hold is WAIT on review-quota', () => {
+test('T0-SHIP-QUOTA-WAIT-2 acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state that a ship-path quota hold is WAIT on review-quota', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const docSentences = [
-    'A `review-no-verdict` ship outcome whose receipt carries a quota message is a quota hold on the ship path as well: the ship returns a `wait` directive on `review-quota`, holds the review pool for 15 minutes, leaves the card out of STOP and spends neither the no-verdict retry nor a substantive decision (card T0-SHIP-QUOTA-WAIT).',
+    'A `review-no-verdict` ship outcome whose receipt carries a quota message is a quota hold on the ship path as well: the ship returns a `wait` directive on `review-quota`, holds the review pool for 15 minutes, leaves the card out of STOP and spends neither the no-verdict retry nor a substantive decision (card T0-SHIP-QUOTA-WAIT-2).',
     'While the hold stands, `aidlc card next` waits on the held pool and ships nothing; once it has passed, `aidlc card next` ships the same candidate again, and the hold never extends the card deadline.',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelogSentences = [
-    '- Ship-path quota hold, card T0-SHIP-QUOTA-WAIT: a `review-no-verdict` ship outcome whose receipt carries a quota message now returns a `wait` directive on `review-quota` until the 15-minute review-pool hold passes, and the next `aidlc card next` after it ships the same candidate again; the card used to stop with STOP/review and `missing/malformed/stale verdict after the single retry`, although the pool was held and no retry or decision had been spent.',
+    '- Ship-path quota hold, card T0-SHIP-QUOTA-WAIT completed as T0-SHIP-QUOTA-WAIT-2 (the replacement after two R2 rounds ended on a verdict line inside an unclosed code fence): a `review-no-verdict` ship outcome whose receipt carries a quota message now returns a `wait` directive on `review-quota` until the 15-minute review-pool hold passes, and the next `aidlc card next` after it ships the same candidate again; the card used to stop with STOP/review and `missing/malformed/stale verdict after the single retry`, although the pool was held and no retry or decision had been spent.',
     'A `review-no-verdict` ship outcome without a quota message still takes the single retry and then STOP/review (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
