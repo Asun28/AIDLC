@@ -176,6 +176,10 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
     ['work after the final GOAL_DONE of a resumed goal', [['GOAL_STOPPED', 0], resume(1), dispatch(1), ['GOAL_DONE', 1], attempt(1)], 1],
     ['a generation-0 dispatch after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), dispatch(0), dispatch(1)], 1],
     ['a generation-0 dispatch after a generation-1 resume with no stop journaled before it', [resume(1), dispatch(0), dispatch(1)], 1],
+    // R2 cycle 0 round 2: a later takeover naming a lower generation never lowers the generation work is checked against,
+    // and never ends a stop of a higher generation.
+    ['a generation-0 dispatch after a resume to 1 and a later takeover naming generation 0', [['GOAL_STOPPED', 0], resume(1), ['GOAL_TAKEOVER', 0, { linkedFrom: 'g-readmit@0' }], dispatch(0)], 1],
+    ['a takeover naming generation 1 after a resume to 2 and a stop of generation 2', [['GOAL_STOPPED', 0], resume(2), ['GOAL_STOPPED', 2], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(2)], 1],
     ['work after a lease takeover that follows GOAL_STOPPED', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', undefined, { leaseGeneration: 2, report: {} }], dispatch(0)], 1],
     ['a resume that does not move the generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(1)], 1],
     ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0, { reason: 'time' }], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
