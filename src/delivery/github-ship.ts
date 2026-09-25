@@ -73,6 +73,58 @@ function conflictedPaths(stdout: string): string[] {
   return out;
 }
 
+/** A conflict marker line of `git checkout --conflict=diff3` output: the seven characters alone or before a space and a label. */
+function isMarker(line: string, marker: '<<<<<<<' | '|||||||' | '=======' | '>>>>>>>'): boolean {
+  const l = line.replace(/\r$/, '');
+  return l === marker || l.startsWith(`${marker} `);
+}
+
+/**
+ * The resolution of a CHANGELOG.md written by `git checkout --conflict=diff3` (card T0-BASE-SYNC-CHANGELOG), or undefined:
+ * every hunk must sit in the `## Unreleased` section, have an empty base part (both sides only added lines there) and add
+ * no `## ` heading; each hunk is replaced by the card's lines, then the base's, both byte for byte. Any other shape, a
+ * marker out of order or outside a hunk, or a file with no hunk, resolves nothing and stays with the merge-conflicts skill.
+ */
+export function unionUnreleasedInsertions(text: string): string | undefined {
+  const lines = text.split('\n');
+  const out: string[] = [];
+  const markers = ['<<<<<<<', '|||||||', '=======', '>>>>>>>'] as const;
+  const anyMarker = (line: string) => markers.some((m) => isMarker(line, m));
+  const heading = (line: string) => /^## /.test(line);
+  let section: string | undefined;
+  let hunks = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i]!;
+    if (!isMarker(line, '<<<<<<<')) {
+      if (anyMarker(line)) return undefined;
+      if (heading(line)) section = line.trimEnd();
+      out.push(line);
+      continue;
+    }
+    if (section !== '## Unreleased') return undefined;
+    // The card's side, up to the base part.
+    const ours: string[] = [];
+    let j = i + 1;
+    for (; j < lines.length && !isMarker(lines[j]!, '|||||||'); j += 1) {
+      if (anyMarker(lines[j]!)) return undefined;
+      ours.push(lines[j]!);
+    }
+    // The base part must be empty: the separator follows its marker at once.
+    if (j + 1 >= lines.length || !isMarker(lines[j + 1]!, '=======')) return undefined;
+    const theirs: string[] = [];
+    for (j += 2; j < lines.length && !isMarker(lines[j]!, '>>>>>>>'); j += 1) {
+      if (anyMarker(lines[j]!)) return undefined;
+      theirs.push(lines[j]!);
+    }
+    if (j >= lines.length) return undefined;
+    if ([...ours, ...theirs].some(heading)) return undefined;
+    out.push(...ours, ...theirs);
+    hunks += 1;
+    i = j;
+  }
+  return hunks > 0 ? out.join('\n') : undefined;
+}
+
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
   return JSON.stringify(runs.map((r) => ({ name: encodeUntrusted(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
     .replace(/\u2028/g, '\\u2028')
@@ -272,7 +324,66 @@ export class GitHubShipPath implements ShipPath {
       return failed(`merge exit ${merge.exitCode}: ${flat(`${merge.stdout}\n${merge.stderr}`)}${inProgress ? `; the index and worktree ${wt} still carry the merge, HEAD ${head} unchanged: run git merge --abort by hand before the next ship` : ''}`);
     }
     log.push(...lines(merge.stdout), ...lines(merge.stderr));
+    const merged = this.mergeChangelog(git, wt, ref, head, log);
+    if (merged) return merged;
     return { sentinel: '[SHIP-BASE-SYNC-CONFLICT]', detail: `${ref} conflicts with HEAD ${head} in ${paths}; the merge is left in ${wt} for the merge-conflicts skill` };
+  }
+
+  /**
+   * A conflict whose only unmerged path is CHANGELOG.md and whose every hunk is lines both sides added to `## Unreleased`
+   * (card T0-BASE-SYNC-CHANGELOG): the file is rewritten with the diff3 base part, resolved by keeping both sides, staged
+   * and committed as the merge, and the ship ends there with `[SHIP-BASE-SYNC-MERGED]`: the merge is a new candidate that
+   * the DoD, R2 and R3 judge anew, never shipped on the reviews of the head it replaces. Undefined leaves the merge, and
+   * the file as git wrote it, to the merge-conflicts skill.
+   */
+  private mergeChangelog(git: (args: string[]) => ExecReceipt, wt: string, ref: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
+    const unmerged = git(['diff', '--name-only', '--diff-filter=U', '-z']);
+    if (unmerged.exitCode !== 0) return undefined;
+    const paths = unmerged.stdout.split('\u0000').filter((p) => p.length > 0);
+    if (paths.length !== 1 || paths[0] !== 'CHANGELOG.md') return undefined;
+    const file = path.join(wt, 'CHANGELOG.md');
+    let before: string;
+    try {
+      before = readFileSync(file, 'utf8');
+    } catch {
+      return undefined;
+    }
+    if (git(['checkout', '--conflict=diff3', '--', 'CHANGELOG.md']).exitCode !== 0) return undefined;
+    let resolved: string | undefined;
+    try {
+      resolved = unionUnreleasedInsertions(readFileSync(file, 'utf8'));
+    } catch {
+      resolved = undefined;
+    }
+    // A write that throws (a locked file, EACCES, a full disk) must end as a failure the runner records: `ship` is called
+    // without a catch, and an exception would leave the ship operation without a result.
+    const write = (text: string): string | undefined => {
+      try {
+        writeFileSync(file, text, 'utf8');
+        return undefined;
+      } catch (err) {
+        return (err as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      }
+    };
+    if (resolved === undefined) {
+      // Not this shape: the file goes back to the markers the merge wrote, for the skill.
+      const code = write(before);
+      if (code) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `restoring CHANGELOG.md as the merge wrote it failed in ${wt} (${code}): the file may carry the diff3 markers instead; the merge is still in progress, HEAD ${head} unchanged` };
+      return undefined;
+    }
+    const code = write(resolved);
+    if (code) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `writing the CHANGELOG.md resolution failed in ${wt} (${code}); the merge is still in progress with its conflict, HEAD ${head} unchanged` };
+    const failed = (step: string, r: ExecReceipt) => ({ sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `${step} of the CHANGELOG.md merge failed in ${wt} (exit ${r.exitCode}): ${flat(r.stderr || r.stdout)}; the resolution is written and the merge is still in progress, HEAD ${head} unchanged` });
+    const add = git(['add', '--', 'CHANGELOG.md']);
+    if (add.exitCode !== 0) return failed('git add', add);
+    const message = `Merge ${ref} into HEAD ${head}: CHANGELOG.md Unreleased keeps the entries both sides added, the card's first (base sync, card T0-BASE-SYNC-CHANGELOG)`;
+    const commit = git(['commit', '-m', message]);
+    if (commit.exitCode !== 0) return failed('git commit', commit);
+    const sha = git(['rev-parse', '--verify', 'HEAD']);
+    const mergeSha = sha.exitCode === 0 ? sha.stdout.trim() : '';
+    if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `the CHANGELOG.md merge is committed in ${wt} but the merge commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; record the worktree HEAD by hand` };
+    log.push(encodeUntrusted(flat(`base sync: CHANGELOG.md resolved by keeping the entries both sides added to Unreleased; merge ${mergeSha}`)));
+    return { sentinel: '[SHIP-BASE-SYNC-MERGED]', detail: `${ref} conflicted with HEAD ${head} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${mergeSha}: a new candidate, not shipped; run the DoD on it and record it as the next attempt` };
   }
 
   private tokenFile(cardId: string): string {
