@@ -2014,7 +2014,7 @@ export class CardRunner {
       const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
       const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
