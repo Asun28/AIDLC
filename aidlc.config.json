@@ -65,18 +65,19 @@
   "gateRequired": true,
   "formalReview": {
     "command": [
-      "codex",
-      "exec",
-      "-m",
-      "gpt-6-sol",
-      "-c",
-      "model_reasoning_effort={effort}",
-      "--sandbox",
-      "read-only",
-      "--output-schema",
-      "{schema}"
+      "claude",
+      "-p",
+      "--model",
+      "claude-opus-5-5",
+      "--effort",
+      "{effort}",
+      "--tools",
+      "Read,Grep,Glob",
+      "--setting-sources=",
+      "--strict-mcp-config",
+      "--no-session-persistence"
     ],
-    "reviewer": "codex",
+    "reviewer": "claude-opus-5-5",
     "timeoutMs": 1200000,
     "maxDiffBytes": 800000,
     "effort": {
@@ -88,35 +89,6 @@
           "src/coordination/**",
           "src/state/**"
         ]
-      }
-    },
-    "fallback": {
-      "command": [
-        "claude",
-        "-p",
-        "--model",
-        "claude-opus-5-5",
-        "--effort",
-        "{effort}",
-        "--tools",
-        "Read,Grep,Glob",
-        "--setting-sources=",
-        "--strict-mcp-config",
-        "--no-session-persistence"
-      ],
-      "reviewer": "claude-opus-5-5",
-      "timeoutMs": 1200000,
-      "maxDiffBytes": 800000,
-      "effort": {
-        "default": "medium",
-        "high": {
-          "minChangedLines": 500,
-          "paths": [
-            "src/core/**",
-            "src/coordination/**",
-            "src/state/**"
-          ]
-        }
       }
     }
   }

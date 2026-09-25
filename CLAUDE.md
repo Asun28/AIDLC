@@ -85,7 +85,8 @@ evidence or the precedence, not a transition table.
 **Review before ship.** SHIP requires a fresh R2 pre-review pass and then an
 R3 formal review pass on the current candidate. Both are external commands
 configured in `aidlc.config.json` (`preReview`, `formalReview`; this repo
-uses DeepSeek for R2 and Codex for R3) and can be run by hand with
+uses DeepSeek for R2 and Claude Opus 5.5 for R3 while Codex is unavailable)
+and can be run by hand with
 `aidlc review pre <card>` / `aidlc review r3 <card>`. Allowances are
 constants in `core/types.ts` enforced by `core/review-policy.ts`: a block
 returns the card to REVIEW_FIX and reopens the effort episode without
