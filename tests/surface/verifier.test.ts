@@ -175,6 +175,7 @@ test('T0-AUDIT-READMIT acceptance 3: work after the last terminal disposition, l
     ['a lease takeover that names a later generation re-admits nothing', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', 1, { leaseGeneration: 3 }], dispatch(1)], 1],
     ['work after the final GOAL_DONE of a resumed goal', [['GOAL_STOPPED', 0], resume(1), dispatch(1), ['GOAL_DONE', 1], attempt(1)], 1],
     ['a generation-0 dispatch after the generation-1 resume', [['GOAL_STOPPED', 0], resume(1), dispatch(0), dispatch(1)], 1],
+    ['a generation-0 dispatch after a generation-1 resume with no stop journaled before it', [resume(1), dispatch(0), dispatch(1)], 1],
     ['work after a lease takeover that follows GOAL_STOPPED', [['GOAL_STOPPED', 0], ['GOAL_TAKEOVER', undefined, { leaseGeneration: 2, report: {} }], dispatch(0)], 1],
     ['a resume that does not move the generation re-admits nothing', [['GOAL_STOPPED', 1], ['GOAL_TAKEOVER', 1, { linkedFrom: 'g-readmit@0' }], dispatch(1)], 1],
     ['a GOAL_STATE from STOP after GOAL_DONE re-admits nothing', [['GOAL_DONE', 0], ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }], dispatch(0)], 1],
@@ -203,7 +204,7 @@ test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
   const changelogSentences = [
     '- Audit re-admission, card T0-AUDIT-READMIT: `aidlc audit verify` no longer reports `WORK_AFTER_TERMINAL` for the work of a goal the user re-admitted with `aidlc goal resume` or with `aidlc goal extend` after a time stop, which dropped such a goal to `recorded`; it counts a dispatch, an issued operation or an attempt only when the latest disposition before it is `GOAL_DONE` or `GOAL_STOPPED`.',
     'Work after the final disposition, work of a generation below the latest resume and work after a lease takeover still block.',
-    'Of the 47 goals in this repository\'s state, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; the other 43 report what they reported before (docs/OPERATIONS.md).',
+    'On 2026-09-25, of the 47 goals in this repository\'s state, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; the other 43 report what they reported before (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
