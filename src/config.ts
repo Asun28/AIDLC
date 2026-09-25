@@ -51,7 +51,16 @@ export const FormalReviewFallback = FormalReviewerConfig.extend({
   command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.fallback.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
   reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.fallback.reviewer must name the reviewer'),
 });
-export const FormalReviewConfig = FormalReviewerConfig.extend({ fallback: FormalReviewFallback.optional() });
+/**
+ * The reviewer of a base-sync decision (card T0-BASE-SYNC-REVIEW): the one more R3 decision a candidate made by resolving a
+ * base-sync conflict gets once both decisions are used. Its effort policy defaults to `medium`; no argument may be empty.
+ */
+export const FormalReviewBaseSync = FormalReviewerConfig.extend({
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.baseSync.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
+  reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.baseSync.reviewer must name the reviewer'),
+  effort: ReviewEffortPolicy.default({ default: 'medium' }),
+});
+export const FormalReviewConfig = FormalReviewerConfig.extend({ fallback: FormalReviewFallback.optional(), baseSync: FormalReviewBaseSync.optional() });
 export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
 /** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */
@@ -115,6 +124,11 @@ export const ProjectConfig = z.object({
     const fold = (name: string) => name.trim().toLowerCase();
     if (config.formalReview.fallback && fold(config.formalReview.fallback.reviewer) === fold(config.formalReview.reviewer)) {
       ctx.addIssue({ code: 'custom', path: ['formalReview', 'fallback', 'reviewer'], message: 'formalReview.fallback.reviewer must differ from formalReview.reviewer: the ledger tells the two reviewers apart by name' });
+    }
+    const baseSync = config.formalReview.baseSync;
+    const others = [config.formalReview.reviewer, ...(config.formalReview.fallback ? [config.formalReview.fallback.reviewer] : [])];
+    if (baseSync && others.some((name) => fold(name) === fold(baseSync.reviewer))) {
+      ctx.addIssue({ code: 'custom', path: ['formalReview', 'baseSync', 'reviewer'], message: 'formalReview.baseSync.reviewer must differ from formalReview.reviewer and formalReview.fallback.reviewer: the ledger tells the reviewers apart by name' });
     }
   });
 export type ProjectConfig = z.infer<typeof ProjectConfig>;

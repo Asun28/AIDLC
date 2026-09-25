@@ -91,6 +91,26 @@
           "src/state/**"
         ]
       }
+    },
+    "baseSync": {
+      "command": [
+        "codex",
+        "exec",
+        "-m",
+        "gpt-6-astra",
+        "-c",
+        "model_reasoning_effort={effort}",
+        "--sandbox",
+        "read-only",
+        "--output-schema",
+        "{schema}"
+      ],
+      "reviewer": "codex",
+      "timeoutMs": 1200000,
+      "maxDiffBytes": 800000,
+      "effort": {
+        "default": "medium"
+      }
     }
   }
 }

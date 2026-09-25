@@ -319,6 +319,8 @@ export const ReviewInvocation = z.object({
   artifactDigest: z.string().optional(),
   /** The level `{effort}` expanded to for this decision; absent when the reviewer's argv carried no `{effort}`, and on records written before the field. */
   effort: ReviewEffortLevel.optional(),
+  /** A base-sync decision: the one decision past the allowance a base-sync candidate gets from `formalReview.baseSync`. */
+  baseSync: z.boolean().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
@@ -661,6 +663,8 @@ export const CandidateInfo = z.object({
   untracked: z.array(z.string()).default([]),
   /** sha256 over sha + status + relevant input manifest; the review/CI dedupe key component. */
   digest: z.string().min(1),
+  /** Recorded by the successful attempt that cleared a merge-conflict repair: the merge of a moved base (T0-BASE-SYNC-REVIEW). */
+  baseSync: z.boolean().optional(),
 });
 export type CandidateInfo = z.infer<typeof CandidateInfo>;
 

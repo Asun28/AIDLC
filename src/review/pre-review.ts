@@ -43,6 +43,8 @@ export interface ReviewPromptInput {
   advisoryNotes?: string[];
   /** The repository's learned invariants (the NEVER and ALWAYS lessons) under their cap; absent renders the section with `none`. */
   lessons?: ReviewLessons;
+  /** A base-sync decision (T0-BASE-SYNC-REVIEW): the formal prompt says the base moved; every other prompt is unchanged. */
+  baseSync?: boolean;
   /** Ask for acceptance coverage (`preReview.coverage: shadow`); it reaches the pre-review's `ac-coverage` angle alone and every other prompt is unchanged. */
   coverage?: boolean;
   round: number;
@@ -299,6 +301,9 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
       if (i.includeDiff) lines.push('```diff', i.delta.diff.trimEnd(), '```');
       else lines.push(`Run \`git diff ${i.delta.sinceSha}...${i.head}\` in the repository working directory for the delta itself.`);
     }
+  }
+  if (i.stage === 'formal' && i.baseSync) {
+    lines.push('', '## Base sync', "- The base moved under this card: this candidate merges the new base into the candidate the last decision reviewed. Review the merged result against the new base, including how the base's changes meet the card's; no decision on an earlier candidate carries to this one.");
   }
   if (i.includeDiff) lines.push('', '## Diff', '```diff', i.diff.trimEnd(), '```');
   else lines.push('', '## Diff', `Run \`git diff ${i.base}...${i.head}\` in the repository working directory and review exactly those committed changes; ignore uncommitted files.`);
