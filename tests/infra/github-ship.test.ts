@@ -779,7 +779,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     assert.match(restore.r.receipt.stdout, /restoring CHANGELOG\.md as the merge wrote it failed/);
     assert.deepEqual(remoteEffects(restore.calls), []);
     // The merge commit cannot be read back: a failure, never a MERGED naming no commit.
-    for (const [name, headAfterCommit] of [['a failed read', { exitCode: 128, stdout: '', stderr: 'fatal: bad HEAD' }], ['an empty read', { stdout: '\n' }]] as const) {
+    for (const [name, headAfterCommit] of [['a failed read', { exitCode: 128, stdout: '', stderr: 'fatal: bad HEAD' }], ['a failed read that still prints a sha', { exitCode: 128, stdout: MERGE_SHA + '\n', stderr: 'fatal: bad HEAD' }], ['an empty read', { stdout: '\n' }]] as const) {
       const read = shipWith(INSERTIONS, undefined, { headAfterCommit });
       assert.ok(read.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !read.r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), `${name}: ${read.r.sentinels.join(' ')}`);
       assert.match(read.r.receipt.stdout, /the merge commit could not be read back/, name);
