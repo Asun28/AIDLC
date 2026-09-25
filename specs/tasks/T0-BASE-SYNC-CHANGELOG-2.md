@@ -1,7 +1,7 @@
 ---
 id: T0-BASE-SYNC-CHANGELOG-2
 title: A base-sync conflict whose only hunks are entries both sides added to the CHANGELOG Unreleased section is merged by keeping both, and the merge is always a new candidate that is verified and reviewed from scratch, never shipped on the reviews of the candidate it replaces (replacement of T0-BASE-SYNC-CHANGELOG, whose first candidate was recorded with a wrong full-check claim)
-status: todo
+status: merged
 branch: T0-BASE-SYNC-CHANGELOG-2
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-CHANGELOG-2
 allow_paths:
