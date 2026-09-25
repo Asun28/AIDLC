@@ -2172,8 +2172,9 @@ export class CardRunner {
       if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash } });
     }
     // The queue slot and the operation are settled before the outcome is applied.
+    const holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
     if (classified.outcome === 'quota-hold') {
-      this.queue.hold(reviewKey, new Date(Date.parse(now) + 15 * 60 * 1000).toISOString(), 'reviewer reported rate limit/quota', now);
+      this.queue.hold(reviewKey, holdUntil, 'reviewer reported rate limit/quota', now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
     } else if (result.outcome === 'unclassified' && result.receipt.timedOut) {
       this.queue.markLost(reviewKey, 'ship timed out; look up the review before releasing the slot', now);
@@ -2271,6 +2272,12 @@ export class CardRunner {
         );
       }
       case 'review-no-verdict': {
+        // A quota hold is WAIT on the pool hold set above, never a no-verdict: no retry or decision is spent, and `card next`
+        // ships the same candidate again once the hold has passed.
+        if (classified.outcome === 'quota-hold') {
+          const pollSeconds = Math.max(60, Math.ceil((Date.parse(holdUntil) - Date.parse(now)) / 1000));
+          return finish(() => ({ state: 'WAIT' }), (next) => ({ run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `The ship-path reviewer reported a quota/rate limit; review pool ${goal.reviewPool} is held until ${holdUntil} (not a decision, no retry spent). Then run \`aidlc card next ${card.id}\`.` } }));
+        }
         if (reviewDecision?.action === 'retry-review') {
           return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
         }
