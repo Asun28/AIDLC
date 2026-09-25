@@ -4000,7 +4000,7 @@ function shipCard(fx: ReturnType<typeof makeFixture>, id: string, ship: DryRunSh
 
 /** The review pool request the ship of a card enqueued. */
 function poolRequestOf(fx: ReturnType<typeof makeFixture>, goalId: string, cardId: string) {
-  return fx.queue.list(fx.config.reviewPool).find((q) => q.requester === `${goalId}:${cardId}`);
+  return fx.queue.list(fx.config.reviewPool).find((q) => q.requesters.includes(`${goalId}:${cardId}`));
 }
 
 test('T0-SHIP-HOLD-OUTCOME acceptance 1: a merged ship whose receipt exits 0 with 429 Too Many Requests on stderr closes the card, completes its pool request, sets no pool resetAt and journals no REVIEW_HOLD; a second card in the pool then ships, also after 15 minutes', () => {
