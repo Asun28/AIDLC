@@ -16,7 +16,7 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import * as cli from '../../src/cli/main.ts';
 import { countedFailures } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
-import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
+import { acceptFinding, detectQuotaHold, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
 import { resolveWorktreeRoot } from '../../src/config.ts';
 
@@ -3983,4 +3983,114 @@ test('T0-R2-ANSWER-MARKER acceptance 4: a pre-review round with the answer marke
       fx.cleanup();
     }
   }
+});
+
+/** A T0 card in a goal of its own, driven to its first ship on `ship`; every goal of a fixture shares the review pool. */
+function shipCard(fx: ReturnType<typeof makeFixture>, id: string, ship: DryRunShipPath) {
+  writeCard(fx, { id, title: `ship ${id}` });
+  const goal = goalForCards(fx, [id]);
+  const runner = fx.runner(ship);
+  const card = fx.card(id);
+  const g = () => fx.goal(goal.id);
+  let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), id));
+  r = runner.next(g(), card, r.run);
+  const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor(id) });
+  return { goal, r: runner.next(g(), card, run) };
+}
+
+/** The review pool request the ship of a card enqueued. */
+function poolRequestOf(fx: ReturnType<typeof makeFixture>, goalId: string, cardId: string) {
+  return fx.queue.list(fx.config.reviewPool).find((q) => q.requesters.includes(`${goalId}:${cardId}`));
+}
+
+test('T0-SHIP-HOLD-OUTCOME acceptance 1: a merged ship whose receipt exits 0 with 429 Too Many Requests on stderr closes the card, completes its pool request, sets no pool resetAt and journals no REVIEW_HOLD; a second card in the pool then ships, also after 15 minutes', () => {
+  const stderr = 'warning: 429 Too Many Requests from api.github.com, retried\n';
+  assert.equal(detectQuotaHold(stderr).hold, true, 'the stderr carries a quota message');
+  for (const waitMs of [0, 16 * 60_000]) {
+    const label = `second card ${waitMs / 60_000} min after the merge`;
+    const fx = makeFixture();
+    try {
+      // One slot, as in the run of the diagnosis: a request left in the pool keeps every other card out.
+      fx.queue.setPoolLimit(fx.config.reviewPool, 1, 'test: one slot');
+      const first = new StderrShipPath(['merged'], [stderr]);
+      const a = shipCard(fx, 'T0-SHO-A', first);
+      assert.equal(first.requests.length, 1, label);
+      assert.equal(a.r.directive.kind, 'close', `${label}: ${a.r.directive.narration}`);
+      assert.equal(a.r.run.state, 'CLOSE', label);
+      assert.equal(a.r.run.mergeVerified, true, label);
+      assert.equal(poolRequestOf(fx, a.goal.id, 'T0-SHO-A')?.state, 'completed', `${label}: the merged ship settles its pool request`);
+      assert.equal(fx.queue.pool(fx.config.reviewPool, fx.now()).resetAt, undefined, `${label}: the pool is not held`);
+      assert.equal(fx.events(a.goal.id).some((e) => e.type === 'REVIEW_HOLD'), false, label);
+      fx.advance(waitMs);
+      const second = new DryRunShipPath(['merged']);
+      const b = shipCard(fx, 'T0-SHO-B', second);
+      assert.equal(second.requests.length, 1, `${label}: the second card ships on its next card next: ${b.r.directive.narration}`);
+      assert.equal(b.r.directive.kind, 'close', `${label}: ${b.r.directive.narration}`);
+      assert.equal(poolRequestOf(fx, a.goal.id, 'T0-SHO-A')?.state, 'completed', `${label}: the request of the closed card is never admitted again`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-SHIP-HOLD-OUTCOME acceptance 2: a ci-red ship whose CI log names API rate limit exceeded completes its pool request, sets no pool resetAt and journals no REVIEW_HOLD', () => {
+  const log = '[CI-GATE-RED] https://github.com/o/r/actions/runs/4242 conclusion=failure\nlint: API rate limit exceeded for installation ID 1\n';
+  assert.equal(detectQuotaHold(log).hold, true, 'the CI log carries a quota message');
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], log);
+    const { goal } = shipCard(fx, 'T0-SHO-CI', ship);
+    assert.equal(ship.requests.length, 1);
+    assert.equal(poolRequestOf(fx, goal.id, 'T0-SHO-CI')?.state, 'completed', 'the ci-red ship settles its pool request');
+    assert.equal(fx.queue.pool(fx.config.reviewPool, fx.now()).resetAt, undefined, 'the pool is not held');
+    assert.equal(fx.events(goal.id).some((e) => e.type === 'REVIEW_HOLD'), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A dry-run ship path whose ship times out with `stderr` on its receipt. */
+class TimedOutShipPath extends DryRunShipPath {
+  private readonly stderr: string;
+  constructor(stderr: string) {
+    super(['unclassified']);
+    this.stderr = stderr;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    const r = super.ship(req);
+    return { ...r, receipt: { ...r.receipt, exitCode: null, timedOut: true, stderr: this.stderr } };
+  }
+}
+
+test('T0-SHIP-HOLD-OUTCOME R1: a ship that timed out with a quota message on its receipt marks its pool request lost, not held', () => {
+  const stderr = 'gh: HTTP 429: rate limit exceeded\n';
+  assert.equal(detectQuotaHold(stderr).hold, true, 'the stderr carries a quota message');
+  const fx = makeFixture();
+  try {
+    const ship = new TimedOutShipPath(stderr);
+    const { goal } = shipCard(fx, 'T0-SHO-TO', ship);
+    assert.equal(ship.requests.length, 1);
+    assert.equal(poolRequestOf(fx, goal.id, 'T0-SHO-TO')?.state, 'lost', 'a timed-out ship leaves its request to be looked up');
+    assert.equal(fx.queue.pool(fx.config.reviewPool, fx.now()).resetAt, undefined, 'the pool is not held');
+    assert.equal(fx.events(goal.id).some((e) => e.type === 'REVIEW_HOLD'), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-HOLD-OUTCOME acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state that only a review-no-verdict ship outcome holds the review pool', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'Only a `review-no-verdict` ship outcome holds the review pool on a quota message (card T0-SHIP-HOLD-OUTCOME): the receipt of the ship path is the output of the whole ship command (git, gh and the CI gate log), not only of its reviewer, so a ship that merged, whose CI gate failed or that ended with any other outcome settles its pool request without a hold (the request is completed, or marked lost when the ship timed out), sets no pool `resetAt` and journals no `REVIEW_HOLD`, whatever quota message its receipt carries.',
+    'A hold set by such a ship left its request in `retry-after` after the card had closed; once the hold passed, the pool admitted that request as running, and nothing completed it.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Ship-path pool hold by outcome, card T0-SHIP-HOLD-OUTCOME: only a `review-no-verdict` ship outcome holds the review pool on a quota message; a ship that merged, whose CI gate failed or that ended with any other outcome now settles its pool request without a hold, sets no pool `resetAt` and journals no `REVIEW_HOLD`, whatever quota message its receipt carries.',
+    'A merged ship with `429 Too Many Requests` on stderr used to hold the pool for 15 minutes and leave its request in `retry-after`; the pool then admitted that request of a closed card as running, so in a pool with one slot no other card was admitted to ship (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
