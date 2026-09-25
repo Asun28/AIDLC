@@ -206,12 +206,12 @@ test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const docSentences = [
     '`WORK_AFTER_TERMINAL` counts a dispatch, an issued operation or an attempt only when the latest disposition journaled before it is terminal (`GOAL_DONE` or `GOAL_STOPPED`); a user-authorised re-admission ends that state: the `GOAL_TAKEOVER` of `aidlc goal resume`, which names the generation it links from and moves to a later one, or the `GOAL_STATE` from `STOP` to `CARDS` that `aidlc goal extend` writes in the stopped generation when it re-admits a time stop, so the continuation of a resumed or extended goal is not work after a terminal disposition (card T0-AUDIT-READMIT).',
-    'A lease takeover (`aidlc goal takeover`) re-admits nothing, and work journaled by a generation below the latest resume still blocks.',
+    'A lease takeover (`aidlc goal takeover`) re-admits nothing, and work journaled by a generation below the highest one a resume moved to still blocks.',
   ];
   for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelogSentences = [
     '- Audit re-admission, card T0-AUDIT-READMIT: `aidlc audit verify` no longer reports `WORK_AFTER_TERMINAL` for the work of a goal the user re-admitted with `aidlc goal resume` or with `aidlc goal extend` after a time stop, which dropped such a goal to `recorded`; it counts a dispatch, an issued operation or an attempt only when the latest disposition before it is `GOAL_DONE` or `GOAL_STOPPED`.',
-    'Work after the final disposition, work of a generation below the latest resume and work after a lease takeover still block.',
+    'Work after the final disposition, work of a generation below the highest one a resume moved to and work after a lease takeover still block.',
     'Of the goals in this repository\'s state when this card ran, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; every other goal reports what it reported before (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);

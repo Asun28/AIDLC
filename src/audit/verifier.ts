@@ -74,8 +74,8 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   // Terminal accounting: work counts against the latest disposition journaled before it. A user-authorised re-admission ends
   // a terminal disposition: the resume takeover (it links from an earlier generation and moves to a later one) and the
   // extension of a time stop (GOAL_STATE from STOP to CARDS in the generation of a GOAL_STOPPED for time). A lease takeover
-  // re-admits nothing, and work of a generation below the latest resume is a late wakeup of the stopped generation. The
-  // chain check guarantees the events are in sequence order.
+  // re-admits nothing, and work of a generation below the highest one a resume moved to is a late wakeup of a stopped
+  // generation. The chain check guarantees the events are in sequence order.
   const generationOf = (e: { generation?: number }) => e.generation ?? 0;
   let terminal: (typeof events)[number] | undefined;
   let resumedGeneration: number | undefined;
@@ -83,7 +83,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   for (const e of events) {
     if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') terminal = e;
     else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string') {
-      resumedGeneration = generationOf(e);
+      resumedGeneration = Math.max(resumedGeneration ?? 0, generationOf(e));
       if (terminal && generationOf(e) > generationOf(terminal)) terminal = undefined;
     } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && terminal.data['reason'] === 'time' && generationOf(e) === generationOf(terminal)) terminal = undefined;
     else if (['CARD_DISPATCHED', 'OPERATION_ISSUED', 'ATTEMPT_STARTED'].includes(e.type) && (terminal || (resumedGeneration !== undefined && generationOf(e) < resumedGeneration))) afterTerminal += 1;
