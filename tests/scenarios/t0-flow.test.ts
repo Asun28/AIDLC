@@ -3809,6 +3809,133 @@ test('T0-QUOTA-FALSE-HOLD acceptance 3: a ship receipt that exits 0 with no verd
   }
 });
 
+/** A dry-run ship path whose receipt exits 0 with the given stderr per call (empty past the list); `onShip` runs at dispatch. */
+class StderrShipPath extends DryRunShipPath {
+  private readonly stderrs: string[];
+  onShip: ((req: ShipRequest) => void) | undefined;
+  constructor(outcomes: ShipOutcomeClass[], stderrs: string[]) {
+    super(outcomes);
+    this.stderrs = stderrs;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    this.onShip?.(req);
+    const r = super.ship(req);
+    return { ...r, receipt: { ...r.receipt, exitCode: 0, stderr: this.stderrs[this.requests.length - 1] ?? '' } };
+  }
+}
+
+/** A T0 card driven to its first ship; the ship path answers with the scripted outcomes and stderr. */
+function shipOnce(fx: ReturnType<typeof makeFixture>, ship: DryRunShipPath) {
+  writeCard(fx, { id: 'T0-SQW', title: 'quota hold on the ship path waits' });
+  const goal = goalForCards(fx, ['T0-SQW']);
+  const runner = fx.runner(ship);
+  const card = fx.card('T0-SQW');
+  const g = () => fx.goal(goal.id);
+  let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T0-SQW'));
+  r = runner.next(g(), card, r.run);
+  const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T0-SQW') });
+  const deadline = run.deadline;
+  r = runner.next(g(), card, run);
+  return { goal, runner, card, g, r, deadline };
+}
+
+test('T0-SHIP-QUOTA-WAIT-3 acceptance 1: a review-no-verdict ship result that exits 0 with 429 Too Many Requests on stderr waits on review-quota, is not STOP, spends no retry or decision and journals REVIEW_HOLD', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
+    const { goal, r, deadline } = shipOnce(fx, ship);
+    assert.equal(ship.requests.length, 1);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') {
+      assert.equal(r.directive.on, 'review-quota');
+      assert.equal(r.directive.pollSeconds, 15 * 60, 'poll when the 15-minute pool hold ends');
+    }
+    const persisted = fx.store.getCardRun(goal.id, 'T0-SQW')!;
+    for (const run of [r.run, persisted]) {
+      assert.equal(run.state, 'WAIT');
+      assert.equal(run.stop, undefined);
+      assert.deepEqual(run.review.invocations.map((i) => i.outcome), ['quota-hold']);
+      assert.equal(run.review.noVerdictRetriesUsed, 0, 'a quota hold spends no no-verdict retry');
+      assert.equal(run.review.substantiveDecisions, 0, 'a quota hold is not a decision');
+      assert.equal(run.deadline, deadline, 'the hold never extends the card deadline');
+    }
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'REVIEW_HOLD').length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-WAIT-3 acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
+    const { goal, runner, card, g, r: held, deadline } = shipOnce(fx, ship);
+    // `card next` dispatches the ship within the call: the run as stored at that dispatch is the observation of the issued
+    // ship, apart from the merge result the same call then applies.
+    const dispatched: Array<{ candidateSha?: string; stopped: boolean; noVerdictRetriesUsed?: number; substantiveDecisions?: number }> = [];
+    ship.onShip = (req) => {
+      const at = fx.store.getCardRun(goal.id, 'T0-SQW');
+      dispatched.push({ candidateSha: req.candidateSha, stopped: at?.stop !== undefined, noVerdictRetriesUsed: at?.review.noVerdictRetriesUsed, substantiveDecisions: at?.review.substantiveDecisions });
+    };
+    fx.advance(14 * 60_000);
+    let r = runner.next(g(), card, held.run);
+    assert.equal(r.directive.kind, 'wait', `still held: ${r.directive.narration}`);
+    assert.equal(ship.requests.length, 1, 'no ship while the hold stands');
+    assert.deepEqual(dispatched, []);
+    fx.advance(2 * 60_000);
+    r = runner.next(g(), card, r.run);
+    assert.equal(ship.requests.length, 2, `the hold passed, so the ship is issued again: ${r.directive.narration}`);
+    assert.deepEqual(dispatched, [{ candidateSha: candidateShaFor('T0-SQW'), stopped: false, noVerdictRetriesUsed: 0, substantiveDecisions: 0 }], 'card next issued the ship for the same candidate, not stopped, with no retry or decision spent');
+    assert.equal(ship.requests[1]!.candidateSha, ship.requests[0]!.candidateSha, 'the same candidate');
+    // The merge result of that ship then closes the card.
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    assert.equal(r.run.state, 'CLOSE');
+    assert.equal(r.run.mergeVerified, true);
+    assert.equal(r.run.deadline, deadline, 'the hold never extends the card deadline');
+    assert.equal(r.run.review.noVerdictRetriesUsed, 0);
+    assert.equal(r.run.review.substantiveDecisions, 0);
+    assert.equal(fx.store.getCardRun(goal.id, 'T0-SQW')!.state, 'CLOSE');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-WAIT-3 acceptance 3: a review-no-verdict ship result that exits 0 without a quota message on stderr still takes the single retry, then STOP/review', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new StderrShipPath(['review-no-verdict', 'review-no-verdict'], ['connection reset by peer\n', 'connection reset by peer\n']);
+    const { goal, runner, card, g, r: first } = shipOnce(fx, ship);
+    assert.equal(first.directive.kind, 'ship', first.directive.narration);
+    assert.equal(first.run.review.noVerdictRetriesUsed, 1);
+    const r = runner.next(g(), card, first.run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'review');
+    assert.equal(r.run.stop?.detail, 'missing/malformed/stale verdict after the single retry');
+    assert.equal(r.run.review.noVerdictRetriesUsed, 2);
+    assert.equal(ship.requests.length, 2);
+    assert.equal(fx.events(goal.id).some((e) => e.type === 'REVIEW_HOLD'), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-WAIT-3 acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state that a ship-path quota hold is WAIT on review-quota', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A `review-no-verdict` ship outcome whose receipt carries a quota message is a quota hold on the ship path as well: the ship returns a `wait` directive on `review-quota`, holds the review pool for 15 minutes, leaves the card out of STOP and spends neither the no-verdict retry nor a substantive decision (card T0-SHIP-QUOTA-WAIT-3).',
+    'While the hold stands, `aidlc card next` waits on the held pool and ships nothing; once it has passed, `aidlc card next` ships the same candidate again, and the hold never extends the card deadline.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Ship-path quota hold, card T0-SHIP-QUOTA-WAIT completed as T0-SHIP-QUOTA-WAIT-3 (the second replacement, after the R2 rounds of T0-SHIP-QUOTA-WAIT and T0-SHIP-QUOTA-WAIT-2 ended on verdict lines inside unclosed code fences): a `review-no-verdict` ship outcome whose receipt carries a quota message now returns a `wait` directive on `review-quota` until the 15-minute review-pool hold passes, and the next `aidlc card next` after it ships the same candidate again; the card used to stop with STOP/review and `missing/malformed/stale verdict after the single retry`, although the pool was held and no retry or decision had been spent.',
+    'A `review-no-verdict` ship outcome without a quota message still takes the single retry and then STOP/review (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
 test('T0-R2-ANSWER-MARKER acceptance 4: a pre-review round with the answer marker configured reads every angle after the marker and passes; without it the same output is a no-verdict round, and R3 ignores the setting', async () => {
   // The shape of the four retained DeepSeek outputs: a closing fence line with no opener in the reasoning leaves a fence
   // open to the end, and the verdict follows `=== answer ===`.
