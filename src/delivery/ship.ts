@@ -64,8 +64,9 @@ export interface ShipPath {
 const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
   [/\[SHIP-MERGE-FAIL\]/, 'merge-failed'],
   // The base sync before any remote effect (github-ship.ts): a conflict carries git's own diagnostic lines, which the
-  // card runner turns into BUILD naming merge-conflicts; a fetch or merge-tree failure carries none and stops as tool.
-  [/\[SHIP-BASE-SYNC-CONFLICT\]/, 'merge-failed'],
+  // card runner turns into BUILD naming merge-conflicts; a fetch or merge-tree failure carries none and stops as tool. A
+  // CHANGELOG merge the path committed itself carries the same lines: it is a new candidate, built and reviewed like one.
+  [/\[SHIP-BASE-SYNC-CONFLICT\]|\[SHIP-BASE-SYNC-MERGED\]/, 'merge-failed'],
   [/\[SHIP-BASE-SYNC-FAIL\]/, 'merge-failed'],
   [/\[CI-GATE-TIMEOUT\]/, 'ci-timeout'],
   [/\[CI-GATE-RED\]|\[CI-GATE-JOBS-DRIFT\]|\[CI-GATE-WF-MISSING\]|\[CI-GATE-NOHEAD\]|\[CI-GATE-HEAD-MOVED\]/, 'ci-red'],
