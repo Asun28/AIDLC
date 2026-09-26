@@ -13,6 +13,10 @@ const TAGGED = 'A reason tagged [question] or [suggestion], the tag opening the 
 /** The two lines card T0-R2-PASS-NOTES adds to every review prompt (issue #82). */
 const PASS_NOTES = 'A pass that carries notes lists each note once, in the top-level `reasons`, and leaves the `reasons` of both axes empty, so the verdict line stays short.';
 const BALANCE = 'Before you send the verdict line, check that it is one complete JSON document: every `{` and `[` is closed by its `}` or `]`, and the line ends with the `}` that closes the document. A line one closing brace short does not parse and returns no verdict.';
+/** The reasons line as T0-PASS-REASONS-WORDING words it, so it agrees with PASS_NOTES (issue #91). */
+const REASONS_LINE = '`verdict` is the worse of the two axes; `reasons` is empty on a pass that carries no notes.';
+/** A line that says `reasons` is empty on every pass, which contradicts PASS_NOTES: any article, a plural, either verb, with or without backticks. */
+const EMPTY_ON_EVERY_PASS = /`?reasons`? (?:is|are) empty (?:on|for|in) (?:an? |every |each |the )?pass(?:es)?\b(?! that carries no notes)/i;
 const MARKER = '=== answer ===';
 /**
  * The answers after `=== answer ===` of the two edge-cases rounds issue #82 retained, byte for byte (goal
@@ -93,6 +97,44 @@ describe('a pass with notes and the verdict line balance (T0-R2-PASS-NOTES, issu
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const entry = '- R2 pass notes, card T0-R2-PASS-NOTES (issue #82): every review prompt says that a pass that carries notes lists each note once, in the top-level `reasons`, with the `reasons` of both axes empty, and asks the reviewer to check that the verdict line is one complete JSON document before sending it; the `deepseek` command has no JSON output mode, and the reader still leaves no verdict for a document one brace short and never repairs it.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  });
+});
+
+describe('the reasons line agrees with the pass-notes line (T0-PASS-REASONS-WORDING, issue #91)', () => {
+  test('the pattern refuses every line that says reasons is empty on every pass and accepts the qualified line and the pass-notes line [R1]', () => {
+    const refused = ['`verdict` is the worse of the two axes; `reasons` is empty on pass.', '`reasons` is empty on a pass.', '`reasons` is empty on every pass', 'reasons is empty on pass', '`Reasons` are empty on passes', '`reasons` is empty for a pass', '`reasons` is empty in each pass', '`reasons` is empty on the pass;', '`reasons` is empty on a pass that carries notes', '`reasons` is empty on an pass, notes or not'];
+    for (const line of refused) assert.ok(EMPTY_ON_EVERY_PASS.test(line), `refused: ${line}`);
+    const accepted = [REASONS_LINE, PASS_NOTES, TAGGED, BALANCE, '`reasons` is empty on a pass that carries no notes', 'REASONS is empty on a pass that carries no notes', 'leaves the `reasons` of both axes empty', '`reasons` is empty on a block', '`reasons` is empty on passthrough'];
+    for (const line of accepted) assert.ok(!EMPTY_ON_EVERY_PASS.test(line), `accepted: ${line}`);
+  });
+
+  test('every pre and formal prompt, a single pass and each angle, coverage on and off, says reasons is empty on a pass that carries no notes next to the pass-notes line, and no line says it is empty on every pass [R1]', () => {
+    const card = { id: 'T1-X', title: 't', allow_paths: ['src/x.ts'], tdd: true, dod_command: 'npm test', acceptance: ['1. x. [dod arm 1]'] } as unknown as Card;
+    const input = { reviewPolicy: 'policy', card, base: 'main', head: 'h', changedPaths: ['src/x.ts'], diff: '+x\n', priorFindings: [], round: 1, maxRounds: 2, includeDiff: true };
+    let prompts = 0;
+    for (const stage of ['pre', 'formal'] as const) {
+      for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
+        for (const coverage of [false, true]) {
+          const key = `${stage}/${perspective ?? 'single'}/coverage ${coverage}`;
+          const lines = buildReviewPrompt({ ...input, stage, perspective, coverage }).split('\n');
+          assert.equal(lines.filter((l) => l === REASONS_LINE).length, 1, `${key}: the reasons line once`);
+          assert.equal(lines.filter((l) => l === PASS_NOTES).length, 1, `${key}: the pass-notes line once`);
+          const at = lines.indexOf(TAGGED);
+          assert.equal(lines[at - 1], REASONS_LINE, `${key}: the reasons line comes right before the advisory-tag line`);
+          assert.equal(lines[at + 1], PASS_NOTES, `${key}: the pass-notes line comes right after it`);
+          assert.deepEqual(lines.filter((l) => EMPTY_ON_EVERY_PASS.test(l)), [], `${key}: no line says reasons is empty on every pass`);
+          prompts += 1;
+        }
+      }
+    }
+    assert.equal(prompts, 2 * (1 + Object.keys(PERSPECTIVES).length) * 2);
+  });
+
+  test('the CHANGELOG Unreleased section states the reworded line [R2]', () => {
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
