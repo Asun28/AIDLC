@@ -100,11 +100,14 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
     for (let j = i + 1; j < window.length && !/^##\[(?:end)?group\]/.test(window[j]!.text); j += 1) if (window[j]!.text.startsWith('shell: ')) return true;
     return false;
   };
-  // The failed step's own header (T0-CI-RED-LOGS-BOUNDS): the one run header of its first second that reads its name. No
-  // count of the steps that started there decides it: post steps and `Complete job` start there without a header, and a
-  // composite step's sub-step headers can make up a count, never the name.
-  const own = window.flatMap((l, i) => (l.time < start + 1000 && runHeader(i) && l.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}` ? [i] : []));
-  const from = failed.number === 1 ? 0 : own.length === 1 ? own[0] : undefined;
+  // The failed step's own header (T0-CI-RED-LOGS-BOUNDS): the one run header of its first second that reads its name, with
+  // exactly one run header before it per earlier step that started in that second (a step's header is its first line, so
+  // a named group the step's own output prints comes after that header and has one too many before it). Later steps are
+  // not counted: post steps and `Complete job` start in that second without a header.
+  const heads = window.flatMap((l, i) => (l.time < start + 1000 && runHeader(i) ? [i] : []));
+  const own = heads.filter((i) => window[i]!.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}`);
+  const earlier = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
+  const from = failed.number === 1 ? 0 : own.length === 1 && heads.indexOf(own[0]!) === earlier ? own[0] : undefined;
   if (from === undefined) return undefined;
   const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
   const laterInEnd = steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
