@@ -57,6 +57,8 @@ export function classifyRequest(input: RouterInput): RoutingResult {
 
   // --- resolve card / issue references -------------------------------------------------
   const cardMatch = text.match(CARD_ID_REGEX) ?? text.match(/\bT\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/);
+  // Every distinct registered card id the text names (T0-GOAL-CARD-COUNT): more than one leaves the count to the projection.
+  const namedCards = [...new Set([...text.matchAll(/\bT\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g)].map((m) => m[0]))].filter((id) => (input.knownCardIds ?? []).includes(id));
   const bare = text.match(BARE_NUMBER);
   const issue = text.match(ISSUE_REF);
   let kind: RequestKind | undefined;
@@ -162,7 +164,11 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   // --- modules -------------------------------------------------------------------------
   const modules: Module[] = ['router'];
   let cardCount: number | 'unknown';
-  if (kind === 'card-amendment') {
+  if (namedCards.length > 1) {
+    cardCount = 'unknown';
+    modules.push('arc', 'card-loop');
+    reasons.push(`named cards: ${namedCards.join(', ')} (count left to the projection)`);
+  } else if (kind === 'card-amendment') {
     cardCount = 1;
     modules.push('card-loop');
   } else if (kind === 'release' || kind === 'migration') {

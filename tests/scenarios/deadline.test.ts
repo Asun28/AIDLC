@@ -208,7 +208,8 @@ test('R1: a T2 goal extended after a time stop passes the plan checkpoint again 
     // The checkpoint approval expired during the stop: re-entry must ask again before any dispatch.
     const stopped = fx.goal(goal.id);
     fx.store.saveGoal({ ...stopped, authorizations: stopped.authorizations.map((a) => ({ ...a, expiresAt: addMs(T0, 2 * HOUR_MS) })) });
-    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 6 * HOUR_MS), 'more time');
+    // An explicit T2 goal has the 12 h arc deadline (T0-GOAL-CARD-COUNT), so the extension lands past it.
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 14 * HOUR_MS), 'more time');
     const again = fx.controller.next(goal.id);
     assert.equal(again.kind, 'checkpoint', `re-entry passes the projection checkpoint before any dispatch: ${again.narration}`);
     if (again.kind === 'checkpoint') assert.equal(again.approvalKind, 'plan-checkpoint');
