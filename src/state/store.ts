@@ -163,7 +163,6 @@ export function updateJson<T>(file: string, schema: ZodType<T>, change: (current
   const deadline = Date.now() + (opts.timeoutMs ?? 2_000);
   const staleMs = opts.staleMs ?? 30_000;
   while (!createExclusive(lock, owner)) {
-    if (Date.now() >= deadline) throw new StoreError('LOCKED', file, `locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);
     if (staleLock(lock, staleMs)) takeOverStaleLock(lock, owner, staleMs);
     else sleepSync(10);
     if (Date.now() >= deadline) throw new StoreError('LOCKED', file, `locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);

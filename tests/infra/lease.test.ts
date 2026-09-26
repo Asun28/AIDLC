@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { actor, cleanup, iso, tmpDir } from './helpers.ts';
@@ -138,6 +138,28 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
       assert.equal(readFileSync(file, 'utf8'), before, `${name} leaves the lease record byte-identical`);
     }
     unlinkSync(`${file}.lock`);
+  });
+
+  it('T1-STORE-CAS: releasing a lease that does not exist writes no record and leaves no lock', () => {
+    const key = resourceKeys.card('repo1', 'T1-NEVER');
+    store.release(key, 0, A);
+    assert.equal(existsSync(store.file(key)), false);
+    assert.equal(existsSync(`${store.file(key)}.lock`), false);
+  });
+
+  it("T1-STORE-CAS: a lease store's lock options reach its lock: a crashed writer's lock older than staleMs is taken over", () => {
+    const dir2 = path.join(dir, 'leases-stale');
+    const patient = new LeaseStore(dir2, { timeoutMs: 1_000, staleMs: 100 });
+    const key = resourceKeys.card('repo1', 'T1-CRASHED');
+    const lock = `${patient.file(key)}.lock`;
+    mkdirSync(dir2, { recursive: true });
+    writeFileSync(lock, 'pid=999999999 at=2026-09-11T10:00:00.000Z nonce=crashed', 'utf8');
+    // One second older than it was written: past this store's 100 ms stale age, well within the default 30 s.
+    const written = statSync(lock).mtime;
+    const older = new Date(written.getTime() - 1_000);
+    utimesSync(lock, older, older);
+    assert.equal(patient.claim(key, { actor: A, now: t0 }).status, 'acquired');
+    assert.equal(existsSync(lock), false);
   });
 
   it('list() returns every parseable lease; resource keys are scoped and case-insensitive', () => {

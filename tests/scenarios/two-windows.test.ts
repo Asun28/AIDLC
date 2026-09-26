@@ -1122,3 +1122,56 @@ test('T1-STORE-CAS acceptance 6: two completions of one takeover generation jour
     fx.cleanup();
   }
 });
+
+test("T1-STORE-CAS: the ship's duplicate check runs in its lease section: a merge of the candidate issued meanwhile makes the ship wait on it with no second intent", () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-DUP', title: 'card T1-DUP' });
+    const goal = goalForCards(fx, ['T1-DUP']);
+    const current = () => fx.store.getCardRun(goal.id, 'T1-DUP')!;
+    const prepared = fx.runner().next(fx.goal(goal.id), fx.card('T1-DUP'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-DUP'));
+    const build = fx.runner().next(fx.goal(goal.id), fx.card('T1-DUP'), prepared.run);
+    assert.equal(build.directive.kind, 'build');
+    fx.runner().recordAttempt(fx.goal(goal.id), fx.card('T1-DUP'), build.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-dup' });
+    // Another window of the owner issued the merge of this candidate after this call's gate and before its ship section.
+    let other = '';
+    const lock = `${fx.leases.file(resourceKeys.card(fx.repo.key, 'T1-DUP'))}.lock`;
+    const shipped = onLock(lock, {
+      before: (n) => {
+        if (n !== 2) return;
+        other = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-DUP', target: 'main', candidateDigest: current().candidate!.digest, ownerGeneration: 0, timeoutMs: 1000 }, fx.now()).id;
+        fx.ops.markIssued(other, undefined, fx.now());
+      },
+    }, () => fx.runner().next(fx.goal(goal.id), fx.card('T1-DUP'), current()));
+    assert.notEqual(other, '', "the other window's merge was issued at the ship section");
+    assert.equal(shipped.directive.kind, 'wait');
+    if (shipped.directive.kind === 'wait') assert.equal(shipped.directive.on, `operation:${other}`);
+    assert.deepEqual(fx.ops.list({ cardId: 'T1-DUP' }).map((o) => o.id), [other], 'no second intent is recorded');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS: a lease of the same session id on another host is another session\'s: the takeover advances it instead of completing it', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-HOST', title: 'card T1-HOST' });
+    const goal = goalForCards(fx, ['T1-HOST']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HOST');
+    fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HOST');
+    const elsewhere = { session: 'win-B', pid: 9, processStart: T0, host: 'elsewhere' };
+    assert.equal(fx.leases.claim(cardKey, { actor: elsewhere, now: fx.now(), operation: 'card:T1-HOST' }).status, 'acquired');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    setActorForTests(actorB);
+    const taken = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-HOST'), fx.store.getCardRun(goal.id, 'T1-HOST')!);
+    assert.equal(taken.completed, false);
+    assert.equal(taken.lease.generation, 1, 'the generation advances');
+    assert.deepEqual(taken.lease.owner, actorB);
+    assert.deepEqual(taken.previousOwner, elsewhere);
+    assert.equal(taken.run.ownerGeneration, 1);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});

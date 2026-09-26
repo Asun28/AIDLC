@@ -106,6 +106,42 @@ describe('state/store updateJson (T1-STORE-CAS acceptance 1)', () => {
     unlinkSync(lock);
   });
 
+  it('a young lock is never taken over, even when its owner process is gone: the waiter refuses at the deadline', () => {
+    const file = seed('young.json');
+    const lock = `${file}.lock`;
+    writeFileSync(lock, 'pid=999999999 at=2026-09-26T00:00:00.000Z nonce=young', 'utf8');
+    assert.throws(() => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }), isCode('LOCKED'));
+    assert.ok(existsSync(lock), 'a lock younger than the stale age stays');
+    assert.equal(readFileSync(file, 'utf8'), STORED);
+    unlinkSync(lock);
+  });
+
+  it('the takeover re-checks the lock under its marker: a stale lock replaced by a live one meanwhile is left to its new owner', () => {
+    const file = seed('recheck.json');
+    const lock = `${file}.lock`;
+    writeFileSync(lock, 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead', 'utf8');
+    utimesSync(lock, LONG_AGO, LONG_AGO);
+    // Right before this waiter takes the takeover marker, another waiter has removed the stale lock and a live writer has locked.
+    let replaced = false;
+    const live = `pid=${process.pid} at=2026-09-26T00:00:00.000Z nonce=new-owner`;
+    const replace = () => { if (!replaced) { replaced = true; writeFileSync(lock, live, 'utf8'); } };
+    let entered = false;
+    assert.throws(() => onExclusiveCreate(`${lock}.takeover`, replace, () => updateJson(file, Rec, (current) => { entered = true; return { ...current!, n: 2 }; }, { timeoutMs: 50 })), isCode('LOCKED'));
+    assert.ok(replaced, 'the waiter went for the takeover marker');
+    assert.equal(entered, false);
+    assert.equal(readFileSync(lock, 'utf8'), live, "the new owner's lock is left in place");
+    assert.ok(!existsSync(`${lock}.takeover`), 'the marker is released');
+    unlinkSync(lock);
+  });
+
+  it('an exclusive create that fails for another reason (EACCES) propagates at once instead of waiting for the deadline', () => {
+    const file = seed('eacces.json');
+    const lock = `${file}.lock`;
+    const eacces = (): Error => Object.assign(new Error('EACCES: permission denied, open'), { code: 'EACCES' });
+    assert.throws(() => onExclusiveCreate(lock, () => { throw eacces(); }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 })), (err: unknown) => (err as NodeJS.ErrnoException).code === 'EACCES');
+    assert.equal(readFileSync(file, 'utf8'), STORED);
+  });
+
   it('a lock that changed hands during the change refuses the write with LOCK_LOST and leaves the new owner its lock', () => {
     const file = seed('lost.json');
     const lock = `${file}.lock`;
