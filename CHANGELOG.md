@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci. A log that cannot be read, or a failed step the job record does not place, still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).
+
 - Goal card count, card T0-GOAL-CARD-COUNT: a goal request that names several known card ids, or carries an explicit T1 or T2 size, now gets the 12 h arc deadline and leaves its card list to the projection; it used to take the first card id of the text as its only card and get the 3 h one-card limit (issue #73).
 
 - Base-sync JSDoc, card T0-BASE-SYNC-JSDOC: the comments of `formalPool`, `formalReviewerFor` and `CandidateInfo.baseSync` now name the base-sync reviewer's own review pool, its lookup by the recorded reviewer name and the marking of an undecided base-sync candidate's repair; no code changed (issue #65).

@@ -179,7 +179,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(other.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged', 'a skipped check outside the required list is not a failure');
   });
 
-  type Runs = Array<{ name: string; status: string; conclusion: string | null }>;
+  type Runs = Array<{ name: string; status: string; conclusion: string | null; details_url?: string; id?: number; app?: { slug: string } }>;
 
   test('a pending check named like a sentinel never enters the sentinel stream; a later red scan is ci-red with the names encoded', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
@@ -218,7 +218,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
       const shipped = runner.next(fx.goal(goal.id), card, built);
       const skills: string[] = shipped.directive.kind === 'build' ? (shipped.directive.skills ?? []) : [];
-      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length, skills, pendingRepair: shipped.run.pendingRepair, dodReceipt: shipped.run.dodReceipt };
+      return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length, skills, pendingRepair: shipped.run.pendingRepair, dodReceipt: shipped.run.dodReceipt, rerunIds: shipped.run.ci.reruns.map((x) => x.runId), counted: shipped.run.effort?.attempts.filter((a) => a.outcome === 'fail').length ?? 0 };
     } finally {
       fx.cleanup();
     }
@@ -287,7 +287,276 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(blocked.kind, 'review-fix', blocked.narration);
     assert.equal(blocked.state, 'REVIEW_FIX');
   });
+
+  // T0-CI-RED-LOGS-2: the failed step of each red Actions job on the gate output, bounded by the job record.
+  const JOB_URL = 'https://github.com/o/r/actions/runs/123/job/456';
+  const JOB_API = 'gh api repos/o/r/actions/jobs/456';
+  /** A runner timestamp (seven fraction digits) at second `s` of the job, `ms` milliseconds into it. */
+  const at = (s: number, ms = 0) => `2026-09-26T04:12:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}4830Z`;
+  const second = (s: number) => `2026-09-26T04:12:${String(s).padStart(2, '0')}Z`;
+  /** A red check run of an Actions job of the configured repository o/r. */
+  const actionsJob = (name: string, run: number, job: number) => ({ name, status: 'completed', conclusion: 'failure', id: job, app: { slug: 'github-actions' }, details_url: `https://github.com/o/r/actions/runs/${run}/job/${job}` });
+  /** A step of `job`: its header reads `Run <name>`; a `title` gives it a name of its own in the record, else it is named after its header. */
+  type Step = { name: string; title?: string; action?: boolean; exit?: boolean; at: number; end?: number; lines: string[]; later?: string[]; failed?: boolean; header?: boolean };
+  /**
+   * A job log and its record as the runner writes them: step 1 `Set up job` in second 0 with no header, then each step's
+   * `##[group]Run` header and lines in its start second and its `later` lines in its end second, the failed step closed by
+   * the runner's exit line (unless `exit` is false), then post-step lines a second after the last step; a byte order mark.
+   */
+  function job(steps: Step[], opts: { exit?: boolean } = {}): { log: string; record: { steps: Array<Record<string, unknown>> } } {
+    const out: string[] = [`${at(0, 1)} Current runner version: '2.337.0'`, `${at(0, 2)} setup says expected 5 to equal 5`];
+    const record: Array<Record<string, unknown>> = [{ number: 1, name: 'Set up job', conclusion: 'success', started_at: second(0), completed_at: second(0) }];
+    let last = 0;
+    steps.forEach((s, i) => {
+      let n = 100;
+      const end = s.end ?? s.at;
+      if (s.header !== false) {
+        out.push(`${at(s.at, n++)} ##[group]Run ${s.name}`);
+        if (!s.action) out.push(`${at(s.at, n++)} shell: /usr/bin/bash -e {0}`);
+        out.push(`${at(s.at, n++)} ##[endgroup]`);
+      }
+      for (const l of s.lines) out.push(`${at(s.at, n++)} ${l}`);
+      for (const l of s.later ?? []) out.push(`${at(end, n++)} ${l}`);
+      if (s.failed && opts.exit !== false && s.exit !== false) out.push(`${at(end, n++)} ##[error]Process completed with exit code 1.`);
+      record.push({ number: i + 2, name: s.title ?? `Run ${s.name}`, conclusion: s.failed ? 'failure' : 'success', started_at: second(s.at), completed_at: second(end) });
+      last = end;
+    });
+    out.push(`${at(last + 1, 1)} Post job cleanup.`, `${at(last + 1, 2)} [command]/usr/bin/git version`, `${at(last + 1, 3)} Cleaning up orphan processes`);
+    record.push({ number: steps.length + 2, name: 'Complete job', conclusion: 'success', started_at: second(last + 1), completed_at: second(last + 1) });
+    return { log: `\uFEFF${out.join('\n')}\n`, record: { steps: record } };
+  }
+  /** The scripted jobs API of job 456: its record and its log, each a receipt or the value to serve. */
+  const jobApi = (j: { log: string | Partial<ExecReceipt>; record: unknown }, id = 456) => ({
+    [`gh api repos/o/r/actions/jobs/${id}`]: (args: string[]) => {
+      const served = args[1]!.endsWith('/logs') ? j.log : j.record;
+      return typeof served === 'string' ? { stdout: served } : served !== null && typeof served === 'object' && ('exitCode' in served || 'timedOut' in served) ? (served as Partial<ExecReceipt>) : { stdout: JSON.stringify(served) };
+    },
+  });
+  const FAILING_TEST = ['\u001b[31m✖ adds two numbers (1.2ms)\u001b[39m', '  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:', '  1 !== 2', 'ℹ fail 1'];
+  const red = (runs: Runs = [actionsJob('check (ubuntu-latest, 22)', 123, 456)]) => ({ 'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: runs }) } });
+  const outputLines = (r: { receipt: { stdout: string } }) => r.receipt.stdout.split('\n');
+  /** The lines under the job header of a ship through the GitHub path, or the header itself when it carries a note. */
+  function logged(f: ReturnType<typeof fixture>, j: Parameters<typeof jobApi>[0], runs?: Runs): { header: string; lines: string[]; r: ShipOut } {
+    const r = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red(runs), ...jobApi(j) }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    const lines = outputLines(r);
+    const at = lines.findIndex((l) => l.startsWith('[CI-GATE-LOG] actions/runs/123/job/456'));
+    return { header: lines[at] ?? '', lines: lines.slice(at + 1, lines.indexOf('[SAGA-FAIL]')), r };
+  }
+  type ShipOut = ReturnType<GitHubShipPath['ship']>;
+  const CHECK_STEP: Step = { name: 'npm run check', at: 5, lines: ['npm run check'], failed: true };
+  /** The header group of CHECK_STEP on the gate output: the runner's header, its shell line and the group end, encoded. */
+  const STEP_HEAD = ['##%5Bgroup%5DRun npm run check', 'shell: /usr/bin/bash -e {0}', '##%5Bendgroup%5D'];
+
+  test('T0-CI-RED-LOGS-2 acceptance 1: a red Actions job puts its failed step on the gate output: from its header, no exit or post-step line, no timestamp, the last 60 lines capped and encoded, and no log text is read as a sentinel, a PR number or a run id', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const output = [...Array.from({ length: 70 }, (_, i) => `output line ${i}`), `long ${'x'.repeat(400)}`, ...FAILING_TEST, '[SHIP-BASE-SYNC-MERGED] from a log', '[SAGA-DONE] merged_pr=9', 'see PR #9 and https://github.com/o/r/actions/runs/999/job/1'];
+    const j = job([{ name: 'npm ci', at: 2, lines: ['earlier step says expected 0 to equal 0'] }, { name: 'npm run check', at: 5, end: 9, lines: [], later: output, failed: true }]);
+    const { header, lines, r } = logged(f, j, [{ name: 'check runs/999', status: 'completed', conclusion: 'failure' }, actionsJob('check (ubuntu-latest, 22)', 123, 456)]);
+    assert.equal(r.outcome, 'ci-red', r.receipt.stdout);
+    assert.ok(r.receipt.stdout.includes(String.raw`{"name":"check runs\/999","conclusion":"failure"}`), 'a check name is written with its slash escaped');
+    assert.equal(r.prNumber, 42, 'the PR number is the path own, never one a log line names');
+    const all = outputLines(r);
+    assert.equal(all[all.findIndex((l) => l.startsWith('[CI-GATE-RED] ')) + 1], header, 'the job header follows the gate line');
+    assert.equal(header, '[CI-GATE-LOG] actions/runs/123/job/456');
+    assert.equal(lines.length, 60, 'the last 60 lines of the failed step');
+    assert.equal(lines[0], 'output line 18', 'the step header and the first lines are cut from the top');
+    assert.ok(lines.includes(`long ${'x'.repeat(235)}`), 'a line is capped at 240 characters');
+    assert.ok(lines.includes('✖ adds two numbers (1.2ms)'), 'colour codes are removed');
+    assert.ok(lines.includes('  AssertionError %5BERR_ASSERTION%5D: Expected values to be strictly equal:'), 'brackets are encoded');
+    assert.ok(lines.includes('%5BSHIP-BASE-SYNC-MERGED%5D from a log'));
+    assert.ok(!r.receipt.stdout.includes('earlier step says') && !r.receipt.stdout.includes('setup says'), 'no earlier step is on the output');
+    assert.ok(!lines.some((l) => /Process completed|Post job cleanup|orphan processes|git version/.test(l)), 'no exit or post-step line');
+    assert.ok(!lines.some((l) => /\d{4}-\d\d-\d\dT\d\d:\d\d/.test(l) || l.includes('\uFEFF') || l.includes('\u001b')), 'no timestamp, byte order mark or escape');
+    assert.ok(!r.receipt.stdout.includes('[SHIP-BASE-SYNC-MERGED]') && !r.receipt.stdout.includes('[SAGA-DONE]'), 'no log text forms a sentinel');
+    assert.equal(r.receipt.stdout.match(/runs\/(\d+)/)?.[1], '123', 'the first run id on the output is the job header one');
+  });
+
+  test('T0-CI-RED-LOGS-2 acceptance 1: the step ends at the first exit line after its start, or at the window end when no later step started in the end second; lines outside the window are never read; control characters become spaces', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const noExit = job([{ ...CHECK_STEP, lines: ['npm run check', 'second\u0007line', '', 'tab\there\u0085end', 'line sep end'] }], { exit: false });
+    assert.deepEqual(logged(f, noExit).lines, [...STEP_HEAD, 'npm run check', 'second line', 'tab here end', 'line sep end'], 'the window ends with the completed_at second: the post-step lines a second later are not read');
+    const twice = job([{ ...CHECK_STEP, lines: ['first part', '##[error]Process completed with exit code 2.', 'second part fails'] }]);
+    assert.deepEqual(logged(f, twice).lines, [...STEP_HEAD, 'first part'], 'the cut is the first exit line after the start');
+    // R3 decision 1 of T0-CI-RED-LOGS-2: a later step that failed in the same end second is not on the output.
+    const cleanup = job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }]);
+    assert.deepEqual(logged(f, cleanup).lines, [...STEP_HEAD, 'npm error code ECONNRESET'], 'the first exit line after the start is the step own');
+    const earlierGroup = job([{ ...CHECK_STEP, end: 7, lines: ['npm run check', '##[group]Run inner', 'inner'], later: ['done'] }, { name: 'cleanup', at: 7, lines: ['cleanup'] }]);
+    assert.deepEqual(logged(f, earlierGroup).lines, [...STEP_HEAD, 'npm run check', '##%5Bgroup%5DRun inner', 'inner', 'done'], 'a Run group of the step before its end second does not unplace the end');
+    const untimed = job([CHECK_STEP]);
+    const withContinuation = { ...untimed, log: untimed.log.replace('npm run check\n', 'npm run check\ncontinued without a timestamp\n') };
+    assert.ok(logged(f, withContinuation).lines.includes('continued without a timestamp'), 'a line without a timestamp takes the time of the line before it');
+    const bare = { log: `﻿${at(5, 0)} ##[group]Run npm run check\n${at(5, 1)} shell: /usr/bin/bash -e {0}\n${at(5, 1)} ##[endgroup]\n${at(5, 2)} alpha\n`, record: job([CHECK_STEP]).record };
+    assert.deepEqual(logged(f, bare).lines, [...STEP_HEAD, 'alpha'], 'the byte order mark goes before the first line is timed, and a line at the very start of the window is in it');
+    const fastExit = job([{ name: 'echo fast', at: 5, lines: ['##[error]Process completed with exit code 1.'] }, CHECK_STEP], { exit: false });
+    assert.deepEqual(logged(f, fastExit).lines, [...STEP_HEAD, 'npm run check'], 'an exit line before the step start is not its end');
+  });
+
+  test('T0-CI-RED-LOGS-2 acceptance 1: the step starts at its own header, never at a group its output prints; an earlier step in the same second and step 1 are not on the output; a step without a header starts at the window start', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    // R3 decision 2 of T0-CI-RED-LOGS: an assertion followed by a `Run diagnostics` group of the same step, in a later second and in the same one.
+    for (const later of [true, false]) {
+      const diag = ['##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'];
+      const j = job([{ name: 'npm ci', at: 2, lines: ['ok'] }, { ...CHECK_STEP, end: 7, lines: ['npm run check', ...FAILING_TEST, ...(later ? [] : diag)], later: later ? diag : [] }]);
+      const got = logged(f, j).lines;
+      assert.equal(got[0], '##%5Bgroup%5DRun npm run check', `diagnostics ${later ? 'later' : 'in the first second'}: the step starts at its own header`);
+      assert.ok(got.includes('  AssertionError %5BERR_ASSERTION%5D: Expected values to be strictly equal:'), 'the assertion stays');
+    }
+    const fast = job([{ name: 'echo fast', at: 5, lines: ['fast step says expected 0 to equal 0'] }, CHECK_STEP]);
+    assert.deepEqual(logged(f, fast).lines, [...STEP_HEAD, 'npm run check'], 'an earlier step that started in the same second is skipped by its header');
+    const first = job([{ ...CHECK_STEP, at: 0 }]);
+    assert.deepEqual(logged(f, first).lines, [...STEP_HEAD, 'npm run check'], 'step 1 prints no header and is not counted');
+    const noisy = job([{ name: 'echo fast', at: 5, lines: ['##[group]Run diagnostics', 'fast step says expected 0 to equal 0'] }, CHECK_STEP]);
+    assert.deepEqual(logged(f, noisy).lines, [...STEP_HEAD, 'npm run check'], 'a step named after its command starts at the line with its name, past a group an earlier step printed');
+    assert.deepEqual(logged(f, job([{ ...CHECK_STEP, title: 'check' }])).lines, [...STEP_HEAD, 'npm run check'], 'a step with a name of its own starts at its run header');
+    assert.deepEqual(logged(f, job([{ name: 'echo fast', at: 5, lines: ['fast step says expected 0 to equal 0'] }, { ...CHECK_STEP, title: 'check' }])).lines, [...STEP_HEAD, 'npm run check'], 'past the header of an earlier step of the same second');
+    const substep = job([{ ...CHECK_STEP, end: 7, later: ['##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'sub-step output'] }]);
+    assert.deepEqual(logged(f, substep).lines.slice(0, 4), [...STEP_HEAD, 'npm run check'], 'a run header after the first second (a composite sub-step) is not counted');
+    const otherGroup = job([{ ...CHECK_STEP, lines: ['npm run check', '##[group]Setup details', 'shell: zsh', '##[endgroup]'] }]);
+    assert.deepEqual(logged(f, otherGroup).lines.slice(0, 4), [...STEP_HEAD, 'npm run check'], 'a group that is not a Run group is no header, whatever it holds');
+    // R3 decision 1 of T0-CI-RED-LOGS-2: a step named `Run diagnostics` whose output prints a `Run diagnostics` group.
+    const lookalike = job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }]);
+    const kept = logged(f, lookalike).lines;
+    assert.deepEqual(kept.slice(0, 3), STEP_HEAD, 'the start is the run header, not the group that reads like the step name');
+    assert.ok(kept.includes('  AssertionError %5BERR_ASSERTION%5D: Expected values to be strictly equal:'), 'the assertion stays');
+    const lateSetup = { log: `${at(0, 1)} before the step\n${at(1, 1)} Current runner version\n`, record: { steps: [{ number: 1, name: 'Set up job', conclusion: 'failure', started_at: second(1), completed_at: second(1) }] } };
+    assert.deepEqual(logged(f, lateSetup).lines, ['Current runner version'], 'a failed step 1 starts at its window, not at the top of the log');
+    assert.deepEqual(logged(f, job([{ ...CHECK_STEP, end: 7, later: ['##[group]Run npm run check', 'again'] }])).lines, [...STEP_HEAD, 'npm run check', '##%5Bgroup%5DRun npm run check', 'again'], 'only the first second holds the header: the same line later is output');
+    const twoFailed = job([{ ...CHECK_STEP, failed: false }]);
+    const firstNoStart = { ...twoFailed, record: { steps: [{ number: 1, name: 'Set up job', conclusion: 'failure', started_at: null }, ...twoFailed.record.steps.slice(1).map((s) => (s['name'] === 'Run npm run check' ? { ...s, conclusion: 'failure' } : s))] } };
+    assert.deepEqual(logged(f, firstNoStart).lines, [...STEP_HEAD, 'npm run check'], 'the first failed step with a start time is the step');
+    const setup = job([]);
+    const setupFails = { ...setup, record: { steps: setup.record.steps.map((s) => (s['number'] === 1 ? { ...s, conclusion: 'failure' } : s)) } };
+    assert.deepEqual(logged(f, setupFails).lines, ["Current runner version: '2.337.0'", 'setup says expected 5 to equal 5'], 'a failed step 1 starts at the window start');
+    const fractional = { ...fast, record: { steps: fast.record.steps.map((s) => ({ ...s, started_at: String(s['started_at']).replace('Z', '.600Z') })) } };
+    assert.deepEqual(logged(f, fractional).lines, [...STEP_HEAD, 'npm run check'], 'a record time is read as its whole second');
+  });
+
+  test('T0-CI-RED-LOGS-2 acceptance 2: an unreadable log or record is unavailable, a record with no failed step or a start that cannot be placed is unknown; both stay ci-red with no lines; a check that is not an Actions job of the repository reads nothing; four red jobs read three', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const good = job([CHECK_STEP]);
+    for (const [label, j, note] of [
+      ['log refused', { ...good, log: { exitCode: 1, stderr: 'HTTP 410: logs expired' } }, 'log unavailable'],
+      ['record refused', { ...good, record: { exitCode: 1, stderr: 'HTTP 404' } }, 'log unavailable'],
+      ['record timed out', { ...good, record: { timedOut: true, stdout: '{}' } }, 'log unavailable'],
+      ['record malformed', { ...good, record: 'not json' }, 'log unavailable'],
+      ['record with a null step', { ...good, record: { steps: [null, ...good.record.steps] } }, 'log unavailable'],
+      ['record with a step number that is text', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, number: String(s['number']) })) } }, 'log unavailable'],
+      ['record with a numeric start time', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, started_at: 5 })) } }, 'log unavailable'],
+      ['record with a numeric conclusion', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, conclusion: 1 })) } }, 'log unavailable'],
+      ['record with a numeric end time', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, completed_at: 5 })) } }, 'log unavailable'],
+      ['no failed step', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, conclusion: 'success' })) } }, 'step unknown'],
+      ['failed step without a start', { ...good, record: { steps: good.record.steps.map((s) => (s['conclusion'] === 'failure' ? { ...s, started_at: null } : s)) } }, 'step unknown'],
+      ['named after its command, no header', job([{ name: 'npm ci', at: 2, lines: ['earlier'] }, { ...CHECK_STEP, header: false, lines: ['alpha'] }]), 'step unknown'],
+      ['no header, a diagnostics group first', job([{ ...CHECK_STEP, header: false, lines: ['##[group]Run diagnostics', 'diag'] }]), 'step unknown'],
+      ['a second run header in its first second', job([{ ...CHECK_STEP, lines: ['##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]'] }]), 'step unknown'],
+      ['not a run step', job([{ ...CHECK_STEP, action: true }]), 'step unknown'],
+      ['no end time and no exit line', ((j) => ({ ...j, record: { steps: j.record.steps.map((s) => (s['conclusion'] === 'failure' ? { ...s, completed_at: null } : s)) } }))(job([CHECK_STEP], { exit: false })), 'step unknown'],
+      ['no exit line, a later step in the end second', job([CHECK_STEP, { name: 'cleanup', at: 5, lines: ['cleanup'] }], { exit: false }), 'step unknown'],
+      ['no exit line, a later step in the end second exits', job([{ ...CHECK_STEP, exit: false }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }]), 'step unknown'],
+      ['an inner Run group in the end second before the exit, a later step there', job([{ ...CHECK_STEP, lines: ['npm run check', '##[group]Run inner', 'inner'] }, { name: 'cleanup', at: 5, lines: ['cleanup'] }]), 'step unknown'],
+      ['own name, no header, a diagnostics group first', job([{ ...CHECK_STEP, title: 'check', header: false, lines: ['##[group]Run diagnostics', 'diag'] }]), 'step unknown'],
+    ] as const) {
+      const { header, lines, r } = logged(f, j);
+      assert.equal(r.outcome, 'ci-red', label);
+      assert.equal(header, `[CI-GATE-LOG] actions/runs/123/job/456 ${note}`, label);
+      assert.deepEqual(lines, [], `${label}: no log lines`);
+    }
+
+    const one = actionsJob('ci', 5, 6);
+    const notJobs: Runs = [
+      { ...one, details_url: 'https://ci.example.com/o/r/runs/5/job/6/build' },
+      { ...one, details_url: 'https://github.com/o/r/actions/runs/5/job/6/summary' },
+      { ...one, details_url: 'https://ci.example.com/o/r/actions/runs/5/job/6' },
+      { ...one, details_url: 'https://github.com/other/r/actions/runs/5/job/6' },
+      { ...one, details_url: 'https://github.com/o/r2/actions/runs/5/job/6' },
+      { ...one, app: { slug: 'circleci' } },
+      { ...one, app: undefined },
+      { ...one, id: 7 },
+      { ...one, details_url: undefined },
+    ];
+    const reads: string[] = [];
+    const foreign = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red(notJobs), 'gh api repos/o/r/actions/jobs/': (args) => { reads.push(args[1]!); return { stdout: 'a log' }; } }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(foreign.outcome, 'ci-red');
+    assert.ok(!foreign.receipt.stdout.includes('[CI-GATE-LOG]'), foreign.receipt.stdout);
+    assert.deepEqual(reads, [], 'nothing is read for a check that is not an Actions job of the repository');
+    for (const url of [`${JOB_URL}?pr=42`, 'https://github.com/O/R/actions/runs/123/job/456']) {
+      const { lines } = logged(f, good, [{ ...actionsJob('ci', 123, 456), details_url: url }]);
+      assert.deepEqual(lines, [...STEP_HEAD, 'npm run check'], `${url} is a job of the repository`);
+    }
+
+    const asked: string[] = [];
+    const four = Array.from({ length: 4 }, (_, i) => actionsJob(`job ${i}`, 10 + i, 20 + i));
+    const served = (args: string[]) => {
+      asked.push(args[1]!);
+      return { stdout: args[1]!.endsWith('/logs') ? good.log : JSON.stringify(good.record) };
+    };
+    const many = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red(four), 'gh api repos/o/r/actions/jobs/': served }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.deepEqual(asked, [20, 21, 22].flatMap((id) => [`repos/o/r/actions/jobs/${id}`, `repos/o/r/actions/jobs/${id}/logs`]));
+    assert.deepEqual(outputLines(many).filter((l) => l.startsWith('[CI-GATE-LOG]')), ['[CI-GATE-LOG] actions/runs/10/job/20', '[CI-GATE-LOG] actions/runs/11/job/21', '[CI-GATE-LOG] actions/runs/12/job/22']);
+  });
+
+  test('T0-CI-RED-LOGS-2 acceptance 3: through the card runner, a failing test is a counted repair even with a network error in a later group of its step, a network failure is the rerun of the job run, and an unavailable log or an unknown step stops with STOP/ci', () => {
+    const github = { requiredChecks: ['check (ubuntu-latest, 22)'], requireVerdict: false, ciTimeoutMs: 60_000, ciPollMs: 1 };
+    const runs: Runs = [actionsJob('check (ubuntu-latest, 22)', 123, 456)];
+    const code = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, lines: ['npm run check', ...FAILING_TEST] }])));
+    assert.equal(code.kind, 'build', code.narration);
+    assert.equal(code.counted, 1, 'the failing test counts the candidate attempt as failed');
+    assert.equal(code.reruns, 0);
+    const diagnosed = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, end: 7, lines: ['npm run check', ...FAILING_TEST], later: ['##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }])));
+    assert.equal(diagnosed.kind, 'build', `a network error in a later group of the step never hides the assertion: ${diagnosed.narration}`);
+    assert.equal(diagnosed.counted, 1);
+    assert.equal(diagnosed.reruns, 0);
+    const lookalike = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }])));
+    assert.equal(lookalike.kind, 'build', `a group reading like the step name never hides the assertion: ${lookalike.narration}`);
+    assert.equal(lookalike.counted, 1);
+    const cleanup = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }])));
+    assert.equal(cleanup.kind, 'ship', `a later step that failed in the same second adds no evidence: ${cleanup.narration}`);
+    assert.equal(cleanup.counted, 0);
+    // The failed step is a network failure; an earlier step printed text the classifier reads as a code defect, and a failed
+    // check whose name holds runs/999 comes first on the gate line.
+    const named: Runs = [{ name: 'check runs/999', status: 'completed', conclusion: 'failure' }, ...runs];
+    const network = job([{ name: 'npm test', at: 2, lines: ['earlier step says expected 0 to equal 0'] }, { ...CHECK_STEP, lines: ['see https://github.com/o/r/actions/runs/999/job/1', 'npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed'] }]);
+    const transient = shipThroughConfig(named, github, undefined, jobApi(network));
+    assert.equal(transient.kind, 'ship', transient.narration);
+    assert.deepEqual(transient.rerunIds, ['123'], 'the rerun is recorded under the run of the job header');
+    assert.equal(transient.counted, 0);
+    for (const [label, j] of [
+      ['unavailable', { ...network, log: { exitCode: 1, stderr: 'HTTP 410' } }],
+      ['unknown step', { ...network, record: { steps: [] } }],
+    ] as const) {
+      const stopped = shipThroughConfig(runs, github, undefined, jobApi(j));
+      assert.equal(stopped.kind, 'stop', `${label}: ${stopped.narration}`);
+      assert.equal(stopped.stopReason, 'ci', label);
+      assert.equal(stopped.reruns, 0, label);
+    }
+  });
+
+  test('T0-CI-RED-LOGS-2 acceptance 4: docs/OPERATIONS.md (Ship gates) and the CHANGELOG Unreleased section state the log lines, the step bound and how the loop reads them', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    for (const sentence of DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    for (const sentence of CHANGELOG_SENTENCES) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+  });
 });
+
+const DOC_SENTENCES = [
+  "A red check run of a GitHub Actions job of the repository (its app is `github-actions`, its details URL is `https://github.com/<repository>/actions/runs/<run>/job/<job>` and the job id is the check run's id) puts the failed step of its log on the gate output (card T0-CI-RED-LOGS-2): right after the `[CI-GATE-RED]` line, one `[CI-GATE-LOG] actions/runs/<run>/job/<job>` line per such job, at most three in gate order, followed by the lines of the failed step, with the byte order mark, the timestamps and the colour codes removed and every other control character, tab and the Unicode line and paragraph separators included, replaced by a space, the last 60 non-empty lines, each capped at 240 characters and encoded like a check name.",
+  "The job record (`gh api repos/<repo>/actions/jobs/<job>`) bounds the step, never a group title or a step name: the first step whose conclusion is `failure` gives the window from the start of its `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line before it); the step starts at its own header, a `run` step's `##[group]Run ` line whose group holds the runner's `shell: ` line, the (k+1)-th such header in its first second when that second holds one per step after step 1 that started in it (k counting the earlier ones), and at the window start for step 1 (`Set up job`, which prints no header); it ends before the first `##[error]Process completed with exit code N.` line after its start, or, without one, at the window end when the record has an end time and no later step started in that second; when a later step started in the end second, the exit line must come before every `##[group]Run ` line of that second after the start.",
+  "The limit: the job log has no step boundaries (the run log archive holds one file per job), the record times are whole seconds and only a `run` step's header carries the runner's `shell: ` line, so a start or an end these cannot establish (a step that is not a `run` step, another count of such headers in its first second, no exit line while a later step started in the end second or with no end time, an exit line after a `Run ` group of an end second a later step started in) is `step unknown` and the card stops with STOP/ci, never a guess; a tool whose output prints a `Run ` group holding a `shell: ` line in that second is read as a step header, and an output line that reads like the runner's exit line ends the step there.",
+  "A log or record the ship path cannot read (the command exits non-zero, as for an expired log, or a step of the record is not an object with a numeric number, a string or null conclusion and string or null times) gets `log unavailable` on its `[CI-GATE-LOG]` line, and a record with no failed step, or a start or an end that is not placed, gets `step unknown`; neither has log lines, and a red check that is not such a job gets no `[CI-GATE-LOG]` line and nothing read.",
+  "The gate lines write every `/` of a check name escaped as `\\/`, so no check name forms the `runs/<id>` the card runner reads as the run of a rerun.",
+  "The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient and takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, or none the classifier recognises, the failure is unknown and the card stops with STOP/ci as before."
+];
+const CHANGELOG_SENTENCES = [
+  '- CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci.',
+  'A log that cannot be read, or a failed step the job record does not place, still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).',
+];
 
 describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
   const dirs: string[] = [];
