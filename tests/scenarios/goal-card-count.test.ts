@@ -63,6 +63,24 @@ test('T0-GOAL-CARD-COUNT acceptance 2: one named card with no size or an explici
   }
 });
 
+test('T0-GOAL-CARD-COUNT acceptance 2: a release goal with an explicit T1 or T2 gets 12 h, a release with no explicit size keeps 3 h, and a tighter user limit wins [R3]', () => {
+  const { fx, create } = withCards();
+  try {
+    for (const explicitSize of ['T1', 'T2'] as RequestSize[]) {
+      const goal = create({ text: 'release to staging', explicitSize });
+      assert.equal(goal.routing.kind, 'release', `${explicitSize}: a release route`);
+      assert.equal(goal.deadlines.goalDeadline, addMs(T0, 12 * HOUR_MS), `${explicitSize}: the arc limit, not the standalone release limit`);
+    }
+    const plain = create({ text: 'release to staging' });
+    assert.equal(plain.routing.kind, 'release');
+    assert.equal(plain.deadlines.goalDeadline, addMs(T0, 3 * HOUR_MS), 'a release with no explicit size keeps the one-card limit');
+    const limited = fx.controller.createGoal({ text: ISSUE_73, source: 'natural-language', affectedSurfaces: [], explicitSize: 'T1' }, { userLimitMs: HOUR_MS });
+    assert.equal(limited.deadlines.goalDeadline, addMs(T0, HOUR_MS), 'a tighter user limit wins over the arc limit');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-GOAL-CARD-COUNT acceptance 3: docs/OPERATIONS.md, docs/ARCHITECTURE.md and the CHANGELOG Unreleased section state how the count is decided [R4]', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
