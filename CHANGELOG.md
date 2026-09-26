@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.
+
 - Merge refusal, card T0-SHIP-MERGE-REFUSED: when GitHub refuses the merge of a PR whose base moved after the ship's base sync, the GitHub ship path reads the merge state and runs the base sync again, so the conflict becomes a CHANGELOG merge or a merge-conflict repair on a new candidate instead of a `tool` stop; a refusal for another reason keeps `[SHIP-MERGE-FAIL]` and names the state (issue #85).
 
 - Goal card count follow-up, card T0-GOAL-CARD-COUNT-3: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).

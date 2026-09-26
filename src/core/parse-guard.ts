@@ -13,7 +13,8 @@ export interface QuotaSignal { hold: boolean; via: 'structured' | 'text'; eviden
 const QUOTA = /(?<![\p{L}\p{N}])(?:rate[- ]?limit(?:s|ed|er|ing)?|quotas?|usage limits?|429s?|retry[- ]after|too many requests|capacity|overloaded)(?![\p{L}\p{N}])/iu;
 /** `_`, a lowercase-to-uppercase change and the last capital of a run before a capitalised word separate words like a space. */
 const asWords = (text: string) => text.replace(/_/g, ' ').replace(/(\p{Ll})(?=\p{Lu})|(\p{Lu})(?=\p{Lu}\p{Ll})/gu, '$1$2 ');
-const RETRY = /retry[- ]after[:=\s]+(\d+)\s*(ms|m)?/i;
+/** A unit is a whole word: a milliseconds or minutes word; a seconds word, none or any other word is seconds. */
+const RETRY = /retry[- ]after[:=\s]+(\d+)(?:\s*(?:(?<ms>milliseconds?|millis|msecs?|ms)|(?<min>minutes?|mins?|m))(?![\p{L}\p{N}]))?/iu;
 
 /** A numeric status decides alone (429 and 529 hold); without one the word rule decides. The result names the path that decided. */
 export function detectQuotaHold(text: string | undefined, status?: number, retryAfterMs?: number): QuotaSignal {
@@ -22,5 +23,5 @@ export function detectQuotaHold(text: string | undefined, status?: number, retry
   const word = QUOTA.exec(asWords(text ?? ''))?.[0];
   if (!word) return { hold: false, via: 'text' };
   const retry = RETRY.exec(text ?? '');
-  return { hold: true, via: 'text', evidence: word, ...(retry ? { retryAfterMs: Number(retry[1]) * (retry[2] === undefined ? 1000 : retry[2].toLowerCase() === 'ms' ? 1 : 60_000) } : {}) };
+  return { hold: true, via: 'text', evidence: word, ...(retry ? { retryAfterMs: Number(retry[1]) * (retry.groups?.['ms'] ? 1 : retry.groups?.['min'] ? 60_000 : 1000) } : {}) };
 }

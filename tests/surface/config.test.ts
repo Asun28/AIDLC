@@ -1,11 +1,11 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
-import { FormalReviewConfig, FormalReviewFallback, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
+import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
 const empty = ProjectConfig.parse({});
@@ -282,7 +282,7 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
     node[keys.at(-1)!] = value;
     return config;
   };
-  const SCALARS = ['base', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'repository', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'preReview.reviewer', 'formalReview.reviewer', 'formalReview.fallback.reviewer'];
+  const SCALARS = ['base', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'repository', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'preReview.reviewer', 'formalReview.reviewer', 'formalReview.fallback.reviewer', 'formalReview.baseSync.reviewer'];
   const EMPTY_ALLOWED = ['preReview.answerMarker', 'worktreeRoot'];
   const LISTS = ['preReview.command', 'formalReview.command', 'formalReview.fallback.command', 'formalReview.baseSync.command', 'preReview.perspectives', 'github.requiredChecks', 'hooks.frozenPaths', 'hooks.testPathPatterns', 'hooks.productionPatterns', 'tierPaths.tierS', 'tierPaths.tier0', 'tierPaths.frozen'];
   test('the base config of these cases parses, so each refusal below is the blank value [R1]', () => {
@@ -339,5 +339,92 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const sentence = 'A blank value of a configuration key that gates behaviour is refused, and `aidlc doctor` reports a configuration that does not parse as `config: ERROR` with exit 1 instead of a stack trace.';
     assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+  });
+});
+
+describe('ConfigError and the doctor catch (T0-PARSE-GUARD-FOLLOWUPS)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  /** A temporary main checkout with `write` applied to its aidlc.config.json path. */
+  const inCheckout = (write: (file: string) => void, check: (dir: string) => void): void => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-config-error-'));
+    try {
+      write(path.join(dir, 'aidlc.config.json'));
+      check(dir);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  const thrownBy = (dir: string): unknown => {
+    try {
+      loadProjectConfig(dir);
+    } catch (err) {
+      return err;
+    }
+    return assert.fail('loadProjectConfig did not throw');
+  };
+  const notJson = '{ not json';
+  const syntaxMessage = ((): string => {
+    try {
+      JSON.parse(notJson);
+    } catch (err) {
+      return (err as Error).message;
+    }
+    return assert.fail('the text parsed');
+  })();
+  const doctor = (dir: string) => {
+    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor'], { cwd: dir, env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, 'state') }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+    return { status: r.status, output: `${r.stdout}${r.stderr}` };
+  };
+
+  test('loadProjectConfig throws a ConfigError for a file that fails the schema or is not JSON, and Node\'s own error for a file it cannot read [R2]', () => {
+    inCheckout((file) => writeFileSync(file, JSON.stringify({ preReview: { answerMarker: '   ' } }), 'utf8'), (dir) => {
+      const err = thrownBy(dir);
+      assert.ok(err instanceof ConfigError, `a ConfigError: ${String(err)}`);
+      assert.equal(err.name, 'ConfigError');
+      assert.equal(err.message, 'aidlc.config.json: preReview.answerMarker: must be empty or not blank');
+    });
+    inCheckout((file) => writeFileSync(file, notJson, 'utf8'), (dir) => {
+      const err = thrownBy(dir);
+      assert.ok(err instanceof ConfigError, `a ConfigError: ${String(err)}`);
+      assert.equal(err.name, 'ConfigError');
+      assert.equal(err.message, `aidlc.config.json: ${syntaxMessage}`);
+    });
+    inCheckout((file) => mkdirSync(file), (dir) => {
+      const err = thrownBy(dir);
+      assert.ok(err instanceof Error && !(err instanceof ConfigError), `not a ConfigError: ${String(err)}`);
+      assert.notEqual(err.name, 'ConfigError');
+      assert.equal((err as NodeJS.ErrnoException).code, 'EISDIR');
+    });
+  });
+
+  test('aidlc doctor prints config: ERROR for a ConfigError alone; a file it cannot read ends it with its own message [R3]', () => {
+    inCheckout((file) => writeFileSync(file, JSON.stringify({ preReview: { answerMarker: '   ' } }), 'utf8'), (dir) => {
+      const r = doctor(dir);
+      assert.equal(r.status, 1, r.output);
+      assert.ok(r.output.includes('aidlc: config: ERROR aidlc.config.json: preReview.answerMarker: must be empty or not blank\n'), r.output);
+      assert.doesNotMatch(r.output, /^\s+at /m, 'no stack trace');
+    });
+    inCheckout((file) => writeFileSync(file, notJson, 'utf8'), (dir) => {
+      const r = doctor(dir);
+      assert.equal(r.status, 1, r.output);
+      assert.ok(r.output.includes(`aidlc: config: ERROR aidlc.config.json: ${syntaxMessage}\n`), r.output);
+      assert.doesNotMatch(r.output, /^\s+at /m, 'no stack trace');
+    });
+    inCheckout((file) => mkdirSync(file), (dir) => {
+      const r = doctor(dir);
+      assert.equal(r.status, 1, r.output);
+      assert.match(r.output, /EISDIR/);
+      assert.doesNotMatch(r.output, /config: ERROR/, 'a read failure is not a configuration error');
+    });
+  });
+
+  test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the ConfigError and the doctor catch [R6]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const opsSentence = 'Only a `ConfigError`, which `loadProjectConfig` throws for an `aidlc.config.json` that is not JSON or fails the schema, is reported as `config: ERROR` (card T0-PARSE-GUARD-FOLLOWUPS); a failure to read the file, such as a directory at that path, ends `aidlc doctor` with its own message, as it ends every other command.';
+    assert.ok(read('docs', 'OPERATIONS.md').includes(opsSentence), `docs/OPERATIONS.md states: ${opsSentence}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
