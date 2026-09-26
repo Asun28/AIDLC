@@ -136,4 +136,54 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
     assert.equal(seen[1]!.env?.['GH_TOKEN'], '');
     assert.equal(seen[1]!.env?.['GITHUB_TOKEN'], '');
   });
+
+  it('T0-CI-RED-LOGS acceptance 2: jobLog reads one Actions job log through the jobs API and returns nothing when the command fails', () => {
+    const asked: string[][] = [];
+    const probe = new GhProbe(
+      scriptedRunner({
+        'gh api repos/Asun28/repo/actions/jobs/77/logs': (args) => {
+          asked.push(args);
+          return { stdout: '2026-09-26T04:12:10.9854830Z line\n' };
+        },
+        'gh api repos/Asun28/repo/actions/jobs/78/logs': { exitCode: 1, stdout: 'partial', stderr: 'HTTP 410: Gone' },
+        'gh api repos/Asun28/repo/actions/jobs/80/logs': { exitCode: 0, timedOut: true, stdout: 'cut short' },
+      }),
+    );
+    assert.equal(probe.jobLog(REPO, '77'), '2026-09-26T04:12:10.9854830Z line\n');
+    assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77/logs']]);
+    assert.equal(probe.jobLog(REPO, '78'), undefined, 'a refused log is no log, whatever its stdout');
+    assert.equal(probe.jobLog(REPO, '79'), undefined, 'a command that cannot run is no log');
+    assert.equal(probe.jobLog(REPO, '80'), undefined, 'a read that timed out is no log');
+  });
+
+  it('T0-CI-RED-LOGS-2 acceptance 2: jobRecord reads the steps of one Actions job and returns nothing when the command fails, times out or prints no JSON', () => {
+    const steps = [{ number: 1, name: 'Set up job', conclusion: 'success', started_at: '2026-09-26T04:12:10Z', completed_at: '2026-09-26T04:12:11Z' }];
+    const asked: string[][] = [];
+    const probe = new GhProbe(
+      scriptedRunner({
+        'gh api repos/Asun28/repo/actions/jobs/77': (args) => {
+          asked.push(args);
+          return { stdout: JSON.stringify({ id: 77, steps }) };
+        },
+        'gh api repos/Asun28/repo/actions/jobs/78': { exitCode: 1, stdout: JSON.stringify({ steps }), stderr: 'HTTP 404' },
+        'gh api repos/Asun28/repo/actions/jobs/80': { exitCode: 0, timedOut: true, stdout: JSON.stringify({ steps }) },
+        'gh api repos/Asun28/repo/actions/jobs/81': { stdout: 'not json' },
+        'gh api repos/Asun28/repo/actions/jobs/82': { stdout: JSON.stringify({ id: 82 }) },
+      }),
+    );
+    assert.deepEqual(probe.jobRecord(REPO, '77'), { steps });
+    assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77']]);
+    assert.equal(probe.jobRecord(REPO, '78'), undefined, 'a refused record is no record');
+    assert.equal(probe.jobRecord(REPO, '80'), undefined, 'a read that timed out is no record');
+    assert.equal(probe.jobRecord(REPO, '81'), undefined, 'output that is not JSON is no record');
+    assert.deepEqual(probe.jobRecord(REPO, '82'), { steps: [] }, 'a record without steps has no steps');
+    const malformed = [[null], [{ ...steps[0], number: '1' }], [{ ...steps[0], conclusion: 1 }], [{ ...steps[0], started_at: 5 }], [{ ...steps[0], completed_at: 5 }], [{ ...steps[0], name: 7 }], 'steps'];
+    for (const bad of malformed) {
+      const one = new GhProbe(scriptedRunner({ 'gh api repos/Asun28/repo/actions/jobs/90': { stdout: JSON.stringify({ steps: bad }) } }));
+      assert.equal(one.jobRecord(REPO, '90'), undefined, `a malformed record is no record: ${JSON.stringify(bad)}`);
+    }
+    const nulls = new GhProbe(scriptedRunner({ 'gh api repos/Asun28/repo/actions/jobs/91': { stdout: JSON.stringify({ steps: [{ number: 2, conclusion: null, started_at: null, completed_at: null }] }) } }));
+    assert.deepEqual(nulls.jobRecord(REPO, '91'), { steps: [{ number: 2, conclusion: null, started_at: null, completed_at: null }] }, 'null times and conclusion, no name: a record');
+    assert.equal(probe.jobRecord(REPO, '83'), undefined, 'a command that cannot run is no record');
+  });
 });

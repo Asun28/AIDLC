@@ -27,6 +27,34 @@ export interface RunView {
   jobs: Array<{ name: string; status: string; conclusion: string | null }>;
 }
 
+export interface CheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  /** For a GitHub Actions job: the job id. */
+  id?: number;
+  /** For a GitHub Actions job: `github-actions`. */
+  app?: { slug?: string } | null;
+  /** For a GitHub Actions job: `https://github.com/<repository>/actions/runs/<run>/job/<job>`. */
+  details_url?: string | null;
+}
+
+/** One step of a GitHub Actions job record. */
+export interface JobStep {
+  number: number;
+  name?: string;
+  conclusion: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+function isJobStep(value: unknown): value is JobStep {
+  if (value === null || typeof value !== 'object') return false;
+  const s = value as Record<string, unknown>;
+  const time = (t: unknown) => t === undefined || t === null || typeof t === 'string';
+  return typeof s['number'] === 'number' && Number.isFinite(s['number']) && (s['conclusion'] === null || typeof s['conclusion'] === 'string') && time(s['started_at']) && time(s['completed_at']) && (s['name'] === undefined || typeof s['name'] === 'string');
+}
+
 export class GhProbe {
   readonly runner: SyncRunner;
 
@@ -92,15 +120,38 @@ export class GhProbe {
   }
 
   /** Check runs for a commit (paginated, up to 50 pages like the scaffold's CI gate). */
-  checkRuns(repo: string, sha: string, cwd?: string): Array<{ name: string; status: string; conclusion: string | null }> {
-    const out: Array<{ name: string; status: string; conclusion: string | null }> = [];
+  checkRuns(repo: string, sha: string, cwd?: string): CheckRun[] {
+    const out: CheckRun[] = [];
     for (let page = 1; page <= 50; page += 1) {
-      const res = this.json<{ check_runs?: Array<{ name: string; status: string; conclusion: string | null }> }>(['api', `repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`], cwd);
+      const res = this.json<{ check_runs?: CheckRun[] }>(['api', `repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`], cwd);
       const runs = res.check_runs ?? [];
       out.push(...runs);
       if (runs.length < 100) break;
     }
     return out;
+  }
+
+  /**
+   * The steps of one GitHub Actions job (numbers, conclusions, times truncated to the second), or undefined when the record
+   * cannot be read: the command fails, the output is not JSON, or a step is not an object with a numeric number, a string
+   * or null conclusion, string or null times and a string name when it has one.
+   */
+  jobRecord(repo: string, jobId: string, cwd?: string): { steps: JobStep[] } | undefined {
+    const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}`], cwd);
+    if (r.exitCode !== 0 || r.timedOut) return undefined;
+    try {
+      const steps = (JSON.parse(r.stdout) as { steps?: unknown }).steps;
+      if (steps === undefined) return { steps: [] };
+      return Array.isArray(steps) && steps.every(isJobStep) ? { steps } : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The raw log of one GitHub Actions job, or undefined when it cannot be read (expired, missing, unfinished, no access). */
+  jobLog(repo: string, jobId: string, cwd?: string): string | undefined {
+    const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}/logs`], cwd);
+    return r.exitCode === 0 && !r.timedOut ? r.stdout : undefined;
   }
 
   rerunFailed(repo: string, runId: string, cwd?: string): ExecReceipt {
