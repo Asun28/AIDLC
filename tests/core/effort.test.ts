@@ -422,9 +422,8 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
     for (const { label, ep, action } of cases) {
       const before = structuredClone(ep);
       const step = afterShipFailure(ep, 'ship dod-failed: x', JUSTIFIED);
-      assert.deepEqual(step.episode.attempts, before.attempts, `${label}: the attempts are unchanged`);
-      assert.equal(step.episode.terminal, before.terminal, `${label}: the terminal is unchanged`);
-      assert.equal(step.episode.escalationUsed, before.escalationUsed, `${label}: the escalation is unchanged`);
+      assert.deepEqual(step.episode, before, `${label}: the whole episode is returned as it was (task, role, baseline, ladder, attempts, terminal, escalation)`);
+      assert.deepEqual(ep, before, `${label}: the input episode is not mutated`);
       assert.equal(step.refuted, undefined, `${label}: nothing is refuted`);
       assert.equal(step.promoted, undefined, `${label}: nothing is promoted`);
       assert.deepEqual(step.action, action, label);
@@ -433,19 +432,22 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
 
   test('a running attempt at an effort other than the baseline keeps that effort when nothing is settled: no ladder step re-derives it [R1]', () => {
     const running = startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'high', T0);
+    const before = structuredClone(running);
+    assert.equal(before.escalationUsed, true, 'starting at high used the escalation');
     const step = afterShipFailure(running, 'ship dod-failed: x', JUSTIFIED);
-    assert.equal(step.episode.attempts[0]!.effort, 'high', 'the running attempt keeps its effort');
-    assert.equal(step.episode.escalationUsed, running.escalationUsed);
+    assert.deepEqual(step.episode, before, 'the whole episode is returned as it was: the running attempt keeps high and the escalation stays used');
+    assert.deepEqual(running, before, 'the input episode is not mutated');
     assert.equal(step.promoted, undefined, 'nothing is promoted or demoted');
     assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 1, escalated: true });
   });
 
   test('a terminal episode with nothing settled answers with its terminal, never with its running attempt [R1]', () => {
     const stopped: EffortEpisode = { ...startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', T0), terminal: 'exhausted' };
+    const before = structuredClone(stopped);
     const step = afterShipFailure(stopped, 'ship dod-failed: x', JUSTIFIED);
     assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
-    assert.deepEqual(step.episode.attempts, stopped.attempts);
-    assert.equal(step.episode.terminal, 'exhausted');
+    assert.deepEqual(step.episode, before, 'the whole episode is returned as it was, its terminal included');
+    assert.deepEqual(stopped, before, 'the input episode is not mutated');
   });
 
   test('the refuted attempt keeps the startedAt and finishedAt of the success it replaces [R2]', () => {
@@ -461,7 +463,13 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
   test('the JSDoc of afterShipFailure, docs/OPERATIONS.md and the CHANGELOG Unreleased section state both rules [R3]', () => {
     const root = path.resolve(import.meta.dirname, '..', '..');
     const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
-    const jsdoc = read('src', 'core', 'effort.ts').replace(/\n \* /g, ' ').replace(/\s+/g, ' ');
+    // The comment block that ends directly above `export function afterShipFailure(`, not any comment of the file.
+    const source = read('src', 'core', 'effort.ts');
+    const fn = source.indexOf('export function afterShipFailure(');
+    const docEnd = source.lastIndexOf('*/', fn);
+    const docStart = source.lastIndexOf('/**', docEnd);
+    assert.ok(fn > 0 && docStart >= 0 && source.slice(docEnd + 2, fn).trim() === '', 'afterShipFailure is preceded directly by its JSDoc');
+    const jsdoc = source.slice(docStart, docEnd).replace(/\n \* /g, ' ').replace(/\s+/g, ' ');
     for (const sentence of [
       'An episode with no settled attempt (none, or only running and not-counted ones) has nothing to refute and takes no ladder step: it is returned as it is, and the next step is its running attempt at its own effort, or the ladder\'s first.',
       'The refuted attempt keeps the startedAt and finishedAt of its success; the refutation\'s time is its ATTEMPT_FINISHED journal event.',
