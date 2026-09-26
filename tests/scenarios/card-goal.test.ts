@@ -38,6 +38,22 @@ test('T0-CARD-GOAL-RESOLVE acceptance 3: without --goal a card command acts on t
   }
 });
 
+test('T0-CARD-GOAL-RESOLVE acceptance 3: card report and card takeover without --goal resolve the goal that projects the card too [R1]', () => {
+  const { fx, older, newer, cli } = twoGoals();
+  try {
+    cli('card', 'report', 'T1-OLD', '--data', '{}');
+    assert.ok(fx.store.getCardRun(older.id, 'T1-OLD'), 'card report writes the run in the goal that projects the card');
+    assert.equal(fx.store.getCardRun(newer.id, 'T1-OLD'), undefined, 'card report creates no run in the newer goal');
+    const takeover = cli('card', 'takeover', 'T1-NEW');
+    assert.notEqual(takeover.status, 0, 'no run of T1-NEW exists to take over');
+    assert.ok(takeover.stderr.includes(`no run record for T1-NEW in ${newer.id}`), `card takeover looks in the goal that projects the card: ${takeover.stderr}`);
+    const takeoverOld = cli('card', 'takeover', 'T1-OLD');
+    assert.ok(!takeoverOld.stderr.includes(newer.id), `card takeover of T1-OLD never names the newer goal: ${takeoverOld.stderr}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-CARD-GOAL-RESOLVE acceptance 3: a card no goal projects is refused naming it, and no run is created in any goal [R2]', () => {
   const { fx, older, newer, cli } = twoGoals();
   try {

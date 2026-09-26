@@ -21,9 +21,13 @@ describe('resolveCardGoal (T0-CARD-GOAL-RESOLVE)', () => {
   });
 
   test('two active goals projecting the card are refused naming both and --goal, and so are two terminal ones with no active one [R2]', () => {
-    for (const goals of [[goal('g-2', ['T0-X']), goal('g-1', ['T0-X'])], [goal('g-2', ['T0-X'], true), goal('g-1', ['T0-X'], true), goal('g-0', ['T0-OTHER'])]]) {
+    const cases = [
+      { goals: [goal('g-2', ['T0-X']), goal('g-1', ['T0-X'])], says: 'is projected by 2 active goals (g-2, g-1)' },
+      { goals: [goal('g-2', ['T0-X'], true), goal('g-1', ['T0-X'], true), goal('g-0', ['T0-OTHER'])], says: 'is projected by no active goal and by 2 terminal goals (g-2, g-1)' },
+    ];
+    for (const { goals, says } of cases) {
       const error = refused(resolveCardGoal(goals, 'T0-X'));
-      for (const part of ['T0-X', 'g-2', 'g-1', '--goal <id>']) assert.ok(error.includes(part), `${error} names ${part}`);
+      for (const part of ['card T0-X', says, '--goal <id>']) assert.ok(error.includes(part), `${error} names ${part}`);
       assert.ok(!error.includes('g-0'), `${error} names only the goals that project the card`);
     }
   });
@@ -52,5 +56,8 @@ describe('resolveCardGoal (T0-CARD-GOAL-RESOLVE)', () => {
     assert.ok(none.includes('no goal projects it'), none);
     const unknown = refused(resolveCardGoal(goals, 'T0-X', { explicit: 'g-zzz', holdsRun: () => false }));
     assert.ok(unknown.includes('goal g-zzz not found'), unknown);
+    // A --goal given empty is a goal named, not an absent option: it is refused, never resolved from the projection.
+    const empty = refused(resolveCardGoal(goals, 'T0-X', { explicit: '', holdsRun: () => false }));
+    assert.ok(empty.includes('not found'), empty);
   });
 });
