@@ -39,6 +39,8 @@ doc_sync: CHANGELOG.md
 
 # T1-BASELINE-HARNESS
 
+Deferred on 2026-09-26: do not start or ship this card. The user deferred the W0 evaluation; it waits for plan decisions D1-D3 (task repository, sandbox repository, spend caps) to be decided again.
+
 ## Deliverable
 `evals/baseline/` holds a task list of 12 real tasks, a harness that runs one trial per arm in a fresh checkout and records oracle result, tokens, cost, wall clock, human interventions and the bound that fired, and an analysis that reports per-task paired differences and the minimum detectable difference. A one-task pilot proves the harness end to end. src/ is unchanged.
 

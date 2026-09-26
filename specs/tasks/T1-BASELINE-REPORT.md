@@ -35,6 +35,8 @@ doc_sync: CHANGELOG.md
 
 # T1-BASELINE-REPORT
 
+Deferred on 2026-09-26: do not start or ship this card. The user deferred the W0 evaluation; it waits for plan decisions D1-D3 (task repository, sandbox repository, spend caps) to be decided again.
+
 ## Deliverable
 The first comparison of aidlc against plain Claude Code on real tasks, judged by an external oracle, reported as per-task paired differences with the smallest difference the design could detect, including every axis on which aidlc loses.
 
