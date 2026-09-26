@@ -54,6 +54,26 @@ test('T0-CARD-GOAL-RESOLVE acceptance 3: card report and card takeover without -
   }
 });
 
+test('T0-CARD-GOAL-RESOLVE acceptance 3: review pre, r3, dispute and accept without --goal act on the goal that projects the card, never on the newer goal [R1]', () => {
+  const commands = [
+    ['review', 'pre', 'T1-OLD'],
+    ['review', 'r3', 'T1-OLD'],
+    ['review', 'dispute', 'T1-OLD', 'F1', '--note', 'the finding does not hold'],
+    ['review', 'accept', 'T1-OLD', 'F1'],
+  ];
+  for (const args of commands) {
+    const { fx, older, newer, cli } = twoGoals();
+    try {
+      const r = cli(...args);
+      assert.ok(!r.stderr.includes(newer.id), `${args.join(' ')} never names the newer goal: ${r.stderr}`);
+      assert.ok(fx.store.getCardRun(older.id, 'T1-OLD'), `${args.join(' ')} reads the run of the goal that projects the card`);
+      assert.equal(fx.store.getCardRun(newer.id, 'T1-OLD'), undefined, `${args.join(' ')} creates no run in the newer goal`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
 test('T0-CARD-GOAL-RESOLVE acceptance 3: a card no goal projects is refused naming it, and no run is created in any goal [R2]', () => {
   const { fx, older, newer, cli } = twoGoals();
   try {
