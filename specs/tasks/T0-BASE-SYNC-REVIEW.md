@@ -1,7 +1,7 @@
 ---
 id: T0-BASE-SYNC-REVIEW
 title: A candidate made by resolving a base-sync conflict after both R3 decisions are used gets one more R3 decision by a configured base-sync reviewer (Codex at medium effort in this repository) instead of a STOP, so the new solution is reviewed rather than carried or ruled through
-status: todo
+status: merged
 branch: T0-BASE-SYNC-REVIEW
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-REVIEW
 allow_paths:
