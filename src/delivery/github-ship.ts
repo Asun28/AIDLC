@@ -66,11 +66,10 @@ function secondOf(iso: string | null | undefined): number | undefined {
  * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS-2), bounded by the job record and never by
  * a group title of the log: the first step whose conclusion is `failure` gives the window from the start of its
  * `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line
- * before it); the step starts at its own header in its first second: the one line reading `##[group]<name>` for a step
- * named after its command (`Run ...`), the (k+1)-th `##[group]Run ` line when exactly k+1 are there for a step with a
- * name of its own (k counting the earlier steps after step 1 that started in that second), the window start for step 1
- * (`Set up job`, which prints none); it ends before the last `##[error]Process completed with exit code N.` line in the
- * window, or at the window end. The lines lose the byte order mark, the timestamps and the colour codes, every other
+ * before it); the step starts at its own header, the one line in its first second that reads `##[group]<step name>`,
+ * which only a step named after its command (`Run <command>`) prints, or at the window start for step 1 (`Set up job`,
+ * which prints none); it ends before the last `##[error]Process completed with exit code N.` line in the window, or at
+ * the window end. The lines lose the byte order mark, the timestamps and the colour codes, every other
  * control character (tab, C1 and the Unicode line and paragraph separators included) becomes a space, and the last 60
  * non-empty ones are capped at 240 characters and then encoded, so no log line can carry a sentinel. Undefined when the
  * record names no failed step with a start time, or when the start is not placed that way: a start that whole-second
@@ -92,15 +91,8 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
     })
     .filter((l) => l.time >= start && (end === undefined || l.time < end + 1000));
   const headers = window.flatMap((l, i) => (l.time < start + 1000 && l.text.startsWith('##[group]Run ') ? [i] : []));
-  let from: number | undefined;
-  if (failed.number === 1) from = 0;
-  else if (failed.name?.startsWith('Run ')) {
-    const own = headers.filter((i) => window[i]!.text.trimEnd() === `##[group]${failed.name!.trimEnd()}`);
-    from = own.length === 1 ? own[0] : undefined;
-  } else {
-    const shared = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
-    from = headers.length === shared + 1 ? headers[shared] : undefined;
-  }
+  const own = headers.filter((i) => window[i]!.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}`);
+  const from = failed.number === 1 ? 0 : own.length === 1 ? own[0] : undefined;
   if (from === undefined) return undefined;
   const exit = window.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
   return window
