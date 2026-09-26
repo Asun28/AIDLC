@@ -1,7 +1,7 @@
 ---
 id: T0-R2-PASS-NOTES
 title: Every review prompt asks that a pass with notes list each note once, in the top-level reasons, and that the verdict line be checked as one complete JSON document before it is sent (issue #82), with the reader unchanged
-status: todo
+status: merged
 branch: T0-R2-PASS-NOTES
 worktree: D:\wt\AIDLC\T0-R2-PASS-NOTES
 allow_paths:
