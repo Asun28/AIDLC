@@ -136,4 +136,21 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
     assert.equal(seen[1]!.env?.['GH_TOKEN'], '');
     assert.equal(seen[1]!.env?.['GITHUB_TOKEN'], '');
   });
+
+  it('T0-CI-RED-LOGS acceptance 2: jobLog reads one Actions job log through the jobs API and returns nothing when the command fails', () => {
+    const asked: string[][] = [];
+    const probe = new GhProbe(
+      scriptedRunner({
+        'gh api repos/Asun28/repo/actions/jobs/77/logs': (args) => {
+          asked.push(args);
+          return { stdout: '2026-09-26T04:12:10.9854830Z line\n' };
+        },
+        'gh api repos/Asun28/repo/actions/jobs/78/logs': { exitCode: 1, stdout: 'partial', stderr: 'HTTP 410: Gone' },
+      }),
+    );
+    assert.equal(probe.jobLog(REPO, '77'), '2026-09-26T04:12:10.9854830Z line\n');
+    assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77/logs']]);
+    assert.equal(probe.jobLog(REPO, '78'), undefined, 'a refused log is no log, whatever its stdout');
+    assert.equal(probe.jobLog(REPO, '79'), undefined, 'a command that cannot run is no log');
+  });
 });
