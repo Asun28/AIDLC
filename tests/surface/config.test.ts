@@ -217,3 +217,32 @@ describe('preReview.answerMarker (T0-R2-ANSWER-MARKER)', () => {
     assert.equal('answerMarker' in ProjectConfig.parse({ formalReview: { command: ['r3'], answerMarker: '=== answer ===' } }).formalReview, false, 'the formal review keeps no marker');
   });
 });
+
+describe('formalReview.baseSync (T0-BASE-SYNC-REVIEW acceptance 5)', () => {
+  const read = (file: string) => JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', file), 'utf8')) as { formalReview: Record<string, unknown> };
+  test('a base-sync reviewer with only command and reviewer is accepted, defaulted like formalReview and its effort defaults to medium [R1]', () => {
+    const c = ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'p', baseSync: { command: ['cx', '{effort}'], reviewer: 'codex' } } });
+    const bs = (c.formalReview as { baseSync?: { command: string[]; reviewer: string; timeoutMs: number; maxDiffBytes: number; effort?: { default: string } } }).baseSync;
+    assert.deepEqual(bs?.command, ['cx', '{effort}']);
+    assert.equal(bs?.reviewer, 'codex');
+    assert.equal(bs?.timeoutMs, 20 * 60 * 1000);
+    assert.equal(bs?.maxDiffBytes, 300_000);
+    assert.equal(bs?.effort?.default, 'medium');
+    assert.equal((ProjectConfig.parse({ formalReview: { command: ['primary'] } }).formalReview as { baseSync?: unknown }).baseSync, undefined);
+  });
+  test('an empty argument, a blank reviewer and a reviewer named like the primary or the fallback in any spelling are refused at formalReview.baseSync [R1]', () => {
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: [], reviewer: 'codex' } } }), issueAt('formalReview.baseSync.command'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: ['cx', ''], reviewer: 'codex' } } }), issueAt('formalReview.baseSync.command'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: ['cx'], reviewer: '  ' } } }), issueAt('formalReview.baseSync.reviewer'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'Opus', baseSync: { command: ['cx'], reviewer: ' opus ' } } }), issueAt('formalReview.baseSync.reviewer'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'p', fallback: { command: ['b'], reviewer: 'Backup' }, baseSync: { command: ['cx'], reviewer: 'BACKUP' } } }), issueAt('formalReview.baseSync.reviewer'));
+  });
+  test('aidlc.config.json names Codex gpt-6-astra at {effort} with effort default medium as the base-sync reviewer; the template has none [R1]', () => {
+    const repo = ProjectConfig.parse(read('aidlc.config.json')).formalReview as { baseSync?: { command: string[]; reviewer: string; effort?: { default: string; high?: unknown } } };
+    assert.deepEqual(repo.baseSync?.command, ['codex', 'exec', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort={effort}', '--sandbox', 'read-only', '--output-schema', '{schema}']);
+    assert.equal(repo.baseSync?.reviewer, 'codex');
+    assert.equal(repo.baseSync?.effort?.default, 'medium');
+    assert.equal(repo.baseSync?.effort?.high, undefined, 'medium for every base-sync candidate');
+    assert.equal(read('templates/aidlc.config.json').formalReview['baseSync'], undefined);
+  });
+});
