@@ -556,6 +556,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     dirs.push(f.root);
     for (const [label, j] of [
       ['composite started in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 5, lines: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
+      ['composite completed in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
       ['a step with a name of its own', job([{ ...CHECK_STEP, title: 'check' }])],
       ['a step named Run diagnostics printing that group', job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }])],
     ] as const) {
