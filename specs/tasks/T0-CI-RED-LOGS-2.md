@@ -1,7 +1,7 @@
 ---
 id: T0-CI-RED-LOGS-2
 title: The GitHub ship path puts the failed step of each red Actions job log on its CI gate output, the step bounded by the job record rather than a log group title, so a red CI run is classified (a code defect is a counted repair, a transient failure takes its rerun) instead of stopping as unknown on check names alone
-status: todo
+status: merged
 branch: T0-CI-RED-LOGS-2
 worktree: D:\wt\AIDLC\T0-CI-RED-LOGS-2
 allow_paths:
