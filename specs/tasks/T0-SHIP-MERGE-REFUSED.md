@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-MERGE-REFUSED
 title: A merge GitHub refuses because the base moved after the ship's base sync goes through the base sync again, a CHANGELOG merge or a merge-conflict repair on a new candidate, instead of an unclassified tool stop
-status: todo
+status: merged
 branch: T0-SHIP-MERGE-REFUSED
 worktree: D:\wt\AIDLC\T0-SHIP-MERGE-REFUSED
 allow_paths:
