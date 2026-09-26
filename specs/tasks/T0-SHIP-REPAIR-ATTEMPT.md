@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-REPAIR-ATTEMPT
 title: A ship that fails on the candidate's own code (a CI code defect, dod-failed, verify-failed, scope-blocked, budget-over) counts as a failed attempt and reopens the effort episode, so the repair can be recorded instead of card next asking for an attempt that card attempt refuses
-status: todo
+status: merged
 branch: T0-SHIP-REPAIR-ATTEMPT
 worktree: D:\wt\AIDLC\T0-SHIP-REPAIR-ATTEMPT
 allow_paths:
