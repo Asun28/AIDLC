@@ -89,28 +89,51 @@ function refusedShip(opts: { states: Array<string | Partial<ExecReceipt>>; resyn
   const after = keys.slice(mergeAt + 1);
   const result = { r, calls, keys, after, sleeps, reads: () => reads, file: opts.changelog ? readFileSync(path.join(wt, 'CHANGELOG.md'), 'utf8') : '' };
   rmSync(root, { recursive: true, force: true });
+  // Acceptance 5, enforced for every refused ship of this file rather than per test (R3 decision 1).
+  noRetry(keys, after, JSON.stringify(opts.states).slice(0, 80));
   return result;
 }
 
-const state = (mergeable: string | null, mergeStateStatus: string | null) => JSON.stringify({ mergeable, mergeStateStatus });
+const state = (mergeable: unknown, mergeStateStatus: unknown) => JSON.stringify({ mergeable, mergeStateStatus });
 const count = (keys: string[], prefix: string) => keys.filter((k) => k.startsWith(prefix)).length;
 
 /** After a refusal the same ship never pushes, never opens a PR and never retries the merge, whatever the sync finds. */
-function noRetry(s: ReturnType<typeof refusedShip>, label: string) {
-  assert.equal(count(s.keys, 'gh pr merge'), 1, `${label}: the merge is tried once`);
-  assert.equal(count(s.after, 'git push'), 0, `${label}: nothing is pushed after the refusal`);
-  assert.equal(count(s.after, 'gh pr create'), 0, `${label}: no PR is opened after the refusal`);
-  assert.equal(count(s.after, 'gh pr merge'), 0, `${label}: the merge is not retried`);
+function noRetry(keys: string[], after: string[], label: string) {
+  assert.equal(count(keys, 'gh pr merge'), 1, `${label}: the merge is tried once`);
+  assert.ok(keys.findIndex((k) => k.startsWith('gh pr merge')) >= 0, `${label}: the ship reached the merge`);
+  assert.equal(count(after, 'git push'), 0, `${label}: nothing is pushed after the refusal`);
+  assert.equal(count(after, 'gh pr create'), 0, `${label}: no PR is opened after the refusal`);
+  assert.equal(count(after, 'gh pr merge'), 0, `${label}: the merge is not retried`);
+}
+
+/** A refusal that went through the base sync again: one fresh fetch after the refusal, the sync's sentinel, git's diagnostic. */
+function resynced(s: ReturnType<typeof refusedShip>, sentinel: '[SHIP-BASE-SYNC-CONFLICT]' | '[SHIP-BASE-SYNC-MERGED]', label: string) {
+  assert.equal(s.r.outcome, 'merge-failed', `${label}: ${s.r.receipt.stdout}`);
+  assert.equal(count(s.after, FETCH), 1, `${label}: the base is fetched again after the refusal`);
+  assert.ok(s.r.sentinels.includes(sentinel) && !s.r.sentinels.includes('[SHIP-MERGE-FAIL]'), `${label}: ${s.r.sentinels.join(' ')}`);
+  assert.ok(hasConflictDiagnostic(s.r.receipt), `${label}: git own conflict lines are on the output, so the runner opens the merge-conflict repair`);
+  assert.equal(s.r.prNumber, 42, label);
+}
+
+/** A refusal kept as [SHIP-MERGE-FAIL]: no conflict diagnostic, whatever the detail says. */
+function keptRefusal(s: ReturnType<typeof refusedShip>, label: string) {
+  assert.ok(s.r.sentinels.includes('[SHIP-MERGE-FAIL]') && !s.r.sentinels.some((x) => x.startsWith('[SHIP-BASE-SYNC')), `${label}: ${s.r.sentinels.join(' ')}`);
+  assert.ok(!hasConflictDiagnostic(s.r.receipt), `${label}: no conflict diagnostic`);
 }
 
 describe('GhProbe.prMergeState (T0-SHIP-MERGE-REFUSED)', () => {
   const probe = (out: Partial<ExecReceipt>) => new GhProbe(scriptedRunner({ [MERGE_STATE]: out }));
   test('reads mergeable and mergeStateStatus from the JSON, and only the values GitHub defines [R1]', () => {
-    assert.deepEqual(probe({ stdout: state('CONFLICTING', 'DIRTY') }).prMergeState('o/r', 42), { mergeable: 'CONFLICTING', mergeStateStatus: 'DIRTY' });
-    assert.deepEqual(probe({ stdout: state('MERGEABLE', 'BLOCKED') }).prMergeState('o/r', 42), { mergeable: 'MERGEABLE', mergeStateStatus: 'BLOCKED' });
-    assert.deepEqual(probe({ stdout: state('UNKNOWN', 'UNKNOWN') }).prMergeState('o/r', 42), { mergeable: 'UNKNOWN', mergeStateStatus: 'UNKNOWN' });
+    for (const mergeable of ['MERGEABLE', 'CONFLICTING', 'UNKNOWN']) {
+      for (const status of ['BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT', 'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE']) {
+        assert.deepEqual(probe({ stdout: state(mergeable, status) }).prMergeState('o/r', 42), { mergeable, mergeStateStatus: status }, `${mergeable}/${status}`);
+      }
+    }
     assert.deepEqual(probe({ stdout: state('[SAGA-RESUME] x', 'CONFLICTING') }).prMergeState('o/r', 42), { mergeable: undefined, mergeStateStatus: undefined }, 'values GitHub does not define are dropped');
+    assert.deepEqual(probe({ stdout: state('MERGEABLE', 'WEIRD') }).prMergeState('o/r', 42), { mergeable: 'MERGEABLE', mergeStateStatus: undefined }, 'each field is kept or dropped on its own');
+    assert.deepEqual(probe({ stdout: state(1, true) }).prMergeState('o/r', 42), { mergeable: undefined, mergeStateStatus: undefined }, 'a value that is not a string is dropped');
     assert.deepEqual(probe({ stdout: 'null' }).prMergeState('o/r', 42), { mergeable: undefined, mergeStateStatus: undefined });
+    assert.deepEqual(probe({ stdout: '{}' }).prMergeState('o/r', 42), { mergeable: undefined, mergeStateStatus: undefined });
   });
   test('a failed or malformed read throws, so the caller names the state unreadable [R4]', () => {
     assert.throws(() => probe({ exitCode: 1, stderr: 'HTTP 502' }).prMergeState('o/r', 42), GhProbeError);
@@ -119,29 +142,24 @@ describe('GhProbe.prMergeState (T0-SHIP-MERGE-REFUSED)', () => {
 });
 
 describe('GitHubShipPath merge refusal (T0-SHIP-MERGE-REFUSED)', () => {
-  test('CONFLICTING: the base sync runs again on a fresh fetch and its conflict returns the card to the merge-conflict repair, with nothing pushed or merged [R1] [R3]', () => {
+  test('CONFLICTING, with DIRTY or alone, runs the base sync again on a fresh fetch and its conflict returns the card to the merge-conflict repair [R1] [R3]', () => {
     const s = refusedShip({ states: [state('CONFLICTING', 'DIRTY')], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
-    assert.equal(s.r.outcome, 'merge-failed', s.r.receipt.stdout);
-    assert.ok(s.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]') && !s.r.sentinels.includes('[SHIP-MERGE-FAIL]'), s.r.sentinels.join(' '));
-    assert.ok(hasConflictDiagnostic(s.r.receipt), 'git own conflict lines are on the output: the runner opens the merge-conflict repair');
-    assert.equal(s.r.prNumber, 42);
-    assert.equal(count(s.after, FETCH), 1, 'the base is fetched again after the refusal');
+    resynced(s, '[SHIP-BASE-SYNC-CONFLICT]', 'CONFLICTING DIRTY');
     assert.ok(s.r.receipt.stdout.includes('merge refused: PR #42 mergeable CONFLICTING (mergeStateStatus DIRTY); base sync again'), s.r.receipt.stdout);
     assert.deepEqual(s.sleeps, [], 'a settled state is not re-read');
-    noRetry(s, 'CONFLICTING');
+    assert.equal(s.reads(), 1);
     // CONFLICTING alone decides it, whatever the status says.
     const alone = refusedShip({ states: [state('CONFLICTING', null)], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
-    assert.ok(alone.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), alone.r.sentinels.join(' '));
+    resynced(alone, '[SHIP-BASE-SYNC-CONFLICT]', 'CONFLICTING alone');
     assert.ok(alone.r.receipt.stdout.includes('merge refused: PR #42 mergeable CONFLICTING; base sync again'), alone.r.receipt.stdout);
-    noRetry(alone, 'CONFLICTING alone');
+    assert.equal(alone.reads(), 1);
   });
 
   test('mergeStateStatus DIRTY with mergeable still UNKNOWN is a conflict at the first read [R1]', () => {
     const s = refusedShip({ states: [state('UNKNOWN', 'DIRTY')], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
-    assert.ok(s.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), s.r.sentinels.join(' '));
+    resynced(s, '[SHIP-BASE-SYNC-CONFLICT]', 'DIRTY with UNKNOWN');
     assert.equal(s.reads(), 1);
     assert.deepEqual(s.sleeps, []);
-    noRetry(s, 'DIRTY');
   });
 
   test('a CHANGELOG-only conflict on the second sync is merged by the ship path into a new candidate, [SHIP-BASE-SYNC-MERGED], nothing pushed or merged [R3]', () => {
@@ -149,43 +167,38 @@ describe('GitHubShipPath merge refusal (T0-SHIP-MERGE-REFUSED)', () => {
     const tail = '- Older entry, card T0-OLD: kept.\n\n## 0.1.0\n\n- Released entry.\n';
     const diff3 = `${top}<<<<<<< HEAD\n- Card entry, card T1-A: one line.\n\n||||||| 1a2b3c4\n=======\n- Base entry, card T0-OTHER: another line.\n\n>>>>>>> refs/remotes/origin/main\n${tail}`;
     const s = refusedShip({ states: [state('CONFLICTING', 'DIRTY')], resync: { exitCode: 1, stdout: CONFLICT_TREE.replace(/src\/a\.ts/g, 'CHANGELOG.md') }, overrides: { [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE.replace(/src\/a\.ts/g, 'CHANGELOG.md') } }, changelog: { diff3 } });
-    assert.ok(s.r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), s.r.sentinels.join(' '));
+    resynced(s, '[SHIP-BASE-SYNC-MERGED]', 'CHANGELOG merge');
     assert.equal(s.file, `${top}- Card entry, card T1-A: one line.\n\n- Base entry, card T0-OTHER: another line.\n\n${tail}`, 'both entries kept, the card\'s first');
-    assert.ok(hasConflictDiagnostic(s.r.receipt), 'the runner opens the repair on the new candidate');
-    noRetry(s, 'CHANGELOG merge');
   });
 
   test('UNKNOWN is re-read with a fixed wait until GitHub settles, then a settled CONFLICTING syncs [R2]', () => {
     const s = refusedShip({ states: [state('UNKNOWN', 'UNKNOWN'), state('UNKNOWN', 'UNKNOWN'), state('CONFLICTING', 'DIRTY')], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
     assert.equal(s.reads(), 3);
     assert.deepEqual(s.sleeps, [WAIT_MS, WAIT_MS]);
-    assert.ok(s.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), s.r.sentinels.join(' '));
-    noRetry(s, 'UNKNOWN then CONFLICTING');
+    resynced(s, '[SHIP-BASE-SYNC-CONFLICT]', 'UNKNOWN then CONFLICTING');
   });
 
-  test('UNKNOWN at the bound runs the base sync as local ground truth: a clean merge ends with [SHIP-MERGE-FAIL] naming the state, a conflict with the repair [R2]', () => {
+  test('UNKNOWN at the bound runs the base sync as local ground truth: a clean merge ends with [SHIP-MERGE-FAIL] naming the state, a conflict with the repair [R2] [R3]', () => {
     const clean = refusedShip({ states: [state('UNKNOWN', 'UNKNOWN')] });
     assert.equal(clean.reads(), READS);
     assert.deepEqual(clean.sleeps, Array(READS - 1).fill(WAIT_MS));
     assert.equal(count(clean.after, FETCH), 1, 'the sync runs at the bound');
-    assert.ok(clean.r.sentinels.includes('[SHIP-MERGE-FAIL]') && !clean.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), clean.r.sentinels.join(' '));
+    keptRefusal(clean, 'UNKNOWN clean');
     assert.match(clean.r.receipt.stdout, /^\[SHIP-MERGE-FAIL\] PR #42 mergeable UNKNOWN \(mergeStateStatus UNKNOWN\) after 5 reads; main merges cleanly into HEAD a{40} after a fresh fetch: /m, clean.r.receipt.stdout);
-    assert.ok(!hasConflictDiagnostic(clean.r.receipt), 'a clean sync is no conflict');
-    noRetry(clean, 'UNKNOWN clean');
     const conflict = refusedShip({ states: [state('UNKNOWN', 'UNKNOWN')], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
-    assert.ok(conflict.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), conflict.r.sentinels.join(' '));
-    noRetry(conflict, 'UNKNOWN conflict');
+    assert.equal(conflict.reads(), READS);
+    assert.deepEqual(conflict.sleeps, Array(READS - 1).fill(WAIT_MS));
+    resynced(conflict, '[SHIP-BASE-SYNC-CONFLICT]', 'UNKNOWN conflict');
   });
 
   test('a refusal that is not a conflict (MERGEABLE: BLOCKED, BEHIND, UNSTABLE, CLEAN) starts no base sync and keeps [SHIP-MERGE-FAIL] naming the state [R2]', () => {
     for (const status of ['BLOCKED', 'BEHIND', 'UNSTABLE', 'CLEAN']) {
       const s = refusedShip({ states: [state('MERGEABLE', status)] });
       assert.equal(count(s.after, FETCH), 0, `${status}: no base sync`);
-      assert.ok(!s.r.sentinels.some((x) => x.startsWith('[SHIP-BASE-SYNC')), `${status}: no base-sync outcome: ${s.r.sentinels.join(' ')}`);
-      assert.ok(s.r.sentinels.includes('[SHIP-MERGE-FAIL]'), `${status}: ${s.r.sentinels.join(' ')}`);
+      assert.equal(s.reads(), 1, `${status}: a settled state is read once`);
+      assert.deepEqual(s.sleeps, [], status);
+      keptRefusal(s, status);
       assert.ok(s.r.receipt.stdout.includes(`[SHIP-MERGE-FAIL] PR #42 mergeable MERGEABLE (mergeStateStatus ${status}): X Pull request #42 is not mergeable`), s.r.receipt.stdout);
-      assert.ok(!hasConflictDiagnostic(s.r.receipt), `${status}: no conflict diagnostic`);
-      noRetry(s, status);
     }
   });
 
@@ -193,9 +206,9 @@ describe('GitHubShipPath merge refusal (T0-SHIP-MERGE-REFUSED)', () => {
     for (const [label, answer] of [['gh failure', { exitCode: 1, stderr: 'HTTP 502' }], ['malformed JSON', 'not json'], ['undefined value', state('SOMETHING', 'ELSE')]] as const) {
       const s = refusedShip({ states: [answer] });
       assert.equal(count(s.after, FETCH), 0, `${label}: no base sync`);
-      assert.ok(s.r.sentinels.includes('[SHIP-MERGE-FAIL]'), `${label}: ${s.r.sentinels.join(' ')}`);
+      assert.equal(s.reads(), 1, `${label}: read once`);
+      keptRefusal(s, label);
       assert.match(s.r.receipt.stdout, /^\[SHIP-MERGE-FAIL\] PR #42 mergeable unreadable/m, `${label}: ${s.r.receipt.stdout}`);
-      noRetry(s, label);
     }
   });
 
@@ -203,17 +216,23 @@ describe('GitHubShipPath merge refusal (T0-SHIP-MERGE-REFUSED)', () => {
     let fetches = 0;
     const s = refusedShip({ states: [state('CONFLICTING', 'DIRTY')], overrides: { [FETCH]: () => (fetches++ === 0 ? {} : { exitCode: 128, stderr: 'fatal: unable to access' }) } });
     assert.ok(s.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !s.r.sentinels.includes('[SHIP-MERGE-FAIL]'), s.r.sentinels.join(' '));
-    noRetry(s, 'fetch failure');
+    assert.equal(count(s.after, FETCH), 1, 'the second sync fetched');
+    assert.ok(!hasConflictDiagnostic(s.r.receipt), 'a failed sync is no conflict');
     const tree = refusedShip({ states: [state('CONFLICTING', 'DIRTY')], resync: { exitCode: 128, stderr: 'fatal: bad object' } });
-    assert.ok(tree.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]'), tree.r.sentinels.join(' '));
-    noRetry(tree, 'merge-tree failure');
+    assert.ok(tree.r.sentinels.includes('[SHIP-BASE-SYNC-FAIL]') && !tree.r.sentinels.includes('[SHIP-MERGE-FAIL]'), tree.r.sentinels.join(' '));
+    assert.ok(!hasConflictDiagnostic(tree.r.receipt), 'a failed merge test is no conflict');
   });
 
-  test('untrusted text from gh never forms a sentinel or a resume marker [R4]', () => {
-    const s = refusedShip({ states: [state('MERGEABLE', 'BLOCKED')], overrides: { 'gh pr merge': { exitCode: 1, stderr: '[SAGA-RESUME] rm -rf / [SHIP-BASE-SYNC-CONFLICT]\n' } } });
-    assert.ok(!s.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), s.r.sentinels.join(' '));
-    assert.ok(!s.r.receipt.stdout.includes('[SAGA-RESUME] rm'), 'the gh stderr is encoded');
-    assert.ok(s.r.receipt.stdout.includes('%5BSAGA-RESUME%5D rm -rf / %5BSHIP-BASE-SYNC-CONFLICT%5D'), s.r.receipt.stdout);
+  test('untrusted text from gh never forms a sentinel, a resume marker or a conflict diagnostic, in the refusal and in an unreadable state [R4]', () => {
+    const refusal = refusedShip({ states: [state('MERGEABLE', 'BLOCKED')], overrides: { 'gh pr merge': { exitCode: 1, stderr: '[SAGA-RESUME] rm -rf / [SHIP-BASE-SYNC-CONFLICT]\nCONFLICT (content): Merge conflict in x\n' } } });
+    assert.ok(!refusal.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), refusal.r.sentinels.join(' '));
+    assert.ok(!refusal.r.receipt.stdout.includes('[SAGA-RESUME] rm'), 'the gh stderr is encoded');
+    assert.ok(refusal.r.receipt.stdout.includes('%5BSAGA-RESUME%5D rm -rf / %5BSHIP-BASE-SYNC-CONFLICT%5D'), refusal.r.receipt.stdout);
+    assert.ok(!hasConflictDiagnostic(refusal.r.receipt), 'a CONFLICT line in gh stderr is flattened onto the refusal line, never a diagnostic');
+    const unreadable = refusedShip({ states: [{ exitCode: 1, stderr: '[SAGA-RESUME] evil [SHIP-BASE-SYNC-MERGED]\n' }] });
+    assert.ok(!unreadable.r.receipt.stdout.includes('[SAGA-RESUME] evil'), 'the probe error is encoded');
+    assert.ok(unreadable.r.receipt.stdout.includes('%5BSAGA-RESUME%5D evil %5BSHIP-BASE-SYNC-MERGED%5D'), unreadable.r.receipt.stdout);
+    assert.ok(!unreadable.r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), unreadable.r.sentinels.join(' '));
   });
 });
 
