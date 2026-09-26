@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- R2 reviewer swap, temporary (issue #92): while the DeepSeek account answers HTTP 402 Insufficient Balance, this repository's R2 runs Claude Sonnet 5 (`claude -p --model claude-sonnet-5 --effort high` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5`) with `preReview.answerMarker` empty, since `claude -p` prints no marker line. DeepSeek returns as the primary, with Sonnet as a configured fallback, in the card that resolves #92; the installed template is unchanged.
+
 - R2 pass notes, card T0-R2-PASS-NOTES (issue #82): every review prompt says that a pass that carries notes lists each note once, in the top-level `reasons`, with the `reasons` of both axes empty, and asks the reviewer to check that the verdict line is one complete JSON document before sending it; the `deepseek` command has no JSON output mode, and the reader still leaves no verdict for a document one brace short and never repairs it.
 
 - Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.

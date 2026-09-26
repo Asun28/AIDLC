@@ -230,9 +230,14 @@ describe('preReview.answerMarker (T0-R2-ANSWER-MARKER)', () => {
     assert.equal(ProjectConfig.parse({ preReview: { answerMarker: '=== answer ===' } }).preReview.answerMarker, '=== answer ===');
     assert.throws(() => ProjectConfig.parse({ preReview: { answerMarker: 1 } }), (err: unknown) => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'preReview.answerMarker'));
   });
-  test('acceptance 3: this repository sets the DeepSeek answer line, the installed template leaves it empty, and the formal review has no such setting [R1] [R3]', () => {
-    assert.equal(configOf('aidlc.config.json').preReview['answerMarker'], '=== answer ===');
-    assert.equal(ProjectConfig.parse(configOf('aidlc.config.json')).preReview.answerMarker, '=== answer ===');
+  test('acceptance 3: this repository sets the DeepSeek answer line only while R2 runs the deepseek CLI (Claude Sonnet 5 until DeepSeek has balance, issue #92), the installed template leaves it empty, and the formal review has no such setting [R1] [R3]', () => {
+    const repo = configOf('aidlc.config.json').preReview as { command: string[]; reviewer: string; answerMarker: string };
+    // The marker is the line the deepseek CLI prints between its reasoning and its answer; `claude -p` prints none, so a
+    // marker kept with it would read every verdict as malformed.
+    assert.equal(repo.answerMarker, repo.command[0] === 'deepseek' ? '=== answer ===' : '');
+    assert.equal(ProjectConfig.parse(configOf('aidlc.config.json')).preReview.answerMarker, repo.answerMarker);
+    assert.deepEqual(repo.command, ['claude', '-p', '--model', 'claude-sonnet-5', '--effort', 'high', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence']);
+    assert.equal(repo.reviewer, 'claude-sonnet-5');
     assert.equal(configOf('templates/aidlc.config.json').preReview['answerMarker'], '');
     assert.equal(ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview.answerMarker, '');
     assert.equal('answerMarker' in ProjectConfig.parse({ formalReview: { command: ['r3'], answerMarker: '=== answer ===' } }).formalReview, false, 'the formal review keeps no marker');

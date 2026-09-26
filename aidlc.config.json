@@ -46,11 +46,19 @@
   },
   "preReview": {
     "command": [
-      "deepseek",
+      "claude",
+      "-p",
       "--model",
-      "deepseek-v4-pro"
+      "claude-sonnet-5",
+      "--effort",
+      "high",
+      "--tools",
+      "Read,Grep,Glob",
+      "--setting-sources=",
+      "--strict-mcp-config",
+      "--no-session-persistence"
     ],
-    "reviewer": "deepseek-v4-pro",
+    "reviewer": "claude-sonnet-5",
     "coverage": "shadow",
     "rounds": 3,
     "timeoutMs": 1200000,
@@ -61,7 +69,7 @@
       "edge-cases"
     ],
     "maxDiffBytes": 800000,
-    "answerMarker": "=== answer ==="
+    "answerMarker": ""
   },
   "gateRequired": true,
   "formalReview": {
