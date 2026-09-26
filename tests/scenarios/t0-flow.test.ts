@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import * as cli from '../../src/cli/main.ts';
-import { countedFailures } from '../../src/core/effort.ts';
+import { countedFailures, reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
 import { acceptFinding, detectQuotaHold, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
@@ -4226,6 +4226,25 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 2: dod-failed, verify-failed, scope-bloc
   }
 });
 
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 2: a repair already running when the ship fails is the attempt the build directive names, and its success is recorded', () => {
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-RUNNING', new DryRunShipPath(['dod-failed', 'merged']));
+    // A review-fix repair opened before the ship: the success reopened by a block and the next attempt running.
+    const opened = rewindCardRun(fx, { ...run1, effort: startAttempt(reopenAfterReviewBlock(run1.effort!, 'R3 block'), 'medium', fx.now()) });
+    let r = runner.next(fx.goal(goal.id), card, opened);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2, 'the running repair is the attempt, not a third one');
+    assert.deepEqual(r.run.effort?.attempts.map((a) => a.outcome), ['fail', 'running']);
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.deepEqual(run2.effort?.attempts.map((a) => a.outcome), ['fail', 'success'], 'the running repair is finished, no attempt is added');
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: repeated ship failures follow the ladder: three without progress stop, with progress the escalation is the fourth and last, and card next returns the stop, never a fifth build', () => {
   for (const progress of [false, true]) {
     const label = progress ? 'with progress' : 'without progress';
@@ -4258,6 +4277,63 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: repeated ship failures follow the lad
       fx.cleanup();
     }
   }
+});
+
+/** A ship that returns after the card deadline: the fixture clock moves while it runs. */
+class LateShipPath extends DryRunShipPath {
+  private readonly fx: ReturnType<typeof makeFixture>;
+  constructor(fx: ReturnType<typeof makeFixture>, outcomes: ShipOutcomeClass[]) {
+    super(outcomes);
+    this.fx = fx;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    this.fx.advance(4 * 3600_000);
+    return super.ship(req);
+  }
+}
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: a ship failure that returns after the card deadline admits no escalation: the third failure with progress stops the card', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-LATEFAIL', title: 'the ship returns after the deadline' });
+    const goal = goalForCards(fx, ['T1-LATEFAIL']);
+    const runner = fx.runner(new LateShipPath(fx, ['dod-failed']));
+    const card = fx.card('T1-LATEFAIL');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-LATEFAIL'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'type error in a.ts', progress: true });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause: 'assertion in a.test.ts', progress: true });
+    r = runner.next(fx.goal(goal.id), card, run);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', progress: true, dodReceipt: 'dod:3', redReceipt: 'red:1', candidateSha: 'sha-3' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', `no escalation past the deadline: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'card');
+      assert.match(r.directive.stop.detail, /exhausted/);
+    }
+    assert.equal(r.run.effort?.terminal, 'exhausted');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state which ship failures count and that they reopen the episode', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    "A ship that fails on the candidate's own code is a failed attempt (card T0-SHIP-REPAIR-ATTEMPT): a CI failure classified as a code defect and the ship outcomes `dod-failed`, `verify-failed`, `scope-blocked` and `budget-over` turn the success that bound the candidate into a counted failure whose cause names the outcome (`ship <outcome>: <detail>`, appended to the attempt's evidence and journaled as `ATTEMPT_FINISHED` with `refutedBy`), and reopen the effort episode.",
+    "The next step is the ladder's on that episode, the same one `aidlc card attempt` admits: the repair attempt, the single justified escalation, or STOP/card once the ladder is spent or the same cause repeats without progress.",
+    "The ship failures that are not the code's fault count nothing: a base-sync merge conflict and a rejected RED receipt reopen the episode without a counted failure, a review block reopens it without spending an attempt, and a transient CI failure takes its single rerun.",
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    "- Ship repair attempt, card T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate's own code (a CI failure classified as a code defect, `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over`) now counts the attempt that bound the candidate as a failed attempt, with the ship outcome as its cause, and reopens the effort episode, so `aidlc card attempt` records the repair; the card used to return to BUILD with the episode still succeeded, `aidlc card next` kept asking for the next attempt and `aidlc card attempt` refused it (`episode already succeeded; ship the candidate instead`) until the card deadline stopped the card.",
+    'Repeated failures follow the effort ladder to STOP/card; a base-sync conflict, a rejected RED receipt, a review block and a transient CI failure keep their rules (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
 
 test('T0-SHIP-REPAIR-ATTEMPT acceptance 4: every build directive a ship outcome returns admits the success recorded right after it; a base-sync conflict and a rejected RED receipt count no failure, and a review block spends no attempt', () => {

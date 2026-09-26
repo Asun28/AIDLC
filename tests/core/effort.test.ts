@@ -326,6 +326,10 @@ describe('T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate code', () =
     assert.equal(none.refuted, undefined);
     assert.deepEqual(none.episode.attempts, failed.attempts, 'nothing to refute: the attempts are unchanged');
     assert.deepEqual(none.action, { action: 'attempt', effort: 'medium', n: 2, escalated: false });
+    const afterBlock = fail(reopenAfterReviewBlock(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 'R2 block'), 2, 'type error', false);
+    const kept2 = afterShipFailure(afterBlock, 'ship dod-failed: x', JUSTIFIED);
+    assert.equal(kept2.refuted, undefined, 'a failure after the reopened success leaves that success alone');
+    assert.deepEqual(kept2.episode.attempts, afterBlock.attempts);
 
     // Three failures with progress, stopped as exhausted where the limits did not permit the escalation.
     const stopped: EffortEpisode = { ...fail(fail(fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'a', true), 2, 'b', true), 3, 'c', true), terminal: 'exhausted' };
@@ -339,6 +343,9 @@ describe('T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate code', () =
     assert.deepEqual(baseline.action, { action: 'attempt', effort: 'medium', n: 2, escalated: false });
     assert.deepEqual(baseline.episode.attempts.map((a) => [a.outcome, a.effort]), [['fail', 'medium'], ['running', 'medium']]);
     assert.equal(baseline.episode.escalationUsed, false);
+    let quota = runningAfterBlock(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 2);
+    quota = startAttempt(finishAttempt(quota, { finishedAt: addMs(T0, 150_000), outcome: 'not-counted', notCountedReason: 'quota' }), 'medium', addMs(T0, 200_000));
+    assert.deepEqual(afterShipFailure(quota, 'ship dod-failed: a', JUSTIFIED).action, { action: 'attempt', effort: 'medium', n: 3, escalated: false }, 'the running attempt keeps its own number');
 
     for (const progress of [true, false]) {
       const twice = fail(fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'a', true), 2, 'b', true);

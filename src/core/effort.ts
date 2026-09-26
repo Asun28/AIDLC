@@ -102,6 +102,37 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   return { action: 'attempt', effort: next, n, escalated: true };
 }
 
+export interface ShipFailureStep {
+  episode: EffortEpisode;
+  action: NextEffortAction;
+  /** The success the ship failed, as recorded now: a counted failure. */
+  refuted?: Attempt;
+}
+
+/**
+ * A ship that fails on the candidate's own code (a CI code defect, dod-failed, verify-failed, scope-blocked, budget-over)
+ * refutes the success that bound the candidate: that attempt becomes a counted failure with the ship's cause, its evidence
+ * kept and the cause appended, and a succeeded episode reopens. The next step is the ladder's, decided on the settled
+ * attempts: a repair already running (opened by a review fix) is that attempt and takes the effort the ladder admits, and a
+ * stop is persisted as the episode's terminal. An episode with no success to refute keeps its attempts and its terminal.
+ */
+export function afterShipFailure(episode: EffortEpisode, cause: string, justification?: EscalationJustification): ShipFailureStep {
+  const idx = episode.attempts.findLastIndex((a) => a.outcome === 'success' || a.outcome === 'fail');
+  const last = episode.attempts[idx];
+  const refuted: Attempt | undefined = last?.outcome === 'success' ? { ...last, outcome: 'fail', cause, evidence: last.evidence ? `${last.evidence}; ${cause}` : cause } : undefined;
+  const attempts = refuted ? episode.attempts.map((a, i) => (i === idx ? refuted : a)) : episode.attempts;
+  const reopened: EffortEpisode = { ...episode, attempts, terminal: episode.terminal === 'succeeded' ? undefined : episode.terminal };
+  const action = nextEffortAction({ ...reopened, attempts: attempts.filter((a) => a.outcome !== 'running') }, justification);
+  if (action.action === 'stop') return { episode: { ...reopened, terminal: action.reason }, action, refuted };
+  const running = attempts.find((a) => a.outcome === 'running');
+  if (!running || action.action !== 'attempt') return { episode: reopened, action, refuted };
+  return {
+    episode: { ...reopened, escalationUsed: reopened.escalationUsed || action.escalated, attempts: attempts.map((a) => (a === running ? { ...a, effort: action.effort } : a)) },
+    action: { ...action, n: running.n },
+    refuted,
+  };
+}
+
 export function startAttempt(episode: EffortEpisode, effort: EffortLevel, startedAt: string): EffortEpisode {
   const n = episode.attempts.length + 1;
   const escalated = effort !== episode.baseline;
