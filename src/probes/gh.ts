@@ -48,6 +48,13 @@ export interface JobStep {
   completed_at?: string | null;
 }
 
+function isJobStep(value: unknown): value is JobStep {
+  if (value === null || typeof value !== 'object') return false;
+  const s = value as Record<string, unknown>;
+  const time = (t: unknown) => t === undefined || t === null || typeof t === 'string';
+  return typeof s['number'] === 'number' && Number.isFinite(s['number']) && (s['conclusion'] === null || typeof s['conclusion'] === 'string') && time(s['started_at']) && time(s['completed_at']) && (s['name'] === undefined || typeof s['name'] === 'string');
+}
+
 export class GhProbe {
   readonly runner: SyncRunner;
 
@@ -124,13 +131,18 @@ export class GhProbe {
     return out;
   }
 
-  /** The steps of one GitHub Actions job (numbers, conclusions, times truncated to the second), or undefined when the record cannot be read. */
+  /**
+   * The steps of one GitHub Actions job (numbers, conclusions, times truncated to the second), or undefined when the record
+   * cannot be read: the command fails, the output is not JSON, or a step is not an object with a numeric number, a string
+   * or null conclusion, string or null times and a string name when it has one.
+   */
   jobRecord(repo: string, jobId: string, cwd?: string): { steps: JobStep[] } | undefined {
     const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}`], cwd);
     if (r.exitCode !== 0 || r.timedOut) return undefined;
     try {
       const steps = (JSON.parse(r.stdout) as { steps?: unknown }).steps;
-      return { steps: Array.isArray(steps) ? (steps as JobStep[]) : [] };
+      if (steps === undefined) return { steps: [] };
+      return Array.isArray(steps) && steps.every(isJobStep) ? { steps } : undefined;
     } catch {
       return undefined;
     }

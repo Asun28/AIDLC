@@ -177,6 +177,13 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
     assert.equal(probe.jobRecord(REPO, '80'), undefined, 'a read that timed out is no record');
     assert.equal(probe.jobRecord(REPO, '81'), undefined, 'output that is not JSON is no record');
     assert.deepEqual(probe.jobRecord(REPO, '82'), { steps: [] }, 'a record without steps has no steps');
+    const malformed = [[null], [{ ...steps[0], number: '1' }], [{ ...steps[0], conclusion: 1 }], [{ ...steps[0], started_at: 5 }], [{ ...steps[0], completed_at: 5 }], [{ ...steps[0], name: 7 }], 'steps'];
+    for (const bad of malformed) {
+      const one = new GhProbe(scriptedRunner({ 'gh api repos/Asun28/repo/actions/jobs/90': { stdout: JSON.stringify({ steps: bad }) } }));
+      assert.equal(one.jobRecord(REPO, '90'), undefined, `a malformed record is no record: ${JSON.stringify(bad)}`);
+    }
+    const nulls = new GhProbe(scriptedRunner({ 'gh api repos/Asun28/repo/actions/jobs/91': { stdout: JSON.stringify({ steps: [{ number: 2, conclusion: null, started_at: null, completed_at: null }] }) } }));
+    assert.deepEqual(nulls.jobRecord(REPO, '91'), { steps: [{ number: 2, conclusion: null, started_at: null, completed_at: null }] }, 'null times and conclusion, no name: a record');
     assert.equal(probe.jobRecord(REPO, '83'), undefined, 'a command that cannot run is no record');
   });
 });
