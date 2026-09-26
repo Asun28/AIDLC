@@ -58,7 +58,12 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   // --- resolve card / issue references -------------------------------------------------
   const cardMatch = text.match(CARD_ID_REGEX) ?? text.match(/\bT\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/);
   // Every distinct registered card id the text names (T0-GOAL-CARD-COUNT): more than one leaves the count to the projection.
-  const namedCards = [...new Set([...text.matchAll(/\bT\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g)].map((m) => m[0]))].filter((id) => (input.knownCardIds ?? []).includes(id));
+  // Without a known card list every card id token may be a card, so each one counts (T0-GOAL-CARD-COUNT-3).
+  const known = input.knownCardIds;
+  const tokens = [...new Set([...text.matchAll(/\bT\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*\b/g)].map((m) => m[0]))];
+  const namedCards = known ? tokens.filter((id) => known.includes(id)) : tokens;
+  // The request's card is the first registered id in text order, never an unknown id that comes before it.
+  const knownCard = known ? namedCards[0] : undefined;
   const bare = text.match(BARE_NUMBER);
   const issue = text.match(ISSUE_REF);
   let kind: RequestKind | undefined;
@@ -79,10 +84,10 @@ export function classifyRequest(input: RouterInput): RoutingResult {
       ambiguity = `bare number ${n} does not uniquely identify a card or issue`;
     }
   }
-  if (cardMatch && (input.knownCardIds ?? []).includes(cardMatch[0])) {
+  if (knownCard) {
     kind = CARD_TEXT_ONLY.test(text) ? 'card-amendment' : 'card-execute';
-    ref = cardMatch[0];
-    reasons.push(`resolved card ${cardMatch[0]}`);
+    ref = knownCard;
+    reasons.push(`resolved card ${knownCard}`);
   } else if (cardMatch && !kind) {
     kind = CARD_TEXT_ONLY.test(text) ? 'card-amendment' : 'card-execute';
     ref = cardMatch[0];
@@ -167,7 +172,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   if (namedCards.length > 1) {
     cardCount = 'unknown';
     modules.push('arc', 'card-loop');
-    reasons.push(`named cards: ${namedCards.join(', ')} (count left to the projection)`);
+    reasons.push(`named cards: ${namedCards.join(', ')} (${known ? '' : 'registry not consulted; '}count left to the projection)`);
   } else if (kind === 'card-amendment') {
     cardCount = 1;
     modules.push('card-loop');
