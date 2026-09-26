@@ -149,6 +149,10 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
         'gh api repos/Asun28/repo/actions/jobs/80/logs': { exitCode: 0, timedOut: true, stdout: 'cut short' },
       }),
     );
+    assert.equal(probe.jobLog(REPO, '77'), '2026-09-26T04:12:10.9854830Z line\n');
+    assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77/logs']]);
+    assert.equal(probe.jobLog(REPO, '78'), undefined, 'a refused log is no log, whatever its stdout');
+    assert.equal(probe.jobLog(REPO, '79'), undefined, 'a command that cannot run is no log');
     assert.equal(probe.jobLog(REPO, '80'), undefined, 'a read that timed out is no log');
   });
 
@@ -173,9 +177,6 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
     assert.equal(probe.jobRecord(REPO, '80'), undefined, 'a read that timed out is no record');
     assert.equal(probe.jobRecord(REPO, '81'), undefined, 'output that is not JSON is no record');
     assert.deepEqual(probe.jobRecord(REPO, '82'), { steps: [] }, 'a record without steps has no steps');
-    assert.equal(probe.jobLog(REPO, '77'), '2026-09-26T04:12:10.9854830Z line\n');
-    assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77/logs']]);
-    assert.equal(probe.jobLog(REPO, '78'), undefined, 'a refused log is no log, whatever its stdout');
-    assert.equal(probe.jobLog(REPO, '79'), undefined, 'a command that cannot run is no log');
+    assert.equal(probe.jobRecord(REPO, '83'), undefined, 'a command that cannot run is no record');
   });
 });

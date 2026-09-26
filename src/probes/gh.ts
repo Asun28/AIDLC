@@ -39,6 +39,15 @@ export interface CheckRun {
   details_url?: string | null;
 }
 
+/** One step of a GitHub Actions job record. */
+export interface JobStep {
+  number: number;
+  name?: string;
+  conclusion: string | null;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
 export class GhProbe {
   readonly runner: SyncRunner;
 
@@ -113,6 +122,18 @@ export class GhProbe {
       if (runs.length < 100) break;
     }
     return out;
+  }
+
+  /** The steps of one GitHub Actions job (numbers, conclusions, times truncated to the second), or undefined when the record cannot be read. */
+  jobRecord(repo: string, jobId: string, cwd?: string): { steps: JobStep[] } | undefined {
+    const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}`], cwd);
+    if (r.exitCode !== 0 || r.timedOut) return undefined;
+    try {
+      const steps = (JSON.parse(r.stdout) as { steps?: unknown }).steps;
+      return { steps: Array.isArray(steps) ? (steps as JobStep[]) : [] };
+    } catch {
+      return undefined;
+    }
   }
 
   /** The raw log of one GitHub Actions job, or undefined when it cannot be read (expired, missing, unfinished, no access). */

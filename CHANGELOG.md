@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- CI logs on a red gate, card T0-CI-RED-LOGS: a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci. A log that cannot be read still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).
+- CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci. A log that cannot be read, or a failed step the job record does not place, still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).
 
 - Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.
 

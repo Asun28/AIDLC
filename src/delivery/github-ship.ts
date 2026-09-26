@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
-import { GhProbe, type CheckRun } from '../probes/gh.ts';
+import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
@@ -56,21 +56,47 @@ const CI_LOG_JOBS = 3;
 const CI_LOG_LINES = 60;
 const CI_LOG_WIDTH = 240;
 
+/** The start of the second an ISO time falls in, in milliseconds; undefined when it is not a time. */
+function secondOf(iso: string | null | undefined): number | undefined {
+  const ms = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000) * 1000;
+}
+
 /**
- * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS): from the runner's last `##[group]Run `
- * step header before its last `##[error]Process completed with exit code N.` line up to that exit line (from the top of
- * the log when no header precedes it, the whole log without an exit line), with the byte order mark, the timestamps and
- * the colour codes removed and every other control character (tab and C1 included) replaced by a space, the last 60
- * non-empty lines, each capped at 240 characters and then encoded, so no log line can carry a sentinel.
+ * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS-2), bounded by the job record and never by
+ * a group title of the log: the first step whose conclusion is `failure` gives the window from the start of its
+ * `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line
+ * before it); the step starts at its own `##[group]Run ` header, the one after the headers of the earlier steps that
+ * started in the same second (step 1, `Set up job`, prints none), or at the window start when it printed none and no
+ * earlier step shares the second; it ends before the last `##[error]Process completed with exit code N.` line in the
+ * window, or at the window end. The lines lose the byte order mark, the timestamps and the colour codes, every other
+ * control character (tab and C1 included) becomes a space, and the last 60 non-empty ones are capped at 240 characters and
+ * then encoded, so no log line can carry a sentinel. Undefined when the record names no failed step with a start time,
+ * or the start cannot be placed.
  */
-export function failedStepLines(log: string): string[] {
-  const lines = log
+export function failedStepLines(log: string, steps: JobStep[]): string[] | undefined {
+  const failed = steps.find((s) => s.conclusion === 'failure' && secondOf(s.started_at) !== undefined);
+  if (!failed) return undefined;
+  const start = secondOf(failed.started_at)!;
+  const end = secondOf(failed.completed_at);
+  let time = Number.NEGATIVE_INFINITY;
+  const window = log
     .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
-    .map((l) => l.replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?/, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '));
-  const exit = lines.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l));
-  const start = Math.max(0, lines.slice(0, Math.max(0, exit)).findLastIndex((l) => l.startsWith('##[group]Run ')));
-  return (exit >= 0 ? lines.slice(start, exit) : lines)
+    .map((raw) => {
+      const stamp = raw.match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ?/);
+      if (stamp) time = Date.parse(stamp[1]!);
+      return { time, text: raw.slice(stamp?.[0].length ?? 0).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ') };
+    })
+    .filter((l) => l.time >= start && (end === undefined || l.time < end + 1000));
+  const shared = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
+  const headers = window.flatMap((l, i) => (l.time < start + 1000 && l.text.startsWith('##[group]Run ') ? [i] : []));
+  const from = headers.length > shared ? headers[shared]! : shared === 0 ? 0 : undefined;
+  if (from === undefined) return undefined;
+  const exit = window.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
+  return window
+    .slice(from, exit >= from ? exit : window.length)
+    .map((l) => l.text)
     .filter((l) => l.trim() !== '')
     .slice(-CI_LOG_LINES)
     .map((l) => encodeUntrusted(l.slice(0, CI_LOG_WIDTH)));
@@ -414,11 +440,12 @@ export class GitHubShipPath implements ShipPath {
   }
 
   /**
-   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS): for each red check run that is an Actions job of the
+   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS-2): for each red check run that is an Actions job of the
    * configured repository (app `github-actions`, a details URL naming this repository's run and job, the job id being the
    * check run's own), at most three in gate order, a header built from the run and job ids alone (so the first
-   * `runs/<id>` on the output is the job's run), then the failed step of its log, or `log unavailable` when the log cannot
-   * be read. Any other red check run gets no line and no log read.
+   * `runs/<id>` on the output is the job's run), then the failed step of its log as the job record bounds it; `log
+   * unavailable` when the record or the log cannot be read, `step unknown` when the record places no failed step. Neither
+   * note holds a word the CI classifier reads as evidence. Any other red check run gets no line and nothing read.
    */
   private ciLogLines(failed: CheckRun[], wt: string): string[] {
     const repository = this.options.repository.toLowerCase();
@@ -428,9 +455,12 @@ export class GitHubShipPath implements ShipPath {
       return [{ run: m[2]!, job: m[3]! }];
     });
     return jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job }) => {
-      const text = this.gh.jobLog(this.options.repository, job, wt);
       const header = `[CI-GATE-LOG] actions/runs/${run}/job/${job}`;
-      return text === undefined ? [`${header} log unavailable`] : [header, ...failedStepLines(text)];
+      const record = this.gh.jobRecord(this.options.repository, job, wt);
+      const text = this.gh.jobLog(this.options.repository, job, wt);
+      if (!record || text === undefined) return [`${header} log unavailable`];
+      const step = failedStepLines(text, record.steps);
+      return step ? [header, ...step] : [`${header} step unknown`];
     });
   }
 
