@@ -19,7 +19,16 @@ const GOAL_KINDS = ['done', 'stop', 'ask', 'checkpoint', 'wait'];
 describe('T0-UNATTENDED-RUNS', () => {
   it('docs/OPERATIONS.md carries the /goal condition and its three rules (acceptance 1)', () => {
     const ops = read('docs', 'OPERATIONS.md');
-    assert.ok(GOAL_PROMPT.includes(HANDS_OFF), 'the /goal condition keeps its hands off the directives that end the goal');
+    // T0-UNATTENDED-TEST-SCAN: the hands-off clause is proven against the docs, on every /goal prompt they show, never
+    // against the test's own constants, so a second prompt without it fails here.
+    assert.ok(ops.includes(HANDS_OFF), 'docs/OPERATIONS.md carries the hands-off clause');
+    const goalPrompts = (text: string) => text.split('\n').filter((line) => line.trimStart().startsWith('/goal '));
+    assert.ok(goalPrompts(ops).length > 0, 'docs/OPERATIONS.md shows a /goal prompt');
+    for (const file of [['docs', 'OPERATIONS.md'], ['README.md']]) {
+      for (const prompt of goalPrompts(read(...file))) {
+        assert.ok(prompt.includes(HANDS_OFF), `${file.join('/')} /goal prompt keeps its hands off the directives that end the goal: ${prompt}`);
+      }
+    }
     for (const sentence of [
       GOAL_PROMPT,
       'The goal ends on `wait` because a turn that only repeats `aidlc next` during a quota hold or a running CI job spends tokens and changes nothing; `ask`, `checkpoint` and `stop` need a person.',
@@ -56,7 +65,8 @@ describe('T0-UNATTENDED-RUNS', () => {
 
   it('every --dod-receipt example names an exit code and a pass count, and OPERATIONS.md says why (acceptance 4)', () => {
     for (const file of [['docs', 'OPERATIONS.md'], ['README.md']]) {
-      const receipts = [...read(...file).matchAll(/--dod-receipt "([^"]*)"/g)].map((m) => m[1]!);
+      // Both quote styles (T0-UNATTENDED-TEST-SCAN): a single-quoted example is checked like a double-quoted one.
+      const receipts = [...read(...file).matchAll(/--dod-receipt (?:"([^"]*)"|'([^']*)')/g)].map((m) => (m[1] ?? m[2])!);
       assert.ok(receipts.length > 0, `${file.join('/')} shows a --dod-receipt example`);
       for (const receipt of receipts) {
         assert.match(receipt, /\bexit \d+\b/, `${file.join('/')} receipt "${receipt}" names the exit code`);
@@ -80,5 +90,14 @@ describe('T0-UNATTENDED-RUNS', () => {
     ]) {
       assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
     }
+  });
+
+  it('CHANGELOG.md Unreleased carries the T0-UNATTENDED-TEST-SCAN entry [T0-UNATTENDED-TEST-SCAN R3]', () => {
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## Unreleased');
+    const end = changelog.indexOf('\n## ', start + 1);
+    const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
+    const sentence = '- Unattended-runs doc test, card T0-UNATTENDED-TEST-SCAN: the test proves the `/goal` hands-off clause against `docs/OPERATIONS.md` and on every `/goal` prompt that `docs/OPERATIONS.md` and `README.md` show, instead of comparing two of its own constants, and it checks single-quoted `--dod-receipt` examples as well as double-quoted ones (issue #62).';
+    assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
 });
