@@ -14,7 +14,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
-import { createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt } from '../core/effort.ts';
+import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt, type ShipFailureStep } from '../core/effort.ts';
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, quotaOutput, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
@@ -2288,8 +2288,26 @@ export class CardRunner {
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
     const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
-    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[]): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
+    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
     const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
+    // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
+    // counted failure whose cause names the outcome, the episode reopens, and the next step is the ladder's on the locked
+    // record (the repair attempt, the one justified escalation, or STOP/card), the same one `card attempt` admits.
+    let refutation: ShipFailureStep | undefined;
+    const refutePatch = (latest: CardRun, cause: string): Partial<CardRun> => {
+      refutation = latest.effort ? afterShipFailure(latest.effort, cause, { harderProblem: true, limitsPermit: checkAdmission(latest.deadline, now).phase === 'open' }) : undefined;
+      if (refutation?.action.action !== 'stop') return { state: 'BUILD', effort: refutation?.episode ?? latest.effort, dodReceipt: undefined, blockedReceipt: undefined };
+      const stop = makeStop('card', `${cause}; the effort ladder admits no repair attempt: ${refutation.action.reason}: ${refutation.action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
+      return { state: 'STOP', stop, effort: refutation.episode, dodReceipt: undefined, blockedReceipt: undefined };
+    };
+    const refuteDirective = (next: CardRun, narration: string): { run: CardRun; directive: CardDirective } => {
+      const step = refutation;
+      if (step?.refuted) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: step.refuted.n, outcome: 'fail', cause: step.refuted.cause, refutedBy: `ship ${result.outcome}` } });
+      if (next.state === 'STOP' && next.stop) return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } };
+      const effort = step?.action.action === 'attempt' ? step.action.effort : undefined;
+      const running = next.effort?.attempts.find((a) => a.outcome === 'running');
+      return { run: next, directive: buildDirective(next, `${narration} The failure counts as a failed attempt on the effort ladder.`, effort, undefined, running?.n) };
+    };
 
     switch (result.outcome) {
       case 'review-blocked': {
@@ -2351,13 +2369,13 @@ export class CardRunner {
           (latest) => {
             decided = rerunOn(latest.ci);
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
-            if (cls.class === 'code-defect') return { state: 'BUILD', dodReceipt: undefined, blockedReceipt: undefined };
+            if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
             if (snapshotAllowed) return { state: 'WAIT' };
             return { state: 'STOP', stop: makeStop('ci', decided.reason, 'diagnose the failure before any further rerun', { at: now, global: false }) };
           },
           (next) => {
             if (decided?.allowed) return { run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `Transient CI failure (${cls.evidence[0] ?? 'evidence'}): one same-origin rerun permitted and persisted; rerun the ship/CI for the same candidate and reconcile (aidlc card ci-reconcile ${card.id} --run ${runId}).` } };
-            if (cls.class === 'code-defect') return { run: next, directive: buildDirective(next, codeDefect) };
+            if (cls.class === 'code-defect') return refuteDirective(next, codeDefect);
             if (snapshotAllowed) return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'record-changed', pollSeconds: 0, narration: `The rerun allowance of this candidate was consumed while the ship result was applied (${decided?.reason ?? rerunOn(next.ci).reason}); run \`aidlc card next ${card.id}\` again.` } };
             const stop = next.stop ?? makeStop('ci', decided?.reason ?? rerunOn(next.ci).reason, 'diagnose the failure before any further rerun', { at: now, global: false });
             return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
@@ -2370,7 +2388,7 @@ export class CardRunner {
       case 'verify-failed':
       case 'scope-blocked':
       case 'budget-over': {
-        return buildWith(() => ({ dodReceipt: undefined, blockedReceipt: undefined }), `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.`);
+        return finish((latest) => refutePatch(latest, `ship ${result.outcome}: ${result.detail}`), (next) => refuteDirective(next, `${result.outcome}: ${result.detail}. Repair within scope (never weaken a test or widen allow_paths to pass a gate) and re-run the DoD.`));
       }
       case 'red-missing': {
         // The ship path rejected the RED receipt: not a code fault, so a succeeded episode is reopened rather than counted,
