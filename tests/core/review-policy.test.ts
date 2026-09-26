@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyVerdict, detectQuotaHold, findingMarker, parseVerdict, recordReviewOutcome, reviewRequestKey } from '../../src/core/review-policy.ts';
+import { detectQuotaHold } from '../../src/core/parse-guard.ts';
+import { classifyVerdict, findingMarker, parseVerdict, recordReviewOutcome, reviewRequestKey } from '../../src/core/review-policy.ts';
 // Namespace import for the finding bookkeeping (T1-REVIEW-FINDINGS): on the baseline the functions are absent and each
 // test fails at its first call, so the RED is the behaviour, not a link error that aborts the file.
 import * as policy from '../../src/core/review-policy.ts';

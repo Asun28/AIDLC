@@ -67,11 +67,11 @@ describe('prose (writing density)', () => {
 
 /**
  * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes, brackets,
- * backticks or emphasis marks, whitespace and a capital letter; a blank line; or a new list item. The dot of an ellipsis or of
- * e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends no sentence, and any other abbreviation before a lowercase word stays
- * inside it.
+ * backticks or emphasis marks, whitespace, any opening ones and a capital letter; a blank line; or a new list item. The dot
+ * of an ellipsis, of e.g., i.e., etc., vs. or cf. in either case, of Mr., Mrs., Ms. or Dr., or of an initialism such as U.S.
+ * ends no sentence, and any other abbreviation before a lowercase word stays inside it (issue #41).
  */
-const SENTENCE_BREAK = /(?:(?<!\.|\b(?:e\.g|i\.e|etc|vs|cf|Mrs?|Ms|Dr))\.|[!?])["'`)\]*_]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
+const SENTENCE_BREAK = /(?:(?<!\.|\b(?:[eE]\.g|[iI]\.e|[eE]tc|[vV]s|[cC]f|Mrs?|Ms|Dr|[A-Z]\.[A-Z]))\.|[!?])["'`)\]*_]*\s+(?=["'`(\[*_]*[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
 /** "subagent" in each spelling and spacing, singular or plural. */
 const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
 const SUBAGENT_TO_VERIFY = new RegExp(String.raw`${SUBAGENT}\s+to\s+verify`, 'i');

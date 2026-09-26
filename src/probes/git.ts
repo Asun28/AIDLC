@@ -9,6 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { nulList } from '../core/parse-guard.ts';
 import { runSync, type ExecReceipt, type SyncRunner } from './exec.ts';
 
 export interface WorktreeEntry {
@@ -151,7 +152,7 @@ export class GitProbe {
     const args = ['diff', '--name-only', '-z', `${baseOid}...HEAD`, '--no-renames'];
     const r = this.git(cwd, args);
     if (r.exitCode !== 0) throw new GitProbeError(args, r);
-    return r.stdout.split('\u0000').filter((l) => l.length > 0);
+    return nulList(r.stdout);
   }
 
   numstat(cwd: string, baseOid: string): { added: number; deleted: number; files: number } {

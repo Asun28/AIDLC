@@ -316,8 +316,7 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
       };
       const blank = doctor(JSON.stringify({ preReview: { answerMarker: '   ' } }));
       assert.equal(blank.status, 1, blank.output);
-      assert.match(blank.output, /config: ERROR/);
-      assert.match(blank.output, /preReview\.answerMarker/);
+      assert.match(blank.output, /config: ERROR aidlc\.config\.json: preReview\.answerMarker: must be empty or not blank/);
       assert.doesNotMatch(blank.output, /^\s+at /m, 'no stack trace');
       const unparsable = doctor('{ not json');
       assert.equal(unparsable.status, 1, unparsable.output);

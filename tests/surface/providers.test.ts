@@ -185,6 +185,7 @@ test('T1-PARSE-GUARD acceptance 5: ClaudeCodeProvider decides a quota hold from 
   assert.equal((await claudeCodeRun({ type: 'result', is_error: true, result: 'Claude AI usage limit reached' }, 0)).outcome, 'quota', 'without a status the word rule reads the payload');
   assert.equal((await claudeCodeRun({ type: 'result', is_error: true, api_error_status: '500', result: 'quota exceeded' }, 1)).outcome, 'quota', 'a status that is not a number is no status: the word rule decides');
   assert.equal((await claudeCodeRun({ type: 'result', is_error: false, api_error_status: 429, result: 'done' }, 0)).outcome, 'ok', 'a status outside an is_error payload decides nothing');
+  assert.equal((await claudeCodeRun({ type: 'result', is_error: false, api_error_status: 500, result: 'quota exceeded' }, 1)).outcome, 'quota', 'a failed run whose payload is not is_error: the word rule decides, not the status');
 });
 
 test('T1-PARSE-GUARD: ClaudeCodeProvider reads a failed run with the merged word rule, not the old substring rule [R5]', async () => {
@@ -203,6 +204,9 @@ test('T1-PARSE-GUARD acceptance 5: ClaudeApiProvider decides quota from the SDK 
   const limited = await run(apiError(429, 'rate limited'));
   assert.equal(limited.outcome, 'quota');
   assert.equal(limited.retryAfterMs, 30_000);
+  const unnamed = await run(Anthropic.APIError.generate(429, { type: 'error', error: { type: 'rate_limit_error', message: 'x' } }, 'x', new Headers()));
+  assert.equal(unnamed.outcome, 'quota');
+  assert.equal(unnamed.retryAfterMs, undefined, 'no retry-after header: no delay, never 0');
   const overloaded = await run(apiError(529, 'Overloaded'));
   assert.equal(overloaded.outcome, 'quota');
   assert.equal(overloaded.retryAfterMs, 30_000, 'a 529 carries the retry-after delay too');

@@ -9,6 +9,7 @@ export * from './core/router.ts';
 export * from './core/deadlines.ts';
 export * from './core/stop.ts';
 export * from './core/effort.ts';
+export * from './core/parse-guard.ts';
 export * from './core/review-policy.ts';
 export * from './core/ci-policy.ts';
 export * from './core/health.ts';

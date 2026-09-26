@@ -16,7 +16,8 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import * as cli from '../../src/cli/main.ts';
 import { countedFailures, reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
-import { acceptFinding, detectQuotaHold, reviewRequestKey } from '../../src/core/review-policy.ts';
+import { detectQuotaHold } from '../../src/core/parse-guard.ts';
+import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
 import { resolveWorktreeRoot } from '../../src/config.ts';
 

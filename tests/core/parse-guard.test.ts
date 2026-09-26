@@ -16,6 +16,7 @@ describe('nulList (T1-PARSE-GUARD acceptance 3)', () => {
   test('splits a -z listing on NUL only: a name with a newline stays whole and empty entries are dropped [R3]', () => {
     assert.deepEqual(nulList('docs/line\nbreak.md\u0000src/a.ts\u0000'), ['docs/line\nbreak.md', 'src/a.ts']);
     assert.deepEqual(nulList(' lead.md\u0000\u0000'), [' lead.md'], 'a name is never trimmed');
+    assert.deepEqual(nulList('a\u0000b'), ['a', 'b'], 'a one-character name and a last name without a NUL are kept');
     assert.deepEqual(nulList(''), []);
   });
   test('no src/ file splits a -z listing outside nulList: no split on a NUL literal, and every file that asks git for -z calls nulList [R3]', () => {
@@ -58,6 +59,7 @@ describe('detectQuotaHold: a numeric status first, else the word rule (T1-PARSE-
   });
   test('the retry delay is read in milliseconds, seconds (the default) and minutes', () => {
     assert.equal(detectQuotaHold('retry after 250 ms').retryAfterMs, 250);
+    assert.equal(detectQuotaHold('RETRY-AFTER: 250 MS').retryAfterMs, 250, 'the unit is read in any letter case');
     assert.equal(detectQuotaHold('retry after 30').retryAfterMs, 30_000);
     assert.equal(detectQuotaHold('retry after 30 sec').retryAfterMs, 30_000);
     assert.equal(detectQuotaHold('Retry-After: 2 min').retryAfterMs, 120_000);
@@ -86,7 +88,7 @@ describe('the six items of issue #45, decided (T1-PARSE-GUARD acceptance 7)', ()
   });
   test('#45.4: a letter or digit of any script next to the word joins it', () => {
     for (const text of ['quotaé', 'équota', 'É429', '429É', 'ÉQUOTA', 'quota²', 'Ωoverloaded', 'quota٣']) assert.equal(holds(text), false, text);
-    for (const text of ['quota é', 'quotaÉxceeded', 'éQuota', '«quota»', 'quota…']) assert.equal(holds(text), true, text);
+    for (const text of ['quota é', 'quotaÉxceeded', 'éQuota', 'ÉQuota', '«quota»', 'quota…']) assert.equal(holds(text), true, text);
   });
   test('#45.5: 429TooManyRequests does not hold: a digit before a capital joins the words', () => {
     assert.equal(holds('429TooManyRequests'), false);
