@@ -18,9 +18,9 @@ type Output = { stdout?: string; stderr?: string; exitCode?: number };
  * `{effort}` under the policy high, xhigh from 500 changed lines or a change under src/core. Each reviewer answers from its
  * own queue (a pass when it is empty); every call is logged with its argv.
  */
-function setup(options: { fallback?: boolean; changedPath?: string } = {}) {
+function setup(options: { fallback?: boolean; changedPath?: string; fallbackCap?: number } = {}) {
   const changedPath = options.changedPath ?? 'src/t1-gate.ts';
-  const fallback = options.fallback === false ? {} : { fallback: { command: ['fallback-reviewer', '--effort', '{effort}'], reviewer: 'sonnet', timeoutMs: 1000, shell: false, effort: { default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**'] } } } };
+  const fallback = options.fallback === false ? {} : { fallback: { command: ['fallback-reviewer', '--effort', '{effort}'], reviewer: 'sonnet', timeoutMs: 1000, shell: false, ...(options.fallbackCap ? { maxDiffBytes: options.fallbackCap } : {}), effort: { default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**'] } } } };
   const fx = makeFixture({ config: { preReview: { command: ['primary-reviewer'], reviewer: 'deepseek', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false, ...fallback } } });
   const primary: Output[] = [];
   const secondary: Output[] = [];
@@ -87,7 +87,9 @@ test('T0-R2-FALLBACK acceptance 3: a primary held on 402 hands the round to the 
   const d = preReviewDirective(s, afterHold);
   assert.equal(d.reviewer, 'sonnet', 'the gate names the fallback, not WAIT');
   assert.equal(d.round, 1, 'the hold consumed no round');
-  assert.ok(d.narration.includes('sonnet'), d.narration);
+  assert.ok(d.narration.includes('(R2, sonnet)'), d.narration);
+  assert.ok(d.narration.includes('(the primary deepseek is on a quota hold; its fallback runs)'), d.narration);
+  assert.ok(!d.narration.includes('retry once it clears'), `a switch is no retry of the held reviewer: ${d.narration}`);
   const passed = await review(s, d.run);
   assert.equal(passed.result.outcome, 'pass');
   assert.deepEqual(s.calls.at(-1), ['fallback-reviewer', '--effort', 'high'], 'the fallback ran with {effort} expanded to high for a small candidate');
@@ -211,3 +213,11 @@ test('T0-R2-FALLBACK acceptance 5: without preReview.fallback the same 402 round
   assert.ok(d.narration.includes('(the previous run reported a quota hold; retry once it clears)'), d.narration);
   assert.ok(!s.calls.some((c) => c[0] === 'fallback-reviewer'), 'no fallback is configured, so none runs');
 }, { fallback: false }));
+
+test('T0-R2-FALLBACK acceptance 3: the diff cap of the fallback applies, and its refusal names preReview.fallback.maxDiffBytes [R1] [R3]', withCard(async (s) => {
+  const afterHold = await holdPrimary(s, s.run);
+  const d = preReviewDirective(s, afterHold);
+  assert.equal(d.reviewer, 'sonnet');
+  await assert.rejects(review(s, d.run), /preReview\.fallback\.maxDiffBytes/);
+  assert.ok(!s.calls.some((c) => c[0] === 'fallback-reviewer'), 'a refused diff dispatches nothing');
+}, { fallbackCap: 10 }));

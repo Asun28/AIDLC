@@ -144,6 +144,10 @@ export const ProjectConfig = z.object({
     if (config.formalReview.fallback && fold(config.formalReview.fallback.reviewer) === fold(config.formalReview.reviewer)) {
       ctx.addIssue({ code: 'custom', path: ['formalReview', 'fallback', 'reviewer'], message: 'formalReview.fallback.reviewer must differ from formalReview.reviewer: the ledger tells the two reviewers apart by name' });
     }
+    // R2 rounds are told apart by reviewer name too: a fallback under the primary's name would read the primary's hold as its own.
+    if (config.preReview.fallback && fold(config.preReview.fallback.reviewer) === fold(config.preReview.reviewer)) {
+      ctx.addIssue({ code: 'custom', path: ['preReview', 'fallback', 'reviewer'], message: 'preReview.fallback.reviewer must differ from preReview.reviewer: the rounds tell the two reviewers apart by name' });
+    }
     const baseSync = config.formalReview.baseSync;
     const others = [config.formalReview.reviewer, ...(config.formalReview.fallback ? [config.formalReview.fallback.reviewer] : [])];
     if (baseSync && others.some((name) => fold(name) === fold(baseSync.reviewer))) {

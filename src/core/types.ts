@@ -296,6 +296,9 @@ export const ReviewEffortPolicy = z.object({
   if (policy.high && (policy.default === 'xhigh' || policy.default === 'max')) {
     ctx.addIssue({ code: 'custom', path: ['high'], message: `effort.high would lower the level below the default ${policy.default}: drop the high rule or lower the default` });
   }
+  if (policy.xhigh && policy.default === 'max') {
+    ctx.addIssue({ code: 'custom', path: ['xhigh'], message: 'effort.xhigh would lower the level below the default max: drop the xhigh rule or lower the default' });
+  }
 });
 export type ReviewEffortPolicy = z.infer<typeof ReviewEffortPolicy>;
 
