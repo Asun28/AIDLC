@@ -4488,7 +4488,9 @@ test('T0-SHIP-NOTHING-REFUTED acceptance 1: a ship failure that refutes no recor
       assert.ok(r.directive.narration.endsWith(SHIP_FAILURE_NOTHING_REFUTED), `${c.label}: ${r.directive.narration}`);
       assert.ok(!r.directive.narration.includes('counts as a failed attempt'), `${c.label}: nothing was counted: ${r.directive.narration}`);
       if (r.directive.kind === 'build') assert.equal(r.directive.attempt, c.attempt, `${c.label}: the ship names the ladder's attempt`);
-      assert.deepEqual(r.run.effort, before, `${c.label}: the episode is unchanged`);
+      // Compared as stored: JSON drops the optional fields either side leaves undefined.
+      const stored = (e: CardRun['effort']) => (e === undefined ? undefined : JSON.parse(JSON.stringify(e)));
+      assert.deepEqual(stored(r.run.effort), stored(before), `${c.label}: the episode is unchanged`);
       r = runner.next(fx.goal(goal.id), card, r.run);
       assert.equal(r.directive.kind, 'build', `${c.label}: ${r.directive.narration}`);
       if (r.directive.kind === 'build') assert.equal(r.directive.attempt, c.attempt, `${c.label}: the next build names the same attempt`);

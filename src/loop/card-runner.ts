@@ -2306,9 +2306,11 @@ export class CardRunner {
       // The running repair the step promoted is journaled at its new effort, so its latest start matches the episode.
       if (step?.promoted && step.action.action === 'attempt') this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: step.promoted.n, effort: step.promoted.effort, escalated: step.action.escalated, promoted: true, from: step.promoted.from, reason: 'ship-failure' } });
       if (next.state === 'STOP' && next.stop) return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } };
-      const effort = step?.action.action === 'attempt' ? step.action.effort : undefined;
-      const running = next.effort?.attempts.find((a) => a.outcome === 'running');
-      return { run: next, directive: buildDirective(next, `${narration} The failure counts as a failed attempt on the effort ladder.`, effort, undefined, running?.n) };
+      // The ladder's step names the attempt (the running repair's number when one runs), the one build() names next
+      // (T0-SHIP-NOTHING-REFUTED); only a refuted success is a counted failure.
+      const attempt = step?.action.action === 'attempt' ? step.action : undefined;
+      const counted = step?.refuted ? 'The failure counts as a failed attempt on the effort ladder.' : 'The ship failure refuted no recorded success, so it counts no attempt on the effort ladder.';
+      return { run: next, directive: buildDirective(next, `${narration} ${counted}`, attempt?.effort, undefined, attempt?.n) };
     };
 
     switch (result.outcome) {
