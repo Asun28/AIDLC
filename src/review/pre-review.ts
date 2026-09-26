@@ -3,7 +3,8 @@
  *
  * A reviewer is any command that receives the prompt (stdin, or argv through `{instructions}`)
  * and prints the REVIEW.md verdict JSON as its last line: DeepSeek V4 Pro through the local
- * `deepseek` CLI for R2 and a read-only headless `claude -p` (Opus 5.5) for R3 in this repository. Every run
+ * `deepseek` CLI for R2 and Codex `gpt-6-astra` in a read-only sandbox for R3, with a read-only headless
+ * `claude -p` (Opus 5.5) as its fallback, in this repository. Every run
  * is receipted (exit, output digest, duration); verdicts and raw output are retained next to the
  * candidate under `.review/`. Missing, malformed, stale or non-zero-exit output is never a pass.
  *
