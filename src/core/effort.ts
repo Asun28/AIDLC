@@ -117,9 +117,22 @@ export interface ShipFailureStep {
  * kept and the cause appended, and a succeeded episode reopens. The next step is the ladder's, decided on the settled
  * attempts: a repair already running (opened by a review fix) is that attempt and takes the effort the ladder admits, and a
  * stop is persisted as the episode's terminal. An episode with no success to refute keeps its attempts and its terminal.
+ * An episode with no settled attempt (none, or only running and not-counted ones) has nothing to refute and takes no
+ * ladder step: it is returned as it is, and the next step is its running attempt at its own effort, or the ladder's first.
+ * The refuted attempt keeps the startedAt and finishedAt of its success; the refutation's time is its ATTEMPT_FINISHED
+ * journal event.
  */
 export function afterShipFailure(episode: EffortEpisode, cause: string, justification?: EscalationJustification): ShipFailureStep {
   const idx = episode.attempts.findLastIndex((a) => a.outcome === 'success' || a.outcome === 'fail');
+  if (idx < 0) {
+    // Nothing settled (T0-SHIP-FAILURE-UNSETTLED): a ship needs a recorded success first, so no ladder step happened and
+    // a running attempt keeps its effort and number; a terminal episode answers with its own terminal.
+    const running = episode.attempts.find((a) => a.outcome === 'running');
+    const action: NextEffortAction = running && !episode.terminal
+      ? { action: 'attempt', effort: running.effort, n: running.n, escalated: running.effort !== episode.baseline }
+      : nextEffortAction({ ...episode, attempts: episode.attempts.filter((a) => a.outcome !== 'running') }, justification);
+    return { episode, action };
+  }
   const last = episode.attempts[idx];
   const refuted: Attempt | undefined = last?.outcome === 'success' ? { ...last, outcome: 'fail', cause, evidence: last.evidence ? `${last.evidence}; ${cause}` : cause } : undefined;
   const attempts = refuted ? episode.attempts.map((a, i) => (i === idx ? refuted : a)) : episode.attempts;
