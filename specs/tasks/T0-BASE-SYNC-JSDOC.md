@@ -1,7 +1,7 @@
 ---
 id: T0-BASE-SYNC-JSDOC
 title: The JSDoc of formalPool, formalReviewerFor and CandidateInfo.baseSync names the base-sync reviewer's own pool, its lookup by name and the marking of an undecided base-sync candidate's repair
-status: todo
+status: merged
 branch: T0-BASE-SYNC-JSDOC
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-JSDOC
 allow_paths:
