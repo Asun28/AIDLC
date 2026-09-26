@@ -9,6 +9,22 @@ import { ReviewEffortPolicy } from './core/types.ts';
 
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
+/**
+ * The reviewer R2 dispatches while the primary holds an unexpired quota or billing hold (card T0-R2-FALLBACK); it shares the
+ * primary's rounds, angles, coverage and no-verdict retry. No argument may be empty: a reviewer runs through a shell on
+ * Windows, which drops an empty argument (write `--flag=`).
+ */
+export const PreReviewFallback = z.object({
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => /\S/.test(a)), 'preReview.fallback.command must not carry an empty or blank argument: the Windows shell drops it (write --flag= instead)'),
+  reviewer: z.string().refine((name) => name.trim().length > 0, 'preReview.fallback.reviewer must name the reviewer'),
+  timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+  shell: z.boolean().optional(),
+  maxDiffBytes: z.number().int().positive().default(300_000),
+  answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
+  /** How `{effort}` in the command is chosen per candidate (src/core/review-effort.ts); absent = `medium`. */
+  effort: ReviewEffortPolicy.optional(),
+});
+
 /** Pre-review (R2): a second-model review before the ship. An empty command disables the stage. */
 export const PreReviewConfig = z.object({
   /** argv of the reviewer; the prompt arrives on stdin and the verdict JSON must be the last stdout line. */
@@ -27,6 +43,7 @@ export const PreReviewConfig = z.object({
   maxDiffBytes: z.number().int().positive().default(300_000),
   /** The stdout line after which a reviewer's answer starts (its reasoning comes before it); empty reads the whole stdout. */
   answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
+  fallback: PreReviewFallback.optional(),
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 
