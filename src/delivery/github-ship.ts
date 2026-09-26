@@ -56,6 +56,9 @@ const ACTIONS_JOB = /^https:\/\/github\.com\/([^/\s]+\/[^/\s?#]+)\/actions\/runs
 const CI_LOG_JOBS = 3;
 const CI_LOG_LINES = 60;
 const CI_LOG_WIDTH = 240;
+/** Reads of GitHub's merge state after a refused merge, and the fixed wait between them (T0-SHIP-MERGE-REFUSED). */
+const MERGE_STATE_READS = 5;
+const MERGE_STATE_WAIT_MS = 3000;
 
 /** The start of the second an ISO time falls in, in milliseconds; undefined when it is not a time. */
 function secondOf(iso: string | null | undefined): number | undefined {
@@ -330,12 +333,51 @@ export class GitHubShipPath implements ShipPath {
     }
     log.push('[CI-GATE-PASS]');
     const merge = this.runner('gh', ['pr', 'merge', String(prNumber), '--repo', this.options.repository, '--squash', '--match-head-commit', head], { cwd: wt });
-    if (merge.exitCode !== 0) return fail('[SHIP-MERGE-FAIL]', merge.stderr, prNumber);
+    if (merge.exitCode !== 0) {
+      // A refusal after the checks (T0-SHIP-MERGE-REFUSED, issue #85): the base may have moved since the sync. GitHub's
+      // merge state is read back; a conflict (CONFLICTING or DIRTY), or an UNKNOWN GitHub has not settled by the last read,
+      // runs the same base sync on a fresh fetch, so the ship ends where a sync conflict ends (a CHANGELOG merge or the
+      // merge-conflict repair, each a new candidate) and never pushes or merges again here. Any other state keeps the
+      // refusal as it is, naming the state.
+      const settled = this.mergeStateAfterRefusal(prNumber, wt, sleep);
+      const named = `PR #${prNumber} ${settled.text}`;
+      if (settled.sync) {
+        log.push(encodeUntrusted(flat(`merge refused: ${named}; base sync again`)));
+        const again = this.baseSync(req.mode, base, wt, head, log);
+        if (again) return fail(again.sentinel, again.detail, prNumber);
+        return fail('[SHIP-MERGE-FAIL]', `${named}; ${base} merges cleanly into HEAD ${head} after a fresh fetch: ${merge.stderr}`, prNumber);
+      }
+      return fail('[SHIP-MERGE-FAIL]', `${named}: ${merge.stderr}`, prNumber);
+    }
     const view = this.gh.prView(this.options.repository, prNumber, wt);
     if (view.state !== 'MERGED') return fail('[SHIP-MERGE-FAIL]', `PR #${prNumber} state ${view.state} after merge`, prNumber);
     this.writeToken(req.cardId, `tip=${head}\nmerged_pr=#${prNumber}\nutc=${new Date().toISOString()}`);
     log.push('[SAGA-DONE]');
     return { ...classifyShipOutput(this.receipt(log, 0, started)), prNumber };
+  }
+
+  /**
+   * GitHub's merge state after a refused merge (T0-SHIP-MERGE-REFUSED). GitHub computes `mergeable` lazily, so an UNKNOWN
+   * is read again up to MERGE_STATE_READS times, MERGE_STATE_WAIT_MS apart through the injected sleep. `sync` is true for
+   * a conflict (CONFLICTING, or DIRTY whatever `mergeable` says) and for an UNKNOWN still unsettled at the last read, where
+   * the base sync is the local test of what GitHub has not decided; never for MERGEABLE (a required check, review or rule,
+   * or BEHIND) or an unreadable state. `text` names the state for the ship output; `fail` encodes it once.
+   */
+  private mergeStateAfterRefusal(prNumber: number, wt: string, sleep: (ms: number) => void): { sync: boolean; text: string } {
+    for (let read = 1; ; read += 1) {
+      let state: ReturnType<GhProbe['prMergeState']>;
+      try {
+        state = this.gh.prMergeState(this.options.repository, prNumber, wt);
+      } catch (err) {
+        return { sync: false, text: `mergeable unreadable (${(err as Error).message})` };
+      }
+      if (!state.mergeable) return { sync: false, text: 'mergeable unreadable (no value GitHub defines)' };
+      const text = `mergeable ${state.mergeable}${state.mergeStateStatus ? ` (mergeStateStatus ${state.mergeStateStatus})` : ''}`;
+      if (state.mergeable === 'CONFLICTING' || state.mergeStateStatus === 'DIRTY') return { sync: true, text };
+      if (state.mergeable === 'MERGEABLE') return { sync: false, text };
+      if (read >= MERGE_STATE_READS) return { sync: true, text: `${text} after ${read} reads` };
+      sleep(MERGE_STATE_WAIT_MS);
+    }
   }
 
   /**

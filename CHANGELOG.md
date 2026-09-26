@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Merge refusal, card T0-SHIP-MERGE-REFUSED: when GitHub refuses the merge of a PR whose base moved after the ship's base sync, the GitHub ship path reads the merge state and runs the base sync again, so the conflict becomes a CHANGELOG merge or a merge-conflict repair on a new candidate instead of a `tool` stop; a refusal for another reason keeps `[SHIP-MERGE-FAIL]` and names the state (issue #85).
+
 - Goal card count follow-up, card T0-GOAL-CARD-COUNT-3: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).
 
 - CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci. A log that cannot be read, or a failed step the job record does not place, still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).
