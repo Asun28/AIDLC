@@ -450,6 +450,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       ['no header, a diagnostics group first', job([{ ...CHECK_STEP, header: false, lines: ['##[group]Run diagnostics', 'diag'] }]), 'step unknown'],
       ['a header without the shell line, a shell line in a later group', job([{ ...CHECK_STEP, action: true, lines: ['##[group]Setup details', 'shell: zsh', '##[endgroup]'] }]), 'step unknown'],
       ['a header group left open, a shell line in the next group', job([{ ...CHECK_STEP, header: false, lines: ['##[group]Run npm run check', '##[group]inner', 'shell: zsh', '##[endgroup]', 'out'] }]), 'step unknown'],
+      ['a second line with the step name, without a shell line, in its first second', job([{ ...CHECK_STEP, lines: ['npm run check', '##[group]Run npm run check', 'out', '##[endgroup]'] }]), 'step unknown'],
+      ['a step named Run diagnostics printing that group without a shell line', job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }]), 'step unknown'],
       ['an earlier step of the second without a run header', job([{ name: 'actions/cache@v4', action: true, at: 5, lines: ['cache hit'] }, CHECK_STEP]), 'step unknown'],
       ['a headerless step opening with a group reading its own name', job([{ ...CHECK_STEP, title: 'check', header: false, lines: ['##[group]check', 'shell: zsh', '##[endgroup]'] }]), 'step unknown'],
       ['a group reading the name of a step with a name of its own', job([{ ...CHECK_STEP, title: 'check', lines: ['##[group]check', 'shell: zsh', '##[endgroup]'] }]), 'step unknown'],
