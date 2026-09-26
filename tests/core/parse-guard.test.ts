@@ -191,10 +191,14 @@ describe('a billing state holds (T0-R2-BILLING-HOLD, issue #92)', () => {
       ['InsufficientBalance', 'Insufficient Balance'],
       ['insufficient-balance', 'insufficient-balance'],
       ['insufficient balances', 'insufficient balances'],
+      ['insufficientbalance', 'insufficientbalance'],
+      ['INSUFFICIENTBALANCE', 'INSUFFICIENTBALANCE'],
       ['Payment Required', 'Payment Required'],
       ['payment_required', 'payment required'],
       ['PaymentRequired', 'Payment Required'],
       ['payment-required', 'payment-required'],
+      ['paymentrequired', 'paymentrequired'],
+      ['PAYMENTREQUIRED', 'PAYMENTREQUIRED'],
       ['HTTP 402 Payment Required', 'Payment Required'],
     ];
     for (const [text, word] of held) assert.deepEqual(detectQuotaHold(text), { hold: true, via: 'text', evidence: word }, text);
