@@ -316,3 +316,64 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
     assert.ok(unreleased.split(/\r?\n/).includes('- Review and agent prompts for Opus 5.5, card T1-OPUS55-PROMPTS: every R2 and R3 prompt and the reviewer agent end the turn only on the verdict JSON line; a progress note, a summary that announces a next step or an offer to continue is not the end of the review, and a reply that ends on one with no verdict line before it has returned no verdict. The R2 prompt asks for every finding the reviewer can defend and says its block rule decides only whether a finding blocks. The implementer agent ends its turn only with the report or a named blocker, and `arc.md` gives a child the elapsed time against its deadline (`elapsed <s> / <s>`). `tests/surface/prose.test.ts` keeps every agent, skill, `REVIEW.md` and review prompt free of the instructions the Opus 5 and 5.5 guides say to remove (double-check or re-verify, "think carefully", "think step by step", "use a subagent to verify", "be conservative", "only report high-severity", each in the word orders and spellings the test lists).'));
   });
 });
+
+describe('one lock primitive in the docs (T1-STORE-CAS)', () => {
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  /** The Sessions section of docs/OPERATIONS.md, from its heading to the next one. */
+  const sessions = (): string => {
+    const ops = lf(read('docs', 'OPERATIONS.md'));
+    const at = ops.indexOf('\n## Sessions\n') + 1;
+    return ops.slice(at, ops.indexOf('\n## ', at) + 1);
+  };
+  /** The paragraph under the README Multi-session heading. */
+  const multiSession = (): string => {
+    const readme = lf(read('README.md'));
+    const heading = '\n## Multi-session\n\n';
+    const at = readme.indexOf(heading) + heading.length;
+    return readme.slice(at, readme.indexOf('\n\n', at));
+  };
+  const LOCK =
+    "Every lease write, every card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), while `recordAttempt` and a raw `card report` patch stay unfenced, goal, release and review-pool records stay last-writer-wins, and a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again.";
+
+  test('acceptance 8: the Sessions section and the README Multi-session paragraph are shorter than on the base, name no compare-and-set windows and state in one sentence what the lock covers and what stays unfenced [R5]', () => {
+    assert.equal(LOCK.split(SENTENCE_BREAK).length, 1, 'the lock statement is one sentence');
+    for (const unfenced of ['`recordAttempt`', 'a raw `card report` patch', 'goal, release and review-pool records', 'between the lease write and the run update']) assert.ok(LOCK.includes(unfenced), `the sentence names ${unfenced}`);
+    // UTF-8 bytes on the base (41f4319) with LF line ends: the Sessions section from its heading to the next heading, and the Multi-session paragraph.
+    const texts: Array<[string, string, number]> = [
+      ['docs/OPERATIONS.md Sessions', sessions(), 13_701],
+      ['README.md Multi-session', multiSession(), 2_831],
+    ];
+    for (const [name, text, base] of texts) {
+      assert.ok(text.length > 1_000, `${name} resolved (${text.length} characters)`);
+      assert.ok(Buffer.byteLength(text, 'utf8') < base, `${name} is shorter than on the base: ${Buffer.byteLength(text, 'utf8')} bytes, base ${base}`);
+      assert.ok(!text.includes('compare-and-set'), `${name} names no compare-and-set`);
+      assert.ok(!text.includes('four windows'), `${name} names no four windows`);
+      assert.ok(text.includes(LOCK), `${name} states what the lock covers and what stays unfenced`);
+    }
+  });
+
+  test('acceptance 10: CHANGELOG.md Unreleased carries the entry, docs/ARCHITECTURE.md keeps the card-run lock phrase and states the primitive, and docs/OPERATIONS.md describes the lock [R1]', () => {
+    const changelog = lf(read('CHANGELOG.md'));
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    assert.ok(
+      unreleased.split('\n').includes(
+        "- One locked read-modify-write, card T1-STORE-CAS: `updateJson` in `src/state/store.ts` hands a change function the stored record under an exclusive lock file (`<file>.lock`) and writes nothing when the function throws or returns the record unchanged; every lease write (claim, takeover, heartbeat, release) and every card-run write go through it, and the card-run store's own lock code is removed. `aidlc card takeover` checks the lease and the operation ledger, journals the handoff intent and writes the lease in one lease section, journals the acquisition under the lease lock after that write, and updates the run under the card-run lock, so a stop saved during a takeover is kept (it used to make the takeover's save fail) and two completions of one generation journal one `LEASE_ACQUIRED`; its second lease read and its late-operation refusal are removed. A ship's fence, duplicate check and operation intent run under the same card lease lock, so a ship intent is refused while a takeover holds that lock and a ship after a takeover is fenced before it records an intent. `mergeFindings` is removed, since a snapshot write must carry the stored revision. Lock errors are `StoreError` `LOCKED` and `LOCK_LOST` (they were `CARD_RUN_LOCKED` and `CARD_RUN_LOCK_LOST`), an exclusive create that fails with EPERM counts as a held lock, and an update whose change returns the stored record no longer writes or bumps the run revision.",
+      ),
+      'CHANGELOG.md Unreleased carries the T1-STORE-CAS entry',
+    );
+    const architecture = lf(read('docs', 'ARCHITECTURE.md'));
+    assert.match(architecture, /written under `<file>.lock`/);
+    const architectureSentences = [
+      '`store.ts` writes JSON atomically (temp file + rename, interrupted-write detection) and owns the one read-modify-write, `updateJson`: an exclusive lock file per record (`<file>.lock`, naming its process) with an ownership-checked write and release, the deadline checked before every retry acquisition, a stale lock taken over only when its owner process is gone, a stat or read failure other than a vanished file propagated, and no write when the change throws or returns the record unchanged; `goal-store.ts` runs every card-run write through it (`updateCardRun`; `saveCardRun` is a compare-and-set on `CardRun.revision`, bumped by every write under the lock, so a snapshot read before another write landed is refused whatever it changes, with the ledger entry named when one is missing, un-decided, resurrected or regressed) and `lease.ts` every lease write.',
+      "Once it has expired, `aidlc card takeover` (`CardRunner.takeover`) takes it after the card's operations in every goal are reconciled, in one lease section (`LeaseStore.update`) that checks the lease record and the operation ledger, journals the handoff intent and writes the lease, the lock a ship's fence, duplicate check and operation intent take too: the generation advances and the old owner is fenced, one `LEASE_ACQUIRED` per generation is journaled under the lease lock after the write, and the run records the new generation (the run without one included) under the card-run lock, so a stop saved meanwhile stays; its state is selected again through the evidence gathering `next` shares with it, which reads the stored run and never a caller's snapshot (a stale dispatch writes nothing back and a persisted blocking stop stands), and whose renewal revalidates the ownership stop; a missing or released lease, a lease this session holds at the run's generation, a live lease of another session and an unresolved operation refuse it before any write; the handoff intent (`NOTE`, `card-takeover-intent`) and the acquisition are resolved by resource and generation across every goal's journal, so a lease this session holds at a generation the run does not carry is an interrupted takeover the command completes, naming the previous owner from the intent.",
+      'Lock order is the card-run lock, then the lease lock: no card-run lock is taken inside a lease section, and neither lock is reentrant; `docs/OPERATIONS.md` (Sessions) states what stays unfenced.',
+    ];
+    for (const sentence of architectureSentences) assert.ok(architecture.includes(sentence), `docs/ARCHITECTURE.md states: ${sentence}`);
+    assert.ok(!architecture.includes('four windows'), 'docs/ARCHITECTURE.md names no four windows');
+    const operations = lf(read('docs', 'OPERATIONS.md'));
+    const lockSentence =
+      'Every card-run write goes through the card-run lock (`GoalStore.updateCardRun`, also behind `saveCardRun`, over `updateJson` in `src/state/store.ts`, which every lease write takes too: an exclusive `.lock` file next to the record naming its process, a 2 s wait with the deadline checked before every retry acquisition, so a wait that overran it never runs on a lock freed meanwhile, an exclusive create refused with EPERM (Windows, a lock being deleted) counted as a held lock, a 30 s stale age after which a lock is taken over only when its owner process is gone (a live owner keeps it however old), a takeover serialized by a second exclusive marker so a live lock is never removed, a stat or read failure other than a vanished file propagated (a lock this process cannot read is never taken over or released), an ownership-checked write and release, so a writer whose lock changed hands during a long suspension refuses (`LOCK_LOST`) instead of writing over the new owner, and no write when the change throws or returns the record unchanged).';
+    assert.ok(operations.includes(lockSentence), `docs/OPERATIONS.md states: ${lockSentence}`);
+    assert.ok(!operations.includes('findings are merged by revision'), 'docs/OPERATIONS.md no longer says findings are merged');
+  });
+});

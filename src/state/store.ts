@@ -102,6 +102,13 @@ export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
   return result.data;
 }
 
+/** Read-modify-write of one record (RED seam: the baseline, a plain read, change and atomic write). */
+export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, _opts: { timeoutMs?: number; staleMs?: number } = {}): T | undefined {
+  const next = change(readJson(file, schema));
+  if (next !== undefined) atomicWriteJson(file, next);
+  return next;
+}
+
 /** Detect leftover temporary files from interrupted writes in a directory. */
 export function findInterruptedWrites(dir: string): string[] {
   if (!existsSync(dir)) return [];

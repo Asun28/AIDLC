@@ -344,4 +344,14 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     assert.equal(store.saveCardRun({ ...legacy, blocker: 'legacy' }).revision, 1);
     assert.throws(() => store.saveCardRun({ ...legacy, blocker: 'again' }), /changed since it was read/i);
   });
+
+  it('T1-STORE-CAS acceptance 1: an update whose change returns the stored record writes nothing, so the revision stays and a snapshot at it still writes', () => {
+    const store = new GoalStore(paths);
+    const v0 = store.saveCardRun(makeCardRun('goal-n', 'T1-N'));
+    const bytes = readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8');
+    const same = store.updateCardRun('goal-n', 'T1-N', (current) => current!);
+    assert.equal(same.revision, v0.revision, 'no write, no revision');
+    assert.equal(readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8'), bytes, 'the record is not rewritten');
+    assert.equal(store.saveCardRun({ ...v0, blocker: 'still current' }).revision, v0.revision + 1, 'the snapshot read before the no-op update is still current');
+  });
 });

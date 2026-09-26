@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import fs, { unlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, actorA, actorB, T0 } from './_harness.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
@@ -11,6 +12,7 @@ import { MINUTE_MS, addMs } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
 const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
@@ -550,47 +552,47 @@ test('T0-CARD-TAKEOVER, goal stopped: a goal the dispatch stopped on the card ow
 });
 
 /**
- * A lease store that lets another process act after the command's first read and before the store's own takeover
- * (`meanwhile`), or after the reconciliation returned and before the store writes the lease (`afterReconcile`).
+ * Route one `node:fs` function through `wrap` while `body` runs (the ESM binding of a builtin follows the CJS export after a
+ * sync): the boundary every writer of the state directory passes, never an injected collaborator.
  */
-class InterleavedLeaseStore extends LeaseStore {
-  readonly meanwhile: () => void;
-  readonly afterReconcile: () => void;
-  readonly beforeRead: (n: number) => void;
-  reads = 0;
-  constructor(dir: string, hooks: { meanwhile?: () => void; afterReconcile?: () => void; beforeRead?: (n: number) => void }) {
-    super(dir);
-    this.meanwhile = hooks.meanwhile ?? (() => undefined);
-    this.afterReconcile = hooks.afterReconcile ?? (() => undefined);
-    this.beforeRead = hooks.beforeRead ?? (() => undefined);
-  }
-  /** Every read of the store, the command's own and the ones its claims and fences make, counted; `beforeRead(n)` runs before the n-th. */
-  override read(resourceKey: string): ReturnType<LeaseStore['read']> {
-    this.reads += 1;
-    this.beforeRead(this.reads);
-    return super.read(resourceKey);
-  }
-  override takeover(resourceKey: string, reconcile: Parameters<LeaseStore['takeover']>[1], options?: Parameters<LeaseStore['takeover']>[2]): ReturnType<LeaseStore['takeover']> {
-    this.meanwhile();
-    return super.takeover(
-      resourceKey,
-      (old) => {
-        const report = reconcile(old);
-        this.afterReconcile();
-        return report;
-      },
-      options,
-    );
+function throughFs<T>(name: 'openSync' | 'readFileSync' | 'renameSync' | 'appendFileSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
+  const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = target[name]!;
+  target[name] = (...args: unknown[]) => wrap(real, args);
+  syncBuiltinESMExports();
+  try {
+    return body();
+  } finally {
+    target[name] = real;
+    syncBuiltinESMExports();
   }
 }
 
-test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeover persisted between the read and the lease write is honoured, and an interrupted takeover is completed', () => {
+/** Run `before(n)` ahead of the n-th exclusive create of `lock` while `body` runs, and `held(n)` once that create has taken the lock. */
+function onLock<T>(lock: string, hooks: { before?: (n: number) => void; held?: (n: number) => void }, body: () => T): T {
+  let n = 0;
+  return throughFs(
+    'openSync',
+    (real, args) => {
+      if (String(args[0]) !== lock || args[1] !== 'wx') return real(...args);
+      const at = (n += 1);
+      hooks.before?.(at);
+      const fd = real(...args);
+      hooks.held?.(at);
+      return fd;
+    },
+    body,
+  );
+}
+
+test('T0-CARD-TAKEOVER, interleaved (T1-STORE-CAS): an operation, a stop, a release or a takeover persisted before the lease section is honoured, an operation attempted inside it is refused, and an interrupted takeover is completed', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     const ids = ['T1-OP', 'T1-LATE', 'T1-STOP', 'T1-RELEASE', 'T1-TWICE', 'T1-ABANDON', 'T1-CLAIM', 'T1-PREPARED'];
     for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
     const goal = goalForCards(fx, ids);
     const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const lockOf = (id: string) => `${fx.leases.file(key(id))}.lock`;
     const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
     // window A prepares every card but the two this session claims itself and ends; window B, the next session, reads each
     // run stopped for ownership
@@ -601,58 +603,59 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
       assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), current(id)).run.stop?.reason, 'ownership');
     }
     fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
-    const interleaved = (hooks: { meanwhile?: () => void; afterReconcile?: () => void }) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new InterleavedLeaseStore(fx.paths.leases, hooks), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    const takeover = (id: string) => fx.runner().takeover(fx.goal(goal.id), fx.card(id), current(id));
+    // Another process acts after the command's first read and before its lease section takes the lease lock.
+    const beforeSection = (id: string, meanwhile: () => void) => onLock(lockOf(id), { before: (n) => { if (n === 1) meanwhile(); } }, () => takeover(id));
     const takeovers = (id: string) => fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === id && e.data['takeover'] === true);
     const intent = (cardId: string) => ({ kind: 'merge' as const, goalId: goal.id, cardId, target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 });
-    // an operation of the card recorded meanwhile: the ledger is read inside the reconciliation, so the takeover refuses it by id
+    // an operation of the card recorded meanwhile: the ledger is read inside the lease section, so the takeover refuses it by id
     let op = '';
     assert.throws(
-      () => interleaved({ meanwhile: () => { op = fx.ops.recordIntent(intent('T1-OP'), fx.now()).id; } }).takeover(fx.goal(goal.id), fx.card('T1-OP'), current('T1-OP')),
-      (err: unknown) => err instanceof Error && err.message.includes(`not reconciled (${op})`),
+      () => beforeSection('T1-OP', () => { op = fx.ops.recordIntent(intent('T1-OP'), fx.now()).id; }),
+      (err: unknown) => err instanceof Error && op !== '' && err.message.includes(`not reconciled (${op})`),
     );
     assert.equal(fx.leases.read(key('T1-OP'))?.generation, 0);
     assert.equal(current('T1-OP').ownerGeneration, 0);
-    // an operation admitted after the reconciliation returned and before the lease write: the lease is taken (its writer is
-    // fenced from now on), the run is left as it was, the command names the id; once it is reconciled the command run again
-    // completes the takeover, and the previous owner comes from the intent journaled before the lease write
-    let lateOp = '';
-    assert.throws(
-      () => interleaved({ afterReconcile: () => { lateOp = fx.ops.recordIntent(intent('T1-LATE'), fx.now()).id; } }).takeover(fx.goal(goal.id), fx.card('T1-LATE'), current('T1-LATE')),
-      (err: unknown) => err instanceof Error && err.message.includes(`landed after the reconciliation (${lateOp})`),
-    );
-    assert.equal(fx.leases.read(key('T1-LATE'))?.generation, 1, 'the lease is taken');
-    assert.equal(fx.leases.read(key('T1-LATE'))?.owner.session, 'win-B');
-    assert.equal(current('T1-LATE').ownerGeneration, 0, 'the run is not updated');
-    assert.equal(current('T1-LATE').stop?.reason, 'ownership');
-    assert.equal(takeovers('T1-LATE').length, 0, 'no acquisition journaled yet');
-    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-LATE'), current('T1-LATE')), /landed after the reconciliation/);
-    fx.ops.markResult(lateOp, 'succeeded', {}, fx.now());
-    const lateDone = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-LATE'), current('T1-LATE'));
-    assert.equal(lateDone.completed, true);
-    assert.equal(lateDone.previousOwner?.session, 'win-A', 'the previous owner is recovered from the handoff intent');
-    assert.equal(lateDone.previousGeneration, 0);
-    assert.equal(lateDone.lease.generation, 1);
-    assert.equal(lateDone.run.ownerGeneration, 1);
-    assert.equal(lateDone.run.state, 'BUILD');
-    assert.deepEqual(takeovers('T1-LATE').map((e) => e.data), [{ resource: key('T1-LATE'), leaseGeneration: 1, takeover: true, previousOwner: 'win-A', previousGeneration: 0, completed: true }]);
-    // a stop another process persisted meanwhile: the run is read again once the lease is held, so the stop stays, at the new generation
+    // an operation attempted while the takeover holds the lease lock, as a ship records its intent (under that lock): it waits for
+    // the lock, is refused and records nothing, and the takeover goes through with one acquisition journaled
+    const quick = new LeaseStore(fx.paths.leases, { timeoutMs: 50 });
+    let attempted: unknown;
+    const late = onLock(lockOf('T1-LATE'), {
+      held: (n) => {
+        if (n !== 1) return;
+        try {
+          quick.update(key('T1-LATE'), (lease) => { fx.ops.recordIntent(intent('T1-LATE'), fx.now()); return lease; });
+        } catch (err) {
+          attempted = err;
+        }
+      },
+    }, () => takeover('T1-LATE'));
+    assert.match(String(attempted), /locked/, 'refused while the takeover holds the lease lock');
+    assert.deepEqual(fx.ops.list({ cardId: 'T1-LATE' }), [], 'no operation is recorded');
+    assert.equal(late.completed, false);
+    assert.equal(late.lease.generation, 1);
+    assert.equal(late.lease.owner.session, 'win-B');
+    assert.equal(late.run.ownerGeneration, 1);
+    assert.equal(late.run.state, 'BUILD');
+    assert.deepEqual(takeovers('T1-LATE').map((e) => e.data), [{ resource: key('T1-LATE'), leaseGeneration: 1, takeover: true, previousOwner: 'win-A', previousGeneration: 0 }]);
+    // a stop another process persisted meanwhile: the run update reads the stored run under the card-run lock, so the stop stays, at the new generation
     const riskStop = makeStop('risk', 'a secret-looking value in the candidate', 'rotate it before any push', { at: fx.now(), global: false });
-    const risky = interleaved({ meanwhile: () => fx.store.saveCardRun({ ...current('T1-STOP'), state: 'STOP', stop: riskStop }) }).takeover(fx.goal(goal.id), fx.card('T1-STOP'), current('T1-STOP'));
+    const risky = beforeSection('T1-STOP', () => fx.store.saveCardRun({ ...current('T1-STOP'), state: 'STOP', stop: riskStop }));
     assert.equal(risky.lease.generation, 1);
     assert.equal(risky.run.ownerGeneration, 1);
     assert.equal(risky.run.state, 'STOP');
     assert.equal(risky.run.stop?.reason, 'risk', 'a stop that is not an ownership stop is kept');
     assert.equal(current('T1-STOP').stop?.reason, 'risk');
-    // a release meanwhile (the old owner let the card go): the record the store hands to the reconciliation is released, so the takeover refuses
-    assert.throws(() => interleaved({ meanwhile: () => fx.leases.release(key('T1-RELEASE'), 0, actorA) }).takeover(fx.goal(goal.id), fx.card('T1-RELEASE'), current('T1-RELEASE')), /lease of card T1-RELEASE is released \(generation 0\)/);
+    // a release meanwhile (the old owner let the card go): the record the lease section reads is released, so the takeover refuses
+    assert.throws(() => beforeSection('T1-RELEASE', () => fx.leases.release(key('T1-RELEASE'), 0, actorA)), /lease of card T1-RELEASE is released \(generation 0\)/);
     assert.equal(fx.leases.read(key('T1-RELEASE'))?.generation, 0);
     assert.equal(fx.leases.read(key('T1-RELEASE'))?.released, true);
     assert.equal(current('T1-RELEASE').ownerGeneration, 0);
     // a takeover by this session meanwhile (a second window of the same session, or a retry racing the first) whose run update
-    // did not land: the record handed to the reconciliation is already this session's, so no second advance; the run update is
+    // did not land: the record the lease section reads is already this session's, so no second advance; the run update is
     // completed instead, journaled as such, and the state selected
     const twiceKey = key('T1-TWICE');
-    const completed = interleaved({ meanwhile: () => { fx.leases.takeover(twiceKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'card:T1-TWICE' }); } }).takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE'));
+    const completed = beforeSection('T1-TWICE', () => { fx.leases.takeover(twiceKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'card:T1-TWICE' }); });
     assert.equal(completed.completed, true);
     assert.equal(completed.previousOwner, undefined);
     assert.equal(completed.lease.generation, 1, 'no second advance');
@@ -664,11 +667,11 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     assert.deepEqual(acquisitions[0]?.data, { resource: twiceKey, leaseGeneration: 1, takeover: true, completed: true });
     // B continues; with the run at the lease generation there is nothing left to take over
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE')).directive.kind, 'build');
-    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE')), /this session owns card T1-TWICE at generation 1; run/);
+    assert.throws(() => takeover('T1-TWICE'), /this session owns card T1-TWICE at generation 1; run/);
     // the same completion when the lease was taken and the process ended before the run update: the command run again finishes it
     const again = fx.leases.read(twiceKey)!;
     fx.store.saveCardRun({ ...current('T1-TWICE'), ownerGeneration: 0, state: 'STOP', stop: makeStop('ownership', 'this dispatch carries a stale ownership generation', 'revalidate', { at: fx.now() }) });
-    const finished = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TWICE'), current('T1-TWICE'));
+    const finished = takeover('T1-TWICE');
     assert.equal(finished.completed, true);
     assert.equal(finished.lease.generation, again.generation);
     assert.equal(finished.run.ownerGeneration, again.generation);
@@ -682,7 +685,7 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CLAIM');
     assert.equal(fx.leases.claim(claimKey, { actor: actorB, now: fx.now(), operation: 'card:T1-CLAIM' }).status, 'acquired');
     assert.equal(current('T1-CLAIM').ownerGeneration, undefined);
-    const claimed = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-CLAIM'), current('T1-CLAIM'));
+    const claimed = takeover('T1-CLAIM');
     assert.equal(claimed.completed, true);
     assert.equal(claimed.previousOwner, undefined);
     assert.equal(claimed.previousGeneration, undefined);
@@ -691,20 +694,22 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     assert.equal(claimed.run.state, 'PREPARE');
     assert.deepEqual(takeovers('T1-CLAIM').map((e) => e.data), [{ resource: claimKey, leaseGeneration: 0, takeover: true, completed: true }]);
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-CLAIM'), current('T1-CLAIM')).directive.kind, 'prepare');
-    // an intent whose lease write never landed (this session's takeover ended right after journaling it): the old owner lets
-    // the card go and a third session claims the same generation; that session's completion recovers no previous owner,
-    // since the intent is bound to the acquiring session and the acquisition time the lease carries
+    // an intent whose lease write never landed (this session's takeover ended right after journaling it, at the rename of the
+    // lease record): the old owner lets the card go and a third session claims the same generation; that session's completion
+    // recovers no previous owner, since the intent is bound to the acquiring session and the acquisition time the lease carries
     const abandonKey = key('T1-ABANDON');
-    assert.throws(() => interleaved({ afterReconcile: () => { throw new Error('process ended'); } }).takeover(fx.goal(goal.id), fx.card('T1-ABANDON'), current('T1-ABANDON')), /process ended/);
+    const abandonFile = fx.leases.file(abandonKey);
+    assert.throws(() => throughFs('renameSync', (real, args) => { if (String(args[1]) === abandonFile) throw new Error('process ended'); return real(...args); }, () => takeover('T1-ABANDON')), /process ended/);
     assert.equal(fx.leases.read(abandonKey)?.owner.session, 'win-A', 'no lease write');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'NOTE' && e.cardId === 'T1-ABANDON' && e.data['kind'] === 'card-takeover-intent').length, 1, 'the intent was journaled');
+    assert.equal(takeovers('T1-ABANDON').length, 0, 'no acquisition is journaled for a lease write that never landed');
     fx.leases.release(abandonKey, 0, actorA);
     const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
     fx.advance(MINUTE_MS);
     assert.equal(fx.leases.claim(abandonKey, { actor: actorC, now: fx.now(), operation: 'card:T1-ABANDON' }).status, 'acquired');
     assert.equal(fx.leases.read(abandonKey)?.generation, 1);
     setActorForTests(actorC);
-    const external = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-ABANDON'), current('T1-ABANDON'));
+    const external = takeover('T1-ABANDON');
     assert.equal(external.completed, true);
     assert.equal(external.previousOwner, undefined, 'an intent that never acquired matches no lease');
     assert.equal(external.run.ownerGeneration, 1);
@@ -716,7 +721,7 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
     fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-PREPARED');
     assert.equal(fx.leases.claim(preparedKey, { actor: actorB, now: fx.now(), operation: 'card:T1-PREPARED' }).status, 'acquired');
     fx.journal(goal.id).append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: 'T1-PREPARED', generation: 0, data: { resource: preparedKey, leaseGeneration: 0 } });
-    const prepared = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-PREPARED'), current('T1-PREPARED'));
+    const prepared = takeover('T1-PREPARED');
     assert.equal(prepared.completed, true);
     assert.equal(prepared.run.ownerGeneration, 0);
     const preparedAcquisitions = fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-PREPARED' && e.data['leaseGeneration'] === 0);
@@ -728,7 +733,7 @@ test('T0-CARD-TAKEOVER, interleaved: an operation, a stop, a release or a takeov
   }
 });
 
-test('T0-CARD-TAKEOVER-2, completion: the lease is read once more before the completion journals and saves, and a record released or taken meanwhile refuses without a write', () => {
+test('T0-CARD-TAKEOVER-2, completion (T1-STORE-CAS): a completion decides on the record its lease section reads, so a record released or taken before that section refuses without a write', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     const ids = ['T1-RELEASED', 'T1-TAKEN'];
@@ -737,20 +742,20 @@ test('T0-CARD-TAKEOVER-2, completion: the lease is read once more before the com
     for (const id of ids) fx.controller.ensureCardRun(fx.goal(goal.id), id);
     const key = (id: string) => resourceKeys.card(fx.repo.key, id);
     const snapshot = (id: string) => ({ run: fx.store.getCardRun(goal.id, id), lease: fx.leases.read(key(id)), events: fx.events(goal.id).length });
-    const withHook = (beforeRead: (n: number) => void) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new InterleavedLeaseStore(fx.paths.leases, { beforeRead }), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    const beforeSection = (id: string, meanwhile: () => void, run: ReturnType<typeof snapshot>['run']) => onLock(`${fx.leases.file(key(id))}.lock`, { before: (n) => { if (n === 1) meanwhile(); } }, () => fx.runner().takeover(fx.goal(goal.id), fx.card(id), run!));
     // both leases are this session's (B) at generation 0 and the runs carry none: claims whose run update did not land
     setActorForTests(actorB);
     for (const id of ids) assert.equal(fx.leases.claim(key(id), { actor: actorB, now: fx.now(), operation: `card:${id}` }).status, 'acquired');
-    // released by another process of this session between the command's first read and the completion's own read
+    // released by another process of this session after the command's first read and before its lease section
     const released = snapshot('T1-RELEASED');
-    assert.throws(() => withHook((n) => { if (n === 2) fx.leases.release(key('T1-RELEASED'), 0, actorB); }).takeover(fx.goal(goal.id), fx.card('T1-RELEASED'), released.run!), /lease of card T1-RELEASED is released \(generation 0\)/);
+    assert.throws(() => beforeSection('T1-RELEASED', () => fx.leases.release(key('T1-RELEASED'), 0, actorB), released.run), /lease of card T1-RELEASED is released \(generation 0\)/);
     assert.deepEqual({ ...snapshot('T1-RELEASED'), lease: undefined }, { ...released, lease: undefined }, 'nothing written');
     assert.equal(fx.leases.read(key('T1-RELEASED'))?.released, true);
-    // taken by another session between the two reads (the lease expired and A took it): the record is another session's at the next generation
+    // taken by another session in between (the lease expired and A took it): the record is another session's, live, at the next generation
     const taken = snapshot('T1-TAKEN');
     assert.throws(
-      () => withHook((n) => { if (n === 2) { fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS); fx.leases.takeover(key('T1-TAKEN'), () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorA, now: fx.now(), operation: 'card:T1-TAKEN' }); } }).takeover(fx.goal(goal.id), fx.card('T1-TAKEN'), taken.run!),
-      /card T1-TAKEN is owned by session win-A \(generation 1\) since the command's first read/,
+      () => beforeSection('T1-TAKEN', () => { fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS); fx.leases.takeover(key('T1-TAKEN'), () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorA, now: fx.now(), operation: 'card:T1-TAKEN' }); }, taken.run),
+      /is still held by win-A until .*expiry alone does not prove the owner stopped/,
     );
     assert.deepEqual({ ...snapshot('T1-TAKEN'), lease: undefined }, { ...taken, lease: undefined }, 'nothing written');
     assert.equal(fx.leases.read(key('T1-TAKEN'))?.owner.session, 'win-A');
@@ -914,6 +919,204 @@ test('T0-CARD-TAKEOVER-2, stale writers: an attempt record and a CI reconciliati
     // B's next call sees the stop the loop knows, not a dispatch of the old owner
     setActorForTests(actorB);
     assert.equal(fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!).run.stop?.reason, 'risk');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test("T1-STORE-CAS acceptance 4: a ship's fence and intent share the card lease lock with the takeover: an intent attempted while the lock is held is refused, an intent recorded first refuses the takeover by id, and a ship after the takeover is fenced with no intent", () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const ids = ['T1-HELD', 'T1-FIRST', 'T1-AFTER'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const lockOf = (id: string) => `${fx.leases.file(key(id))}.lock`;
+    const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
+    const intents = (id: string) => fx.ops.list({ cardId: id });
+    // window A (a lease store that waits 50 ms for a lock) prepares each card and records its candidate: the next call ships it
+    const windowA = (shipPath: DryRunShipPath = new DryRunShipPath(['merged'])) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }), queue: fx.queue, ops: fx.ops, shipPath, now: fx.now });
+    for (const id of ids) {
+      const prepared = windowA().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id));
+      assert.equal(prepared.directive.kind, 'prepare');
+      const build = windowA().next(fx.goal(goal.id), fx.card(id), prepared.run);
+      assert.equal(build.directive.kind, 'build');
+      windowA().recordAttempt(fx.goal(goal.id), fx.card(id), build.run, { outcome: 'success', dodReceipt: `dod:${id}`, redReceipt: `red:${id}`, candidateSha: `sha-${id}` });
+    }
+    const takeoverByB = (id: string) => {
+      setActorForTests(actorB);
+      try {
+        return fx.runner().takeover(fx.goal(goal.id), fx.card(id), current(id));
+      } finally {
+        setActorForTests(actorA);
+      }
+    };
+    // The owner's call takes the lease lock twice: its renewal, then the ship's fence and intent.
+    const atShipSection = (id: string, act: () => void) => onLock(lockOf(id), { before: (n) => { if (n === 2) act(); } }, () => windowA().next(fx.goal(goal.id), fx.card(id), current(id)));
+    // held: a takeover holds the lease lock (its record names this live process) when A's ship reaches its section
+    let fired = 0;
+    assert.throws(() => atShipSection('T1-HELD', () => { fired += 1; writeFileSync(lockOf('T1-HELD'), `pid=${process.pid} at=${fx.now()} nonce=takeover`, 'utf8'); }), /locked/);
+    assert.equal(fired, 1, "the ship's section is the second lease section of the call");
+    assert.deepEqual(intents('T1-HELD'), [], 'no intent is recorded');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'OPERATION_INTENT' && e.cardId === 'T1-HELD'));
+    unlinkSync(lockOf('T1-HELD'));
+    // first: A's intent is recorded, and a takeover attempted while the ship is in flight refuses and names it
+    let refusal: unknown;
+    let inFlight = '';
+    class TakeoverDuringShip extends DryRunShipPath {
+      override ship(req: Parameters<DryRunShipPath['ship']>[0]): ReturnType<DryRunShipPath['ship']> {
+        inFlight = intents('T1-FIRST')[0]?.id ?? '';
+        fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+        try {
+          takeoverByB('T1-FIRST');
+        } catch (err) {
+          refusal = err;
+        }
+        return super.ship(req);
+      }
+    }
+    windowA(new TakeoverDuringShip(['merged'])).next(fx.goal(goal.id), fx.card('T1-FIRST'), current('T1-FIRST'));
+    assert.notEqual(inFlight, '', 'the intent was recorded before the dispatch');
+    assert.match(String(refusal), new RegExp(`not reconciled \\(${inFlight}\\)`));
+    assert.equal(fx.leases.read(key('T1-FIRST'))?.owner.session, 'win-A');
+    assert.equal(fx.leases.read(key('T1-FIRST'))?.generation, 0);
+    // after: B takes the card over once A's ship has passed its gate and before its section; the section's fence refuses at the
+    // stale generation, no intent is recorded, and the stale ship writes nothing over the new owner's run
+    let taken: ReturnType<CardRunner['takeover']> | undefined;
+    assert.throws(() => atShipSection('T1-AFTER', () => { fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS); taken = takeoverByB('T1-AFTER'); }), /changed since it was read/);
+    assert.equal(taken?.lease.generation, 1);
+    assert.deepEqual(intents('T1-AFTER'), [], 'the fenced ship records no intent');
+    assert.ok(!fx.events(goal.id).some((e) => e.type === 'OPERATION_INTENT' && e.cardId === 'T1-AFTER'));
+    assert.equal(current('T1-AFTER').ownerGeneration, 1);
+    assert.equal(current('T1-AFTER').stop, undefined);
+    assert.equal(fx.leases.read(key('T1-AFTER'))?.owner.session, 'win-B');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test("T1-STORE-CAS acceptance 5: a stop saved between the takeover's run read and its run update survives the takeover, and an old owner's review commit after the takeover is fenced", async () => {
+  const fx = makeFixture({ actor: actorA, config: { preReview: { command: ['fake-r2', '{instructions}'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    const ids = ['T1-STOPPED', 'T1-REVIEW'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
+    let onDispatch: (() => void) | undefined;
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-review.ts\u0000' },
+      'git diff': { stdout: 'diff --git a/src/t1-review.ts b/src/t1-review.ts\n+export const review = 1;\n' },
+      'fake-r2': () => {
+        onDispatch?.();
+        return { stdout: '{"verdict":"pass","reasons":[]}\n' };
+      },
+    });
+    const runner = () => new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+    // window A prepares both cards and records the candidate of T1-REVIEW
+    for (const id of ids) assert.equal(runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
+    const build = runner().next(fx.goal(goal.id), fx.card('T1-REVIEW'), current('T1-REVIEW'));
+    assert.equal(build.directive.kind, 'build');
+    const candidate = runner().recordAttempt(fx.goal(goal.id), fx.card('T1-REVIEW'), build.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    // B's takeover: another process saves a risk stop right after the command's first read of the run record
+    const runFile = fx.store.cardFile(goal.id, 'T1-STOPPED');
+    const risk = makeStop('risk', 'a secret-looking value in the candidate', 'rotate it before any push', { at: fx.now(), global: false });
+    let reads = 0;
+    let taken: ReturnType<CardRunner['takeover']> | undefined;
+    setActorForTests(actorB);
+    const caller = current('T1-STOPPED');
+    assert.doesNotThrow(() => {
+      taken = throughFs(
+        'readFileSync',
+        (real, args) => {
+          const out = real(...args);
+          if (String(args[0]) === runFile && ++reads === 1) fx.store.saveCardRun({ ...current('T1-STOPPED'), state: 'STOP', stop: risk });
+          return out;
+        },
+        () => runner().takeover(fx.goal(goal.id), fx.card('T1-STOPPED'), caller),
+      );
+    });
+    assert.equal(taken?.lease.generation, 1);
+    assert.equal(taken?.run.ownerGeneration, 1);
+    assert.equal(taken?.run.stop?.reason, 'risk', 'the stop saved meanwhile survives the takeover');
+    assert.equal(current('T1-STOPPED').stop?.reason, 'risk');
+    assert.equal(current('T1-STOPPED').ownerGeneration, 1);
+    // A's pre-review of T1-REVIEW is in flight when B takes the card over: its commit is fenced at the new generation
+    setActorForTests(actorA);
+    const reserved = runner().next(fx.goal(goal.id), fx.card('T1-REVIEW'), candidate).run;
+    let tookOver: ReturnType<CardRunner['takeover']> | undefined;
+    onDispatch = () => {
+      onDispatch = undefined;
+      fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+      setActorForTests(actorB);
+      try {
+        tookOver = runner().takeover(fx.goal(goal.id), fx.card('T1-REVIEW'), current('T1-REVIEW'));
+      } finally {
+        setActorForTests(actorA);
+      }
+    };
+    const reviewed = await runner().preReview(fx.goal(goal.id), fx.card('T1-REVIEW'), reserved);
+    assert.equal(tookOver?.lease.generation, 1);
+    assert.equal(reviewed.run.ownerGeneration, 1, 'the run keeps the new generation');
+    assert.equal(reviewed.run.stop?.reason, 'ownership', "the old owner's review commit is fenced");
+    assert.match(reviewed.run.stop?.detail ?? '', /fenced: .*owned by win-B/);
+    assert.ok(!reviewed.run.preReview.rounds.some((r) => r.outcome === 'pending'), 'its reservation is released');
+    assert.ok(!reviewed.run.preReview.rounds.some((r) => r.outcome === 'pass'), 'no pass of the old owner is recorded');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS acceptance 6: two completions of one takeover generation journal exactly one LEASE_ACQUIRED', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-TWO', title: 'card T1-TWO' });
+    const goal = goalForCards(fx, ['T1-TWO']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-TWO');
+    const current = () => fx.store.getCardRun(goal.id, 'T1-TWO')!;
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-TWO'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TWO')).directive.kind, 'prepare');
+    // B took the lease at generation 1 and ended before the run update and the acquisition were journaled
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    fx.leases.takeover(cardKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'card:T1-TWO' });
+    setActorForTests(actorB);
+    // two windows of B complete it at once: the second runs while the first journals the acquisition
+    const second = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    let armed = true;
+    let secondError: unknown;
+    let firstError: unknown;
+    throughFs(
+      'appendFileSync',
+      (real, args) => {
+        if (armed && String(args[1]).includes('"LEASE_ACQUIRED"')) {
+          armed = false;
+          try {
+            second.takeover(fx.goal(goal.id), fx.card('T1-TWO'), current());
+          } catch (err) {
+            secondError = err;
+          }
+        }
+        return real(...args);
+      },
+      () => {
+        try {
+          fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TWO'), current());
+        } catch (err) {
+          firstError = err;
+        }
+      },
+    );
+    const acquisitions = () => fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-TWO' && e.data['leaseGeneration'] === 1);
+    assert.equal(acquisitions().length, 1, 'one LEASE_ACQUIRED for generation 1');
+    assert.equal(armed, false, 'the second completion ran while the first journaled the acquisition');
+    assert.match(String(secondError), /locked/, 'the second completion waits for the lease lock the first holds, then refuses');
+    assert.equal(firstError, undefined);
+    assert.equal(current().ownerGeneration, 1);
+    // the second completion run again: the run carries the generation, so nothing is left to complete and nothing is journaled
+    assert.throws(() => second.takeover(fx.goal(goal.id), fx.card('T1-TWO'), current()), /this session owns card T1-TWO at generation 1/);
+    assert.equal(acquisitions().length, 1);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();

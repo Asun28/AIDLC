@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { ActorIdentity, Lease, addMs, nowIso } from '../core/types.ts';
-import { atomicWriteJson, createExclusive, readJson, stableStringify } from '../state/store.ts';
+import { atomicWriteJson, createExclusive, readJson, stableStringify, updateJson } from '../state/store.ts';
 import { currentActor } from '../state/journal.ts';
 import { shortKey } from '../state/paths.ts';
 
@@ -34,9 +34,16 @@ export interface ReconcileReport {
 
 export class LeaseStore {
   readonly dir: string;
+  private readonly lock: { timeoutMs?: number; staleMs?: number };
 
-  constructor(dir: string) {
+  constructor(dir: string, lock: { timeoutMs?: number; staleMs?: number } = {}) {
     this.dir = dir;
+    this.lock = lock;
+  }
+
+  /** One lease section (RED seam: the baseline `updateJson`). */
+  update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+    return updateJson(this.file(resourceKey), Lease, change, this.lock);
   }
 
   file(resourceKey: string): string {

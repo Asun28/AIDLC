@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { actor, cleanup, iso, tmpDir } from './helpers.ts';
@@ -117,6 +117,27 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     store.release(key, 1, B);
     store.purgeReleased(key);
     assert.equal(existsSync(store.file(key)), false);
+  });
+
+  it('T1-STORE-CAS acceptance 3: with a live lease lock, claim, takeover, heartbeat and release each refuse with a locked message and leave the record byte-identical', () => {
+    const quick = new LeaseStore(path.join(dir, 'leases'), { timeoutMs: 50 });
+    const key = resourceKeys.card('repo1', 'T1-LOCKED');
+    store.claim(key, { actor: A, now: t0, ttlMs: 1000 });
+    const file = store.file(key);
+    const before = readFileSync(file, 'utf8');
+    // Another writer of this lease, alive (this process), holds its lock.
+    writeFileSync(`${file}.lock`, `pid=${process.pid} at=${t0} nonce=held`, 'utf8');
+    const writes: Array<[string, () => unknown]> = [
+      ['claim', () => quick.claim(key, { actor: A, now: iso(500) })],
+      ['takeover', () => quick.takeover(key, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: B, now: iso(5000) })],
+      ['heartbeat', () => quick.heartbeat(key, 0, { actor: A, now: iso(500) })],
+      ['release', () => quick.release(key, 0, A)],
+    ];
+    for (const [name, write] of writes) {
+      assert.throws(write, /locked/, `${name} refuses while the lock is held`);
+      assert.equal(readFileSync(file, 'utf8'), before, `${name} leaves the lease record byte-identical`);
+    }
+    unlinkSync(`${file}.lock`);
   });
 
   it('list() returns every parseable lease; resource keys are scoped and case-insensitive', () => {
