@@ -111,13 +111,16 @@ describe('the reasons line agrees with the pass-notes line (T0-PASS-REASONS-WORD
 
   test('every pre and formal prompt, a single pass and each angle, coverage on and off, says reasons is empty on a pass that carries no notes next to the pass-notes line, and no line says it is empty on every pass [R1]', () => {
     const card = { id: 'T1-X', title: 't', allow_paths: ['src/x.ts'], tdd: true, dod_command: 'npm test', acceptance: ['1. x. [dod arm 1]'] } as unknown as Card;
-    const input = { reviewPolicy: 'policy', card, base: 'main', head: 'h', changedPaths: ['src/x.ts'], diff: '+x\n', priorFindings: [], round: 1, maxRounds: 2, includeDiff: true };
+    // The real policy, so the scan covers every line a reviewer reads, REVIEW.md's output contract included.
+    const policy = readFileSync(path.join(root, 'REVIEW.md'), 'utf8').replace(/\r\n/g, '\n');
+    const input = { reviewPolicy: policy, card, base: 'main', head: 'h', changedPaths: ['src/x.ts'], diff: '+x\n', priorFindings: [], round: 1, maxRounds: 2, includeDiff: true };
     let prompts = 0;
     for (const stage of ['pre', 'formal'] as const) {
       for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
         for (const coverage of [false, true]) {
           const key = `${stage}/${perspective ?? 'single'}/coverage ${coverage}`;
           const lines = buildReviewPrompt({ ...input, stage, perspective, coverage }).split('\n');
+          assert.ok(lines.includes('## Output contract') && lines.includes('`{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}`'), `${key}: the prompt carries REVIEW.md's output contract`);
           assert.equal(lines.filter((l) => l === REASONS_LINE).length, 1, `${key}: the reasons line once`);
           assert.equal(lines.filter((l) => l === PASS_NOTES).length, 1, `${key}: the pass-notes line once`);
           const at = lines.indexOf(TAGGED);
