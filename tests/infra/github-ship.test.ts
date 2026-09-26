@@ -335,11 +335,11 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
   test('T0-CI-RED-LOGS acceptance 1: a log without the runner exit line is read whole; an exit line inside the step output is not the cut', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
-    const whole = `${stamp(0)}only line\n${stamp(1)}second line\n`;
+    const whole = `﻿${stamp(0)}only line\n${stamp(1)}second\u0007line\n`;
     const r = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red(), [JOB_LOGS]: { stdout: whole } }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     const lines = outputLines(r);
     const gate = lines.indexOf('[CI-GATE-LOG] actions/runs/123/job/456');
-    assert.deepEqual(lines.slice(gate + 1, lines.indexOf('[SAGA-FAIL]')), ['only line', 'second line']);
+    assert.deepEqual(lines.slice(gate + 1, lines.indexOf('[SAGA-FAIL]')), ['only line', 'second line'], 'the byte order mark and the timestamp of the first line go, a control character becomes a space');
     const twice = jobLog(['first step', '##[error]Process completed with exit code 2.', 'second step fails']);
     const r2 = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red(), [JOB_LOGS]: { stdout: twice } }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     const lines2 = outputLines(r2);
@@ -356,9 +356,11 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const lines = outputLines(refused);
     assert.equal(lines[lines.indexOf('[CI-GATE-LOG] actions/runs/123/job/456 log unavailable') + 1], '[SAGA-FAIL]', 'no log lines follow');
 
-    const foreign = new GitHubShipPath({ ...base(f), runner: runnerWith(red([{ name: 'ci', status: 'completed', conclusion: 'failure', details_url: 'https://ci.example.com/o/r/runs/5/job/6/build' }, { name: 'lint', status: 'completed', conclusion: 'failure' }])) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    const foreign = new GitHubShipPath({ ...base(f), runner: runnerWith(red([{ name: 'ci', status: 'completed', conclusion: 'failure', details_url: 'https://ci.example.com/o/r/runs/5/job/6/build' }, { name: 'deploy', status: 'completed', conclusion: 'failure', details_url: 'https://github.com/o/r/actions/runs/7/job/8/summary' }, { name: 'lint', status: 'completed', conclusion: 'failure' }])) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     assert.equal(foreign.outcome, 'ci-red');
     assert.ok(!foreign.receipt.stdout.includes('[CI-GATE-LOG]'), foreign.receipt.stdout);
+    const query = new GitHubShipPath({ ...base(f), runner: runnerWith({ ...red([{ name: 'ci', status: 'completed', conclusion: 'failure', details_url: `${JOB_URL}?pr=42` }]), [JOB_LOGS]: { stdout: `${stamp(0)}read\n` } }) }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.ok(outputLines(query).includes('[CI-GATE-LOG] actions/runs/123/job/456'), 'a job URL with a query is an Actions job');
 
     const asked: string[] = [];
     const four = Array.from({ length: 4 }, (_, i) => ({ name: `job ${i}`, status: 'completed', conclusion: 'failure', details_url: `https://github.com/o/r/actions/runs/${10 + i}/job/${20 + i}` }));
@@ -395,7 +397,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
 });
 
 const DOC_SENTENCES = [
-  'A red check run of a GitHub Actions job puts the failed step of its log on the gate output (card T0-CI-RED-LOGS): right after the `[CI-GATE-RED]` line, one `[CI-GATE-LOG] actions/runs/<run>/job/<job>` line per red Actions job, at most three in gate order, followed by the lines before the runner\'s last `##[error]Process completed with exit code N.` line (the whole log without one), with the byte order mark, the timestamps and the colour codes removed, the last 60 non-empty lines, each capped at 240 characters and encoded like a check name.',
+  'A red check run of a GitHub Actions job puts the failed step of its log on the gate output (card T0-CI-RED-LOGS): right after the `[CI-GATE-RED]` line, one `[CI-GATE-LOG] actions/runs/<run>/job/<job>` line per red Actions job, at most three in gate order, followed by the lines before the runner\'s last `##[error]Process completed with exit code N.` line (the whole log without one), with the byte order mark, the timestamps, the colour codes and other control characters removed, the last 60 non-empty lines, each capped at 240 characters and encoded like a check name.',
   'A log the ship path cannot read (`gh api repos/<repo>/actions/jobs/<job>/logs` exits non-zero, as for an expired log) gets `log unavailable` on its `[CI-GATE-LOG]` line and no log lines, and a red check that is not an Actions job gets no `[CI-GATE-LOG]` line.',
   'The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient and takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, or none the classifier recognises, the failure is unknown and the card stops with STOP/ci as before.',
 ];

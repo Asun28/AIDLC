@@ -27,6 +27,14 @@ export interface RunView {
   jobs: Array<{ name: string; status: string; conclusion: string | null }>;
 }
 
+export interface CheckRun {
+  name: string;
+  status: string;
+  conclusion: string | null;
+  /** For a GitHub Actions job: `.../actions/runs/<run>/job/<job>`. */
+  details_url?: string | null;
+}
+
 export class GhProbe {
   readonly runner: SyncRunner;
 
@@ -92,15 +100,21 @@ export class GhProbe {
   }
 
   /** Check runs for a commit (paginated, up to 50 pages like the scaffold's CI gate). */
-  checkRuns(repo: string, sha: string, cwd?: string): Array<{ name: string; status: string; conclusion: string | null }> {
-    const out: Array<{ name: string; status: string; conclusion: string | null }> = [];
+  checkRuns(repo: string, sha: string, cwd?: string): CheckRun[] {
+    const out: CheckRun[] = [];
     for (let page = 1; page <= 50; page += 1) {
-      const res = this.json<{ check_runs?: Array<{ name: string; status: string; conclusion: string | null }> }>(['api', `repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`], cwd);
+      const res = this.json<{ check_runs?: CheckRun[] }>(['api', `repos/${repo}/commits/${sha}/check-runs?per_page=100&page=${page}`], cwd);
       const runs = res.check_runs ?? [];
       out.push(...runs);
       if (runs.length < 100) break;
     }
     return out;
+  }
+
+  /** The raw log of one GitHub Actions job, or undefined when it cannot be read (expired, missing, unfinished, no access). */
+  jobLog(repo: string, jobId: string, cwd?: string): string | undefined {
+    const r = this.gh(['api', `repos/${repo}/actions/jobs/${jobId}/logs`], cwd);
+    return r.exitCode === 0 && !r.timedOut ? r.stdout : undefined;
   }
 
   rerunFailed(repo: string, runId: string, cwd?: string): ExecReceipt {

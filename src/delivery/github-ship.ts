@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
-import { GhProbe } from '../probes/gh.ts';
+import { GhProbe, type CheckRun } from '../probes/gh.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
@@ -48,6 +48,30 @@ function encodeUntrusted(text: string): string {
 /** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
 function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
+}
+
+/** The Actions job a check run's details URL names (T0-CI-RED-LOGS). */
+const ACTIONS_JOB = /\/actions\/runs\/(\d+)\/job\/(\d+)(?:[?#][^\s]*)?$/;
+const CI_LOG_JOBS = 3;
+const CI_LOG_LINES = 60;
+const CI_LOG_WIDTH = 240;
+
+/**
+ * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS): the lines before the runner's last
+ * `##[error]Process completed with exit code N.` line (the whole log without one), with the byte order mark, the
+ * timestamps, the colour codes and other control characters removed, the last 60 non-empty lines, each capped at 240
+ * characters and then encoded, so no log line can carry a sentinel.
+ */
+export function failedStepLines(log: string): string[] {
+  const lines = log
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((l) => l.replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?/, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' '));
+  const exit = lines.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l));
+  return (exit >= 0 ? lines.slice(0, exit) : lines)
+    .filter((l) => l.trim() !== '')
+    .slice(-CI_LOG_LINES)
+    .map((l) => encodeUntrusted(l.slice(0, CI_LOG_WIDTH)));
 }
 
 /** Git's non-empty output lines trimmed and joined on one line, not encoded: `fail` encodes every detail exactly once. */
@@ -163,8 +187,8 @@ export class GitHubShipPath implements ShipPath {
     // encoded exactly once here, so no detail can form a sentinel, a resume marker or a merge diagnostic; the CI gate
     // lines are the one verbatim detail (their JSON already carries encoded names and is decoded by the runner). The
     // resume command and the PR identity come from this path's own state, never from the output text.
-    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean } = {}): ShipResult => {
-      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
+    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean; lines?: string[] } = {}): ShipResult => {
+      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, ...(opts.lines ?? []), '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
       return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
@@ -254,7 +278,7 @@ export class GitHubShipPath implements ShipPath {
         return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
       };
       const failed = runs.filter((r) => r.status === 'completed' && !green(r));
-      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true });
+      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true, lines: this.ciLogLines(failed, wt) });
       if (!pending.length && runs.length > 0) break;
       if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber, { verbatim: true });
       log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
@@ -384,6 +408,23 @@ export class GitHubShipPath implements ShipPath {
     if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `the CHANGELOG.md merge is committed in ${wt} but the merge commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; record the worktree HEAD by hand` };
     log.push(encodeUntrusted(flat(`base sync: CHANGELOG.md resolved by keeping the entries both sides added to Unreleased; merge ${mergeSha}`)));
     return { sentinel: '[SHIP-BASE-SYNC-MERGED]', detail: `${ref} conflicted with HEAD ${head} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${mergeSha}: a new candidate, not shipped; run the DoD on it and record it as the next attempt` };
+  }
+
+  /**
+   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS): for each red check run that is an Actions job, at most three
+   * in gate order, a header built from the run and job ids alone (so the first `runs/<id>` on the output is the job's
+   * run), then the failed step of its log, or `log unavailable` when the log cannot be read.
+   */
+  private ciLogLines(failed: CheckRun[], wt: string): string[] {
+    const jobs = failed.flatMap((r) => {
+      const m = (r.details_url ?? '').match(ACTIONS_JOB);
+      return m ? [{ run: m[1]!, job: m[2]! }] : [];
+    });
+    return jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job }) => {
+      const text = this.gh.jobLog(this.options.repository, job, wt);
+      const header = `[CI-GATE-LOG] actions/runs/${run}/job/${job}`;
+      return text === undefined ? [`${header} log unavailable`] : [header, ...failedStepLines(text)];
+    });
   }
 
   private tokenFile(cardId: string): string {

@@ -146,8 +146,10 @@ describe('probes/gh (PR identity, CI runs, pagination)', () => {
           return { stdout: '2026-09-26T04:12:10.9854830Z line\n' };
         },
         'gh api repos/Asun28/repo/actions/jobs/78/logs': { exitCode: 1, stdout: 'partial', stderr: 'HTTP 410: Gone' },
+        'gh api repos/Asun28/repo/actions/jobs/80/logs': { exitCode: 0, timedOut: true, stdout: 'cut short' },
       }),
     );
+    assert.equal(probe.jobLog(REPO, '80'), undefined, 'a read that timed out is no log');
     assert.equal(probe.jobLog(REPO, '77'), '2026-09-26T04:12:10.9854830Z line\n');
     assert.deepEqual(asked, [['api', 'repos/Asun28/repo/actions/jobs/77/logs']]);
     assert.equal(probe.jobLog(REPO, '78'), undefined, 'a refused log is no log, whatever its stdout');

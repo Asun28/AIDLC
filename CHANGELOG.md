@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- CI logs on a red gate, card T0-CI-RED-LOGS: a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci. A log that cannot be read still stops with STOP/ci (docs/OPERATIONS.md, Ship gates).
+
 - Ship failure that refutes nothing, card T0-SHIP-NOTHING-REFUTED: a ship failure that refutes no recorded success (a run with no effort episode, or one whose last evaluated attempt is not a success) no longer says the failure counts as a failed attempt; its build directive says it counts no attempt. The build directive of a ship failure names the ladder's attempt number, where it used to count not-counted attempts and name a number the next build directive did not.
 - Running repair on a ladder stop, card T0-RUNNING-REPAIR-STOP: a repair attempt still running when a ship failure stops the effort ladder can no longer be recorded; `aidlc card attempt` refuses it with any outcome and names the stop, where a success used to overwrite the stop with `succeeded`. A running repair the ladder promotes to the escalation is journaled as an `ATTEMPT_STARTED` with `promoted: true`, so the journal no longer shows it as a baseline attempt.
 
