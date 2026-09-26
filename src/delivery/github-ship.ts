@@ -70,7 +70,8 @@ function secondOf(iso: string | null | undefined): number | undefined {
  * `shell: ` line, the (k+1)-th such header in its first second when that second holds one per step after step 1 that
  * started in it (k counting the earlier ones), or at the window start for step 1 (`Set up job`, which prints none); it ends
  * before the first `##[error]Process completed with exit code N.` line after its start, or, without one, at the window
- * end when the record has an end time and no later step started in that second. The lines lose the byte order mark, the timestamps and the colour codes, every other
+ * end when the record has an end time and no later step started in that second; when a later step started in the end
+ * second, the exit line must come before every `##[group]Run ` line of that second after the start. The lines lose the byte order mark, the timestamps and the colour codes, every other
  * control character (tab, C1 and the Unicode line and paragraph separators included) becomes a space, and the last 60
  * non-empty ones are capped at 240 characters and then encoded, so no log line can carry a sentinel. Undefined when the
  * record names no failed step with a start time, or when the start is not placed that way: a start that whole-second
@@ -103,7 +104,10 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
   const from = failed.number === 1 ? 0 : headers.length === inSecond.length ? headers[rank] : undefined;
   if (from === undefined) return undefined;
   const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
-  if (exit < 0 && (end === undefined || steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end))) return undefined;
+  const laterInEnd = end !== undefined && steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
+  if (exit < 0 && (end === undefined || laterInEnd)) return undefined;
+  // With a later step started in the end second, an exit line after a `Run` group of that second may be the later step's.
+  if (laterInEnd && window.some((l, i) => i > from && i < exit && l.time >= end && l.text.startsWith('##[group]Run '))) return undefined;
   return window
     .slice(from, exit < 0 ? window.length : exit)
     .map((l) => l.text)
