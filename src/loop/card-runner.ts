@@ -1169,7 +1169,7 @@ export class CardRunner {
     }
     const round = decided.length + 1;
     const switched = reviewer.reviewer !== cfg.reviewer ? ` (the primary ${cfg.reviewer} is on a quota hold; its fallback runs)` : '';
-    const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : last?.outcome === 'quota-hold' && !switched ? ' (the previous run reported a quota hold; retry once it clears)' : '';
+    const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : last?.outcome === 'quota-hold' && !switched && (!cfg.fallback || last.reviewer === reviewer.reviewer) ? ' (the previous run reported a quota hold; retry once it clears)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
     return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: reviewer.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${reviewer.reviewer}) before the ship${retry}${switched}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
   }

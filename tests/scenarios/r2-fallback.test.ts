@@ -99,6 +99,8 @@ function preReviewDirective(s: Setup, run: CardRun): { run: CardRun; reviewer: s
   if (r.directive.kind !== 'pre-review') throw new Error('unreachable');
   return { run: r.run, reviewer: r.directive.reviewer, round: r.directive.round, narration: r.directive.narration };
 }
+/** The complete `pre-review` directive of this fixture's card, field for field: round 1 of 2 unless given. */
+const preReviewOf = (reviewer: string, notes: string, round = 1) => ({ kind: 'pre-review', cardId: 'T1-GATE', round, maxRounds: 2, reviewer, narration: `Pre-review round ${round}/2 (R2, ${reviewer}) before the ship${notes}: run \`aidlc review pre T1-GATE\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.` });
 /** Hold the primary with the 402 answer, and return the run the review recorded. */
 async function holdPrimary(s: Setup, run: CardRun): Promise<CardRun> {
   s.primary.push({ stderr: INSUFFICIENT_BALANCE, exitCode: 1 });
@@ -142,13 +144,9 @@ const withCard = (fn: (s: Setup) => Promise<void>, options?: Options) => async (
 
 test('T0-R2-FALLBACK acceptance 3: a primary held on 402 hands the round to the fallback at high; the round, its event and its evidence note name the fallback and the level; the pass ships [R3]', withCard(async (s) => {
   const afterHold = await holdPrimary(s, s.run);
-  const d = preReviewDirective(s, afterHold);
-  assert.equal(d.reviewer, 'sonnet', 'the gate names the fallback, not WAIT');
-  assert.equal(d.round, 1, 'the hold consumed no round');
-  assert.ok(d.narration.includes('(R2, sonnet)'), d.narration);
-  assert.ok(d.narration.includes('(the primary deepseek is on a quota hold; its fallback runs)'), d.narration);
-  assert.ok(!d.narration.includes('retry once it clears'), `a switch is no retry of the held reviewer: ${d.narration}`);
-  const passed = await review(s, d.run);
+  const switched = next(s, afterHold);
+  assert.deepEqual(switched.directive, preReviewOf('sonnet', ' (the primary deepseek is on a quota hold; its fallback runs)'), 'the gate names the fallback, not WAIT; the hold consumed no round; a switch is no retry of the held reviewer');
+  const passed = await review(s, switched.run);
   assert.equal(passed.result.outcome, 'pass');
   assert.deepEqual(s.calls, [['primary-reviewer'], ['fallback-reviewer', '--effort', 'high']], 'the fallback ran with {effort} expanded to high for a small candidate');
   assertRecordedBy(s, passed, 'sonnet', 'high');
@@ -176,9 +174,9 @@ test('T0-R2-FALLBACK acceptance 3: the diff cap of the fallback applies, and its
 
 for (const fallback of [false, true]) {
   test(`T0-R2-FALLBACK acceptance 5: a primary argv with a literal {effort} is dispatched unchanged and records no level, ${fallback ? 'with a fallback configured and the primary not held' : 'without a fallback'} [R3]`, withCard(async (s) => {
-    const d = preReviewDirective(s, s.run);
-    assert.equal(d.reviewer, 'deepseek');
-    const passed = await review(s, d.run);
+    const first = next(s, s.run);
+    assert.deepEqual(first.directive, preReviewOf('deepseek', ''), 'the directive, field for field');
+    const passed = await review(s, first.run);
     assert.deepEqual(s.calls, [['primary-reviewer', '--effort', '{effort}']], 'the primary has no effort policy: {effort} stays as written');
     assertRecordedBy(s, passed, 'deepseek', undefined);
   }, { fallback, primaryArgs: ['--effort', '{effort}'] }));
@@ -256,9 +254,9 @@ test('T0-R2-FALLBACK acceptance 4: with both held the gate waits until the earli
   d = preReviewDirective(s, waiting.run);
   assert.equal(d.reviewer, 'sonnet', 'the reviewer whose hold cleared first runs next');
   s.fx.advance(HOLD_MS);
-  d = preReviewDirective(s, d.run);
-  assert.equal(d.reviewer, 'deepseek', 'the primary runs again once its hold clears');
-  const passed = await review(s, d.run);
+  const resumed = next(s, d.run);
+  assert.deepEqual(resumed.directive, preReviewOf('deepseek', ''), 'the primary runs again once its hold clears, with no retry note: the last hold was the fallback, not the primary');
+  const passed = await review(s, resumed.run);
   assertRecordedBy(s, passed, 'deepseek', undefined);
   assert.deepEqual(s.calls.at(-1), ['primary-reviewer']);
 }));
@@ -325,6 +323,7 @@ test('T0-R2-FALLBACK acceptance 4: a pending round expires on the timeout of the
 
 test('T0-R2-FALLBACK acceptance 5: without preReview.fallback the 402 round, the WAIT directive, the refusal and the directive after the hold are as before this card [R3]', withCard(async (s) => {
   const start = s.fx.now();
+  assert.deepEqual(next(s, s.run).directive, preReviewOf('deepseek', ''), 'the first directive, field for field');
   const afterHold = await holdPrimary(s, s.run);
   const held = afterHold.preReview.rounds.at(-1)!;
   const holdUntil = new Date(Date.parse(start) + HOLD_MS).toISOString();
@@ -343,11 +342,9 @@ test('T0-R2-FALLBACK acceptance 5: without preReview.fallback the 402 round, the
   assert.equal(waiting.run.state, 'WAIT');
   await assert.rejects(review(s, waiting.run), { message: `pre-reviewer deepseek is on a quota hold until ${holdUntil}; do not re-run before it clears` });
   s.fx.advance(HOLD_MS + 1_000);
-  const d = preReviewDirective(s, waiting.run);
-  assert.equal(d.reviewer, 'deepseek');
-  assert.equal(d.round, 1);
-  assert.equal(d.narration, 'Pre-review round 1/2 (R2, deepseek) before the ship (the previous run reported a quota hold; retry once it clears): run `aidlc review pre T1-GATE`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.');
-  const passed = await review(s, d.run);
+  const after = next(s, waiting.run);
+  assert.deepEqual(after.directive, preReviewOf('deepseek', ' (the previous run reported a quota hold; retry once it clears)'), 'the directive after the hold, field for field');
+  const passed = await review(s, after.run);
   assertRecordedBy(s, passed, 'deepseek', undefined);
   assert.ok(!s.calls.some((c) => c[0] === 'fallback-reviewer'), 'no fallback is configured, so none runs');
 }, { fallback: false }));
@@ -404,3 +401,14 @@ for (const primaryShell of [true, false]) {
     assert.equal(s.spawned.find((x) => x.command === 'primary-reviewer')?.shell, primaryShell, 'the primary keeps its own shell');
   }, { fallbackBare: true, primaryShell, primaryMarker: '=== answer ===' }));
 }
+
+test('T0-R2-FALLBACK-2 acceptance 5: without preReview.fallback a cleared hold recorded under an earlier reviewer name keeps the retry note, as before [R3]', withCard(async (s) => {
+  s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
+    const latest = current!;
+    const held: PreReviewRound = { round: 1, cycle: 0, reviewer: 'renamed-reviewer', candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'quota-hold', reasons: ['via text: quota'], holdUntil: new Date(Date.parse(s.fx.now()) + 60_000).toISOString(), reservationId: 'T1-GATE.pre.0.1.1.eeeeeeee', advisory: [] };
+    return { ...latest, preReview: { ...latest.preReview, rounds: [held] } };
+  });
+  s.fx.advance(61_000);
+  const r = next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!);
+  assert.deepEqual(r.directive, preReviewOf('deepseek', ' (the previous run reported a quota hold; retry once it clears)'));
+}, { fallback: false }));
