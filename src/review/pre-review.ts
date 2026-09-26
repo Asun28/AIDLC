@@ -17,7 +17,8 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { detectQuotaHold, findingLocation, parseVerdict, quotaOutput } from '../core/review-policy.ts';
+import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
+import { findingLocation, parseVerdict } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
 import type { Card, CoverageEntry as CoverageEntryType, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
@@ -697,7 +698,7 @@ export function classifyPreReview(verdict: Verdict | undefined, receipt: Pick<Ex
     return { outcome: verdict.verdict, runStatus: 'success', reasons };
   }
   const quota = detectQuotaHold(quotaOutput(receipt));
-  if (quota.hold) return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: quota.retryAfterMs };
+  if (quota.hold) return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [`via ${quota.via}: ${quota.evidence}`], retryAfterMs: quota.retryAfterMs };
   if (receipt.exitCode !== 0) return { outcome: 'no-verdict', runStatus: 'tool_error', reasons: [] };
   return { outcome: 'no-verdict', runStatus: receipt.stdout.trim() ? 'malformed' : 'no_output', reasons: [] };
 }
@@ -724,9 +725,7 @@ export function collectCandidateDiff(runner: SyncRunner, cwd: string, baseRef: s
   // --no-ext-diff and --no-textconv: the reviewer and the effort count read a plain unified diff under any user git configuration.
   const full = runner('git', ['diff', '--text', range, '--no-color', '--no-ext-diff', '--no-textconv'], { cwd });
   if (full.exitCode !== 0) throw new Error(`git diff ${range} failed in ${cwd}: ${full.stderr.trim() || `exit ${full.exitCode}`}`);
-  const changedPaths = names.stdout
-    .split(/\u0000|\r?\n/)
-    .filter((l) => l.length > 0);
+  const changedPaths = nulList(names.stdout);
   const bytes = Buffer.byteLength(full.stdout, 'utf8');
   if (bytes > maxBytes) throw new Error(`the committed diff ${range} is ${bytes} bytes, above ${cap} (${maxBytes}); split the candidate or raise the cap: no review is dispatched on a cut diff`);
   return { changedPaths, diff: full.stdout, bytes };
@@ -934,7 +933,7 @@ export function aggregateVerdicts(results: PerspectiveResult[]): AggregatedVerdi
   const holds = results.filter((r) => r.outcome === 'quota-hold');
   if (holds.length) {
     const delays = holds.map((r) => r.retryAfterMs ?? 0).filter((d) => d > 0);
-    return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: holds.map((r) => `quota hold from ${r.perspective}`), retryAfterMs: delays.length ? Math.max(...delays) : undefined, advisory };
+    return { outcome: 'quota-hold', runStatus: 'tool_error', reasons: holds.map((r) => [`quota hold from ${r.perspective}`, ...r.reasons].join(': ')), retryAfterMs: delays.length ? Math.max(...delays) : undefined, advisory };
   }
   const shas = dedupe(results.map((r) => r.verdict?.sha).filter((s): s is string => Boolean(s)));
   const branches = dedupe(results.map((r) => r.verdict?.branch).filter((s): s is string => Boolean(s)));

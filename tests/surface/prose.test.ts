@@ -67,11 +67,11 @@ describe('prose (writing density)', () => {
 
 /**
  * Where one sentence ends and the next begins, read case-sensitively: `.`, `!` or `?`, any closing quotes, brackets,
- * backticks or emphasis marks, whitespace and a capital letter; a blank line; or a new list item. The dot of an ellipsis or of
- * e.g., i.e., etc., vs., cf., Mr., Mrs., Ms. or Dr. ends no sentence, and any other abbreviation before a lowercase word stays
- * inside it.
+ * backticks or emphasis marks, whitespace, any opening ones and a capital letter; a blank line; or a new list item. The dot
+ * of an ellipsis, of e.g., i.e., etc., vs. or cf. in either case, of Mr., Mrs., Ms. or Dr., or of an initialism such as U.S.
+ * ends no sentence, and any other abbreviation before a lowercase word stays inside it (issue #41).
  */
-const SENTENCE_BREAK = /(?:(?<!\.|\b(?:e\.g|i\.e|etc|vs|cf|Mrs?|Ms|Dr))\.|[!?])["'`)\]*_]*\s+(?=[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
+const SENTENCE_BREAK = /(?:(?<!\.|\b(?:[eE]\.g|[iI]\.e|[eE]tc|[vV]s|[cC]f|Mrs?|Ms|Dr|[A-Z]\.[A-Z]))\.|[!?])["'`)\]*_]*\s+(?=["'`(\[*_]*[A-Z])|\n[ \t\r]*\n|\n[ \t]*(?:[-*+]|\d+[.)])\s/;
 /** "subagent" in each spelling and spacing, singular or plural. */
 const SUBAGENT = String.raw`sub(?:-|\s+)?agents?`;
 const SUBAGENT_TO_VERIFY = new RegExp(String.raw`${SUBAGENT}\s+to\s+verify`, 'i');
@@ -202,6 +202,19 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       ['Verify the answers with subagents.', 'use a subagent to verify'],
       ['Use a sub-agent to verify the answer.', 'use a subagent to verify'],
       ['Use subagents to verify the answers.', 'use a subagent to verify'],
+      // Issue #41 (T1-PARSE-GUARD acceptance 7): a capitalised abbreviation or an initialism ends no sentence either.
+      ['Verify E.g. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify I.e. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify Bob, Alice Etc. The rest with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff Vs. Main with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff (Cf. Section 2) with a subagent.', 'use a subagent to verify'],
+      ['Verify U.S. Bank data with a subagent.', 'use a subagent to verify'],
+      // Issue #41: With and Subagent are read in any letter case.
+      ['Verify the diff With A Subagent.', 'use a subagent to verify'],
+      ['Use a Subagent to verify.', 'use a subagent to verify'],
+      // Issue #41: an opening delimiter starts a sentence only before a capital.
+      ['Verify it. "then run the tests with a subagent."', 'use a subagent to verify'],
+      ['Verify it. " Then run the tests with a subagent."', 'use a subagent to verify'],
     ];
     for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
   });
@@ -230,6 +243,17 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       '* verify the output\n+ run the tests with a subagent',
       '+ verify the output\n* run the tests with a subagent',
       '1) verify the output\n2) run the tests with a subagent',
+      // Issue #41 (T1-PARSE-GUARD acceptance 7): the numbered-list branch with a dot, and an opening quote, backtick,
+      // bracket or emphasis mark before the capital of the next sentence.
+      '1. verify the output\n2. run the tests with a subagent',
+      '  10. verify the output\n  11. run the tests with a subagent',
+      'Verify it. "Then run the tests with a subagent."',
+      "Verify it. 'Then run the tests with a subagent.'",
+      'Verify it. `Then` run the tests with a subagent.',
+      'Verify it. (Then run the tests with a subagent.)',
+      'Verify it. [Then](x) run the tests with a subagent.',
+      'Verify it. **Then** run the tests with a subagent.',
+      'Verify it. _Then_ run the tests with a subagent.',
       'Where verify steps run, nothing changes.',
       'Maybe more conservative estimates hold.',
     ];

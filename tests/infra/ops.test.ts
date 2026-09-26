@@ -122,4 +122,16 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     assert.equal(lookupOperation(withLookup, 'op-1', runner('state: weird')).status, 'UNKNOWN');
     assert.equal(lookupOperation(withLookup, 'op-1', runner('', 1)).status, 'UNKNOWN');
   });
+
+  it('T1-PARSE-GUARD acceptance 1: a blank successPattern, failurePattern or operationIdPattern is refused at its path, never read as a pattern [R1]', () => {
+    const binding = { role: 'deploy', command: ['deploy-tool', 'submit'] };
+    for (const key of ['successPattern', 'failurePattern', 'operationIdPattern']) {
+      for (const blank of ['   ', '', '\t']) {
+        const r = OperationBinding.safeParse({ ...binding, [key]: blank });
+        assert.equal(r.success, false, `${key}: ${JSON.stringify(blank)}`);
+        assert.ok(r.error?.issues.some((i) => i.path.join('.') === key), `${key}: the issue names the key`);
+      }
+      assert.equal(OperationBinding.safeParse({ ...binding, [key]: ' state: done ' }).success, true, `${key}: a pattern with a non-blank character parses`);
+    }
+  });
 });

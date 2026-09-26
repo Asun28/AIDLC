@@ -33,11 +33,11 @@ export const OperationBinding = z.object({
   statusLookup: z.array(z.string()).optional(),
   idempotencyKeyArg: z.string().optional(),
   /** Regex capturing the provider operation id from stdout. */
-  operationIdPattern: z.string().optional(),
+  operationIdPattern: z.string().regex(/\S/, 'must not be blank').optional(),
   /** Interpretation: exit 0 alone is not completion for async operations. */
   async: z.boolean().default(false),
-  successPattern: z.string().optional(),
-  failurePattern: z.string().optional(),
+  successPattern: z.string().regex(/\S/, 'must not be blank').optional(),
+  failurePattern: z.string().regex(/\S/, 'must not be blank').optional(),
   evidenceDir: z.string().optional(),
   /** Whether this operation triggers external publication (tag/release CD). */
   triggersPublication: z.boolean().default(false),
