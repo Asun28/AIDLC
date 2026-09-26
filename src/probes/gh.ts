@@ -115,6 +115,11 @@ export class GhProbe {
     return { number: v.number, url: v.url, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergedAt: v.mergedAt ?? undefined, mergeCommit: v.mergeCommit?.oid };
   }
 
+  /** The merge state GitHub reports for a PR (T0-SHIP-MERGE-REFUSED). Seam for the RED run: reads nothing yet. */
+  prMergeState(_repo: string, _number: number, _cwd?: string): { mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; mergeStateStatus?: string } {
+    return {};
+  }
+
   runView(repo: string, runId: string, cwd?: string): RunView {
     return this.json<RunView>(['run', 'view', runId, '--repo', repo, '--json', 'databaseId,attempt,status,conclusion,headSha,jobs,url'], cwd);
   }
