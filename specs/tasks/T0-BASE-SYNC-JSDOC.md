@@ -19,7 +19,7 @@ requirements:
   - R4. No code token of `src/loop/card-runner.ts` or `src/core/types.ts` shall change; `CHANGELOG.md` Unreleased shall carry the entry.
 acceptance:
   - 1. `tests/surface/base-sync-jsdoc.test.ts` reads the comment directly above each of the three symbols and asserts the exact sentences this card writes, failing with any one removed or moved to another symbol. [R1] [R2] [R3] [dod arm 1]
-  - 2. The token sweep retained as evidence compares the TypeScript token stream (comments and whitespace skipped) of both source files at the base and at the candidate and finds them equal. [R4]
+  - 2. The candidate diff of `src/loop/card-runner.ts` and `src/core/types.ts` against its base changes JSDoc comment lines only: every added or removed line of the two files starts with `/**`, `*` or `*/`, which the diff itself shows, so no DoD test holds this item (a test would need a fixed base). The code sweep confirms it and is retained as evidence: both files, parsed by TypeScript and printed with comments removed, are identical at the base and at the candidate, and one changed code token in either file is reported as a difference. [R4]
   - 3. The same test file reads the exact CHANGELOG Unreleased sentence this card adds. [R4] [dod arm 1]
 depends_on: []
 budget: 60
