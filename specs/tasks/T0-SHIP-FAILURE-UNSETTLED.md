@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-FAILURE-UNSETTLED
 title: A ship failure on an effort episode with no settled attempt returns the episode unchanged through an explicit guard, and a refuted attempt keeps the finishedAt of its success, as documented
-status: todo
+status: merged
 branch: T0-SHIP-FAILURE-UNSETTLED
 worktree: D:\wt\AIDLC\T0-SHIP-FAILURE-UNSETTLED
 allow_paths:
