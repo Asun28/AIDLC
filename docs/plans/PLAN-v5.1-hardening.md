@@ -13,7 +13,7 @@ created: 2026-09-25T23:55:00Z
 Approving this plan authorizes: the nine cards below (registered on main by
 this plan's PR), four T1 goals created one wave at a time, one PR per card on
 the github ship path through R2, R3 and the CI checks, and the five decisions
-D1-D5 as recommended unless the approval says otherwise. It does not
+D1-D4 as recommended unless the approval says otherwise (D5 is met). It does not
 authorize a release, a deploy, a force push or any spend on W0 runs beyond
 the cap set in D3. No src/ file changes before approval.
 
@@ -367,6 +367,12 @@ filed as an issue by the card named.
 - F6: the ship path enforces the card `budget:` only on the scaffold path
   (`[CARD-BUDGET-OVER]`); the github path has no churn gate, so the src net
   gates above are checked by each card's acceptance, not by the ship.
+- F7 (issue #72): card commands without `--goal` take the newest active goal,
+  even one that does not project the card (`src/cli/main.ts:97`); another
+  session's attempt landed in an unrelated goal's journal this way. Every
+  card and review command of these waves passes `--goal`. A card for #72 and
+  T0-CI-RED-LOGS-2 are in flight in other sessions and both edit
+  CHANGELOG.md, so wave 1 syncs its base before each ship.
 
 New findings from running the waves are appended here by the card that meets
 them, never worked around.
@@ -388,10 +394,10 @@ them, never worked around.
   `evals/baseline/README.md`.
 - D4 (W3 primitive). Recommended as designed: the O_EXCL locked update, not
   `git update-ref`, for the reasons in 4.5. Approving the plan accepts it.
-- D5 (W5 overlap). `T0-UNATTENDED-RUNS` (registered on main, not started,
-  another session's card) documents `/goal` as the outer driver of `aidlc next`. Recommended:
-  that card runs first; `aidlc run` stops on the same directive kinds and
-  covers drivers other than Claude Code.
+- D5 (W5 overlap), met. `T0-UNATTENDED-RUNS` merged in PR #61 (b7898d8):
+  `docs/OPERATIONS.md` documents `/goal` as the outer driver of `aidlc next`.
+  `aidlc run` stops on the same directive kinds and covers drivers other
+  than Claude Code.
 
 ## Risks
 - W1 margin is a few lines; the 53 `git diff --name-only` stubs in
@@ -404,8 +410,11 @@ them, never worked around.
   file, and every remaining window is stated in the first candidate.
 - W2 re-derivation needs gh and network at verify time; offline it reports
   warnings, and `--claim-full` then refuses.
-- W0 runs share the DeepSeek and Opus quotas with waves 1-3; a quota hold is
-  a WAIT and spends no allowance, but it slows both.
+- W0 runs share the R2 (DeepSeek) and R3 (Codex, Opus 5.5 fallback) quotas
+  with waves 1-3; a quota hold is a WAIT and spends no allowance, but it
+  slows both.
+- Other sessions run cards on main at the same time (F7); every command here
+  passes `--goal`, and a moved base is synced by merge before each ship.
 - W0 can show aidlc losing on tokens or wall clock; the report says so.
 - Every card edits CHANGELOG.md; they run strictly one at a time.
 
