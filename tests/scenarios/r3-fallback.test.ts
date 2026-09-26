@@ -584,3 +584,29 @@ test('a small candidate whose changed path matches high.paths runs at high witho
     fx.cleanup();
   }
 });
+
+test('T0-BASE-SYNC-HOLD-NARRATION acceptance 2: both formal reviewers held are narrated as a hold of both, and a held primary without a fallback as its own', async () => {
+  const both = await atReview();
+  try {
+    both.primary.push(HOLD_120);
+    let f = await both.runner.formalReview(both.g(), both.card, both.run);
+    let r = both.runner.next(both.g(), both.card, f.run);
+    both.backup.push(HOLD_60);
+    f = await both.runner.formalReview(both.g(), both.card, r.run);
+    r = both.runner.next(both.g(), both.card, f.run);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') assert.ok(r.directive.narration.startsWith('Formal reviewers primary and fallback backup both reported a quota/rate limit'), r.directive.narration);
+  } finally {
+    both.fx.cleanup();
+  }
+  const alone = await atReview(false);
+  try {
+    alone.primary.push(HOLD_60);
+    const f = await alone.runner.formalReview(alone.g(), alone.card, alone.run);
+    const r = alone.runner.next(alone.g(), alone.card, f.run);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') assert.ok(r.directive.narration.startsWith('Formal reviewer primary reported a quota/rate limit'), r.directive.narration);
+  } finally {
+    alone.fx.cleanup();
+  }
+});

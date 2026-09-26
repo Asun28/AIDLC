@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.
+
 - Ship failure that refutes nothing, card T0-SHIP-NOTHING-REFUTED: a ship failure that refutes no recorded success (a run with no effort episode, or one whose last evaluated attempt is not a success) no longer says the failure counts as a failed attempt; its build directive says it counts no attempt. The build directive of a ship failure names the ladder's attempt number, where it used to count not-counted attempts and name a number the next build directive did not.
 - Running repair on a ladder stop, card T0-RUNNING-REPAIR-STOP: a repair attempt still running when a ship failure stops the effort ladder can no longer be recorded; `aidlc card attempt` refuses it with any outcome and names the stop, where a success used to overwrite the stop with `succeeded`. A running repair the ladder promotes to the escalation is journaled as an `ATTEMPT_STARTED` with `promoted: true`, so the journal no longer shows it as a baseline attempt.
 
