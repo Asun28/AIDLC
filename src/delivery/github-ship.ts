@@ -66,13 +66,15 @@ function secondOf(iso: string | null | undefined): number | undefined {
  * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS-2), bounded by the job record and never by
  * a group title of the log: the first step whose conclusion is `failure` gives the window from the start of its
  * `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line
- * before it); the step starts at its own `##[group]Run ` header, the one after the headers of the earlier steps that
- * started in the same second (step 1, `Set up job`, prints none), or at the window start when it printed none and no
- * earlier step shares the second; it ends before the last `##[error]Process completed with exit code N.` line in the
+ * before it); the step starts at its own header in its first second: the one line reading `##[group]<name>` for a step
+ * named after its command (`Run ...`), the (k+1)-th `##[group]Run ` line when exactly k+1 are there for a step with a
+ * name of its own (k counting the earlier steps after step 1 that started in that second), the window start for step 1
+ * (`Set up job`, which prints none); it ends before the last `##[error]Process completed with exit code N.` line in the
  * window, or at the window end. The lines lose the byte order mark, the timestamps and the colour codes, every other
- * control character (tab and C1 included) becomes a space, and the last 60 non-empty ones are capped at 240 characters and
- * then encoded, so no log line can carry a sentinel. Undefined when the record names no failed step with a start time,
- * or the start cannot be placed.
+ * control character (tab, C1 and the Unicode line and paragraph separators included) becomes a space, and the last 60
+ * non-empty ones are capped at 240 characters and then encoded, so no log line can carry a sentinel. Undefined when the
+ * record names no failed step with a start time, or when the start is not placed that way: a start that whole-second
+ * record times and one header per step cannot place is never guessed (T0-CI-RED-LOGS-2 R1, the stated limit).
  */
 export function failedStepLines(log: string, steps: JobStep[]): string[] | undefined {
   const failed = steps.find((s) => s.conclusion === 'failure' && secondOf(s.started_at) !== undefined);
@@ -86,12 +88,19 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
     .map((raw) => {
       const stamp = raw.match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ?/);
       if (stamp) time = Date.parse(stamp[1]!);
-      return { time, text: raw.slice(stamp?.[0].length ?? 0).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ') };
+      return { time, text: raw.slice(stamp?.[0].length ?? 0).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ') };
     })
     .filter((l) => l.time >= start && (end === undefined || l.time < end + 1000));
-  const shared = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
   const headers = window.flatMap((l, i) => (l.time < start + 1000 && l.text.startsWith('##[group]Run ') ? [i] : []));
-  const from = headers.length > shared ? headers[shared]! : shared === 0 ? 0 : undefined;
+  let from: number | undefined;
+  if (failed.number === 1) from = 0;
+  else if (failed.name?.startsWith('Run ')) {
+    const own = headers.filter((i) => window[i]!.text.trimEnd() === `##[group]${failed.name!.trimEnd()}`);
+    from = own.length === 1 ? own[0] : undefined;
+  } else {
+    const shared = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
+    from = headers.length === shared + 1 ? headers[shared] : undefined;
+  }
   if (from === undefined) return undefined;
   const exit = window.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
   return window
