@@ -47,12 +47,12 @@ class SequenceShip extends DryRunShipPath {
  * passes on sha-2, and whose next ship merges again into sha-3: both decisions are used and sha-3 is a base-sync candidate.
  * `primary` and `cx` feed the primary and the base-sync reviewer; `cxArgs` records each base-sync dispatch's argv.
  */
-async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number; blockFirst?: boolean; stopAtFirstMerge?: boolean } = {}) {
+async function atBaseSync(opts: { baseSync?: boolean; fallback?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number; blockFirst?: boolean; stopAtFirstMerge?: boolean } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: true,
       preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false },
-      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...(opts.baseSync === false ? {} : { baseSync: { ...BASE_SYNC, ...(opts.baseSyncTimeoutMs ? { timeoutMs: opts.baseSyncTimeoutMs } : {}) } }) },
+      formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false, ...(opts.fallback ? { fallback: { command: ['fake-fb', '{instructions}'], reviewer: 'backup', timeoutMs: 1000, shell: false } } : {}), ...(opts.baseSync === false ? {} : { baseSync: { ...BASE_SYNC, ...(opts.baseSyncTimeoutMs ? { timeoutMs: opts.baseSyncTimeoutMs } : {}) } }) },
     },
   });
   const primary: string[] = [];
@@ -70,6 +70,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
       pArgs.push(args);
       return answer(primary.shift() ?? PASS);
     },
+    'fake-fb': () => ({ stdout: PASS }),
     'fake-cx': (args) => {
       cxArgs.push(args);
       hooks.onCx?.();
@@ -346,4 +347,37 @@ test('R2 cycle 1: a failed or not-counted attempt while a merge-conflict repair 
   } finally {
     s.fx.cleanup();
   }
+});
+
+test('T0-BASE-SYNC-HOLD-NARRATION acceptance 1: a quota hold of the base-sync reviewer is narrated as its own hold, with a fallback configured or without one', async () => {
+  for (const fallback of [true, false]) {
+    const label = fallback ? 'with a fallback' : 'without a fallback';
+    const s = await atBaseSync({ fallback });
+    try {
+      await s.reviewed('sha-3');
+      s.cx.push(HOLD);
+      const decided = await s.decide();
+      assert.equal(decided.f.classified.outcome, 'quota-hold', label);
+      let r = decided.r;
+      assert.equal(r.directive.kind, 'wait', `${label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'wait') {
+        assert.equal(r.directive.on, 'review-quota');
+        assert.ok(r.directive.narration.startsWith('Base-sync reviewer codex-bs reported a quota/rate limit'), `${label}: ${r.directive.narration}`);
+        assert.doesNotMatch(r.directive.narration, /primary|backup/, `${label}: neither the primary nor the fallback is named as held`);
+      }
+      s.fx.advance(61_000);
+      r = s.runner.next(s.g(), s.card, r.run);
+      assert.equal(r.directive.kind, 'review', `${label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'review') assert.equal(r.directive.reviewer, 'codex-bs', `${label}: the base-sync reviewer runs once its hold clears`);
+    } finally {
+      s.fx.cleanup();
+    }
+  }
+});
+
+test('T0-BASE-SYNC-HOLD-NARRATION acceptance 3: the CHANGELOG Unreleased section states the fix', () => {
+  const changelog = readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const sentence = '- Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.';
+  assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });

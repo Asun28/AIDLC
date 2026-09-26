@@ -1204,7 +1204,12 @@ export class CardRunner {
     if (waitUntil) {
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
-      const held = primary.fallback ? `Formal reviewers ${primary.reviewer} and fallback ${primary.fallback.reviewer} both reported a quota/rate limit` : `Formal reviewer ${cfg.reviewer} reported a quota/rate limit`;
+      // The held reviewer is the one resolved above: a due base-sync decision waits on the base-sync reviewer alone.
+      const held = cfg === primary.baseSync
+        ? `Base-sync reviewer ${cfg.reviewer} reported a quota/rate limit`
+        : primary.fallback
+          ? `Formal reviewers ${primary.reviewer} and fallback ${primary.fallback.reviewer} both reported a quota/rate limit`
+          : `Formal reviewer ${cfg.reviewer} reported a quota/rate limit`;
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'review-quota', pollSeconds, narration: `${held}; holding until ${waitUntil} (not a decision). Then run \`aidlc card next ${card.id}\`.` } };
     }
     // R3 policy: a further required review beyond the two-decision allowance is STOP/review, never a third run, except the
