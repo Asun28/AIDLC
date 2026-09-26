@@ -1,9 +1,9 @@
 ---
-id: T0-GOAL-CARD-COUNT-2
-title: The router takes ref= from the first known card id, counts every card id token when no known card list is passed, and a text naming several cards keeps the arc limit when --card names one of them
+id: T0-GOAL-CARD-COUNT-3
+title: The router takes ref= from the first known card id, counts every card id token when no known card list is passed, and a text naming several cards keeps the arc limit when --card names one of them (replacement of T0-GOAL-CARD-COUNT-2, whose passed candidate GitHub refused to merge after the base moved)
 status: todo
-branch: T0-GOAL-CARD-COUNT-2
-worktree: D:\wt\AIDLC\T0-GOAL-CARD-COUNT-2
+branch: T0-GOAL-CARD-COUNT-3
+worktree: D:\wt\AIDLC\T0-GOAL-CARD-COUNT-3
 allow_paths:
   - src/core/router.ts
   - src/loop/controller.ts
@@ -11,7 +11,7 @@ allow_paths:
   - tests/scenarios/goal-card-count.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
-  - specs/tasks/T0-GOAL-CARD-COUNT-2.md
+  - specs/tasks/T0-GOAL-CARD-COUNT-3.md
 dod_command: npm run typecheck && node --test tests/core/router.test.ts tests/scenarios/goal-card-count.test.ts
 dod_exit: 0
 requirements:
@@ -27,17 +27,16 @@ acceptance:
   - 4. `tests/core/router.test.ts`: a release text and a migration text that name two known ids route as card-execute with `cardCount` `unknown`, and a card-amendment text naming two known ids routes as card-amendment with `cardCount` `unknown`. [R4] [dod arm 1]
   - 5. `tests/scenarios/goal-card-count.test.ts` reads the exact sentences this card adds to `docs/OPERATIONS.md` and the CHANGELOG Unreleased section and fails with any one removed. [R5] [dod arm 1]
 depends_on: [T0-GOAL-CARD-COUNT]
-superseded_by: T0-GOAL-CARD-COUNT-3
 budget: 160
 tdd: true
 sweep: "Starts from the merged T0-GOAL-CARD-COUNT: router.ts computes namedCards from the known card list only (an absent list names none) and keeps the first card id token of the text as ref= (cardMatch), known or not; controller.ts derives the deadline count from --card (options.cards) whatever the router counted from the text, and forces the arc only for an explicit T1 or T2."
 forbid: [weakening or skipping a test to go green, editing src/state/goal-store.ts or src/loop/card-runner.ts, making the known card list a required router input (the UserPromptSubmit route preview runs without the registry)]
 non_goals: [reading card ids from an issue body, inferring the size from the number of named cards]
-hygiene: "Follow-up of T0-GOAL-CARD-COUNT (issue #73): the four R2 edge-cases questions of that card (logs .review/T0-GOAL-CARD-COUNT.pre.0.1.1.3e172325.edge-cases.log and .pre.1.1.1.e111e31b.edge-cases.log), ruled by the coordinating session into this card because that card's candidate was bound when R2 passed. If T0-GOAL-CARD-COUNT stops at its second R3 decision instead of merging, this card becomes its replacement and also carries whatever that decision names. Every acceptance item has a DoD-run test (docs/LESSONS.md 2026-09-26 T0-BASE-SYNC-JSDOC); run the mutation sweep before the first review. No known card list means the caller passed none (the UserPromptSubmit preview calls classifyRequest({ text }), src/hooks/index.ts:343); an empty list is a registry that was read and holds no card (createGoal passes registry.cards, controller.ts:119), so its tokens are not known cards. Tokens are distinct card ids: the same id written twice is one card."
+hygiene: "Replacement of T0-GOAL-CARD-COUNT-2 on the coordinating session's ruling (option B), carrying its branch at 87ab7db. Cause: R2 and R3 decision 1 passed on 87ab7db and the ship opened PR #84 with every check green; T0-CI-RED-LOGS-2 (PR #83) merged after the ship's base sync, GitHub refused the merge (PR #84 CONFLICTING, CHANGELOG.md only), hasConflictDiagnostic did not recognise the refusal, and the run stopped as STOP/tool with a resume command (aidlc card next) that returns the same stop. The candidate of this card is 87ab7db merged with origin/main, reviewed from scratch; the doc and CHANGELOG sentences name this card. Follow-up of T0-GOAL-CARD-COUNT (issue #73): the four R2 edge-cases questions of that card (logs .review/T0-GOAL-CARD-COUNT.pre.0.1.1.3e172325.edge-cases.log and .pre.1.1.1.e111e31b.edge-cases.log), ruled by the coordinating session into this card because that card's candidate was bound when R2 passed. If T0-GOAL-CARD-COUNT stops at its second R3 decision instead of merging, this card becomes its replacement and also carries whatever that decision names. Every acceptance item has a DoD-run test (docs/LESSONS.md 2026-09-26 T0-BASE-SYNC-JSDOC); run the mutation sweep before the first review. No known card list means the caller passed none (the UserPromptSubmit preview calls classifyRequest({ text }), src/hooks/index.ts:343); an empty list is a registry that was read and holds no card (createGoal passes registry.cards, controller.ts:119), so its tokens are not known cards. Tokens are distinct card ids: the same id written twice is one card."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
 ---
 
-# T0-GOAL-CARD-COUNT-2
+# T0-GOAL-CARD-COUNT-3
 
 ## Deliverable
 The router's card reference and count no longer depend on where an unknown id sits in the text or on whether the caller passed the registry, and a request that names several cards keeps the arc deadline even when `--card` picks one of them.

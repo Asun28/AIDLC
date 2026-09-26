@@ -127,7 +127,7 @@ export class GoalController {
     const explicitCards = options.cards ?? ((routing.kind === 'card-execute' || routing.kind === 'card-amendment') && routing.cardCount === 1 ? [routing.reasons.find((r) => r.startsWith('ref='))?.slice(4) ?? ''].filter(Boolean) : []);
     // An explicit T1 or T2 is an arc whatever the card list says: it never gets the one-card limit.
     const arcBySize = routing.sizeSource === 'explicit' && (routing.size === 'T1' || routing.size === 'T2');
-    // A text naming several cards is an arc too, whatever --card names: --card sets the cards, not the deadline (T0-GOAL-CARD-COUNT-2).
+    // A text naming several cards is an arc too, whatever --card names: --card sets the cards, not the deadline (T0-GOAL-CARD-COUNT-3).
     const namesSeveral = routing.reasons.some((r) => r.startsWith('named cards: '));
     const cardCount = arcBySize || namesSeveral ? 'unknown' : explicitCards.length ? explicitCards.length : routing.cardCount;
     // A standalone release keeps the one-card limit only without an explicit T1 or T2 (R3 decision 1).

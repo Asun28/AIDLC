@@ -4,6 +4,7 @@ title: The GitHub ship path puts the failed step's log of each red Actions job o
 status: todo
 branch: T0-CI-RED-LOGS
 worktree: D:\wt\AIDLC\T0-CI-RED-LOGS
+superseded_by: T0-CI-RED-LOGS-2
 allow_paths:
   - src/delivery/github-ship.ts
   - src/probes/gh.ts

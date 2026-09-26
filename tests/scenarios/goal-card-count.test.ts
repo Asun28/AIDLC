@@ -81,7 +81,7 @@ test('T0-GOAL-CARD-COUNT acceptance 2: a release goal with an explicit T1 or T2 
   }
 });
 
-test('T0-GOAL-CARD-COUNT-2 acceptance 3: the issue #73 request with --card one of its two cards keeps that card and gets 12 h; --card on a one-card text keeps 3 h [R3]', () => {
+test('T0-GOAL-CARD-COUNT-3 acceptance 3: the issue #73 request with --card one of its two cards keeps that card and gets 12 h; --card on a one-card text keeps 3 h [R3]', () => {
   const { fx, create } = withCards();
   try {
     const several = create({ text: ISSUE_73, source: 'card', ref: 'T1-PARSE-GUARD' }, ['T1-PARSE-GUARD']);
@@ -94,16 +94,16 @@ test('T0-GOAL-CARD-COUNT-2 acceptance 3: the issue #73 request with --card one o
   }
 });
 
-test('T0-GOAL-CARD-COUNT-2 acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the three rules [R5]', () => {
+test('T0-GOAL-CARD-COUNT-3 acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the three rules [R5]', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
-  const sentence = 'A request whose text names several cards keeps the arc limit also when `--card` names one of them, its `ref=` is the first known card id of the text, and a caller that passes no known card list has every card id token counted (card T0-GOAL-CARD-COUNT-2).';
+  const sentence = 'A request whose text names several cards keeps the arc limit also when `--card` names one of them, its `ref=` is the first known card id of the text, and a caller that passes no known card list has every card id token counted (card T0-GOAL-CARD-COUNT-3).';
   assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
   const start = changelog.indexOf('## Unreleased');
   const end = changelog.indexOf('\n## ', start + 1);
   const unreleased = changelog.slice(start, end === -1 ? changelog.length : end);
-  const entry = "- Goal card count follow-up, card T0-GOAL-CARD-COUNT-2: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).";
+  const entry = "- Goal card count follow-up, card T0-GOAL-CARD-COUNT-3: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
 

@@ -197,7 +197,7 @@ describe('T0-GOAL-CARD-COUNT: several named card ids leave the count to the proj
   });
 });
 
-describe('T0-GOAL-CARD-COUNT-2: ref= from the first known id, no registry, the kinds that reach the several-cards rule', () => {
+describe('T0-GOAL-CARD-COUNT-3: ref= from the first known id, no registry, the kinds that reach the several-cards rule', () => {
   const known = ['T1-PARSE-GUARD', 'T1-STORE-CAS', 'T3-API'];
   test('one known and one unknown card id in either order keep the count 1 with ref= the known id [R1]', () => {
     for (const text of ['implement T3-API after T9-UNKNOWN', 'implement T9-UNKNOWN then T3-API']) {

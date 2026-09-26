@@ -15,7 +15,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
-import { GhProbe } from '../probes/gh.ts';
+import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
@@ -49,6 +49,72 @@ function encodeUntrusted(text: string): string {
 /** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
 function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
+}
+
+/** The repository, run and job a GitHub Actions check run's details URL names (T0-CI-RED-LOGS). */
+const ACTIONS_JOB = /^https:\/\/github\.com\/([^/\s]+\/[^/\s?#]+)\/actions\/runs\/(\d+)\/job\/(\d+)(?:[?#]\S*)?$/;
+const CI_LOG_JOBS = 3;
+const CI_LOG_LINES = 60;
+const CI_LOG_WIDTH = 240;
+
+/** The start of the second an ISO time falls in, in milliseconds; undefined when it is not a time. */
+function secondOf(iso: string | null | undefined): number | undefined {
+  const ms = iso ? Date.parse(iso) : Number.NaN;
+  return Number.isNaN(ms) ? undefined : Math.floor(ms / 1000) * 1000;
+}
+
+/**
+ * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS-2), bounded by the job record and never by
+ * a group title of the log: the first step whose conclusion is `failure` gives the window from the start of its
+ * `started_at` second to the end of its `completed_at` second (a line without a timestamp takes the time of the line
+ * before it); the step starts at its own header, a `run` step's `##[group]Run ` line whose group holds the runner's
+ * `shell: ` line, the (k+1)-th such header in its first second when that second holds one per step after step 1 that
+ * started in it (k counting the earlier ones), or at the window start for step 1 (`Set up job`, which prints none); it ends
+ * before the first `##[error]Process completed with exit code N.` line after its start, or, without one, at the window
+ * end when the record has an end time and no later step started in that second; when a later step started in the end
+ * second, the exit line must come before every `##[group]Run ` line of that second after the start. The lines lose the byte order mark, the timestamps and the colour codes, every other
+ * control character (tab, C1 and the Unicode line and paragraph separators included) becomes a space, and the last 60
+ * non-empty ones are capped at 240 characters and then encoded, so no log line can carry a sentinel. Undefined when the
+ * record names no failed step with a start time, or when the start is not placed that way: a start that whole-second
+ * record times and one header per step cannot place is never guessed (T0-CI-RED-LOGS-2 R1, the stated limit).
+ */
+export function failedStepLines(log: string, steps: JobStep[]): string[] | undefined {
+  const failed = steps.find((s) => s.conclusion === 'failure' && secondOf(s.started_at) !== undefined);
+  if (!failed) return undefined;
+  const start = secondOf(failed.started_at)!;
+  const end = secondOf(failed.completed_at);
+  let time = Number.NEGATIVE_INFINITY;
+  const window = log
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((raw) => {
+      const stamp = raw.match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z) ?/);
+      if (stamp) time = Date.parse(stamp[1]!);
+      return { time, text: raw.slice(stamp?.[0].length ?? 0).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ') };
+    })
+    .filter((l) => l.time >= start && (end === undefined || l.time < end + 1000));
+  // A `run` step's header: `##[group]Run ...` whose group holds the runner's `shell: ` line.
+  const runHeader = (i: number): boolean => {
+    if (!window[i]!.text.startsWith('##[group]Run ')) return false;
+    for (let j = i + 1; j < window.length && !/^##\[(?:end)?group\]/.test(window[j]!.text); j += 1) if (window[j]!.text.startsWith('shell: ')) return true;
+    return false;
+  };
+  const headers = window.flatMap((l, i) => (l.time < start + 1000 && runHeader(i) ? [i] : []));
+  const inSecond = steps.filter((s) => s.number > 1 && secondOf(s.started_at) === start);
+  const rank = inSecond.filter((s) => s.number < failed.number).length;
+  const from = failed.number === 1 ? 0 : headers.length === inSecond.length ? headers[rank] : undefined;
+  if (from === undefined) return undefined;
+  const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
+  const laterInEnd = end !== undefined && steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
+  if (exit < 0 && (end === undefined || laterInEnd)) return undefined;
+  // With a later step started in the end second, an exit line after a `Run` group of that second may be the later step's.
+  if (laterInEnd && window.some((l, i) => i > from && i < exit && l.time >= end && l.text.startsWith('##[group]Run '))) return undefined;
+  return window
+    .slice(from, exit < 0 ? window.length : exit)
+    .map((l) => l.text)
+    .filter((l) => l.trim() !== '')
+    .slice(-CI_LOG_LINES)
+    .map((l) => encodeUntrusted(l.slice(0, CI_LOG_WIDTH)));
 }
 
 /** Git's non-empty output lines trimmed and joined on one line, not encoded: `fail` encodes every detail exactly once. */
@@ -129,7 +195,8 @@ export function unionUnreleasedInsertions(text: string): string | undefined {
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
   return JSON.stringify(runs.map((r) => ({ name: encodeUntrusted(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
     .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029'); // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
+    .replace(/\u2029/g, '\\u2029') // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
+    .replace(/\//g, '\\/'); // escaped, a check name never forms the `runs/<id>` the card runner reads as a rerun's run (T0-CI-RED-LOGS)
 }
 
 export class GitHubShipPath implements ShipPath {
@@ -164,8 +231,8 @@ export class GitHubShipPath implements ShipPath {
     // encoded exactly once here, so no detail can form a sentinel, a resume marker or a merge diagnostic; the CI gate
     // lines are the one verbatim detail (their JSON already carries encoded names and is decoded by the runner). The
     // resume command and the PR identity come from this path's own state, never from the output text.
-    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean } = {}): ShipResult => {
-      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
+    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean; lines?: string[] } = {}): ShipResult => {
+      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, ...(opts.lines ?? []), '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
       return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
@@ -255,7 +322,7 @@ export class GitHubShipPath implements ShipPath {
         return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
       };
       const failed = runs.filter((r) => r.status === 'completed' && !green(r));
-      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true });
+      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true, lines: this.ciLogLines(failed, wt) });
       if (!pending.length && runs.length > 0) break;
       if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber, { verbatim: true });
       log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
@@ -385,6 +452,31 @@ export class GitHubShipPath implements ShipPath {
     if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-FAIL]', detail: `the CHANGELOG.md merge is committed in ${wt} but the merge commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; record the worktree HEAD by hand` };
     log.push(encodeUntrusted(flat(`base sync: CHANGELOG.md resolved by keeping the entries both sides added to Unreleased; merge ${mergeSha}`)));
     return { sentinel: '[SHIP-BASE-SYNC-MERGED]', detail: `${ref} conflicted with HEAD ${head} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${mergeSha}: a new candidate, not shipped; run the DoD on it and record it as the next attempt` };
+  }
+
+  /**
+   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS-2): for each red check run that is an Actions job of the
+   * configured repository (app `github-actions`, a details URL naming this repository's run and job, the job id being the
+   * check run's own), at most three in gate order, a header built from the run and job ids alone (so the first
+   * `runs/<id>` on the output is the job's run), then the failed step of its log as the job record bounds it; `log
+   * unavailable` when the record or the log cannot be read, `step unknown` when the record places no failed step. Neither
+   * note holds a word the CI classifier reads as evidence. Any other red check run gets no line and nothing read.
+   */
+  private ciLogLines(failed: CheckRun[], wt: string): string[] {
+    const repository = this.options.repository.toLowerCase();
+    const jobs = failed.flatMap((r) => {
+      const m = (r.details_url ?? '').match(ACTIONS_JOB);
+      if (!m || r.app?.slug !== 'github-actions' || m[1]!.toLowerCase() !== repository || String(r.id) !== m[3]) return [];
+      return [{ run: m[2]!, job: m[3]! }];
+    });
+    return jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job }) => {
+      const header = `[CI-GATE-LOG] actions/runs/${run}/job/${job}`;
+      const record = this.gh.jobRecord(this.options.repository, job, wt);
+      const text = this.gh.jobLog(this.options.repository, job, wt);
+      if (!record || text === undefined) return [`${header} log unavailable`];
+      const step = failedStepLines(text, record.steps);
+      return step ? [header, ...step] : [`${header} step unknown`];
+    });
   }
 
   private tokenFile(cardId: string): string {
