@@ -1,7 +1,7 @@
 ---
 id: T0-BASE-SYNC-HOLD-NARRATION
 title: A quota hold of the base-sync reviewer is narrated as that reviewer's hold alone, never as a hold of both the primary and the fallback
-status: todo
+status: merged
 branch: T0-BASE-SYNC-HOLD-NARRATION
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-HOLD-NARRATION
 allow_paths:
