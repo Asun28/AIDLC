@@ -1088,7 +1088,9 @@ export class CardRunner {
       // A round whose dispatch failed before any receipt (its retained failure marker, no log) never ran: it expires at once.
       const reviewDir = path.join(this.reviewCheckout(run), '.review');
       const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
-      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + cfg.timeoutMs + RECONCILE_GRACE_MS);
+      // A round runs under the timeout of the reviewer it names: the fallback's own, or the primary's (card T0-R2-FALLBACK).
+      const timeoutOf = (r: PreReviewRound) => (cfg.fallback && r.reviewer === cfg.fallback.reviewer ? cfg.fallback.timeoutMs : cfg.timeoutMs);
+      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
@@ -1162,7 +1164,8 @@ export class CardRunner {
     // One no-verdict retry per cycle (initial run plus one retry), like R3.
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
-      const stop = makeStop('tool', `pre-reviewer ${reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -2049,8 +2052,9 @@ export class CardRunner {
     // A diff above the cap is refused here, before the reservation: no round, receipt or event records it (R7).
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
-    // `{effort}` in the reviewer's argv expands to the level its policy selects over the collected diff, as for R3.
-    const effort = cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
+    // `{effort}` in the fallback's argv expands to the level its policy selects over the collected diff, as for R3; the primary
+    // has no effort policy, and its argv is dispatched as before.
+    const effort = cfg.reviewer !== primary.reviewer && cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     const since = this.lastReviewedSha(persisted, 'pre');
     const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
@@ -2070,7 +2074,10 @@ export class CardRunner {
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       this.refuseChangedCheckout(current, cwd, candidateSha);
       const admitted = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
-      if (admitted.reviewer.reviewer !== cfg.reviewer) throw new Error(`the pre-reviewer changed since the first read (${cfg.reviewer}, now ${admitted.reviewer.reviewer}: a hold was recorded or cleared meanwhile); run the command again`);
+      // The reviewer is re-read on the locked record at the clock of the lock: a hold recorded, or one that expired while the
+      // diff was collected, since the first read hands the dispatch back.
+      const atLock = this.preReviewerNow(current, candidateDigest, this.clock()).cfg.reviewer;
+      if (atLock !== cfg.reviewer) throw new Error(`the pre-reviewer changed since the first read (${cfg.reviewer}, now ${atLock}: a hold was recorded or cleared meanwhile); run the command again`);
       numbering = { cycle: admitted.cycle, round: admitted.round, attemptNo: admitted.attemptNo };
       if (this.lastReviewedSha(current, 'pre') !== since) throw new Error('a pre-review round was decided since the delta was collected; run the command again');
       if (current.ownerGeneration !== undefined) {
@@ -2124,7 +2131,7 @@ export class CardRunner {
     const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
     const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives, coverage: result.coverage };
-    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
+    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer}${effort ? ` (effort ${effort})` : ''} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
     // The angle that wrote each reason, from the structured result: every cited reason of the angle's own document (root
     // list and both axes), so a single-angle panel, whose reasons carry no trailing tag, keeps its angle on axis findings too.
     const perspectiveByReason: Record<string, string> = {};
@@ -2162,7 +2169,7 @@ export class CardRunner {
       after,
     );
     const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage } });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}) } });
     return { run: saved, result, round: record };
   }
 

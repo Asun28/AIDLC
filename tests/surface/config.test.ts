@@ -467,13 +467,18 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     assert.equal(raw['answerMarker'], '=== answer ===');
     assert.deepEqual(raw['fallback'], SONNET);
     const parsed = ProjectConfig.parse(configOf('aidlc.config.json')).preReview;
+    assert.deepEqual(parsed.command, ['deepseek', '--model', 'deepseek-v4-pro'], 'the parsed primary command');
+    assert.equal(parsed.reviewer, 'deepseek-v4-pro', 'the parsed primary reviewer');
+    assert.equal(parsed.answerMarker, '=== answer ===', 'the parsed primary marker');
     assert.deepEqual(parsed.fallback, SONNET, 'the parsed fallback is the configured one, nothing added');
     assert.equal(parsed.rounds, 3);
     assert.deepEqual(parsed.perspectives, ['ac-coverage', 'spec-deviations', 'edge-cases']);
     assert.equal(parsed.onExhausted, 'ship');
     assert.equal(parsed.coverage, 'shadow');
     assert.equal('fallback' in configOf('templates/aidlc.config.json').preReview, false);
-    assert.equal(ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview.fallback, undefined);
+    const template = ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview;
+    assert.deepEqual(template.command, [], 'the installed R2 command is empty, so a fallback has nothing to fall back from');
+    assert.equal(template.fallback, undefined);
   });
   test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the fallback, and the temporary swap of a8293d7 is gone from both [R4] [R5]', () => {
     const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
@@ -481,7 +486,8 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     const opsSentences = [
       "Pre-review fallback (card T0-R2-FALLBACK, part 2 of issue #92). `preReview.fallback` (optional: `command`, non-empty with no empty or blank argument, and a `reviewer` that is not blank and differs from `preReview.reviewer` after trimming and case folding, required; `timeoutMs`, `shell`, `maxDiffBytes` and `answerMarker` defaulted as for the primary; `effort` a review effort policy) names a second pre-reviewer that shares the primary's `rounds`, `perspectives`, `coverage`, `onExhausted` and single no-verdict retry.",
       'The pre-reviewer is resolved per dispatch as the R3 fallback is: the primary unless its latest round of the card, on any candidate, holds an unexpired quota or billing hold, then the fallback unless it holds one too; with both held, `card next` is `wait` on `pre-review-quota` until the earlier hold clears and names both reviewers.',
-      "The fallback never replaces a primary that is not held, and a block or a no-verdict never switches reviewer; `review pre` runs the resolved reviewer with `{effort}` expanded from its policy over the collected diff, records the round, its `PRE_REVIEW_DECIDED` event and its evidence note under that reviewer's name with the level in the round's `effort`, and re-checks the reviewer on the record locked at reservation (a hold recorded or cleared meanwhile refuses: run the command again).",
+      "The fallback never replaces a primary that is not held, and a block or a no-verdict never switches reviewer; `review pre` runs the resolved reviewer, expands `{effort}` in the fallback's argv from its policy over the collected diff (the primary has no effort policy, and its argv is dispatched as before), records the round, its `PRE_REVIEW_DECIDED` event and its evidence note under that reviewer's name with the level (the `effort` of the round and of the event, `(effort <level>)` in the note), and re-checks the reviewer on the record locked at reservation, at the clock of the lock (a hold recorded meanwhile, or one that expired while the diff was collected, refuses: run the command again).",
+      "A round in flight expires on the timeout of the reviewer it names, the fallback's own `timeoutMs` or the primary's, plus the reconciliation grace, and a second no-verdict in the cycle stops the card naming the reviewer of the last round.",
       'Without `preReview.fallback` every gate decision, directive, round and hold is as before.',
       'A review effort policy also takes an optional `xhigh` rule of the same shape as `high`, checked before it: a candidate whose added plus deleted lines reach its `minChangedLines` or that changes a path matching its `paths` runs at `xhigh`, an `xhigh` rule with a `max` default is refused, and a collected diff with no `diff --git ` section selects `xhigh` under such a rule.',
       'This repository runs DeepSeek as the R2 primary with Claude Sonnet 5 as the fallback (`claude -p --model claude-sonnet-5 --effort {effort}` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5`, `answerMarker` empty since `claude -p` prints no marker line), at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`; the installed template configures no fallback, since its R2 command is empty.',
