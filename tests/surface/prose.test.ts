@@ -377,3 +377,15 @@ describe('one lock primitive in the docs (T1-STORE-CAS)', () => {
     assert.ok(!operations.includes('findings are merged by revision'), 'docs/OPERATIONS.md no longer says findings are merged');
   });
 });
+
+describe('the takeover revalidates before its run update (T1-STORE-CAS R3 decision 1 F2)', () => {
+  test('the Sessions section of docs/OPERATIONS.md states that the run takes the generation only while the lease is still this session\'s', () => {
+    const ops = read('docs', 'OPERATIONS.md').replace(/\r\n/g, '\n');
+    const at = ops.indexOf('\n## Sessions\n') + 1;
+    const sessions = ops.slice(at, ops.indexOf('\n## ', at) + 1);
+    assert.ok(
+      sessions.includes("the run records the new generation, a run without one included, only while the lease is still this session's at that generation (a takeover that lost the lease to another session before its run update refuses, names the lease as it is now and writes nothing more)"),
+      'the Sessions section states the revalidation',
+    );
+  });
+});

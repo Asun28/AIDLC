@@ -1232,3 +1232,64 @@ test('T1-STORE-CAS R3 decision 1 F2: a takeover that lost the lease before its r
     fx.cleanup();
   }
 });
+
+test('T1-STORE-CAS R3 decision 1 F2: the paused takeover checks the whole acquisition, owner session, host, generation and release, before its run update', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const ids = ['T1-NEWER', 'T1-REUSED', 'T1-REMOTE', 'T1-LET-GO'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
+    for (const id of ids) assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+    const remoteB = { session: 'win-B', pid: 4, processStart: T0, host: 'elsewhere' };
+    const as = <T>(who: typeof actorA, body: () => T): T => {
+      setActorForTests(who);
+      try {
+        return body();
+      } finally {
+        setActorForTests(actorB);
+      }
+    };
+    /** B pauses after acquiring generation 1; `meanwhile` changes the lease; B resumes and must refuse without a write. */
+    const stale = (id: string, meanwhile: () => void, names: RegExp) => {
+      let snapshot: { run: ReturnType<typeof current>; lease: ReturnType<typeof fx.leases.read>; events: number } | undefined;
+      const refusal = pausedTakeover(fx, goal.id, id, () => {
+        assert.equal(fx.leases.read(key(id))?.generation, 1);
+        meanwhile();
+        snapshot = { run: current(id), lease: fx.leases.read(key(id)), events: fx.events(goal.id).length };
+      });
+      assert.match(String(refusal), names, `${id}: B refuses naming the lease as it is: ${String(refusal)}`);
+      assert.deepEqual({ run: current(id), lease: fx.leases.read(key(id)), events: fx.events(goal.id).length }, snapshot, `${id}: B writes nothing once it resumes`);
+    };
+    // the same session at a newer generation: C took the card at 2, then another window of B at 3
+    stale('T1-NEWER', () => {
+      fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+      assert.equal(as(actorC, () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-NEWER'), current('T1-NEWER'))).lease.generation, 2);
+      fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+      assert.equal(as(actorB, () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-NEWER'), current('T1-NEWER'))).lease.generation, 3);
+    }, /held by session win-B at generation 3/);
+    assert.equal(current('T1-NEWER').ownerGeneration, 3, 'the run keeps the newer generation');
+    // the same generation under another owner: B's other process let the card go, the record was purged, and C claimed it
+    // twice (a purged lease restarts at generation 0), so the record is C's at generation 1
+    const reclaim = (id: string, who: typeof actorA) => () => {
+      fx.leases.release(key(id), 1, actorB);
+      fx.leases.purgeReleased(key(id));
+      assert.equal(fx.leases.claim(key(id), { actor: who, now: fx.now(), operation: `card:${id}` }).lease.generation, 0);
+      fx.leases.release(key(id), 0, who);
+      assert.equal(fx.leases.claim(key(id), { actor: who, now: fx.now(), operation: `card:${id}` }).lease.generation, 1);
+    };
+    stale('T1-REUSED', reclaim('T1-REUSED', actorC), /held by session win-C at generation 1/);
+    // the same session id on another host at the same generation is another session
+    stale('T1-REMOTE', reclaim('T1-REMOTE', remoteB), /held by session win-B at generation 1/);
+    assert.equal(fx.leases.read(key('T1-REMOTE'))?.owner.host, 'elsewhere');
+    // B's own acquisition, released by another process of B before the run update
+    stale('T1-LET-GO', () => fx.leases.release(key('T1-LET-GO'), 1, actorB), /released at generation 1/);
+    assert.equal(current('T1-LET-GO').ownerGeneration, 0, 'the run is not taken at a released generation');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
