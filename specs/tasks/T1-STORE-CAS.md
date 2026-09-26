@@ -31,7 +31,7 @@ allow_paths:
   - README.md
   - CHANGELOG.md
   - specs/tasks/T1-STORE-CAS.md
-dod_command: npm run check
+dod_command: npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
 dod_exit: 0
 requirements:
   - R1. `src/state/store.ts` shall provide one primitive, `updateJson`, that hands a change function the stored record under an exclusive-create lock and writes nothing when the function returns the record unchanged or throws.
@@ -48,7 +48,7 @@ acceptance:
   - 6. Two completions of one takeover generation journal exactly one `LEASE_ACQUIRED` (tests/scenarios/two-windows.test.ts). [R2] [dod arm 1]
   - 7. Every existing lease test passes with its assertions unchanged: claim statuses, generation advance and `FencedError` messages (tests/infra/lease.test.ts). [R4] [dod arm 1]
   - 8. The Sessions section of `docs/OPERATIONS.md` and the README Multi-session paragraph are shorter in bytes than on the base, contain neither `compare-and-set` nor `four windows`, and state in one sentence each what the lock covers and what stays unfenced (`recordAttempt`, a raw `card report` patch, goal, release and review-pool records, a crash between the lease write and the run update); a test reads each sentence and compares the byte counts with the base recorded in the test (tests/surface/prose.test.ts). [R5] [dod arm 1]
-  - 9. `git diff --numstat origin/main...HEAD -- src` sums to fewer added than deleted lines; the close-out states the delta and the Sessions byte counts before and after. [R5]
+  - 9. `git diff --numstat origin/main...HEAD -- src` sums to fewer added than deleted lines and the Sessions section of the committed `docs/OPERATIONS.md` is shorter in bytes than on `origin/main`: the second arm of the DoD prints both measures and exits 1 otherwise; the close-out states them. [R5] [dod arm 2]
   - 10. `CHANGELOG.md` Unreleased carries the entry under this card id; `docs/ARCHITECTURE.md` keeps the phrase `written under \`<file>.lock\`` that templates.test.ts reads; a test reads the entry (tests/surface/prose.test.ts). [R1] [dod arm 1]
 depends_on: [T1-PARSE-GUARD]
 budget: 1300
@@ -67,7 +67,7 @@ doc_sync: docs/OPERATIONS.md (Sessions), README.md (Multi-session), docs/ARCHITE
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run check
+npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
 ```
 - Expected exit code: 0
-- Assertion: the typecheck is clean and every test passes, with the pass count in the receipt.
+- Assertion: the typecheck is clean and every test passes, with the pass count in the receipt; the second arm prints the src net and the Sessions byte counts and exits 0 only when both shrank.
