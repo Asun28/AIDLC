@@ -55,6 +55,12 @@ function isJobStep(value: unknown): value is JobStep {
   return typeof s['number'] === 'number' && Number.isFinite(s['number']) && (s['conclusion'] === null || typeof s['conclusion'] === 'string') && time(s['started_at']) && time(s['completed_at']) && (s['name'] === undefined || typeof s['name'] === 'string');
 }
 
+/** The values GitHub defines for a PR's `mergeable` and `mergeStateStatus` (T0-SHIP-MERGE-REFUSED). */
+export const MERGEABLE = ['MERGEABLE', 'CONFLICTING', 'UNKNOWN'] as const;
+export type Mergeable = (typeof MERGEABLE)[number];
+export const MERGE_STATE_STATUS = ['BEHIND', 'BLOCKED', 'CLEAN', 'DIRTY', 'DRAFT', 'HAS_HOOKS', 'UNKNOWN', 'UNSTABLE'] as const;
+export type MergeStateStatus = (typeof MERGE_STATE_STATUS)[number];
+
 export class GhProbe {
   readonly runner: SyncRunner;
 
@@ -115,9 +121,14 @@ export class GhProbe {
     return { number: v.number, url: v.url, state: v.state, headRefOid: v.headRefOid, baseRefName: v.baseRefName, mergedAt: v.mergedAt ?? undefined, mergeCommit: v.mergeCommit?.oid };
   }
 
-  /** The merge state GitHub reports for a PR (T0-SHIP-MERGE-REFUSED). Seam for the RED run: reads nothing yet. */
-  prMergeState(_repo: string, _number: number, _cwd?: string): { mergeable?: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'; mergeStateStatus?: string } {
-    return {};
+  /**
+   * The merge state GitHub reports for a PR (T0-SHIP-MERGE-REFUSED): `mergeable` and `mergeStateStatus` from the JSON
+   * only, each kept only when it is a value GitHub defines, else undefined. Throws when gh fails or the JSON is malformed.
+   */
+  prMergeState(repo: string, number: number, cwd?: string): { mergeable?: Mergeable; mergeStateStatus?: MergeStateStatus } {
+    const v = this.json<{ mergeable?: unknown; mergeStateStatus?: unknown } | null>(['pr', 'view', String(number), '--repo', repo, '--json', 'mergeable,mergeStateStatus'], cwd);
+    const pick = <T extends string>(allowed: readonly T[], x: unknown): T | undefined => (typeof x === 'string' && (allowed as readonly string[]).includes(x) ? (x as T) : undefined);
+    return { mergeable: pick(MERGEABLE, v?.mergeable), mergeStateStatus: pick(MERGE_STATE_STATUS, v?.mergeStateStatus) };
   }
 
   runView(repo: string, runId: string, cwd?: string): RunView {

@@ -129,6 +129,11 @@ describe('GitHubShipPath merge refusal (T0-SHIP-MERGE-REFUSED)', () => {
     assert.ok(s.r.receipt.stdout.includes('merge refused: PR #42 mergeable CONFLICTING (mergeStateStatus DIRTY); base sync again'), s.r.receipt.stdout);
     assert.deepEqual(s.sleeps, [], 'a settled state is not re-read');
     noRetry(s, 'CONFLICTING');
+    // CONFLICTING alone decides it, whatever the status says.
+    const alone = refusedShip({ states: [state('CONFLICTING', null)], resync: { exitCode: 1, stdout: CONFLICT_TREE } });
+    assert.ok(alone.r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]'), alone.r.sentinels.join(' '));
+    assert.ok(alone.r.receipt.stdout.includes('merge refused: PR #42 mergeable CONFLICTING; base sync again'), alone.r.receipt.stdout);
+    noRetry(alone, 'CONFLICTING alone');
   });
 
   test('mergeStateStatus DIRTY with mergeable still UNKNOWN is a conflict at the first read [R1]', () => {
