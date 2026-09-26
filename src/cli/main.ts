@@ -23,6 +23,7 @@ import { parseSpec } from '../artifacts/spec.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
+import { resolveCardGoal } from '../core/card-goal.ts';
 import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -100,6 +101,13 @@ function latestActiveGoalId(c: Ctx, explicit?: string): string {
   const active = goals.find((g) => !g.terminal) ?? goals[0];
   if (!active) fail('no goals; create one with `aidlc goal new "<request>"`');
   return active.id;
+}
+
+/** The goal a command that names a card acts on: the goal that projects the card, never the newest one (card T0-CARD-GOAL-RESOLVE). */
+function cardGoalId(c: Ctx, cardId: string, explicit?: string): string {
+  const r = resolveCardGoal(c.store.listGoals(), cardId, { explicit, holdsRun: (goalId) => c.store.getCardRun(goalId, cardId) !== undefined });
+  if (!r.ok) fail(r.error);
+  return r.goalId;
 }
 
 /** The approver of an approval recorded without --by (card T0-APPROVER-IDENTITY): the git identity of the main checkout, else `user`. */
@@ -415,7 +423,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   const card = program.command('card').description('single-card execution');
   const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store });
   const cardCtx = (c: Ctx, cardId: string, goalId?: string) => {
-    const goalRec = c.controller.mustGoal(latestActiveGoalId(c, goalId));
+    const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, goalId));
     const parsed = cardOf(c, cardId);
     const run = c.controller.ensureCardRun(goalRec, cardId);
     return { goalRec, parsed, run };
@@ -488,7 +496,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--data <json>')
     .action((cardId: string, o: { goal?: string; data: string }) => {
       const c = ctx(g());
-      const id = latestActiveGoalId(c, o.goal);
+      const id = cardGoalId(c, cardId, o.goal);
       c.controller.ensureCardRun(c.controller.mustGoal(id), cardId);
       const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'card-result', cardId, data: parseData(o.data) });
       out(c, r.directive, () => `[${r.directive.kind}] ${r.directive.narration}`);
@@ -498,7 +506,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const id = latestActiveGoalId(c, o.goal);
+      const id = cardGoalId(c, cardId, o.goal);
       const run = c.store.getCardRun(id, cardId);
       if (!run) fail(`no run record for ${cardId} in ${id}`);
       // The card lease next to the run: a run stopped for ownership before PREPARE names no owner in its stop, and
@@ -526,7 +534,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { goal?: string }) => {
       const c = ctx(g());
-      const id = latestActiveGoalId(c, o.goal);
+      const id = cardGoalId(c, cardId, o.goal);
       const goalRec = c.controller.mustGoal(id);
       // The stored run only: a takeover owns an existing run, it never creates one.
       const run = c.store.getCardRun(id, cardId);
