@@ -1,7 +1,7 @@
 ---
 id: T0-R2-BILLING-HOLD
 title: A reviewer that answers HTTP 402 Insufficient Balance or Payment Required is held (WAIT, the billing word named, no round or no-verdict retry spent) instead of a tool_error no-verdict round (issue #92)
-status: todo
+status: merged
 branch: T0-R2-BILLING-HOLD
 worktree: D:\wt\AIDLC\T0-R2-BILLING-HOLD
 allow_paths:
