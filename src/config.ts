@@ -46,6 +46,15 @@ export const PreReviewConfig = z.object({
   fallback: PreReviewFallback.optional(),
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
+/** One pre-reviewer's dispatch settings: the primary `preReview`, or the settings `preReviewFallbackSettings` builds. */
+export type PreReviewer = Omit<PreReviewConfig, 'fallback'> & { effort?: ReviewEffortPolicy };
+
+/** The fallback's dispatch settings (card T0-R2-FALLBACK-2). */
+export function preReviewFallbackSettings(preReview: PreReviewConfig): PreReviewer | undefined {
+  if (!preReview.fallback) return undefined;
+  const { fallback, ...shared } = preReview;
+  return { ...shared, ...fallback };
+}
 
 /**
  * Formal review (R3) as a command before the ship. Placeholders in argv: {instructions} {base} {head}

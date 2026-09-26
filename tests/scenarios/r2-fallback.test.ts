@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CardRun, PreReviewRound } from '../../src/core/types.ts';
 
 /** The stderr the DeepSeek CLI printed on each round-3 angle of issue #92: a billing hold since T0-R2-BILLING-HOLD. */
@@ -25,6 +25,11 @@ interface Options {
   primaryArgs?: string[];
   /** The fallback's argv after its command name; `--effort {effort}` by default. */
   fallbackArgs?: string[];
+  /** A fallback with only its command, reviewer and effort policy: every other setting omitted (T0-R2-FALLBACK-2). */
+  fallbackBare?: boolean;
+  /** The primary's `shell` and `answerMarker`, unset by default. */
+  primaryShell?: boolean;
+  primaryMarker?: string;
 }
 
 /**
@@ -34,21 +39,25 @@ interface Options {
  */
 function setup(options: Options = {}) {
   const changedPath = options.changedPath ?? 'src/t1-gate.ts';
-  const fallback = options.fallback === false ? {} : {
+  const effort = { default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**'] } };
+  const fallback = options.fallback === false ? {} : options.fallbackBare ? { fallback: { command: ['fallback-reviewer', '--effort', '{effort}'], reviewer: 'sonnet', effort } } : {
     fallback: {
       command: ['fallback-reviewer', ...(options.fallbackArgs ?? ['--effort', '{effort}'])],
       reviewer: 'sonnet',
       timeoutMs: options.fallbackTimeoutMs ?? 1000,
       shell: false,
       ...(options.fallbackCap ? { maxDiffBytes: options.fallbackCap } : {}),
-      effort: { default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**'] } },
+      effort,
     },
   };
-  const fx = makeFixture({ config: { preReview: { command: ['primary-reviewer', ...(options.primaryArgs ?? [])], reviewer: 'deepseek', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false, ...fallback } } });
+  const primaryExtra = { shell: options.primaryShell ?? false, ...(options.primaryMarker ? { answerMarker: options.primaryMarker } : {}) };
+  const fx = makeFixture({ config: { preReview: { command: ['primary-reviewer', ...(options.primaryArgs ?? [])], reviewer: 'deepseek', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', ...primaryExtra, ...fallback } } });
   const primary: Output[] = [];
   const secondary: Output[] = [];
   const calls: string[][] = [];
   const hooks: { onDiff?: () => void } = {};
+  /** The spawn options of every reviewer call: the shell and the timeout the dispatch chose. */
+  const spawned: Array<{ command: string; shell?: boolean; timeoutMs?: number }> = [];
   const script = scriptedRunner({
     'git diff --name-only': { stdout: `${changedPath}\u0000` },
     'git diff': () => {
@@ -64,7 +73,11 @@ function setup(options: Options = {}) {
       return secondary.shift() ?? PASS;
     },
   });
-  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
+  const recording: SyncRunner = (command, args, spawnOptions) => {
+    if (command.endsWith('-reviewer')) spawned.push({ command, shell: spawnOptions?.shell, timeoutMs: spawnOptions?.timeoutMs });
+    return script(command, args, spawnOptions);
+  };
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: recording });
   writeCard(fx, { id: 'T1-GATE', title: 'gate the ship', allowPaths: [changedPath] });
   const goal = fx.controller.createGoal({ text: 'implement T1-GATE', source: 'card', ref: 'T1-GATE', affectedSurfaces: [] }, { cards: ['T1-GATE'] });
   fx.controller.next(goal.id);
@@ -73,7 +86,7 @@ function setup(options: Options = {}) {
   const r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-GATE'));
   assert.equal(r.directive.kind, 'prepare');
   const run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: 'sha-1' });
-  return { fx, runner, card, goalId: goal.id, run, primary, secondary, calls, hooks };
+  return { fx, runner, card, goalId: goal.id, run, primary, secondary, calls, hooks, spawned };
 }
 
 type Setup = ReturnType<typeof setup>;
@@ -298,6 +311,7 @@ test('T0-R2-FALLBACK acceptance 4: a pending round expires on the timeout of the
       if (stillPending) {
         assert.equal(r.directive.kind, 'wait', r.directive.narration);
         if (r.directive.kind === 'wait') assert.equal(r.directive.on, `pre-review:${reservationId}`);
+        assert.ok(r.directive.narration.endsWith('A round is dropped 15 minutes after its dispatch when nothing came back.'), `the fallback timeout of 600 s plus the 5 min grace: ${r.directive.narration}`);
         assert.equal(r.run.preReview.rounds.at(-1)?.outcome, 'pending', 'the fallback round keeps running');
       } else {
         assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
@@ -358,3 +372,35 @@ test('T0-R2-FALLBACK acceptance 5: without preReview.fallback two no-verdicts st
   assert.equal(stopped.directive.kind, 'stop', stopped.directive.narration);
   assert.ok(stopped.run.stop?.detail.startsWith('pre-reviewer deepseek produced no usable verdict twice in R3 cycle 0 (malformed)'), stopped.run.stop?.detail);
 }, { fallback: false }));
+
+test('T0-R2-FALLBACK-2 acceptance 4: a pending primary round shows the primary minutes in its WAIT text [R3]', async () => {
+  const s = setup({ fallbackTimeoutMs: 600_000 });
+  try {
+    const reservationId = 'T1-GATE.pre.0.1.1.dddddddd';
+    s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
+      const latest = current!;
+      const pending: PreReviewRound = { round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId, advisory: [] };
+      return { ...latest, preReview: { ...latest.preReview, rounds: [...latest.preReview.rounds, pending] } };
+    });
+    const r = next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    assert.ok(r.directive.narration.endsWith('A round is dropped 5 minutes after its dispatch when nothing came back.'), `the primary 1 s plus the 5 min grace: ${r.directive.narration}`);
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+for (const primaryShell of [true, false]) {
+  test(`T0-R2-FALLBACK-2 acceptance 6: a fallback that omits shell, timeoutMs and answerMarker runs with the platform shell default, its own default timeout and no marker under a primary with shell ${primaryShell}, a 1 s timeout and a marker [R4]`, withCard(async (s) => {
+    const afterHold = await holdPrimary(s, s.run);
+    const d = preReviewDirective(s, afterHold);
+    assert.equal(d.reviewer, 'sonnet');
+    const passed = await review(s, d.run);
+    assert.equal(passed.result.outcome, 'pass', 'an unmarked fallback verdict passes: the primary marker is not the fallback marker');
+    const spawn = s.spawned.filter((x) => x.command === 'fallback-reviewer');
+    assert.equal(spawn.length, 1);
+    assert.equal(spawn[0]!.shell, process.platform === 'win32', `the platform default, never the primary shell ${primaryShell}`);
+    assert.equal(spawn[0]!.timeoutMs, 600_000, 'the fallback schema default timeout, never the primary 1 s');
+    assert.equal(s.spawned.find((x) => x.command === 'primary-reviewer')?.shell, primaryShell, 'the primary keeps its own shell');
+  }, { fallbackBare: true, primaryShell, primaryMarker: '=== answer ===' }));
+}

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
-import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
+import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, PreReviewConfig, PreReviewFallback, preReviewFallbackSettings, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
 const empty = ProjectConfig.parse({});
@@ -499,5 +499,49 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     const entry = "- Pre-review fallback, card T0-R2-FALLBACK (part 2 of issue #92): `preReview.fallback` names a second R2 reviewer that runs while the primary holds a quota or billing hold, resolved per dispatch as the R3 fallback is and sharing the primary's rounds, angles and no-verdict retry, and every round, event and evidence note names the reviewer that ran and its effort level; a review effort policy takes an `xhigh` rule; this repository runs DeepSeek as the R2 primary again with Claude Sonnet 5 as the fallback at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`, replacing the temporary swap of a8293d7.";
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
     assert.ok(!unreleased.includes('- R2 reviewer swap, temporary (issue #92)'), 'the temporary CHANGELOG line of a8293d7 is removed');
+  });
+});
+
+describe('the fallback dispatch settings are its own (T0-R2-FALLBACK-2, part 2 of issue #92)', () => {
+  /** A primary that sets every field it shares with the fallback schema to a value that is not that schema's default. */
+  const PRIMARY = { command: ['p'], reviewer: 'p', rounds: 3, perspectives: ['a'], coverage: 'shadow', onExhausted: 'ship', timeoutMs: 999_000, maxDiffBytes: 111_111, answerMarker: '=== answer ===' };
+  const settingsOf = (primary: Record<string, unknown>, fallback: Record<string, unknown>) => preReviewFallbackSettings(ProjectConfig.parse({ preReview: { ...PRIMARY, ...primary, fallback: { command: ['f'], reviewer: 'f', ...fallback } } }).preReview)! as unknown as Record<string, unknown>;
+  const DEFAULTS = PreReviewFallback.parse({ command: ['f'], reviewer: 'f' }) as unknown as Record<string, unknown>;
+  const CASES: Array<{ field: string; primary: Record<string, unknown>; own: unknown }> = [
+    { field: 'timeoutMs', primary: {}, own: 42_000 },
+    { field: 'maxDiffBytes', primary: {}, own: 222 },
+    { field: 'answerMarker', primary: {}, own: '>>> answer' },
+    { field: 'shell', primary: { shell: true }, own: false },
+    { field: 'shell', primary: { shell: false }, own: true },
+    { field: 'effort', primary: {}, own: { default: 'high' } },
+  ];
+  test('a field the fallback omits takes the fallback schema default and one it sets takes its own value, never the primary value, field by field [R4]', () => {
+    for (const c of CASES) {
+      const label = `${c.field} (primary ${JSON.stringify({ ...PRIMARY, ...c.primary }[c.field as keyof typeof PRIMARY] ?? null)})`;
+      const omitted = settingsOf(c.primary, {});
+      assert.deepEqual(omitted[c.field], DEFAULTS[c.field], `${label}, omitted: the fallback schema default`);
+      assert.equal(c.field in omitted, c.field in DEFAULTS, `${label}, omitted: present exactly when the schema defaults it`);
+      assert.deepEqual(settingsOf(c.primary, { [c.field]: c.own })[c.field], c.own, `${label}, set: the fallback value`);
+    }
+    // Every case differs from the primary, so the default is never the primary value by coincidence.
+    for (const c of CASES.filter((x) => x.field !== 'effort')) assert.notDeepEqual(DEFAULTS[c.field], { ...PRIMARY, ...c.primary }[c.field as keyof typeof PRIMARY], c.field);
+  });
+  test('the command and reviewer are the fallback, the four shared fields are the primary, and nothing else is set [R4]', () => {
+    assert.deepEqual(settingsOf({}, {}), { command: ['f'], reviewer: 'f', timeoutMs: 600_000, maxDiffBytes: 300_000, answerMarker: '', rounds: 3, perspectives: ['a'], coverage: 'shadow', onExhausted: 'ship' });
+    assert.equal(preReviewFallbackSettings(ProjectConfig.parse({ preReview: PRIMARY }).preReview), undefined, 'no fallback configured, no settings');
+  });
+  test('an unparsed fallback (a caller that skips the parse) still takes the fallback schema defaults, never the primary values [R4]', () => {
+    const parsed = ProjectConfig.parse({ preReview: PRIMARY }).preReview;
+    const raw = preReviewFallbackSettings({ ...parsed, fallback: { command: ['f'], reviewer: 'f' } } as unknown as typeof parsed)!;
+    assert.equal(raw.timeoutMs, 600_000);
+    assert.equal(raw.maxDiffBytes, 300_000);
+    assert.equal(raw.answerMarker, '');
+    assert.equal('shell' in raw, false);
+  });
+  test('the keys of PreReviewConfig are the fallback schema keys but effort, the four shared keys and fallback: a new field must be placed on one side [R4]', () => {
+    const own = Object.keys(PreReviewFallback.shape).sort();
+    assert.deepEqual(own, ['answerMarker', 'command', 'effort', 'maxDiffBytes', 'reviewer', 'shell', 'timeoutMs']);
+    const shared = ['coverage', 'onExhausted', 'perspectives', 'rounds'];
+    assert.deepEqual(Object.keys(PreReviewConfig.shape).sort(), [...own.filter((k) => k !== 'effort'), ...shared, 'fallback'].sort());
   });
 });
