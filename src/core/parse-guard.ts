@@ -9,8 +9,8 @@ export const quotaOutput = (r: { exitCode: number | null; stdout: string; stderr
 
 export interface QuotaSignal { hold: boolean; via: 'structured' | 'text'; evidence?: string; retryAfterMs?: number }
 
-/** A quota word in any letter case, with no letter or digit of any script directly before or after it. */
-const QUOTA = /(?<![\p{L}\p{N}])(?:rate[- ]?limit(?:s|ed|er|ing)?|quotas?|usage limits?|429s?|retry[- ]after|too many requests|capacity|overloaded)(?![\p{L}\p{N}])/iu;
+/** A quota or billing word in any letter case, with no letter or digit of any script directly before or after it. */
+const QUOTA = /(?<![\p{L}\p{N}])(?:rate[- ]?limit(?:s|ed|er|ing)?|quotas?|usage limits?|429s?|retry[- ]after|too many requests|capacity|overloaded|insufficient[- ]?balances?|payment[- ]?required)(?![\p{L}\p{N}])/iu;
 /** `_`, a lowercase-to-uppercase change and the last capital of a run before a capitalised word separate words like a space. */
 const asWords = (text: string) => text.replace(/_/g, ' ').replace(/(\p{Ll})(?=\p{Lu})|(\p{Lu})(?=\p{Lu}\p{Ll})/gu, '$1$2 ');
 /** A unit is a whole word: a milliseconds or minutes word; a seconds word, none or any other word is seconds. */

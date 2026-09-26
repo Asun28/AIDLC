@@ -175,3 +175,51 @@ describe('one module owns every quota matcher (T1-PARSE-GUARD acceptance 8)', ()
     assert.ok(lines <= 30, `src/core/parse-guard.ts has ${lines} lines`);
   });
 });
+
+describe('a billing state holds (T0-R2-BILLING-HOLD, issue #92)', () => {
+  /** The stderr the DeepSeek CLI printed on the three round-3 angles of issue #92, one request id each. */
+  const RECEIPTS = ['1d3badb9-fdf0-4164-998c-5e841344d9ab', '85406a0c-3ea7-43fb-869c-89f032df1c09', 'e1f8c686-3ba1-4d72-bbba-204d56dbd462'].map(
+    (id) => `ERROR 402: {"error":{"message":"Insufficient Balance (request_id: ${id})","type":"unknown_error","param":null,"code":"invalid_request_error"}}\n`,
+  );
+  test('the word rule holds on insufficient balance and payment required in every spelling the separators split, naming the word as matched [R1]', () => {
+    const held: Array<[string, string]> = [
+      ['Insufficient Balance', 'Insufficient Balance'],
+      ['insufficient balance', 'insufficient balance'],
+      ['INSUFFICIENT BALANCE', 'INSUFFICIENT BALANCE'],
+      ['INSUFFICIENT_BALANCE', 'INSUFFICIENT BALANCE'],
+      ['insufficientBalance', 'insufficient Balance'],
+      ['InsufficientBalance', 'Insufficient Balance'],
+      ['insufficient-balance', 'insufficient-balance'],
+      ['insufficient balances', 'insufficient balances'],
+      ['insufficientbalance', 'insufficientbalance'],
+      ['INSUFFICIENTBALANCE', 'INSUFFICIENTBALANCE'],
+      ['Payment Required', 'Payment Required'],
+      ['payment_required', 'payment required'],
+      ['PaymentRequired', 'Payment Required'],
+      ['payment-required', 'payment-required'],
+      ['paymentrequired', 'paymentrequired'],
+      ['PAYMENTREQUIRED', 'PAYMENTREQUIRED'],
+      ['HTTP 402 Payment Required', 'Payment Required'],
+    ];
+    for (const [text, word] of held) assert.deepEqual(detectQuotaHold(text), { hold: true, via: 'text', evidence: word }, text);
+    for (const text of ['402', 'Error 402', 'sufficient balance', 'insufficient balancé', 'xinsufficient balance', 'insufficient balance2', 'payment requiredé', 'payments required', 'balance insufficient']) {
+      assert.deepEqual(detectQuotaHold(text), { hold: false, via: 'text' }, text);
+    }
+    assert.deepEqual(detectQuotaHold('Insufficient Balance', 402), { hold: false, via: 'structured', evidence: 'status 402' }, 'a status of 402 decides alone and does not hold');
+  });
+  test('the three round-3 receipts of issue #92 read as a quota hold that names Insufficient Balance, with no retry delay [R2]', () => {
+    assert.equal(RECEIPTS.length, 3);
+    for (const stderr of RECEIPTS) {
+      assert.deepEqual(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: '', stderr }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: ['via text: Insufficient Balance'], retryAfterMs: undefined }, stderr);
+    }
+  });
+  test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the billing hold [R3]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(import.meta.dirname, '..', '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const sentence = 'The word rule also holds on a billing state, `insufficient balance` and `payment required` in the spellings the separators split (card T0-R2-BILLING-HOLD): a reviewer whose account has no balance, such as the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`, is a quota hold with `via text: Insufficient Balance` in its reasons, so the R2 gate waits and spends neither a round nor the no-verdict retry, where the round used to be a `tool_error` no-verdict round (issue #92); a bare `402` and a status of 402 do not hold.';
+    assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- Billing hold, card T0-R2-BILLING-HOLD (issue #92): the quota word rule holds on `insufficient balance` and `payment required`, so a reviewer whose account has no balance (the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`) is a quota hold that names the billing word and spends neither an R2 round nor the no-verdict retry; it used to be a `tool_error` no-verdict round.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  });
+});

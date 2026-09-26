@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Billing hold, card T0-R2-BILLING-HOLD (issue #92): the quota word rule holds on `insufficient balance` and `payment required`, so a reviewer whose account has no balance (the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`) is a quota hold that names the billing word and spends neither an R2 round nor the no-verdict retry; it used to be a `tool_error` no-verdict round.
+
 - R2 reviewer swap, temporary (issue #92): while the DeepSeek account answers HTTP 402 Insufficient Balance, this repository's R2 runs Claude Sonnet 5 (`claude -p --model claude-sonnet-5 --effort high` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5`) with `preReview.answerMarker` empty, since `claude -p` prints no marker line. DeepSeek returns as the primary, with Sonnet as a configured fallback, in the card that resolves #92; the installed template is unchanged.
 
 - R2 pass notes, card T0-R2-PASS-NOTES (issue #82): every review prompt says that a pass that carries notes lists each note once, in the top-level `reasons`, with the `reasons` of both axes empty, and asks the reviewer to check that the verdict line is one complete JSON document before sending it; the `deepseek` command has no JSON output mode, and the reader still leaves no verdict for a document one brace short and never repairs it.
