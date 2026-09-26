@@ -176,3 +176,23 @@ describe('router (Q2)', () => {
     assert.equal(classifyRequest({ text: long }).size, 'T0');
   });
 });
+
+describe('T0-GOAL-CARD-COUNT: several named card ids leave the count to the projection', () => {
+  const known = ['T1-PARSE-GUARD', 'T1-STORE-CAS', 'T3-API'];
+  test('a text naming two known card ids routes with an unknown count and the arc module, naming both, with or without an explicit size [R1]', () => {
+    for (const explicitSize of [undefined, 'T0', 'T1'] as const) {
+      const r = classifyRequest({ text: 'v5.1 hardening wave 1: T1-PARSE-GUARD then T1-STORE-CAS', knownCardIds: known, explicitSize });
+      assert.equal(r.cardCount, 'unknown', `size ${explicitSize ?? 'inferred'}`);
+      assert.ok(r.modules.includes('arc'), `size ${explicitSize ?? 'inferred'}: the arc module`);
+      assert.ok(r.reasons.includes('named cards: T1-PARSE-GUARD, T1-STORE-CAS (count left to the projection)'), JSON.stringify(r.reasons));
+    }
+  });
+  test('one known card id, alone or beside an unknown or a repeated one, keeps the count 1 for a T0 size [R1]', () => {
+    for (const text of ['implement T3-API', 'implement T3-API after T9-UNKNOWN', 'implement T3-API, then check T3-API again']) {
+      const r = classifyRequest({ text, knownCardIds: known });
+      assert.equal(r.cardCount, 1, text);
+      assert.ok(r.reasons.includes('ref=T3-API'), text);
+      assert.ok(!r.reasons.some((x) => x.startsWith('named cards:')), text);
+    }
+  });
+});

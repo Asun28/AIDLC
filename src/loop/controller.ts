@@ -122,9 +122,14 @@ export class GoalController {
       affectedSurfaces: request.affectedSurfaces,
     });
     const target: DeliveryTarget = request.explicitTarget ?? routing.target;
-    const explicitCards = options.cards ?? (routing.kind === 'card-execute' || routing.kind === 'card-amendment' ? [routing.reasons.find((r) => r.startsWith('ref='))?.slice(4) ?? ''].filter(Boolean) : []);
-    const cardCount = explicitCards.length ? explicitCards.length : routing.cardCount;
-    const deadlines = computeGoalDeadlines(now, { cardCount, standaloneRelease: routing.kind === 'release', userLimitMs: options.userLimitMs ?? this.config.userLimitMs });
+    // A card id of the request text is the goal's card only when the router counts exactly one card (T0-GOAL-CARD-COUNT):
+    // several named ids, or a T1 or T2 route, leave the list to the projection.
+    const explicitCards = options.cards ?? ((routing.kind === 'card-execute' || routing.kind === 'card-amendment') && routing.cardCount === 1 ? [routing.reasons.find((r) => r.startsWith('ref='))?.slice(4) ?? ''].filter(Boolean) : []);
+    // An explicit T1 or T2 is an arc whatever the card list says: it never gets the one-card limit.
+    const arcBySize = routing.sizeSource === 'explicit' && (routing.size === 'T1' || routing.size === 'T2');
+    const cardCount = arcBySize ? 'unknown' : explicitCards.length ? explicitCards.length : routing.cardCount;
+    // A standalone release keeps the one-card limit only without an explicit T1 or T2 (R3 decision 1).
+    const deadlines = computeGoalDeadlines(now, { cardCount, standaloneRelease: routing.kind === 'release' && !arcBySize, userLimitMs: options.userLimitMs ?? this.config.userLimitMs });
     const id = `g-${now.replace(/[-:.TZ]/g, '').slice(0, 14)}-${randomUUID().slice(0, 6)}`;
     const roleProfiles = (['planner', 'implementer', 'investigator', 'reviewer', 'release-specialist'] as const).map((role) => resolveRoleProfile({ role, family: this.config.family }));
     const authorizations: AuthorizationRecord[] = [
