@@ -63,7 +63,7 @@ async function atBaseSync(opts: { baseSync?: boolean; fallback?: boolean; steps?
   /** Runs inside the base-sync reviewer, before it answers. */
   const hooks: { onCx?: () => void } = {};
   const script = scriptedRunner({
-    'git diff --name-only': { stdout: 'src/t0-bsr.ts\n' },
+    'git diff --name-only': { stdout: 'src/t0-bsr.ts\u0000' },
     'git diff': { stdout: 'diff --git a/src/t0-bsr.ts b/src/t0-bsr.ts\n+export const bsr = 1;\n' },
     'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
     'fake-p': (args) => {

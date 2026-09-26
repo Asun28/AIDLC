@@ -7,11 +7,12 @@
  *   prefill, so the request sends none of them; text is read from `text` blocks only, since a
  *   response may begin with thinking blocks.
  * - Streaming with `finalMessage()` so long planning/review outputs never hit HTTP timeouts.
- * - Rate limits (429) are reported as `quota` with the provider's retry-after so the caller
- *   WAITs (MS4) instead of treating them as reasoning failures.
+ * - The SDK error status decides a quota hold (429 and 529, `detectQuotaHold`), reported as `quota` with the
+ *   provider's retry-after so the caller WAITs (MS4) instead of treating it as a reasoning failure.
  * - `stop_reason: "refusal"` is surfaced as `refusal`, never as an empty success.
  * - The SDK is imported lazily so the CLI works without credentials (mock / dry-run modes).
  */
+import { detectQuotaHold } from '../core/parse-guard.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider } from './types.ts';
 import { extractJson, newInvocationId } from './types.ts';
 
@@ -110,14 +111,10 @@ export class ClaudeApiProvider implements ModelProvider {
       };
     } catch (err) {
       const durationMs = Date.now() - started;
-      if (err instanceof sdk.default.RateLimitError) {
-        const retry = err.headers?.get?.('retry-after');
-        const retryAfterMs = retry ? Number(retry) * 1000 : undefined;
-        return { invocationId, provider: this.name, model, text: '', outcome: 'quota', error: err.message, retryAfterMs, durationMs };
-      }
       if (err instanceof sdk.default.APIError) {
-        const quota = err.status === 529 || err.status === 429;
-        return { invocationId, provider: this.name, model, text: '', outcome: quota ? 'quota' : 'error', error: `${err.status ?? 'api'}: ${err.message}`, durationMs };
+        const retry = Number(err.headers?.get?.('retry-after'));
+        const quota = detectQuotaHold(err.message, err.status, retry > 0 ? retry * 1000 : undefined);
+        return { invocationId, provider: this.name, model, text: '', outcome: quota.hold ? 'quota' : 'error', error: `${err.status ?? 'api'}: ${err.message}`, retryAfterMs: quota.retryAfterMs, durationMs };
       }
       return { invocationId, provider: this.name, model, text: '', outcome: 'error', error: (err as Error).message, durationMs };
     }

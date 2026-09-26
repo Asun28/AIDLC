@@ -16,6 +16,7 @@ import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
+import { nulList } from '../core/parse-guard.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
@@ -339,7 +340,7 @@ export class GitHubShipPath implements ShipPath {
   private mergeChangelog(git: (args: string[]) => ExecReceipt, wt: string, ref: string, head: string, log: string[]): { sentinel: string; detail: string } | undefined {
     const unmerged = git(['diff', '--name-only', '--diff-filter=U', '-z']);
     if (unmerged.exitCode !== 0) return undefined;
-    const paths = unmerged.stdout.split('\u0000').filter((p) => p.length > 0);
+    const paths = nulList(unmerged.stdout);
     if (paths.length !== 1 || paths[0] !== 'CHANGELOG.md') return undefined;
     const file = path.join(wt, 'CHANGELOG.md');
     let before: string;

@@ -1,7 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
 import { FormalReviewConfig, FormalReviewFallback, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
@@ -264,5 +266,78 @@ describe('formalReview.baseSync (T0-BASE-SYNC-REVIEW acceptance 5)', () => {
     assert.equal(repo.baseSync?.effort?.default, 'medium');
     assert.equal(repo.baseSync?.effort?.high, undefined, 'medium for every base-sync candidate');
     assert.equal(read('templates/aidlc.config.json').formalReview['baseSync'], undefined);
+  });
+});
+
+describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptance 1, 2 and 10)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  /** A ZodError with an issue at `at` or at one of its elements. */
+  const issueUnder = (at: string) => (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === at || i.path.join('.').startsWith(`${at}.`));
+  /** A config that parses, with `value` at the dotted path `at`. */
+  const withValue = (at: string, value: unknown): Record<string, unknown> => {
+    const config: Record<string, any> = { formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b'], reviewer: 'b' }, baseSync: { command: ['cx'], reviewer: 'cx' } } };
+    const keys = at.split('.');
+    let node = config;
+    for (const key of keys.slice(0, -1)) node = node[key] ??= {};
+    node[keys.at(-1)!] = value;
+    return config;
+  };
+  const SCALARS = ['base', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'repository', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'preReview.reviewer', 'formalReview.reviewer', 'formalReview.fallback.reviewer'];
+  const EMPTY_ALLOWED = ['preReview.answerMarker', 'worktreeRoot'];
+  const LISTS = ['preReview.command', 'formalReview.command', 'formalReview.fallback.command', 'formalReview.baseSync.command', 'preReview.perspectives', 'github.requiredChecks', 'hooks.frozenPaths', 'hooks.testPathPatterns', 'hooks.productionPatterns', 'tierPaths.tierS', 'tierPaths.tier0', 'tierPaths.frozen'];
+  test('the base config of these cases parses, so each refusal below is the blank value [R1]', () => {
+    assert.doesNotThrow(() => ProjectConfig.parse(withValue('base', 'main')));
+    for (const at of LISTS) assert.doesNotThrow(() => ProjectConfig.parse(withValue(at, ['ok'])), at);
+  });
+  test('a whitespace-only value is refused with an issue at its path, in every key and every list element that gates behaviour [R1]', () => {
+    for (const at of [...SCALARS, ...EMPTY_ALLOWED]) assert.throws(() => ProjectConfig.parse(withValue(at, '   ')), issueUnder(at), `${at}: "   "`);
+    for (const at of [...SCALARS, ...EMPTY_ALLOWED]) assert.throws(() => ProjectConfig.parse(withValue(at, '\t\n')), issueUnder(at), `${at}: a tab and a newline`);
+    for (const at of LISTS) assert.throws(() => ProjectConfig.parse(withValue(at, ['ok', '   '])), issueUnder(at), `${at}: ["ok", "   "]`);
+  });
+  test('an empty value is refused everywhere but preReview.answerMarker and worktreeRoot, which accept it as off and as the default [R1]', () => {
+    for (const at of SCALARS) assert.throws(() => ProjectConfig.parse(withValue(at, '')), issueUnder(at), `${at}: ""`);
+    for (const at of LISTS) assert.throws(() => ProjectConfig.parse(withValue(at, ['ok', ''])), issueUnder(at), `${at}: ["ok", ""]`);
+    const parsed = ProjectConfig.parse({ worktreeRoot: '', preReview: { answerMarker: '' } });
+    assert.equal(parsed.worktreeRoot, '');
+    assert.equal(parsed.preReview.answerMarker, '');
+  });
+  test('a value with a non-blank character still parses, surrounding blanks included, and both shipped configs parse [R1]', () => {
+    assert.equal(ProjectConfig.parse({ preReview: { answerMarker: ' === answer === ' } }).preReview.answerMarker, ' === answer === ');
+    assert.deepEqual(ProjectConfig.parse({ preReview: { command: ['r2', '--flag='] } }).preReview.command, ['r2', '--flag=']);
+    for (const file of ['aidlc.config.json', path.join('templates', 'aidlc.config.json')]) assert.doesNotThrow(() => ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, file), 'utf8'))), file);
+  });
+  test('aidlc doctor on a whitespace-only preReview.answerMarker prints config: ERROR naming the path and exits 1, with no stack trace [R2]', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-config-error-'));
+    try {
+      const doctor = (config: string) => {
+        writeFileSync(path.join(dir, 'aidlc.config.json'), config, 'utf8');
+        const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor'], { cwd: dir, env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, 'state') }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+        return { status: r.status, output: `${r.stdout}${r.stderr}` };
+      };
+      const blank = doctor(JSON.stringify({ preReview: { answerMarker: '   ' } }));
+      assert.equal(blank.status, 1, blank.output);
+      assert.match(blank.output, /config: ERROR aidlc\.config\.json: preReview\.answerMarker: must be empty or not blank/);
+      assert.doesNotMatch(blank.output, /^\s+at /m, 'no stack trace');
+      const unparsable = doctor('{ not json');
+      assert.equal(unparsable.status, 1, unparsable.output);
+      assert.match(unparsable.output, /config: ERROR/);
+      assert.doesNotMatch(unparsable.output, /^\s+at /m, 'no stack trace');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+  test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the refused blank values and the doctor config error [R1] [R2]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const operations = read('docs', 'OPERATIONS.md');
+    const opsSentences = [
+      'A key that gates behaviour refuses a value that is only whitespace, and every such key but `worktreeRoot` and `preReview.answerMarker`, where empty is the default or off, refuses an empty value as well (card T1-PARSE-GUARD): `cardsDir`, `archiveDir`, `intentDir`, `specsDir`, `plansDir`, `evalsDir`, `base`, `reviewPool`, `reviewPolicyVersion`, `reviewer`, `repository`, the reviewer names of `preReview` and `formalReview`, each element of the `command` arrays, of `preReview.perspectives`, of `github.requiredChecks`, of the three `hooks` lists and of the three `tierPaths` lists, and the `successPattern`, `failurePattern` and `operationIdPattern` of an `aidlc.ops.json` binding.',
+      'A whitespace-only `preReview.answerMarker` used to read the whole stdout as if no marker were set.',
+      '`aidlc doctor` on an `aidlc.config.json` that does not parse prints `config: ERROR` with the failing path and exits 1, with no stack trace.',
+    ];
+    for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const sentence = 'A blank value of a configuration key that gates behaviour is refused, and `aidlc doctor` reports a configuration that does not parse as `config: ERROR` with exit 1 instead of a stack trace.';
+    assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
 });
