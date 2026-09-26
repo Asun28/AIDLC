@@ -107,6 +107,8 @@ export interface ShipFailureStep {
   action: NextEffortAction;
   /** The success the ship failed, as recorded now: a counted failure. */
   refuted?: Attempt;
+  /** The running repair whose effort the ladder step changed (the promotion to the escalation), with the effort it started at. */
+  promoted?: { n: number; from: EffortLevel; effort: EffortLevel };
 }
 
 /**
@@ -130,6 +132,7 @@ export function afterShipFailure(episode: EffortEpisode, cause: string, justific
     episode: { ...reopened, escalationUsed: reopened.escalationUsed || action.escalated, attempts: attempts.map((a) => (a === running ? { ...a, effort: action.effort } : a)) },
     action: { ...action, n: running.n },
     refuted,
+    ...(running.effort !== action.effort ? { promoted: { n: running.n, from: running.effort, effort: action.effort } } : {}),
   };
 }
 
@@ -157,6 +160,10 @@ export interface FinishAttemptInput {
 }
 
 export function finishAttempt(episode: EffortEpisode, input: FinishAttemptInput): EffortEpisode {
+  // A terminal episode takes no further record: a repair left running by a ship failure that stopped the ladder
+  // (afterShipFailure) would otherwise overwrite the stop with `succeeded` (T0-RUNNING-REPAIR-STOP). A succeeded episode
+  // never holds a running attempt, since a repair starts only after the episode reopens.
+  if (episode.terminal) throw new Error(`the effort episode is terminal (${episode.terminal}); no attempt may be recorded`);
   const idx = episode.attempts.findIndex((a) => a.outcome === 'running');
   if (idx < 0) throw new Error('no running attempt to finish');
   if (input.outcome === 'not-counted' && !input.notCountedReason) throw new Error('not-counted attempts must state their reason');
@@ -175,9 +182,7 @@ export function finishAttempt(episode: EffortEpisode, input: FinishAttemptInput)
     nextHypothesis: input.nextHypothesis,
   };
   const attempts = episode.attempts.map((a, i) => (i === idx ? finished : a));
-  let terminal = episode.terminal;
-  if (input.outcome === 'success') terminal = 'succeeded';
-  const updated: EffortEpisode = { ...episode, attempts, terminal };
+  const updated: EffortEpisode = { ...episode, attempts, terminal: input.outcome === 'success' ? 'succeeded' : undefined };
   if (input.outcome === 'fail') {
     const decision = nextEffortAction(updated, { harderProblem: true, limitsPermit: true });
     if (decision.action === 'stop' && decision.reason !== 'exhausted') updated.terminal = decision.reason;

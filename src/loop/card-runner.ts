@@ -2303,6 +2303,8 @@ export class CardRunner {
     const refuteDirective = (next: CardRun, narration: string): { run: CardRun; directive: CardDirective } => {
       const step = refutation;
       if (step?.refuted) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: step.refuted.n, outcome: 'fail', cause: step.refuted.cause, refutedBy: `ship ${result.outcome}` } });
+      // The running repair the step promoted is journaled at its new effort, so its latest start matches the episode.
+      if (step?.promoted && step.action.action === 'attempt') this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: step.promoted.n, effort: step.promoted.effort, escalated: step.action.escalated, promoted: true, from: step.promoted.from, reason: 'ship-failure' } });
       if (next.state === 'STOP' && next.stop) return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } };
       const effort = step?.action.action === 'attempt' ? step.action.effort : undefined;
       const running = next.effort?.attempts.find((a) => a.outcome === 'running');

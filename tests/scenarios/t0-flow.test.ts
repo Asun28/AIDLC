@@ -4374,3 +4374,97 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 4: every build directive a ship outcome 
     fx.cleanup();
   }
 });
+
+/**
+ * T0-RUNNING-REPAIR-STOP: three successes, each refuted by a ship failure with a different detail but the last, whose
+ * ship follows a review-fix repair that is already running (the success reopened by a block and the next attempt open).
+ */
+function thirdShipWithRunningRepair(fx: ReturnType<typeof makeFixture>, id: string, progress: boolean) {
+  writeCard(fx, { id, title: `a repair is running when the third ship fails for ${id}` });
+  const goal = goalForCards(fx, [id]);
+  const runner = fx.runner(new VaryingDetailShipPath(['dod-failed']));
+  const card = fx.card(id);
+  let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+  r = runner.next(fx.goal(goal.id), card, r.run);
+  let run = r.run;
+  for (let n = 1; n <= 3; n += 1) {
+    assert.equal(r.directive.kind, 'build', `attempt ${n}: ${r.directive.narration}`);
+    run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', progress, dodReceipt: `dod:${n}`, redReceipt: 'red:1', candidateSha: `sha-${n}` });
+    if (n < 3) r = runner.next(fx.goal(goal.id), card, run);
+  }
+  const opened = rewindCardRun(fx, { ...run, effort: startAttempt(reopenAfterReviewBlock(run.effort!, 'R3 block'), 'medium', fx.now()) });
+  const started = fx.events(goal.id).length;
+  r = runner.next(fx.goal(goal.id), card, opened);
+  return { goal, runner, card, r, eventsAfterShip: fx.events(goal.id).slice(started) };
+}
+
+test('T0-RUNNING-REPAIR-STOP acceptance 2: a repair running when a ship failure stops the ladder cannot be recorded over the stop; the card stays in STOP', () => {
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, r } = thirdShipWithRunningRepair(fx, 'T1-RUNSTOP', false);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.state, 'STOP');
+    assert.equal(r.run.effort?.terminal, 'exhausted');
+    assert.deepEqual(r.run.effort?.attempts.map((a) => a.outcome), ['fail', 'fail', 'fail', 'running']);
+    const stored = fx.store.getCardRun(goal.id, card.id);
+    const finished = fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED').length;
+    assert.throws(() => runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:4', redReceipt: 'red:1', candidateSha: 'sha-4' }), /exhausted/);
+    assert.deepEqual(fx.store.getCardRun(goal.id, card.id), stored, 'the stored run keeps its state, stop, effort, candidate and receipts');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED').length, finished, 'no ATTEMPT_FINISHED is journaled');
+    const again = runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, card.id)!);
+    assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-RUNNING-REPAIR-STOP acceptance 3: a running repair the ladder promotes to the escalation is journaled as escalated, after the refuted attempt', () => {
+  const fx = makeFixture();
+  try {
+    const { r, eventsAfterShip } = thirdShipWithRunningRepair(fx, 'T1-RUNESC', true);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    if (r.directive.kind === 'build') {
+      assert.equal(r.directive.attempt, 4);
+      assert.equal(r.directive.effort, 'high');
+    }
+    const refuted = eventsAfterShip.findIndex((e) => e.type === 'ATTEMPT_FINISHED' && e.data['n'] === 3 && e.data['refutedBy'] === 'ship dod-failed');
+    const starts = eventsAfterShip.filter((e) => e.type === 'ATTEMPT_STARTED');
+    assert.equal(starts.length, 1, 'one start is journaled for the promotion');
+    assert.deepEqual(starts[0]!.data, { n: 4, effort: 'high', escalated: true, promoted: true, from: 'medium', reason: 'ship-failure' });
+    assert.ok(refuted >= 0 && eventsAfterShip.indexOf(starts[0]!) > refuted, 'the promotion follows the refuted attempt');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-RUNNING-REPAIR-STOP acceptance 3: a ship failure whose step keeps the running repair at its effort journals no start', () => {
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-RUNKEEP', new DryRunShipPath(['dod-failed', 'merged']));
+    const opened = rewindCardRun(fx, { ...run1, effort: startAttempt(reopenAfterReviewBlock(run1.effort!, 'R3 block'), 'medium', fx.now()) });
+    const started = fx.events(goal.id).length;
+    const r = runner.next(fx.goal(goal.id), card, opened);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.effort?.attempts.at(-1)?.effort, 'medium');
+    assert.deepEqual(fx.events(goal.id).slice(started).filter((e) => e.type === 'ATTEMPT_STARTED'), [], 'the running repair keeps its effort: no start is journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-RUNNING-REPAIR-STOP acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the running repair rules', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A repair attempt that a review fix opened and that is still running when such a failure stops the ladder stays in the stopped episode, and `aidlc card attempt` refuses to finish it with any outcome, naming the stop (card T0-RUNNING-REPAIR-STOP): a success recorded after the stop would otherwise turn the stopped episode back into a succeeded one.',
+    "When the ladder instead promotes that running repair to the single escalation, the promotion is journaled as an `ATTEMPT_STARTED` of the same attempt number with the new effort, `escalated: true`, `promoted: true`, the effort it started at as `from` and `reason: 'ship-failure'`.",
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Running repair on a ladder stop, card T0-RUNNING-REPAIR-STOP: a repair attempt still running when a ship failure stops the effort ladder can no longer be recorded; `aidlc card attempt` refuses it with any outcome and names the stop, where a success used to overwrite the stop with `succeeded`.',
+    'A running repair the ladder promotes to the escalation is journaled as an `ATTEMPT_STARTED` with `promoted: true`, so the journal no longer shows it as a baseline attempt.',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});

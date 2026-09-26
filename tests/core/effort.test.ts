@@ -361,3 +361,45 @@ describe('T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate code', () =
     }
   });
 });
+
+describe('T0-RUNNING-REPAIR-STOP: a repair still running when the ladder stops', () => {
+  const STOPS = ['same-cause-stop', 'exhausted', 'escalation-unavailable', 'escalation-failed'] as const;
+  const OUTCOMES = [
+    { outcome: 'success' },
+    { outcome: 'fail', cause: 'type error in a.ts' },
+    { outcome: 'not-counted', notCountedReason: 'quota' },
+  ] as const;
+  function succeed(ep: EffortEpisode, n: number, progress = false): EffortEpisode {
+    const started = startAttempt(ep, ep.baseline, addMs(T0, n * 60_000));
+    return finishAttempt(started, { finishedAt: addMs(T0, n * 60_000 + 30_000), outcome: 'success', progress });
+  }
+
+  test('finishAttempt refuses to finish the running attempt of a stopped episode with any outcome and names the stop; the episode is unchanged [R1]', () => {
+    for (const terminal of STOPS) {
+      const stopped: EffortEpisode = { ...startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', T0), terminal };
+      const before = structuredClone(stopped);
+      for (const input of OUTCOMES) {
+        assert.throws(() => finishAttempt(stopped, { finishedAt: addMs(T0, 60_000), ...input }), new RegExp(terminal), `${terminal}: ${input.outcome} is refused`);
+      }
+      assert.deepEqual(stopped, before, `${terminal}: nothing is recorded`);
+    }
+  });
+
+  test('an episode with no terminal finishes the same running attempt with each outcome [R1]', () => {
+    const open = startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', T0);
+    for (const input of OUTCOMES) {
+      assert.equal(finishAttempt(open, { finishedAt: addMs(T0, 60_000), ...input }).attempts[0]!.outcome, input.outcome);
+    }
+  });
+
+  test('afterShipFailure that stops the ladder with a repair running keeps the stop and the running attempt as it was, and finishing that attempt is refused [R1]', () => {
+    let ep = afterShipFailure(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 'ship dod-failed: a', JUSTIFIED).episode;
+    ep = afterShipFailure(succeed(ep, 2), 'ship dod-failed: b', JUSTIFIED).episode;
+    const running = startAttempt(reopenAfterReviewBlock(succeed(ep, 3), 'R3 block'), 'medium', addMs(T0, 240_000));
+    const step = afterShipFailure(running, 'ship dod-failed: c', JUSTIFIED);
+    assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
+    assert.equal(step.episode.terminal, 'exhausted');
+    assert.deepEqual(step.episode.attempts[3], running.attempts[3], 'the running repair is left as it was');
+    assert.throws(() => finishAttempt(step.episode, { finishedAt: addMs(T0, 300_000), outcome: 'success' }), /exhausted/);
+  });
+});
