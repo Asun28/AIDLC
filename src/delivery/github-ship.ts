@@ -104,8 +104,10 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
   // exactly one run header before it per earlier step that started in that second (a step's header is its first line, so
   // a named group the step's own output prints comes after that header and has one too many before it). Later steps are
   // not counted: post steps and `Complete job` start in that second without a header.
-  const heads = window.flatMap((l, i) => (l.time < start + 1000 && runHeader(i) ? [i] : []));
-  const own = heads.filter((i) => window[i]!.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}`);
+  // Every line of that second reading the step's name counts, a group without a `shell: ` line included: a second one
+  // leaves the start unplaced. The window opens with that second, so the run headers before the named line are its own.
+  const heads = window.flatMap((_l, i) => (runHeader(i) ? [i] : []));
+  const own = window.flatMap((l, i) => (l.time < start + 1000 && l.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}` ? [i] : []));
   const earlier = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
   const from = failed.number === 1 ? 0 : own.length === 1 && heads.indexOf(own[0]!) === earlier ? own[0] : undefined;
   if (from === undefined) return undefined;
