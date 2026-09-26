@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.
+
 - R2 pass notes, card T0-R2-PASS-NOTES (issue #82): every review prompt says that a pass that carries notes lists each note once, in the top-level `reasons`, with the `reasons` of both axes empty, and asks the reviewer to check that the verdict line is one complete JSON document before sending it; the `deepseek` command has no JSON output mode, and the reader still leaves no verdict for a document one brace short and never repairs it.
 
 - Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.
