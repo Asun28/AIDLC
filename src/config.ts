@@ -137,6 +137,14 @@ export type ProjectConfig = z.infer<typeof ProjectConfig>;
 
 export const CONFIG_FILE = 'aidlc.config.json';
 
+/** An `aidlc.config.json` that is not JSON or fails the schema; a file that cannot be read throws Node's own error. */
+export class ConfigError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ConfigError';
+  }
+}
+
 export function loadProjectConfig(root: string): { config: ProjectConfig; file: string; found: boolean } {
   const file = path.join(root, CONFIG_FILE);
   if (!existsSync(file)) return { config: ProjectConfig.parse({}), file, found: false };

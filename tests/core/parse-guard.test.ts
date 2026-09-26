@@ -11,6 +11,16 @@ const SRC = path.join(import.meta.dirname, '..', '..', 'src');
 const SOURCES = (readdirSync(SRC, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts')).map((f) => f.split(path.sep).join('/'));
 const source = (file: string) => readFileSync(path.join(SRC, file), 'utf8');
 const holds = (text: string) => detectQuotaHold(text).hold;
+/** The `-z` literals in code, in any quote spelling (T0-PARSE-GUARD-FOLLOWUPS): a string or a template without substitutions, never a comment. */
+const zLiterals = (text: string): number => {
+  let found = 0;
+  const visit = (node: ts.Node): void => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === '-z') found++;
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile('scan.ts', text, ts.ScriptTarget.Latest, true));
+  return found;
+};
 
 describe('nulList (T1-PARSE-GUARD acceptance 3)', () => {
   test('splits a -z listing on NUL only: a name with a newline stays whole and empty entries are dropped [R3]', () => {
@@ -23,10 +33,17 @@ describe('nulList (T1-PARSE-GUARD acceptance 3)', () => {
     const nulSplit = /\.split\(\s*(?:'[^'\n]*|"[^"\n]*|\/[^/\n]*)(?:\\u0000|\\0|\\x00)/;
     const splitting = SOURCES.filter((f) => f !== 'core/parse-guard.ts' && nulSplit.test(source(f)));
     assert.deepEqual(splitting, [], `a NUL split outside nulList in: ${splitting.join(', ')}`);
-    const listing = SOURCES.filter((f) => source(f).includes("'-z'"));
+    const listing = SOURCES.filter((f) => zLiterals(source(f)) > 0);
     assert.ok(listing.length >= 3, `the -z listings resolved to ${listing.join(', ')}`);
     const unguarded = listing.filter((f) => !source(f).includes('nulList('));
     assert.deepEqual(unguarded, [], `a -z listing not read through nulList in: ${unguarded.join(', ')}`);
+  });
+  test('the -z literal finder finds a single-quoted, double-quoted or template -z in code and none in a comment (T0-PARSE-GUARD-FOLLOWUPS) [R5]', () => {
+    assert.equal(zLiterals("git(['diff', '-z']);"), 1, 'single quotes');
+    assert.equal(zLiterals('git(["diff", "-z"]);'), 1, 'double quotes');
+    assert.equal(zLiterals('git([`diff`, `-z`]);'), 1, 'a template');
+    assert.equal(zLiterals("const a = ['-z', \"-z\", `-z`];"), 3, 'each spelling counts');
+    assert.equal(zLiterals("// git(['-z'])\n/* git([\"-z\", `-z`]) */\nconst a = ['-zz', '-Z', ' -z'];"), 0, 'a comment, a longer argument, another case, a leading space');
   });
 });
 
@@ -65,6 +82,17 @@ describe('detectQuotaHold: a numeric status first, else the word rule (T1-PARSE-
     assert.equal(detectQuotaHold('Retry-After: 2 min').retryAfterMs, 120_000);
     assert.equal(detectQuotaHold('retry after 3 minutes').retryAfterMs, 180_000);
     assert.equal(detectQuotaHold('quota exceeded').retryAfterMs, undefined);
+  });
+  test('a retry-after unit is read only as a whole word: milliseconds and minutes words, and seconds for a seconds word, no unit or any other word (T0-PARSE-GUARD-FOLLOWUPS) [R1]', () => {
+    const delay = (unit: string) => detectQuotaHold(`retry after 30${unit}`).retryAfterMs;
+    for (const unit of [' milliseconds', ' millisecond', ' millis', ' msecs', ' msec', ' ms', 'ms', 'milliseconds', ' MILLISECONDS', ' Msec', ' ms.', ' ms)', ' ms and more']) assert.equal(delay(unit), 30, `30${unit}`);
+    for (const unit of [' m', ' min', ' mins', ' minute', ' minutes', 'min', 'm', ' Minutes', ' MIN', ' minutes;', ' m,']) assert.equal(delay(unit), 1_800_000, `30${unit}`);
+    for (const unit of [' s', ' sec', ' secs', ' second', ' seconds', 's', '', ' ', ' hours', ' h', ' msx', ' minx', ' millisecondsx', ' mins2', ' m5', ' ms5', ' secondsx', ' mé', ' msé', ' mn', ' millisec']) assert.equal(delay(unit), 30_000, `30${unit}`);
+  });
+  test('docs/OPERATIONS.md states how the word rule reads a retry-after unit (T0-PARSE-GUARD-FOLLOWUPS) [R6]', () => {
+    const operations = readFileSync(path.join(import.meta.dirname, '..', '..', 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const sentence = 'The word rule reads the delay of a `retry after <n>` in the text with its unit as a whole word in any letter case (card T0-PARSE-GUARD-FOLLOWUPS): `ms`, `msec`, `msecs`, `millis`, `millisecond` and `milliseconds` are milliseconds, `m`, `min`, `mins`, `minute` and `minutes` are minutes, and a seconds word, no unit or any other word is seconds, so `retry after 30 milliseconds` waits 30 ms where it used to wait 30 minutes.';
+    assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   });
 });
 
