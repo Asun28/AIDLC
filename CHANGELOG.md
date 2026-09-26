@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Goal card count follow-up, card T0-GOAL-CARD-COUNT-2: a request whose text names several cards keeps the 12 h arc deadline when `--card` names one of them; the router takes `ref=` from the first known card id, never an unknown id before it, and without a known card list counts every card id token, so two tokens leave the count to the projection (issue #73).
+
 - Goal card count, card T0-GOAL-CARD-COUNT: a goal request that names several known card ids, or carries an explicit T1 or T2 size, now gets the 12 h arc deadline and leaves its card list to the projection; it used to take the first card id of the text as its only card and get the 3 h one-card limit (issue #73).
 
 - Base-sync JSDoc, card T0-BASE-SYNC-JSDOC: the comments of `formalPool`, `formalReviewerFor` and `CandidateInfo.baseSync` now name the base-sync reviewer's own review pool, its lookup by the recorded reviewer name and the marking of an undecided base-sync candidate's repair; no code changed (issue #65).

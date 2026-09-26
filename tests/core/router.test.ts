@@ -207,10 +207,18 @@ describe('T0-GOAL-CARD-COUNT-2: ref= from the first known id, no registry, the k
       assert.ok(!r.reasons.includes('ref=T9-UNKNOWN'), text);
       assert.ok(r.reasons.includes('resolved card T3-API'), text);
     }
+    // Several known ids: ref= is the first known id in text order, after an unknown one too.
+    for (const [text, first] of [['implement T1-STORE-CAS then T1-PARSE-GUARD', 'T1-STORE-CAS'], ['implement T9-UNKNOWN, T3-API, then T1-PARSE-GUARD', 'T3-API']] as const) {
+      const r = classifyRequest({ text, knownCardIds: known });
+      assert.ok(r.reasons.includes(`ref=${first}`), `${text}: ${JSON.stringify(r.reasons)}`);
+    }
   });
   test('with no known card list one card id token keeps the count 1, and two route unknown with the arc module and the registry reason [R2]', () => {
     const one = classifyRequest({ text: 'implement T1-A' });
     assert.equal(one.cardCount, 1);
+    // Without a registry a token is never reported as resolved.
+    assert.ok(one.reasons.includes('card id T1-A referenced (registry not consulted or id absent; verify before dispatch)'), JSON.stringify(one.reasons));
+    assert.ok(!one.reasons.includes('resolved card T1-A'), JSON.stringify(one.reasons));
     const two = classifyRequest({ text: 'implement T1-A then T1-B' });
     assert.equal(two.cardCount, 'unknown');
     assert.ok(two.modules.includes('arc'));
