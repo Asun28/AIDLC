@@ -1,7 +1,7 @@
 ---
 id: T0-RUNNING-REPAIR-STOP
 title: A repair attempt still running when a ship failure stops the effort ladder can no longer be recorded as a success over the stop, and a running repair the ladder promotes to the escalation is journaled as escalated
-status: todo
+status: merged
 branch: T0-RUNNING-REPAIR-STOP
 worktree: D:\wt\AIDLC\T0-RUNNING-REPAIR-STOP
 allow_paths:
