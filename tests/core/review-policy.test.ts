@@ -69,12 +69,25 @@ describe('classifyVerdict (Q6)', () => {
   });
 
   test('Q24: a verified quota hold is quota-hold, not a decision and not a defect', () => {
-    assert.equal(classifyVerdict(undefined, { rawOutput: 'HTTP 429 Too Many Requests; retry-after: 120 s' }).outcome, 'quota-hold');
-    assert.equal(classifyVerdict({ verdict: 'block', reasons: [], run_status: 'timeout' }, { rawOutput: 'usage limit reached' }).outcome, 'quota-hold');
-    assert.deepEqual(detectQuotaHold('retry-after: 30s'), { hold: true, retryAfterMs: 30_000 });
-    assert.deepEqual(detectQuotaHold('Retry-After: 2 min'), { hold: true, retryAfterMs: 120_000 });
-    assert.deepEqual(detectQuotaHold('all good'), { hold: false });
-    assert.deepEqual(detectQuotaHold(undefined), { hold: false });
+    assert.equal(classifyVerdict(undefined, { receipt: { exitCode: 1, stdout: 'HTTP 429 Too Many Requests; retry-after: 120 s', stderr: '' } }).outcome, 'quota-hold');
+    assert.equal(classifyVerdict({ verdict: 'block', reasons: [], run_status: 'timeout' }, { receipt: { exitCode: 1, stdout: 'usage limit reached', stderr: '' } }).outcome, 'quota-hold');
+    assert.deepEqual(detectQuotaHold('retry-after: 30s'), { hold: true, via: 'text', evidence: 'retry-after', retryAfterMs: 30_000 });
+    assert.deepEqual(detectQuotaHold('Retry-After: 2 min'), { hold: true, via: 'text', evidence: 'Retry-After', retryAfterMs: 120_000 });
+    assert.deepEqual(detectQuotaHold('all good'), { hold: false, via: 'text' });
+    assert.deepEqual(detectQuotaHold(undefined), { hold: false, via: 'text' });
+  });
+
+  test('T1-PARSE-GUARD acceptance 6: a ship-path quota hold records the path that decided in its reasons, and a receipt that exited 0 is read on stderr alone [R4]', () => {
+    const missing = classifyVerdict(undefined, { receipt: { exitCode: 1, stdout: 'Error: 429 Too Many Requests', stderr: '' } });
+    assert.equal(missing.outcome, 'quota-hold');
+    assert.ok(missing.reasons.includes('via text: 429'), missing.reasons.join(' | '));
+    const timedOut = classifyVerdict({ verdict: 'block', reasons: ['reviewer timed out'], run_status: 'timeout' }, { receipt: { exitCode: 0, stdout: '', stderr: 'usage limit reached' } });
+    assert.equal(timedOut.outcome, 'quota-hold');
+    assert.deepEqual(timedOut.reasons, ['reviewer timed out', 'via text: usage limit']);
+    assert.equal(timedOut.runStatus, 'timeout');
+    const answered = classifyVerdict(undefined, { receipt: { exitCode: 0, stdout: 'the quota rule is unchanged', stderr: '' } });
+    assert.equal(answered.outcome, 'no-verdict', 'the stdout of a process that exited 0 is its answer, never a hold');
+    assert.deepEqual(classifyVerdict({ verdict: 'block', reasons: ['r'], run_status: 'tool_error' }, { receipt: { exitCode: 1, stdout: 'boom', stderr: '' } }), { outcome: 'no-verdict', mergeBlocking: false, runStatus: 'tool_error', reasons: ['r'], stale: false });
   });
 
   test('T0-QUOTA-FALSE-HOLD acceptance 1: each quota pattern holds only as a whole word or phrase: no letter or digit directly before or after it, except across a lowercase-to-uppercase change', () => {
@@ -214,7 +227,7 @@ describe('recordReviewOutcome ledger (Q6 / Q24)', () => {
   });
 
   test('Q24: quota hold waits and consumes no substantive round', () => {
-    const q = classifyVerdict(undefined, { rawOutput: 'rate limit exceeded' });
+    const q = classifyVerdict(undefined, { receipt: { exitCode: 1, stdout: 'rate limit exceeded', stderr: '' } });
     const r = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), q, undefined);
     assert.equal(r.decision.action, 'wait-quota');
     assert.equal(r.ledger.substantiveDecisions, 0);

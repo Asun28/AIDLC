@@ -202,6 +202,19 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       ['Verify the answers with subagents.', 'use a subagent to verify'],
       ['Use a sub-agent to verify the answer.', 'use a subagent to verify'],
       ['Use subagents to verify the answers.', 'use a subagent to verify'],
+      // Issue #41 (T1-PARSE-GUARD acceptance 7): a capitalised abbreviation or an initialism ends no sentence either.
+      ['Verify E.g. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify I.e. Bob with a subagent.', 'use a subagent to verify'],
+      ['Verify Bob, Alice Etc. The rest with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff Vs. Main with a subagent.', 'use a subagent to verify'],
+      ['Verify the diff (Cf. Section 2) with a subagent.', 'use a subagent to verify'],
+      ['Verify U.S. Bank data with a subagent.', 'use a subagent to verify'],
+      // Issue #41: With and Subagent are read in any letter case.
+      ['Verify the diff With A Subagent.', 'use a subagent to verify'],
+      ['Use a Subagent to verify.', 'use a subagent to verify'],
+      // Issue #41: an opening delimiter starts a sentence only before a capital.
+      ['Verify it. "then run the tests with a subagent."', 'use a subagent to verify'],
+      ['Verify it. " Then run the tests with a subagent."', 'use a subagent to verify'],
     ];
     for (const [text, name] of cases) assert.deepEqual(removedInstructions(text), [name], text);
   });
@@ -230,6 +243,17 @@ describe('Opus 5 and 5.5 guide changes (T1-OPUS55-PROMPTS)', () => {
       '* verify the output\n+ run the tests with a subagent',
       '+ verify the output\n* run the tests with a subagent',
       '1) verify the output\n2) run the tests with a subagent',
+      // Issue #41 (T1-PARSE-GUARD acceptance 7): the numbered-list branch with a dot, and an opening quote, backtick,
+      // bracket or emphasis mark before the capital of the next sentence.
+      '1. verify the output\n2. run the tests with a subagent',
+      '  10. verify the output\n  11. run the tests with a subagent',
+      'Verify it. "Then run the tests with a subagent."',
+      "Verify it. 'Then run the tests with a subagent.'",
+      'Verify it. `Then` run the tests with a subagent.',
+      'Verify it. (Then run the tests with a subagent.)',
+      'Verify it. [Then](x) run the tests with a subagent.',
+      'Verify it. **Then** run the tests with a subagent.',
+      'Verify it. _Then_ run the tests with a subagent.',
       'Where verify steps run, nothing changes.',
       'Maybe more conservative estimates hold.',
     ];

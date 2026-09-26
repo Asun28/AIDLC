@@ -169,3 +169,47 @@ test('T1-OPUS55-MODELS acceptance 3: a request model wins over defaultModel, and
   await new ClaudeApiProvider({ client: withBoth.client, defaultModel: 'claude-opus-5' }).complete({ ...REQUEST, model: 'claude-sonnet-5' });
   assert.equal(withBoth.sent[0]!['model'], 'claude-sonnet-5', 'the request model wins');
 });
+
+/** A claude -p run that prints `payload` as its `--output-format json` document and exits `exitCode`. */
+const claudeCodeRun = (payload: Record<string, unknown>, exitCode: number) => new ClaudeCodeProvider({ runner: scripted(() => ({ exitCode, stdout: JSON.stringify(payload) })).runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low' });
+
+test('T1-PARSE-GUARD acceptance 5: ClaudeCodeProvider decides a quota hold from api_error_status of an is_error payload whatever the exit code, and never reads an is_error payload as ok [R4]', async () => {
+  for (const exitCode of [0, 1]) {
+    assert.equal((await claudeCodeRun({ type: 'result', is_error: true, api_error_status: 429, result: 'API Error: 429' }, exitCode)).outcome, 'quota', `status 429, exit ${exitCode}`);
+    assert.equal((await claudeCodeRun({ type: 'result', is_error: true, api_error_status: 529, result: 'API Error: 529' }, exitCode)).outcome, 'quota', `status 529, exit ${exitCode}`);
+    assert.equal((await claudeCodeRun({ type: 'result', is_error: true, api_error_status: 500, result: 'quota exceeded, rate limit, overloaded' }, exitCode)).outcome, 'error', `status 500 with quota words, exit ${exitCode}: the status decides alone`);
+  }
+  const failed = await claudeCodeRun({ type: 'result', is_error: true, result: 'Execution error' }, 0);
+  assert.equal(failed.outcome, 'error', 'an is_error payload that exited 0 is never ok');
+  assert.match(failed.error ?? '', /Execution error/, 'the error names what the payload reported');
+  assert.equal((await claudeCodeRun({ type: 'result', is_error: true, result: 'Claude AI usage limit reached' }, 0)).outcome, 'quota', 'without a status the word rule reads the payload');
+  assert.equal((await claudeCodeRun({ type: 'result', is_error: true, api_error_status: '500', result: 'quota exceeded' }, 1)).outcome, 'quota', 'a status that is not a number is no status: the word rule decides');
+  assert.equal((await claudeCodeRun({ type: 'result', is_error: false, api_error_status: 429, result: 'done' }, 0)).outcome, 'ok', 'a status outside an is_error payload decides nothing');
+});
+
+test('T1-PARSE-GUARD: ClaudeCodeProvider reads a failed run with the merged word rule, not the old substring rule [R5]', async () => {
+  const failedWith = async (stderr: string) => (await new ClaudeCodeProvider({ runner: scripted(() => ({ exitCode: 1, stderr })).runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low' })).outcome;
+  for (const stderr of ['Error: overloaded_error', 'server at capacity', '429 Too Many Requests', 'usageLimitReached', 'retry after 30 seconds']) assert.equal(await failedWith(stderr), 'quota', stderr);
+  for (const stderr of ['Quotation marks unbalanced', 'HTTP429', 'rate.limit.ts not found', 'commit 1429abf']) assert.equal(await failedWith(stderr), 'error', stderr);
+});
+
+/** A messages client whose stream throws `err` before any message; no network. */
+const throwingClaudeClient = (err: unknown) => ({ messages: { stream: () => { throw err; } } }) as unknown as ClaudeMessagesClient;
+
+test('T1-PARSE-GUARD acceptance 5: ClaudeApiProvider decides quota from the SDK error status alone: 429 and 529 are quota with the retry-after delay, 500 is an error [R4]', async () => {
+  const { default: Anthropic } = await import('@anthropic-ai/sdk');
+  const apiError = (status: number, message: string) => Anthropic.APIError.generate(status, { type: 'error', error: { type: 'api_error', message } }, message, new Headers({ 'retry-after': '30' }));
+  const run = (err: unknown) => new ClaudeApiProvider({ client: throwingClaudeClient(err) }).complete(REQUEST);
+  const limited = await run(apiError(429, 'rate limited'));
+  assert.equal(limited.outcome, 'quota');
+  assert.equal(limited.retryAfterMs, 30_000);
+  const overloaded = await run(apiError(529, 'Overloaded'));
+  assert.equal(overloaded.outcome, 'quota');
+  assert.equal(overloaded.retryAfterMs, 30_000, 'a 529 carries the retry-after delay too');
+  const server = await run(apiError(500, 'quota exceeded, overloaded'));
+  assert.equal(server.outcome, 'error', 'status 500 is an error whatever its message says');
+  assert.equal(server.retryAfterMs, undefined, 'an error carries no retry delay');
+  assert.equal((await run(new Anthropic.APIConnectionError({ message: 'Connection error.' }))).outcome, 'error', 'no status: the word rule reads the message');
+  assert.equal((await run(new Anthropic.APIConnectionError({ message: 'upstream overloaded' }))).outcome, 'quota', 'no status: the word rule reads the message');
+  assert.equal((await run(new Error('rate limit'))).outcome, 'error', 'an error that is not an SDK error is never a hold');
+});
