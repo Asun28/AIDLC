@@ -1,7 +1,7 @@
 ---
 id: T0-UNATTENDED-TEST-SCAN
 title: The unattended-runs doc test proves the /goal hands-off clause against the docs, for every /goal prompt they show, and scans single-quoted --dod-receipt examples as well as double-quoted ones
-status: todo
+status: merged
 branch: T0-UNATTENDED-TEST-SCAN
 worktree: D:\wt\AIDLC\T0-UNATTENDED-TEST-SCAN
 allow_paths:
