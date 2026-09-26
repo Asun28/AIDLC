@@ -6,7 +6,7 @@
  * reported, never silently adopted (plan v5 MS5: "acquire/update it atomically and recover
  * interrupted writes").
  */
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ZodType } from 'zod';
@@ -102,13 +102,6 @@ export function readJson<T>(file: string, schema: ZodType<T>): T | undefined {
   return result.data;
 }
 
-/** Read-modify-write of one record (RED seam: the baseline, a plain read, change and atomic write). */
-export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, _opts: { timeoutMs?: number; staleMs?: number } = {}): T | undefined {
-  const next = change(readJson(file, schema));
-  if (next !== undefined) atomicWriteJson(file, next);
-  return next;
-}
-
 /** Detect leftover temporary files from interrupted writes in a directory. */
 export function findInterruptedWrites(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -130,14 +123,15 @@ export function recoverInterruptedWrites(dir: string): string[] {
   return found;
 }
 
-/** Create a file exclusively; returns false if it already exists. Used for atomic claims. */
+/** Create a file exclusively; returns false if it exists, or is being deleted (Windows refuses that create with EPERM). */
 export function createExclusive(file: string, text: string): boolean {
   mkdirSync(path.dirname(file), { recursive: true });
   let fd: number;
   try {
     fd = openSync(file, 'wx');
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'EEXIST' || code === 'EPERM') return false;
     throw err;
   }
   try {
@@ -151,6 +145,112 @@ export function createExclusive(file: string, text: string): boolean {
     closeSync(fd);
   }
   return true;
+}
+
+/**
+ * The one read-modify-write of a record: `change` receives the record as stored, parsed by `schema`, under an exclusive
+ * lock file (`<file>.lock`, created with `wx` and naming its process), and the record it returns is written atomically;
+ * a change that throws, or returns the record it received or nothing, writes nothing. A waiter refuses with `LOCKED` at
+ * the deadline (`timeoutMs`, default 2 s), which is checked before every retry, so a wait that overran it never runs
+ * `change` on a lock freed meanwhile. A lock older than `staleMs` (default 30 s) whose owner process is gone belongs to a
+ * crashed writer and is taken over through a serialized marker; a live owner keeps its lock however old. The write and
+ * the release are ownership-checked: a writer whose lock changed hands meanwhile refuses with `LOCK_LOST` and never
+ * removes the new owner's lock. The lock is not reentrant: nested sections take the card-run lock before the lease lock.
+ */
+export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, opts: { timeoutMs?: number; staleMs?: number } = {}): T | undefined {
+  const lock = `${file}.lock`;
+  const owner = `pid=${process.pid} at=${new Date().toISOString()} nonce=${randomBytes(4).toString('hex')}`;
+  const deadline = Date.now() + (opts.timeoutMs ?? 2_000);
+  const staleMs = opts.staleMs ?? 30_000;
+  while (!createExclusive(lock, owner)) {
+    if (Date.now() >= deadline) throw new StoreError('LOCKED', file, `locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);
+    if (staleLock(lock, staleMs)) takeOverStaleLock(lock, owner, staleMs);
+    else sleepSync(10);
+    if (Date.now() >= deadline) throw new StoreError('LOCKED', file, `locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);
+  }
+  try {
+    const current = readJson(file, schema);
+    const next = change(current);
+    if (next === undefined || next === current) return current;
+    if (readLockOwner(lock) !== owner) throw new StoreError('LOCK_LOST', file, `the lock changed hands during the update (${readLockOwner(lock) ?? 'lock gone'}); nothing written, run the command again`);
+    atomicWriteJson(file, next);
+    return next;
+  } finally {
+    if (readLockOwner(lock) === owner) removeIfPresent(lock);
+  }
+}
+
+/** Block the thread for `ms` (a lock retry between two synchronous file operations). */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/** A lock older than the stale age whose owner process is gone (a lock naming no process counts as gone). */
+function staleLock(lock: string, staleMs: number): boolean {
+  const age = ageMs(lock);
+  return age !== undefined && age > staleMs && !ownerAlive(lock);
+}
+
+/**
+ * Stale-lock takeover, serialized among waiters by a second exclusive marker (`<lock>.takeover`): the one waiter holding
+ * the marker re-checks the lock's age and its owner's liveness and removes it only while it is still stale. A live writer
+ * cannot create a lock while the stale file exists, so nothing but the stale file is ever removed; a marker left by a
+ * crashed taker-over ages out the same way. Errors other than a vanished file propagate.
+ */
+function takeOverStaleLock(lock: string, owner: string, staleMs: number): void {
+  const marker = `${lock}.takeover`;
+  if (!createExclusive(marker, owner)) {
+    const markerAge = ageMs(marker);
+    if (markerAge !== undefined && markerAge > staleMs) removeIfPresent(marker);
+    else sleepSync(10);
+    return;
+  }
+  try {
+    if (staleLock(lock, staleMs)) removeIfPresent(lock);
+  } finally {
+    removeIfPresent(marker);
+  }
+}
+
+/** Remove a file; a file already gone is not an error, anything else propagates. */
+function removeIfPresent(file: string): void {
+  try {
+    unlinkSync(file);
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+  }
+}
+
+/** Age of a file by its mtime, undefined when it is gone; any other stat failure propagates. */
+function ageMs(file: string): number | undefined {
+  try {
+    return Date.now() - statSync(file).mtimeMs;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
+/** Whether the process a lock file names is still running (a process this one may not signal counts as running). */
+function ownerAlive(lock: string): boolean {
+  const pid = Number(/\bpid=(\d+)/.exec(readLockOwner(lock) ?? '')?.[1]);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** The owner text of a lock file, undefined when it is gone; any other read failure propagates (a lock this process cannot read is never taken over or released). */
+function readLockOwner(lock: string): string | undefined {
+  try {
+    return readFileSync(lock, 'utf8').trim() || 'unknown owner';
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
 }
 
 export function listJsonFiles(dir: string): string[] {

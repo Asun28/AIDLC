@@ -432,21 +432,6 @@ export function rerunAllowed(findings: ReviewFinding[], block: BlockSelector): {
   return { allowed: open.length === 0, open };
 }
 
-/**
- * Merge two views of a run's findings by revision: the higher revision of a finding wins, the writer's
- * view on a tie; findings only one side knows are kept. A write computed from an older read therefore never
- * drops a disposition another window recorded meanwhile.
- */
-export function mergeFindings(persisted: ReviewFinding[], mine: ReviewFinding[]): ReviewFinding[] {
-  const byId = new Map<string, ReviewFinding>();
-  for (const f of persisted) byId.set(f.id, f);
-  for (const f of mine) {
-    const other = byId.get(f.id);
-    if (!other || f.revision >= other.revision) byId.set(f.id, f);
-  }
-  return [...byId.values()].sort((a, b) => Number(a.id.slice(1)) - Number(b.id.slice(1)));
-}
-
 /** The ledgers of a card run as a stale-write check reads them. */
 export interface LedgerView {
   review: ReviewLedger;

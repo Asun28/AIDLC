@@ -1,8 +1,8 @@
 /**
  * Shared atomic claims with ownership generations and fencing (plan v5 MS1, MS2, MS5).
  *
- * A lease is a file created exclusively (`wx`) under the canonical state directory visible to
- * every participating local session. It records owner session/process identity, operation,
+ * A lease is a record under the canonical state directory visible to every participating local
+ * session, written only under its lock file (`updateJson`). It records owner session/process identity, operation,
  * expiry/heartbeat and a monotonically advancing generation. Takeover after expiry requires
  * the caller to reconcile the old owner's in-flight operations first (MS2); the generation
  * then advances and any later write carrying the stale generation is fenced.
@@ -13,7 +13,7 @@
 import { existsSync, readFileSync, readdirSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { ActorIdentity, Lease, addMs, nowIso } from '../core/types.ts';
-import { atomicWriteJson, createExclusive, readJson, stableStringify, updateJson } from '../state/store.ts';
+import { readJson, updateJson } from '../state/store.ts';
 import { currentActor } from '../state/journal.ts';
 import { shortKey } from '../state/paths.ts';
 
@@ -41,7 +41,7 @@ export class LeaseStore {
     this.lock = lock;
   }
 
-  /** One lease section (RED seam: the baseline `updateJson`). */
+  /** One lease section: `change` receives the record under the lease's lock (`updateJson`); every lease write goes through it. */
   update(resourceKey: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
     return updateJson(this.file(resourceKey), Lease, change, this.lock);
   }
@@ -64,74 +64,58 @@ export class LeaseStore {
     const actor = options.actor ?? currentActor();
     const now = options.now ?? nowIso();
     const ttl = options.ttlMs ?? DEFAULT_LEASE_TTL_MS;
-    const file = this.file(resourceKey);
-    const existing = this.read(resourceKey);
-    if (!existing || existing.released) {
-      const generation = existing ? existing.generation + 1 : 0;
-      const lease: Lease = { resourceKey, generation, owner: actor, operation: options.operation, acquiredAt: now, heartbeatAt: now, expiresAt: addMs(now, ttl), released: false };
-      if (existing) {
-        // released lease file exists: replace atomically
-        atomicWriteJson(file, lease);
-        return { status: 'acquired', lease };
+    let result: ClaimResult | undefined;
+    this.update(resourceKey, (existing) => {
+      if (!existing || existing.released) {
+        result = { status: 'acquired', lease: { resourceKey, generation: existing ? existing.generation + 1 : 0, owner: actor, operation: options.operation, acquiredAt: now, heartbeatAt: now, expiresAt: addMs(now, ttl), released: false } };
+      } else if (this.sameOwner(existing.owner, actor)) {
+        result = { status: 'renewed', lease: { ...existing, operation: options.operation ?? existing.operation, heartbeatAt: now, expiresAt: addMs(now, ttl) } };
+      } else {
+        result = Date.parse(existing.expiresAt) < Date.parse(now) ? { status: 'expired', lease: existing, expired: true } : { status: 'held', lease: existing, expired: false };
       }
-      if (createExclusive(file, stableStringify(lease) + '\n')) return { status: 'acquired', lease };
-      // Lost the race: read what won.
-      const won = this.read(resourceKey);
-      if (!won) throw new Error(`lease race on ${resourceKey}: file vanished`);
-      return this.sameOwner(won.owner, actor) ? { status: 'renewed', lease: won } : { status: 'held', lease: won, expired: false };
-    }
-    if (this.sameOwner(existing.owner, actor)) {
-      const lease: Lease = { ...existing, operation: options.operation ?? existing.operation, heartbeatAt: now, expiresAt: addMs(now, ttl) };
-      atomicWriteJson(file, lease);
-      return { status: 'renewed', lease };
-    }
-    const expired = Date.parse(existing.expiresAt) < Date.parse(now);
-    return expired ? { status: 'expired', lease: existing, expired: true } : { status: 'held', lease: existing, expired: false };
+      return result.lease;
+    });
+    return result!;
   }
 
   /** MS2: take over an expired lease only after reconciliation of the old owner's effects. */
   takeover(resourceKey: string, reconcile: (old: Lease) => ReconcileReport, options: { ttlMs?: number; operation?: string; actor?: ActorIdentity; now?: string } = {}): { lease: Lease; report: ReconcileReport } {
+    let report: ReconcileReport | undefined;
+    const lease = this.update(resourceKey, (existing) => {
+      const next = this.successor(resourceKey, existing, options);
+      report = reconcile(existing!);
+      if (!report.reconciled) throw new Error(`takeover refused: old owner effects not reconciled (${report.unresolvedOperations.join(',') || report.note || 'unknown'})`);
+      return next;
+    })!;
+    return { lease, report: report! };
+  }
+
+  /** The record a takeover writes over `existing`: the next generation, owned by the acting session. A missing lease and a live lease of another session refuse. */
+  successor(resourceKey: string, existing: Lease | undefined, options: { ttlMs?: number; operation?: string; actor?: ActorIdentity; now?: string } = {}): Lease {
     const actor = options.actor ?? currentActor();
     const now = options.now ?? nowIso();
-    const existing = this.read(resourceKey);
     if (!existing) throw new Error(`no lease to take over for ${resourceKey}`);
     if (!existing.released && Date.parse(existing.expiresAt) >= Date.parse(now) && !this.sameOwner(existing.owner, actor)) {
       throw new Error(`lease for ${resourceKey} is still held by ${existing.owner.session} until ${existing.expiresAt}; expiry alone does not prove the owner stopped`);
     }
-    const report = reconcile(existing);
-    if (!report.reconciled) {
-      throw new Error(`takeover refused: old owner effects not reconciled (${report.unresolvedOperations.join(',') || report.note || 'unknown'})`);
-    }
-    const lease: Lease = {
-      resourceKey,
-      generation: existing.generation + 1,
-      owner: actor,
-      operation: options.operation,
-      acquiredAt: now,
-      heartbeatAt: now,
-      expiresAt: addMs(now, options.ttlMs ?? DEFAULT_LEASE_TTL_MS),
-      released: false,
-    };
-    atomicWriteJson(this.file(resourceKey), lease);
-    return { lease, report };
+    return { resourceKey, generation: existing.generation + 1, owner: actor, operation: options.operation, acquiredAt: now, heartbeatAt: now, expiresAt: addMs(now, options.ttlMs ?? DEFAULT_LEASE_TTL_MS), released: false };
   }
 
   heartbeat(resourceKey: string, generation: number, options: { ttlMs?: number; actor?: ActorIdentity; now?: string } = {}): Lease {
     const actor = options.actor ?? currentActor();
     const now = options.now ?? nowIso();
-    const existing = this.read(resourceKey);
-    if (!existing) throw new FencedError(resourceKey, generation, 'lease missing');
-    if (existing.generation !== generation || !this.sameOwner(existing.owner, actor)) throw new FencedError(resourceKey, generation, `current generation ${existing.generation} owned by ${existing.owner.session}`);
-    const lease: Lease = { ...existing, heartbeatAt: now, expiresAt: addMs(now, options.ttlMs ?? DEFAULT_LEASE_TTL_MS) };
-    atomicWriteJson(this.file(resourceKey), lease);
-    return lease;
+    return this.update(resourceKey, (existing) => {
+      if (!existing) throw new FencedError(resourceKey, generation, 'lease missing');
+      if (existing.generation !== generation || !this.sameOwner(existing.owner, actor)) throw new FencedError(resourceKey, generation, `current generation ${existing.generation} owned by ${existing.owner.session}`);
+      return { ...existing, heartbeatAt: now, expiresAt: addMs(now, options.ttlMs ?? DEFAULT_LEASE_TTL_MS) };
+    })!;
   }
 
   release(resourceKey: string, generation: number, actor: ActorIdentity = currentActor()): void {
-    const existing = this.read(resourceKey);
-    if (!existing) return;
-    if (existing.generation !== generation || !this.sameOwner(existing.owner, actor)) throw new FencedError(resourceKey, generation, 'cannot release a lease you do not own');
-    atomicWriteJson(this.file(resourceKey), { ...existing, released: true });
+    this.update(resourceKey, (existing) => {
+      if (existing && (existing.generation !== generation || !this.sameOwner(existing.owner, actor))) throw new FencedError(resourceKey, generation, 'cannot release a lease you do not own');
+      return existing && { ...existing, released: true };
+    });
   }
 
   /** Fence check: a mutation may commit only under the current generation of a live lease. */
