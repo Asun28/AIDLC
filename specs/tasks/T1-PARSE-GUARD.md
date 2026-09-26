@@ -1,7 +1,7 @@
 ---
 id: T1-PARSE-GUARD
 title: Control decisions read from text come from a declared structured field first or fail closed; one parse guard module replaces the scattered quota matchers and NUL splits, blank gating config values are refused, and aidlc doctor reports a config error with exit 1 (issues 39, 41, 45, 52)
-status: todo
+status: merged
 branch: T1-PARSE-GUARD
 worktree: D:\wt\AIDLC\T1-PARSE-GUARD
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
