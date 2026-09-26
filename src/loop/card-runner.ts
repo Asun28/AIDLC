@@ -882,7 +882,8 @@ export class CardRunner {
       // the merge): the base moved all the same, and the repaired merge is reviewed rather than stopped.
       const prior = run.candidate;
       const repairsBaseSync = prior?.baseSync === true && !run.review.invocations.some((i) => i.candidateDigest === prior.digest && (i.outcome === 'pass' || i.outcome === 'block'));
-      // The clearing check reads as the card states the rule; inside this success branch it always holds for a merge-conflict repair.
+      // Only a success reaches this branch, and it must clear the merge-conflict repair (T0-BASE-SYNC-REVIEW R2): a failed or
+      // not-counted attempt never records a base-sync candidate.
       const clearsMerge = run.pendingRepair?.kind === 'merge-conflict' && clearsPendingRepair(run.pendingRepair, input);
       if (candidate && (clearsMerge || repairsBaseSync)) candidate = { ...candidate, baseSync: true };
     }

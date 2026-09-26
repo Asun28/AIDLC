@@ -47,7 +47,7 @@ class SequenceShip extends DryRunShipPath {
  * passes on sha-2, and whose next ship merges again into sha-3: both decisions are used and sha-3 is a base-sync candidate.
  * `primary` and `cx` feed the primary and the base-sync reviewer; `cxArgs` records each base-sync dispatch's argv.
  */
-async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number; blockFirst?: boolean } = {}) {
+async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' | 'red-missing'>; baseSyncTimeoutMs?: number; blockFirst?: boolean; stopAtFirstMerge?: boolean } = {}) {
   const fx = makeFixture({
     config: {
       gateRequired: true,
@@ -113,6 +113,7 @@ async function atBaseSync(opts: { baseSync?: boolean; steps?: Array<'base-sync' 
   }
   r = (await decide()).r;
   assert.equal(r.directive.kind, 'build', `the first ship merged the base into a new candidate: ${r.directive.narration}`);
+  if (opts.stopAtFirstMerge) return handle;
   r = await reviewed('sha-2');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
   r = (await decide()).r;
@@ -321,6 +322,27 @@ test('acceptance 1: a base-sync candidate that R2 blocks is repaired into a cand
     const { f } = await s.decide();
     assert.equal(f.classified.outcome, 'pass');
     assert.equal(f.run.review.invocations.at(-1)?.candidateSha, 'sha-4');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+test('R2 cycle 1: a failed or not-counted attempt while a merge-conflict repair is pending records no base-sync candidate; only the success that clears it does', async () => {
+  const s = await atBaseSync({ stopAtFirstMerge: true });
+  try {
+    const run0 = s.fx.store.getCardRun(s.goal.id, 'T0-BSR')!;
+    assert.equal(run0.pendingRepair?.kind, 'merge-conflict');
+    // A failed attempt that names a sha, then a not-counted one: neither clears the repair, and neither marks a candidate.
+    let run = s.runner.recordAttempt(s.g(), s.card, run0, { outcome: 'fail', cause: 'dod red on the merge', candidateSha: 'sha-x' });
+    assert.equal(run.pendingRepair?.kind, 'merge-conflict', 'a failure clears no repair');
+    assert.notEqual(run.candidate?.baseSync, true, 'a failed attempt records no base-sync candidate');
+    run = s.runner.recordAttempt(s.g(), s.card, run, { outcome: 'not-counted', notCountedReason: 'env-setup', candidateSha: 'sha-y' });
+    assert.equal(run.pendingRepair?.kind, 'merge-conflict');
+    assert.notEqual(run.candidate?.baseSync, true, 'a not-counted attempt records no base-sync candidate');
+    // The success that clears the repair records the base-sync candidate.
+    run = s.runner.recordAttempt(s.g(), s.card, run, { outcome: 'success', dodReceipt: 'dod:sha-2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(run.pendingRepair, undefined);
+    assert.equal(run.candidate?.baseSync, true);
   } finally {
     s.fx.cleanup();
   }
