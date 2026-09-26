@@ -1,7 +1,7 @@
 ---
 id: T0-PARSE-GUARD-FOLLOWUPS
 title: The T1-PARSE-GUARD review follow-ups (issue #79), retry-after units read as whole words, a typed ConfigError that doctor alone catches, formalReview.baseSync.reviewer in the blank-refusal sweep and a -z scan that finds every quote spelling
-status: todo
+status: merged
 branch: T0-PARSE-GUARD-FOLLOWUPS
 worktree: D:\wt\AIDLC\T0-PARSE-GUARD-FOLLOWUPS
 allow_paths:
