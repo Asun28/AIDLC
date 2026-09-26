@@ -4468,3 +4468,96 @@ test('T0-RUNNING-REPAIR-STOP acceptance 4: docs/OPERATIONS.md and the CHANGELOG 
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
+
+/** T0-SHIP-NOTHING-REFUTED: the sentence a code-side ship failure's build directive ends with, by whether a success was refuted. */
+const SHIP_FAILURE_COUNTED = 'The failure counts as a failed attempt on the effort ladder.';
+const SHIP_FAILURE_NOTHING_REFUTED = 'The ship failure refuted no recorded success, so it counts no attempt on the effort ladder.';
+
+test('T0-SHIP-NOTHING-REFUTED acceptance 1: a ship failure that refutes no recorded success says it counts no attempt and names the attempt the next build names; a refuted success keeps the counted sentence', () => {
+  const cases: { label: string; effortOf: (run: CardRun) => CardRun['effort']; attempt: number }[] = [
+    { label: 'no effort episode', effortOf: () => undefined, attempt: 1 },
+    { label: 'last evaluated attempt failed', effortOf: (run) => ({ ...run.effort!, terminal: undefined, attempts: run.effort!.attempts.map((a) => ({ ...a, outcome: 'fail' as const, cause: 'dod red on case alpha' })) }), attempt: 2 },
+  ];
+  for (const c of cases) {
+    const fx = makeFixture();
+    try {
+      const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-NOREFUTE', new DryRunShipPath(['dod-failed', 'merged']));
+      const before = c.effortOf(run1);
+      let r = runner.next(fx.goal(goal.id), card, rewindCardRun(fx, { ...run1, effort: before }));
+      assert.equal(r.directive.kind, 'build', `${c.label}: ${r.directive.narration}`);
+      assert.ok(r.directive.narration.endsWith(SHIP_FAILURE_NOTHING_REFUTED), `${c.label}: ${r.directive.narration}`);
+      assert.ok(!r.directive.narration.includes('counts as a failed attempt'), `${c.label}: nothing was counted: ${r.directive.narration}`);
+      if (r.directive.kind === 'build') assert.equal(r.directive.attempt, c.attempt, `${c.label}: the ship names the ladder's attempt`);
+      // Compared as stored: JSON drops the optional fields either side leaves undefined.
+      const stored = (e: CardRun['effort']) => (e === undefined ? undefined : JSON.parse(JSON.stringify(e)));
+      assert.deepEqual(stored(r.run.effort), stored(before), `${c.label}: the episode is unchanged`);
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      assert.equal(r.directive.kind, 'build', `${c.label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'build') assert.equal(r.directive.attempt, c.attempt, `${c.label}: the next build names the same attempt`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-REFUTED', new DryRunShipPath(['dod-failed', 'merged']));
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.ok(r.directive.narration.endsWith(SHIP_FAILURE_COUNTED), r.directive.narration);
+    assert.ok(!r.directive.narration.includes(SHIP_FAILURE_NOTHING_REFUTED), r.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-NOTHING-REFUTED acceptance 2: with a not-counted attempt before the refuted success, the ship failure names the ladder attempt 2, the one the next build names, not the record count plus one', () => {
+  const ships: { label: string; ship: () => DryRunShipPath }[] = [
+    { label: 'dod-failed', ship: () => new DryRunShipPath(['dod-failed', 'merged']) },
+    { label: 'CI code defect', ship: () => new InjectedShipPath(['ci-red', 'merged'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/778 ... AssertionError: expected 2 to equal 3') },
+  ];
+  for (const s of ships) {
+    const fx = makeFixture();
+    try {
+      const id = 'T1-NOTCOUNTED';
+      writeCard(fx, { id, title: `a not-counted attempt before the refuted success for ${id}` });
+      const goal = goalForCards(fx, [id]);
+      const runner = fx.runner(s.ship());
+      const card = fx.card(id);
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const outage = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'not-counted', notCountedReason: 'tool-outage', cause: 'test runner unavailable' });
+      r = runner.next(fx.goal(goal.id), card, outage);
+      assert.equal(r.directive.kind, 'build', `${s.label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 1, `${s.label}: the not-counted attempt is not counted`);
+      const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor(id) });
+      r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'build', `${s.label}: ${r.directive.narration}`);
+      assert.ok(r.directive.narration.endsWith(SHIP_FAILURE_COUNTED), `${s.label}: ${r.directive.narration}`);
+      assert.deepEqual(r.run.effort?.attempts.map((a) => a.outcome), ['not-counted', 'fail'], `${s.label}: the success is refuted`);
+      if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2, `${s.label}: the ship names the ladder's attempt 2`);
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      assert.equal(r.directive.kind, 'build', `${s.label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'build') assert.equal(r.directive.attempt, 2, `${s.label}: the next build names the same attempt 2`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-SHIP-NOTHING-REFUTED acceptance 3: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the no-refutation narration and the ladder attempt number', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const paragraph = operations.split('\n').find((l) => l.startsWith("A ship that fails on the candidate's own code is a failed attempt")) ?? '';
+  const docSentences = [
+    `A ship failure that refutes no recorded success (the run has no effort episode, or its last evaluated attempt is not a success) counts no attempt, and its build directive ends with "${SHIP_FAILURE_NOTHING_REFUTED}" instead of "${SHIP_FAILURE_COUNTED}" (card T0-SHIP-NOTHING-REFUTED).`,
+    "The attempt number the build directive of a ship failure names is the ladder's, the number the build directive of the next `aidlc card next` names, also when not-counted attempts came before the refuted success.",
+  ];
+  for (const sentence of docSentences) assert.ok(paragraph.includes(sentence), `docs/OPERATIONS.md (the ship repair attempt paragraph) states: ${sentence}`);
+  const changelogSentences = [
+    '- Ship failure that refutes nothing, card T0-SHIP-NOTHING-REFUTED: a ship failure that refutes no recorded success (a run with no effort episode, or one whose last evaluated attempt is not a success) no longer says the failure counts as a failed attempt; its build directive says it counts no attempt.',
+    "The build directive of a ship failure names the ladder's attempt number, where it used to count not-counted attempts and name a number the next build directive did not.",
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
