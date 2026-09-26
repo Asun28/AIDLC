@@ -31,6 +31,8 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 ## Goal state machine
 
+The goal deadline is fixed at intake: `createGoal` (`src/loop/controller.ts`) takes the goal's card from the request text only when the router counts exactly one card, a request naming several known card ids leaves the count unknown, and an explicit T1 or T2 size always gets the arc limit (card T0-GOAL-CARD-COUNT).
+
 A recorded deadline extension re-admits a goal stopped for time (re-entering through `CARDS`) and the time-stopped card runs of its current projection (stops cleared, runs in progress again, card deadlines moved to the new goal deadline, journaled as `GOAL_STATE` and `CARD_STATE`; a superseded card keeps its stop); a resume carrying a revision applies it before the projection (re-entering through `CARDS`, the completion evidence of the old projection reset to pending), so replacement cards run in the resumed generation; delivery evidence is bound to the generation, so no earlier release is reused. While a T2 goal is in `CARDS` without the plan checkpoint for its current revision, `card next` parks its cards (`wait`) until the approval is recorded. A goal parked in `WAIT` (polled while its cards were still running) resumes to `RUN`, journaled as `GOAL_STATE WAIT->RUN`, before `VERIFY_ARC` is derived once every required card is closed; the diagram has no `WAIT -> VERIFY_ARC` edge.
 
 Source: `GOAL_TRANSITIONS` and guards in `src/core/goal-machine.ts`.

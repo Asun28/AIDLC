@@ -51,7 +51,10 @@ test('T0-GOAL-CARD-COUNT acceptance 2: one named card with no size or an explici
       create({ text: 'implement T1-PARSE-GUARD', explicitSize: 'T0' }),
       create({ text: 'Execute card T1-PARSE-GUARD', source: 'card', ref: 'T1-PARSE-GUARD', explicitSize: 'T0-bugfix' }, ['T1-PARSE-GUARD']),
     ];
-    for (const goal of goals) {
+    // --card one card with a T1 the router inferred from impact words: only an explicit T1 or T2 forces the arc.
+    const inferred = create({ text: 'Execute card T1-PARSE-GUARD: fix the password reset token', source: 'card', ref: 'T1-PARSE-GUARD' }, ['T1-PARSE-GUARD']);
+    assert.deepEqual([inferred.routing.size, inferred.routing.sizeSource], ['T1', 'inferred'], 'impact words infer T1');
+    for (const goal of [...goals, inferred]) {
       assert.deepEqual(goal.cards, ['T1-PARSE-GUARD']);
       assert.equal(goal.deadlines.goalDeadline, addMs(T0, 3 * HOUR_MS));
     }
