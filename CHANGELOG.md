@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Base-sync JSDoc, card T0-BASE-SYNC-JSDOC: the comments of `formalPool`, `formalReviewerFor` and `CandidateInfo.baseSync` now name the base-sync reviewer's own review pool, its lookup by the recorded reviewer name and the marking of an undecided base-sync candidate's repair; no code changed (issue #65).
+
 - Unattended-runs doc test, card T0-UNATTENDED-TEST-SCAN: the test proves the `/goal` hands-off clause against `docs/OPERATIONS.md` and on every `/goal` prompt that `docs/OPERATIONS.md` and `README.md` show, instead of comparing two of its own constants, and it checks single-quoted `--dod-receipt` examples as well as double-quoted ones (issue #62).
 
 - Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort. A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).

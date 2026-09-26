@@ -1230,9 +1230,10 @@ export class CardRunner {
   }
 
   /**
-   * The review pool a formal reviewer queues in: the goal's pool, or with a fallback configured one pool per reviewer
-   * (`<pool>/<reviewer>`), since a quota hold resets the whole pool it lands in and the two reviewers hold separate quotas;
-   * the ship's own admission stays in the goal's pool either way.
+   * The review pool a formal reviewer queues in. The base-sync reviewer always queues in its own pool, `<pool>/<reviewer>`,
+   * since its quota is its own. The primary and the fallback queue in the goal's pool, or with a fallback configured in one
+   * pool each (`<pool>/<reviewer>`), since a quota hold resets the whole pool it lands in and the two reviewers hold
+   * separate quotas. The ship's own admission stays in the goal's pool either way.
    */
   private formalPool(goal: Goal, cfg: FormalReviewer): string {
     // The base-sync reviewer always queues in its own pool (its quota is its own); the primary moves only with a fallback,
@@ -1291,7 +1292,10 @@ export class CardRunner {
     return [...invocations].reverse().find((i) => names.has(i.reviewer) && i.candidateDigest === candidateDigest);
   }
 
-  /** The settings of the formal reviewer an invocation names: the configured fallback under its own name, else the primary. */
+  /**
+   * The settings of the formal reviewer an invocation names, looked up by the name it records: the base-sync reviewer under
+   * its own name, else the configured fallback under its own name, else the primary.
+   */
   private formalReviewerFor(name: string | undefined): FormalReviewer {
     const primary = this.config.formalReview;
     if (primary.baseSync && name === primary.baseSync.reviewer) return primary.baseSync;
