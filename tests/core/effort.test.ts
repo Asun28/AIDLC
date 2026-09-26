@@ -17,6 +17,8 @@ import {
 import type { EffortEpisode, EffortLevel } from '../../src/core/types.ts';
 import { addMs } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 
 const GPT = EFFORT_LADDERS['gpt']!;
 const JUSTIFIED = { harderProblem: true, limitsPermit: true };
@@ -401,5 +403,71 @@ describe('T0-RUNNING-REPAIR-STOP: a repair still running when the ladder stops',
     assert.equal(step.episode.terminal, 'exhausted');
     assert.deepEqual(step.episode.attempts[3], running.attempts[3], 'the running repair is left as it was');
     assert.throws(() => finishAttempt(step.episode, { finishedAt: addMs(T0, 300_000), outcome: 'success' }), /exhausted/);
+  });
+});
+
+describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of a refuted attempt', () => {
+  const quota = (ep: EffortEpisode, n: number): EffortEpisode =>
+    finishAttempt(startAttempt(ep, ep.baseline, addMs(T0, n * 60_000)), { finishedAt: addMs(T0, n * 60_000 + 30_000), outcome: 'not-counted', notCountedReason: 'quota' });
+
+  test('an episode with no settled attempt keeps its attempts, terminal and escalation, with nothing refuted or promoted; the next step is its running attempt or the ladder\'s first [R1]', () => {
+    const empty = createEpisode('t', 'implementer', 'medium', GPT);
+    const onlyQuota = quota(empty, 1);
+    const cases = [
+      { label: 'no attempt', ep: empty, action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
+      { label: 'a running attempt', ep: startAttempt(empty, 'medium', T0), action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
+      { label: 'not-counted records', ep: onlyQuota, action: { action: 'attempt', effort: 'medium', n: 1, escalated: false } },
+      { label: 'not-counted records and a running attempt', ep: startAttempt(onlyQuota, 'medium', addMs(T0, 120_000)), action: { action: 'attempt', effort: 'medium', n: 2, escalated: false } },
+    ];
+    for (const { label, ep, action } of cases) {
+      const before = structuredClone(ep);
+      const step = afterShipFailure(ep, 'ship dod-failed: x', JUSTIFIED);
+      assert.deepEqual(step.episode.attempts, before.attempts, `${label}: the attempts are unchanged`);
+      assert.equal(step.episode.terminal, before.terminal, `${label}: the terminal is unchanged`);
+      assert.equal(step.episode.escalationUsed, before.escalationUsed, `${label}: the escalation is unchanged`);
+      assert.equal(step.refuted, undefined, `${label}: nothing is refuted`);
+      assert.equal(step.promoted, undefined, `${label}: nothing is promoted`);
+      assert.deepEqual(step.action, action, label);
+    }
+  });
+
+  test('a running attempt at an effort other than the baseline keeps that effort when nothing is settled: no ladder step re-derives it [R1]', () => {
+    const running = startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'high', T0);
+    const step = afterShipFailure(running, 'ship dod-failed: x', JUSTIFIED);
+    assert.equal(step.episode.attempts[0]!.effort, 'high', 'the running attempt keeps its effort');
+    assert.equal(step.episode.escalationUsed, running.escalationUsed);
+    assert.equal(step.promoted, undefined, 'nothing is promoted or demoted');
+    assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 1, escalated: true });
+  });
+
+  test('the refuted attempt keeps the startedAt and finishedAt of the success it replaces [R2]', () => {
+    const started = startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', addMs(T0, 60_000));
+    const success = finishAttempt(started, { finishedAt: addMs(T0, 90_000), outcome: 'success' });
+    const step = afterShipFailure(success, 'ship dod-failed: x', JUSTIFIED);
+    assert.equal(step.refuted?.outcome, 'fail');
+    assert.equal(step.refuted?.startedAt, addMs(T0, 60_000));
+    assert.equal(step.refuted?.finishedAt, addMs(T0, 90_000));
+    assert.deepEqual([step.episode.attempts[0]!.startedAt, step.episode.attempts[0]!.finishedAt], [addMs(T0, 60_000), addMs(T0, 90_000)]);
+  });
+
+  test('the JSDoc of afterShipFailure, docs/OPERATIONS.md and the CHANGELOG Unreleased section state both rules [R3]', () => {
+    const root = path.resolve(import.meta.dirname, '..', '..');
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const jsdoc = read('src', 'core', 'effort.ts').replace(/\n \* /g, ' ').replace(/\s+/g, ' ');
+    for (const sentence of [
+      'An episode with no settled attempt (none, or only running and not-counted ones) has nothing to refute and takes no ladder step: it is returned as it is, and the next step is its running attempt at its own effort, or the ladder\'s first.',
+      'The refuted attempt keeps the startedAt and finishedAt of its success; the refutation\'s time is its ATTEMPT_FINISHED journal event.',
+    ]) assert.ok(jsdoc.includes(sentence), `the afterShipFailure JSDoc states: ${sentence}`);
+    const operations = read('docs', 'OPERATIONS.md');
+    for (const sentence of [
+      'A ship failure on an episode with no settled attempt (none recorded, or only running and not-counted ones) refutes nothing and takes no ladder step (card T0-SHIP-FAILURE-UNSETTLED): the episode is returned as it is, and the next step is the attempt already running, at its own effort, or else the ladder\'s first.',
+      'The refuted attempt keeps the `startedAt` and `finishedAt` of its success, so they still time the implementer\'s attempt; the time of the refutation is the `ATTEMPT_FINISHED` event with `refutedBy` in the journal.',
+    ]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    for (const sentence of [
+      '- Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort.',
+      'A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).',
+    ]) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
 });
