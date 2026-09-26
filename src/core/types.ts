@@ -663,7 +663,11 @@ export const CandidateInfo = z.object({
   untracked: z.array(z.string()).default([]),
   /** sha256 over sha + status + relevant input manifest; the review/CI dedupe key component. */
   digest: z.string().min(1),
-  /** Recorded by the successful attempt that cleared a merge-conflict repair: the merge of a moved base (T0-BASE-SYNC-REVIEW). */
+  /**
+   * A base-sync candidate (T0-BASE-SYNC-REVIEW): recorded by the successful attempt that cleared a merge-conflict repair,
+   * the merge of a moved base, and by the successful attempt that repairs a base-sync candidate no R3 decision has decided
+   * yet (an R2 block after the merge), since the base moved all the same.
+   */
   baseSync: z.boolean().optional(),
 });
 export type CandidateInfo = z.infer<typeof CandidateInfo>;
