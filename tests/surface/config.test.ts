@@ -92,38 +92,57 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     assert.deepEqual(ProjectConfig.parse({ formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b', '--setting-sources='], reviewer: 'b' } } }).formalReview.fallback?.command, ['b', '--setting-sources=']);
   });
 
-  test('aidlc.config.json runs R3 on a read-only Claude Opus 5.5 at {effort} with no fallback while Codex is unavailable [T0-R3-OPUS-PRIMARY R1]', () => {
+  test('aidlc.config.json runs R3 on a read-only Codex gpt-6-astra at medium effort [T0-R3-CODEX-ASTRA R1]', () => {
     const repoConfig = ProjectConfig.parse(JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', 'aidlc.config.json'), 'utf8')));
-    const effort = { default: 'medium', high: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } };
     const r3 = repoConfig.formalReview;
-    assert.deepEqual(r3.command, ['claude', '-p', '--model', 'claude-opus-5-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'], 'the arguments of the former fallback, unchanged');
-    assert.equal(r3.reviewer, 'claude-opus-5-5');
+    assert.deepEqual(r3.command, ['codex', 'exec', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort={effort}', '--sandbox', 'read-only', '--output-schema', '{schema}']);
+    assert.equal(r3.reviewer, 'codex');
     assert.equal(r3.timeoutMs, 1_200_000);
-    assert.deepEqual(r3.effort, effort);
-    assert.equal(r3.fallback, undefined, 'no fallback: a Codex fallback would be dispatched on an Opus quota hold and fail while Codex is unavailable');
-    assert.equal(r3.command[r3.command.indexOf('--tools') + 1], 'Read,Grep,Glob', 'the reviewer can only read');
-    assert.ok(r3.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
-    assert.ok(r3.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
+    assert.equal(r3.maxDiffBytes, 800_000);
+    assert.deepEqual(r3.effort, { default: 'medium' }, 'medium for every candidate: no high rule');
+    assert.equal(r3.command[r3.command.indexOf('--sandbox') + 1], 'read-only', 'the reviewer can only read');
+    assert.equal(r3.command[r3.command.indexOf('--output-schema') + 1], '{schema}', 'the verdict schema reaches Codex');
     assert.ok(r3.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
   });
 
-  test('docs/OPERATIONS.md, CLAUDE.md and CHANGELOG.md name Opus 5.5 as the R3 reviewer and keep the Codex restore path [T0-R3-OPUS-PRIMARY R2]', () => {
+  test('aidlc.config.json runs the read-only Claude Opus 5.5 R3 ran on before as the fallback, with its effort policy [T0-R3-CODEX-ASTRA R2]', () => {
+    const repoConfig = ProjectConfig.parse(JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', 'aidlc.config.json'), 'utf8')));
+    const fallback = repoConfig.formalReview.fallback;
+    assert.ok(fallback, 'Opus 5.5 runs while Codex is held on quota');
+    assert.deepEqual(fallback.command, ['claude', '-p', '--model', 'claude-opus-5-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'], 'the arguments R3 ran on before, unchanged');
+    assert.equal(fallback.reviewer, 'claude-opus-5-5');
+    assert.equal(fallback.timeoutMs, 1_200_000);
+    assert.equal(fallback.maxDiffBytes, 800_000);
+    assert.deepEqual(fallback.effort, { default: 'medium', high: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } });
+    assert.equal(fallback.command[fallback.command.indexOf('--tools') + 1], 'Read,Grep,Glob', 'the reviewer can only read');
+    assert.ok(fallback.command.includes('--setting-sources='), 'no setting sources: no hooks or plugins in the reviewer session');
+    assert.ok(fallback.command.includes('--strict-mcp-config'), 'no MCP servers, the account connectors included');
+    assert.ok(fallback.command.every((a) => a.length > 0), 'no empty argument for the Windows shell to drop');
+  });
+
+  test('docs/OPERATIONS.md, CLAUDE.md, the pre-review header and CHANGELOG.md name Codex gpt-6-astra as the R3 reviewer and Opus 5.5 as its fallback [T0-R3-CODEX-ASTRA R4]', () => {
     const read = (...parts: string[]) => readFileSync(path.join(import.meta.dirname, '..', '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
-    const flat = (text: string) => text.replace(/\s+/g, ' ');
+    const flat = (text: string) => text.replace(/\n \* /g, ' ').replace(/\s+/g, ' ');
     const ops = read('docs', 'OPERATIONS.md');
     const opsSentences = [
-      'In this repository R3 is a headless Claude Opus 5.5 with no fallback (card T0-R3-OPUS-PRIMARY), limited to the Read, Grep and Glob tools, with no setting sources (no hooks or plugins) and no MCP servers (`--strict-mcp-config`, which also drops the account connectors); it receives the effort level `{effort}` expands to as `--effort <level>`:',
-      'Codex `gpt-6-sol` was the primary, with Opus 5.5 as its fallback, until Codex became unavailable. No Codex fallback is configured: the fallback runs while the primary is held on quota, and a Codex run would fail as well.',
-      'To restore Codex, put its command back as `formalReview.command` with `"reviewer": "codex"` and move the Opus 5.5 command to `formalReview.fallback`; Codex takes the level as `-c model_reasoning_effort=<level>`:',
+      'In this repository R3 is Codex `gpt-6-astra` in a read-only sandbox at `medium` for every candidate (card T0-R3-CODEX-ASTRA); it receives the effort level `{effort}` expands to as `-c model_reasoning_effort=<level>` and the verdict schema through `--output-schema`.',
+      'Its fallback, which runs while Codex is held on quota, is the headless Claude Opus 5.5 that R3 ran on before (card T0-R3-OPUS-PRIMARY), limited to the Read, Grep and Glob tools, with no setting sources (no hooks or plugins) and no MCP servers (`--strict-mcp-config`, which also drops the account connectors); it receives the level as `--effort <level>` and keeps its effort policy, `high` from 500 changed lines or a change under `src/core`, `src/coordination` or `src/state`:',
+      '"command": ["codex", "exec", "-m", "gpt-6-astra", "-c", "model_reasoning_effort={effort}", "--sandbox", "read-only", "--output-schema", "{schema}"], "reviewer": "codex", "timeoutMs": 1200000,',
+      '"command": ["claude", "-p", "--model", "claude-opus-5-5", "--effort", "{effort}", "--tools", "Read,Grep,Glob", "--setting-sources=", "--strict-mcp-config", "--no-session-persistence"], "reviewer": "claude-opus-5-5", "timeoutMs": 1200000,',
+      'Codex `gpt-6-sol`, the primary until Codex became unavailable, is refused for a Codex login with a ChatGPT account ("The \'gpt-6-sol\' model is not supported when using Codex with a ChatGPT account"), so R3 runs on `gpt-6-astra`.',
+      'To run R3 without Codex again, move the fallback\'s `command`, `reviewer` and `effort` up to `formalReview` and remove `formalReview.fallback`, as card T0-R3-OPUS-PRIMARY did, since a Codex fallback would be dispatched on an Opus quota hold and fail as well.',
+      'The base-sync reviewer, `codex-base-sync`, runs the same Codex command on the same login, so it shares the primary\'s quota but not its review pool (`<reviewPool>/codex-base-sync` against `<reviewPool>/codex`), and a hold on one pool does not hold the other.',
     ];
     for (const sentence of opsSentences) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
-    assert.ok(ops.includes('"command": ["codex", "exec", "-m", "gpt-6-sol", "-c", "model_reasoning_effort={effort}", "--sandbox", "read-only", "--output-schema", "{schema}"], "reviewer": "codex"'), 'docs/OPERATIONS.md keeps the Codex command');
-    assert.ok(flat(read('CLAUDE.md')).includes('this repo uses DeepSeek for R2 and Claude Opus 5.5 for R3 while Codex is unavailable)'), 'CLAUDE.md names the R3 reviewer');
+    assert.ok(!ops.includes('In this repository R3 is a headless Claude Opus 5.5 with no fallback'), 'docs/OPERATIONS.md no longer names Opus 5.5 as the R3 reviewer');
+    assert.ok(flat(read('CLAUDE.md')).includes('this repo uses DeepSeek for R2 and Codex gpt-6-astra for R3, with Claude Opus 5.5 as the fallback)'), 'CLAUDE.md names the R3 reviewer');
+    assert.ok(flat(read('src', 'review', 'pre-review.ts')).includes('`deepseek` CLI for R2 and Codex `gpt-6-astra` in a read-only sandbox for R3, with a read-only headless `claude -p` (Opus 5.5) as its fallback, in this repository.'), 'the pre-review header names the R3 reviewer');
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const changelogSentences = [
-      '- Formal review on Opus 5.5, card T0-R3-OPUS-PRIMARY: Codex is unavailable, so this repository runs R3 on the headless Claude Opus 5.5 reviewer that was its fallback, with the same read-only flags, effort policy and timeout, and with no fallback, since a Codex fallback would be dispatched on an Opus quota hold and fail.',
-      '`docs/OPERATIONS.md` keeps the Codex `gpt-6-sol` command as the way to restore it, and `CLAUDE.md` names Opus 5.5 for R3.',
+      '- Formal review on Codex gpt-6-astra, card T0-R3-CODEX-ASTRA: this repository runs R3 on Codex `gpt-6-astra` in a read-only sandbox at `medium` for every candidate, with the headless Claude Opus 5.5 reviewer, its read-only flags and its effort policy moved to `formalReview.fallback`, which runs while Codex is held on quota.',
+      '`gpt-6-sol` is refused for a Codex login with a ChatGPT account.',
+      'The base-sync reviewer keeps its command under the name `codex-base-sync`, since the configuration refuses a base-sync reviewer named like the primary.',
     ];
     for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
   });
@@ -215,5 +234,35 @@ describe('preReview.answerMarker (T0-R2-ANSWER-MARKER)', () => {
     assert.equal(configOf('templates/aidlc.config.json').preReview['answerMarker'], '');
     assert.equal(ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview.answerMarker, '');
     assert.equal('answerMarker' in ProjectConfig.parse({ formalReview: { command: ['r3'], answerMarker: '=== answer ===' } }).formalReview, false, 'the formal review keeps no marker');
+  });
+});
+
+describe('formalReview.baseSync (T0-BASE-SYNC-REVIEW acceptance 5)', () => {
+  const read = (file: string) => JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', file), 'utf8')) as { formalReview: Record<string, unknown> };
+  test('a base-sync reviewer with only command and reviewer is accepted, defaulted like formalReview and its effort defaults to medium [R1]', () => {
+    const c = ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'p', baseSync: { command: ['cx', '{effort}'], reviewer: 'codex' } } });
+    const bs = (c.formalReview as { baseSync?: { command: string[]; reviewer: string; timeoutMs: number; maxDiffBytes: number; effort?: { default: string } } }).baseSync;
+    assert.deepEqual(bs?.command, ['cx', '{effort}']);
+    assert.equal(bs?.reviewer, 'codex');
+    assert.equal(bs?.timeoutMs, 20 * 60 * 1000);
+    assert.equal(bs?.maxDiffBytes, 300_000);
+    assert.equal(bs?.effort?.default, 'medium');
+    assert.equal((ProjectConfig.parse({ formalReview: { command: ['primary'] } }).formalReview as { baseSync?: unknown }).baseSync, undefined);
+  });
+  test('an empty argument, a blank reviewer and a reviewer named like the primary or the fallback in any spelling are refused at formalReview.baseSync [R1]', () => {
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: [], reviewer: 'codex' } } }), issueAt('formalReview.baseSync.command'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: ['cx', ''], reviewer: 'codex' } } }), issueAt('formalReview.baseSync.command'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], baseSync: { command: ['cx'], reviewer: '  ' } } }), issueAt('formalReview.baseSync.reviewer'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'Opus', baseSync: { command: ['cx'], reviewer: ' opus ' } } }), issueAt('formalReview.baseSync.reviewer'));
+    assert.throws(() => ProjectConfig.parse({ formalReview: { command: ['primary'], reviewer: 'p', fallback: { command: ['b'], reviewer: 'Backup' }, baseSync: { command: ['cx'], reviewer: 'BACKUP' } } }), issueAt('formalReview.baseSync.reviewer'));
+  });
+  test('aidlc.config.json names Codex gpt-6-astra at {effort} with effort default medium as the base-sync reviewer codex-base-sync; the template has none [R1] [T0-R3-CODEX-ASTRA R3]', () => {
+    const repo = ProjectConfig.parse(read('aidlc.config.json')).formalReview as { reviewer: string; fallback?: { reviewer: string }; baseSync?: { command: string[]; reviewer: string; effort?: { default: string; high?: unknown } } };
+    assert.deepEqual(repo.baseSync?.command, ['codex', 'exec', '-m', 'gpt-6-astra', '-c', 'model_reasoning_effort={effort}', '--sandbox', 'read-only', '--output-schema', '{schema}']);
+    assert.equal(repo.baseSync?.reviewer, 'codex-base-sync', 'a name of its own: the configuration refuses a base-sync reviewer named like the primary codex');
+    assert.equal(new Set([repo.reviewer, repo.fallback?.reviewer, repo.baseSync?.reviewer]).size, 3, 'the primary, the fallback and the base-sync reviewer are three names');
+    assert.equal(repo.baseSync?.effort?.default, 'medium');
+    assert.equal(repo.baseSync?.effort?.high, undefined, 'medium for every base-sync candidate');
+    assert.equal(read('templates/aidlc.config.json').formalReview['baseSync'], undefined);
   });
 });

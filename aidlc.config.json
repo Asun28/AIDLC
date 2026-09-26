@@ -66,30 +66,70 @@
   "gateRequired": true,
   "formalReview": {
     "command": [
-      "claude",
-      "-p",
-      "--model",
-      "claude-opus-5-5",
-      "--effort",
-      "{effort}",
-      "--tools",
-      "Read,Grep,Glob",
-      "--setting-sources=",
-      "--strict-mcp-config",
-      "--no-session-persistence"
+      "codex",
+      "exec",
+      "-m",
+      "gpt-6-astra",
+      "-c",
+      "model_reasoning_effort={effort}",
+      "--sandbox",
+      "read-only",
+      "--output-schema",
+      "{schema}"
     ],
-    "reviewer": "claude-opus-5-5",
+    "reviewer": "codex",
     "timeoutMs": 1200000,
     "maxDiffBytes": 800000,
     "effort": {
-      "default": "medium",
-      "high": {
-        "minChangedLines": 500,
-        "paths": [
-          "src/core/**",
-          "src/coordination/**",
-          "src/state/**"
-        ]
+      "default": "medium"
+    },
+    "fallback": {
+      "command": [
+        "claude",
+        "-p",
+        "--model",
+        "claude-opus-5-5",
+        "--effort",
+        "{effort}",
+        "--tools",
+        "Read,Grep,Glob",
+        "--setting-sources=",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "reviewer": "claude-opus-5-5",
+      "timeoutMs": 1200000,
+      "maxDiffBytes": 800000,
+      "effort": {
+        "default": "medium",
+        "high": {
+          "minChangedLines": 500,
+          "paths": [
+            "src/core/**",
+            "src/coordination/**",
+            "src/state/**"
+          ]
+        }
+      }
+    },
+    "baseSync": {
+      "command": [
+        "codex",
+        "exec",
+        "-m",
+        "gpt-6-astra",
+        "-c",
+        "model_reasoning_effort={effort}",
+        "--sandbox",
+        "read-only",
+        "--output-schema",
+        "{schema}"
+      ],
+      "reviewer": "codex-base-sync",
+      "timeoutMs": 1200000,
+      "maxDiffBytes": 800000,
+      "effort": {
+        "default": "medium"
       }
     }
   }

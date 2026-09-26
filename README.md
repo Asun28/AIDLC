@@ -34,7 +34,7 @@ The loop is `next` -> act -> `report` -> `next`:
 aidlc report --result plan-produced --plan-ref plans/claims-status.md
 aidlc report --result cards-projected --cards T1-STATUS-API,T1-STATUS-PANEL
 aidlc card next T1-STATUS-API          # prepare | build | ship | review-fix | wait | close | done | stop
-aidlc card attempt T1-STATUS-API --outcome success --dod-receipt "npm test exit 0"
+aidlc card attempt T1-STATUS-API --outcome success --dod-receipt "npm test exit 0: 42 pass, 0 fail"
 aidlc card next T1-STATUS-API          # ships through the configured ship path
 aidlc report --result arc-verified --data '{"evidence":"e2e run 1234"}'
 aidlc audit verify

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath, T0 } from './_harness.ts';
 import { canRerun } from '../../src/core/ci-policy.ts';
+import { countedFailures } from '../../src/core/effort.ts';
 
 const TRANSIENT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact';
 const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3';
@@ -84,6 +85,64 @@ test('Q7: a code-defect CI failure never reruns; it goes back to BUILD with a ne
     assert.equal(r.run.dodReceipt, undefined, 'the failed candidate needs a fresh DoD');
     const classified = fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED');
     assert.equal(classified?.data['class'], 'code-defect');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 1: a CI code defect on a succeeded attempt is a counted failure that reopens the episode; the repair is recorded and ships', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red', 'merged'], CODE_DEFECT);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    assert.equal(run1.effort?.terminal, 'succeeded');
+    let r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    if (r.directive.kind === 'build') {
+      assert.equal(r.directive.attempt, 2);
+      assert.equal(r.directive.effort, 'medium');
+    }
+    const effort = r.run.effort!;
+    assert.equal(effort.terminal, undefined, 'the episode is reopened');
+    assert.equal(countedFailures(effort).length, 1, 'the ship failure is a counted failure');
+    assert.equal(effort.attempts[0]!.outcome, 'fail', 'the attempt that bound the failed candidate is the counted failure');
+    assert.match(effort.attempts[0]!.cause ?? '', /^ship ci-red: CI code defect \(/, 'the cause names the ship outcome');
+    const finished = fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED').at(-1);
+    assert.equal(finished?.data['outcome'], 'fail');
+    assert.equal(finished?.data['refutedBy'], 'ship ci-red');
+    assert.equal(finished?.data['n'], 1);
+
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', candidateSha: 'sha-repair' });
+    assert.equal(run2.effort?.terminal, 'succeeded');
+    assert.deepEqual(run2.effort?.attempts.map((a) => a.outcome), ['fail', 'success']);
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'close', `the repaired candidate ships: ${r.directive.narration}`);
+    assert.equal(ship.requests.length, 2);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: the same CI code defect twice without progress stops the card early; card next returns the stop, never a build directive', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new InjectedShipPath(['ci-red'], CODE_DEFECT);
+    const { goal, runner, card, run1 } = start(fx, ship);
+    let r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', candidateSha: 'sha-repair' });
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'stop', `the second same-cause failure stops: ${r.directive.narration}`);
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'card');
+      assert.match(r.directive.stop.detail, /same-cause-stop/);
+    }
+    assert.equal(r.run.effort?.terminal, 'same-cause-stop');
+    assert.equal(countedFailures(r.run.effort!).length, 2);
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'stop', 'card next keeps returning the stop');
+    assert.throws(() => runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', candidateSha: 'sha-3' }), /no attempt may start: same-cause-stop/);
+    assert.equal(ship.requests.length, 2);
   } finally {
     fx.cleanup();
   }

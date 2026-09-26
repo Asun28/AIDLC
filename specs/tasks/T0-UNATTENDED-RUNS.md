@@ -1,7 +1,7 @@
 ---
 id: T0-UNATTENDED-RUNS
 title: OPERATIONS.md documents /goal as the outer driver of aidlc next and /loop for wait directives, and every DoD receipt example names the test count, not only the exit code
-status: todo
+status: merged
 branch: T0-UNATTENDED-RUNS
 worktree: D:\wt\AIDLC\T0-UNATTENDED-RUNS
 allow_paths:
