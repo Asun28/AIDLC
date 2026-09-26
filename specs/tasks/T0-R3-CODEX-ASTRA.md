@@ -1,7 +1,7 @@
 ---
 id: T0-R3-CODEX-ASTRA
 title: This repository runs its formal review (R3) on Codex gpt-6-astra at medium effort with the headless Claude Opus 5.5 as its fallback, and the base-sync reviewer takes a name of its own
-status: todo
+status: merged
 branch: T0-R3-CODEX-ASTRA
 worktree: D:\wt\AIDLC\T0-R3-CODEX-ASTRA
 allow_paths:
