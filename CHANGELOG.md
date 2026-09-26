@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Unattended-runs doc test, card T0-UNATTENDED-TEST-SCAN: the test proves the `/goal` hands-off clause against `docs/OPERATIONS.md` and on every `/goal` prompt that `docs/OPERATIONS.md` and `README.md` show, instead of comparing two of its own constants, and it checks single-quoted `--dod-receipt` examples as well as double-quoted ones (issue #62).
+
 - Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort. A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).
 
 - Card goal resolution, card T0-CARD-GOAL-RESOLVE: a command that names a card now acts on the goal that projects the card and refuses, naming the candidate goals, when none or several do; it used to take the newest active goal, so a card command of one session could create and journal a run of its card in another session's goal (issue #72). An explicit `--goal` that neither projects the card nor holds its run is refused.
