@@ -6,7 +6,7 @@ import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
-import { loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
+import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
@@ -176,7 +176,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('check toolchain, configuration, state directory and providers')
     .action(async () => {
       let c: Ctx;
-      try { c = ctx(g()); } catch (err) { return fail(`config: ERROR ${(err as Error).message}`); }
+      // Only a configuration that does not parse is a config error; any other failure ends doctor as it ends every command.
+      try { c = ctx(g()); } catch (err) { if (err instanceof ConfigError) return fail(`config: ERROR ${err.message}`); throw err; }
       // Toolchain probes run concurrently: doctor is the entry check of every route and wakeup.
       const probe = (cmd: string, args: string[]) =>
         new Promise<string | undefined>((resolve) => {

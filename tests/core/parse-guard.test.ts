@@ -87,7 +87,7 @@ describe('detectQuotaHold: a numeric status first, else the word rule (T1-PARSE-
     const delay = (unit: string) => detectQuotaHold(`retry after 30${unit}`).retryAfterMs;
     for (const unit of [' milliseconds', ' millisecond', ' millis', ' msecs', ' msec', ' ms', 'ms', 'milliseconds', ' MILLISECONDS', ' Msec', ' ms.', ' ms)', ' ms and more']) assert.equal(delay(unit), 30, `30${unit}`);
     for (const unit of [' m', ' min', ' mins', ' minute', ' minutes', 'min', 'm', ' Minutes', ' MIN', ' minutes;', ' m,']) assert.equal(delay(unit), 1_800_000, `30${unit}`);
-    for (const unit of [' s', ' sec', ' secs', ' second', ' seconds', 's', '', ' ', ' hours', ' h', ' msx', ' minx', ' millisecondsx', ' mins2', ' m5', ' ms5', ' secondsx', ' mé', ' msé', ' mn', ' millisec']) assert.equal(delay(unit), 30_000, `30${unit}`);
+    for (const unit of [' s', ' sec', ' secs', ' second', ' seconds', 's', '', ' ', ' hours', ' h', 'h', 'hours', 'x', ' msx', ' minx', ' millisecondsx', ' mins2', ' m5', ' ms5', ' secondsx', ' mé', ' msé', ' mn', ' millisec']) assert.equal(delay(unit), 30_000, `30${unit}`);
   });
   test('docs/OPERATIONS.md states how the word rule reads a retry-after unit (T0-PARSE-GUARD-FOLLOWUPS) [R6]', () => {
     const operations = readFileSync(path.join(import.meta.dirname, '..', '..', 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
