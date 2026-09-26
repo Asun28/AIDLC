@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-GOAL-RESOLVE
 title: A command that names a card acts on the goal that projects that card, and refuses naming the candidates when none or several do, instead of taking the newest active goal
-status: todo
+status: merged
 branch: T0-CARD-GOAL-RESOLVE
 worktree: D:\wt\AIDLC\T0-CARD-GOAL-RESOLVE
 allow_paths:
