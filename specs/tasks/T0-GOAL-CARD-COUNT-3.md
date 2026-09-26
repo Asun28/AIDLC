@@ -1,7 +1,7 @@
 ---
 id: T0-GOAL-CARD-COUNT-3
 title: The router takes ref= from the first known card id, counts every card id token when no known card list is passed, and a text naming several cards keeps the arc limit when --card names one of them (replacement of T0-GOAL-CARD-COUNT-2, whose passed candidate GitHub refused to merge after the base moved)
-status: todo
+status: merged
 branch: T0-GOAL-CARD-COUNT-3
 worktree: D:\wt\AIDLC\T0-GOAL-CARD-COUNT-3
 allow_paths:
