@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort. A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).
+
 - Card goal resolution, card T0-CARD-GOAL-RESOLVE: a command that names a card now acts on the goal that projects the card and refuses, naming the candidate goals, when none or several do; it used to take the newest active goal, so a card command of one session could create and journal a run of its card in another session's goal (issue #72). An explicit `--goal` that neither projects the card nor holds its run is refused.
 
 - Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.

@@ -440,6 +440,14 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
     assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 1, escalated: true });
   });
 
+  test('a terminal episode with nothing settled answers with its terminal, never with its running attempt [R1]', () => {
+    const stopped: EffortEpisode = { ...startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', T0), terminal: 'exhausted' };
+    const step = afterShipFailure(stopped, 'ship dod-failed: x', JUSTIFIED);
+    assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
+    assert.deepEqual(step.episode.attempts, stopped.attempts);
+    assert.equal(step.episode.terminal, 'exhausted');
+  });
+
   test('the refuted attempt keeps the startedAt and finishedAt of the success it replaces [R2]', () => {
     const started = startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', addMs(T0, 60_000));
     const success = finishAttempt(started, { finishedAt: addMs(T0, 90_000), outcome: 'success' });
