@@ -50,25 +50,27 @@ function lines(text: string): string[] {
   return text.split(/\r?\n/).filter((l) => l.trim() !== '').map(encodeUntrusted);
 }
 
-/** The Actions job a check run's details URL names (T0-CI-RED-LOGS). */
-const ACTIONS_JOB = /\/actions\/runs\/(\d+)\/job\/(\d+)(?:[?#][^\s]*)?$/;
+/** The repository, run and job a GitHub Actions check run's details URL names (T0-CI-RED-LOGS). */
+const ACTIONS_JOB = /^https:\/\/github\.com\/([^/\s]+\/[^/\s?#]+)\/actions\/runs\/(\d+)\/job\/(\d+)(?:[?#]\S*)?$/;
 const CI_LOG_JOBS = 3;
 const CI_LOG_LINES = 60;
 const CI_LOG_WIDTH = 240;
 
 /**
- * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS): the lines before the runner's last
- * `##[error]Process completed with exit code N.` line (the whole log without one), with the byte order mark, the
- * timestamps, the colour codes and other control characters removed, the last 60 non-empty lines, each capped at 240
- * characters and then encoded, so no log line can carry a sentinel.
+ * The failed step of an Actions job log as ship output lines (T0-CI-RED-LOGS): from the runner's last `##[group]Run `
+ * step header before its last `##[error]Process completed with exit code N.` line up to that exit line (from the top of
+ * the log when no header precedes it, the whole log without an exit line), with the byte order mark, the timestamps and
+ * the colour codes removed and every other control character (tab and C1 included) replaced by a space, the last 60
+ * non-empty lines, each capped at 240 characters and then encoded, so no log line can carry a sentinel.
  */
 export function failedStepLines(log: string): string[] {
   const lines = log
     .replace(/^\uFEFF/, '')
     .split(/\r?\n/)
-    .map((l) => l.replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?/, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, ' '));
+    .map((l) => l.replace(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z ?/, '').replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f]/g, ' '));
   const exit = lines.findLastIndex((l) => /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l));
-  return (exit >= 0 ? lines.slice(0, exit) : lines)
+  const start = Math.max(0, lines.slice(0, Math.max(0, exit)).findLastIndex((l) => l.startsWith('##[group]Run ')));
+  return (exit >= 0 ? lines.slice(start, exit) : lines)
     .filter((l) => l.trim() !== '')
     .slice(-CI_LOG_LINES)
     .map((l) => encodeUntrusted(l.slice(0, CI_LOG_WIDTH)));
@@ -152,7 +154,8 @@ export function unionUnreleasedInsertions(text: string): string | undefined {
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
   return JSON.stringify(runs.map((r) => ({ name: encodeUntrusted(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
     .replace(/\u2028/g, '\\u2028')
-    .replace(/\u2029/g, '\\u2029'); // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
+    .replace(/\u2029/g, '\\u2029') // a JSON string may carry them literally; escaped, the gate line stays one line for every consumer
+    .replace(/\//g, '\\/'); // escaped, a check name never forms the `runs/<id>` the card runner reads as a rerun's run (T0-CI-RED-LOGS)
 }
 
 export class GitHubShipPath implements ShipPath {
@@ -411,14 +414,18 @@ export class GitHubShipPath implements ShipPath {
   }
 
   /**
-   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS): for each red check run that is an Actions job, at most three
-   * in gate order, a header built from the run and job ids alone (so the first `runs/<id>` on the output is the job's
-   * run), then the failed step of its log, or `log unavailable` when the log cannot be read.
+   * The `[CI-GATE-LOG]` lines of a red gate (T0-CI-RED-LOGS): for each red check run that is an Actions job of the
+   * configured repository (app `github-actions`, a details URL naming this repository's run and job, the job id being the
+   * check run's own), at most three in gate order, a header built from the run and job ids alone (so the first
+   * `runs/<id>` on the output is the job's run), then the failed step of its log, or `log unavailable` when the log cannot
+   * be read. Any other red check run gets no line and no log read.
    */
   private ciLogLines(failed: CheckRun[], wt: string): string[] {
+    const repository = this.options.repository.toLowerCase();
     const jobs = failed.flatMap((r) => {
       const m = (r.details_url ?? '').match(ACTIONS_JOB);
-      return m ? [{ run: m[1]!, job: m[2]! }] : [];
+      if (!m || r.app?.slug !== 'github-actions' || m[1]!.toLowerCase() !== repository || String(r.id) !== m[3]) return [];
+      return [{ run: m[2]!, job: m[3]! }];
     });
     return jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job }) => {
       const text = this.gh.jobLog(this.options.repository, job, wt);

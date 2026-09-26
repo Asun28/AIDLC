@@ -31,7 +31,11 @@ export interface CheckRun {
   name: string;
   status: string;
   conclusion: string | null;
-  /** For a GitHub Actions job: `.../actions/runs/<run>/job/<job>`. */
+  /** For a GitHub Actions job: the job id. */
+  id?: number;
+  /** For a GitHub Actions job: `github-actions`. */
+  app?: { slug?: string } | null;
+  /** For a GitHub Actions job: `https://github.com/<repository>/actions/runs/<run>/job/<job>`. */
   details_url?: string | null;
 }
 
