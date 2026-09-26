@@ -51,7 +51,8 @@ export interface JobStep {
 function isJobStep(value: unknown): value is JobStep {
   if (value === null || typeof value !== 'object') return false;
   const s = value as Record<string, unknown>;
-  const time = (t: unknown) => t === undefined || t === null || typeof t === 'string';
+  // A time is present as a string or null (T0-CI-RED-LOGS-BOUNDS: an absent key is a malformed step).
+  const time = (t: unknown) => t === null || typeof t === 'string';
   return typeof s['number'] === 'number' && Number.isFinite(s['number']) && (s['conclusion'] === null || typeof s['conclusion'] === 'string') && time(s['started_at']) && time(s['completed_at']) && (s['name'] === undefined || typeof s['name'] === 'string');
 }
 
