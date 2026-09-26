@@ -1,7 +1,7 @@
 ---
 id: T0-GOAL-CARD-COUNT
 title: A goal request that names several known card ids, or carries an explicit T1 or T2 size, gets the arc deadline, and its card count is left to the projection instead of the first card id in the text
-status: todo
+status: merged
 branch: T0-GOAL-CARD-COUNT
 worktree: D:\wt\AIDLC\T0-GOAL-CARD-COUNT
 allow_paths:
