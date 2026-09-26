@@ -9,18 +9,20 @@ created: 2026-09-25T23:55:00Z
 
 # Plan: v5.1 hardening (from the v5.1 goal text, section 1)
 
-## Approval asked for
-Approving this plan authorizes: the nine cards below (registered on main by
-this plan's PR), four T1 goals created one wave at a time, one PR per card on
-the github ship path through R2, R3 and the CI checks, and the five decisions
-D1-D4 as recommended unless the approval says otherwise (D5 is met). It does not
-authorize a release, a deploy, a force push or any spend on W0 runs beyond
-the cap set in D3. No src/ file changes before approval.
+## Approval
+Approved by the user on 2026-09-26 with one change: no evaluation now. W0
+(T1-BASELINE-HARNESS, T1-BASELINE-REPORT) is deferred, stays registered and
+does not run; decisions D1-D3 are withdrawn with it, so no sandbox repository
+is created and nothing is spent on eval runs. W5 runs without the W0 gate and
+without its baseline measurement. The approval covers the seven remaining
+cards, three T1 goals created one wave at a time, and one PR per card on the
+github ship path (`Asun28/AIDLC`) through R2, R3 and the CI checks. It does
+not authorize a release, a deploy or a force push.
 
 ## 1. Goal and boundaries
-Harden the loop's correctness (W1-W4), measure it against plain Claude Code
-(W0), then close three ergonomics gaps (W5) and document the init surface
-(W6, W7). Source: the v5.1 goal text of 2026-09-26.
+Harden the loop's correctness (W1-W4), then close three ergonomics gaps (W5)
+and document the init surface (W6, W7). The comparison against plain Claude
+Code (W0) is deferred. Source: the v5.1 goal text of 2026-09-26.
 
 Hard constraints (from the goal text, restated so each card can cite them):
 - No new subsystem: no new top-level src/ directory, state store, web UI, MCP
@@ -39,38 +41,37 @@ multi-repo goals, a web dashboard, a new persistence layer, anything that
 makes the README Multi-session section longer.
 
 ## 2. Minimal acceptable loop
-Nine cards, one PR each, merged through the loop on the github ship path.
+Seven cards, one PR each, merged through the loop on the github ship path.
 They run one at a time: every card edits CHANGELOG.md, and most edit
-docs/OPERATIONS.md. Four goals, one per wave, so a STOP in one wave does not
-spend another wave's 12 h arc and the W0 runs stay outside any card deadline.
+docs/OPERATIONS.md. Three goals, one per wave, so a STOP in one wave does not
+spend another wave's 12 h arc.
 
 | Wave | Goal | Cards, in order | Starts when |
 |---|---|---|---|
-| 1 | v5.1 wave 1 | T1-BASELINE-HARNESS, T1-PARSE-GUARD, T1-STORE-CAS | plan approved |
-| - | W0 runs (operator step, not a card) | 12 tasks x 2 arms x 3 runs | T1-BASELINE-HARNESS merged; D1-D3 settled |
+| 1 | v5.1 wave 1 | T1-PARSE-GUARD, T1-STORE-CAS | plan approved |
 | 2 | v5.1 wave 2 | T1-AUDIT-FACTS, T1-BOUND-TELEMETRY | wave 1 DONE |
-| 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE | wave 2 DONE |
-| 4 | v5.1 wave 4 | T1-BASELINE-REPORT, T1-RUN-DRIVER | W0 runs finished |
+| 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
+| deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
 
 W0 is two cards, not one: 72 agent runs cannot finish inside the 3 h card
 deadline, so the harness and the report are cards and the runs between them
-are an operator step bounded by the D3 spend cap. The harness merges first so
-the runs measure the pre-hardening loop at a pinned SHA while waves 1-3 work.
+are an operator step bounded by a spend cap. Both are deferred: they stay in
+the registry with the design below, and running them later needs the
+decisions D1-D3 again.
 
 ## 3. Tech stack
-none this version (no new dependency; the W0 harness is TypeScript run by
-Node type stripping, like the CLI)
+none this version (no new dependency)
 
 ## 4. Directory structure
-One new directory, `evals/baseline/` (W0: task list, harness, analysis,
-results, REPORT.md). No new top-level src/ directory. `tsconfig.test.json`
-adds `evals/**/*.ts` so the typecheck covers the harness.
+none this version (no new directory; the deferred W0 would add
+`evals/baseline/`)
 
 ## 4.5 Module design
 Each design below comes from a read-only survey of main at 5983a1e; the file
 and line references are that survey's.
 
-**W0, T1-BASELINE-HARNESS and T1-BASELINE-REPORT.** `src/evals/runner.ts` runs
+**W0, T1-BASELINE-HARNESS and T1-BASELINE-REPORT (deferred, kept for a later
+run).** `src/evals/runner.ts` runs
 one provider call per case in place and drops `usage` (runner.ts:76-79); it
 has no checkout isolation, arms or repetitions. The harness lives outside
 src/ and reuses what src/ exports: `ClaudeCodeProvider` for the model call
@@ -183,7 +184,8 @@ not a firing, and is not counted. `MAX_LIFECYCLE_REPAIR_CYCLES` is defined
 and never enforced; the Limits table says so (finding F2). No new config, no
 new file. Target +50 src lines.
 
-**W5, T1-RUN-DRIVER** (projected in wave 4, after REPORT.md exists).
+**W5, T1-RUN-DRIVER** (wave 3, last card; the W0 gate is lifted by the
+approval, so the token measurement below waits for the deferred W0).
 (a) `aidlc run --goal <id> [--max-steps n]`: loops `next`, hands the directive
 and its context pack to the configured provider, and loops again after the
 provider's `aidlc report`; it stops and prints the directive on `checkpoint`,
@@ -194,8 +196,8 @@ the W4 bound line and the next directive, re-rendered from `state/board.ts`.
 (c) `contextPack(card)`: a deterministic projection of the card's plan
 section, acceptance list, allow_paths, non_goals and the LESSONS lines that
 name its paths or modules, capped at a declared token budget, carried on the
-`run-card` directive and handed to the worker. Tokens per card are measured
-on the W0 task set against the W0 arm B baseline. Budget: +400 minus the
+`run-card` directive and handed to the worker. Measuring tokens per card
+against a baseline is left to the deferred W0. Budget: +400 minus the
 actual W2 and W4 totals (target +210). If the three parts do not fit, the
 card stops and asks which part to drop.
 
@@ -234,27 +236,23 @@ deleted), tests excluded, stated in every card's close-out.
 
 | Card | Work item | src net | Gate |
 |---|---|---|---|
-| T1-BASELINE-HARNESS | W0 | 0 | no src/ change |
 | T1-PARSE-GUARD | W1 | below 0 (estimate -3 to -7) | STOP/scope at 0 or above |
 | T1-STORE-CAS | W3 | below 0 (estimate -45) | STOP/scope at 0 or above |
 | T1-AUDIT-FACTS | W2 | at most +140 | shared +400 |
 | T1-BOUND-TELEMETRY | W4 | at most +50 | shared +400 |
 | T1-INIT-SURFACE | W6 | at most +15 | own |
 | T1-README-SCOPE | W7 | 0 | no src/ change |
-| T1-BASELINE-REPORT | W0 | 0 | no src/ change |
 | T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual | shared +400 |
+| T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 (deferred) | 0 | no src/ change |
 
 The card `budget:` field is the churn cap (added plus deleted, all files),
 a different measure; each card sets both.
 
 ## Files that change
-- evals/baseline/README.md (new)
-- evals/baseline/tasks.json (new)
-- evals/baseline/harness.ts (new)
-- evals/baseline/analyze.ts (new)
-- evals/baseline/REPORT.md (new)
-- tsconfig.test.json
 - src/core/parse-guard.ts (new)
+- src/loop/run-driver.ts (new)
+- src/loop/context-pack.ts (new)
+- src/loop/directive.ts
 - src/core/review-policy.ts
 - src/review/pre-review.ts
 - src/providers/claude-api.ts
@@ -278,8 +276,10 @@ a different measure; each card sets both.
 - src/loop/controller.ts
 - src/core/card-machine.ts
 - src/scaffold/init.ts
-- tests/surface/baseline.test.ts (new)
 - tests/core/parse-guard.test.ts (new)
+- tests/infra/update-json.test.ts (new)
+- tests/scenarios/run-driver.test.ts (new)
+- tests/core/context-pack.test.ts (new)
 - tests/surface/readme.test.ts (new)
 - tests/core/review-policy.test.ts
 - tests/surface/config.test.ts
@@ -305,33 +305,30 @@ a different measure; each card sets both.
 
 ## Order of work
 1. Merge this plan's PR (cards registered on main, not started).
-2. Wave 1 goal: T1-BASELINE-HARNESS, including a one-task pilot per arm.
-3. Start the W0 runs at the harness merge SHA, inside the D3 cap, in the D2 sandbox.
-4. Wave 1 goal: T1-PARSE-GUARD (W1, net-negative gate).
-5. Wave 1 goal: T1-STORE-CAS (W3, net-negative gate); VERIFY_ARC closes wave 1.
-6. Wave 2 goal: T1-AUDIT-FACTS (W2); report the running +400 total.
-7. Wave 2 goal: T1-BOUND-TELEMETRY (W4); VERIFY_ARC closes wave 2.
-8. Wave 3 goal: T1-INIT-SURFACE (W6), then T1-README-SCOPE (W7).
-9. Wave 4 goal, once the runs are done: T1-BASELINE-REPORT (REPORT.md).
-10. Wave 4 goal: T1-RUN-DRIVER (W5), measured against REPORT.md; VERIFY_ARC closes wave 4.
+2. Wave 1 goal: T1-PARSE-GUARD (W1, net-negative gate).
+3. Wave 1 goal: T1-STORE-CAS (W3, net-negative gate); VERIFY_ARC closes wave 1.
+4. Wave 2 goal: T1-AUDIT-FACTS (W2); report the running +400 total.
+5. Wave 2 goal: T1-BOUND-TELEMETRY (W4); VERIFY_ARC closes wave 2.
+6. Wave 3 goal: T1-INIT-SURFACE (W6), then T1-README-SCOPE (W7).
+7. Wave 3 goal: T1-RUN-DRIVER (W5); VERIFY_ARC closes wave 3.
 
 ## 7. Task split (dependencies and parallel windows)
 
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-BASELINE-HARNESS | MUST | W0 harness, task list, analysis, one-task pilot per arm | - | W1 | - |
-| T1-PARSE-GUARD | MUST | one parse guard, non-blank config, doctor config error, #39 #41 #45 #52 | T1-BASELINE-HARNESS | W2 | - |
-| T1-STORE-CAS | MUST | one locked update primitive for lease and run records, Sessions text shorter | T1-PARSE-GUARD | W3 | - |
-| T1-AUDIT-FACTS | MUST | merge facts journaled and re-derived by audit verify | T1-STORE-CAS | W4 | - |
-| T1-BOUND-TELEMETRY | SHOULD | BOUND_FIRED per bound and one board line | T1-AUDIT-FACTS | W5 | - |
-| T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W6 | - |
-| T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W7 | - |
-| T1-BASELINE-REPORT | MUST | REPORT.md with paired differences and the MDE | T1-BASELINE-HARNESS | W8 | - |
-| T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-BASELINE-REPORT, T1-BOUND-TELEMETRY | W9 | - |
+| T1-PARSE-GUARD | MUST | one parse guard, non-blank config, doctor config error, #39 #41 #45 #52 | - | W1 | - |
+| T1-STORE-CAS | MUST | one locked update primitive for lease and run records, Sessions text shorter | T1-PARSE-GUARD | W2 | - |
+| T1-AUDIT-FACTS | MUST | merge facts journaled and re-derived by audit verify | T1-STORE-CAS | W3 | - |
+| T1-BOUND-TELEMETRY | SHOULD | BOUND_FIRED per bound and one board line | T1-AUDIT-FACTS | W4 | - |
+| T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
+| T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
+| T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-README-SCOPE, T1-BOUND-TELEMETRY | W7 | - |
+| T1-BASELINE-HARNESS | COULD | deferred: W0 harness, task list, analysis, one-task pilot per arm | - | - | - |
+| T1-BASELINE-REPORT | COULD | deferred: REPORT.md with paired differences and the MDE | T1-BASELINE-HARNESS | - | - |
 
 The depends_on chain orders the shared files (CHANGELOG.md,
-docs/OPERATIONS.md, README.md); only T1-BASELINE-REPORT and T1-RUN-DRIVER
-carry a real prerequisite (the report, and the bound line W5 shows).
+docs/OPERATIONS.md, README.md); only T1-RUN-DRIVER carries a real
+prerequisite (the bound line W5 shows).
 
 ## Card close-out record
 Every card ends with, in its CLOSE evidence (`aidlc evidence retain`) and in
@@ -377,23 +374,13 @@ filed as an issue by the card named.
 New findings from running the waves are appended here by the card that meets
 them, never worked around.
 
-## Decisions for the approver
-- D1 (W0 task repository). Recommended: `Asun28/MyInspection`, whose merged
-  cards carry real tests to hold out, so the loop is measured on a repository
-  other than itself. Alternative: this repository's merged cards #21-#59,
-  with its own `.claude/` stripped from arm A.
-- D2 (arm B PRs). Recommended: a new private sandbox repository
-  (`Asun28/aidlc-baseline`), seeded with each task's base commit as a branch,
-  so 36 arm B runs open no PR on a real repository. Creating it is an
-  outward action and waits for this approval.
-- D3 (W0 spend). The baseline is 72 agent runs, arm B adding R2 and R3 per
-  run, and W5 measures its context pack with 12 more arm B runs (one per
-  task). Recommended: a per-run token cap and a total cap you set; the
-  harness stops a run at its cap and records the cap as the bound that fired.
-  The runs do not start until the caps are recorded in
-  `evals/baseline/README.md`.
-- D4 (W3 primitive). Recommended as designed: the O_EXCL locked update, not
-  `git update-ref`, for the reasons in 4.5. Approving the plan accepts it.
+## Decisions
+- D1-D3 (W0 task repository, arm B sandbox repository, eval spend caps):
+  withdrawn with W0. Running W0 later needs all three decided again; the
+  earlier recommendations were `Asun28/MyInspection`, a private sandbox
+  repository for the arm B PRs, and a per-run and total spend cap.
+- D4 (W3 primitive): accepted as designed, the O_EXCL locked update, not
+  `git update-ref`, for the reasons in 4.5.
 - D5 (W5 overlap), met. `T0-UNATTENDED-RUNS` merged in PR #61 (b7898d8):
   `docs/OPERATIONS.md` documents `/goal` as the outer driver of `aidlc next`.
   `aidlc run` stops on the same directive kinds and covers drivers other
@@ -410,23 +397,19 @@ them, never worked around.
   file, and every remaining window is stated in the first candidate.
 - W2 re-derivation needs gh and network at verify time; offline it reports
   warnings, and `--claim-full` then refuses.
-- W0 runs share the R2 (DeepSeek) and R3 (Codex, Opus 5.5 fallback) quotas
-  with waves 1-3; a quota hold is a WAIT and spends no allowance, but it
-  slows both.
 - Other sessions run cards on main at the same time (F7); every command here
   passes `--goal`, and a moved base is synced by merge before each ship.
-- W0 can show aidlc losing on tokens or wall clock; the report says so.
 - Every card edits CHANGELOG.md; they run strictly one at a time.
+- Without W0 there is no measurement of whether the hardening or the W5
+  context pack changes cost or resolution; that stays open until W0 runs.
 
 ## Proof
-- T1-BASELINE-HARNESS: tests/surface/baseline.test.ts on fixture results; the pilot result JSON.
 - T1-PARSE-GUARD: tests/core/parse-guard.test.ts, config, pre-review, providers and t0-flow tests; doctor exit 1 on a blank marker.
 - T1-STORE-CAS: store, goal-store, lease and two-windows tests; Sessions bytes before and after.
 - T1-AUDIT-FACTS: tests/surface/verifier.test.ts and tests/scenarios/audit.test.ts with scripted git and gh.
 - T1-BOUND-TELEMETRY: tests/infra/board.test.ts and a deadline scenario.
 - T1-INIT-SURFACE, T1-README-SCOPE: tests/infra/init.test.ts, tests/surface/readme.test.ts, tests/surface/hooks.test.ts.
-- T1-BASELINE-REPORT: analyze.ts regenerates REPORT.md from the committed results unchanged.
-- T1-RUN-DRIVER: scenario tests for the driver's stop kinds; tokens per card against REPORT.md.
+- T1-RUN-DRIVER: scenario tests for the driver's stop kinds and the context pack.
 - Every card: `npm run check` exit 0 with the pass count, and the close-out record.
 
 ## 10. After merge

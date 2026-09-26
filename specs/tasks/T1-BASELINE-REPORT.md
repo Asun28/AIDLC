@@ -29,7 +29,7 @@ budget: 3000
 tdd: false
 forbid: [any change under src/, editing a run record by hand, dropping a run from the results, a claim in REPORT.md not computed from the records]
 non_goals: [re-running a task to improve a result, a change to analyze.ts (a harness fix is a successor of T1-BASELINE-HARNESS), W5 measurements]
-hygiene: "Data and generated text only: the analysis is tested in T1-BASELINE-HARNESS; this card commits the records and the regenerated report. The budget covers the result records."
+hygiene: "Deferred on 2026-09-26 by the user (no eval now): the card stays registered and does not start until plan decisions D1-D3 (task repository, sandbox repository, spend caps) are decided again. Data and generated text only: the analysis is tested in T1-BASELINE-HARNESS; this card commits the records and the regenerated report. The budget covers the result records."
 doc_sync: CHANGELOG.md
 ---
 

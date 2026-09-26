@@ -33,7 +33,7 @@ budget: 900
 tdd: true
 forbid: [any change under src/, choosing or dropping a task after seeing a result of either arm, network access from a test, a PR opened on any repository other than the sandbox of plan decision D2]
 non_goals: [the 72 measurement runs (an operator step between this card and T1-BASELINE-REPORT), REPORT.md, a change to src/evals/runner.ts, a new CLI command]
-hygiene: "Reuses src/ exports only: ClaudeCodeProvider for the model call and its usage, the evals runner's command check for the oracle. Run the mutation sweep over analyze.ts before the first review (docs/LESSONS.md 2026-09-24)."
+hygiene: "Deferred on 2026-09-26 by the user (no eval now): the card stays registered and does not start until plan decisions D1-D3 (task repository, sandbox repository, spend caps) are decided again. Reuses src/ exports only: ClaudeCodeProvider for the model call and its usage, the evals runner's command check for the oracle. Run the mutation sweep over analyze.ts before the first review (docs/LESSONS.md 2026-09-24)."
 doc_sync: CHANGELOG.md
 ---
 
