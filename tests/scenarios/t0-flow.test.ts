@@ -819,7 +819,7 @@ test('R3: an incident goal names diagnose on the build directive', () => {
   }
 });
 
-test('R3: every repair path returns a build directive that names the skills: scope-blocked and budget-over (episode kept), CI code defect, and a pending pre-review block', () => {
+test('R3: every repair path returns a build directive that names the skills: scope-blocked and budget-over (episode reopened with a counted failure), CI code defect, and a pending pre-review block', () => {
   for (const outcome of ['scope-blocked', 'budget-over'] as const) {
     const fx = makeFixture();
     try {
@@ -837,7 +837,8 @@ test('R3: every repair path returns a build directive that names the skills: sco
       assert.equal(r.directive.kind, 'build', `${outcome} returns to BUILD`);
       if (r.directive.kind === 'build') assert.deepEqual(r.directive.skills, ['tdd'], `${outcome} build directive names the skills`);
       assert.equal(r.run.dodReceipt, undefined);
-      assert.equal(r.run.effort?.terminal, 'succeeded', `${outcome} is a code-side repair: the episode is not reopened by this card`);
+      assert.equal(r.run.effort?.terminal, undefined, `${outcome} is a code-side repair: the episode is reopened (T0-SHIP-REPAIR-ATTEMPT)`);
+      assert.equal(countedFailures(r.run.effort!).length, 1, `${outcome} counts the candidate's attempt as failed`);
     } finally {
       fx.cleanup();
     }
@@ -4172,6 +4173,127 @@ test('T0-BASE-SYNC-CHANGELOG acceptance 3: a CHANGELOG base-sync merge is a new 
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(r.run.stop?.reason, 'review');
     assert.equal(ship.requests.length, 2, 'the unreviewed merge was never shipped');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** T0-SHIP-REPAIR-ATTEMPT: a card whose first attempt succeeded; the next `card next` ships it through `ship`. */
+function shipRepairStart(fx: ReturnType<typeof makeFixture>, id: string, ship: DryRunShipPath, spec: Partial<Parameters<typeof writeCard>[1]> = {}) {
+  writeCard(fx, { id, title: `ship outcome for ${id}`, ...spec });
+  const goal = goalForCards(fx, [id]);
+  const runner = fx.runner(ship);
+  const card = fx.card(id);
+  let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+  r = runner.next(fx.goal(goal.id), card, r.run);
+  const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor(id), evidence: 'DoD green in the worktree' });
+  return { goal, runner, card, run1 };
+}
+
+/** A ship path whose failure detail differs on every ship, so two consecutive failures never share a cause. */
+class VaryingDetailShipPath extends DryRunShipPath {
+  override ship(req: ShipRequest): ShipResult {
+    const r = super.ship(req);
+    return { ...r, detail: `dod red on case ${['alpha', 'beta', 'gamma', 'delta', 'epsilon', 'zeta'][this.requests.length - 1]}` };
+  }
+}
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 2: dod-failed, verify-failed, scope-blocked and budget-over count the attempt that bound the candidate as failed and reopen the episode; the repair is recorded and ships', () => {
+  for (const outcome of ['dod-failed', 'verify-failed', 'scope-blocked', 'budget-over'] as const) {
+    const fx = makeFixture();
+    try {
+      const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-SHIPFAIL', new DryRunShipPath([outcome, 'merged']));
+      assert.equal(run1.effort?.terminal, 'succeeded');
+      let r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'build', `${outcome}: ${r.directive.narration}`);
+      if (r.directive.kind === 'build') {
+        assert.equal(r.directive.attempt, 2, `${outcome}: the repair is attempt 2`);
+        assert.equal(r.directive.effort, 'medium');
+      }
+      const effort = r.run.effort!;
+      assert.equal(effort.terminal, undefined, `${outcome}: the episode is reopened`);
+      assert.equal(effort.attempts.length, 1, `${outcome}: the ship adds no attempt of its own`);
+      assert.equal(effort.attempts[0]!.outcome, 'fail', `${outcome}: the attempt that bound the candidate is a counted failure`);
+      assert.equal(effort.attempts[0]!.cause, `ship ${outcome}: dry-run outcome ${outcome}`, `${outcome}: the cause names the ship outcome`);
+      assert.equal(effort.attempts[0]!.evidence, `DoD green in the worktree; ship ${outcome}: dry-run outcome ${outcome}`, `${outcome}: the recorded evidence is kept and the ship's appended`);
+      const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+      assert.equal(run2.effort?.terminal, 'succeeded', `${outcome}: the repair attempt is recorded`);
+      r = runner.next(fx.goal(goal.id), card, run2);
+      assert.equal(r.directive.kind, 'close', `${outcome}: the repaired candidate ships: ${r.directive.narration}`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: repeated ship failures follow the ladder: three without progress stop, with progress the escalation is the fourth and last, and card next returns the stop, never a fifth build', () => {
+  for (const progress of [false, true]) {
+    const label = progress ? 'with progress' : 'without progress';
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-LADDER', title: 'the ship fails on every candidate' });
+      const goal = goalForCards(fx, ['T1-LADDER']);
+      const runner = fx.runner(new VaryingDetailShipPath(['dod-failed']));
+      const card = fx.card('T1-LADDER');
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-LADDER'));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const efforts: string[] = [];
+      for (let n = 1; r.directive.kind === 'build' && n <= 5; n += 1) {
+        efforts.push(r.directive.effort);
+        const run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', progress, dodReceipt: `dod:${n}`, redReceipt: 'red:1', candidateSha: `sha-${n}` });
+        r = runner.next(fx.goal(goal.id), card, run);
+      }
+      assert.deepEqual(efforts, progress ? ['medium', 'medium', 'medium', 'high'] : ['medium', 'medium', 'medium'], `${label}: the attempts the ladder admits`);
+      assert.equal(r.directive.kind, 'stop', `${label}: ${r.directive.narration}`);
+      if (r.directive.kind === 'stop') {
+        assert.equal(r.directive.stop.reason, 'card');
+        assert.match(r.directive.stop.detail, progress ? /escalation-failed/ : /exhausted/);
+      }
+      assert.equal(r.run.effort?.terminal, progress ? 'escalation-failed' : 'exhausted');
+      assert.equal(countedFailures(r.run.effort!).length, progress ? 4 : 3);
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      assert.equal(r.directive.kind, 'stop', `${label}: card next keeps returning the stop`);
+      assert.throws(() => runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:9', redReceipt: 'red:1', candidateSha: 'sha-9' }), /no attempt may start/, `${label}: no fifth attempt`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-SHIP-REPAIR-ATTEMPT acceptance 4: every build directive a ship outcome returns admits the success recorded right after it; a base-sync conflict and a rejected RED receipt count no failure, and a review block spends no attempt', () => {
+  const cases: { label: string; ship: () => DryRunShipPath; counted: number; redReceipt?: string }[] = [
+    ...(['dod-failed', 'verify-failed', 'scope-blocked', 'budget-over'] as const).map((o) => ({ label: o, ship: () => new DryRunShipPath([o, 'merged']), counted: 1 })),
+    { label: 'CI code defect', ship: () => new InjectedShipPath(['ci-red', 'merged'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3'), counted: 1 },
+    { label: 'base-sync conflict', ship: () => new InjectedShipPath(['merge-failed', 'merged'], 'CONFLICT (content): Merge conflict in src/a.ts'), counted: 0 },
+    { label: 'rejected RED receipt', ship: () => new DryRunShipPath(['red-missing', 'merged']), counted: 0, redReceipt: 'red:2' },
+  ];
+  for (const c of cases) {
+    const fx = makeFixture();
+    try {
+      const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-REPAIRS', c.ship());
+      const r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'build', `${c.label}: ${r.directive.narration}`);
+      assert.equal(countedFailures(r.run.effort!).length, c.counted, `${c.label}: counted failures`);
+      const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: c.redReceipt ?? 'red:1', candidateSha: 'sha-2' });
+      assert.equal(repaired.effort?.terminal, 'succeeded', `${c.label}: the success is accepted`);
+      assert.equal(runner.next(fx.goal(goal.id), card, repaired).directive.kind, 'close', `${c.label}: the repair ships`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+  const fx = makeFixture();
+  try {
+    const block: Verdict = { verdict: 'block', reasons: ['[spec] 6 tests missing @ src/t1-blocked.ts'], axes: { spec: { verdict: 'block', reasons: ['tests missing'] }, standards: { verdict: 'pass', reasons: [] } }, sha: candidateShaFor('T1-BLOCKED'), run_status: 'success' };
+    const { goal, runner, card, run1 } = shipRepairStart(fx, 'T1-BLOCKED', new DryRunShipPath(['review-blocked', 'merged'], block), { tier: 'S', reviewGate: 'codex {verdict:pass}', acceptance: ['1. the block is repaired. [dod arm 1]'] });
+    let r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'review-fix', r.directive.narration);
+    assert.equal(countedFailures(r.run.effort!).length, 0, 'a review block spends no attempt');
+    assert.equal(r.run.effort?.attempts[0]?.outcome, 'success', 'the blocked success is kept');
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(repaired.effort?.terminal, 'succeeded', 'the review repair is accepted');
+    assert.equal(countedFailures(repaired.effort!).length, 0);
   } finally {
     fx.cleanup();
   }

@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  afterShipFailure,
   reopenAfterReviewBlock,
   EFFORT_LADDERS,
   MAX_BASELINE_ATTEMPTS,
@@ -242,5 +243,114 @@ describe('effort episodes (MA2 / Q25)', () => {
   test('ladders: Claude uses its own levels, never a translation of GPT strings [T1-OPUS55-MODELS R5]', () => {
     assert.deepEqual(EFFORT_LADDERS['claude'], ['low', 'medium', 'high', 'xhigh', 'max']);
     assert.deepEqual(GPT, ['low', 'medium', 'high', 'xhigh']);
+  });
+});
+
+describe('T0-SHIP-REPAIR-ATTEMPT: a ship that fails on the candidate code', () => {
+  function succeed(ep: EffortEpisode, n: number, options: { progress?: boolean; evidence?: string; effort?: EffortLevel } = {}): EffortEpisode {
+    const started = startAttempt(ep, options.effort ?? ep.baseline, addMs(T0, n * 60_000));
+    return finishAttempt(started, { finishedAt: addMs(T0, n * 60_000 + 30_000), outcome: 'success', progress: options.progress, evidence: options.evidence });
+  }
+  /** A succeeded attempt reopened by a review block, with the review-fix repair already running. */
+  function runningAfterBlock(ep: EffortEpisode, n: number): EffortEpisode {
+    return startAttempt(reopenAfterReviewBlock(ep, 'R3 block'), 'medium', addMs(T0, n * 60_000));
+  }
+
+  test('the success that bound the candidate becomes a counted failure with the ship cause, its evidence kept, and the episode reopens at the next baseline attempt', () => {
+    const ep = succeed(createEpisode('t', 'implementer', 'medium', GPT), 1, { evidence: 'DoD green' });
+    assert.equal(ep.terminal, 'succeeded');
+    const step = afterShipFailure(ep, 'ship dod-failed: 3 tests red', JUSTIFIED);
+    assert.equal(step.refuted?.n, 1);
+    const [refuted] = step.episode.attempts;
+    assert.deepEqual([refuted?.outcome, refuted?.cause, refuted?.evidence, refuted?.finishedAt], ['fail', 'ship dod-failed: 3 tests red', 'DoD green; ship dod-failed: 3 tests red', ep.attempts[0]!.finishedAt]);
+    assert.equal(step.episode.terminal, undefined, 'the episode is reopened');
+    assert.equal(countedAttempts(step.episode).length, 1);
+    assert.deepEqual(step.action, { action: 'attempt', effort: 'medium', n: 2, escalated: false });
+    assert.equal(afterShipFailure(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 'ship verify-failed: x', JUSTIFIED).episode.attempts[0]!.evidence, 'ship verify-failed: x', 'no recorded evidence: the cause alone');
+  });
+
+  test('the same ship cause twice without progress stops the episode as same-cause-stop; with progress it does not', () => {
+    for (const progress of [false, true]) {
+      const first = afterShipFailure(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1, { progress }), 'ship ci-red: CI code defect (expected 2 to equal 3 at line 12)', JUSTIFIED);
+      const second = afterShipFailure(succeed(first.episode, 2, { progress }), 'ship ci-red: CI code defect (expected 2 to equal 3 at line 40)', JUSTIFIED);
+      if (progress) {
+        assert.deepEqual(second.action, { action: 'attempt', effort: 'medium', n: 3, escalated: false });
+        assert.equal(second.episode.terminal, undefined);
+      } else {
+        assert.equal(second.action.action, 'stop');
+        assert.equal(second.action.action === 'stop' && second.action.reason, 'same-cause-stop');
+        assert.match(second.action.action === 'stop' ? second.action.detail : '', /ship ci-red: ci code defect/);
+        assert.equal(second.episode.terminal, 'same-cause-stop', 'the stop is persisted on the episode');
+      }
+    }
+  });
+
+  test('three refuted baseline successes: exhausted without progress, the escalation with progress, and a refuted escalation ends the episode', () => {
+    for (const progress of [false, true]) {
+      let ep = createEpisode('t', 'implementer', 'medium', GPT);
+      let step = afterShipFailure(succeed(ep, 1, { progress }), 'ship dod-failed: a', JUSTIFIED);
+      step = afterShipFailure(succeed(step.episode, 2, { progress }), 'ship dod-failed: b', JUSTIFIED);
+      step = afterShipFailure(succeed(step.episode, 3, { progress }), 'ship dod-failed: c', JUSTIFIED);
+      assert.equal(countedAttempts(step.episode).length, 3);
+      if (!progress) {
+        assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
+        assert.equal(step.episode.terminal, 'exhausted');
+        continue;
+      }
+      assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 4, escalated: true });
+      ep = succeed(step.episode, 4, { progress, effort: 'high' });
+      step = afterShipFailure(ep, 'ship dod-failed: d', JUSTIFIED);
+      assert.equal(step.action.action === 'stop' && step.action.reason, 'escalation-failed');
+      assert.equal(step.episode.terminal, 'escalation-failed');
+      assert.equal(countedAttempts(step.episode).length, 4, 'no fifth attempt');
+    }
+  });
+
+  test('escalation needs the limits: without them the third refuted success with progress is exhausted', () => {
+    let step = afterShipFailure(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1, { progress: true }), 'ship dod-failed: a', JUSTIFIED);
+    step = afterShipFailure(succeed(step.episode, 2, { progress: true }), 'ship dod-failed: b', JUSTIFIED);
+    step = afterShipFailure(succeed(step.episode, 3, { progress: true }), 'ship dod-failed: c', { harderProblem: true, limitsPermit: false });
+    assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
+    assert.equal(step.episode.terminal, 'exhausted');
+  });
+
+  test('a not-counted record after the success never hides it; with no success to refute the attempts stay and a terminal episode stays terminal', () => {
+    let ep = runningAfterBlock(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 2);
+    ep = finishAttempt(ep, { finishedAt: addMs(T0, 150_000), outcome: 'not-counted', notCountedReason: 'quota' });
+    const step = afterShipFailure(ep, 'ship budget-over: 900 lines', JUSTIFIED);
+    assert.deepEqual(step.episode.attempts.map((a) => a.outcome), ['fail', 'not-counted']);
+    assert.equal(step.refuted?.n, 1);
+
+    const failed = fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'type error', false);
+    const none = afterShipFailure(failed, 'ship scope-blocked: src/x.ts', JUSTIFIED);
+    assert.equal(none.refuted, undefined);
+    assert.deepEqual(none.episode.attempts, failed.attempts, 'nothing to refute: the attempts are unchanged');
+    assert.deepEqual(none.action, { action: 'attempt', effort: 'medium', n: 2, escalated: false });
+
+    // Three failures with progress, stopped as exhausted where the limits did not permit the escalation.
+    const stopped: EffortEpisode = { ...fail(fail(fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'a', true), 2, 'b', true), 3, 'c', true), terminal: 'exhausted' };
+    const kept = afterShipFailure(stopped, 'ship dod-failed: d', JUSTIFIED);
+    assert.equal(kept.action.action, 'stop', 'a terminal episode is never reopened by a ship failure');
+    assert.equal(kept.episode.terminal, 'exhausted');
+  });
+
+  test('a repair already running (opened by a review fix) is the next attempt: the ladder decides on the settled attempts and sets its effort', () => {
+    const baseline = afterShipFailure(runningAfterBlock(succeed(createEpisode('t', 'implementer', 'medium', GPT), 1), 2), 'ship dod-failed: a', JUSTIFIED);
+    assert.deepEqual(baseline.action, { action: 'attempt', effort: 'medium', n: 2, escalated: false });
+    assert.deepEqual(baseline.episode.attempts.map((a) => [a.outcome, a.effort]), [['fail', 'medium'], ['running', 'medium']]);
+    assert.equal(baseline.episode.escalationUsed, false);
+
+    for (const progress of [true, false]) {
+      const twice = fail(fail(createEpisode('t', 'implementer', 'medium', GPT), 1, 'a', true), 2, 'b', true);
+      const step = afterShipFailure(runningAfterBlock(succeed(twice, 3, { progress }), 4), 'ship dod-failed: c', JUSTIFIED);
+      if (progress) {
+        assert.deepEqual(step.action, { action: 'attempt', effort: 'high', n: 4, escalated: true });
+        assert.deepEqual(step.episode.attempts.map((a) => [a.outcome, a.effort]), [['fail', 'medium'], ['fail', 'medium'], ['fail', 'medium'], ['running', 'high']], 'the running repair is the escalation');
+        assert.equal(step.episode.escalationUsed, true);
+      } else {
+        assert.equal(step.action.action === 'stop' && step.action.reason, 'exhausted');
+        assert.equal(step.episode.terminal, 'exhausted');
+      }
+    }
   });
 });
