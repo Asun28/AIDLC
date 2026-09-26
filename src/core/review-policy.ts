@@ -10,6 +10,7 @@
  *   own counter is tracked separately and never rewritten.
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
+import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
 import { MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
@@ -30,41 +31,8 @@ export interface ClassifyOptions {
   tier?: 'S' | '1' | '0';
   /** ReviewGate 'required' makes every block merge-blocking. */
   gateRequired?: boolean;
-  /** Reviewer stdout / stderr, used to detect verified quota holds. */
-  rawOutput?: string;
-}
-
-/** A whole word or phrase: no letter or digit directly before or after it, so `Quotation` or `4290` never match (`_` separates). */
-const word = (source: string) => new RegExp(`(?<![a-z0-9])(?:${source})(?![a-z0-9])`, 'i');
-const QUOTA_PATTERNS = [word('rate[- ]?limit(?:s|ed|er|ing)?'), word('quotas?'), word('usage limits?'), word('429s?'), word('retry[- ]after'), word('too many requests'), word('capacity'), word('overloaded')];
-/**
- * The text as words: `_`, a lowercase-to-uppercase change and the last capital of a run before a capitalised word separate
- * words like a space, so provider codes (`RATE_LIMIT_EXCEEDED`, `rateLimitExceeded`, `APIQuotaExceeded`) still match.
- */
-const CAMEL_SPLIT = /([a-z])(?=[A-Z])|([A-Z])(?=[A-Z][a-z])/g;
-const asWords = (text: string) => text.replace(/_/g, ' ').replace(CAMEL_SPLIT, '$1$2 ');
-
-/**
- * The reviewer output a quota hold is read from: a process that exited 0 wrote its answer to stdout, where its reasoning can
- * name a quota word, so only its stderr reports a hold; any other process reports one on either stream.
- */
-export function quotaOutput(receipt: { exitCode: number | null; stdout: string; stderr: string }): string {
-  return receipt.exitCode === 0 ? receipt.stderr : `${receipt.stdout}\n${receipt.stderr}`;
-}
-
-export function detectQuotaHold(text: string | undefined): { hold: boolean; retryAfterMs?: number } {
-  if (!text) return { hold: false };
-  const words = asWords(text);
-  const hold = QUOTA_PATTERNS.some((p) => p.test(words));
-  if (!hold) return { hold: false };
-  const m = text.match(/retry[- ]after[:=\s]+(\d+)\s*(ms|s|sec|seconds|m|min|minutes)?/i);
-  if (m) {
-    const n = Number(m[1]);
-    const unit = (m[2] ?? 's').toLowerCase();
-    const factor = unit.startsWith('ms') ? 1 : unit.startsWith('m') ? 60_000 : 1000;
-    return { hold: true, retryAfterMs: n * factor };
-  }
-  return { hold: true };
+  /** The receipt of the reviewer process, read for a verified quota hold by the stream rule of `quotaOutput`. */
+  receipt?: { exitCode: number | null; stdout: string; stderr: string };
 }
 
 /** Parse a raw verdict document. Returns undefined when it does not satisfy the enforced field. */
@@ -105,20 +73,15 @@ export function parseVerdict(raw: unknown): Verdict | undefined {
 }
 
 export function classifyVerdict(verdict: Verdict | undefined, options: ClassifyOptions = {}): ClassifiedVerdict {
-  const quota = detectQuotaHold(options.rawOutput);
+  const quota = detectQuotaHold(options.receipt && quotaOutput(options.receipt));
+  const held = `via ${quota.via}: ${quota.evidence}`;
   if (!verdict) {
-    if (quota.hold) return { outcome: 'quota-hold', mergeBlocking: false, runStatus: 'tool_error', reasons: ['verified reviewer admission/quota hold'], stale: false };
+    if (quota.hold) return { outcome: 'quota-hold', mergeBlocking: false, runStatus: 'tool_error', reasons: ['verified reviewer admission/quota hold', held], stale: false };
     return { outcome: 'no-verdict', mergeBlocking: false, runStatus: 'malformed', reasons: ['missing or malformed verdict; never pass'], stale: false };
   }
   const stale = Boolean(options.candidateSha && verdict.sha && verdict.sha !== options.candidateSha);
   if (stale) return { outcome: 'no-verdict', mergeBlocking: false, runStatus: verdict.run_status ?? 'no_output', reasons: ['stale verdict sha'], stale: true };
-  if (verdict.run_status && verdict.run_status !== 'success') {
-    if (quota.hold || verdict.run_status === 'timeout') {
-      // A timeout may be a quota-exhausted reviewer; the scaffold cannot tell them apart.
-      return { outcome: quota.hold ? 'quota-hold' : 'no-verdict', mergeBlocking: false, runStatus: verdict.run_status, reasons: verdict.reasons, stale: false };
-    }
-    return { outcome: 'no-verdict', mergeBlocking: false, runStatus: verdict.run_status, reasons: verdict.reasons, stale: false };
-  }
+  if (verdict.run_status && verdict.run_status !== 'success') return { outcome: quota.hold ? 'quota-hold' : 'no-verdict', mergeBlocking: false, runStatus: verdict.run_status, reasons: quota.hold ? [...verdict.reasons, held] : verdict.reasons, stale: false };
   if (verdict.routed_skip) return { outcome: 'routed-skip', mergeBlocking: false, runStatus: 'success', reasons: [verdict.routed_skip.reason], stale: false };
   if (verdict.verdict === 'pass') return { outcome: 'pass', mergeBlocking: false, runStatus: 'success', reasons: [], stale: false };
   const specBlock = verdict.axes?.spec?.verdict === 'block' || (!verdict.axes && verdict.verdict === 'block');

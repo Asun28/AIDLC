@@ -51,7 +51,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
     ...opts.script,
     // A numstat of any range says 0 lines: the effort level must come from the diff the reviewer receives.
     'git diff --numstat': { stdout: '0\t0\tsrc/t0-fb.ts\n' },
-    'git diff --name-only': { stdout: 'src/t0-fb.ts\n' },
+    'git diff --name-only': { stdout: 'src/t0-fb.ts\u0000' },
     'git diff': { stdout: opts.diff ?? 'diff --git a/src/t0-fb.ts b/src/t0-fb.ts\n+export const fb = 1;\n' },
     'fake-r2': () => ({ stdout: PASS }),
     'fake-p': (args) => {

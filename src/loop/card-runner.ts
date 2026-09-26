@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, quotaOutput, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -1230,9 +1230,10 @@ export class CardRunner {
   }
 
   /**
-   * The review pool a formal reviewer queues in: the goal's pool, or with a fallback configured one pool per reviewer
-   * (`<pool>/<reviewer>`), since a quota hold resets the whole pool it lands in and the two reviewers hold separate quotas;
-   * the ship's own admission stays in the goal's pool either way.
+   * The review pool a formal reviewer queues in. The base-sync reviewer always queues in its own pool, `<pool>/<reviewer>`,
+   * since its quota is its own. The primary and the fallback queue in the goal's pool, or with a fallback configured in one
+   * pool each (`<pool>/<reviewer>`), since a quota hold resets the whole pool it lands in and the two reviewers hold
+   * separate quotas. The ship's own admission stays in the goal's pool either way.
    */
   private formalPool(goal: Goal, cfg: FormalReviewer): string {
     // The base-sync reviewer always queues in its own pool (its quota is its own); the primary moves only with a fallback,
@@ -1291,7 +1292,10 @@ export class CardRunner {
     return [...invocations].reverse().find((i) => names.has(i.reviewer) && i.candidateDigest === candidateDigest);
   }
 
-  /** The settings of the formal reviewer an invocation names: the configured fallback under its own name, else the primary. */
+  /**
+   * The settings of the formal reviewer an invocation names, looked up by the name it records: the base-sync reviewer under
+   * its own name, else the configured fallback under its own name, else the primary.
+   */
   private formalReviewerFor(name: string | undefined): FormalReviewer {
     const primary = this.config.formalReview;
     if (primary.baseSync && name === primary.baseSync.reviewer) return primary.baseSync;
@@ -2150,7 +2154,7 @@ export class CardRunner {
     const stripped = verdictInfo.verdict ? stripAdvisoryTags(verdictInfo.verdict) : undefined;
     const shipVerdict = stripped?.verdict;
     const shipAdvisory = stripped?.advisory ?? [];
-    const classified = classifyVerdict(shipVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired, rawOutput: quotaOutput(result.receipt) });
+    const classified = classifyVerdict(shipVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired, receipt: result.receipt });
     const invocationId = `ship:${operationId}`;
     let review = run.review;
     let reviewDecision: ReturnType<typeof recordReviewOutcome>['decision'] | undefined;

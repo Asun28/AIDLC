@@ -27,10 +27,11 @@ allow_paths:
   - tests/surface/templates.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
+  - docs/REQUIREMENTS-TRACEABILITY.md
   - README.md
   - CHANGELOG.md
   - specs/tasks/T1-STORE-CAS.md
-dod_command: npm run check
+dod_command: npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
 dod_exit: 0
 requirements:
   - R1. `src/state/store.ts` shall provide one primitive, `updateJson`, that hands a change function the stored record under an exclusive-create lock and writes nothing when the function returns the record unchanged or throws.
@@ -47,12 +48,12 @@ acceptance:
   - 6. Two completions of one takeover generation journal exactly one `LEASE_ACQUIRED` (tests/scenarios/two-windows.test.ts). [R2] [dod arm 1]
   - 7. Every existing lease test passes with its assertions unchanged: claim statuses, generation advance and `FencedError` messages (tests/infra/lease.test.ts). [R4] [dod arm 1]
   - 8. The Sessions section of `docs/OPERATIONS.md` and the README Multi-session paragraph are shorter in bytes than on the base, contain neither `compare-and-set` nor `four windows`, and state in one sentence each what the lock covers and what stays unfenced (`recordAttempt`, a raw `card report` patch, goal, release and review-pool records, a crash between the lease write and the run update); a test reads each sentence and compares the byte counts with the base recorded in the test (tests/surface/prose.test.ts). [R5] [dod arm 1]
-  - 9. `git diff --numstat origin/main...HEAD -- src` sums to fewer added than deleted lines; the close-out states the delta and the Sessions byte counts before and after. [R5]
+  - 9. `git diff --numstat origin/main...HEAD -- src` sums to fewer added than deleted lines and the Sessions section of the committed `docs/OPERATIONS.md` is shorter in bytes than on `origin/main`: the second arm of the DoD prints both measures and exits 1 otherwise; the close-out states them. [R5] [dod arm 2]
   - 10. `CHANGELOG.md` Unreleased carries the entry under this card id; `docs/ARCHITECTURE.md` keeps the phrase `written under \`<file>.lock\`` that templates.test.ts reads; a test reads the entry (tests/surface/prose.test.ts). [R1] [dod arm 1]
 depends_on: [T1-PARSE-GUARD]
-budget: 800
+budget: 1300
 tdd: true
-sweep: "Survey of main at 5983a1e. Temp file + rename store.ts:45-81; interrupted-write cleanup store.ts:105-124 and goal-store.ts:175-185; createExclusive store.ts:126-147; the card-run lock (timeout loop, sleepSync, owner check on write and release, .takeover marker, pid liveness) goal-store.ts:11-32, 84-149, 188-227, about 110 lines; revision compare-and-set goal-store.ts:63-78; mergeFindings review-policy.ts:472-485 (dead under the revision check); lease claim, takeover, heartbeat, release lease.ts:56-128 (read then blind write, wx only on first acquire 70-74), fence lease.ts:131-137; takeover workarounds card-runner.ts:154-160, 674-680, 689-737, 710-715, 728-732; fences inside the run lock card-runner.ts:1452-1461, 1885-1904, 1983-1993; ship fence outside any lock card-runner.ts:905-919; journal append journal.ts:127-145 (no lock); op records reconcile.ts:109-114. Interleaving tests that model windows the lock removes: two-windows.test.ts:587 and :731. Estimated src net about -45."
+sweep: "Survey of main at 5983a1e. Temp file + rename store.ts:45-81; interrupted-write cleanup store.ts:105-124 and goal-store.ts:175-185; createExclusive store.ts:126-147; the card-run lock (timeout loop, sleepSync, owner check on write and release, .takeover marker, pid liveness) goal-store.ts:11-32, 84-149, 188-227, about 110 lines; revision compare-and-set goal-store.ts:63-78; mergeFindings review-policy.ts:472-485 (dead under the revision check); lease claim, takeover, heartbeat, release lease.ts:56-128 (read then blind write, wx only on first acquire 70-74), fence lease.ts:131-137; takeover workarounds card-runner.ts:154-160, 674-680, 689-737, 710-715, 728-732; fences inside the run lock card-runner.ts:1452-1461, 1885-1904, 1983-1993; ship fence outside any lock card-runner.ts:905-919; journal append journal.ts:127-145 (no lock); op records reconcile.ts:109-114. Interleaving tests that model windows the lock removes: two-windows.test.ts:587 and :731. Estimated src net about -45. docs/REQUIREMENTS-TRACEABILITY.md:34 (MS2 row) says the takeover is implemented to the store's limits with no compare-and-set (found at attempt 1)."
 forbid: [git update-ref or any git object as state, SQLite, a new store or state directory, a lease or fencing behaviour change seen by callers, a new Node file lock over a file whose writer a lease already fences (docs/LESSONS.md 2026-09-14 T1-LOOP-LESSONS), shipping a candidate whose src/ net is 0 or above]
 non_goals: [fencing recordAttempt or card report, locking goal, release or review-pool records, locking across hosts, deleting staleLedger (its entry naming in CARD_RUN_STALE is a feature)]
 hygiene: "Lesson 2026-09-15 T0-CARD-TAKEOVER-2: state every remaining window and its recovery in the first candidate, never one window per review round. Lock order is run, then lease; no run lock is taken inside a lease section. On Windows an exclusive create can fail with EPERM while a lock is being deleted; treat it as busy."
@@ -66,7 +67,7 @@ doc_sync: docs/OPERATIONS.md (Sessions), README.md (Multi-session), docs/ARCHITE
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run check
+npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
 ```
 - Expected exit code: 0
-- Assertion: the typecheck is clean and every test passes, with the pass count in the receipt.
+- Assertion: the typecheck is clean and every test passes, with the pass count in the receipt; the second arm prints the src net and the Sessions byte counts and exits 0 only when both shrank.

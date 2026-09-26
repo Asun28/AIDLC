@@ -175,7 +175,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('doctor')
     .description('check toolchain, configuration, state directory and providers')
     .action(async () => {
-      const c = ctx(g());
+      let c: Ctx;
+      try { c = ctx(g()); } catch (err) { return fail(`config: ERROR ${(err as Error).message}`); }
       // Toolchain probes run concurrently: doctor is the entry check of every route and wakeup.
       const probe = (cmd: string, args: string[]) =>
         new Promise<string | undefined>((resolve) => {

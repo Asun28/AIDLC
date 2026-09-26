@@ -3,6 +3,7 @@
  * playbook uses in CI ("Continuous evals", "CI/CD integration"). Tools are restricted with
  * `--allowedTools`; execution stays inside the caller's sandbox and permissions.
  */
+import { detectQuotaHold } from '../core/parse-guard.ts';
 import { run, type Runner } from '../probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider } from './types.ts';
 import { extractJson, newInvocationId } from './types.ts';
@@ -49,9 +50,11 @@ export class ClaudeCodeProvider implements ModelProvider {
       payload = undefined;
     }
     const text = typeof payload?.['result'] === 'string' ? (payload['result'] as string) : r.stdout;
-    if (r.exitCode !== 0) {
-      const quota = /rate.?limit|usage limit|429|quota/i.test(r.stderr + r.stdout);
-      return { invocationId, provider: this.name, model: model ?? 'claude', text, outcome: quota ? 'quota' : 'error', error: r.stderr.trim() || `exit ${r.exitCode}`, durationMs };
+    // An `is_error` payload is a failed run whatever the exit code; its `api_error_status` decides a quota hold before any text.
+    if (r.exitCode !== 0 || payload?.['is_error'] === true) {
+      const status = payload?.['is_error'] === true && typeof payload['api_error_status'] === 'number' ? payload['api_error_status'] : undefined;
+      const quota = detectQuotaHold(`${r.stdout}\n${r.stderr}`, status).hold;
+      return { invocationId, provider: this.name, model: model ?? 'claude', text, outcome: quota ? 'quota' : 'error', error: r.stderr.trim() || (r.exitCode === 0 ? `is_error: ${text}` : `exit ${r.exitCode}`), durationMs };
     }
     const usage = payload && typeof payload['usage'] === 'object' && payload['usage'] ? (payload['usage'] as Record<string, number>) : undefined;
     return {

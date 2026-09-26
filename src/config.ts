@@ -7,13 +7,15 @@ import path from 'node:path';
 import { z } from 'zod';
 import { ReviewEffortPolicy } from './core/types.ts';
 
+const nonBlank = z.string().regex(/\S/, 'must not be blank');
+
 /** Pre-review (R2): a second-model review before the ship. An empty command disables the stage. */
 export const PreReviewConfig = z.object({
   /** argv of the reviewer; the prompt arrives on stdin and the verdict JSON must be the last stdout line. */
-  command: z.array(z.string()).default([]),
-  reviewer: z.string().default('deepseek-v4-pro'),
+  command: z.array(nonBlank).default([]),
+  reviewer: nonBlank.default('deepseek-v4-pro'),
   /** Concurrent angles per round (bugs, security, compliance); empty = one full pass. */
-  perspectives: z.array(z.string()).default([]),
+  perspectives: z.array(nonBlank).default([]),
   /** Blocks allowed per R3 cycle before onExhausted applies. */
   rounds: z.number().int().min(1).max(3).default(2),
   /** Acceptance coverage from the `ac-coverage` angle: `off` asks for nothing; `shadow` asks for one entry per acceptance item and records the join without changing any outcome. */
@@ -24,7 +26,7 @@ export const PreReviewConfig = z.object({
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),
   /** The stdout line after which a reviewer's answer starts (its reasoning comes before it); empty reads the whole stdout. */
-  answerMarker: z.string().default(''),
+  answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 
@@ -35,8 +37,8 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
  * verdict comes from the ship path (scaffold ReviewGate) or nowhere.
  */
 const FormalReviewerConfig = z.object({
-  command: z.array(z.string()).default([]),
-  reviewer: z.string().default('codex'),
+  command: z.array(nonBlank).default([]),
+  reviewer: nonBlank.default('codex'),
   timeoutMs: z.number().int().positive().default(20 * 60 * 1000),
   shell: z.boolean().optional(),
   maxDiffBytes: z.number().int().positive().default(300_000),
@@ -48,7 +50,7 @@ const FormalReviewerConfig = z.object({
  * argument may be empty: a reviewer runs through a shell on Windows, which drops an empty argument (write `--flag=`).
  */
 export const FormalReviewFallback = FormalReviewerConfig.extend({
-  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.fallback.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => /\S/.test(a)), 'formalReview.fallback.command must not carry an empty or blank argument: the Windows shell drops it (write --flag= instead)'),
   reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.fallback.reviewer must name the reviewer'),
 });
 /**
@@ -56,7 +58,7 @@ export const FormalReviewFallback = FormalReviewerConfig.extend({
  * base-sync conflict gets once both decisions are used. Its effort policy defaults to `medium`; no argument may be empty.
  */
 export const FormalReviewBaseSync = FormalReviewerConfig.extend({
-  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => a.length > 0), 'formalReview.baseSync.command must not carry an empty argument: the Windows shell drops it (write --flag= instead)'),
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => /\S/.test(a)), 'formalReview.baseSync.command must not carry an empty or blank argument: the Windows shell drops it (write --flag= instead)'),
   reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.baseSync.reviewer must name the reviewer'),
   effort: ReviewEffortPolicy.default({ default: 'medium' }),
 });
@@ -66,7 +68,7 @@ export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 /** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */
 export const GitHubShipConfig = z.object({
   /** Check-run names that must be present and conclude success before the merge; an absent name is pending, never satisfied, and skipped or neutral never satisfies a required name. Every other check that reports on the head must succeed as well. */
-  requiredChecks: z.array(z.string()).default([]),
+  requiredChecks: z.array(nonBlank).default([]),
   /** A fresh candidate-bound R3 verdict is required before any remote effect. False (only without gateRequired) tolerates a missing or stale verdict; a block verdict for the head always fails the ship. */
   requireVerdict: z.boolean().default(true),
   /** Defaults in the ship path: 30 minutes, polled every 20 seconds. */
@@ -76,35 +78,35 @@ export const GitHubShipConfig = z.object({
 export type GitHubShipConfig = z.infer<typeof GitHubShipConfig>;
 export const ProjectConfig = z.object({
   schemaVersion: z.literal(1).default(1),
-  cardsDir: z.string().default('specs/tasks'),
-  archiveDir: z.string().default('specs/archive/tasks'),
-  intentDir: z.string().default('intent'),
-  specsDir: z.string().default('specs'),
-  plansDir: z.string().default('plans'),
-  evalsDir: z.string().default('evals'),
-  worktreeRoot: z.string().default(''),
-  base: z.string().default('main'),
+  cardsDir: nonBlank.default('specs/tasks'),
+  archiveDir: nonBlank.default('specs/archive/tasks'),
+  intentDir: nonBlank.default('intent'),
+  specsDir: nonBlank.default('specs'),
+  plansDir: nonBlank.default('plans'),
+  evalsDir: nonBlank.default('evals'),
+  worktreeRoot: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
+  base: nonBlank.default('main'),
   mode: z.enum(['local', 'remote']).default('remote'),
   shipPath: z.enum(['scaffold', 'github', 'dry-run']).default('dry-run'),
-  reviewPool: z.string().default('default'),
-  reviewPolicyVersion: z.string().default('review-v1'),
-  reviewer: z.string().default('codex-review'),
+  reviewPool: nonBlank.default('default'),
+  reviewPolicyVersion: nonBlank.default('review-v1'),
+  reviewer: nonBlank.default('codex-review'),
   gateRequired: z.boolean().default(false),
   /** 'strict' = upstream scaffold rules (acceptance and sweep block); 'advisory' = downstream contract (they warn). */
   cardPolicy: z.enum(['strict', 'advisory']).default('strict'),
   maxWorkers: z.number().int().min(1).max(2).default(2),
   family: z.enum(['claude', 'gpt']).default('claude'),
   provider: z.enum(['claude-api', 'claude-code', 'mock']).default('claude-api'),
-  repository: z.string().optional(),
+  repository: nonBlank.optional(),
   userLimitMs: z.number().int().positive().optional(),
   hooks: z
     .object({
-      frozenPaths: z.array(z.string()).default([]),
-      testPathPatterns: z.array(z.string()).optional(),
-      productionPatterns: z.array(z.string()).optional(),
+      frozenPaths: z.array(nonBlank).default([]),
+      testPathPatterns: z.array(nonBlank).optional(),
+      productionPatterns: z.array(nonBlank).optional(),
     })
     .default({ frozenPaths: [] }),
-  tierPaths: z.object({ tierS: z.array(z.string()).default([]), tier0: z.array(z.string()).default([]), frozen: z.array(z.string()).default([]) }).default({ tierS: [], tier0: [], frozen: [] }),
+  tierPaths: z.object({ tierS: z.array(nonBlank).default([]), tier0: z.array(nonBlank).default([]), frozen: z.array(nonBlank).default([]) }).default({ tierS: [], tier0: [], frozen: [] }),
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
@@ -138,8 +140,9 @@ export const CONFIG_FILE = 'aidlc.config.json';
 export function loadProjectConfig(root: string): { config: ProjectConfig; file: string; found: boolean } {
   const file = path.join(root, CONFIG_FILE);
   if (!existsSync(file)) return { config: ProjectConfig.parse({}), file, found: false };
-  const parsed = ProjectConfig.parse(JSON.parse(readFileSync(file, 'utf8')));
-  return { config: parsed, file, found: true };
+  const parsed = ProjectConfig.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+  if (!parsed.success) throw new Error(`${CONFIG_FILE}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  return { config: parsed.data, file, found: true };
 }
 
 /**

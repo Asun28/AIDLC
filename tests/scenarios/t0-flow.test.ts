@@ -16,7 +16,8 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import * as cli from '../../src/cli/main.ts';
 import { countedFailures, reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
-import { acceptFinding, detectQuotaHold, reviewRequestKey } from '../../src/core/review-policy.ts';
+import { detectQuotaHold } from '../../src/core/parse-guard.ts';
+import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';
 import { RECONCILE_GRACE_MS } from '../../src/core/types.ts';
 import { resolveWorktreeRoot } from '../../src/config.ts';
 
@@ -266,7 +267,7 @@ test('pre-review gate: a block returns to BUILD as a counted repair, a pass open
   try {
     const verdicts: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-gate.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-gate.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
       'fake-reviewer': () => {
         const out = verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n';
@@ -391,7 +392,7 @@ test('formal review (R3) command: R2 pass first, then a review directive; a bloc
     const r3: string[] = [];
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-r3.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-r3.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-r3.ts b/src/t1-r3.ts\n+export const r3 = 1;\n' },
       'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
       'fake-r3': () => {
@@ -480,7 +481,7 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     let r3Calls = 0;
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-guard.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-guard.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-guard.ts b/src/t1-guard.ts\n+export const guard = 1;\n' },
       'fake-r2': { stdout: PASS },
       'fake-r3': () => {
@@ -528,7 +529,7 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     const busy = fx.store.saveCardRun(CardRun.parse({ ...r.run, state: 'BUILD', mergeVerified: false, candidate: { sha: 'sha-1b', dirty: false, untracked: [], digest: 'sha-1b' }, dodReceipt: 'dod:1b', updatedAt: fx.now() }));
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, busy), /pool/);
     fx.queue.complete(occupant.request.key, 'other-verdict', fx.now());
-    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git status': { stdout: '' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
+    const gitRunner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, isGit: true }, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git rev-parse': { stdout: 'elsewhere\n' }, 'git status': { stdout: '' }, 'git diff --name-only': { stdout: 'src/t1-guard.ts\u0000' }, 'git diff': { stdout: 'diff\n' }, 'fake-r3': () => { r3Calls += 1; return { stdout: PASS }; } }) });
     await assert.rejects(() => gitRunner.formalReview(fx.goal(goal.id), card, busy), /pinned candidate/);
     assert.equal(r3Calls, spawnsBefore, 'neither guard dispatched the reviewer');
 
@@ -596,7 +597,7 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     let stopDuringReview: CardRun | undefined;
     const r3Out: string[] = ['{"verdict":"pass","reasons":[],"branch":"OTHER","axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n'];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-panel.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-panel.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-panel.ts b/src/t1-panel.ts\n+export const panel = 1;\n' },
       'fake-r2 --focus security': () => ({ stdout: securityBlocks ? '{"verdict":"block","reasons":["[spec] 2 boundary @ src/t1-panel.ts:1: token logged -> redact"],"axes":{"spec":{"verdict":"block","reasons":["token"]},"standards":{"verdict":"pass","reasons":[]}}}\n' : PASS }),
       'fake-r2': { stdout: PASS },
@@ -670,7 +671,7 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     assert.ok(!f.run.review.invocations.some((i) => i.outcome === 'pending'));
     // The scope gate blocks an R2 round and refuses an R3 dispatch with no reviewer process at all.
     let spawns = 0;
-    const scoped = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-panel.ts\nsrc/outside.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } }) });
+    const scoped = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-panel.ts\u0000src/outside.ts\u0000' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } }) });
     const outside = rewindCardRun(fx, { ...stopDuringReview, state: 'BUILD', stop: undefined, candidate: { sha: 'sha-4', dirty: false, untracked: [], digest: 'sha-4' }, dodReceipt: 'dod:4' });
     const gated = await scoped.preReview(fx.goal(goal.id), card, outside);
     assert.equal(gated.result.outcome, 'block');
@@ -1081,7 +1082,7 @@ test('R11: an R3 command block on the escalated success reopens the episode and 
   try {
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-up.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
-    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-up.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-up.ts b/src/t1-up.ts\n+export const up = 1;\n' }, 'fake-r2': { stdout: PASS }, 'fake-r3': { stdout: BLOCK } });
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-up.ts\u0000' }, 'git diff': { stdout: 'diff --git a/src/t1-up.ts b/src/t1-up.ts\n+export const up = 1;\n' }, 'fake-r2': { stdout: PASS }, 'fake-r3': { stdout: BLOCK } });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     writeCard(fx, { id: 'T1-UP', title: 'escalated success blocked by the R3 command' });
     const goal = fx.controller.createGoal({ text: 'implement T1-UP', source: 'card', ref: 'T1-UP', affectedSurfaces: [] }, { cards: ['T1-UP'] });
@@ -1130,7 +1131,7 @@ test('T1-REVIEW-FINDINGS: an R2 block records findings, the unchanged candidate 
     const verdicts: string[] = [];
     const prompts: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-find.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-find.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-find.ts b/src/t1-find.ts\n+export const find = 1;\n' },
       'fake-r2': (args) => {
         prompts.push(args[0] ?? '');
@@ -1272,7 +1273,7 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     const prompts: string[] = [];
     let r2Runs = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-fr3.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-fr3.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-fr3.ts b/src/t1-fr3.ts\n+export const fr3 = 1;\n' },
       'fake-r2': () => {
         r2Runs += 1;
@@ -1348,7 +1349,7 @@ test('T1-REVIEW-FINDINGS: accept withdraws a dispute, the finding stays open and
   try {
     const verdicts: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-acc.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-acc.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-acc.ts b/src/t1-acc.ts\n+export const acc = 1;\n' },
       'fake-r2': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
     });
@@ -1388,7 +1389,7 @@ test('T1-REVIEW-FINDINGS: a routed skip is not a decision on the findings: an op
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const r3: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-skip.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-skip.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-skip.ts b/src/t1-skip.ts\n+export const skip = 1;\n' },
       'fake-r2': () => ({ stdout: PASS }),
       'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
@@ -1429,7 +1430,7 @@ test('T1-REVIEW-FINDINGS acceptance 5: a finding that reached two non-acceptance
     const r2: string[] = [];
     const r3: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-dl.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-dl.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-dl.ts b/src/t1-dl.ts\n+export const dl = 1;\n' },
       'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
       'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
@@ -1486,7 +1487,7 @@ test('T1-REVIEW-FINDINGS-2: review r3 on exhausted R2 rounds journals the residu
     const r2: string[] = [];
     const r3: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-ho.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-ho.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-ho.ts b/src/t1-ho.ts\n+export const ho = 1;\n' },
       'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
       'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
@@ -1551,7 +1552,7 @@ test('T1-REVIEW-FINDINGS-2 acceptance 4: the DoD receipt restored for a disputed
   try {
     const verdicts: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-drop.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-drop.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-drop.ts b/src/t1-drop.ts\n+export const drop = 1;\n' },
       'fake-r2': () => ({ stdout: verdicts.shift() ?? '{"verdict":"pass","reasons":[]}\n' }),
     });
@@ -1589,7 +1590,7 @@ test('T1-REVIEW-FINDINGS-2 acceptance 7: a write computed from a stale read neve
   const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-stale.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-stale.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-stale.ts b/src/t1-stale.ts\n+export const stale = 1;\n' },
       'fake-r2': () => ({ stdout: '{"verdict":"pass","reasons":[]}\n' }),
     });
@@ -1648,7 +1649,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: a single-angle panel names its angle o
   const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false, perspectives: ['edge-cases'] } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-ax.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-ax.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-ax.ts b/src/t1-ax.ts\n+export const ax = 1;\n' },
       'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ax.ts:1: no RED -> add one"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ax.ts:1: no RED -> add one"]},"standards":{"verdict":"block","reasons":["[standards] 9 error handling @ src/t1-ax.ts:9: swallowed -> rethrow"]}}}\n' }),
     });
@@ -1670,7 +1671,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: the review checkout is probed for unco
     const script = scriptedRunner({
       'git rev-parse': { stdout: 'sha-1\n' },
       'git status': () => ({ stdout: status }),
-      'git diff --name-only': { stdout: 'src/t1-wt.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-wt.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-wt.ts b/src/t1-wt.ts\n+export const wt = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -1705,7 +1706,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: R2 and R3 re-check the same-candidate 
     const r3: string[] = [];
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-rc.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-rc.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-rc.ts b/src/t1-rc.ts\n+export const rc = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: r2.shift() ?? R2_PASS }; },
       'fake-r3': () => { dispatched += 1; return { stdout: r3.shift() ?? R3_PASS }; },
@@ -1763,7 +1764,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: a failed attempt drops the retained re
     const verdicts: string[] = [];
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-fs.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-fs.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-fs.ts b/src/t1-fs.ts\n+export const fs = 1;\n' },
       'fake-r2': () => { onDispatch?.(); return { stdout: verdicts.shift() ?? R2_PASS }; },
     });
@@ -1812,7 +1813,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: a result for a superseded candidate is
     const verdicts: string[] = [];
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-sup.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-sup.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-sup.ts b/src/t1-sup.ts\n+export const sup = 1;\n' },
       'fake-r2': () => { onDispatch?.(); return { stdout: verdicts.shift() ?? R2_PASS }; },
     });
@@ -1863,7 +1864,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: the gate abandons a round only when it
   const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-gate.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-gate.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-gate.ts b/src/t1-gate.ts\n+export const gate = 1;\n' },
       'fake-r2': () => ({ stdout: r2Block('src/t1-gate.ts') }),
     });
@@ -1891,7 +1892,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: the R3 counters and the action are com
   try {
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-cc.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-cc.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-cc.ts b/src/t1-cc.ts\n+export const cc = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { onDispatch?.(); return { stdout: r3Block('src/t1-cc.ts') }; },
@@ -2065,7 +2066,7 @@ test('T1-REVIEW-FINDINGS-2 R2 cycle 1 round 2: a candidate recorded between the 
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-mv.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-mv.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-mv.ts b/src/t1-mv.ts\n+export const mv = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -2115,7 +2116,7 @@ test('T1-REVIEW-FINDINGS-3 acceptance 11: one pre-review round and one formal re
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-one.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-one.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-one.ts b/src/t1-one.ts\n+export const one = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -2161,7 +2162,7 @@ test('T1-REVIEW-FINDINGS-3 acceptance 12: a failed attempt clears the active rec
     const script = scriptedRunner({
       'git rev-parse': { stdout: 'sha-1\n' },
       'git status': () => ({ stdout: statuses.shift() ?? '' }),
-      'git diff --name-only': { stdout: 'src/t1-tw.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-tw.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-tw.ts b/src/t1-tw.ts\n+export const tw = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: r2.shift() ?? R2_PASS }; },
       'fake-r3': () => {
@@ -2225,7 +2226,7 @@ test('T1-REVIEW-FINDINGS-3 R3 decision 1: a stop persisted before the gate reloa
   const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'ship', shell: false } } });
   try {
     const ship = new DryRunShipPath(['merged']);
-    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-rv.ts\n' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': { stdout: R2_PASS } }) });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-rv.ts\u0000' }, 'git diff': { stdout: 'diff\n' }, 'fake-r2': { stdout: R2_PASS } }) });
     const s = cardAtShip(fx, runner, 'T1-RV');
     const { card, g, goal } = s;
     // A round reserved by another window expires; this window still holds the snapshot with the reservation and no stop.
@@ -2250,7 +2251,7 @@ test('T1-REVIEW-FINDINGS-3 R3 decision 1: a formal result whose commit lost the 
     let dispatched = 0;
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-lk.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-lk.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-lk.ts b/src/t1-lk.ts\n+export const lk = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: r3Block('src/t1-lk.ts') }; },
@@ -2291,7 +2292,7 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 1: a formal dispatch that fails neve
     let dispatched = 0;
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-th.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-th.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-th.ts b/src/t1-th.ts\n+export const th = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { dispatched += 1; onDispatch?.(); return { stdout: R3_PASS }; },
@@ -2356,7 +2357,7 @@ test('T1-REVIEW-FINDINGS-3 R2 cycle 1 round 2: a retained formal result is commi
     let onDispatch: (() => void) | undefined;
     const r3: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-rt.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-rt.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-rt.ts b/src/t1-rt.ts\n+export const rt = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => {
@@ -2423,7 +2424,7 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a formal result is recovered only from
     let onDispatch: (() => void) | undefined;
     const r3: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-env.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-env.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-env.ts b/src/t1-env.ts\n+export const env = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => {
@@ -2524,7 +2525,7 @@ test('T1-REVIEW-FINDINGS-4 acceptance 15: a second completion of an already-deci
   try {
     let onDispatch: (() => void) | undefined;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-dbl.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-dbl.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-dbl.ts b/src/t1-dbl.ts\n+export const dbl = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { onDispatch?.(); return { stdout: r3Block('src/t1-dbl.ts') }; },
@@ -2576,7 +2577,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: an envelope is recovered only when com
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-env2.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-env2.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-env2.ts b/src/t1-env2.ts\n+export const env2 = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -2640,7 +2641,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the gate re-validates after the hand-o
   try {
     const r2: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-ho2.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-ho2.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-ho2.ts b/src/t1-ho2.ts\n+export const ho2 = 1;\n' },
       'fake-r2': () => ({ stdout: r2.shift() ?? R2_PASS }),
       'fake-r3': () => ({ stdout: R3_PASS }),
@@ -2734,7 +2735,7 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 1: the envelope carries the verdict 
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-env3.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-env3.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-env3.ts b/src/t1-env3.ts\n+export const env3 = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -2803,7 +2804,7 @@ test('T1-REVIEW-FINDINGS-4 R2 cycle 1 round 2: a failed dispatch always releases
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-fd.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-fd.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-fd.ts b/src/t1-fd.ts\n+export const fd = 1;\n' },
       'fake-r2': () => { dispatched += 1; return { stdout: R2_PASS }; },
       'fake-r3': () => { dispatched += 1; return { stdout: R3_PASS }; },
@@ -2867,7 +2868,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 4): the locked re-read before 
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-cy.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-cy.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-cy.ts b/src/t1-cy.ts\n+export const cy = 1;\n' },
       'fake-r2': () => ({ stdout: r2Block('src/t1-cy.ts') }),
       'fake-r3': () => ({ stdout: R3_PASS }),
@@ -2918,7 +2919,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 5): a release computed from a 
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-rl.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-rl.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-rl.ts b/src/t1-rl.ts\n+export const rl = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => ({ stdout: R3_PASS }),
@@ -2981,7 +2982,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 11): an advisory block is a pu
   try {
     const reason = '[standards] 9 error handling @ src/t1-adv3.ts:1: swallowed error -> rethrow';
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-adv3.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-adv3.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-adv3.ts b/src/t1-adv3.ts\n+export const adv3 = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => ({ stdout: `${JSON.stringify({ verdict: 'block', reasons: [reason], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [reason] } } })}\n` }),
@@ -3030,7 +3031,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (findings 6, 12, 13, 14): a retained re
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-rec.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-rec.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-rec.ts b/src/t1-rec.ts\n+export const rec = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => {
@@ -3123,7 +3124,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 15): a dispatch that fails bef
   try {
     let dispatched = 0;
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-pc.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-pc.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-pc.ts b/src/t1-pc.ts\n+export const pc = 1;\n' },
       'fake-r2': () => ({ stdout: R2_PASS }),
       'fake-r3': () => {
@@ -3180,7 +3181,7 @@ test('T1-REVIEW-INPUTS acceptance 1: a committed diff above the stage cap is ref
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     let spawns = 0;
     const big = 'diff --git a/src/t1-cap.ts b/src/t1-cap.ts\n' + '+export const cap = 1;\n'.repeat(4);
-    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-cap.ts\n' }, 'git diff': { stdout: big }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } });
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-cap.ts\u0000' }, 'git diff': { stdout: big }, 'fake-r2': () => { spawns += 1; return { stdout: PASS }; }, 'fake-r3': () => { spawns += 1; return { stdout: PASS }; } });
     const mk = (pre: number, formal: number) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, preReview: { ...fx.config.preReview, maxDiffBytes: pre }, formalReview: { ...fx.config.formalReview, maxDiffBytes: formal } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     writeCard(fx, { id: 'T1-CAP', title: 'diff cap' });
     const goal = fx.controller.createGoal({ text: 'implement T1-CAP', source: 'card', ref: 'T1-CAP', affectedSurfaces: [] }, { cards: ['T1-CAP'] });
@@ -3233,11 +3234,11 @@ test('T1-REVIEW-INPUTS acceptance 2-4: every round and decision records the poli
     const prompts: Array<{ stage: string; text: string }> = [];
     const script = scriptedRunner({
       // The delta since the last reviewed candidate is its own range; the generic keys below serve the full diff against the base.
-      'git diff --name-only -z sha-1...HEAD': { stdout: 'src/t1-in2.ts\n' },
+      'git diff --name-only -z sha-1...HEAD': { stdout: 'src/t1-in2.ts\u0000' },
       'git diff --text sha-1...HEAD': { stdout: 'diff --git a/src/t1-in2.ts b/src/t1-in2.ts\n+export const in2 = 1;\n' },
-      'git diff --name-only -z sha-2...HEAD': { stdout: 'src/t1-in.ts\n' },
+      'git diff --name-only -z sha-2...HEAD': { stdout: 'src/t1-in.ts\u0000' },
       'git diff --text sha-2...HEAD': { stdout: 'diff --git a/src/t1-in.ts b/src/t1-in.ts\n+export const fix = 1;\n' },
-      'git diff --name-only': { stdout: 'src/t1-in.ts\nsrc/t1-in2.ts\nREVIEW.md\n' },
+      'git diff --name-only': { stdout: 'src/t1-in.ts\u0000src/t1-in2.ts\u0000REVIEW.md\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-in.ts b/src/t1-in.ts\n+export const in1 = 1;\n' },
       'fake-r2': (args) => {
         prompts.push({ stage: 'pre', text: args[0] ?? '' });
@@ -3339,7 +3340,7 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F5, F6): review r3 checks the diff cap bef
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const big = 'diff --git a/src/t1-ho2.ts b/src/t1-ho2.ts\n' + '+export const ho2 = 1;\n'.repeat(4);
-    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-ho2.ts\n' }, 'git diff': { stdout: big }, 'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho2.ts:1: no RED -> add one"]}\n' }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-ho2.ts\u0000' }, 'git diff': { stdout: big }, 'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho2.ts:1: no RED -> add one"]}\n' }), 'fake-r3': () => ({ stdout: R3_PASS }) });
     const mk = (formal: number) => new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, formalReview: { ...fx.config.formalReview, maxDiffBytes: formal } }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const narrow = mk(40);
     const s = cardAtShip(fx, narrow, 'T1-HO2');
@@ -3397,7 +3398,7 @@ test('T1-REVIEW-INPUTS R3 decision 1 (F6, F7): a ship-path decision records the 
 test('T1-REVIEW-INPUTS R3 decision 1 (F9): a result envelope whose policy hash contradicts the reservation is not that reservation\'s; an envelope naming none recovers under the reserved hash', async () => {
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
-    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-env3.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-env3.ts b/src/t1-env3.ts\n+export const env3 = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-env3.ts\u0000' }, 'git diff': { stdout: 'diff --git a/src/t1-env3.ts b/src/t1-env3.ts\n+export const env3 = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
     const s = cardAtShip(fx, runner, 'T1-ENV3');
     const { card, g, goal } = s;
@@ -3426,9 +3427,9 @@ test('T1-REVIEW-INPUTS R3 decision 2 (F5 re-raised): the hand-off is recorded on
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'ship', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false, maxDiffBytes: 100 } } });
   try {
     const script = scriptedRunner({
-      'git diff --name-only -z sha-0...HEAD': { stdout: 'src/t1-ho3.ts\n' },
+      'git diff --name-only -z sha-0...HEAD': { stdout: 'src/t1-ho3.ts\u0000' },
       'git diff --text sha-0...HEAD': { stdout: 'diff --git a/src/t1-ho3.ts b/src/t1-ho3.ts\n' + '+export const ho3 = 1;\n'.repeat(4) },
-      'git diff --name-only': { stdout: 'src/t1-ho3.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-ho3.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-ho3.ts b/src/t1-ho3.ts\n+export const ho3 = 1;\n' },
       'fake-r2': () => ({ stdout: '{"verdict":"block","reasons":["[spec] 6 tests @ src/t1-ho3.ts:1: no RED -> add one"]}\n' }),
       'fake-r3': () => ({ stdout: R3_PASS }),
@@ -3475,7 +3476,7 @@ test('T1-REVIEW-INPUTS R3 decision 2 (F6 re-raised, F10): a ship-path decision w
     const policy = '# Review instructions\nMust-block 1-6.\n';
     writeFileSync(path.join(fx.repo.mainRoot, 'REVIEW.md'), policy, 'utf8');
     const hash = createHash('sha256').update(policy, 'utf8').digest('hex');
-    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-sd.ts\n' }, 'git diff': { stdout: 'diff --git a/src/t1-sd.ts b/src/t1-sd.ts\n+export const sd = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
+    const script = scriptedRunner({ 'git diff --name-only': { stdout: 'src/t1-sd.ts\u0000' }, 'git diff': { stdout: 'diff --git a/src/t1-sd.ts b/src/t1-sd.ts\n+export const sd = 1;\n' }, 'fake-r2': () => ({ stdout: R2_PASS }), 'fake-r3': () => ({ stdout: R3_PASS }) });
     // The ship path's own reviewer wrote a block on the same sha the command decision passed: another document, a second decision.
     const reason = '[standards] 9 error handling @ src/t1-sd.ts:9: swallowed error -> rethrow';
     const shipDoc: Verdict = { verdict: 'block', reasons: [reason], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [reason] } }, run_status: 'success' };
@@ -3518,7 +3519,7 @@ test('T1-REVIEW-INVARIANTS acceptance 3: the lessons of the main checkout reach 
     writeFileSync(lessonsFile, fixtureLessons, 'utf8');
     const prompts: string[] = [];
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-inv.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-inv.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-inv.ts b/src/t1-inv.ts\n+export const inv = 1;\n' },
       'fake-r2': (args) => {
         prompts.push(args.at(-1) ?? '');
@@ -3612,7 +3613,7 @@ test('T1-REVIEW-COVERAGE acceptance 5: in shadow the decided round, its journal 
     });
     const prompts: Record<string, string> = {};
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t1-cov.ts\n' },
+      'git diff --name-only': { stdout: 'src/t1-cov.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t1-cov.ts b/src/t1-cov.ts\n+export const cov = 1;\n' },
       'fake-reviewer ac-coverage': { stdout: coverageVerdict + '\n' },
       'fake-reviewer edge-cases': { stdout: plain + '\n' },
@@ -3948,7 +3949,7 @@ test('T0-R2-ANSWER-MARKER acceptance 4: a pre-review round with the answer marke
     try {
       let r2Calls = 0;
       const script = scriptedRunner({
-        'git diff --name-only': { stdout: 'src/t0-mark.ts\n' },
+        'git diff --name-only': { stdout: 'src/t0-mark.ts\u0000' },
         'git diff': { stdout: 'diff --git a/src/t0-mark.ts b/src/t0-mark.ts\n+export const gate = 1;\n' },
         'fake-r2': () => {
           r2Calls += 1;
@@ -4127,7 +4128,7 @@ test('T0-BASE-SYNC-CHANGELOG acceptance 3: a CHANGELOG base-sync merge is a new 
   try {
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
     const script = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t0-bs.ts\n' },
+      'git diff --name-only': { stdout: 'src/t0-bs.ts\u0000' },
       'git diff': { stdout: 'diff --git a/src/t0-bs.ts b/src/t0-bs.ts\n+export const bs = 1;\n' },
       'fake-r2': { stdout: PASS },
       'fake-r3': { stdout: PASS },

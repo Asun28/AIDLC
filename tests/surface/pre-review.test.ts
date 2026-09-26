@@ -162,7 +162,7 @@ test('runPreReview classifies pass, block, malformed and quota output and writes
   assert.equal(classifyPreReview(undefined, { exitCode: 0, timedOut: true, stdout: '', stderr: '' }).runStatus, 'timeout');
   assert.equal(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: 'Error: 429 Too Many Requests, retry after 30 seconds', stderr: '' }).retryAfterMs, 30_000);
   // T1-REVIEW-INPUTS acceptance 1: a diff above the cap is refused, naming the size and the cap; below it the byte size is returned and nothing is cut.
-  const git = { 'git diff --name-only': { stdout: 'src/gate.ts\nsrc/x.ts\n' }, 'git diff': { stdout: 'x'.repeat(50) } };
+  const git = { 'git diff --name-only': { stdout: 'src/gate.ts\u0000src/x.ts\u0000' }, 'git diff': { stdout: 'x'.repeat(50) } };
   assert.throws(() => collectCandidateDiff(scriptedRunner(git), dir, 'main', 20, 'HEAD', 'preReview.maxDiffBytes'), /50 bytes.*preReview\.maxDiffBytes.*20/s);
   const diff = collectCandidateDiff(scriptedRunner(git), dir, 'main', 50);
   assert.deepEqual(diff.changedPaths, ['src/gate.ts', 'src/x.ts']);
@@ -176,7 +176,7 @@ test('T0-QUOTA-FALSE-HOLD acceptance 2: a reviewer that exits 0 is held only on 
   const stdout = 'Line 812: Quotation marks around pass need escape, and the quota hold rule is unchanged.\n{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}\n';
   const clean = { exitCode: 0, timedOut: false, stdout, stderr: '' };
   assert.deepEqual(classifyPreReview(undefined, clean), { outcome: 'no-verdict', runStatus: 'malformed', reasons: [] });
-  assert.deepEqual(classifyPreReview(undefined, { ...clean, stderr: '429 Too Many Requests, retry after 30 seconds' }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: [], retryAfterMs: 30_000 });
+  assert.deepEqual(classifyPreReview(undefined, { ...clean, stderr: '429 Too Many Requests, retry after 30 seconds' }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: ['via text: 429'], retryAfterMs: 30_000 });
   assert.equal(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: 'Error: quota exceeded, retry after 30 seconds', stderr: '' }).outcome, 'quota-hold');
   // A process that did not exit 0 (killed by a signal, no exit code) reports a hold on either stream (R3 decision 1 F2).
   assert.equal(classifyPreReview(undefined, { exitCode: null, timedOut: false, stdout: 'Error: quota exceeded', stderr: '' }).outcome, 'quota-hold');
@@ -363,6 +363,31 @@ test('T1-RENAME-PATHS acceptance 1: the review listing runs git diff --name-only
   const calls: string[][] = [];
   collectCandidateDiff((c, a, o = {}) => { calls.push(a); return scriptedRunner({ 'git diff --name-only': { stdout: 'src/a.ts\u0000' }, 'git diff': { stdout: 'x' } })(c, a, o); }, tmpdir(), 'main', 100, 'sha-1');
   assert.deepEqual(calls.find((a) => a.includes('--name-only')), ['diff', '--name-only', '-z', 'main...sha-1', '--no-renames']);
+});
+
+test('T1-PARSE-GUARD acceptance 3: collectCandidateDiff splits the -z listing on NUL only, so a name with a newline is one path the scope gate refuses [R3]', () => {
+  const git = scriptedRunner({ 'git diff --name-only': { stdout: 'docs/line\nbreak.md\u0000src/a.ts\u0000' }, 'git diff': { stdout: 'x' } });
+  const { changedPaths } = collectCandidateDiff(git, tmpdir(), 'main', 100);
+  assert.deepEqual(changedPaths, ['docs/line\nbreak.md', 'src/a.ts']);
+  // Allow paths naming the two fragments a newline split made never admit the whole name.
+  assert.deepEqual(changedPaths.filter((p) => !pathAllowed(p, ['docs/line', 'break.md', 'src/a.ts'])), ['docs/line\nbreak.md']);
+});
+
+test('T1-PARSE-GUARD acceptance 6: a quota-hold R2 round persists the path that decided, via text and the word, in its reasons [R4]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const quota = scriptedRunner({ 'fake-panel': { stdout: 'Error: 429 Too Many Requests, retry after 30 seconds\n', exitCode: 1 } });
+  const pass = scriptedRunner({ 'fake-panel': { stdout: '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n' } });
+  const common = { command: ['fake-panel', '--focus', '{perspective}'], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, head: 'def456', reviewer: 'fake' };
+  const roundReasons = (verdictRef: string | undefined) => (JSON.parse(readFileSync(verdictRef!, 'utf8')) as { reasons: string[] }).reasons;
+  const single = await runReviewPanel({ ...common, runner: async (c, a, o) => quota(c, a, o), perspectives: [], fileStem: 'T1-GATE.pre.9.1' });
+  assert.equal(single.outcome, 'quota-hold');
+  assert.deepEqual(single.reasons, ['via text: 429']);
+  assert.deepEqual(roundReasons(single.verdictRef), ['via text: 429'], 'the retained round document records the path');
+  const panel = await runReviewPanel({ ...common, runner: async (c, a, o) => (a.includes('security') ? quota(c, a, o) : pass(c, a, o)), perspectives: ['bugs', 'security'], fileStem: 'T1-GATE.pre.9.2' });
+  assert.equal(panel.outcome, 'quota-hold');
+  assert.deepEqual(panel.reasons, ['quota hold from security: via text: 429']);
+  assert.deepEqual(roundReasons(panel.verdictRef), ['quota hold from security: via text: 429']);
 });
 
 /**
@@ -1231,6 +1256,38 @@ test('T0-QUOTA-FALSE-HOLD acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unr
     'The quota patterns of `detectQuotaHold` match whole words only: a word ends at any character other than a letter or digit and at a camelCase change of case, and `_` separates the words of a phrase, so `Quotation`, `4290`, `HTTP429`, `E429`, a sha containing `429` or a one-case compound such as `quotaexceeded` never hold, while `quotas`, `429s`, `rate-limited`, `insufficient_quota`, `rateLimitExceeded`, `RateLimitError` and `APIQuotaExceeded` still do.',
     'The camelCase and `_` forms of the phrases, such as `retryAfter`, `tooManyRequests`, `usageLimit`, `rate_limit` and `too_many_requests`, now hold, which no pattern matched before.',
     'On T1-REVIEW-LOOP-GUARDS an R2 angle that exited 0 with a verdict cut before its last brace and `Quotation marks` in its reasoning was held as a quota hold instead of taking the no-verdict retry (docs/OPERATIONS.md).',
+  ];
+  for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+test('T1-PARSE-GUARD acceptance 10: docs/OPERATIONS.md, docs/ARCHITECTURE.md and the CHANGELOG Unreleased section state the structured-first quota rule, the recorded path and the decided word classes [R4]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+  const operations = read('docs', 'OPERATIONS.md');
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const docSentences = [
+    'A provider that reports a numeric error status decides a quota hold from that status alone (card T1-PARSE-GUARD): 429 and 529 hold and any other status does not, whatever quota words its message carries.',
+    'The `claude-api` provider reads the status of the SDK error, with its `retry-after` header as the delay, and the `claude-code` provider reads `api_error_status` from an `is_error` payload of `--output-format json`, which is an error or a hold whatever the exit code and never a result.',
+    'The word rule decides when there is no status, and a review command (R2 and R3) and the ship path declare no structured error field, so for them it always decides.',
+    'A review hold records the path that decided in its `reasons`: `via text: <word>`, with the word the rule matched after the separators split it, or `via structured: status <n>`; an R2 or R3 panel round names the angle that held, as `quota hold from <angle>: via text: <word>`.',
+    'A letter or digit of any script joins the word, so `quotaé` and `É429` never hold; an all-capitals word with a lowercase suffix is cut before its last capital, so `QUOTAs` and `RATE LIMITed` never hold; a digit before a capital joins the words, so `429TooManyRequests` never holds.',
+    'A camelCase identifier such as `retryAfterMs`, `usageLimit` or `tooManyRequests` holds on the output of a process that did not exit 0: the rule accepts that false hold, since a hold waits and never passes.',
+  ];
+  for (const sentence of docSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const architecture = read('docs', 'ARCHITECTURE.md');
+  const architectureSentences = [
+    '`parse-guard.ts` holds the control decisions read from process output: `nulList` splits a `-z` name listing on NUL only, and `detectQuotaHold` decides a quota hold from a provider\'s numeric error status first, else from one word rule, and names the path that decided.',
+    '`claude-code.ts` (`claude -p --output-format json`; an `is_error` payload is an error, or a quota hold by its `api_error_status`).',
+  ];
+  for (const sentence of architectureSentences) assert.ok(architecture.includes(sentence), `docs/ARCHITECTURE.md states: ${sentence}`);
+  const changelogSentences = [
+    '- Parse guard, card T1-PARSE-GUARD (issues 39, 41, 45 and 52): `src/core/parse-guard.ts` owns every quota decision and every split of a `-z` name listing, and the quota matchers of `review-policy.ts` and `claude-code.ts` are removed.',
+    'A provider\'s numeric error status now decides a quota hold alone: the `claude-code` provider reads `is_error` and `api_error_status` from its JSON payload, so an `is_error` payload that exits 0 is no longer a result and a status of 500 with quota words is an error, and the `claude-api` provider merges its `RateLimitError` branch into the status branch, so a 529 carries the `retry-after` delay too.',
+    'Every review hold records the path that decided in its reasons, `via text: <word>` or `via structured: status <n>`, and the word rule reads letters and digits of any script.',
+    'The `claude-code` provider matched `rate.?limit`, `usage limit`, `429` and `quota` anywhere in its output; it now uses the word rule, so `Quotation`, `HTTP429` and `rate.limit` no longer hold there, and `overloaded`, `capacity`, `too many requests` and `retry after` do.',
+    '`collectCandidateDiff` splits its `-z` listing on NUL only, so a file name that contains a newline reaches the scope gate whole.',
+    'The prose lint of `tests/surface/prose.test.ts` now ends no sentence at a capitalised abbreviation or an initialism such as `U.S.`, and sees a sentence break before an opening quote.',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
