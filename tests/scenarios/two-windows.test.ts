@@ -1175,3 +1175,60 @@ test('T1-STORE-CAS: a lease of the same session id on another host is another se
     fx.cleanup();
   }
 });
+
+/**
+ * Window B takes card `id` over at the next generation and pauses right before its run update (the first exclusive create
+ * of the card-run lock); `meanwhile` runs there, then B resumes. Returns B's error, if any.
+ */
+function pausedTakeover(fx: ReturnType<typeof makeFixture>, goalId: string, id: string, meanwhile: () => void): unknown {
+  const runLock = `${fx.store.cardFile(goalId, id)}.lock`;
+  setActorForTests(actorB);
+  try {
+    onLock(runLock, { before: (n) => { if (n === 1) meanwhile(); } }, () => fx.runner().takeover(fx.goal(goalId), fx.card(id), fx.store.getCardRun(goalId, id)!));
+    return undefined;
+  } catch (err) {
+    return err;
+  } finally {
+    setActorForTests(actorA);
+  }
+}
+
+test('T1-STORE-CAS R3 decision 1 F2: a takeover that lost the lease before its run update refuses and never writes its older generation over a later owner', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-STALE', title: 'card T1-STALE' });
+    const goal = goalForCards(fx, ['T1-STALE']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-STALE');
+    const current = () => fx.store.getCardRun(goal.id, 'T1-STALE')!;
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-STALE'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-STALE')).directive.kind, 'prepare');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    // B takes the lease at generation 1 and pauses; its lease expires and C completes a takeover at generation 2
+    const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+    let byC: ReturnType<CardRunner['takeover']> | undefined;
+    let afterC: ReturnType<typeof current> | undefined;
+    let eventsAfterC = 0;
+    const refusal = pausedTakeover(fx, goal.id, 'T1-STALE', () => {
+      assert.equal(fx.leases.read(cardKey)?.generation, 1, "B's lease write landed before the pause");
+      fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+      setActorForTests(actorC);
+      try {
+        byC = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-STALE'), current());
+      } finally {
+        setActorForTests(actorB);
+      }
+      afterC = current();
+      eventsAfterC = fx.events(goal.id).length;
+    });
+    assert.equal(byC?.lease.generation, 2);
+    assert.equal(afterC?.ownerGeneration, 2);
+    // B resumes: its completion refuses, naming the lease as it is now, and writes nothing
+    assert.match(String(refusal), /session win-C at generation 2/, `B refuses: ${String(refusal)}`);
+    assert.deepEqual(current(), afterC, "the run keeps C's generation and nothing of B's");
+    assert.equal(fx.leases.read(cardKey)?.owner.session, 'win-C', "the lease stays C's");
+    assert.equal(fx.leases.read(cardKey)?.generation, 2);
+    assert.equal(fx.events(goal.id).length, eventsAfterC, 'B journals nothing once it resumes');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
