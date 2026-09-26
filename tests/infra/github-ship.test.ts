@@ -562,6 +562,10 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       ['composite started in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 5, lines: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
       ['an earlier step of the second printing an extra run header before the failed step', job([{ name: 'echo fast', at: 5, lines: ['##[group]Run npm run check', 'shell: /usr/bin/bash -e {0}', '##[endgroup]'] }, CHECK_STEP])],
       ['composite completed in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
+      // R3 decision 1: the composite's second sub-step header renamed to the failed step's name, the failed step headerless.
+      ['composite started in the second, a sub-step header with the failed step name', job([{ name: './.github/actions/check', action: true, at: 5, lines: ['##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'composite says expected 0 to equal 0', '##[group]Run npm run check', 'shell: /usr/bin/bash -e {0}', '##[endgroup]'] }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
+      // R3 decision 1: an earlier action (its header has no shell line) and a step named Run diagnostics printing that group with one.
+      ['an earlier action, then a named step printing a group with its name', job([{ name: 'actions/cache@v4', action: true, at: 5, lines: ['cache hit'] }, { name: 'npm test', title: 'Run diagnostics', at: 5, lines: ['npm test', ...FAILING_TEST, '##[group]Run diagnostics', 'shell: /usr/bin/bash -e {0}', 'npm error code ECONNRESET', '##[endgroup]'], failed: true }])],
       ['a step with a name of its own', job([{ ...CHECK_STEP, title: 'check' }])],
       ['a step named Run diagnostics printing that group', job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'shell: /usr/bin/bash -e {0}', 'npm error code ECONNRESET', '##[endgroup]'] }])],
     ] as const) {
@@ -578,9 +582,15 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const other = logged(f, job([{ ...CHECK_STEP, lines: ['npm run check', '##[group]Run npm test', 'shell: /usr/bin/bash -e {0}', '##[endgroup]', 'sub-step output'] }]));
     assert.deepEqual(other.lines.slice(0, 4), [...STEP_HEAD, 'npm run check'], 'a run header of another name in the first second is the step own output, not its start');
     const github = { requiredChecks: ['check (ubuntu-latest, 22)'], requireVerdict: false, ciTimeoutMs: 60_000, ciPollMs: 1 };
-    const composite = shipThroughConfig([actionsJob('check (ubuntu-latest, 22)', 123, 456)], github, undefined, jobApi(job([{ name: './.github/actions/check', action: true, at: 5, lines: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])));
-    assert.equal(composite.kind, 'stop', `a transient failed step after a composite step is not a code defect: ${composite.narration}`);
-    assert.equal(composite.counted, 0);
+    for (const [label, j] of [
+      ['composite started in the second', job([{ name: './.github/actions/check', action: true, at: 5, lines: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
+      ['composite completed in the second', job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }])],
+    ] as const) {
+      const composite = shipThroughConfig([actionsJob('check (ubuntu-latest, 22)', 123, 456)], github, undefined, jobApi(j));
+      assert.equal(composite.kind, 'stop', `${label}: a transient failed step after a composite step is not a code defect: ${composite.narration}`);
+      assert.equal(composite.stopReason, 'ci', label);
+      assert.equal(composite.counted, 0, label);
+    }
   });
 
   test('T0-CI-RED-LOGS-BOUNDS acceptance 2: with a later step in the end second the end is the exit line no later step line precedes; a post-action exit line never ends the step', () => {
