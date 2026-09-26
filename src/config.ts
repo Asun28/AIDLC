@@ -49,11 +49,16 @@ export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
 /** One pre-reviewer's dispatch settings: the primary `preReview`, or the settings `preReviewFallbackSettings` builds. */
 export type PreReviewer = Omit<PreReviewConfig, 'fallback'> & { effort?: ReviewEffortPolicy };
 
-/** The fallback's dispatch settings (card T0-R2-FALLBACK-2). */
+/**
+ * The fallback's dispatch settings (card T0-R2-FALLBACK-2): every field of the fallback schema comes from the fallback alone,
+ * its schema default when the fallback omits it, never the primary's value; the parse applies those defaults again, so an
+ * object built without it gets them too. Only the fields the fallback schema has none of, the primary's `rounds`,
+ * `perspectives`, `coverage` and `onExhausted`, are shared.
+ */
 export function preReviewFallbackSettings(preReview: PreReviewConfig): PreReviewer | undefined {
   if (!preReview.fallback) return undefined;
-  const { fallback, ...shared } = preReview;
-  return { ...shared, ...fallback };
+  const own = PreReviewFallback.parse(preReview.fallback);
+  return { ...own, rounds: preReview.rounds, perspectives: preReview.perspectives, coverage: preReview.coverage, onExhausted: preReview.onExhausted };
 }
 
 /**

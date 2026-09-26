@@ -38,12 +38,10 @@ import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { FormalReviewConfig, ProjectConfig } from '../config.ts';
 import { resolveWorktreeRoot } from '../config.ts';
-import type { PreReviewConfig } from '../config.ts';
+import { preReviewFallbackSettings, type PreReviewer } from '../config.ts';
 
 /** One formal reviewer's settings: the primary `formalReview`, its `fallback` or its `baseSync` reviewer. */
 type FormalReviewer = Omit<FormalReviewConfig, 'fallback' | 'baseSync'>;
-/** One pre-reviewer's settings (card T0-R2-FALLBACK): the primary `preReview`, or its `fallback` over the primary's shared rounds and angles. */
-type PreReviewer = Omit<PreReviewConfig, 'fallback'> & { effort?: NonNullable<PreReviewConfig['fallback']>['effort'] };
 
 export interface CardRunnerDeps {
   paths: StatePaths;
@@ -1093,7 +1091,7 @@ export class CardRunner {
       const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
-        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
+        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((timeoutOf(pending) + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
       }
       // Abandonment is decided on the locked record: only a round still pending and still expired there is dropped, and
       // only that drop is journaled; a round decided meanwhile stays and drives the gate from here on.
@@ -1990,14 +1988,15 @@ export class CardRunner {
     const primary = this.config.preReview;
     const holdOf = (round: PreReviewRound | undefined): string | undefined => (round?.outcome === 'quota-hold' && round.holdUntil && Date.parse(round.holdUntil) > Date.parse(now) ? round.holdUntil : undefined);
     const recorded = [...run.preReview.rounds].reverse().filter((r) => r.outcome !== 'pending');
-    const { fallback, ...shared } = primary;
+    const fallback = primary.fallback;
     if (!fallback) {
       const hold = holdOf(recorded.find((r) => r.cycle === run.review.substantiveBlocks && r.candidateDigest === candidateDigest));
       return hold ? { cfg: primary, waitUntil: hold } : { cfg: primary };
     }
     const primaryHold = holdOf(recorded.find((r) => r.reviewer === primary.reviewer));
     if (!primaryHold) return { cfg: primary };
-    const fallbackCfg: PreReviewer = { ...shared, ...fallback };
+    // The fallback's own settings and schema defaults, never the primary's (card T0-R2-FALLBACK-2).
+    const fallbackCfg = preReviewFallbackSettings(primary)!;
     const fallbackHold = holdOf(recorded.find((r) => r.reviewer === fallback.reviewer));
     if (!fallbackHold) return { cfg: fallbackCfg };
     return Date.parse(fallbackHold) < Date.parse(primaryHold) ? { cfg: fallbackCfg, waitUntil: fallbackHold } : { cfg: primary, waitUntil: primaryHold };
