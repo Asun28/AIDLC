@@ -509,7 +509,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(diagnosed.kind, 'build', `a network error in a later group of the step never hides the assertion: ${diagnosed.narration}`);
     assert.equal(diagnosed.counted, 1);
     assert.equal(diagnosed.reruns, 0);
-    const lookalike = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }])));
+    const lookalike = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'shell: /usr/bin/bash -e {0}', 'npm error code ECONNRESET', '##[endgroup]'] }])));
     assert.equal(lookalike.kind, 'stop', `a step with a name of its own is step unknown (T0-CI-RED-LOGS-BOUNDS): ${lookalike.narration}`);
     assert.equal(lookalike.stopReason, 'ci');
     const cleanup = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }])));
@@ -556,9 +556,10 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     dirs.push(f.root);
     for (const [label, j] of [
       ['composite started in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 5, lines: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
+      ['an earlier step of the second printing an extra run header before the failed step', job([{ name: 'echo fast', at: 5, lines: ['##[group]Run npm run check', 'shell: /usr/bin/bash -e {0}', '##[endgroup]'] }, CHECK_STEP])],
       ['composite completed in the second, failed step headerless', job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, header: false, lines: ['npm error code ECONNRESET'] }])],
       ['a step with a name of its own', job([{ ...CHECK_STEP, title: 'check' }])],
-      ['a step named Run diagnostics printing that group', job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'npm error code ECONNRESET', '##[endgroup]'] }])],
+      ['a step named Run diagnostics printing that group', job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'shell: /usr/bin/bash -e {0}', 'npm error code ECONNRESET', '##[endgroup]'] }])],
     ] as const) {
       const { header, lines, r } = logged(f, j);
       assert.equal(header, '[CI-GATE-LOG] actions/runs/123/job/456 step unknown', label);
