@@ -108,11 +108,12 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
   // a named group the step's own output prints comes after that header and has one too many before it). Later steps are
   // not counted: post steps and `Complete job` start in that second without a header.
   // Every line of that second reading the step's name counts, a group without a `shell: ` line included: a second one
-  // leaves the start unplaced. The window opens with that second, so the run headers before the named line are its own.
-  const heads = window.flatMap((_l, i) => (runHeader(i) ? [i] : []));
+  // leaves the start unplaced. Before it, every `##[group]Run ` line counts, a `uses:` step's header (no `shell: ` line)
+  // included, since every earlier step of the second prints one; the window opens with that second.
   const own = window.flatMap((l, i) => (l.time < start + 1000 && l.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}` ? [i] : []));
+  const before = own[0] === undefined ? -1 : window.slice(0, own[0]).filter((l) => l.text.startsWith('##[group]Run ')).length;
   const earlier = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
-  const from = failed.number === 1 ? 0 : own.length === 1 && heads.indexOf(own[0]!) === earlier ? own[0] : undefined;
+  const from = failed.number === 1 ? 0 : own.length === 1 && runHeader(own[0]!) && before === earlier ? own[0] : undefined;
   if (from === undefined) return undefined;
   const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
   const laterInEnd = steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
