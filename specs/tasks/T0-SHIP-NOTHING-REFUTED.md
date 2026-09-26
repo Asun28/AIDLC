@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-NOTHING-REFUTED
 title: A ship failure that refutes no recorded success no longer says it counts as a failed attempt, and the build directive a ship failure returns names the attempt number the ladder admits, the one the next build directive names
-status: todo
+status: merged
 branch: T0-SHIP-NOTHING-REFUTED
 worktree: D:\wt\AIDLC\T0-SHIP-NOTHING-REFUTED
 allow_paths:
