@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
+import { normaliseCause } from '../core/effort.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import type { Verdict } from '../core/types.ts';
 
@@ -87,6 +88,112 @@ const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
   [/DoD 未通过|RED 检查失败/, 'dod-failed'],
 ];
 
+/**
+ * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync, the
+ * failing line of a ship failure) travels with brackets and percent signs encoded, so it can never form a sentinel or a
+ * `[SAGA-RESUME]` marker; everything else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
+ */
+export function encodeUntrusted(text: string): string {
+  return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+/**
+ * The ship failures that count on the effort ladder, and where the failing line their detail names is read (card
+ * T0-SHIP-FAILING-LINE-2): a failing test or compile line of the DoD or verify output, or the gate line itself.
+ */
+const FAILING_LINE_AT: Partial<Record<ShipOutcomeClass, 'test' | 'gate'>> = { 'dod-failed': 'test', 'verify-failed': 'test', 'scope-blocked': 'gate', 'budget-over': 'gate' };
+
+/** A TAP test line, `ok <n>` or `not ok <n>`: judged by the TAP rule alone, whatever other shape it carries. */
+const TAP_TEST_LINE = /^(?:not )?ok \d+\b/;
+
+/**
+ * The failing lines other than TAP's: a node:test spec failure other than the `✖ failing tests:` heading, a TypeScript
+ * diagnostic at the start of the line (bare, or after a location without spaces), a Go failure, and a jest, vitest or
+ * pytest failure.
+ */
+const FAILING_SHAPE: RegExp[] = [/^✖ (?!failing tests:?$)/, /^(?:\S+(?:\(\d+,\d+\): |:\d+:\d+ - ))?error TS\d+: /, /^--- FAIL: \S/, /^FAIL(?:ED)?\s+\S/];
+
+/** A failing test or compile line: a TAP `not ok <n>` without a TODO or SKIP directive, or one of the other shapes. */
+function isFailingLine(line: string): boolean {
+  if (TAP_TEST_LINE.test(line)) return line.startsWith('not ') && !/(?<!\\)#\s*(?:todo|skip)\b/i.test(line);
+  return FAILING_SHAPE.some((shape) => shape.test(line));
+}
+
+/**
+ * The text a terminal prints from `text`, read as the DEC and ECMA-48 parser (vt100.net) reads it, so every control
+ * sequence is consumed whole and the controls met inside one are handled as that parser handles them:
+ * - a C0 control is executed in any state, so it stays in the text (a line feed keeps its line); DEL is ignored inside a
+ *   sequence;
+ * - ESC starts a sequence; CAN and SUB cancel one and are executed; a C1 control ends one: the ST (0x9C) silently, the
+ *   CSI, DCS, SOS, OSC, PM and APC introducers by starting their own, any other by being executed;
+ * - after ESC, `[` starts a CSI, `]`, `P`, `X`, `^` and `_` a control string, 0x20-0x2F an nF escape up to its
+ *   final byte, and any other byte from 0x30 to 0x7E is the final byte of a two-character escape;
+ * - a CSI runs through its parameter and intermediate bytes (0x20-0x3F in any order, colon-separated colours included)
+ *   to its final byte (0x40-0x7E); a control string holds its payload, lines included, until BEL, an ST (`ESC \` or
+ *   0x9C), a CAN or SUB, the next ESC, or the end of the text;
+ * - any other character inside a sequence ends it and is printed.
+ */
+function printedText(text: string): string {
+  let out = '';
+  let state: 'ground' | 'escape' | 'nf' | 'csi' | 'string' = 'ground';
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0x1b) {
+      state = 'escape';
+    } else if (c === 0x18 || c === 0x1a) {
+      state = 'ground';
+      out += ch;
+    } else if (c >= 0x80 && c <= 0x9f) {
+      state = c === 0x9b ? 'csi' : c === 0x90 || c === 0x98 || c >= 0x9d ? 'string' : 'ground';
+      if (state === 'ground' && c !== 0x9c) out += ch;
+    } else if (state === 'string') {
+      if (c === 0x07) state = 'ground';
+    } else if (c < 0x20 || c === 0x7f) {
+      if (c < 0x20 || state === 'ground') out += ch;
+    } else if (state === 'ground' || c > 0x7f) {
+      state = 'ground';
+      out += ch;
+    } else if (state === 'escape') {
+      state = c === 0x5b ? 'csi' : ']PX^_'.includes(ch) ? 'string' : c < 0x30 ? 'nf' : 'ground';
+    } else if (state === 'nf') {
+      if (c >= 0x30) state = 'ground';
+    } else if (c >= 0x40) {
+      state = 'ground';
+    }
+  }
+  return out;
+}
+
+const FAILING_LINE_WIDTH = 160;
+
+/** The first `width` code points of a text, so a cut never splits a surrogate pair. */
+function firstCodePoints(text: string, width: number): string {
+  let end = 0;
+  let count = 0;
+  for (const ch of text) {
+    if (count === width) break;
+    end += ch.length;
+    count += 1;
+  }
+  return text.slice(0, end);
+}
+
+/**
+ * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
+ * qualifies: the text a terminal prints (printedText), then per line control characters as spaces,
+ * normalised as effort causes are, cut to 160 code points and encoded, so the line only tells two failures apart and can
+ * never form a sentinel.
+ */
+function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
+  const at = FAILING_LINE_AT[outcome];
+  if (!at) return undefined;
+  const line = printedText(text)
+    .split(/\r?\n/)
+    .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
+    .find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
+  return line === undefined ? undefined : encodeUntrusted(firstCodePoints(normaliseCause(line), FAILING_LINE_WIDTH));
+}
+
 export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const text = `${receipt.stdout}\n${receipt.stderr}`;
   const sentinels = [...new Set([...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]))];
@@ -99,7 +206,10 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   }
   if (receipt.timedOut) return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: 'ship timed out; reconcile before retry' };
   for (const [re, cls] of SENTINEL_MAP) {
-    if (re.test(text)) return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: `sentinel ${re.source.split('|')[0]}` };
+    if (!re.test(text)) continue;
+    const detail = `sentinel ${re.source.split('|')[0]}`;
+    const line = failingLine(text, cls, re);
+    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
   }
   return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: `exit ${receipt.exitCode} with no known sentinel; STOP/tool with diagnostics` };
 }

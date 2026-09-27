@@ -395,7 +395,7 @@ test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the le
   }
 });
 
-/** The sentences card T1-AUDIT-FACTS adds to the docs and the CHANGELOG (acceptance 8). */
+/** The sentences card T1-AUDIT-FACTS adds to the docs, the README Status section and the CHANGELOG (acceptance 8). */
 const FACT_DOC_SENTENCES = {
   operations: [
     '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of every merge it verifies on the GitHub path, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a fetch of the base, never from the ship output.',
@@ -407,6 +407,9 @@ const FACT_DOC_SENTENCES = {
   architecture: [
     '4. The merge result of a card shipped on the GitHub path carries `ShippedFacts` (`src/core/types.ts`: `headSha`, `mergeSha`, `tree`, `pr`), which the card runner reads from `gh pr view` and `git rev-parse <mergeSha>^{tree}` when it verifies the merge; `verifyAudit` takes injected git and gh probes (`aidlc audit verify` passes real ones) and re-derives each fact with `git cat-file -t`, `git rev-parse <mergeSha>^{tree}`, `git merge-base --is-ancestor <mergeSha> <base>` and `gh pr view <pr>`.',
     'A disagreement is a `FACT_MISMATCH` block, a fact that cannot be re-derived is a `FACT_UNVERIFIED` warning, no check reads a narration or free-text field, and a "fully audited" claim also needs at least one re-derived fact for every shipped card.',
+  ],
+  readme: [
+    '- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.',
   ],
   changelog: [
     '- Audit facts, card T1-AUDIT-FACTS: the card runner journals the merge `OPERATION_RESULT` of every merge it verifies on the GitHub path with the PR head, the merge commit, its tree and the PR number, read from `gh pr view` and `git rev-parse` after a fetch of the base, never from the ship output, and `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning.',
@@ -426,6 +429,7 @@ test('T1-AUDIT-FACTS acceptance 8: docs/OPERATIONS.md (Audit), docs/ARCHITECTURE
   const where: Array<[string[], string, string[]]> = [
     [['docs', 'OPERATIONS.md'], '## Audit', FACT_DOC_SENTENCES.operations],
     [['docs', 'ARCHITECTURE.md'], '## Evidence and audit chain', FACT_DOC_SENTENCES.architecture],
+    [['README.md'], '## Status', FACT_DOC_SENTENCES.readme],
     [['CHANGELOG.md'], '## Unreleased', FACT_DOC_SENTENCES.changelog],
   ];
   for (const [file, heading, sentences] of where) {

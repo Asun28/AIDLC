@@ -19,6 +19,7 @@ allow_paths:
   - tests/infra/git.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
+  - README.md
   - CHANGELOG.md
   - specs/tasks/T1-AUDIT-FACTS.md
 dod_command: npm run check

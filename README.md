@@ -9,7 +9,7 @@ Version 0.1.0.
 - The development-only loop (intake, routing, planning gates, card execution, arc selection, integrated acceptance, closure) is implemented and tested (413 tests: unit suites plus end-to-end scenarios for the T0 flow, T1 arc, review block, CI rerun, deadlines, two windows, staging/production release, audit and amendments).
 - Ship paths are adapters: `dry-run` is exercised by tests; `scaffold` drives `scripts/task.ps1` from claude-devops-scaffold and classifies its sentinels; `github` mirrors that chain natively with `git` and `gh` (commit, candidate-bound verdict, base sync, push, PR, CI check runs, squash merge; a base that conflicts leaves the merge in the worktree and returns the card to BUILD instead of opening a PR GitHub runs no workflow on). The scaffold and github paths need qualification against a real repository before the loop is advertised as run-verified (plan Q3/Q4/Q23/Q24).
 - Release and migration modules are opt-in. Until provider operations are bound in `aidlc.ops.json`, an enabled target stops with `release-config` and prints `NOT CONFIGURED`; a development-only goal never needs them.
-- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal and an asserted host capture boundary; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
+- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.
 
 ## Requirements
 
