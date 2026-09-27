@@ -281,7 +281,7 @@ const READ_ONLY_TOOLS = new Set(['grep', 'rg', 'egrep', 'fgrep', 'findstr', 'cat
 const READ_ONLY_GIT = new Set(['log', 'diff', 'show', 'status', 'blame', 'grep', 'ls-files', 'rev-parse', 'branch', 'remote', 'worktree']);
 
 /**
- * The segments of a Bash command: split at `||`, `&&`, `;`, `|`, a lone `&` and a line break (card T0-HOOK-CLASSIFIER). A
+ * The segments of a Bash command: split at `||`, `&&`, `;`, `|`, a lone `&` and a line break (card T0-HOOK-CLASSIFIER-3). A
  * lone `&` is neither preceded by `<`, `>`, `&` or `|` nor followed by `>` or `&`, so `2>&1`, `>&2`, `&>`, `&>>` and `&&`
  * split as before. Quotes are not read: a separator inside quotes splits too, which only adds segments.
  */
@@ -334,7 +334,7 @@ function writesFiles(cmd: string): boolean {
 /**
  * The segments of a command `production-gate` tests: all but the read-only ones. A segment is read-only only when its first
  * word is a bare name (no path) on the read-only lists and it carries no executing form of that command; git reads only
- * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER-2).
+ * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER-3).
  */
 export function mutatingSegments(cmd: string): string[] {
   return commandSegments(cmd).filter(isMutating);
@@ -347,7 +347,7 @@ function isMutating(segment: string): boolean {
   return !READ_ONLY_TOOLS.has(name);
 }
 
-/** The classification before card T0-HOOK-CLASSIFIER: a first word on the read-only lists, any path stripped, reads. */
+/** The classification before card T0-HOOK-CLASSIFIER-3: a first word on the read-only lists, any path stripped, reads. */
 function mainMutating(segment: string): boolean {
   const { name, args } = commandOf(segment);
   if (READ_ONLY_TOOLS.has(name)) return false;
@@ -355,7 +355,7 @@ function mainMutating(segment: string): boolean {
   return true;
 }
 
-/** The split before card T0-HOOK-CLASSIFIER, at `||`, `&&`, `;` and `|` only. */
+/** The split before card T0-HOOK-CLASSIFIER-3, at `||`, `&&`, `;` and `|` only. */
 function mainSegments(cmd: string): string[] {
   return cmd
     .split(/\|\||&&|;|\|/)
@@ -368,8 +368,8 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   if (!cmd) return { exitCode: 0 };
   // The segments main tested come first, in main's order and classified as main classified them, so every match and every
   // pattern error main reached is reached first and the gate decides as main did wherever main denied or threw; then the
-  // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used,
-  // tests main's segments alone, so it decides exactly as main did.
+  // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used
+  // and the first pass of `dispatchHook`, tests main's segments alone, so it decides exactly as main did.
   const main = mainSegments(cmd).filter(mainMutating);
   const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd)])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
@@ -623,7 +623,8 @@ export function readStdinJson(text: string): HookEvent {
 
 export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | 'secrets-guard' | 'verify-before-done' | 'route-new-work';
 
-export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig } = {}): HookResult {
+/** `classic` decides `production-gate` and `protect-paths` with the Bash classification before card T0-HOOK-CLASSIFIER-3 (the first pass of `dispatchHook`). */
+export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig; classic?: boolean } = {}): HookResult {
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const config = options.config ?? loadHookConfig(cwd);
@@ -632,9 +633,9 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
   const error = isHookConfigError(config) ? config : undefined;
   switch (name) {
     case 'production-gate':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd, options.classic);
     case 'protect-paths':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config, options.classic);
     case 'protect-tests':
       return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectTests(event, cwd, env, config);
     case 'secrets-guard':

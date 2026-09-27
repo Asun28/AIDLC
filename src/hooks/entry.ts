@@ -9,12 +9,20 @@
  * advisory output (frozen-path note, Stop context, routing line) is returned unchanged; otherwise
  * exit 0 with no output. One JSON document per process keeps the hook protocol intact.
  *
+ * Two passes (card T0-HOOK-CLASSIFIER-3): every guard first decides in order with the Bash command
+ * classification before that card, so wherever that dispatch blocked, the same guard blocks with the
+ * same result; only when none blocked do `production-gate` and `protect-paths` decide again with the
+ * card's forms, which can add a block and never replace another guard's.
+ *
  * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
  * only about the cards this session owns.
  */
 import { isBlock, loadHookConfig, readStdinJson, runHook, type HookEvent, type HookName, type HookResult } from './index.ts';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
+
+/** The guards whose Bash command classification card T0-HOOK-CLASSIFIER-3 changed: they decide again in the second pass. */
+const CLASSIFIED = new Set<HookName>(['production-gate', 'protect-paths']);
 
 /** Guards that apply to an event, in the order the per-guard wiring used to run them. */
 export function hookNamesFor(event: HookEvent): HookName[] {
@@ -42,9 +50,14 @@ export function dispatchHook(event: HookEvent, options: { cwd?: string; env?: No
   const config = loadHookConfig(cwd);
   let advisory: HookResult | undefined;
   for (const name of names) {
-    const r = runHook(name, event, { cwd, env, config });
+    const r = runHook(name, event, { cwd, env, config, classic: true });
     if (isBlock(r)) return r;
     if (!advisory && (r.stdout || r.stderr)) advisory = r;
+  }
+  for (const name of names) {
+    if (!CLASSIFIED.has(name)) continue;
+    const r = runHook(name, event, { cwd, env, config });
+    if (isBlock(r)) return r;
   }
   return advisory ?? { exitCode: 0 };
 }

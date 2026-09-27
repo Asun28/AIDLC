@@ -1223,7 +1223,7 @@ test('T0-HOOK-CLASSIFIER-3 acceptance 7: wherever main\'s dispatch blocked, disp
       }
     }
   }
-  assert.ok(decided > 300, `the invariant decided ${decided} cells where main's dispatch blocked`);
+  assert.ok(decided > 900, `the invariant decided ${decided} cells where main's dispatch blocked`);
   // the named rows: main's block, by the guard main's dispatch reached
   const { cwd, env } = withConfig(configs[0]!);
   assert.deepEqual(dispatchHook(bash(`git remote add deploy production ${TOKEN}`), { cwd, env }), denied(TOKEN_REASON));
