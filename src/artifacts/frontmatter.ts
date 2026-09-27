@@ -33,17 +33,25 @@ export function splitFrontMatter(text: string): FrontMatterDoc | undefined {
   return { raw: text, frontMatter, body, yaml, yamlError };
 }
 
+/** A space or a tab: the only blanks YAML reads as separation. */
+function blank(ch: string | undefined): boolean {
+  return ch === ' ' || ch === '\t';
+}
+
 /**
- * Where a YAML comment starts in a one-line value, or -1 (card T0-FM-COMMENT-CUT): the first hash sign after whitespace that
- * is outside a quoted scalar. A quoted scalar opens only where a scalar starts (the value start, or after `[`, `{`, `,` or
- * `:` inside a flow collection) and closes at its unescaped closing quote (a backslash escapes in a double-quoted scalar, a
- * doubled quote in a single-quoted one). A hash directly after a non-blank character, or at the value start, is text. A
- * value is a flow collection when it starts with `[` or `{`; in valid YAML only a comment follows its closing bracket.
+ * A one-line value as YAML reads it (card T0-FM-COMMENT-CUT): where its comment starts (-1 when none) and the offsets of the
+ * commas that separate the items of a flow collection. A comment starts at the first hash sign after a space or a tab that is
+ * outside a quoted scalar; any other blank, a non-breaking space included, is text, as in YAML. A quoted scalar opens only
+ * where a scalar starts (the value start, or after `[`, `{`, `,` or `:` inside a flow collection) and closes at its unescaped
+ * closing quote (a backslash escapes in a double-quoted scalar, a doubled quote in a single-quoted one). A hash directly after
+ * any other character, or at the value start, is text. A value is a flow collection when it starts with `[` or `{`; in valid
+ * YAML only a comment follows its closing bracket.
  */
-export function commentStart(value: string): number {
+function scanValue(value: string): { comment: number; commas: number[] } {
   let quote: '"' | "'" | undefined;
   let flow = false;
   let scalarStart = true;
+  const commas: number[] = [];
   for (let i = 0; i < value.length; i += 1) {
     const ch = value[i]!;
     if (quote === '"') {
@@ -56,8 +64,8 @@ export function commentStart(value: string): number {
       else if (ch === "'") quote = undefined;
       continue;
     }
-    if (/\s/.test(ch)) continue;
-    if (ch === '#' && i > 0 && /\s/.test(value[i - 1]!)) return i;
+    if (blank(ch)) continue;
+    if (ch === '#' && blank(value[i - 1])) return { comment: i, commas };
     if (scalarStart && (ch === '"' || ch === "'")) {
       quote = ch;
       scalarStart = false;
@@ -65,15 +73,30 @@ export function commentStart(value: string): number {
       flow = true;
     } else if (flow && (ch === ',' || ch === ':')) {
       scalarStart = true;
+      if (ch === ',') commas.push(i);
     } else {
       scalarStart = false;
     }
   }
-  return -1;
+  return { comment: -1, commas };
 }
 
-export function flowItems(_value: string): string[] | undefined {
-  return undefined;
+/** Where a YAML comment starts in a one-line value, or -1 (see `scanValue`). */
+export function commentStart(value: string): number {
+  return scanValue(value).comment;
+}
+
+/** The trimmed items of a one-line flow list `[a, "b, c"]`, split only at a comma outside a quoted item, or undefined when the value is not one. */
+export function flowItems(value: string): string[] | undefined {
+  if (!/^\[.*\]$/.test(value)) return undefined;
+  const items: string[] = [];
+  let from = 1;
+  for (const at of scanValue(value).commas) {
+    items.push(value.slice(from, at).trim());
+    from = at + 1;
+  }
+  items.push(value.slice(from, -1).trim());
+  return items;
 }
 
 export function stripComment(value: string): string {
@@ -90,17 +113,31 @@ export interface ReferenceCut {
 }
 
 /**
+ * A block scalar header: `|` or `>`, with an optional indentation and chomping indicator in either order, alone or after the
+ * key of a mapping written in a list item (`- note: |`), which the group captures.
+ */
+const BLOCK_HEADER = /^(?:([^#]*?):[ \t]+)?[|>](?:[1-9][+-]?|[+-][1-9]?)?$/;
+
+/**
  * Every value line of the front matter (a key, a nested key or a list item) that a comment cuts where the comment begins
  * with a hash directly followed by a non-blank character, which is how an issue or a PR number reads (card
- * T0-FM-COMMENT-CUT). A comment of a hash, a space and text is an annotation and is not listed.
+ * T0-FM-COMMENT-CUT). A key is read with or without a space after its colon, as `scalar` and the nested-key reader read it. A
+ * comment of a hash, a space and text is an annotation and is not listed, and the body of a block scalar (the blank lines and
+ * the lines indented deeper than the key or the list item holding its header) is text, as YAML reads it.
  */
 export function referenceCuts(frontMatter: string): ReferenceCut[] {
   const cuts: ReferenceCut[] = [];
   let parent = '';
   let item = 0;
+  let blockIndent: number | undefined;
   for (const line of frontMatter.split(/\r?\n/)) {
-    const kv = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]+(.*?))?[ \t\r]*$/);
-    const listItem = kv ? undefined : line.match(/^\s*-\s+(.*?)[ \t\r]*$/);
+    const indent = line.match(/^\s*/)![0].length;
+    if (blockIndent !== undefined) {
+      if (indent === line.length || indent > blockIndent) continue;
+      blockIndent = undefined;
+    }
+    const kv = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)[ \t\r]*$/);
+    const listItem = kv ? undefined : line.match(/^(\s*)-(\s+)(.*?)[ \t\r]*$/);
     let key: string;
     let raw: string;
     if (kv) {
@@ -113,11 +150,13 @@ export function referenceCuts(frontMatter: string): ReferenceCut[] {
     } else if (listItem) {
       item += 1;
       key = `${parent} item ${item}`;
-      raw = listItem[1] ?? '';
+      raw = listItem[3] ?? '';
     } else continue;
     const at = commentStart(raw);
-    if (at < 0 || !/^#\S/.test(raw.slice(at))) continue;
-    cuts.push({ key, raw, kept: raw.slice(0, at).trim(), comment: raw.slice(at) });
+    const kept = (at < 0 ? raw : raw.slice(0, at)).trim();
+    const header = kept.match(BLOCK_HEADER);
+    if (header) blockIndent = listItem && header[1] !== undefined ? listItem[1]!.length + 1 + listItem[2]!.length : indent;
+    else if (at >= 0 && /^#\S/.test(raw.slice(at))) cuts.push({ key, raw, kept, comment: raw.slice(at) });
   }
   return cuts;
 }

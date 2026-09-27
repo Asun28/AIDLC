@@ -10,7 +10,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Card, CARD_ID_REGEX, type ProjectTier } from '../core/types.ts';
-import { blockList, hasKey, referenceCuts, renderFrontMatter, scalar, splitFrontMatter, stripComment } from './frontmatter.ts';
+import { blockList, flowItems, hasKey, referenceCuts, renderFrontMatter, scalar, splitFrontMatter, stripComment } from './frontmatter.ts';
 
 export interface CardFinding {
   sentinel: string;
@@ -158,12 +158,9 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
 
 function parseInlineList(v: string | undefined): string[] | undefined {
   if (v === undefined) return undefined;
-  const m = v.match(/^\[(.*)\]$/);
-  if (!m) return v ? [v] : [];
-  return m[1]!
-    .split(',')
-    .map((s) => stripComment(s).replace(/^['"]|['"]$/g, ''))
-    .filter((s) => s.length > 0);
+  const items = flowItems(v);
+  if (!items) return v ? [v] : [];
+  return items.map((s) => s.replace(/^['"]|['"]$/g, '')).filter((s) => s.length > 0);
 }
 
 function extractNested(fm: string, parent: string, child: string): string | undefined {

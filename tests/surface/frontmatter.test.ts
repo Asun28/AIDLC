@@ -98,6 +98,7 @@ test('flowItems splits a one-line flow list only at a comma outside a quoted ite
   assert.deepEqual(flowItems('["see issue, #45", \'a, b #46\', plain]'), ['"see issue, #45"', "'a, b #46'", 'plain'], 'a comma inside a quoted item');
   assert.deepEqual(flowItems('["a \\" , b", \'it\'\'s, ok\', z]'), ['"a \\" , b"', "'it''s, ok'", 'z'], 'an escaped quote before the comma');
   assert.deepEqual(flowItems('[plain, text, with "quotes, inside"]'), ['plain', 'text', 'with "quotes', 'inside"'], 'a quote inside a plain item opens nothing');
+  assert.deepEqual(flowItems('[note: a, b]'), ['note: a', 'b'], 'a colon separates no items');
   assert.equal(flowItems('a, b'), undefined, 'not a flow list');
 });
 

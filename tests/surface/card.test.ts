@@ -281,11 +281,11 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
   });
 
-  test('the body of a literal or a folded block scalar is text under a key, a nested key and a list item, and the lines after it are read again [R2]', () => {
+  test('the body of a literal or a folded block scalar is text under a key, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
     for (const header of ['|', '>-', '|2+', `| ${H} a note`, `>- ${H}3`]) {
-      const fm = `notes: ${header}\n  - issue ${H}45\n\n  more ${H}46 text\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\nsweep: see ${H}12`;
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\nsweep: see ${H}12`;
       const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
-      assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('sweep', `see ${H}12`, 'see')], header);
+      assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('non_goals.other', `x ${H}101`, 'x'), message('sweep', `see ${H}12`, 'see')], header);
     }
   });
 
