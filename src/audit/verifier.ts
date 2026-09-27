@@ -17,7 +17,7 @@ import { fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
 import type { GitProbe } from '../probes/git.ts';
 import type { GhProbe } from '../probes/gh.ts';
-import { ShippedFacts, type PrInfo } from '../core/types.ts';
+import { ShippedFacts } from '../core/types.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -181,14 +181,19 @@ function rederive(card: string, facts: ShippedFacts, probes: VerifierInput['prob
   check('mergeSha object type', 'commit', probes?.git.objectType(probes.cwd, facts.mergeSha), 'git');
   check('tree', facts.tree, probes?.git.treeOf(probes.cwd, facts.mergeSha), 'git');
   check(`mergeSha on ${probes?.base ?? 'the base'}`, 'ancestor', onBase === undefined ? undefined : onBase ? 'ancestor' : 'not an ancestor', 'git');
-  let view: PrInfo | undefined;
+  let pr: Record<string, unknown> | null | undefined;
   try {
-    view = probes?.repository ? probes.gh.prView(probes.repository, facts.pr, probes.cwd) : undefined;
+    pr = probes?.repository ? probes.gh.prFacts(probes.repository, facts.pr, probes.cwd) : undefined;
   } catch {
-    view = undefined;
+    pr = undefined;
   }
-  check(`pr ${facts.pr} state`, 'MERGED', view?.state, 'gh');
-  check('mergeSha', facts.mergeSha, view && (view.mergeCommit ?? 'none'), 'gh');
-  check('headSha', facts.headSha, view && (view.headRefOid ?? 'none'), 'gh');
+  // A field gh answers is one of the expected type or an explicit null ('none', a mismatch); an absent field or one of another
+  // type answers nothing (R3 decision 2 F2).
+  const field = (value: unknown, type: 'string' | 'number') => (value === null ? 'none' : typeof value === type ? String(value) : undefined);
+  const commit = pr?.['mergeCommit'];
+  check(`pr ${facts.pr} state`, 'MERGED', field(pr?.['state'], 'string'), 'gh');
+  check('mergeSha', facts.mergeSha, commit === null ? 'none' : field((commit as { oid?: unknown } | undefined)?.oid, 'string'), 'gh');
+  check('headSha', facts.headSha, field(pr?.['headRefOid'], 'string'), 'gh');
+  check('pr', String(facts.pr), field(pr?.['number'], 'number'), 'gh');
   return answered;
 }

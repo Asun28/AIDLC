@@ -259,7 +259,7 @@ const missing = (card: string) => ({ severity: 'warn', code: 'FACT_MISSING', det
 const unverified = (detail: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail });
 const gitUnverified = (base = BASE) => [unverified('T1-A mergeSha object type: recorded commit, not re-derived (git)'), unverified(`T1-A tree: recorded ${TREE}, not re-derived (git)`), unverified(`T1-A mergeSha on ${base}: recorded ancestor, not re-derived (git)`)];
 const GIT_UNVERIFIED = gitUnverified();
-const GH_UNVERIFIED = [unverified('T1-A pr 42 state: recorded MERGED, not re-derived (gh)'), unverified(`T1-A mergeSha: recorded ${MERGE}, not re-derived (gh)`), unverified(`T1-A headSha: recorded ${HEAD}, not re-derived (gh)`)];
+const GH_UNVERIFIED = [unverified('T1-A pr 42 state: recorded MERGED, not re-derived (gh)'), unverified(`T1-A mergeSha: recorded ${MERGE}, not re-derived (gh)`), unverified(`T1-A headSha: recorded ${HEAD}, not re-derived (gh)`), unverified('T1-A pr: recorded 42, not re-derived (gh)')];
 
 /** One goal with T1-A shipped with facts, verified with `p`, optionally sealed and under a full-audit claim. */
 function verifyShipped(p: ReturnType<typeof probes>['probes'] | undefined, options: { seal?: boolean; claim?: boolean } = {}) {
@@ -283,6 +283,9 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
     ['gh reports no merge commit', { [GH_VIEW]: prJson({ mergeCommit: null }) }, `T1-A mergeSha: recorded ${MERGE}, re-derived none`],
     ['gh reports another head', { [GH_VIEW]: prJson({ headRefOid: OTHER }) }, `T1-A headSha: recorded ${HEAD}, re-derived ${OTHER}`],
     ['gh reports no head', { [GH_VIEW]: prJson({ headRefOid: null }) }, `T1-A headSha: recorded ${HEAD}, re-derived none`],
+    ['gh reports a null state', { [GH_VIEW]: prJson({ state: null }) }, 'T1-A pr 42 state: recorded MERGED, re-derived none'],
+    ['gh reports another PR number (R3 decision 2 F1)', { [GH_VIEW]: prJson({ number: 99 }) }, 'T1-A pr: recorded 42, re-derived 99'],
+    ['gh reports a null PR number', { [GH_VIEW]: prJson({ number: null }) }, 'T1-A pr: recorded 42, re-derived none'],
   ];
   for (const [name, over, detail] of cases) {
     const report = verifyShipped(probes(over).probes, { seal: true, claim: true });
@@ -294,9 +297,9 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
 });
 
 test('T1-AUDIT-FACTS R2 advisory: a card whose every fact git and gh answer but contradict is blocked by FACT_MISMATCH, never named as having no re-derived fact [R4]', () => {
-  const contradicted = { [`git cat-file -t ${MERGE}`]: { stdout: 'tree\n' }, [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${OTHER}\n` }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 1 }, [GH_VIEW]: prJson({ state: 'CLOSED', headRefOid: OTHER, mergeCommit: { oid: OTHER } }) };
+  const contradicted = { [`git cat-file -t ${MERGE}`]: { stdout: 'tree\n' }, [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${OTHER}\n` }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 1 }, [GH_VIEW]: prJson({ state: 'CLOSED', headRefOid: OTHER, mergeCommit: { oid: OTHER }, number: 99 }) };
   const report = verifyShipped(probes(contradicted).probes, { seal: true, claim: true });
-  assert.deepEqual(report.findings.map((x) => x.code), Array(6).fill('FACT_MISMATCH'), JSON.stringify(report.findings));
+  assert.deepEqual(report.findings.map((x) => x.code), Array(7).fill('FACT_MISMATCH'), JSON.stringify(report.findings));
   assert.equal(report.level, 'traceable');
   assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability');
   assert.equal(report.prerequisite, 'audit level is traceable; resolve blocking findings');
@@ -310,8 +313,13 @@ test('T1-AUDIT-FACTS acceptance 3: a fact git or gh cannot answer is a FACT_UNVE
     ['gh fails', probes(ghDown).probes, GH_UNVERIFIED, true],
     ['no repository is configured for gh', noRepository.probes, GH_UNVERIFIED, true],
     ['gh answers malformed JSON', probes({ [GH_VIEW]: { stdout: 'not json' } }).probes, GH_UNVERIFIED, true],
+    ['gh answers {} (R3 decision 2 F2)', probes({ [GH_VIEW]: { stdout: '{}' } }).probes, GH_UNVERIFIED, true],
+    ['gh answers JSON that is no object', probes({ [GH_VIEW]: { stdout: '[]' } }).probes, GH_UNVERIFIED, true],
+    ['gh answers some fields: a merge commit without an id, no head', probes({ [GH_VIEW]: { stdout: JSON.stringify({ number: 42, state: 'MERGED', mergeCommit: {} }) } }).probes, [GH_UNVERIFIED[1], GH_UNVERIFIED[2]], true],
+    ['gh answers fields of another type', probes({ [GH_VIEW]: { stdout: JSON.stringify({ number: '42', state: 1, mergeCommit: MERGE, headRefOid: [HEAD] }) } }).probes, GH_UNVERIFIED, true],
     ['the merge commit is absent from the repository', probes(absent).probes, GIT_UNVERIFIED, true],
     ['the merge commit is absent and gh fails', probes({ ...absent, ...ghDown }).probes, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
+    ['the merge commit is absent and gh answers {} (R3 decision 2 F2)', probes({ ...absent, [GH_VIEW]: { stdout: '{}' } }).probes, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
     ['no probes at all (no base ref is known)', undefined, [...gitUnverified('the base'), ...GH_UNVERIFIED], false],
   ];
   for (const [name, p, findings, rederived] of cases) {
@@ -428,8 +436,8 @@ const FACT_DOC_SENTENCES = {
     '`MANIFEST_UNSEALED`, `MANIFEST_TRAILING`, `FACT_UNVERIFIED`, `FACT_MISSING`.',
     '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS-2): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of a merge it verifies through a PR, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a successful fetch of the base, never from the ship output.',
     'The facts ride in the one merge `OPERATION_RESULT` only when all of them can be read; otherwise that result carries none (gh failing or naming no merge commit, the fetch failing, the tree unreadable, a merge without a PR), and `verify` reports a `FACT_MISSING` warning naming each shipped card whose merge result carries no facts, which `--claim-full` refuses.',
-    '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded merge commit and head.',
-    'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
+    '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded number, merge commit and head.',
+    'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing or leaving the field out, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
     '`--claim-full` is `verified` only when, in addition, every shipped card (a card whose merge operation succeeded, by its result or by `aidlc ops reconcile`) has at least one re-derived fact; otherwise the prerequisite names each card that has none, which includes every card of a journal written before this change.',
     'A card whose facts git and gh answer but contradict is not named there: its `FACT_MISMATCH` blocks the claim.',
   ],

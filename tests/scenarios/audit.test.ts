@@ -235,7 +235,7 @@ test('T1-AUDIT-FACTS acceptance 4: aidlc audit verify --claim-full is BLOCKED na
     assert.equal(old.prerequisite, 'no re-derived fact for shipped card(s): T1-HELLO, T1-WORLD');
     const withFacts = verify(after.id, ...claim);
     const gh = (card: string, fact: string, value: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${value}, not re-derived (gh)` });
-    const ghFacts = (card: string) => [gh(card, 'pr 42 state', 'MERGED'), gh(card, 'mergeSha', merge), gh(card, 'headSha', head)];
+    const ghFacts = (card: string) => [gh(card, 'pr 42 state', 'MERGED'), gh(card, 'mergeSha', merge), gh(card, 'headSha', head), gh(card, 'pr', '42')];
     assert.deepEqual(withFacts.findings, ghFacts('T1-FACTS'), 'git re-derived the commit, its tree and its place on main; no FACT_MISSING');
     assert.equal(withFacts.level, 'independently-verified');
     assert.equal(withFacts.fullyAuditedStatus, 'verified');
