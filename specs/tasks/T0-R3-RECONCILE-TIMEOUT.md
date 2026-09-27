@@ -1,7 +1,7 @@
 ---
 id: T0-R3-RECONCILE-TIMEOUT
 title: A pending R3 decision is reconciled against the timeout recorded on its reservation, never the live configuration looked up by reviewer name (issue #96)
-status: todo
+status: merged
 branch: T0-R3-RECONCILE-TIMEOUT
 worktree: D:\wt\AIDLC\T0-R3-RECONCILE-TIMEOUT
 allow_paths:
