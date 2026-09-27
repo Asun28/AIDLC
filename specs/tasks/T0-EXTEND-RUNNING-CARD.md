@@ -1,7 +1,7 @@
 ---
 id: T0-EXTEND-RUNNING-CARD
 title: A deadline extension also moves the deadline of every card run of the current projection still in progress, and the run-card directive shows the stored card deadline (issue 105)
-status: todo
+status: merged
 branch: T0-EXTEND-RUNNING-CARD
 worktree: D:\wt\AIDLC\T0-EXTEND-RUNNING-CARD
 allow_paths:
