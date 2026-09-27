@@ -18,7 +18,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { parseVerdict } from '../core/review-policy.ts';
-import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
+import { classifyShipOutput, encodeUntrusted, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
 
 export interface GitHubShipOptions {
@@ -35,15 +35,6 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
-}
-
-/**
- * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync) travels
- * with brackets and percent signs encoded, so it can never form a sentinel or a `[SAGA-RESUME]` marker; everything
- * else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
- */
-function encodeUntrusted(text: string): string {
-  return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
 }
 
 /** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
