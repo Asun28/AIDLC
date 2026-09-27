@@ -182,7 +182,7 @@ integration repair. The board renders one line over every goal journal:
 being the goal's terminal event after the firing. The worker cap is a cap,
 not a firing, and is not counted. `MAX_LIFECYCLE_REPAIR_CYCLES` is defined
 and never enforced; the Limits table says so (finding F2). No new config, no
-new file. Target +50 src lines.
+new file. Target +50 src lines, raised to +90 by the monitoring session for the R3 decision 1 repair (keyed, journal-idempotent firings; per-journal board reads).
 
 **W5, T1-RUN-DRIVER** (wave 3, last card; the W0 gate is lifted by the
 approval, so the token measurement below waits for the deferred W0).
@@ -239,10 +239,10 @@ deleted), tests excluded, stated in every card's close-out.
 | T1-PARSE-GUARD | W1 | below 0 (estimate -3 to -7) | STOP/scope at 0 or above |
 | T1-STORE-CAS | W3 | below 0 (estimate -45) | STOP/scope at 0 or above |
 | T1-AUDIT-FACTS | W2 | at most +140 | shared +400 |
-| T1-BOUND-TELEMETRY | W4 | at most +50 | shared +400 |
+| T1-BOUND-TELEMETRY | W4 | at most +90 (raised from +50 for its R3 decision 1 repair) | shared +400 |
 | T1-INIT-SURFACE | W6 | at most +15 | own |
 | T1-README-SCOPE | W7 | 0 | no src/ change |
-| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual | shared +400 |
+| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +214 after W2 +96 and W4 +90) | shared +400 |
 | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 (deferred) | 0 | no src/ change |
 
 The card `budget:` field is the churn cap (added plus deleted, all files),

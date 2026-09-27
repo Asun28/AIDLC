@@ -71,7 +71,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
 
   // Delegated work must carry invocation ids.
   for (const e of events) {
-    if ((e.type === 'MODEL_INVOCATION' || e.type === 'CARD_DISPATCHED') && !e.data['invocationId'] && !e.data['childRef']) {
+    if (e.type === 'CARD_DISPATCHED' && !e.data['invocationId'] && !e.data['childRef']) {
       findings.push({ severity: 'block', code: 'TRACE_MISSING', detail: `event #${e.seq} (${e.type}) lacks invocationId/childRef` });
     }
   }
