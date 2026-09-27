@@ -95,17 +95,21 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });
 
-  // Merge facts (card T1-AUDIT-FACTS). A card is shipped when a merge intent of the card has a succeeded result or
-  // reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's card and
-  // operation, status succeeded) and never from narration. Each card counts the facts git or gh answered.
+  // Merge facts (cards T1-AUDIT-FACTS and T1-AUDIT-FACTS-2). A card is shipped when a merge intent of the card has a succeeded
+  // result or reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's
+  // card and operation, status succeeded) and never from narration. Each card counts the facts git or gh answered; a shipped
+  // card whose merge result carries no facts is FACT_MISSING.
   const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId]));
   const rederived = new Map<string, number>();
+  const withFacts = new Set<string>();
   for (const e of events) {
     const card = merges.get(e.data['operationId']);
     if (!card || e.cardId !== card || e.data['status'] !== 'succeeded' || (e.type !== 'OPERATION_RESULT' && e.type !== 'OPERATION_RECONCILED')) continue;
     const facts = e.type === 'OPERATION_RESULT' ? ShippedFacts.safeParse(e.data).data : undefined;
+    if (facts) withFacts.add(card);
     rederived.set(card, (rederived.get(card) ?? 0) + (facts ? rederive(card, facts, input.probes, findings) : 0));
   }
+  for (const card of rederived.keys()) if (!withFacts.has(card)) findings.push({ severity: 'warn', code: 'FACT_MISSING', detail: `${card}: its merge result carries no facts` });
   const noFacts = [...rederived].filter(([, n]) => n === 0).map(([card]) => card);
 
   // Manifest / artifacts.

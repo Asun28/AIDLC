@@ -461,7 +461,7 @@ export class CardRunner {
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined; runningOp?: OperationRecord } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
     // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
@@ -548,7 +548,7 @@ export class CardRunner {
     // reads the record as persisted and must not find the stop it cleared.
     if (revalidatedStop) next = save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
-    return { run, next, decision, lease, runningOp };
+    return { run, next, decision, lease };
   }
 
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
@@ -567,7 +567,7 @@ export class CardRunner {
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
     // run as it stands now, before any action.
     if (checkpointMissing(run)) return checkpointWait(run);
-    const { decision, runningOp } = assessed;
+    const { decision } = assessed;
     let next = assessed.next;
 
     switch (decision.state) {
@@ -623,9 +623,6 @@ export class CardRunner {
       }
       case 'WAIT': {
         next = this.save(next);
-        // A verified merge whose facts are unread (card T1-AUDIT-FACTS) waits on its merge operation: only the facts are read again.
-        const pr = next.mergeVerified ? next.pr?.number : undefined;
-        if (pr && runningOp) return this.recordMerge(goal, card, next, runningOp.id, this.readFacts(pr, this.viewPr(pr)));
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: decision.reason, pollSeconds: 60, narration: decision.reason } };
       }
       case 'CLOSE':
@@ -2310,18 +2307,29 @@ export class CardRunner {
       const token = this.shipPath.readMergeToken(card.id);
       const pr = result.prNumber ?? token?.mergedPr;
       // The PR as GitHub reports it: the merge check when the token does not settle it, and the facts of a verified merge.
-      const view = this.viewPr(pr);
+      let view: PrInfo | undefined;
+      if (pr && this.config.repository) {
+        try {
+          view = this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
+        } catch {
+          view = undefined;
+        }
+      }
       let mergeVerified = false;
       if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
       else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
-      // A verified GitHub merge closes only with its facts (card T1-AUDIT-FACTS): until they are all read the card waits.
-      const read = mergeVerified && this.config.shipPath === 'github' && pr ? this.readFacts(pr, view) : {};
-      return finish((latest) => ({ state: mergeVerified && !read.missing ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
-        if (mergeVerified) return this.recordMerge(goal, card, next, operationId, read);
-        this.ops.markResult(operationId, 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: 'merge reported but not verified against the intended base' });
-        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'UNKNOWN' } });
-        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
+      // The facts ride in the merge's one result (card T1-AUDIT-FACTS-2), from gh and git only, never from the ship output or the
+      // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
+      // read leaves the result without facts; audit verify names the card (FACT_MISSING).
+      let facts: ShippedFacts | undefined;
+      if (mergeVerified && view?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
+        facts = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number }).data;
+      }
+      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
+        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : 'merge reported but not verified against the intended base' });
+        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
+        return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
       });
     }
 
@@ -2506,39 +2514,6 @@ export class CardRunner {
     const ci = reconcileRerun(run.ci, runId, 1, outcome, now);
     this.journal(goal.id).append({ type: 'OPERATION_RECONCILED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { runId, outcome } });
     return this.save({ ...run, ci, state: outcome === 'success' ? 'SHIP' : outcome === 'failure' ? 'BUILD' : 'WAIT' });
-  }
-
-  /** The PR as gh reports it, or undefined without a PR, a repository or an answer from gh. */
-  private viewPr(pr: number | undefined): PrInfo | undefined {
-    if (!pr || !this.config.repository) return undefined;
-    try {
-      return this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
-    } catch {
-      return undefined;
-    }
-  }
-
-  /**
-   * The facts of a verified merge (card T1-AUDIT-FACTS), from gh and git only, never from the ship output or the token: the
-   * merge commit GitHub made reaches the checkout through a fetch of the base, then its tree is read. Else what was not read.
-   */
-  private readFacts(pr: number, view: PrInfo | undefined): { facts?: ShippedFacts; missing?: string } {
-    if (!view?.mergeCommit) return { missing: `the merge commit of PR #${pr} (gh pr view)` };
-    if (this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode !== 0) return { missing: `${this.config.base} (git fetch)` };
-    const parsed = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number });
-    return parsed.success ? { facts: parsed.data } : { missing: `the ${parsed.error.issues.map((i) => i.path.join('.')).join(', ')} of PR #${pr}` };
-  }
-
-  /**
-   * The one succeeded result of a verified merge, journaled with its facts, then CLOSE. While a fact is unread nothing is
-   * recorded: the merge operation stays issued, so the card machine selects WAIT (a known operation still running) and the
-   * next `card next` reads only the facts again, never the ship or the merge (card T1-AUDIT-FACTS).
-   */
-  private recordMerge(goal: Goal, card: Card, run: CardRun, operationId: string, read: { facts?: ShippedFacts; missing?: string }): { run: CardRun; directive: CardDirective } {
-    if (read.missing) return { run, directive: { kind: 'wait', cardId: card.id, on: `merge-facts:${operationId}`, pollSeconds: 60, narration: `The merge is verified, but ${read.missing} could not be read; the card closes once its facts are read and journaled with the merge result. Run \`aidlc card next ${card.id}\` again: only the facts are read, nothing is shipped or merged again.` } };
-    this.ops.markResult(operationId, 'succeeded', { evidenceRef: `ship-${operationId}` });
-    this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'succeeded', ...read.facts } });
-    return this.close(goal, card, run);
   }
 
   private close(goal: Goal, card: Card, caller: CardRun): { run: CardRun; directive: CardDirective } {
