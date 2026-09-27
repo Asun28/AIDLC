@@ -76,7 +76,8 @@ function refusedShip(opts: { states: Array<string | Partial<ExecReceipt>>; resyn
             return {};
           },
         }
-      : {}),
+      : // No unmerged path otherwise: a failed listing is its own failure (card T0-BASE-SYNC-CHANGELOG-EDGES).
+        { 'git diff --name-only --diff-filter=U -z': { stdout: '' } }),
     ...opts.overrides,
   });
   const runner: typeof scripted = (cmd, args, o) => {
