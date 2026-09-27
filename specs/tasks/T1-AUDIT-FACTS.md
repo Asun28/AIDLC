@@ -16,6 +16,7 @@ allow_paths:
   - tests/scenarios/audit.test.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/infra/gh.test.ts
+  - tests/infra/github-ship.test.ts
   - tests/infra/git.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
@@ -41,7 +42,7 @@ acceptance:
   - 8. `docs/OPERATIONS.md` (Audit) and `docs/ARCHITECTURE.md` (Evidence and audit chain) state what is re-derived and what `--claim-full` requires; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/surface/verifier.test.ts). [R2] [R4] [dod arm 1]
   - 9. Issue filed for plan finding F4 (seven journal event types declared and never written), named in the close-out. [R5]
 depends_on: [T1-STORE-CAS-2]
-budget: 600
+budget: 700
 tdd: true
 sweep: "Survey of main at 5983a1e. No journal event carries a commit SHA, tree hash, check-run id or exec receipt; MANIFEST_SEALED.finalSha is operator input (main.ts:968). The SHA lives only in CardRun.candidate.sha (card-runner.ts:870-876), pr.headRefOid (2238) and the merge token (github-ship.ts:268); the merge OPERATION_RESULT (card-runner.ts:2240) has neither PR nor merge commit though PrInfo.mergeCommit is fetched (gh.ts:87). verifyAudit (verifier.ts:51-144) is offline: chain, ledger, invocation ids, work after terminal, seal, artifact digests, stale candidate. audit verify main.ts:938-954; --claim-full sets hostCaptureBoundary from --capture-boundary."
 forbid: [a fact read from ship output text, a network call from a test, a change to the hash-chain format, counting an unverifiable fact as verified]
