@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -119,7 +119,7 @@ test('protect-paths denies PowerShell-cased write verbs', () => {
 test('protect-paths reads frozenPaths from aidlc.config.json via runHook', () => {
   const { cwd, env } = envWithState();
   writeFileSync(path.join(cwd, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }), 'utf8');
-  assert.deepEqual(loadHookConfig(cwd).frozenPaths, ['contracts/']);
+  assert.deepEqual(loadHookConfig(cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] });
   const r = runHook('protect-paths', { tool_input: { file_path: 'contracts/api.yaml' } }, { cwd, env });
   assert.equal(decision(r), 'deny');
   assert.deepEqual(loadHookConfig(mkdtempSync(path.join(tmpdir(), 'aidlc-nocfg-'))), DEFAULT_HOOK_CONFIG);
@@ -445,4 +445,160 @@ test('T0-PLANNING-CLAIMS: a goal id that is not a plain identifier is JSON-quote
   const note = (JSON.parse(failed.stdout!) as { hookSpecificOutput: { additionalContext: string } }).hookSpecificOutput.additionalContext;
   assert.equal(note, '[aidlc] The planning-artifacts check did not run (UNREADABLE); run `aidlc doctor` and commit your own goal\'s planning artifacts before the session ends.');
   assert.ok(!note.includes('HUSH42XYZ'));
+});
+
+// ---------------------------------------------------------------- T0-HOOK-CONFIG-CLOSED (issue 76 item 1)
+
+/** A state-backed cwd whose aidlc.config.json holds `text`. */
+function withConfig(text: string): { cwd: string; env: NodeJS.ProcessEnv; file: string } {
+  const { cwd, env } = envWithState();
+  const file = path.join(cwd, 'aidlc.config.json');
+  writeFileSync(file, text, 'utf8');
+  return { cwd, env, file };
+}
+
+/** The reason a deny result gives. */
+function denyReason(r: HookResult): string {
+  return (JSON.parse(r.stdout!) as { hookSpecificOutput: { permissionDecisionReason: string } }).hookSpecificOutput.permissionDecisionReason;
+}
+
+const KEY_OF = { 'production-gate': 'productionPatterns', 'protect-paths': 'frozenPaths', 'protect-tests': 'testPathPatterns' } as const;
+
+/** The denial a config-reading guard gives while the config cannot be used. */
+function configDenial(file: string, detail: string, guard: keyof typeof KEY_OF): string {
+  return `${file} cannot be used (${detail}), so the ${guard} guard cannot read hooks.${KEY_OF[guard]} from it and denies this call. Fix the file first: an Edit or Write of that file, reads and \`aidlc doctor\` pass.`;
+}
+
+/** Each config that cannot be used, with the detail the loader names it by; no detail quotes the file. */
+const UNUSABLE_CONFIGS: Array<[string, string]> = [
+  ['{ "hooks": { "frozenPaths": [ QUOTE-ME-NOT-7Q', 'not valid JSON; `aidlc doctor` prints where'],
+  [JSON.stringify({ mode: 'QUOTE-ME-NOT-8R', hooks: { frozenPaths: [' '] } }), 'mode: Invalid option: expected one of "local"|"remote"; hooks.frozenPaths.0: must not be blank'],
+  [JSON.stringify({ hooks: { productionPatterns: ['\\bship-it\\b', '(QUOTE-ME-NOT-9S'] } }), 'hooks.productionPatterns.1 is not a valid regular expression'],
+  [JSON.stringify({ hooks: { testPathPatterns: ['[z-a]QUOTE-ME-NOT-0T'] } }), 'hooks.testPathPatterns.0 is not a valid regular expression'],
+];
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 1: a config that is not JSON, fails the schema, cannot be read or holds a pattern that does not compile is a config error, never the defaults; a missing file gives the defaults', () => {
+  for (const [text, detail] of UNUSABLE_CONFIGS) {
+    const { cwd, file } = withConfig(text);
+    assert.deepEqual(loadHookConfig(cwd), { file, detail }, text);
+  }
+  const unreadable = envWithState();
+  const dir = path.join(unreadable.cwd, 'aidlc.config.json');
+  mkdirSync(dir);
+  assert.deepEqual(loadHookConfig(unreadable.cwd), { file: dir, detail: 'cannot be read: EISDIR' });
+  assert.deepEqual(loadHookConfig(mkdtempSync(path.join(tmpdir(), 'aidlc-nocfg-'))), DEFAULT_HOOK_CONFIG);
+  // a frozenPaths entry is matched as literal text when it is not a regular expression, so it is no error
+  const literal = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/('] } }));
+  assert.deepEqual(loadHookConfig(literal.cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/('] });
+  assert.equal(decision(runHook('protect-paths', { tool_input: { file_path: 'contracts/(x.yaml' } }, { cwd: literal.cwd, env: literal.env })), 'deny');
+});
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 1 and 2: while the config cannot be used, a guarded call is denied with the error and the repair, and the repair, reads and aidlc doctor pass', () => {
+  for (const [text, detail] of UNUSABLE_CONFIGS) {
+    const { cwd, env, file } = withConfig(text);
+    const run = (event: HookEvent, e: NodeJS.ProcessEnv = env) => dispatchHook({ hook_event_name: 'PreToolUse', ...event }, { cwd, env: e });
+    const denied = (event: HookEvent, guard: keyof typeof KEY_OF, e?: NodeJS.ProcessEnv) => {
+      const r = run(event, e);
+      assert.equal(decision(r), 'deny', JSON.stringify(event));
+      assert.equal(denyReason(r), configDenial(file, detail, guard), JSON.stringify(event));
+      assert.ok(!r.stdout!.includes('QUOTE-ME-NOT'), 'the denial never quotes the file');
+    };
+    const passes = (event: HookEvent, e?: NodeJS.ProcessEnv) => assert.deepEqual(run(event, e), { exitCode: 0 }, JSON.stringify(event));
+    // an edit anywhere but the config file is denied
+    denied({ tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'src', 'app.ts'), old_string: 'a', new_string: 'b' } }, 'protect-paths');
+    denied({ tool_name: 'Write', tool_input: { file_path: 'README.md', content: 'x' } }, 'protect-paths');
+    denied({ tool_name: 'MultiEdit', tool_input: { file_path: 'specs/api.yaml', edits: [] } }, 'protect-paths');
+    // a Bash command with a mutating segment or a write is denied, by the first guard that reads the config
+    denied({ tool_name: 'Bash', tool_input: { command: 'npm test' } }, 'production-gate');
+    denied({ tool_name: 'Bash', tool_input: { command: 'aidlc doctor; rm -rf src' } }, 'production-gate');
+    denied({ tool_name: 'Bash', tool_input: { command: 'aidlc doctor > doctor.txt' } }, 'production-gate');
+    denied({ tool_name: 'Bash', tool_input: { command: 'aidlc doctor $(touch src/x)' } }, 'production-gate');
+    denied({ tool_name: 'Bash', tool_input: { command: 'echo x > src/app.ts' } }, 'protect-paths');
+    denied({ tool_name: 'Bash', tool_input: { command: "sed -i 's/a/b/' src/app.ts" } }, 'protect-paths');
+    denied({ tool_name: 'Bash', tool_input: { command: 'grep x src 2>/dev/null >> notes.txt' } }, 'protect-paths');
+    // the repair: an Edit or Write of that config file, however the path is spelled
+    passes({ tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } });
+    passes({ tool_name: 'Edit', tool_input: { file_path: file.replace(/\\/g, '/'), old_string: 'a', new_string: 'b' } });
+    passes({ tool_name: 'Write', tool_input: { file_path: 'aidlc.config.json', content: '{}' } });
+    passes({ tool_name: 'MultiEdit', tool_input: { file_path: path.join(cwd, 'src', '..', 'aidlc.config.json'), edits: [] } });
+    // a config file in another directory is not the repair
+    denied({ tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'sub', 'aidlc.config.json'), old_string: 'a', new_string: 'b' } }, 'protect-paths');
+    // reads, a change of directory and aidlc doctor in each spelling
+    for (const command of ['git log --oneline -3', 'grep -rn frozen src 2>/dev/null', 'cat aidlc.config.json | head -5', 'aidlc doctor', 'npx --no-install aidlc doctor --json', 'npx aidlc doctor', 'node bin/aidlc.js doctor 2>&1', 'node D:/repo/bin/aidlc.js doctor', 'npm run dev -- doctor', 'cd D:/repo && aidlc doctor']) {
+      passes({ tool_name: 'Bash', tool_input: { command } });
+    }
+    // secrets-guard runs as before, on the repair too
+    const awsLike = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
+    const secret = run({ tool_name: 'Write', tool_input: { file_path: 'aidlc.config.json', content: `{"key": "${awsLike}"}` } });
+    assert.equal(decision(secret), 'deny');
+    assert.ok(denyReason(secret).includes('AWS access key id'));
+    // protect-tests reads the config only while a fix task is active
+    const fixing = { ...env, AIDLC_FIX_TASK: 'T1-FIX' };
+    assert.equal(denyReason(runHook('protect-tests', { tool_input: { file_path: 'tests/a.test.ts' } }, { cwd, env: fixing })), configDenial(file, detail, 'protect-tests'));
+    assert.deepEqual(runHook('protect-tests', { tool_input: { file_path: 'aidlc.config.json' } }, { cwd, env: fixing }), { exitCode: 0 });
+    assert.deepEqual(runHook('protect-tests', { tool_input: { file_path: 'tests/a.test.ts' } }, { cwd, env }), { exitCode: 0 });
+    assert.deepEqual(runHook('protect-tests', { tool_input: { command: 'npm test' } }, { cwd, env: fixing }), { exitCode: 0 });
+    // production-gate and protect-paths alone, as `aidlc hook <name>` runs them
+    assert.equal(denyReason(runHook('production-gate', { tool_input: { command: 'npm test' } }, { cwd, env })), configDenial(file, detail, 'production-gate'));
+    assert.deepEqual(runHook('production-gate', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
+    assert.equal(denyReason(runHook('protect-paths', { tool_input: { command: 'cp a b' } }, { cwd, env })), configDenial(file, detail, 'protect-paths'));
+    assert.deepEqual(runHook('protect-paths', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
+  }
+});
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 3: every prompt names the config error, and the Stop output is the one a valid config gives', () => {
+  const [text, detail] = UNUSABLE_CONFIGS[0]!;
+  const { cwd, env, file } = withConfig(text);
+  const line = `[aidlc] ${file} cannot be used (${detail}): the hook guards that read it deny every call they cannot decide until it is fixed. An Edit or Write of that file, reads and \`aidlc doctor\` pass.`;
+  const request = 'Add a reporting dashboard feature with charts to the admin portal';
+  const routed = routeNewWork({ prompt: request }).stdout!;
+  assert.deepEqual(dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: request }, { cwd, env }), { exitCode: 0, stdout: `${routed}\n${line}` });
+  assert.deepEqual(dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { cwd, env }), { exitCode: 0, stdout: line });
+  assert.ok(!line.includes('QUOTE-ME-NOT'));
+  // Stop: the same output under the broken config as under a valid one, with a run to report and without
+  const stop = { hook_event_name: 'Stop', session_id: 'win-A' };
+  assert.deepEqual(dispatchHook(stop, { cwd, env }), { exitCode: 0 });
+  buildRuns(cwd, env, ['T1-FOO']);
+  const broken = dispatchHook(stop, { cwd, env });
+  writeFileSync(file, JSON.stringify({ hooks: { frozenPaths: [] } }), 'utf8');
+  const valid = dispatchHook(stop, { cwd, env });
+  assert.deepEqual(stopCards(valid), ['T1-FOO']);
+  assert.deepEqual(broken, valid);
+  assert.deepEqual(dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { cwd, env }), { exitCode: 0 });
+});
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 4: a valid config gives the guard results it gave before', () => {
+  const { cwd, env } = withConfig(JSON.stringify({ mode: 'local', hooks: { frozenPaths: ['contracts/'], testPathPatterns: ['\\.check\\.ts$'], productionPatterns: ['\\bship-it\\b'] } }));
+  assert.deepEqual(loadHookConfig(cwd), { frozenPaths: ['contracts/'], testPathPatterns: ['\\.check\\.ts$'], productionPatterns: ['\\bship-it\\b'] });
+  const run = (event: HookEvent, e: NodeJS.ProcessEnv = env) => dispatchHook({ hook_event_name: 'PreToolUse', ...event }, { cwd, env: e });
+  const frozen = run({ tool_name: 'Edit', tool_input: { file_path: 'contracts/api.yaml' } });
+  assert.ok(denyReason(frozen).startsWith('FROZEN: '));
+  assert.deepEqual(run({ tool_name: 'Edit', tool_input: { file_path: 'src/app.ts' } }), { exitCode: 0 });
+  const gated = run({ tool_name: 'Bash', tool_input: { command: 'ship-it now' } });
+  assert.equal(gated.exitCode, 2);
+  assert.ok(gated.stderr?.includes('release authorization'));
+  assert.deepEqual(run({ tool_name: 'Bash', tool_input: { command: 'npm test' } }), { exitCode: 0 });
+  assert.equal(decision(run({ tool_name: 'Bash', tool_input: { command: 'cat contracts/api.yaml' } })), 'defer');
+  assert.equal(decision(run({ tool_name: 'Bash', tool_input: { command: 'cp x contracts/api.yaml' } })), 'deny');
+  const fixing = { ...env, AIDLC_FIX_TASK: 'T1-FIX' };
+  assert.ok(denyReason(run({ tool_name: 'Edit', tool_input: { file_path: 'src/a.check.ts' } }, fixing)).includes('T1-FIX'));
+  assert.deepEqual(run({ tool_name: 'Edit', tool_input: { file_path: 'tests/a.test.ts' } }, fixing), { exitCode: 0 });
+  // the lists a config leaves out keep their defaults
+  const partial = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }));
+  assert.deepEqual(loadHookConfig(partial.cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] });
+  const empty = withConfig(JSON.stringify({ hooks: { frozenPaths: [], testPathPatterns: [] } }));
+  assert.deepEqual(loadHookConfig(empty.cwd), { ...DEFAULT_HOOK_CONFIG, testPathPatterns: [] });
+  assert.deepEqual(routeNewWork({ prompt: 'hi' }), { exitCode: 0 });
+});
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 5: docs/OPERATIONS.md (Hooks) and the CHANGELOG Unreleased section state the fail-closed config', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
+  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED, issue 76): when the file is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, `production-gate`, `protect-paths` and `protect-tests` deny each call that some valid config would deny, naming the error without quoting the file, and pass the repair: an Edit or Write of that file, a read-only command, a change of directory and `aidlc doctor`. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A missing file still gives the defaults, as it does for the CLI, and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
+  assert.ok(hooks.includes(sentence), `docs/OPERATIONS.md (Hooks) states: ${sentence}`);
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED (issue 76 item 1): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now `production-gate`, `protect-paths` and `protect-tests` deny each call that some valid config would deny, naming the error without quoting the file, and an Edit or Write of that file, a read-only command, a change of directory and `aidlc doctor` pass. `route-new-work` names the error on every prompt; the Stop output is unchanged. A missing file still gives the defaults.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });

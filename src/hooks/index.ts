@@ -82,7 +82,18 @@ function normalise(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
-export function loadHookConfig(cwd: string): Required<HookConfig> {
+export interface HookConfigError {
+  file: string;
+  detail: string;
+}
+
+export type LoadedHookConfig = Required<HookConfig> | HookConfigError;
+
+export function isHookConfigError(config: LoadedHookConfig): config is HookConfigError {
+  return 'detail' in config;
+}
+
+export function loadHookConfig(cwd: string): LoadedHookConfig {
   const file = path.join(cwd, 'aidlc.config.json');
   if (!existsSync(file)) return DEFAULT_HOOK_CONFIG;
   try {
@@ -337,7 +348,7 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   return contexts;
 }
 
-export function routeNewWork(event: HookEvent): HookResult {
+export function routeNewWork(event: HookEvent, _configError?: HookConfigError): HookResult {
   const prompt = String(event.prompt ?? '');
   if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return { exitCode: 0 };
   const routing = classifyRequest({ text: prompt });
@@ -359,10 +370,11 @@ export function readStdinJson(text: string): HookEvent {
 
 export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | 'secrets-guard' | 'verify-before-done' | 'route-new-work';
 
-export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: Required<HookConfig> } = {}): HookResult {
+export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig } = {}): HookResult {
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const config = options.config ?? loadHookConfig(cwd);
+  const loaded = options.config ?? loadHookConfig(cwd);
+  const config = isHookConfigError(loaded) ? DEFAULT_HOOK_CONFIG : loaded;
   switch (name) {
     case 'production-gate':
       return productionGate(event, env, config, cwd);
