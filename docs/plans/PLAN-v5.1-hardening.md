@@ -48,7 +48,7 @@ spend another wave's 12 h arc.
 
 | Wave | Goal | Cards, in order | Starts when |
 |---|---|---|---|
-| 1 | v5.1 wave 1 | T1-PARSE-GUARD, T1-STORE-CAS | plan approved |
+| 1 | v5.1 wave 1 | T1-PARSE-GUARD (merged, PR #78), T1-STORE-CAS (stopped, replaced by T1-STORE-CAS-2 in its own goal) | plan approved |
 | 2 | v5.1 wave 2 | T1-AUDIT-FACTS, T1-BOUND-TELEMETRY | wave 1 DONE |
 | 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
 | deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
@@ -318,7 +318,8 @@ a different measure; each card sets both.
 |---|---|---|---|---|---|
 | T1-PARSE-GUARD | MUST | one parse guard, non-blank config, doctor config error, #39 #41 #45 #52 | - | W1 | - |
 | T1-STORE-CAS | MUST | one locked update primitive for lease and run records, Sessions text shorter | T1-PARSE-GUARD | W2 | - |
-| T1-AUDIT-FACTS | MUST | merge facts journaled and re-derived by audit verify | T1-STORE-CAS | W3 | - |
+| T1-STORE-CAS-2 | MUST | successor of T1-STORE-CAS: the takeover holds the lease lock through its run write; F3, F4, F5 and issue #87 | T1-PARSE-GUARD | W2 | - |
+| T1-AUDIT-FACTS | MUST | merge facts journaled and re-derived by audit verify | T1-STORE-CAS-2 | W3 | - |
 | T1-BOUND-TELEMETRY | SHOULD | BOUND_FIRED per bound and one board line | T1-AUDIT-FACTS | W4 | - |
 | T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
 | T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
@@ -371,8 +372,18 @@ filed as an issue by the card named.
   T0-CI-RED-LOGS-2 are in flight in other sessions and both edit
   CHANGELOG.md, so wave 1 syncs its base before each ship.
 
-New findings from running the waves are appended here by the card that meets
-them, never worked around.
+- F9: a busy base livelocks a passed candidate. Each card merged on main
+  adds a CHANGELOG entry, so every ship of T1-STORE-CAS found a CHANGELOG
+  conflict, the ship path merged it (card T0-BASE-SYNC-CHANGELOG-2) and the
+  merge was a new candidate needing the DoD, an R2 round and a base-sync R3
+  decision (about 20 minutes); two such rounds ran within 30 minutes and
+  the second needed a hold on main from the monitoring session.
+- F10: `git worktree remove` deletes a card worktree's gitignored `.review/`
+  directory, so a closure that cleans up before `aidlc evidence retain`
+  loses the retained verdict and log files (T1-PARSE-GUARD lost them; its
+  review outputs were retained from the session's own copies).
+
+New findings from running the waves are appended here by the card that meetsthem, never worked around.
 
 ## Decisions
 - D1-D3 (W0 task repository, arm B sandbox repository, eval spend caps):
