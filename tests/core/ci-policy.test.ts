@@ -4,6 +4,10 @@ import { canRerun, classifyCiFailure, gateChecks, hasUnreconciledRerun, reconcil
 import { classifyShipOutput } from '../../src/delivery/ship.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 describe('CI classification (Q7)', () => {
   test('a transient log pattern alone is unknown: log text never grants a rerun, and its match stays as evidence (T0-CI-RERUN-STRUCTURED)', () => {
@@ -54,6 +58,10 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     assert.equal(ship(`${gate(build)}\n${step('build', null)}`).class, 'unknown', 'no failed step placed');
     assert.equal(ship(`${gate(build)}\nnpm ERR! network ECONNRESET`).class, 'unknown', 'no step line: no structured evidence');
     assert.equal(ship(`${gate(build)}\n${step('other', 'Set up job')}`).class, 'unknown', 'a step line of another check is no evidence for this one');
+    const succeeded = `[CI-GATE-STEP] ${JSON.stringify({ check: 'build', job: '456', step: { number: 1, name: 'Set up job', conclusion: 'success' } })}`;
+    assert.equal(ship(`${gate(build)}\n${succeeded}`).class, 'unknown', 'a step that did not fail is no evidence');
+    const encoded = `[CI-GATE-STEP] ${JSON.stringify({ check: 'build', job: '456', step: { number: 4, name: 'Run %5Bnet%5D fetch', conclusion: 'failure' } })}`;
+    assert.equal(ship(`${gate(build)}\n${encoded}`, ['Run [net] fetch']).class, 'transient', 'step names are decoded before the list is read');
   });
 
   test('acceptance 1: a startup_failure conclusion is transient; every red check needs evidence [R3]', () => {
@@ -83,6 +91,41 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
   test('acceptance 2: a [CI-GATE-STEP] line is no ship sentinel [R2]', () => {
     const r = classifyShipOutput({ command: 'x', args: [], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout: step('build', 'Set up job'), stderr: '', startedAt: T0, finishedAt: T0, durationMs: 0, outputSha256: '' });
     assert.equal(r.outcome, 'unclassified');
+  });
+});
+
+describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the CLI says a log alone cannot be transient [R4] [R5]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+  const SENTENCES = [
+    'A CI failure is `transient`, and earns the one same-origin rerun, only on structured evidence for every red check (card T0-CI-RERUN-STRUCTURED): its conclusion is `startup_failure`, or the `[CI-GATE-STEP]` line the GitHub ship path prints from the job record names a failed step listed in `ci.transientSteps` (default `Set up job` and `Complete job`, the steps GitHub runs itself).',
+    'Log text never grants a rerun: a failure whose only transient evidence is text, a cancelled check included, is `unknown` and stops as `ci` for diagnosis.',
+    'A repository can list its own steps in `ci.transientSteps`; a listed step grants the rerun on any failure in it, so list only steps whose failures are usually infrastructure (a dependency download, for example).',
+    'The scaffold path\'s CI gate prints no step lines, so a scaffold ship never earns a transient rerun (issue 137), and `aidlc ci classify --log` says that a log alone cannot be transient.',
+  ];
+  const CHANGELOG_ENTRY = '- CI rerun on structured evidence, card T0-CI-RERUN-STRUCTURED (issue 76 item 2): a red CI failure is `transient`, the one same-origin rerun, only when every red check carries structured evidence, a `startup_failure` conclusion or a failed step listed in the new `ci.transientSteps` (default `Set up job`, `Complete job`), which the GitHub ship path prints as `[CI-GATE-STEP]` lines from the job records; log text, a cancelled check\'s included, no longer grants a rerun and classifies as `unknown` (STOP/ci). A network failure inside a project step is no longer rerun unless that step is listed; the scaffold path never earns a transient rerun (issue 137).';
+
+  test('docs/OPERATIONS.md and CHANGELOG.md Unreleased carry the rule', () => {
+    const operations = read('docs', 'OPERATIONS.md');
+    for (const sentence of SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## Unreleased');
+    assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
+  });
+
+  test('aidlc ci classify --log on a log-only transient prints unknown and the note', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-'));
+    try {
+      const log = path.join(dir, 'ci.log');
+      writeFileSync(log, 'npm ERR! network read ECONNRESET\n');
+      const out = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'ci', 'classify', '--log', log, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
+      assert.equal(out.status, 0, out.stderr);
+      const r = JSON.parse(out.stdout) as { class: string; note: string };
+      assert.equal(r.class, 'unknown');
+      assert.match(r.note, /a log alone cannot be transient/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

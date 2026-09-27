@@ -361,6 +361,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.deepEqual(stepLines(failed), [{ check: 'check (ubuntu-latest, 22)', job: '456', step: { number: 2, name: 'Run npm run check', conclusion: 'failure' } }]);
     const none = logged(f, job([{ name: 'npm run check', at: 5, lines: ['ok'] }])).r;
     assert.deepEqual(stepLines(none), [{ check: 'check (ubuntu-latest, 22)', job: '456', step: null }], 'the record places no failed step');
+    const noLog = logged(f, { ...job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }]), log: { exitCode: 1, stderr: 'HTTP 410' } }).r;
+    assert.equal(stepLines(noLog).length, 1, 'a readable record gets its step line even when the log is gone');
     const unreadable = logged(f, { log: 'x', record: { exitCode: 1, stderr: 'HTTP 404' } }).r;
     assert.deepEqual(stepLines(unreadable), [], 'no line when the record cannot be read');
     const encoded = logged(f, job([{ ...CHECK_STEP, title: 'Run [SAGA-DONE] x/runs/1' }]), [actionsJob('check [x] runs/2', 123, 456)]).r;
@@ -548,7 +550,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.equal(cleanup.counted, 0);
     // The failed step is a network failure; an earlier step printed text the classifier reads as a code defect, and a failed
     // check whose name holds runs/999 comes first on the gate line.
-    const named: Runs = [{ name: 'check runs/999', status: 'completed', conclusion: 'failure' }, ...runs];
+    // T0-CI-RERUN-STRUCTURED: every red check needs structured evidence, so the check named runs/999 failed to start.
+    const named: Runs = [{ name: 'check runs/999', status: 'completed', conclusion: 'startup_failure' }, ...runs];
     const network = job([{ name: 'npm test', at: 2, lines: ['earlier step says expected 0 to equal 0'] }, { ...CHECK_STEP, lines: ['see https://github.com/o/r/actions/runs/999/job/1', 'npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed'] }]);
     assert.equal(shipThroughConfig(named, github, undefined, jobApi(network)).kind, 'stop', 'a network failure in a project step is no rerun under the default list');
     const transient = shipThroughConfig(named, github, undefined, jobApi(network), { transientSteps: ['Set up job', 'Complete job', 'Run npm run check'] });
@@ -663,7 +666,10 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const code = shipThroughConfig(runs, github, undefined, jobApi(ciShape(FAILING_TEST)));
     assert.equal(code.kind, 'build', code.narration);
     assert.equal(code.counted, 1, 'an assertion is a counted repair');
-    const transient = shipThroughConfig(runs, github, undefined, jobApi(ciShape(['npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed'])));
+    const networkJob = jobApi(ciShape(['npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed']));
+    // T0-CI-RERUN-STRUCTURED: Run npm test is a project step, no rerun under the default list; listed, a network error is the rerun.
+    assert.equal(shipThroughConfig(runs, github, undefined, networkJob).kind, 'stop', 'a network error in a project step is no rerun by default');
+    const transient = shipThroughConfig(runs, github, undefined, networkJob, { transientSteps: ['Set up job', 'Complete job', 'Run npm test'] });
     assert.equal(transient.kind, 'ship', transient.narration);
     assert.deepEqual(transient.rerunIds, ['123'], 'a network error is the rerun of the job run');
   });
@@ -694,7 +700,7 @@ const DOC_SENTENCES = [
   "The limit: the job log has no step boundaries (the run log archive holds one file per job), the record times are whole seconds, and only a step named after its command prints a header that reads its name, so a start or an end these cannot establish (a step with a name of its own, a step that is not a `run` step, no such header, two of them or another count of such lines before it, no end time, no exit line while a later step started in the end second, an exit line after a later step's first line of that second) is `step unknown` and the card stops with STOP/ci, never a guess; a later step whose first line is neither a `Run ` header nor `Post job cleanup.`, and a `run` step printing no header, are not shapes the runner writes; the one shape these rules cannot refuse needs the failed step to print no header while an earlier step that completed in its first second prints a `##[group]Run ` line with the failed step's name and a `shell: ` line.",
   "A log or record the ship path cannot read (the command exits non-zero, as for an expired log, or a step of the record is not an object with a numeric number, a string or null conclusion and both times present as a string or null) gets `log unavailable` on its `[CI-GATE-LOG]` line, and a record with no failed step, a start or an end that is not placed, or a placed step of blank lines only, gets `step unknown`; neither has log lines, and a red check that is not such a job gets no `[CI-GATE-LOG]` line and nothing read.",
   "The gate lines write every `/` of a check name escaped as `\\/`, so no check name forms the `runs/<id>` the card runner reads as the run of a rerun.",
-  "The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient and takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, or none the classifier recognises, the failure is unknown and the card stops with STOP/ci as before."
+  "The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient only on the structured evidence below and then takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, none the classifier recognises, or transient text without that evidence, the failure is unknown and the card stops with STOP/ci as before."
 ];
 const CHANGELOG_SENTENCES = [
   '- CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci.',

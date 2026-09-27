@@ -19,6 +19,9 @@
     "requiredChecks": [],
     "requireVerdict": true
   },
+  "ci": {
+    "transientSteps": ["Set up job", "Complete job"]
+  },
   "hooks": {
     "frozenPaths": [],
     "testPathPatterns": [
