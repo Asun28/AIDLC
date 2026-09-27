@@ -103,30 +103,55 @@ export function encodeUntrusted(text: string): string {
  */
 const FAILING_LINE_AT: Partial<Record<ShipOutcomeClass, 'test' | 'gate'>> = { 'dod-failed': 'test', 'verify-failed': 'test', 'scope-blocked': 'gate', 'budget-over': 'gate' };
 
-/** Failing test or compile lines: TAP without a TODO or SKIP directive, node:test spec, tsc, Go, and jest, vitest or pytest. */
-const FAILING_TEST_LINE: Array<(line: string) => boolean> = [
-  (l) => /^not ok \d+\b/.test(l) && !/(?<!\\)#\s*(?:todo|skip)\b/i.test(l),
-  (l) => /^✖ /.test(l) && !/^✖ failing tests:?$/.test(l),
-  (l) => /\berror TS\d+:/.test(l),
-  (l) => /^--- FAIL: \S/.test(l),
-  (l) => /^FAIL(?:ED)?\s+\S/.test(l),
-];
+/** A TAP test line, `ok <n>` or `not ok <n>`: judged by the TAP rule alone, whatever other shape it carries. */
+const TAP_TEST_LINE = /^(?:not )?ok \d+\b/;
+
+/**
+ * The failing lines other than TAP's: a node:test spec failure other than the `✖ failing tests:` heading, a TypeScript
+ * diagnostic at the start of the line (bare, or after a location without spaces), a Go failure, and a jest, vitest or
+ * pytest failure.
+ */
+const FAILING_SHAPE: RegExp[] = [/^✖ (?!failing tests:?$)/, /^(?:\S+(?:\(\d+,\d+\): |:\d+:\d+ - ))?error TS\d+: /, /^--- FAIL: \S/, /^FAIL(?:ED)?\s+\S/];
+
+/** A failing test or compile line: a TAP `not ok <n>` without a TODO or SKIP directive, or one of the other shapes. */
+function isFailingLine(line: string): boolean {
+  if (TAP_TEST_LINE.test(line)) return line.startsWith('not ') && !/(?<!\\)#\s*(?:todo|skip)\b/i.test(line);
+  return FAILING_SHAPE.some((shape) => shape.test(line));
+}
+
+/**
+ * ANSI escape sequences (ECMA-48), removed whole: a control string (OSC, DCS, SOS, PM, APC) up to its BEL or ST, a CSI
+ * with any parameter and intermediate bytes (colon-separated colours included), and any other escape.
+ */
+const ANSI_ESCAPE = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)|(?:\u001b\[|\u009b)[0-?]*[ -\/]*[@-~]|\u001b[ -\/]*[0-~]/g;
 
 const FAILING_LINE_WIDTH = 160;
 
+/** The first `width` code points of a text, so a cut never splits a surrogate pair. */
+function firstCodePoints(text: string, width: number): string {
+  let end = 0;
+  let count = 0;
+  for (const ch of text) {
+    if (count === width) break;
+    end += ch.length;
+    count += 1;
+  }
+  return text.slice(0, end);
+}
+
 /**
  * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
- * qualifies: ANSI escapes removed, control characters as spaces, normalised as effort causes are, cut to 160 characters
- * and encoded, so the line only tells two failures apart and can never form a sentinel.
+ * qualifies: ANSI escapes removed, control characters as spaces, normalised as effort causes are, cut to 160 code
+ * points and encoded, so the line only tells two failures apart and can never form a sentinel.
  */
 function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
   const at = FAILING_LINE_AT[outcome];
   if (!at) return undefined;
   const line = text
     .split(/\r?\n/)
-    .map((l) => l.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
-    .find((l) => (at === 'gate' ? sentinel.test(l) : FAILING_TEST_LINE.some((failing) => failing(l))));
-  return line === undefined ? undefined : encodeUntrusted(normaliseCause(line).slice(0, FAILING_LINE_WIDTH));
+    .map((l) => l.replace(ANSI_ESCAPE, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
+    .find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
+  return line === undefined ? undefined : encodeUntrusted(firstCodePoints(normaliseCause(line), FAILING_LINE_WIDTH));
 }
 
 export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
