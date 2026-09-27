@@ -161,6 +161,7 @@ test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE a
     const result = types.indexOf('OPERATION_RESULT');
     assert.ok(intent >= 0 && issued > intent && result > issued, `intent(${intent}) < issued(${issued}) < result(${result})`);
     assert.ok(types.includes('GOAL_DONE'));
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'GOAL_DONE')?.data['at'], fx.now(), 'GOAL_DONE carries the controller clock time of the transition (T1-BOUND-TELEMETRY-2 R9)');
     const mergeOps = fx.ops.list({ goalId: goal.id, kind: 'merge' });
     assert.equal(mergeOps.length, 1);
     assert.equal(mergeOps[0]!.status, 'succeeded');

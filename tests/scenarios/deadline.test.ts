@@ -431,7 +431,8 @@ test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while
     assert.equal(fx.controller.next(goal.id).kind, 'stop', 'the goal stops on its stopped card');
     repair();
     fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
-    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED' || e.type === 'BOUND_FIRED').map((e) => e.type), ['GOAL_STOPPED', 'BOUND_FIRED'], 'the firing lands after the stop');
+    const [stopped, fired] = fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED' || e.type === 'BOUND_FIRED');
+    assert.deepEqual([stopped?.type, stopped?.data['at'], fired?.type, fired?.data['stoppedAt']], ['GOAL_STOPPED', fx.goal(goal.id).stop?.at, 'BOUND_FIRED', fx.store.getCardRun(goal.id, 'T1-A')?.stop?.at], 'the firing lands after the stop; each carries the persisted time of its stop');
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: card-deadline 1 (DONE 0, STOP/time 1, open 0)'));
   } finally {
     fx.cleanup();

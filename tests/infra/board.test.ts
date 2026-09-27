@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { boundsOfJournals, journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
+import { boundsLine, boundsOfJournals, journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { BoundName, JournalEvent, boundFired } from '../../src/core/types.ts';
 import { ProjectConfig } from '../../src/config.ts';
@@ -241,6 +241,15 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
     } finally {
       fx.cleanup();
     }
+  });
+
+  it('T1-BOUND-TELEMETRY-2 R9: entries that carry their persisted times are matched by time alone, whatever their journal positions; an entry without its time counts by position, and an old-shape line parses unchanged', () => {
+    const e = (type: string, data: Record<string, unknown>) => JournalEvent.parse({ seq: 0, ts: iso(), type, goalId: 'g-1', generation: 0, actor: actor('win-A'), data, prevHash: '0'.repeat(64), hash: 'a'.repeat(64) });
+    const stop = (reason: string, at?: string) => e('GOAL_STOPPED', { reason, detail: 'd', nextAction: 'n', global: false, ...(at && { at }) });
+    const fire = (bound: string, stoppedAt?: string) => e('BOUND_FIRED', { bound, key: `k-${bound}`, ...(stoppedAt && { stoppedAt }) });
+    const journal = [fire('card-deadline'), stop('ci'), stop('review', iso(2)), fire('arc-deadline', iso(2)), fire('attempts', iso(5)), fire('review-decisions'), e('GOAL_DONE', { cards: [], stages: {}, at: iso(4) }), stop('risk')];
+    assert.deepEqual(journal.map((x) => x.data['at'] ?? x.data['key']), ['k-card-deadline', undefined, iso(2), 'k-arc-deadline', 'k-attempts', 'k-review-decisions', iso(4), undefined], 'old-shape lines parse unchanged');
+    assert.equal(boundsLine([journal]), 'Bounds: card-deadline 1 (DONE 0, STOP/ci 1, open 0); arc-deadline 1 (DONE 0, STOP/review 1, open 0); review-decisions 1 (DONE 1, open 0); attempts 1 (DONE 0, STOP/risk 1, open 0)');
   });
 
   it('T1-BOUND-TELEMETRY-2 acceptance 10: a journal file or directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired [R2]', (t) => {
