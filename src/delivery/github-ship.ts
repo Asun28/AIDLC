@@ -35,6 +35,8 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
+  /** The writer of the base-sync CHANGELOG.md merge (card T0-BASE-SYNC-CHANGELOG-EDGES); injectable for tests. */
+  writeFile?: (file: string, text: string) => void;
 }
 
 /** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
