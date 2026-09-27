@@ -13,7 +13,7 @@ const GLOBAL_REASONS: ReadonlySet<StopReason> = new Set<StopReason>(['auth', 'au
  * anything else, so the command that made it returns it again and the way on is a replacement card through `goal resume`
  * (a recorded resume is issue 109). It gives the cause first and never names `card next`.
  */
-export function toolStopNextAction(goalId: string, cardId: string, cause: string): string {
+export function toolStopNextAction(goalId: string, cardId: string, cause: string, _candidate = true): string {
   return `${cause}; this stop is final for card ${cardId}: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goalId} --reason "..." --replace '{"${cardId}":"<replacement>"}'\``;
 }
 
@@ -21,7 +21,7 @@ export function makeStop(
   reason: StopReason,
   detail: string,
   nextAction: string,
-  options: { global?: boolean; unresolvedOperations?: string[]; at?: string; finalFor?: { goalId: string; cardId: string } } = {},
+  options: { global?: boolean; unresolvedOperations?: string[]; at?: string; finalFor?: { goalId: string; cardId: string; candidate?: boolean } } = {},
 ): StopRecord {
   return {
     reason,
