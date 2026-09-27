@@ -299,111 +299,6 @@ function commandOf(segment: string): { name: string; qualified: boolean; args: s
   return { name: first.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, ''), qualified: /[\\/]/.test(first), args: tokens.slice(1) };
 }
 
-/**
- * The words of the command that starts at `start` in `line`, up to the first separator outside quotes, each with its quotes
- * removed. Only the program or script of an awk or sed command is read this way; segments are still split without quotes.
- */
-function wordsFrom(line: string, start: number): string[] {
-  const words: string[] = [];
-  let i = start;
-  while (i < line.length) {
-    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i += 1;
-    if (i >= line.length || /[;|&\r\n]/.test(line[i]!)) break;
-    let word = '';
-    while (i < line.length && !/[\s;|&]/.test(line[i]!)) {
-      const c = line[i]!;
-      if (c === "'") {
-        const end = line.indexOf("'", i + 1);
-        const close = end === -1 ? line.length : end;
-        word += line.slice(i + 1, close);
-        i = close + 1;
-      } else if (c === '"') {
-        let j = i + 1;
-        while (j < line.length && line[j] !== '"') j += line[j] === '\\' ? 2 : 1;
-        word += line.slice(i + 1, Math.min(j, line.length));
-        i = j + 1;
-      } else if (c === '\\' && i + 1 < line.length) {
-        word += line[i + 1];
-        i += 2;
-      } else {
-        word += c;
-        i += 1;
-      }
-    }
-    words.push(word);
-  }
-  return words;
-}
-
-/** The argument words of each `name` command in a line: a name that starts a segment, after a prefix or a path. */
-function commandWords(line: string, name: 'awk' | 'sed'): string[][] {
-  const start = new RegExp(`(?:^|[;|&\\r\\n])\\s*(?:(?:sudo|time|env(?:\\s+\\w+=\\S+)*)\\s+)?(?:\\S*[\\\\/])?${name}(?:\\.exe)?(?=\\s)`, 'gi');
-  return [...line.matchAll(start)].map((m) => wordsFrom(line, m.index + m[0].length));
-}
-
-/** The program text of each awk command in a line: the first operand, unless `-f` names a program file. */
-function awkPrograms(line: string): string[] {
-  const programs: string[] = [];
-  for (const words of commandWords(line, 'awk')) {
-    for (let i = 0; i < words.length; i += 1) {
-      const w = words[i]!;
-      if (/^(?:-f|--file)(?:=|$)/.test(w) || /^-f./.test(w)) break;
-      if (w === '-F' || w === '-v') {
-        i += 1;
-        continue;
-      }
-      if (w.startsWith('-') && w.length > 1) continue;
-      programs.push(w);
-      break;
-    }
-  }
-  return programs;
-}
-
-/** The scripts of each sed command in a line: every `-e` or `--expression` value, else the first operand. */
-function sedScripts(line: string): string[] {
-  const scripts: string[] = [];
-  for (const words of commandWords(line, 'sed')) {
-    const own: string[] = [];
-    let operand: string | undefined;
-    for (let i = 0; i < words.length; i += 1) {
-      const w = words[i]!;
-      if (w === '-e' || w === '--expression') own.push(words[(i += 1)] ?? '');
-      else if (/^--expression=/.test(w)) own.push(w.slice('--expression='.length));
-      else if (/^-e./.test(w)) own.push(w.slice(2));
-      else if (w === '-f' || w === '--file' || w === '-l' || w === '--line-length') i += 1;
-      else if (!(w.startsWith('-') && w.length > 1) && operand === undefined) operand = w;
-    }
-    scripts.push(...(own.length ? own : operand === undefined ? [] : [operand]));
-  }
-  return scripts;
-}
-
-/** A sed address before a command letter: a line number, `$` or a /regex/, optionally a range, optionally negated. */
-const SED_ADDRESS = String.raw`(?:(?:\d+|\$|\/(?:\\.|[^\/])*\/)(?:\s*,\s*(?:\d+|\$|\/(?:\\.|[^\/])*\/))?\s*!?\s*)?`;
-const SED_E = new RegExp(String.raw`(?:^|[;{}\n])\s*` + SED_ADDRESS + String.raw`e(?=\s|$|[;}])`);
-const SED_W = new RegExp(String.raw`(?:^|[;{}\n])\s*` + SED_ADDRESS + String.raw`[wW]\s*\S`);
-
-/** The flags of each `s` command of a sed script, read with its own delimiter; an address may precede the `s`. */
-function sedFlags(script: string): string {
-  let flags = '';
-  for (const m of script.matchAll(/(?<![A-Za-z_-])s([^\w\s\\])(?:\\.|(?!\1).)*?\1(?:\\.|(?!\1).)*?\1([A-Za-z0-9]*)/g)) flags += m[2] ?? '';
-  return flags;
-}
-
-/**
- * The sed forms of a line, read in the scripts of its sed commands (never in their file operands): `e` runs a command (the
- * `e` command, an address allowed before it, or the `e` flag); `w` and `W` and the `w` flag write a file, and so do the
- * in-place options of the segment.
- */
-function sedForms(segment: string, line: string): { executes: boolean; writes: boolean } {
-  const scripts = sedScripts(line);
-  return {
-    executes: scripts.some((s) => sedFlags(s).includes('e') || SED_E.test(s)),
-    writes: scripts.some((s) => sedFlags(s).includes('w') || SED_W.test(s)) || /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment),
-  };
-}
-
 const BRANCH_MUTATING = new Set(['--delete', '--move', '--copy', '--force', '--set-upstream-to', '--unset-upstream', '--edit-description', '--track', '--no-track']);
 const BRANCH_VALUE_OPTIONS = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--format', '--sort']);
 
@@ -442,22 +337,23 @@ function gitReads(args: string[]): boolean {
   return true;
 }
 
-/** The awk forms that run a command, read in the awk program text (`awkPrograms`), never in the shell line around it. */
-const AWK_EXECUTES = /\bsystem\s*\(|\|\s*getline\b|\bprintf?\b[^|]*\|/;
-
-/** Whether a read-only command's segment carries one of its executing forms (production-gate). */
-function executes(name: string, segment: string, line: string): boolean {
-  if (name === 'awk') return awkPrograms(line).some((program) => AWK_EXECUTES.test(program));
+/**
+ * Whether a read-only command's segment carries one of its executing options (production-gate), read from that segment's own
+ * words. No awk program and no sed script is read (issue 135).
+ */
+function executes(name: string, segment: string): boolean {
   if (name === 'find') return /\s-(?:exec|execdir|ok|okdir)(?=\s|$)/.test(segment);
-  if (name === 'sed') return sedForms(segment, line).executes;
   if (name === 'rg') return /\s--pre(?=[\s=]|$)/.test(segment);
   return false;
 }
 
-/** Whether a segment carries a file-writing form of its command (protect-paths); `print >` and the like are writes through `>`. */
-function writesFile(segment: string, line: string): boolean {
+/**
+ * Whether a segment carries a file-writing option or subcommand of its own command (protect-paths), read from its own words;
+ * `print >` and the like are writes through `>`, and the sed `w` and `W` script forms are issue 135.
+ */
+function writesFile(segment: string): boolean {
   const { name, args } = commandOf(segment);
-  if (name === 'sed') return sedForms(segment, line).writes;
+  if (name === 'sed') return /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment);
   if (name === 'awk') return /\s-i\s*inplace\b/.test(segment);
   if (name === 'find') return /\s-(?:delete|fprint|fprint0|fprintf|fls)(?=\s|$)/.test(segment);
   if (name === 'sort') return /\s(?:-[a-zA-Z]*o\S*|--output(?:=\S*)?)(?=\s|$)/.test(segment);
@@ -482,24 +378,32 @@ function writesFile(segment: string, line: string): boolean {
 
 /** Whether a Bash command writes a file: a write verb (`WRITE_VERBS`) or a file-writing form of one of its segments. */
 function writesFiles(cmd: string): boolean {
-  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some((s) => writesFile(s, cmd));
+  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some(writesFile);
 }
 
 /**
  * The segments of a command `production-gate` tests: all but the read-only ones. A segment is read-only only when its first
  * word is a bare name (no path) on the read-only lists and it carries no executing form of that command; git reads only
- * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER).
+ * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER-2).
  */
 export function mutatingSegments(cmd: string): string[] {
-  return commandSegments(cmd).filter((s) => isMutating(s, cmd));
+  return commandSegments(cmd).filter(isMutating);
 }
 
-function isMutating(segment: string, line: string): boolean {
+function isMutating(segment: string): boolean {
   const { name, qualified, args } = commandOf(segment);
   if (qualified) return true;
   if (name === 'git') return !gitReads(args);
   if (!READ_ONLY_TOOLS.has(name)) return true;
-  return executes(name, segment, line);
+  return executes(name, segment);
+}
+
+/** The classification before card T0-HOOK-CLASSIFIER: a first word on the read-only lists, any path stripped, reads. */
+function mainMutating(segment: string): boolean {
+  const { name, args } = commandOf(segment);
+  if (READ_ONLY_TOOLS.has(name)) return false;
+  if (name === 'git' && READ_ONLY_GIT.has((args[0] ?? '').toLowerCase())) return false;
+  return true;
 }
 
 /** The split before card T0-HOOK-CLASSIFIER, at `||`, `&&`, `;` and `|` only. */
@@ -513,10 +417,11 @@ function mainSegments(cmd: string): string[] {
 export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string): HookResult {
   const cmd = String(event.tool_input?.['command'] ?? '');
   if (!cmd) return { exitCode: 0 };
-  // The mutating segments of both splits: the split before card T0-HOOK-CLASSIFIER keeps in one segment every release phrase
-  // it matched before (`make deploy & echo production`), and the new split adds the commands a lone `&` or a line break hid.
-  // For the same text the classification marks at least what it marked before, so no denial is lost.
-  const segments = [...new Set([...mainSegments(cmd).filter((s) => isMutating(s, cmd)), ...mutatingSegments(cmd)])];
+  // The segments main tested come first, in main's order and classified as main classified them, so every match and every
+  // pattern error main reached is reached first and the gate decides as main did wherever main denied or threw; then the
+  // segments the new classification and the new split add (a lone `&` or a line break hid them, card T0-HOOK-CLASSIFIER-2).
+  const main = mainSegments(cmd);
+  const segments = [...new Set([...main.filter(mainMutating), ...main.filter(isMutating), ...mutatingSegments(cmd)])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).

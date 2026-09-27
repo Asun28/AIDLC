@@ -1101,6 +1101,9 @@ test('T0-HOOK-CLASSIFIER-2 acceptance 6: wherever main denied or threw, producti
     'git branch topic; make deploy',
     'make build; make deploy',
     'cat notes & make deploy',
+    // a path-qualified read-only first word main skipped comes before main's match: main's order reaches the match first
+    '/usr/bin/grep x; make deploy production',
+    'C:\\tools\\grep.exe x; make deploy production',
   ];
   const patternLists = [DEFAULT_HOOK_CONFIG.productionPatterns, ['deploy', '['], ['[', 'deploy'], [...DEFAULT_HOOK_CONFIG.productionPatterns, '[']];
   let decided = 0;
