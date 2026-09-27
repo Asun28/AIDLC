@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DEFAULT_HOOK_CONFIG, HookConfigError, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type ConfigProbe, type HookConfig, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
+import { DEFAULT_HOOK_CONFIG, HookConfigError, loadHookConfig, mutatingSegments, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type ConfigProbe, type HookConfig, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
 import { AuthorizationRecord, CardRun, Goal, addMs, nowIso, type ActorIdentity, type AuthorizationRecord as AuthRec } from '../../src/core/types.ts';
 import { classifyRequest } from '../../src/core/router.ts';
@@ -890,5 +890,128 @@ test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section st
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const entry = '- Command values that are not strings, card T0-HOOK-CONFIG-NONSTRING (issue 129): while `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` compared the `command` of an event with the doctor list only when it was a string, so a hand-written hook event whose `command` was null, a number, an object or an array passed them, beside the config path too. A present `command` that is not one of the doctor commands is now denied whatever its type, after the decision the guards took before these cards on the same text; an event without a `command` is decided as before, and nothing changes under a valid config.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
+
+// ---------------------------------------------------------------- T0-HOOK-CLASSIFIER (issue 120)
+
+test('T0-HOOK-CLASSIFIER acceptance 1: a command splits at a lone ampersand and a line break, and at nothing else new', () => {
+  // redirects and && split as before: one segment holds the whole release phrase
+  for (const command of ['make deploy 2>&1 production', 'make deploy >&2 production', 'make deploy &> log production', 'make deploy &>> log production']) {
+    assert.deepEqual(mutatingSegments(command), [command], command);
+  }
+  assert.deepEqual(mutatingSegments('make a && make b'), ['make a', 'make b']);
+  assert.deepEqual(mutatingSegments('make a || make b ; make c | make d'), ['make a', 'make b', 'make c', 'make d']);
+  // the tail after a lone ampersand and after each line break is its own segment
+  assert.deepEqual(mutatingSegments('cat notes & make y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\nmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\r\nmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\rmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('make a & make b'), ['make a', 'make b']);
+});
+
+const RELEASE = 'deploy production';
+
+/** One row per executing form, separator and path-qualified first word: [label, command naming a release, the same form without one]. */
+const GATE_ROWS: Array<[string, string, string]> = [
+  ['a lone ampersand', `cat notes & make ${RELEASE}`, 'cat notes & make build'],
+  ['a line break', `cat notes\nmake ${RELEASE}`, 'cat notes\nmake build'],
+  ['a carriage return and a line break', `cat notes\r\nmake ${RELEASE}`, 'cat notes\r\nmake build'],
+  ['a carriage return', `cat notes\rmake ${RELEASE}`, 'cat notes\rmake build'],
+  ['a POSIX path first word', `/usr/bin/grep ${RELEASE}.log`, '/usr/bin/grep build x.log'],
+  ['a Windows path first word', `C:\\tools\\grep.exe ${RELEASE}.log`, 'C:\\tools\\grep.exe build x.log'],
+  ['awk system(', `awk 'BEGIN{system("make ${RELEASE}")}'`, `awk 'BEGIN{system("make build")}'`],
+  ['awk print |', `awk '{print "${RELEASE}" | "sh"}' in.txt`, `awk '{print "build" | "sh"}' in.txt`],
+  ['awk printf |', `awk '{printf "${RELEASE}" | "sh"}' in.txt`, `awk '{printf "build" | "sh"}' in.txt`],
+  ['awk | getline', `awk 'BEGIN{"${RELEASE}" | getline x}'`, `awk 'BEGIN{"date" | getline x}'`],
+  ...['-exec', '-execdir', '-ok', '-okdir'].map((action): [string, string, string] => [`find ${action}`, `find . ${action} make ${RELEASE} {} +`, `find . ${action} make build {} +`]),
+  ['the sed e command', `sed 'e make ${RELEASE}' in.txt`, `sed 'e make build' in.txt`],
+  ['the sed e flag', `sed 's/x/make ${RELEASE}/e' in.txt`, `sed 's/x/make build/e' in.txt`],
+  ['rg --pre', 'rg --pre deploy-production x', 'rg --pre cat x'],
+  ['git grep -O', `git grep -O ${RELEASE}`, 'git grep -O x'],
+  ['git grep --open-files-in-pager', `git grep --open-files-in-pager=vim ${RELEASE}`, 'git grep --open-files-in-pager=vim x'],
+  ...['-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-f', '--force', '-u', '--set-upstream-to', '--unset-upstream', '--edit-description', '-t', '--track', '--no-track'].map((flag): [string, string, string] => [`git branch ${flag}`, `git branch ${flag} release/production-deploy`, `git branch ${flag} feature/x`]),
+  ['git branch with a new name', 'git branch release/production-deploy', 'git branch feature/x'],
+  ...['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'set-branches', 'prune', 'update'].map((sub): [string, string, string] => [`git remote ${sub}`, `git remote ${sub} production-deploy`, `git remote ${sub} origin`]),
+  ...['add', 'remove', 'move', 'prune', 'lock', 'unlock', 'repair'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} ../production-deploy`, `git worktree ${sub} ../x`]),
+];
+
+/** Read-only uses the forms leave read-only: each passes the gate although its text names a release. */
+const READ_ONLY_ROWS = [
+  `awk '/deploy/ && /production/' log`,
+  `sed -n '/deploy/p' production.log`,
+  "sed -i 's/production/prod/' deploy.yaml",
+  'find . -name deploy-production',
+  `rg ${RELEASE}.log`,
+  `git grep ${RELEASE}`,
+  "git branch --list '*production*deploy*'",
+  'git branch -vv --merged production-deploy',
+  'git branch --contains production-deploy',
+  'git remote',
+  'git remote -v',
+  'git remote show production-deploy',
+  'git remote get-url production-deploy',
+  'git worktree list',
+  `grep ${RELEASE}.log 2>&1`,
+  `grep ${RELEASE}.log && echo done`,
+];
+
+test('T0-HOOK-CLASSIFIER acceptance 2: production-gate tests every executing form, separator and path-qualified first word, and leaves the read-only uses read-only', () => {
+  const { cwd, env } = envWithState();
+  const gate = (command: string) => productionGate({ tool_name: 'Bash', tool_input: { command } }, env, DEFAULT_HOOK_CONFIG, cwd);
+  for (const [label, named, plain] of GATE_ROWS) {
+    const denied = gate(named);
+    assert.equal(denied.exitCode, 2, `${label}: ${JSON.stringify(named)}`);
+    assert.ok(denied.stderr?.includes('release authorization'), label);
+    assert.deepEqual(gate(plain), { exitCode: 0 }, `${label} without a release: ${JSON.stringify(plain)}`);
+  }
+  for (const command of READ_ONLY_ROWS) assert.deepEqual(gate(command), { exitCode: 0 }, JSON.stringify(command));
+});
+
+/** One row per file-writing form: [label, command writing under the frozen contracts/, the same command without the form]. */
+const WRITE_ROWS: Array<[string, string, string]> = [
+  ['sed -i after another option', "sed -n -i 's/a/b/' contracts/api.yaml", "sed -n 's/a/b/' contracts/api.yaml"],
+  ['sed -ni', "sed -ni 's/a/b/' contracts/api.yaml", "sed -n 's/a/b/' contracts/api.yaml"],
+  ['sed -i.bak', "sed -i.bak 's/a/b/' contracts/api.yaml", "sed 's/a/b/' contracts/api.yaml"],
+  ['sed --in-place', "sed --in-place 's/a/b/' contracts/api.yaml", "sed 's/a/b/' contracts/api.yaml"],
+  ['the sed w command', "sed -n 'w contracts/copy.yaml' in.txt", "sed -n 'p' contracts/copy.yaml"],
+  ['the sed W command', "sed -n 'W contracts/copy.yaml' in.txt", "sed -n 'p' contracts/copy.yaml"],
+  ['the sed w flag', "sed 's/a/b/w contracts/out.yaml' in.txt", "sed 's/a/b/' contracts/out.yaml"],
+  ['awk -i inplace', 'awk -f p.awk -i inplace contracts/api.yaml', 'awk -f p.awk contracts/api.yaml'],
+  ...['-delete', '-fprint out.txt', '-fprint0 out.txt', '-fprintf out.txt %p', '-fls out.txt'].map((action): [string, string, string] => [`find ${action.split(' ')[0]}`, `find contracts ${action}`, 'find contracts -name x']),
+  ['sort -o', 'sort -o contracts/api.yaml contracts/api.yaml', 'sort contracts/api.yaml'],
+  ['sort --output', 'sort --output=contracts/x.txt in.txt', 'sort in.txt contracts/x.txt'],
+  ['a uniq output operand', 'uniq in.txt contracts/out.txt', 'uniq -f 2 contracts/in.txt'],
+  ['tree -o', 'tree -o contracts/tree.txt', 'tree contracts'],
+  ['yq -i', "yq -i '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
+  ['yq --inplace', "yq --inplace '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
+  ...['log', 'diff', 'show'].map((sub): [string, string, string] => [`git ${sub} --output`, `git ${sub} --output=contracts/out.txt`, `git ${sub} -- contracts/`]),
+  ['git log --output with a separate value', 'git log --output contracts/log.txt', 'git log -- contracts/'],
+  ...['add', 'remove', 'move', 'prune'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} contracts/wt`, 'git worktree list contracts/wt']),
+];
+
+test('T0-HOOK-CLASSIFIER acceptance 3: protect-paths reads every file-writing form as a write, and no file-writing form asks production-gate', () => {
+  const config = { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] };
+  const paths = (command: string) => protectPaths({ tool_name: 'Bash', tool_input: { command } }, config);
+  for (const [label, writing, reading] of WRITE_ROWS) {
+    const denied = paths(writing);
+    assert.equal(decision(denied), 'deny', `${label}: ${JSON.stringify(writing)}`);
+    assert.ok(denyReason(denied).startsWith('FROZEN: '), label);
+    assert.equal(decision(paths(reading)), 'defer', `${label} without the form: ${JSON.stringify(reading)}`);
+    assert.deepEqual(paths(writing.replaceAll('contracts', 'src')), { exitCode: 0 }, `${label} without a frozen path`);
+  }
+  const { cwd, env } = envWithState();
+  assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: "sed -i 's/production/prod/' deploy.yaml" } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 });
+});
+
+test('T0-HOOK-CLASSIFIER acceptance 5: docs/OPERATIONS.md (Hooks) and the CHANGELOG Unreleased section state the classifier', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
+  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, and the segment carries no executing form of it. `production-gate` tests every other segment against `hooks.productionPatterns`; the executing forms are awk `system(`, `print |`, `printf |` and `| getline`, find `-exec`, `-execdir`, `-ok` and `-okdir`, the sed `e` command and `e` flag, rg `--pre`, git grep `-O` and `--open-files-in-pager`, and the git branch, remote and worktree commands that change the repository (all but a branch listing, `git remote` alone or with `-v`, `show` or `get-url`, and `git worktree list`). `protect-paths` also reads as a write the file-writing forms sed `-i` (combined included), `--in-place`, `w`, `W` and the `w` flag, awk `-i inplace`, find `-delete`, `-fprint`, `-fprint0`, `-fprintf` and `-fls`, sort `-o` and `--output`, a uniq output operand, tree `-o`, yq `-i` and `--inplace`, git log, diff and show `--output`, and git worktree `add`, `remove`, `move` and `prune`; these never make `production-gate` test a segment, so an in-place edit of a file that names a release asks for no release authorization.';
+  assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER (issue 120). The Bash guards read a segment as read-only from its first word alone, after stripping any path, and split only at `||`, `&&`, `;` and `|`, so a command that ran another command, changed repository state or wrote a file behind a read-only first word, or after a lone `&` or a line break, passed them. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `production-gate` tests the executing forms (awk `system(` and its pipes, find `-exec`, `-execdir`, `-ok` and `-okdir`, sed `e`, rg `--pre`, git grep `-O`) and the git branch, remote and worktree commands that change the repository, and `protect-paths` reads the file-writing forms (sed `-i`, `--in-place` and `w`, awk `-i inplace`, find `-delete`, `-fprint*` and `-fls`, sort `-o`, a uniq output operand, tree `-o`, yq `-i`, git `--output`, git worktree `add`, `remove`, `move` and `prune`) as writes. Every change adds a denial; none removes one.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
