@@ -326,6 +326,8 @@ export const ReviewInvocation = z.object({
   effort: ReviewEffortLevel.optional(),
   /** A base-sync decision: the one decision past the allowance a base-sync candidate gets from `formalReview.baseSync`. */
   baseSync: z.boolean().optional(),
+  /** The timeout of the reviewer the decision was dispatched to; a pending decision is reconciled against it. Absent on records written before the field (card T0-R3-RECONCILE-TIMEOUT). */
+  timeoutMs: z.number().int().positive().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 

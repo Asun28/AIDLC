@@ -6,7 +6,7 @@ import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
-import { RECONCILE_GRACE_MS, type CardRun, type Verdict } from '../../src/core/types.ts';
+import { RECONCILE_GRACE_MS, type CardRun, type ReviewInvocation, type Verdict } from '../../src/core/types.ts';
 
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-fb.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -45,7 +45,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
   /** The argv each reviewer received, one entry per run. */
   const argv: { primary: string[][]; backup: string[][] } = { primary: [], backup: [] };
   /** Runs inside the primary reviewer, before it answers. */
-  const hooks: { onPrimary?: () => void } = {};
+  const hooks: { onPrimary?: () => void; onBackup?: () => void } = {};
   const script = scriptedRunner({
     // Keys of a scenario come first: the runner answers the first key the command starts with.
     ...opts.script,
@@ -62,6 +62,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
     },
     'fake-b': (args) => {
       calls.push('backup');
+      hooks.onBackup?.();
       argv.backup.push(args);
       return answer(backup.shift() ?? PASS);
     },
@@ -609,4 +610,107 @@ test('T0-BASE-SYNC-HOLD-NARRATION acceptance 2: both formal reviewers held are n
   } finally {
     alone.fx.cleanup();
   }
+});
+
+// T0-R3-RECONCILE-TIMEOUT (issue #96): a pending R3 decision is reconciled against the timeout recorded on its reservation.
+
+const TEN_MIN = 600_000;
+/** The base-sync reviewer the reconciliation scenarios configure, with a 600 s timeout of its own. */
+const BASE_SYNC = { command: ['fake-s', '{instructions}'], reviewer: 'base-sync', timeoutMs: TEN_MIN, shell: false };
+
+/** The pending reservation of the card and its retained `.reservation.json`, read while the reviewer runs. */
+function readReservation(s: Awaited<ReturnType<typeof atReview>>): { stored?: number; file?: number } {
+  const run = s.fx.store.getCardRun(s.goalId, s.card.id)!;
+  const pending = run.review.invocations.find((i) => i.outcome === 'pending')!;
+  const file = path.join(reviewDirOf(s.fx, run), `${pending.invocationId.slice(3)}.reservation.json`);
+  const retained = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { timeoutMs?: number; reservation?: { timeoutMs?: number } }) : undefined;
+  return { stored: pending.timeoutMs, file: retained?.timeoutMs ?? retained?.reservation?.timeoutMs };
+}
+
+test('T0-R3-RECONCILE-TIMEOUT acceptance 1: a primary and a fallback dispatch each record their own timeout on the pending reservation and its retained file, and the decided invocation keeps it [R1]', async () => {
+  const s = await atReview(true, { fallback: { timeoutMs: TEN_MIN } });
+  try {
+    const seen: Array<{ reviewer: string; stored?: number; file?: number }> = [];
+    s.hooks.onPrimary = () => seen.push({ reviewer: 'primary', ...readReservation(s) });
+    s.hooks.onBackup = () => seen.push({ reviewer: 'backup', ...readReservation(s) });
+    s.primary.push(HOLD_60);
+    const held = await s.runner.formalReview(s.g(), s.card, s.run);
+    assert.equal(held.run.review.invocations.at(-1)?.outcome, 'quota-hold');
+    assert.equal(held.run.review.invocations.at(-1)?.timeoutMs, 1_000, 'the decided primary invocation keeps the primary timeout');
+    const passed = await s.runner.formalReview(s.g(), s.card, held.run);
+    assert.equal(passed.run.review.invocations.at(-1)?.reviewer, 'backup');
+    assert.equal(passed.run.review.invocations.at(-1)?.timeoutMs, TEN_MIN, 'the decided fallback invocation keeps the fallback timeout');
+    assert.deepEqual(seen, [{ reviewer: 'primary', stored: 1_000, file: 1_000 }, { reviewer: 'backup', stored: TEN_MIN, file: TEN_MIN }], 'recorded on the reservation while each reviewer runs');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+/** A pending formal invocation of `reviewer` with no envelope, no log and no failure marker, dispatched now. */
+function injectPendingDecision(s: Awaited<ReturnType<typeof atReview>>, reviewer: string, timeoutMs: number | undefined, baseSync = false): string {
+  const invocationId = `r3:${s.card.id}.r3.1.${baseSync ? 'bbbbbbbb' : reviewer === 'primary' ? 'aaaaaaaa' : 'cccccccc'}`;
+  s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
+    const latest = current!;
+    const pending: ReviewInvocation = { invocationId, candidateDigest: latest.candidate!.digest, candidateSha: latest.candidate!.sha, base: s.fx.config.base, policyVersion: s.fx.config.reviewPolicyVersion, reviewer, requestedAt: s.fx.now(), outcome: 'pending', ...(timeoutMs ? { timeoutMs } : {}), ...(baseSync ? { baseSync: true } : {}) };
+    return { ...latest, review: { ...latest.review, invocations: [...latest.review.invocations, pending] } };
+  });
+  return invocationId;
+}
+
+/**
+ * The pending decision checked at both edges through `runner`: at an age of exactly `timeoutMs` plus the grace it is in
+ * flight (`review r3` refuses, no reviewer runs); 1 ms later it is charged as a no-verdict without running a reviewer.
+ */
+async function assertReconciledAt(s: Awaited<ReturnType<typeof atReview>>, runner: CardRunner, invocationId: string, timeoutMs: number): Promise<void> {
+  const requestedAt = s.fx.store.getCardRun(s.goalId, s.card.id)!.review.invocations.find((i) => i.invocationId === invocationId)!.requestedAt;
+  s.fx.advance(Date.parse(requestedAt) + timeoutMs + RECONCILE_GRACE_MS - Date.parse(s.fx.now()));
+  await assert.rejects(runner.formalReview(s.g(), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!), /a formal review of this card is in flight/, 'at the timeout and the grace the decision is in flight');
+  assert.equal(s.fx.store.getCardRun(s.goalId, s.card.id)!.review.invocations.find((i) => i.invocationId === invocationId)?.outcome, 'pending');
+  s.fx.advance(1);
+  const charged = await runner.formalReview(s.g(), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!);
+  const decided = charged.run.review.invocations.find((i) => i.invocationId === invocationId);
+  assert.equal(decided?.outcome, 'no-verdict', '1 ms past it the decision is charged');
+  assert.deepEqual(s.calls, [], 'no reviewer runs, in flight or charged');
+}
+
+for (const kind of ['fallback', 'base-sync'] as const) {
+  const reviewer = kind === 'fallback' ? 'backup' : 'base-sync';
+  const changes: Array<[string, Record<string, unknown>]> = [
+    ['renamed', kind === 'fallback' ? { fallback: { ...FALLBACK, reviewer: 'backup-renamed', timeoutMs: TEN_MIN } } : { baseSync: { ...BASE_SYNC, reviewer: 'base-sync-renamed' } }],
+    ['removed', kind === 'fallback' ? { fallback: undefined } : { baseSync: undefined }],
+    ['given 1 s timeouts', { timeoutMs: 1_000, fallback: { ...FALLBACK, timeoutMs: 1_000 }, ...(kind === 'base-sync' ? { baseSync: { ...BASE_SYNC, timeoutMs: 1_000 } } : {}) }],
+  ];
+  for (const [change, formal] of changes) {
+    test(`T0-R3-RECONCILE-TIMEOUT acceptance 2: a pending ${kind} decision with a recorded 600 s timeout is in flight until 600 s and the grace and charged 1 ms later when the ${kind} reviewer is ${change} while it runs [R2]`, async () => {
+      const s = await atReview(true, { fallback: { timeoutMs: TEN_MIN }, formalReview: kind === 'base-sync' ? { baseSync: BASE_SYNC } : {} });
+      try {
+        const invocationId = injectPendingDecision(s, reviewer, TEN_MIN, kind === 'base-sync');
+        const changed = s.makeRunner({ ...s.fx.config, formalReview: { ...s.fx.config.formalReview, ...formal } } as typeof s.fx.config);
+        await assertReconciledAt(s, changed, invocationId, TEN_MIN);
+      } finally {
+        s.fx.cleanup();
+      }
+    });
+  }
+}
+
+test('T0-R3-RECONCILE-TIMEOUT acceptance 3: a pending primary decision with no recorded timeout is reconciled against the live timeout, as before [R2]', async () => {
+  const s = await atReview(true, { fallback: { timeoutMs: TEN_MIN } });
+  try {
+    const invocationId = injectPendingDecision(s, 'primary', undefined);
+    await assertReconciledAt(s, s.runner, invocationId, 1_000);
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+test('T0-R3-RECONCILE-TIMEOUT acceptance 4: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the recorded timeout [R3]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+  const sentence = 'The timeout of that reconciliation is the one the reservation records, the timeout of the reviewer the decision was dispatched to (card T0-R3-RECONCILE-TIMEOUT, issue #96): renaming or removing `formalReview.fallback` or `formalReview.baseSync`, or changing a `timeoutMs`, while a decision runs never shortens or lengthens it, and a reservation written before the field is reconciled against the live timeout of the reviewer it names.';
+  assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- R3 reconcile timeout, card T0-R3-RECONCILE-TIMEOUT (issue #96): a formal reservation records the timeout of the reviewer it is dispatched to, and a pending decision with no result is reconciled against that recorded timeout, so a configuration change while it runs (the fallback or the base-sync reviewer renamed or removed, a timeout changed) no longer charges it early; a reservation written before the field is reconciled as before.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
