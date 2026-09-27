@@ -9,6 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
+import { normaliseCause } from '../core/effort.ts';
 import { parseVerdict } from '../core/review-policy.ts';
 import type { Verdict } from '../core/types.ts';
 
@@ -87,6 +88,47 @@ const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
   [/DoD 未通过|RED 检查失败/, 'dod-failed'],
 ];
 
+/**
+ * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync, the
+ * failing line of a ship failure) travels with brackets and percent signs encoded, so it can never form a sentinel or a
+ * `[SAGA-RESUME]` marker; everything else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
+ */
+export function encodeUntrusted(text: string): string {
+  return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+/**
+ * The ship failures that count on the effort ladder, and where the failing line their detail names is read (card
+ * T0-SHIP-FAILING-LINE): a failing test or compile line of the DoD or verify output, or the gate line itself.
+ */
+const FAILING_LINE_AT: Partial<Record<ShipOutcomeClass, 'test' | 'gate'>> = { 'dod-failed': 'test', 'verify-failed': 'test', 'scope-blocked': 'gate', 'budget-over': 'gate' };
+
+/** Failing test or compile lines: TAP without a TODO or SKIP directive, node:test spec, tsc, Go, and jest, vitest or pytest. */
+const FAILING_TEST_LINE: Array<(line: string) => boolean> = [
+  (l) => /^not ok \d+\b/.test(l) && !/(?<!\\)#\s*(?:todo|skip)\b/i.test(l),
+  (l) => /^✖ /.test(l) && !/^✖ failing tests:?$/.test(l),
+  (l) => /\berror TS\d+:/.test(l),
+  (l) => /^--- FAIL: \S/.test(l),
+  (l) => /^FAIL(?:ED)?\s+\S/.test(l),
+];
+
+const FAILING_LINE_WIDTH = 160;
+
+/**
+ * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
+ * qualifies: ANSI escapes removed, control characters as spaces, normalised as effort causes are, cut to 160 characters
+ * and encoded, so the line only tells two failures apart and can never form a sentinel.
+ */
+function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
+  const at = FAILING_LINE_AT[outcome];
+  if (!at) return undefined;
+  const line = text
+    .split(/\r?\n/)
+    .map((l) => l.replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
+    .find((l) => (at === 'gate' ? sentinel.test(l) : FAILING_TEST_LINE.some((failing) => failing(l))));
+  return line === undefined ? undefined : encodeUntrusted(normaliseCause(line).slice(0, FAILING_LINE_WIDTH));
+}
+
 export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const text = `${receipt.stdout}\n${receipt.stderr}`;
   const sentinels = [...new Set([...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]))];
@@ -99,7 +141,10 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   }
   if (receipt.timedOut) return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: 'ship timed out; reconcile before retry' };
   for (const [re, cls] of SENTINEL_MAP) {
-    if (re.test(text)) return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: `sentinel ${re.source.split('|')[0]}` };
+    if (!re.test(text)) continue;
+    const detail = `sentinel ${re.source.split('|')[0]}`;
+    const line = failingLine(text, cls, re);
+    return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
   }
   return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: `exit ${receipt.exitCode} with no known sentinel; STOP/tool with diagnostics` };
 }
