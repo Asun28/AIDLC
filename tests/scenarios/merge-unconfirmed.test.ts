@@ -279,6 +279,16 @@ test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 3: the facts of a verified merge-unco
   } finally {
     fy.cleanup();
   }
+  const fz = makeFixture();
+  try {
+    // An answer at the candidate in another state carries no facts, even with a merge commit in it.
+    const s = shipped(fz, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghRaw({ number: 42, state: 'OPEN', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }) });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+    const result = fz.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+    assert.equal(result?.data['mergeSha'], undefined, 'no facts from a view that is not MERGED');
+  } finally {
+    fz.cleanup();
+  }
 });
 
 test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: a merged ship keeps its verification: [SAGA-DONE] closes on the dry-run path, and with gh reading its PR OPEN it waits with the operation UNKNOWN rather than stopping [R2] [R3]', () => {
