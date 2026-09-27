@@ -1,14 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { reviewerEnv, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
-import { run, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
-import { CardRunner } from '../../src/loop/card-runner.ts';
-import { DryRunShipPath } from '../../src/delivery/ship.ts';
-import { makeFixture, writeCard } from '../scenarios/_harness.ts';
+import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 
 const OURS = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
 const PASS = '{"verdict":"pass","reasons":[]}\n';
@@ -69,86 +67,35 @@ test('T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPa
   }
 });
 
-test('T0-REVIEWER-UTF8 acceptance 3: on Windows a Python probe spawned through runReviewPanel with the real runner reads ✖ 码 再 运 intact and reports utf-8 [R3]', { skip: process.platform !== 'win32' ? 'Windows only: the code-page decoding of issue 99 is Windows behaviour' : false }, async () => {
-  const dir = tempDir();
-  try {
-    const probe = path.join(dir, 'probe.py');
-    writeFileSync(probe, ['import json, sys', 'text = sys.stdin.read()', 'print(json.dumps({"encoding": sys.stdin.encoding, "read": text}))', `print(json.dumps({"verdict": "pass", "reasons": []}))`, ''].join('\n'), 'utf8');
-    const panel = await runReviewPanel({ runner: run, command: ['python', probe], perspectives: [], promptFor: () => 'PROMPT ✖ 码 再 运', vars: {}, cwd: dir, timeoutMs: 60_000, reviewDir: path.join(dir, '.review'), fileStem: 'T0-RU.pre.0.4', head: 'abc123', reviewer: 'probe' });
-    assert.equal(panel.outcome, 'pass', JSON.stringify(panel.reasons));
-    const line = readFileSync(panel.logRef!, 'utf8').split(/\r?\n/).find((l) => l.startsWith('{"encoding"'));
-    assert.ok(line, 'the probe printed what it read');
-    const seen = JSON.parse(line) as { encoding: string; read: string };
-    assert.equal(seen.encoding.toLowerCase().replace('_', '-'), 'utf-8', 'the probe reads its stdin as UTF-8');
-    assert.equal(seen.read.trim(), 'PROMPT ✖ 码 再 运', 'every character arrives intact');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-/** The UTF-8 bytes the Windows ANSI code page (cp1252) leaves undefined: `surrogateescape` turns each into a lone surrogate. */
-const UNDEFINED_IN_CP1252 = new Set([0x81, 0x8d, 0x8f, 0x90, 0x9d]);
-/** The stderr of every angle of R2 round 1 of T0-SHIP-FAILING-LINE (candidate a1efe1a), issue 99. */
-const ISSUE_99 = 'ERROR 400: Failed to parse the request body as JSON: messages[0].content: lone leading surrogate in hex escape at line 1 column 31249\n';
-
-/** Python's UTF-8 mode as the child sees its environment. */
-function utf8Mode(env: NodeJS.ProcessEnv | undefined): boolean {
-  const get = (name: string) => Object.entries(env ?? {}).find(([k]) => k.toUpperCase() === name)?.[1];
-  return get('PYTHONUTF8') === '1' || /^utf-?8$/i.test(get('PYTHONIOENCODING') ?? '');
+/**
+ * The environment of the child that runs the default-environment scenarios (reviewer-env.child.ts): a copy of `base`
+ * without PYTHONUTF8 and PYTHONIOENCODING in any letter case, and without the test runner's own context, so the child is
+ * a top-level run whose reviewerEnv() adds both variables whatever the developer set (T0-REVIEWER-UTF8 R3 decision 1).
+ */
+function childEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(base).filter(([k]) => !['PYTHONUTF8', 'PYTHONIOENCODING', 'NODE_TEST_CONTEXT'].includes(k.toUpperCase())));
 }
 
-/** A reviewer that reads its piped prompt as the DeepSeek CLI does: without UTF-8 mode, a lone surrogate the API refuses. */
-function pythonLikeReviewer(command: string): SyncRunner {
-  return (cmd, args, options = {}) => {
-    if (cmd !== command) return scriptedRunner({})(cmd, args, options);
-    const refused = !utf8Mode(options.env) && [...Buffer.from(options.input ?? '', 'utf8')].some((b) => UNDEFINED_IN_CP1252.has(b));
-    return scriptedRunner({ [command]: refused ? { exitCode: 1, stderr: ISSUE_99 } : { stdout: PASS } })(cmd, args, options);
-  };
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+/** Run reviewer-env.child.ts with the environment childEnv makes of `base`; its output on failure. */
+function runChild(base: NodeJS.ProcessEnv, label: string): void {
+  const r = spawnSync(process.execPath, ['--test', '--test-reporter=tap', path.join('tests', 'surface', 'reviewer-env.child.ts')], { cwd: ROOT, env: childEnv(base), encoding: 'utf8', timeout: 300_000 });
+  const output = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
+  assert.equal(r.status, 0, `${label}: the child passes\n${output}`);
+  assert.match(output, /^# fail 0$/m, `${label}: no child test failed\n${output}`);
+  // Four tests: the guard, the Windows probe (skipped elsewhere) and the two replays of issue 99.
+  const windows = process.platform === 'win32';
+  assert.match(output, new RegExp(`^# pass ${windows ? 4 : 3}$`, 'm'), `${label}: every child test ran\n${output}`);
+  assert.match(output, new RegExp(`^# skipped ${windows ? 0 : 1}$`, 'm'), `${label}: only the probe is skipped, and only off Windows\n${output}`);
 }
 
-test('T0-REVIEWER-UTF8 acceptance 4: the receipt shape of issue 99 is a no-verdict; the replaying reviewer refuses a prompt without the reviewer environment and passes with it [R4]', () => {
-  const dir = tempDir();
-  try {
-    const common = { cwd: dir, timeoutMs: 1000, shell: false, reviewDir: path.join(dir, '.review'), head: 'abc123', reviewer: 'deepseek' };
-    const shape = runPreReview({ ...common, runner: scriptedRunner({ 'py-reviewer': { exitCode: 1, stderr: ISSUE_99 } }), command: ['py-reviewer'], prompt: 'P', fileStem: 'T0-RU.pre.0.5' });
-    assert.deepEqual([shape.outcome, shape.runStatus], ['no-verdict', 'tool_error']);
-    const reviewer = pythonLikeReviewer('py-reviewer');
-    const prompt = 'DoD 未通过（退出码 1）。修绿再 ship。 运行: node --test';
-    assert.equal(reviewer('py-reviewer', [], { input: prompt }).stderr, ISSUE_99, 'the replay refuses the prompt without UTF-8 mode');
-    assert.equal(reviewer('py-reviewer', [], { input: prompt, env: { PYTHONUTF8: '0' } }).stderr, ISSUE_99, 'and with UTF-8 mode off');
-    assert.equal(reviewer('py-reviewer', [], { input: 'ascii only' }).exitCode, 0, 'an ASCII prompt never carries such a byte');
-    const passed = runPreReview({ ...common, runner: reviewer, command: ['py-reviewer'], prompt, fileStem: 'T0-RU.pre.0.6' });
-    assert.equal(passed.outcome, 'pass', 'spawned with the reviewer environment, the same prompt passes');
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('T0-REVIEWER-UTF8 acceptance 4: through the card runner an R2 round on a diff carrying 码 再 运 passes with the replaying reviewer [R4]', async () => {
-  const fx = makeFixture({ config: { preReview: { command: ['py-reviewer'], reviewer: 'deepseek', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
-  try {
-    const git = scriptedRunner({
-      'git diff --name-only': { stdout: 'src/t0-ru.ts\u0000' },
-      'git diff': { stdout: 'diff --git a/src/t0-ru.ts b/src/t0-ru.ts\n@@ -1 +1 @@\n-export const dod = 0;\n+export const dod = "DoD 未通过（退出码 1）。修绿再 ship。 运行";\n' },
-    });
-    const reviewer = pythonLikeReviewer('py-reviewer');
-    const runner: SyncRunner = (command, args, options) => (command === 'py-reviewer' ? reviewer : git)(command, args, options);
-    const cards = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner });
-    writeCard(fx, { id: 'T0-RU', title: 'a diff with CJK text', allowPaths: ['src/t0-ru.ts'] });
-    const goal = fx.controller.createGoal({ text: 'implement T0-RU', source: 'card', ref: 'T0-RU', affectedSurfaces: [] }, { cards: ['T0-RU'] });
-    fx.controller.next(goal.id);
-    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T0-RU'] } });
-    const card = fx.card('T0-RU');
-    const r = cards.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T0-RU'));
-    const run = cards.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:ok', redReceipt: 'red:ok', candidateSha: 'sha-1' });
-    const gate = cards.next(fx.goal(goal.id), card, run);
-    assert.equal(gate.directive.kind, 'pre-review', gate.directive.narration);
-    const reviewed = await cards.preReview(fx.goal(goal.id), card, gate.run);
-    assert.equal(reviewed.result.outcome, 'pass', JSON.stringify(reviewed.result.reasons));
-    assert.deepEqual(reviewed.run.preReview.rounds.map((round) => [round.reviewer, round.outcome]), [['deepseek', 'pass']]);
-  } finally {
-    fx.cleanup();
-  }
+test('T0-REVIEWER-UTF8 acceptance 3 and 4: the default-environment scenarios run in a child with both variables removed in any letter case, from the process environment and from a user PYTHONUTF8=0 and PYTHONIOENCODING=cp1252 [R3] [R4]', () => {
+  const hostile = { ...process.env, PYTHONUTF8: '0', PYTHONIOENCODING: 'cp1252', pythonioencoding: 'cp1252' };
+  assert.deepEqual(Object.keys(childEnv(hostile)).filter((k) => ['PYTHONUTF8', 'PYTHONIOENCODING', 'NODE_TEST_CONTEXT'].includes(k.toUpperCase())), []);
+  assert.equal(childEnv(hostile)['PATH'] ?? childEnv(hostile)['Path'], process.env['PATH'], 'every other variable is kept');
+  runChild(process.env, 'from the process environment');
+  runChild(hostile, 'from a user cp1252 environment');
 });
 
 /** The sentences card T0-REVIEWER-UTF8 adds to docs/OPERATIONS.md, after the pre-review command paragraph. */
