@@ -183,18 +183,23 @@ test('T0-AUDIT-READMIT acceptance 2 end to end: a goal stopped for time, re-admi
 test('T1-AUDIT-FACTS acceptance 4: aidlc audit verify --claim-full is BLOCKED naming each shipped card with no re-derived fact, every card of a journal written before the facts included, and verified once every shipped card has one [R4]', () => {
   const fx = makeFixture();
   try {
-    // A repository whose main holds the merge commit: the CLI runs git for real, and never gh (no repository is configured).
+    // A checkout that fetched the merge commit into origin/main but never pulled it into main: the CLI runs git for real
+    // against origin/main, and never gh (no repository is configured).
     const git = (...args: string[]) => {
       const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: fx.tmp, encoding: 'utf8' });
       assert.equal(r.status, 0, r.stderr);
       return r.stdout.trim();
     };
     git('init', '-q', '-b', 'main');
+    git('commit', '-q', '--allow-empty', '-m', 'base');
+    const base = git('rev-parse', 'HEAD');
     writeFileSync(path.join(fx.tmp, 'hello.txt'), 'hello\n');
     git('add', 'hello.txt');
     git('commit', '-q', '-m', 'merge');
     const merge = git('rev-parse', 'HEAD');
     const tree = git('rev-parse', 'HEAD^{tree}');
+    git('update-ref', 'refs/remotes/origin/main', merge);
+    git('update-ref', 'refs/heads/main', base);
     // Two cards shipped on a path that journals no facts, as every merge journaled before this card.
     writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
     writeCard(fx, { id: 'T1-WORLD', title: 'print world' });

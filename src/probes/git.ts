@@ -152,7 +152,7 @@ export class GitProbe {
 
   private answer(cwd: string, args: string[]): string | undefined {
     const r = this.git(cwd, args);
-    return r.exitCode === 0 ? r.stdout.trim() || undefined : undefined;
+    return r.exitCode === 0 ? r.stdout.trim() : undefined;
   }
 
   commonDir(cwd: string): string {

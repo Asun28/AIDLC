@@ -4577,7 +4577,8 @@ test('T1-AUDIT-FACTS acceptance 1: a merge verified on the GitHub ship path jour
       return r;
     }
   }
-  const shipWith = (candidateSha: string) => {
+  /** `failAfterMerge`: the fetch, or the runner's own gh read (the one after the ship path's), fails once the PR is merged. */
+  const shipWith = (candidateSha: string, ghHead = HEAD, failAfterMerge?: 'fetch' | 'gh') => {
     const fx = makeFixture();
     try {
       writeCard(fx, { id: 'T1-FACTS', title: 'facts of a merge' });
@@ -4591,12 +4592,14 @@ test('T1-AUDIT-FACTS acceptance 1: a merge verified on the GitHub ship path jour
       // The merge commit reaches the checkout only through a fetch after the merge: its tree is readable from then on.
       let merged = false;
       let fetched = false;
+      let viewsAfterMerge = 0;
       const script = scriptedRunner({
         'gh api user -q .login': { stdout: 'alice\n' },
         'git add -A': {},
         'git diff --cached --quiet': {},
         'git rev-parse --verify HEAD': { stdout: `${HEAD}\n` },
         'git fetch': () => {
+          if (merged && failAfterMerge === 'fetch') return { exitCode: 128, stderr: 'fatal: unable to access the remote' };
           fetched = merged;
           return {};
         },
@@ -4610,7 +4613,7 @@ test('T1-AUDIT-FACTS acceptance 1: a merge verified on the GitHub ship path jour
           merged = true;
           return {};
         },
-        'gh pr view 42 --repo o/r --json': { stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: HEAD, baseRefName: 'main', mergeCommit: { oid: MERGE } }) },
+        'gh pr view 42 --repo o/r --json': () => (merged && (viewsAfterMerge += 1) > 1 && failAfterMerge === 'gh' ? { exitCode: 1, stderr: 'HTTP 502' } : { stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: ghHead, baseRefName: 'main', mergeCommit: { oid: MERGE } }) }),
         [`git rev-parse ${MERGE}^{tree}`]: () => (fetched ? { stdout: `${TREE}\n` } : { exitCode: 128, stderr: `fatal: ambiguous argument '${MERGE}^{tree}'` }),
       });
       const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
@@ -4630,6 +4633,17 @@ test('T1-AUDIT-FACTS acceptance 1: a merge verified on the GitHub ship path jour
   assert.equal(verified.results.length, 1, 'one result for the merge');
   assert.equal(verified.results[0]?.data['status'], 'succeeded');
   assert.deepEqual(ShippedFacts.safeParse(verified.results[0]?.data).data, { headSha: HEAD, mergeSha: MERGE, tree: TREE, pr: 42 }, JSON.stringify(verified.results[0]?.data));
+  // The token (tip = the candidate) verifies the merge; the head journaled is the one gh reports, never the candidate or the token's.
+  const ghHead = '9'.repeat(40);
+  const byToken = shipWith(HEAD, ghHead);
+  assert.equal(byToken.kind, 'close', byToken.narration);
+  assert.deepEqual(ShippedFacts.safeParse(byToken.results[0]?.data).data, { headSha: ghHead, mergeSha: MERGE, tree: TREE, pr: 42 }, JSON.stringify(byToken.results[0]?.data));
+  // A merge verified by the token whose facts cannot all be read (the fetch or gh failing) journals none.
+  for (const failing of ['fetch', 'gh'] as const) {
+    const partial = shipWith(HEAD, HEAD, failing);
+    assert.equal(partial.kind, 'close', partial.narration);
+    assert.deepEqual(partial.results.map((e) => e.data), [{ operationId: partial.results[0]?.data['operationId'], status: 'succeeded' }], failing);
+  }
   // A merge the runner cannot verify (the PR head is not the candidate) journals no facts.
   const unverified = shipWith(OTHER);
   assert.equal(unverified.kind, 'wait', unverified.narration);

@@ -98,7 +98,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   // Merge facts (card T1-AUDIT-FACTS). A card is shipped when a merge intent of the card has a succeeded result or
   // reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's card and
   // operation, status succeeded) and never from narration. Each card counts the facts git and gh re-derived as recorded.
-  const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && e.cardId && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId!]));
+  const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId]));
   const rederived = new Map<string, number>();
   for (const e of events) {
     const card = merges.get(e.data['operationId']);

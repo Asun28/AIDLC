@@ -281,6 +281,7 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
     ['gh reports another merge commit', { [GH_VIEW]: prJson({ mergeCommit: { oid: OTHER } }) }, `T1-A mergeSha: recorded ${MERGE}, re-derived ${OTHER}`],
     ['gh reports no merge commit', { [GH_VIEW]: prJson({ mergeCommit: null }) }, `T1-A mergeSha: recorded ${MERGE}, re-derived none`],
     ['gh reports another head', { [GH_VIEW]: prJson({ headRefOid: OTHER }) }, `T1-A headSha: recorded ${HEAD}, re-derived ${OTHER}`],
+    ['gh reports no head', { [GH_VIEW]: prJson({ headRefOid: null }) }, `T1-A headSha: recorded ${HEAD}, re-derived none`],
   ];
   for (const [name, over, detail] of cases) {
     const report = verifyShipped(probes(over).probes, { seal: true, claim: true });
@@ -292,7 +293,7 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
 });
 
 test('T1-AUDIT-FACTS acceptance 3: a fact git or gh cannot answer is a FACT_UNVERIFIED warning and never counts as re-derived [R3]', () => {
-  const absent = { [`git cat-file -t ${MERGE}`]: { exitCode: 128, stderr: 'fatal: Not a valid object name' }, [`git rev-parse ${MERGE}^{tree}`]: { exitCode: 128, stderr: 'fatal: ambiguous argument' }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 128, stderr: 'fatal: Not a valid commit name' } };
+  const absent = { [`git cat-file -t ${MERGE}`]: { exitCode: 128, stderr: 'fatal: Not a valid object name' }, [`git rev-parse ${MERGE}^{tree}`]: { exitCode: 128, stdout: `${MERGE}^{tree}\n`, stderr: 'fatal: ambiguous argument' }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 128, stderr: 'fatal: Not a valid commit name' } };
   const ghDown = { [GH_VIEW]: { exitCode: 1, stderr: 'error connecting to api.github.com' } };
   const noRepository = probes({}, { noRepository: true });
   const cases: Array<[string, ReturnType<typeof probes>['probes'] | undefined, unknown[], boolean]> = [
@@ -321,19 +322,28 @@ test('T1-AUDIT-FACTS acceptance 4 (unit): the claim names each shipped card with
   const f = fixture();
   f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId });
   ship(f.journal, f.goalId, 'T1-A');
+  // A reconciliation of T1-A's merge after its result leaves the facts of the result counted.
+  f.journal.append({ type: 'OPERATION_RECONCILED', goalId: f.goalId, cardId: 'T1-A', data: { operationId: 'op-T1-A', status: 'succeeded' } });
   ship(f.journal, f.goalId, 'T1-B', {});
-  // A merge left UNKNOWN and reconciled as succeeded by `aidlc ops reconcile` is shipped, and carries no facts.
+  // A merge left UNKNOWN and reconciled as succeeded by `aidlc ops reconcile` is shipped; facts are read from no reconciliation.
   f.journal.append({ type: 'OPERATION_INTENT', goalId: f.goalId, cardId: 'T1-C', generation: 0, data: { operationId: 'op-C', kind: 'merge', candidateDigest: 'cand' } });
   f.journal.append({ type: 'OPERATION_RESULT', goalId: f.goalId, cardId: 'T1-C', generation: 0, data: { operationId: 'op-C', status: 'UNKNOWN' } });
-  f.journal.append({ type: 'OPERATION_RECONCILED', goalId: f.goalId, cardId: 'T1-C', data: { operationId: 'op-C', status: 'succeeded' } });
+  f.journal.append({ type: 'OPERATION_RECONCILED', goalId: f.goalId, cardId: 'T1-C', data: { operationId: 'op-C', status: 'succeeded', ...FACTS } });
+  // Facts that are not lowercase 40-digit git object ids and a positive PR number never parse, so none reaches git or gh.
+  ship(f.journal, f.goalId, 'T1-D', { ...FACTS, mergeSha: `--output=${MERGE}` });
+  ship(f.journal, f.goalId, 'T1-E', { ...FACTS, tree: `${TREE}x` });
+  ship(f.journal, f.goalId, 'T1-F', { ...FACTS, headSha: HEAD.toUpperCase() });
+  ship(f.journal, f.goalId, 'T1-G', { ...FACTS, pr: 0 });
+  ship(f.journal, f.goalId, 'T1-H', { ...FACTS, pr: 4.2 });
+  const named = 'no re-derived fact for shipped card(s): T1-B, T1-C, T1-D, T1-E, T1-F, T1-G, T1-H';
   const manifest = sealWith(f);
   const claim = (present: boolean) => verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: f.evidence, manifest, finalCandidateDigest: 'cand-final', hostCaptureBoundary: { present, detail: 'no export' }, probes: probes().probes, now });
   const report = claim(true);
   assert.deepEqual(report.findings, []);
   assert.equal(report.level, 'independently-verified');
   assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability');
-  assert.equal(report.prerequisite, 'no re-derived fact for shipped card(s): T1-B, T1-C');
-  assert.equal(claim(false).prerequisite, 'host capture boundary missing: no export; no re-derived fact for shipped card(s): T1-B, T1-C');
+  assert.equal(report.prerequisite, named);
+  assert.equal(claim(false).prerequisite, `host capture boundary missing: no export; ${named}`);
 });
 
 test('T1-AUDIT-FACTS acceptance 5: changing every narration and free-text field of a journal changes no finding and no level [R5]', () => {
@@ -366,7 +376,7 @@ test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the le
     ['a merge left UNKNOWN carrying facts', [merge('T1-A', 'op-1'), ['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'UNKNOWN', ...FACTS }]]],
     ['a succeeded result naming another card than its merge intent', [merge('T1-A', 'op-1'), ['OPERATION_RESULT', 'T1-B', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
     ['a succeeded deploy result carrying facts', [['OPERATION_INTENT', 'T1-A', { operationId: 'op-1', kind: 'deploy' }], ['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
-    ['a succeeded result with no intent', [['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['a succeeded result with no intent, even one naming the merge kind', [['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', kind: 'merge', status: 'succeeded', ...FACTS }]]],
     ['a merge intent and result that name no card (aidlc ops intent)', [merge(undefined, 'op-1'), ['OPERATION_RESULT', undefined, { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
     ['facts on a note of a card with a merge intent', [merge('T1-A', 'op-1'), ['NOTE', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
     ['a merge intent and result that carry no operation id', [['OPERATION_INTENT', 'T1-A', { kind: 'merge' }], ['OPERATION_RESULT', 'T1-A', { status: 'succeeded', ...FACTS }]]],
@@ -389,6 +399,7 @@ test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the le
 const FACT_DOC_SENTENCES = {
   operations: [
     '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of every merge it verifies on the GitHub path, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a fetch of the base, never from the ship output.',
+    'A merge whose facts cannot all be read when it is verified (gh or the fetch failing) journals none, and `--claim-full` then names its card.',
     '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded merge commit and head.',
     'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
     '`--claim-full` is `verified` only when, in addition, every shipped card (a card whose merge operation succeeded, by its result or by `aidlc ops reconcile`) has at least one re-derived fact; otherwise the prerequisite names each card that has none, which includes every card of a journal written before this change.',
