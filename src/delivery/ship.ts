@@ -120,12 +120,49 @@ function isFailingLine(line: string): boolean {
 }
 
 /**
- * Terminal control sequences (ECMA-48, xterm), removed whole from the receipt text before it is split into lines: a
- * control string (OSC, DCS, SOS, PM or APC, 7-bit or 8-bit introducer) with its payload, lines included, through its BEL
- * or ST, through a CAN or SUB that cancels it, up to the next ESC, or through the end of the text when it has none; a CSI
- * (7-bit or 8-bit) with any parameter and intermediate bytes, colon-separated colours included; and any other escape.
+ * The text a terminal prints from `text`, read as the DEC and ECMA-48 parser (vt100.net) reads it, so every control
+ * sequence is consumed whole and the controls met inside one are handled as that parser handles them:
+ * - a C0 control is executed in any state, so it stays in the text (a line feed keeps its line); DEL is ignored inside a
+ *   sequence;
+ * - ESC starts a sequence; CAN and SUB cancel one and are executed; a C1 control ends one: the ST (0x9C) silently, the
+ *   CSI, DCS, SOS, OSC, PM and APC introducers by starting their own, any other by being executed;
+ * - after ESC, `[` starts a CSI, `]`, `P`, `X`, `^` and `_` a control string, 0x20-0x2F an nF escape up to its
+ *   final byte, and any other byte from 0x30 to 0x7E is the final byte of a two-character escape;
+ * - a CSI runs through its parameter and intermediate bytes (0x20-0x3F in any order, colon-separated colours included)
+ *   to its final byte (0x40-0x7E); a control string holds its payload, lines included, until BEL, an ST (`ESC \` or
+ *   0x9C), a CAN or SUB, the next ESC, or the end of the text;
+ * - any other character inside a sequence ends it and is printed.
  */
-const CONTROL_SEQUENCE = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u0018\u001a\u001b\u009c]*(?:\u0007|\u0018|\u001a|\u001b\\|\u009c)?|(?:\u001b\[|\u009b)[0-?]*[ -\/]*[@-~]|\u001b[ -\/]*[0-~]/g;
+function printedText(text: string): string {
+  let out = '';
+  let state: 'ground' | 'escape' | 'nf' | 'csi' | 'string' = 'ground';
+  for (const ch of text) {
+    const c = ch.codePointAt(0)!;
+    if (c === 0x1b) {
+      state = 'escape';
+    } else if (c === 0x18 || c === 0x1a) {
+      state = 'ground';
+      out += ch;
+    } else if (c >= 0x80 && c <= 0x9f) {
+      state = c === 0x9b ? 'csi' : c === 0x90 || c === 0x98 || c >= 0x9d ? 'string' : 'ground';
+      if (state === 'ground' && c !== 0x9c) out += ch;
+    } else if (state === 'string') {
+      if (c === 0x07) state = 'ground';
+    } else if (c < 0x20 || c === 0x7f) {
+      if (c < 0x20 || state === 'ground') out += ch;
+    } else if (state === 'ground' || c > 0x7f) {
+      state = 'ground';
+      out += ch;
+    } else if (state === 'escape') {
+      state = c === 0x5b ? 'csi' : ']PX^_'.includes(ch) ? 'string' : c < 0x30 ? 'nf' : 'ground';
+    } else if (state === 'nf') {
+      if (c >= 0x30) state = 'ground';
+    } else if (c >= 0x40) {
+      state = 'ground';
+    }
+  }
+  return out;
+}
 
 const FAILING_LINE_WIDTH = 160;
 
@@ -143,15 +180,14 @@ function firstCodePoints(text: string, width: number): string {
 
 /**
  * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
- * qualifies: terminal control sequences removed from the whole text, then per line control characters as spaces,
+ * qualifies: the text a terminal prints (printedText), then per line control characters as spaces,
  * normalised as effort causes are, cut to 160 code points and encoded, so the line only tells two failures apart and can
  * never form a sentinel.
  */
 function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
   const at = FAILING_LINE_AT[outcome];
   if (!at) return undefined;
-  const line = text
-    .replace(CONTROL_SEQUENCE, '')
+  const line = printedText(text)
     .split(/\r?\n/)
     .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
     .find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
