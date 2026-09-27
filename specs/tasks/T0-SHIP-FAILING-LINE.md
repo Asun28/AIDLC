@@ -4,6 +4,7 @@ title: The cause of a dod-failed, verify-failed, scope-blocked or budget-over sh
 status: todo
 branch: T0-SHIP-FAILING-LINE
 worktree: D:\wt\AIDLC\T0-SHIP-FAILING-LINE
+superseded_by: T0-SHIP-FAILING-LINE-2
 allow_paths:
   - src/delivery/ship.ts
   - src/delivery/github-ship.ts
