@@ -269,8 +269,9 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
     return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
   }
   // A command is compared with the doctor list whatever else the event carries, so a file path beside it (the config's
-  // own included) never lets it through.
-  if (typeof cmd === 'string' && !DOCTOR_COMMANDS.has(cmd.trim())) return configDenial(guard, error, true);
+  // own included) never lets it through, and whatever its type: a present value that is not one of the doctor strings is
+  // denied (card T0-HOOK-CONFIG-NONSTRING); only an absent command is left to the file rule.
+  if (cmd !== undefined && !(typeof cmd === 'string' && DOCTOR_COMMANDS.has(cmd.trim()))) return configDenial(guard, error, true);
   if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
   return { exitCode: 0 };
 }

@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-CONFIG-NONSTRING
 title: While aidlc.config.json cannot be used, a command value that is present but not a string is denied like any command outside the doctor list (issue 129, residual of issue 76 item 1)
-status: todo
+status: merged
 branch: T0-HOOK-CONFIG-NONSTRING
 worktree: D:\wt\AIDLC\T0-HOOK-CONFIG-NONSTRING
 allow_paths:
