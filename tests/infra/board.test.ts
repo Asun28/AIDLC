@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
+import { boundsOfJournals, journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { BoundName, JournalEvent, boundFired } from '../../src/core/types.ts';
 import { ProjectConfig } from '../../src/config.ts';
@@ -194,6 +194,24 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0); attempts 1 (DONE 0, open 1)']);
     } finally {
       fx.cleanup();
+    }
+  });
+
+  it('R2 attempt 2 advisory: a journal directory that cannot be listed is named, never thrown out of the board', () => {
+    const dir = tmpDir();
+    try {
+      const line = (journals: string) => {
+        try {
+          return boundsOfJournals(journals);
+        } catch (err) {
+          return String(err);
+        }
+      };
+      writeFileSync(path.join(dir, 'journal'), '', 'utf8'); // exists, and listing it fails (ENOTDIR)
+      assert.equal(line(path.join(dir, 'journal')), 'Bounds: none fired; incomplete: lines that do not parse in "journal"');
+      assert.equal(line(path.join(dir, 'absent')), 'Bounds: none fired', 'a journal directory not yet created holds no firing');
+    } finally {
+      cleanup(dir);
     }
   });
 
