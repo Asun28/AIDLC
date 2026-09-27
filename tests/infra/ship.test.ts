@@ -314,7 +314,7 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE-2)', () => {
     const SI = '\u000f';
     // Each form carries C0 controls (SI, SO, DEL) inside it: 7-bit and 8-bit CSI, a charset escape, and controls
     // between ESC and the byte that picks the sequence.
-    const FORMS = [`${E}[3${SI}1m`, `${E}[${SI}38:2\u000e:255;0;0m`, `${E}[3\u007f1m`, `\u009b3${SI}1m`, `${E}(${SI}B`, `${E}${SI}[31m`, `${E}${SI}]8;;https://example.test/a\u0007`, `${E}[1 ${SI}2m`];
+    const FORMS = [`${E}[3${SI}1m`, `${E}[${SI}38:2\u000e:255;0;0m`, `${E}[3\u007f1m`, `\u009b3${SI}1m`, `${E}(${SI}B`, `${E}${SI}[31m`, `${E}${SI}]8;;https://example.test/a\u0007`, `${E}[1 ${SI}2m`, `${E}(0`, `${E}[2@`];
     for (const outcome of ['dod-failed', 'verify-failed'] as const) {
       for (const form of FORMS) {
         for (const name of ['alpha', 'beta']) {
@@ -328,6 +328,14 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE-2)', () => {
       expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}[31\u0085not ok 3 - after a C1 control`))), 'not ok N - after a cN control', `${outcome} C1 control ends a CSI`);
       expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}[31\u0018not ok 4 - after CAN`, `${E}(\u001anot ok 5 - after SUB`))), 'not ok N - after can', `${outcome} CAN cancels a CSI`);
       expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}(\u001anot ok 5 - after SUB`))), 'not ok N - after sub', `${outcome} SUB cancels an escape`);
+      // Inside a word: DEL inside a sequence is ignored, an executed C0 control (SI, CAN) and an executed C1 control become
+      // spaces, and a character above DEL that is not a C1 control ends a sequence and is printed.
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - al${E}[3\u007f1mpha`))), 'not ok N - alpha', `${outcome} DEL inside a word`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - al${E}[3${SI}1mpha`))), 'not ok N - al pha', `${outcome} SI inside a word`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - al${E}[3\u0018pha`))), 'not ok N - al pha', `${outcome} CAN inside a word`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - al\u009b3\u0085pha`))), 'not ok N - al pha', `${outcome} C1 control inside a word`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - caf${E}[3é`))), 'not ok N - café', `${outcome} a letter ends a CSI`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - al\u009cpha`))), 'not ok N - alpha', `${outcome} a stray ST is consumed`);
     }
   });
 
