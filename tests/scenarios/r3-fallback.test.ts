@@ -489,6 +489,7 @@ test('a result retained from its envelope is committed with the effort its reser
     assert.deepEqual(calls, ['primary'], 'committed from the envelope, not run again');
     assert.equal(f.run.review.invocations.at(-1)?.outcome, 'pass');
     assert.equal(f.run.review.invocations.at(-1)?.effort, 'high');
+    assert.equal(f.run.review.invocations.at(-1)?.timeoutMs, 1_000, 'and with the timeout its reservation recorded (T0-R3-RECONCILE-TIMEOUT)');
   } finally {
     fx.cleanup();
   }
@@ -662,7 +663,9 @@ function injectPendingDecision(s: Awaited<ReturnType<typeof atReview>>, reviewer
  * flight (`review r3` refuses, no reviewer runs); 1 ms later it is charged as a no-verdict without running a reviewer.
  */
 async function assertReconciledAt(s: Awaited<ReturnType<typeof atReview>>, runner: CardRunner, invocationId: string, timeoutMs: number): Promise<void> {
-  const requestedAt = s.fx.store.getCardRun(s.goalId, s.card.id)!.review.invocations.find((i) => i.invocationId === invocationId)!.requestedAt;
+  const reserved = s.fx.store.getCardRun(s.goalId, s.card.id)!.review.invocations.find((i) => i.invocationId === invocationId)!;
+  const requestedAt = reserved.requestedAt;
+  const recorded = reserved.timeoutMs;
   s.fx.advance(Date.parse(requestedAt) + timeoutMs + RECONCILE_GRACE_MS - Date.parse(s.fx.now()));
   await assert.rejects(runner.formalReview(s.g(), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!), /a formal review of this card is in flight/, 'at the timeout and the grace the decision is in flight');
   assert.equal(s.fx.store.getCardRun(s.goalId, s.card.id)!.review.invocations.find((i) => i.invocationId === invocationId)?.outcome, 'pending');
@@ -670,6 +673,7 @@ async function assertReconciledAt(s: Awaited<ReturnType<typeof atReview>>, runne
   const charged = await runner.formalReview(s.g(), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!);
   const decided = charged.run.review.invocations.find((i) => i.invocationId === invocationId);
   assert.equal(decided?.outcome, 'no-verdict', '1 ms past it the decision is charged');
+  assert.equal(decided?.timeoutMs, recorded, 'the charged decision keeps the timeout its reservation recorded, or none');
   assert.deepEqual(s.calls, [], 'no reviewer runs, in flight or charged');
 }
 
@@ -713,4 +717,14 @@ test('T0-R3-RECONCILE-TIMEOUT acceptance 4: docs/OPERATIONS.md and the CHANGELOG
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const entry = '- R3 reconcile timeout, card T0-R3-RECONCILE-TIMEOUT (issue #96): a formal reservation records the timeout of the reviewer it is dispatched to, and a pending decision with no result is reconciled against that recorded timeout, so a configuration change while it runs (the fallback or the base-sync reviewer renamed or removed, a timeout changed) no longer charges it early; a reservation written before the field is reconciled as before.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
+
+test('T0-R3-RECONCILE-TIMEOUT acceptance 3: a pending fallback decision with no recorded timeout is reconciled against the live timeout of the fallback it names, as before [R2]', async () => {
+  const s = await atReview(true, { fallback: { timeoutMs: TEN_MIN } });
+  try {
+    const invocationId = injectPendingDecision(s, 'backup', undefined);
+    await assertReconciledAt(s, s.runner, invocationId, TEN_MIN);
+  } finally {
+    s.fx.cleanup();
+  }
 });
