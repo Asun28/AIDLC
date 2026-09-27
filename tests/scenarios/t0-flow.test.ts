@@ -4839,11 +4839,13 @@ test('T1-BOUND-TELEMETRY acceptance 1: a planning allowance spent without an acc
   try {
     const goal = fx.controller.createGoal({ text: 'build the hello feature', source: 'natural-language', affectedSurfaces: [], explicitSize: 'T1' });
     assert.equal(fx.controller.next(goal.id).kind, 'plan');
-    for (const detail of ['the planner timed out', 'the plan did not validate']) fx.controller.report({ goalId: goal.id, generation: 0, result: 'plan-failed', data: { detail } });
+    const first = fx.controller.report({ goalId: goal.id, generation: 0, result: 'plan-failed', data: { detail: 'the planner timed out' } });
+    assert.equal(first.directive.kind, 'plan', 'one corrective invocation is left');
     assert.deepEqual(fired(fx, goal.id), []);
-    const d = fx.controller.next(goal.id);
-    assert.equal(d.kind, 'stop', d.narration);
-    if (d.kind === 'stop') assert.match(d.stop.detail, /^planning allowance/);
+    // The report answers with the next directive, so the second failure spends the allowance within the same call.
+    const second = fx.controller.report({ goalId: goal.id, generation: 0, result: 'plan-failed', data: { detail: 'the plan did not validate' } });
+    assert.equal(second.directive.kind, 'stop', second.directive.narration);
+    if (second.directive.kind === 'stop') assert.match(second.directive.stop.detail, /^planning allowance/);
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations']);
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations'], 'the stopped goal fires nothing more');

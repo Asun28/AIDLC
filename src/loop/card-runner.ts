@@ -20,6 +20,7 @@ import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnre
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
+import { boundFired, type BoundName } from '../core/types.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -548,6 +549,8 @@ export class CardRunner {
     // reads the record as persisted and must not find the stop it cleared.
     if (revalidatedStop) next = save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
+    const bound: BoundName | undefined = next.state === run.state ? undefined : decision.reason === 'card admission deadline reached' ? 'card-deadline' : decision.reason === 'reconciliation grace expired with unresolved operations' ? 'reconciliation-grace' : decision.reason === 'review allowance exhausted' ? (run.review.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES ? 'no-verdict-retry' : 'review-decisions') : decision.reason === repairExhausted ? 'attempts' : undefined;
+    if (bound) this.journal(goal.id).append(boundFired(goal, bound, card.id));
     return { run, next, decision, lease };
   }
 
@@ -586,6 +589,7 @@ export class CardRunner {
           if (action.action === 'stop') {
             const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no counter reset via another session', { at: now, global: false });
             const stopped = this.save({ ...next, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+            this.journal(goal.id).append(boundFired(goal, 'attempts', card.id));
             return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
           }
           if (action.action === 'attempt') {
@@ -796,6 +800,7 @@ export class CardRunner {
       if (action.action === 'stop') {
         const stop = makeStop('card', `${action.reason}: ${action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
         const stopped = this.save({ ...run, state: 'STOP', stop, effort: { ...episode, terminal: action.reason } });
+        this.journal(goal.id).append(boundFired(goal, 'attempts', card.id));
         return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: action.detail } };
       }
       if (action.action === 'attempt') {
@@ -1226,6 +1231,7 @@ export class CardRunner {
     if (run.review.substantiveDecisions >= MAX_SUBSTANTIVE_REVIEW_DECISIONS && !baseSyncDecision) {
       const stop = makeStop('review', `a further required review of candidate ${digest ?? 'unknown'} exceeds the two-decision allowance (${run.review.substantiveDecisions} used)`, 'return the retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
+      this.journal(goal.id).append(boundFired(goal, 'review-decisions', card.id));
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     const decision = run.review.substantiveDecisions + 1;
@@ -1930,6 +1936,7 @@ export class CardRunner {
       }
     }
     this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(committed.status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: committed.found.raised, reraised: committed.found.reraised, resolved: committed.found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, canonicalPublished: publication?.published, publicationError: publication?.error, policyHash: r.policyHash } });
+    if (committed.status === 'committed' && committed.run.state === 'STOP') this.journal(goal.id).append(boundFired(goal, classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions', card.id));
     return { run: committed.run, ...result, reviewer };
   }
 
@@ -2288,6 +2295,7 @@ export class CardRunner {
     // moment, a decision or a failed check recorded meanwhile included); the ledger written in the decision transaction
     // above is never replaced by the copy captured then.
     const history = { superseded: false, stopped: false, newer: 'none' };
+    let fired: BoundName | undefined; // set by the patch that fires a bound, which runs only on the record it is saved to
     const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }): { run: CardRun; directive: CardDirective } => {
       const saved = this.store.updateCardRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
@@ -2303,6 +2311,7 @@ export class CardRunner {
         }
         return { ...latest, ...patchOf(latest), evidence };
       });
+      if (fired) this.journal(goal.id).append(boundFired(goal, fired, card.id));
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' ? 'UNKNOWN' : 'failed';
@@ -2348,7 +2357,7 @@ export class CardRunner {
 
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
-    const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
+    const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}, bound?: BoundName) => finish(() => ((fired = bound), { ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
     const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
     const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
     // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
@@ -2359,6 +2368,7 @@ export class CardRunner {
       refutation = latest.effort ? afterShipFailure(latest.effort, cause, { harderProblem: true, limitsPermit: checkAdmission(latest.deadline, now).phase === 'open' }) : undefined;
       if (refutation?.action.action !== 'stop') return { state: 'BUILD', effort: refutation?.episode ?? latest.effort, dodReceipt: undefined, blockedReceipt: undefined };
       const stop = makeStop('card', `${cause}; the effort ladder admits no repair attempt: ${refutation.action.reason}: ${refutation.action.detail}`, 'record cause, evidence and the next needed action; no fifth attempt or counter reset via another session', { at: now, global: false });
+      fired = 'attempts';
       return { state: 'STOP', stop, effort: refutation.episode, dodReceipt: undefined, blockedReceipt: undefined };
     };
     const refuteDirective = (next: CardRun, narration: string): { run: CardRun; directive: CardDirective } => {
@@ -2387,6 +2397,7 @@ export class CardRunner {
             }
             if (latest.review.substantiveBlocks >= 2 || reviewDecision?.action === 'stop-review') {
               const stop = makeStop('review', this.withContest(reviewDecision?.action === 'stop-review' ? reviewDecision.detail : 'second substantive block', latest.findings), 'return the PR and retained verdict evidence for human adjudication; no counter reset', { at: now, global: false });
+              fired = classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions';
               return { state: 'STOP', stop };
             }
             // The two R3 decisions are the formal review's own budget: the episode reopens and the repair is the next attempt.
@@ -2409,7 +2420,7 @@ export class CardRunner {
         if (reviewDecision?.action === 'retry-review') {
           return finish(() => ({ state: 'SHIP' }), (next) => ({ run: next, directive: { kind: 'ship', cardId: card.id, base: this.config.base, mode: run.mode, narration: `No verdict (${classified.runStatus}); raw evidence preserved. One retry remains across script and driver: re-run the same ship command.` } }));
         }
-        return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', 'preserve raw output; never pass; hand off for adjudication', { at: now, global: false }));
+        return stopWith(makeStop('review', 'missing/malformed/stale verdict after the single retry', 'preserve raw output; never pass; hand off for adjudication', { at: now, global: false }), {}, 'no-verdict-retry');
       }
       case 'ci-red':
       case 'ci-timeout': {
@@ -2433,6 +2444,7 @@ export class CardRunner {
         const applied = finish(
           (latest) => {
             decided = rerunOn(latest.ci);
+            fired = decided.allowed ? 'ci-rerun-allowed' : cls.class === 'transient' && !snapshotAllowed ? 'ci-rerun-denied' : undefined;
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
             if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
             if (snapshotAllowed) return { state: 'WAIT' };
@@ -2460,7 +2472,7 @@ export class CardRunner {
         // provided the episode can still admit an attempt; the rejected receipt is never reused as proof.
         const admission = checkAdmission(run.deadline, now);
         if (admission.phase !== 'open') {
-          return stopWith(makeStop('time', `RED receipt rejected (${result.detail}) after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }));
+          return stopWith(makeStop('time', `RED receipt rejected (${result.detail}) after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }), {}, 'card-deadline');
         }
         const reopened = reopenEpisode(run.effort);
         const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
@@ -2488,7 +2500,7 @@ export class CardRunner {
         if (result.outcome === 'merge-failed' && hasConflictDiagnostic(result.receipt)) {
           const admission = checkAdmission(run.deadline, now);
           if (admission.phase !== 'open') {
-            return stopWith(makeStop('time', `merge conflict on the base sync after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }));
+            return stopWith(makeStop('time', `merge conflict on the base sync after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }), {}, 'card-deadline');
           }
           const reopened = reopenEpisode(run.effort);
           const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;

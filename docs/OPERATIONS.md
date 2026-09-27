@@ -328,6 +328,11 @@ A merge GitHub refuses after the checks passed (card T0-SHIP-MERGE-REFUSED) is r
 | `ownership` | stale generation, foreign lease, or worktree/branch mismatch | the owner's own `card next` renews its lease and clears a stop caused only by expiry (journal `LEASE_RENEWED` with `revalidated`); otherwise attach read-only, continue as the owner identity (`AIDLC_SESSION`) while the lease is live, or `card takeover` once it has expired and the card's operations are reconciled (Sessions); `goal takeover` for the goal lease |
 | `cancelled` | user cancellation | none; evidence retained; `goal resume` links a new generation |
 
+## Bound telemetry
+
+- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY), whose payload `{ bound }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.
+- The board prints one line over every goal journal in the state directory, `Bounds: <bound> <n> (DONE a, STOP/<reason> b, open c); ...`: the fired bounds in that order, the number of firings of each, and for each firing the first terminal event of its goal after it (`GOAL_DONE` is DONE, `GOAL_STOPPED` is STOP with its reason, none yet is open). With no firing the line is `Bounds: none fired`.
+
 ## Companion skills
 
 Advisory skills installed next to `aidlc-loop`; the loop's gates decide, and a skill never overrides `aidlc next`. Each is read by path when the step needs it (the implementer, investigator and planner agents point at them) or called by name in a session.

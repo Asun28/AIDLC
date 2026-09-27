@@ -916,6 +916,8 @@ export type JournalEventType = z.infer<typeof JournalEventType>;
 export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
 export type BoundName = z.infer<typeof BoundName>;
 export const BoundFired = z.object({ bound: BoundName });
+/** The one `BOUND_FIRED` entry of a firing: each firing point journals it once, ahead of any stop the firing causes. */
+export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, cardId?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound } });
 
 export const JournalEvent = z.object({
   seq: z.number().int().nonnegative(),
@@ -928,7 +930,7 @@ export const JournalEvent = z.object({
   data: z.record(z.string(), z.unknown()).default({}),
   prevHash: z.string(),
   hash: Sha256Hex,
-});
+}).refine((e) => e.type !== 'BOUND_FIRED' || BoundFired.safeParse(e.data).success, { message: 'BOUND_FIRED names no known bound', path: ['data', 'bound'] });
 export type JournalEvent = z.infer<typeof JournalEvent>;
 
 // ---------------------------------------------------------------------------

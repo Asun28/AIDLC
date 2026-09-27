@@ -3,7 +3,7 @@
  * per-card status/dependencies/wave/worktree/PR/counters/blocker. It is never the only store
  * of clocks, approvals or history.
  */
-import type { Card, CardRun, Goal } from '../core/types.ts';
+import { BoundFired, BoundName, StopReason, type Card, type CardRun, type Goal, type JournalEvent } from '../core/types.ts';
 import { effectiveGoalDeadline } from '../core/deadlines.ts';
 import { selectArc, type CardOutcome } from '../core/arc.ts';
 import { formatStop } from '../core/stop.ts';
@@ -38,12 +38,34 @@ export function outcomeOf(run: CardRun | undefined, card: Card): CardOutcome {
 }
 
 /**
+ * The Bounds line (card T1-BOUND-TELEMETRY): per bound fired in any journal, in the Limits table order, the firings and the
+ * first terminal event of the goal after each, `GOAL_DONE` or a `GOAL_STOPPED` with a stop reason, else open.
+ */
+export function boundsLine(journals: JournalEvent[][]): string {
+  const tally = new Map<BoundName, Map<string, number>>();
+  for (const events of journals) events.forEach((e, i) => {
+    const bound = e.type === 'BOUND_FIRED' ? BoundFired.safeParse(e.data).data?.bound : undefined;
+    if (!bound) return;
+    const end = events.slice(i + 1).find((t) => t.type === 'GOAL_DONE' || (t.type === 'GOAL_STOPPED' && StopReason.safeParse(t.data['reason']).success));
+    const outcome = !end ? 'open' : end.type === 'GOAL_DONE' ? 'DONE' : `STOP/${String(end.data['reason'])}`;
+    const counts = tally.get(bound) ?? new Map([['DONE', 0], ['open', 0]]);
+    tally.set(bound, counts.set(outcome, (counts.get(outcome) ?? 0) + 1));
+  });
+  const parts = BoundName.options.filter((b) => tally.has(b)).map((b) => {
+    const counts = tally.get(b)!;
+    // Code-unit order puts DONE first, the STOP/<reason> entries next and open last.
+    return `${b} ${[...counts.values()].reduce((n, c) => n + c, 0)} (${[...counts.keys()].sort().map((k) => `${k} ${counts.get(k)}`).join(', ')})`;
+  });
+  return `Bounds: ${parts.join('; ') || 'none fired'}`;
+}
+
+/**
  * `externalOutcomes` carries what the caller vouches for beyond this projection (a prerequisite merged under another
  * goal, from `prerequisitesClosedElsewhere`), so the Arc line reports the arc the controller decided instead of a gap
  * of the view's own making. Every projected card is written over it from its own run, and an id outside the projection
  * is no row of this board.
  */
-export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string, externalOutcomes: Record<string, CardOutcome> = {}): string {
+export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string, externalOutcomes: Record<string, CardOutcome> = {}, journals: JournalEvent[][] = []): string {
   const runById = new Map(runs.map((r) => [r.cardId, r]));
   const outcomes: Record<string, CardOutcome> = { ...externalOutcomes };
   for (const c of cards) outcomes[c.id] = outcomeOf(runById.get(c.id), c);
@@ -61,7 +83,7 @@ export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: str
   lines.push(`- **Arc**: verdict=${arc.verdict} workers=${arc.workers} wave=${arc.wave.join(',') || '-'} ready=${arc.ready.join(',') || '-'}`);
   if (goal.stop) lines.push(`- **STOP**: ${formatStop(goal.stop)}`);
   lines.push(`- **Rendered**: ${now} (view only; clocks, approvals and history live in .aidlc/)`);
-  lines.push('');
+  lines.push('', boundsLine(journals), '');
   lines.push('| | Card | State | Depends on | Wave | Worktree | PR | Reviews | CI reruns | Attempts | Deadline | Blocker |');
   lines.push('|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const card of cards) {
