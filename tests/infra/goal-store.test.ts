@@ -4,9 +4,9 @@ import fs, { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } f
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
-import { atomicWriteJson } from '../../src/state/store.ts';
+import { StoreError, atomicWriteJson } from '../../src/state/store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
-import { ReleaseAttempt } from '../../src/core/types.ts';
+import { ReleaseAttempt, type Goal } from '../../src/core/types.ts';
 import { cleanup, iso, makeCardRun, makeGoal, tmpDir } from './helpers.ts';
 
 describe('state/goal-store', () => {
@@ -328,5 +328,35 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     assert.equal(same.revision, v0.revision, 'no write, no revision');
     assert.equal(readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8'), bytes, 'the record is not rewritten');
     assert.equal(store.saveCardRun({ ...v0, blocker: 'still current' }).revision, v0.revision + 1, 'the snapshot read before the no-op update is still current');
+  });
+});
+
+describe('state/goal-store goal writes under the store lock (T1-BOUND-TELEMETRY-2)', () => {
+  const dir = tmpDir();
+  const paths = ensureStatePaths(statePathsFromRoot(path.join(dir, '.aidlc')));
+  after(() => cleanup(dir));
+
+  it('acceptance 15: a held goal lock refuses a goal write with LOCKED naming the file and leaves the record byte-identical; after the release the same write succeeds [R7]', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 50 });
+    const goal = store.saveGoal(makeGoal('goal-locked'));
+    const file = store.goalFile('goal-locked');
+    const bytes = readFileSync(file);
+    writeFileSync(`${file}.lock`, `pid=${process.pid} at=${iso()} nonce=held`, 'utf8');
+    assert.throws(() => store.saveGoal({ ...goal, maxWorkers: 1 }), (err: unknown) => err instanceof StoreError && err.code === 'LOCKED' && err.file === file);
+    assert.deepEqual(readFileSync(file), bytes, 'nothing is written');
+    unlinkSync(`${file}.lock`);
+    assert.equal(store.saveGoal({ ...goal, maxWorkers: 1 }).maxWorkers, 1);
+    assert.equal(store.getGoal('goal-locked')?.maxWorkers, 1, 'the same write succeeds once the lock is released');
+  });
+
+  it('acceptance 11: a plain goal write from a snapshot without pendingFiring keeps the persisted one [R6] [R7]', () => {
+    const store = new GoalStore(paths);
+    const goal = store.saveGoal(makeGoal('goal-outbox'));
+    const pendingFiring = { bound: 'arc-deadline', key: 'goal-outbox@0/-/arc-deadline/2026-09-11T13:00:00.000Z' };
+    store.saveGoal({ ...goal, pendingFiring } as Goal);
+    assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'the firing is saved with the goal');
+    store.saveGoal({ ...goal, maxWorkers: 1 });
+    assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'a snapshot without it keeps it');
+    assert.equal(store.getGoal('goal-outbox')?.maxWorkers, 1);
   });
 });

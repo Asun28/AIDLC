@@ -5113,33 +5113,38 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F5: a goal deadline stop whose goal save 
   }
 });
 
-/** F6: journaling the firing fails once: no stop is saved without its firing, and running the command again saves both. */
-async function firingFailsOnce(fx: ReturnType<typeof makeFixture>, goalId: string, cardId: string, act: () => unknown, reason: string, bound: string): Promise<void> {
+/** F6 under the outbox (T1-BOUND-TELEMETRY-2 R5, R6): journaling the firing fails once: the stop is saved with the firing pending, and the next card next journals it once, before anything else. */
+async function firingFailsOnce(fx: ReturnType<typeof makeFixture>, goalId: string, cardId: string, act: () => unknown, reason: string, bound: string, again: () => unknown = act): Promise<void> {
   const failed = await failOnce('appendFileSync', firingLine, act);
-  assert.match(String(failed), /injected appendFileSync failure/);
-  assert.notEqual(fx.store.getCardRun(goalId, cardId)?.state, 'STOP', 'no stop is saved without its firing');
-  const again = await Promise.resolve().then(act).catch((err: unknown) => err);
-  assert.equal(fx.store.getCardRun(goalId, cardId)?.stop?.reason, reason, String(again));
+  const stopped = fx.store.getCardRun(goalId, cardId);
+  assert.deepEqual([stopped?.stop?.reason, stopped?.pendingFiring?.bound], [reason, bound], `the stop is saved with its firing pending (${String(failed)})`);
+  assert.deepEqual(fired(fx, goalId), []);
+  const seen = fx.events(goalId).length;
+  await again();
+  assert.equal(fx.events(goalId)[seen]?.type, 'BOUND_FIRED', 'journaled before anything else');
+  assert.equal(fx.store.getCardRun(goalId, cardId)?.pendingFiring, undefined);
   assert.deepEqual(fired(fx, goalId), [bound]);
 }
 
-test('T1-BOUND-TELEMETRY R3 decision 1 F6: a ship-path CI rerun denial is never saved without its firing', async () => {
+test('T1-BOUND-TELEMETRY R3 decision 1 F6: a ship-path CI rerun denial is saved with its firing pending, and the next card next journals it without shipping again', async () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: 'T1-CIF', title: 'the rerun allowance is spent' });
     const goal = goalForCards(fx, ['T1-CIF']);
-    const runner = fx.runner(new InjectedShipPath(['ci-red', 'ci-red'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact'));
+    const ship = new InjectedShipPath(['ci-red'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact');
+    const runner = fx.runner(ship);
     const card = fx.card('T1-CIF');
     const r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CIF'));
     runner.recordAttempt(fx.goal(goal.id), card, runner.next(fx.goal(goal.id), card, r.run).run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-cif' });
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-CIF', data: { ci: { reruns: [{ runId: '999', attempt: 1, candidate: 'sha-cif', requestedAt: T0, outcome: 'success' }] } } });
     await firingFailsOnce(fx, goal.id, 'T1-CIF', () => runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-CIF')!), 'ci', 'ci-rerun-denied');
+    assert.equal(ship.requests.length, 1, 'the ship path is not invoked again (T1-BOUND-TELEMETRY-2 acceptance 9)');
   } finally {
     fx.cleanup();
   }
 });
 
-test('T1-BOUND-TELEMETRY R3 decision 1 F6: the BUILD and REVIEW_FIX ladder stops are never saved without their firing', async () => {
+test('T1-BOUND-TELEMETRY R3 decision 1 F6: the BUILD and REVIEW_FIX ladder stops are saved with their firing pending, and the next card next journals it', async () => {
   for (const reviewFix of [false, true]) {
     const fx = makeFixture();
     try {
@@ -5159,7 +5164,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: the BUILD and REVIEW_FIX ladder stops
   }
 });
 
-test('T1-BOUND-TELEMETRY R3 decision 1 F6: the R3 gate stop past two decisions is never saved without its firing', async () => {
+test('T1-BOUND-TELEMETRY R3 decision 1 F6: the R3 gate stop past two decisions is saved with its firing pending, and the next card next journals it', async () => {
   const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     writeCard(fx, { id: 'T1-GATE', title: 'two decisions are spent' });
@@ -5174,7 +5179,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: the R3 gate stop past two decisions i
   }
 });
 
-test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is never saved without its firing; the retained result commits both', async () => {
+test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is saved with its firing pending, and the next card next journals it', async () => {
   const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const script = scriptedRunner({
@@ -5190,7 +5195,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is never saved
     const f = await runner.formalReview(fx.goal(goal.id), card, runner.next(fx.goal(goal.id), card, run).run);
     assert.equal(f.classified.outcome, 'no-verdict');
     const second = runner.next(fx.goal(goal.id), card, f.run).run;
-    await firingFailsOnce(fx, goal.id, 'T1-NVF', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF') ?? second), 'review', 'no-verdict-retry');
+    await firingFailsOnce(fx, goal.id, 'T1-NVF', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF') ?? second), 'review', 'no-verdict-retry', () => runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF')!));
   } finally {
     fx.cleanup();
   }
@@ -5247,7 +5252,8 @@ test('T1-BOUND-TELEMETRY R3 decision 1: an owner that revalidates its ownership 
     fx.advance(3 * 3600_000 + 60_000);
     let locks = 0;
     const lockFile = path.resolve(`${fx.store.cardFile(goal.id, 'T1-REVAL')}.lock`);
-    const failed = await failOnce('openSync', (args) => path.resolve(String(args[0])) === lockFile && (locks += 1) === 2, () => fx.runner().next(fx.goal(goal.id), card, stopped));
+    // The first lock saves the stop with its firing, the second flushes the firing (T1-BOUND-TELEMETRY-2), the third is the next save.
+    const failed = await failOnce('openSync', (args) => path.resolve(String(args[0])) === lockFile && (locks += 1) === 3, () => fx.runner().next(fx.goal(goal.id), card, stopped));
     assert.match(String(failed), /injected openSync failure/);
     assert.equal(fx.store.getCardRun(goal.id, 'T1-REVAL')?.stop?.reason, 'time', 'the revalidation saved the deadline stop');
     assert.deepEqual(fired(fx, goal.id), ['card-deadline'], 'with its firing');

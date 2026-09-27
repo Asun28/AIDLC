@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { boundsOfJournals, journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -191,7 +191,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       })();
       assert.equal(kind, 'stop', 'the goal deadline stop is saved');
       assert.equal(fx.goal(goal.id).terminal, true);
-      assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0); attempts 1 (DONE 0, open 1)']);
+      assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0); attempts 1 (DONE 0, open 1); incomplete: pending firings or unreadable records in "g-damaged"'], 'the record that cannot be read is named (T1-BOUND-TELEMETRY-2)');
     } finally {
       fx.cleanup();
     }
@@ -210,6 +210,59 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       writeFileSync(path.join(dir, 'journal'), '', 'utf8'); // exists, and listing it fails (ENOTDIR)
       assert.equal(line(path.join(dir, 'journal')), 'Bounds: none fired; incomplete: lines that do not parse in "journal"');
       assert.equal(line(path.join(dir, 'absent')), 'Bounds: none fired', 'a journal directory not yet created holds no firing');
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it('T1-BOUND-TELEMETRY-2 acceptance 8: a goal journal that cannot be read in full refuses the firing and keeps it pending, and the board names the goal and the journal; once readable, the next call journals it once and clears it [R2] [R6]', () => {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const file = fx.journal(goal.id).file;
+      writeFileSync(file, readFileSync(file, 'utf8').replace('\n', '\nnot a journal line\n'), 'utf8'); // its tail still appends
+      fx.advance(3 * 3600_000 + 60_000);
+      const stop = fx.controller.next(goal.id);
+      assert.equal(stop.kind, 'stop');
+      assert.match(stop.narration, /arc-deadline\/.* stays pending/, 'the command names the pending firing');
+      assert.deepEqual([fx.goal(goal.id).terminal, fx.goal(goal.id).pendingFiring?.bound], [true, 'arc-deadline'], 'the stop is saved with its firing pending');
+      assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(goal.id))), [`Bounds: none fired; incomplete: lines that do not parse in "${goal.id}"; pending firings or unreadable records in "${goal.id}"`]);
+      assert.equal(fx.controller.next(goal.id).kind, 'stop', 'still refused: the stop stands');
+      writeFileSync(file, readFileSync(file, 'utf8').replace('not a journal line\n', ''), 'utf8');
+      const seen = fx.events(goal.id).length;
+      assert.equal(fx.controller.next(goal.id).kind, 'stop');
+      fx.controller.next(goal.id);
+      assert.deepEqual(fx.events(goal.id).slice(seen).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]], 'journaled once, before anything else');
+      assert.equal(fx.goal(goal.id).pendingFiring, undefined, 'and cleared');
+      assert.match(boundsLines(fx.controller.writeBoard(fx.goal(goal.id)))[0] ?? '', /^Bounds: arc-deadline 1 \([^;]*\)$/);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('T1-BOUND-TELEMETRY-2 acceptance 10: a journal file or directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired [R2]', (t) => {
+    const dir = tmpDir();
+    try {
+      const journals = path.join(dir, 'journals');
+      mkdirSync(journals);
+      // A junction needs no privilege on Windows; elsewhere the type is ignored and a symbolic link is made.
+      const dangling = (at: string) => {
+        try {
+          symlinkSync(path.join(dir, 'gone'), at, 'junction');
+          return true;
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code === 'EPERM') return false;
+          throw err;
+        }
+      };
+      if (!dangling(path.join(journals, 'g-link.jsonl')) || !dangling(path.join(dir, 'linked'))) return t.skip('the platform refuses links (EPERM)');
+      mkdirSync(path.join(journals, 'g-dir.jsonl')); // a directory where a journal file is expected
+      writeFileSync(path.join(dir, 'file'), '', 'utf8'); // a file where the journal directory is expected
+      assert.equal(boundsOfJournals(journals), 'Bounds: none fired; incomplete: lines that do not parse in "g-dir", "g-link"', 'a dangling journal file is named');
+      assert.equal(boundsOfJournals(path.join(dir, 'linked')), 'Bounds: none fired; incomplete: lines that do not parse in "linked"', 'a dangling journal directory is named');
+      assert.equal(boundsOfJournals(path.join(dir, 'file')), 'Bounds: none fired; incomplete: lines that do not parse in "file"');
+      assert.equal(boundsOfJournals(path.join(dir, 'absent')), 'Bounds: none fired', 'an absent journal directory holds no firing');
     } finally {
       cleanup(dir);
     }
@@ -242,17 +295,19 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
     assert.deepEqual(rows, ['| Integration / lifecycle repair cycles | 1 each; the integration repair bound is enforced, the lifecycle repair bound is defined and not enforced | `src/core/arc.ts`, `src/loop/controller.ts` |']);
   });
 
-  it('acceptance 7: docs/OPERATIONS.md names BOUND_FIRED and the board line, and the CHANGELOG Unreleased section carries the entry [R1] [R2]', () => {
+  it('acceptance 14: docs/OPERATIONS.md names BOUND_FIRED, the outbox, the goal LOCKED refusal and the board line with its incomplete part, and the CHANGELOG Unreleased section carries the entry of card T1-BOUND-TELEMETRY-2 and the Changed entry [R1] [R2] [R5] [R7]', () => {
     const operations = read('docs', 'OPERATIONS.md');
     for (const sentence of [
-      '- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY), whose payload `{ bound, key }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound, or no key, fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.',
-      '- The event is journaled before the stop or state the firing causes is saved, under the lock that guards that save (the card-run lock for a card firing; a goal firing is guarded by the goal lease), and only when the journal holds no `BOUND_FIRED` with the same key. The key names the firing from persisted facts only, never the clock: the goal and its generation (a resumed generation that the same bound stops again is a new firing), the card when there is one, the bound and the stored card or goal deadline, the candidate digest (review decisions, no-verdict retry, CI rerun), the number of attempts recorded on the effort episode, the planning invocation count or the repair cycle count. A retry after a refused save finds its key and journals nothing more, and a later `card next` or `aidlc next` on the stopped card or goal journals nothing.',
+      '- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY-2), whose payload `{ bound, key }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound, or no key, fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.',
+      '- A firing goes through an outbox: it is saved as `pendingFiring` on the card run or the goal record in the same write as the stop or state it causes, so a bound stop never waits on the journal. Right after that write, and at the start of every later `aidlc card next`, `aidlc next` and `aidlc report`, a second write under the same lock (the card-run lock, or the goal lock) journals the pending firing, only when the journal holds no `BOUND_FIRED` with the same key, and clears it. A journal that cannot be read in full refuses the append and nothing is written: the firing stays pending beside its stop, and the call answers with that stop, or a wait, naming the firing, never with a ship or a build.',
+      '- The key names the firing from persisted facts only, never the clock: the goal and its generation (a resumed generation that the same bound stops again is a new firing), the card when there is one, the bound and the stored card or goal deadline, the candidate digest (review decisions, no-verdict retry, and for a CI rerun the digest and the number of reruns the ledger holds for the candidate, cancelled ones included, so a rerun granted again after a cancel is a new firing), the number of attempts recorded on the effort episode, the planning invocation count or the repair cycle count. A retry after a refused save journals nothing twice, and a later call on the stopped card or goal journals nothing.',
+      '- Goal writes take the store lock, `<goal>.json.lock`, like card runs: a goal write while another writer holds it refuses with `StoreError` `LOCKED` naming the file and writes nothing, `aidlc goal extend` included, and the command run again succeeds once the lock is free. A goal stop is written only over a record that is not terminal, so of two overlapping calls only the one whose write landed journals the firing and `GOAL_STOPPED`.',
       '- The board prints one line over every goal journal in the state directory, `Bounds: <bound> <n> (DONE a, STOP/<reason> b, open c); ...`: the fired bounds in that order, the number of distinct firings of each, and for each firing the first terminal event of its goal after its first entry (`GOAL_DONE` is DONE, `GOAL_STOPPED` is STOP with its reason, none yet is open). With no firing the line is `Bounds: none fired`.',
-      '- The line reads every goal journal file of the state directory, whatever the goal records say, one line at a time: a line that does not parse is left out and the Bounds line ends with `; incomplete: lines that do not parse in "<journal>"`, naming each such journal, so a damaged journal never reads as none fired and never blocks another goal or its stop.',
+      '- The line reads every goal journal file of the state directory, whatever the goal records say, one line at a time: a line that does not parse is left out and the Bounds line ends with `; incomplete: lines that do not parse in "<journal>"`, naming each such journal, so a damaged journal never reads as none fired and never blocks another goal or its stop. A journal file or directory that is a dangling link, or a directory that cannot be listed, is named the same way; only one that is absent reads as none fired.',
+      '- The `incomplete:` part also names, after `pending firings or unreadable records in`, every goal whose goal record or card run holds a `pendingFiring`, or cannot be read, so a firing not yet journaled never reads as none fired.',
     ]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = '- Bound telemetry, card T1-BOUND-TELEMETRY: each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. Each event carries a key naming the firing from persisted facts and is journaled once per key, before the stop it causes is saved, so a retry after a refused save neither loses nor doubles a firing; the board reads every goal journal file line by line and names a journal with lines that do not parse. The README Limits table says the lifecycle repair bound is defined and not enforced.';
-    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+    for (const entry of ['- Bound telemetry, card T1-BOUND-TELEMETRY-2 (replacing T1-BOUND-TELEMETRY): each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. A firing is saved as `pendingFiring` in the same write as the stop or state it causes, an outbox, and journaled once per key right after that write or by the next `aidlc card next`, `aidlc next` or `aidlc report` once the journal reads in full, so a bound stop never waits on the journal and a retry neither loses nor doubles a firing; a CI rerun firing also counts the reruns of its candidate, so a rerun granted again after a cancel is its own firing. The board reads every goal journal file line by line and names a journal it cannot read in full, a dangling link included, and every goal whose firing is pending or whose record cannot be read. The README Limits table says the lifecycle repair bound is defined and not enforced.', '- Changed: goal writes now take the store lock, card T1-BOUND-TELEMETRY-2: the goal record is written under `<goal>.json.lock` like a card run, so a goal write while another writer holds the lock refuses with `StoreError` `LOCKED` and writes nothing, `aidlc goal extend` included, and a goal stop is written only over a record that is not terminal.']) assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });

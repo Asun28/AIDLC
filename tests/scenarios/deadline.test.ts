@@ -6,6 +6,7 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { HOUR_MS, MINUTE_MS, RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
 import { effectiveGoalDeadline } from '../../src/core/deadlines.ts';
 import { makeStop } from '../../src/core/stop.ts';
+import { readFileSync, writeFileSync } from 'node:fs';
 import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delivery/ship.ts';
 
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
@@ -338,6 +339,66 @@ test('T1-BOUND-TELEMETRY R2 on cc53042: a resumed generation that the arc deadli
     const deadline = effectiveGoalDeadline(goal.deadlines);
     assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${deadline}`, `@1/-/arc-deadline/${deadline}`]);
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: arc-deadline 2 (DONE 0, STOP/time 2, open 0)'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A line that does not parse inserted after the first one, so the journal cannot be read in full while its tail still appends; returns the repair. */
+function damageJournal(fx: Fixture, goalId: string): () => void {
+  const file = fx.journal(goalId).file;
+  writeFileSync(file, readFileSync(file, 'utf8').replace('\n', '\nnot a journal line\n'), 'utf8');
+  return () => writeFileSync(file, readFileSync(file, 'utf8').replace('not a journal line\n', ''), 'utf8');
+}
+
+test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pending firing before selection; while the journal refuses it, card next names it and dispatches no work [R6] [R8]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    const next = () => fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    const stopped = next();
+    assert.deepEqual([stopped.directive.kind, stopped.run.stop?.reason, fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound], ['stop', 'time', 'card-deadline'], 'the stop is saved with its firing pending');
+    assert.match(stopped.directive.narration, /card-deadline\/.* stays pending/);
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 13 * HOUR_MS), 'more time'); // re-admits the run; the firing stays pending
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
+    const held = next();
+    assert.deepEqual([held.directive.kind, held.run.state], ['wait', 'BUILD'], `no work is dispatched: ${held.directive.narration}`);
+    assert.match(held.directive.narration, /card-deadline\/.* stays pending/);
+    repair();
+    const seen = fx.events(goal.id).length;
+    const resumed = next();
+    assert.notEqual(resumed.directive.kind, 'wait', resumed.directive.narration);
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 1).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/T1-A/card-deadline/${run.deadline}`]], 'journaled before selection');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and clear a pending goal firing before anything else; while the journal refuses it they name it and a resume is not applied [R6] [R8]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    for (let i = 0; i < 2; i += 1) {
+      const d = fx.controller.next(goal.id);
+      assert.equal(d.kind, 'stop');
+      assert.match(d.narration, /arc-deadline\/.* stays pending/, 'next names the pending firing');
+    }
+    const refused = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
+    assert.deepEqual([refused.directive.kind, fx.goal(goal.id).generation], ['stop', 0], 'the resume is not applied');
+    assert.match(refused.directive.narration, /arc-deadline\/.* stays pending/, 'report names the pending firing');
+    repair();
+    const seen = fx.events(goal.id).length;
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 2).map((e) => e.type), ['BOUND_FIRED', 'GOAL_TAKEOVER'], 'the firing of generation 0 is journaled before the resume');
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, `@1/-/arc-deadline/${goal.deadlines.goalDeadline}`]);
   } finally {
     fx.cleanup();
   }
