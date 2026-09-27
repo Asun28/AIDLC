@@ -345,7 +345,7 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     assert.throws(() => store.saveCardRun({ ...legacy, blocker: 'again' }), /changed since it was read/i);
   });
 
-  it('T1-STORE-CAS acceptance 1: an update whose change returns the stored record writes nothing, so the revision stays and a snapshot at it still writes', () => {
+  it('T1-STORE-CAS-2 acceptance 1: an update whose change returns the stored record writes nothing, so the revision stays and a snapshot at it still writes', () => {
     const store = new GoalStore(paths);
     const v0 = store.saveCardRun(makeCardRun('goal-n', 'T1-N'));
     const bytes = readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8');

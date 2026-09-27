@@ -585,7 +585,7 @@ function onLock<T>(lock: string, hooks: { before?: (n: number) => void; held?: (
   );
 }
 
-test('T0-CARD-TAKEOVER, interleaved (T1-STORE-CAS): an operation, a stop, a release or a takeover persisted before the lease section is honoured, an operation attempted inside it is refused, and an interrupted takeover is completed', () => {
+test('T0-CARD-TAKEOVER, interleaved (T1-STORE-CAS-2): an operation, a stop, a release or a takeover persisted before the lease section is honoured, an operation attempted inside it is refused, and an interrupted takeover is completed', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     const ids = ['T1-OP', 'T1-LATE', 'T1-STOP', 'T1-RELEASE', 'T1-TWICE', 'T1-ABANDON', 'T1-CLAIM', 'T1-PREPARED'];
@@ -733,7 +733,7 @@ test('T0-CARD-TAKEOVER, interleaved (T1-STORE-CAS): an operation, a stop, a rele
   }
 });
 
-test('T0-CARD-TAKEOVER-2, completion (T1-STORE-CAS): a completion decides on the record its lease section reads, so a record released or taken before that section refuses without a write', () => {
+test('T0-CARD-TAKEOVER-2, completion (T1-STORE-CAS-2): a completion decides on the record its lease section reads, so a record released or taken before that section refuses without a write', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     const ids = ['T1-RELEASED', 'T1-TAKEN'];
@@ -925,7 +925,7 @@ test('T0-CARD-TAKEOVER-2, stale writers: an attempt record and a CI reconciliati
   }
 });
 
-test("T1-STORE-CAS acceptance 4: a ship's fence and intent share the card lease lock with the takeover: an intent attempted while the lock is held is refused, an intent recorded first refuses the takeover by id, and a ship after the takeover is fenced with no intent", () => {
+test("T1-STORE-CAS-2 acceptance 4: a ship's fence and intent share the card lease lock with the takeover: an intent attempted while the lock is held is refused, an intent recorded first refuses the takeover by id, and a ship after the takeover is fenced with no intent", () => {
   const fx = makeFixture({ actor: actorA });
   try {
     const ids = ['T1-HELD', 'T1-FIRST', 'T1-AFTER'];
@@ -997,7 +997,7 @@ test("T1-STORE-CAS acceptance 4: a ship's fence and intent share the card lease 
   }
 });
 
-test("T1-STORE-CAS acceptance 5: a stop saved between the takeover's run read and its run update survives the takeover, and an old owner's review commit after the takeover is fenced", async () => {
+test("T1-STORE-CAS-2 acceptance 5: a stop saved between the takeover's run read and its run update survives the takeover, and an old owner's review commit after the takeover is fenced", async () => {
   const fx = makeFixture({ actor: actorA, config: { preReview: { command: ['fake-r2', '{instructions}'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
   try {
     const ids = ['T1-STOPPED', 'T1-REVIEW'];
@@ -1070,7 +1070,7 @@ test("T1-STORE-CAS acceptance 5: a stop saved between the takeover's run read an
   }
 });
 
-test('T1-STORE-CAS acceptance 6: two completions of one takeover generation journal exactly one LEASE_ACQUIRED', () => {
+test('T1-STORE-CAS-2 acceptance 6: two completions of one takeover generation journal exactly one LEASE_ACQUIRED', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     writeCard(fx, { id: 'T1-TWO', title: 'card T1-TWO' });
@@ -1123,7 +1123,7 @@ test('T1-STORE-CAS acceptance 6: two completions of one takeover generation jour
   }
 });
 
-test("T1-STORE-CAS: the ship's duplicate check runs in its lease section: a merge of the candidate issued meanwhile makes the ship wait on it with no second intent", () => {
+test("T1-STORE-CAS-2: the ship's duplicate check runs in its lease section: a merge of the candidate issued meanwhile makes the ship wait on it with no second intent", () => {
   const fx = makeFixture({ actor: actorA });
   try {
     writeCard(fx, { id: 'T1-DUP', title: 'card T1-DUP' });
@@ -1153,7 +1153,7 @@ test("T1-STORE-CAS: the ship's duplicate check runs in its lease section: a merg
   }
 });
 
-test('T1-STORE-CAS: a lease of the same session id on another host is another session\'s: the takeover advances it instead of completing it', () => {
+test('T1-STORE-CAS-2: a lease of the same session id on another host is another session\'s: the takeover advances it instead of completing it', () => {
   const fx = makeFixture({ actor: actorA });
   try {
     writeCard(fx, { id: 'T1-HOST', title: 'card T1-HOST' });
@@ -1288,6 +1288,117 @@ test('T1-STORE-CAS R3 decision 1 F2: the paused takeover checks the whole acquis
     // B's own acquisition, released by another process of B before the run update
     stale('T1-LET-GO', () => fx.leases.release(key('T1-LET-GO'), 1, actorB), /released at generation 1/);
     assert.equal(current('T1-LET-GO').ownerGeneration, 0, 'the run is not taken at a released generation');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+/** The outcome of `body`: its value, or the error it threw. */
+function settle<T>(body: () => T): { value?: T; error?: unknown } {
+  try {
+    return { value: body() };
+  } catch (error) {
+    return { error };
+  }
+}
+
+test('T1-STORE-CAS-2 acceptance 11: a completion of the same generation that lands between the takeover\'s first run read and its lease section makes the takeover refuse as already owned, journal nothing and write nothing', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-RACED', title: 'card T1-RACED' });
+    const goal = goalForCards(fx, ['T1-RACED']);
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-RACED');
+    const current = () => fx.store.getCardRun(goal.id, 'T1-RACED')!;
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-RACED'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-RACED')).directive.kind, 'prepare');
+    // B took the lease at generation 1 and ended before its run update: two windows of B complete it at once
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    fx.leases.takeover(cardKey, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: actorB, now: fx.now(), operation: 'card:T1-RACED' });
+    setActorForTests(actorB);
+    const runFile = fx.store.cardFile(goal.id, 'T1-RACED');
+    const caller = current();
+    let reads = 0;
+    let other: ReturnType<CardRunner['takeover']> | undefined;
+    let afterOther: { run: ReturnType<typeof current>; events: number } | undefined;
+    const outcome = settle(() =>
+      throughFs(
+        'readFileSync',
+        (real, args) => {
+          const out = real(...args);
+          if (String(args[0]) === runFile && ++reads === 1) {
+            other = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-RACED'), current());
+            afterOther = { run: current(), events: fx.events(goal.id).length };
+          }
+          return out;
+        },
+        () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-RACED'), caller),
+      ),
+    );
+    assert.equal(other?.completed, true, 'the other window completed the takeover at the first run read');
+    assert.equal(afterOther?.run.ownerGeneration, 1);
+    assert.match(String(outcome.error), /this session owns card T1-RACED at generation 1/, `refused as already owned: ${String(outcome.error)}`);
+    assert.deepEqual({ run: current(), events: fx.events(goal.id).length }, afterOther, 'nothing journaled, nothing written');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS-2 acceptance 12: the takeover holds the lease lock until its run write lands: a release or another takeover at the paused rename refuses with locked and changes nothing, and a release before its lease section leaves the run unwritten', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const ids = ['T1-PAUSED', 'T1-EARLY'];
+    for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
+    const goal = goalForCards(fx, ids);
+    const key = (id: string) => resourceKeys.card(fx.repo.key, id);
+    const current = (id: string) => fx.store.getCardRun(goal.id, id)!;
+    const state = (id: string) => ({ run: current(id), lease: fx.leases.read(key(id)), events: fx.events(goal.id).length });
+    for (const id of ids) assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    const quick = new LeaseStore(fx.paths.leases, { timeoutMs: 50 });
+    const windowC = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: quick, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+    // B's run write is paused at the rename of the run record; meanwhile another process of B releases the lease and C,
+    // once the lease has expired, takes the card over
+    const runFile = fx.store.cardFile(goal.id, 'T1-PAUSED');
+    let atRename: ReturnType<typeof state> | undefined;
+    let afterAttempts: ReturnType<typeof state> | undefined;
+    let release: { error?: unknown } = {};
+    let byC: { error?: unknown } = {};
+    setActorForTests(actorB);
+    const taken = settle(() =>
+      throughFs(
+        'renameSync',
+        (real, args) => {
+          if (atRename === undefined && String(args[1]) === runFile) {
+            atRename = state('T1-PAUSED');
+            release = settle(() => quick.release(key('T1-PAUSED'), 1, actorB));
+            fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+            setActorForTests(actorC);
+            byC = settle(() => windowC.takeover(fx.goal(goal.id), fx.card('T1-PAUSED'), current('T1-PAUSED')));
+            setActorForTests(actorB);
+            afterAttempts = state('T1-PAUSED');
+          }
+          return real(...args);
+        },
+        () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-PAUSED'), current('T1-PAUSED')),
+      ),
+    );
+    assert.match(String(release.error), /locked/, `the release refuses while the run write is paused: ${String(release.error)}`);
+    assert.match(String(byC.error), /locked/, `C's takeover refuses while the run write is paused: ${String(byC.error)}`);
+    assert.deepEqual(afterAttempts, atRename, 'the refused release and takeover change nothing');
+    assert.equal(taken.error, undefined, `B's takeover lands: ${String(taken.error)}`);
+    assert.equal(current('T1-PAUSED').ownerGeneration, 1, 'the run carries the takeover generation');
+    assert.equal(fx.leases.read(key('T1-PAUSED'))?.generation, 1, 'and so does the lease');
+    assert.equal(fx.leases.read(key('T1-PAUSED'))?.owner.session, 'win-B');
+    assert.equal(fx.leases.read(key('T1-PAUSED'))?.released, false);
+    // A release that lands after B's lease write and before its run section takes the lease lock: the run stays unwritten
+    const leaseLock = `${fx.leases.file(key('T1-EARLY'))}.lock`;
+    const before = current('T1-EARLY');
+    const early = settle(() => onLock(leaseLock, { before: (n) => { if (n === 2) fx.leases.release(key('T1-EARLY'), 1, actorB); } }, () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-EARLY'), current('T1-EARLY'))));
+    assert.match(String(early.error), /released at generation 1/, `refused: ${String(early.error)}`);
+    assert.deepEqual(current('T1-EARLY'), before, 'the run is left unwritten');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-EARLY' && e.data['leaseGeneration'] === 1).length, 0, 'no acquisition journaled');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();

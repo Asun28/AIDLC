@@ -119,7 +119,7 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     assert.equal(existsSync(store.file(key)), false);
   });
 
-  it('T1-STORE-CAS acceptance 3: with a live lease lock, claim, takeover, heartbeat and release each refuse with a locked message and leave the record byte-identical', () => {
+  it('T1-STORE-CAS-2 acceptance 3: with a live lease lock, claim, takeover, heartbeat and release each refuse with a locked message and leave the record byte-identical', () => {
     const quick = new LeaseStore(path.join(dir, 'leases'), { timeoutMs: 50 });
     const key = resourceKeys.card('repo1', 'T1-LOCKED');
     store.claim(key, { actor: A, now: t0, ttlMs: 1000 });
@@ -140,14 +140,14 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     unlinkSync(`${file}.lock`);
   });
 
-  it('T1-STORE-CAS: releasing a lease that does not exist writes no record and leaves no lock', () => {
+  it('T1-STORE-CAS-2: releasing a lease that does not exist writes no record and leaves no lock', () => {
     const key = resourceKeys.card('repo1', 'T1-NEVER');
     store.release(key, 0, A);
     assert.equal(existsSync(store.file(key)), false);
     assert.equal(existsSync(`${store.file(key)}.lock`), false);
   });
 
-  it("T1-STORE-CAS: a lease store's lock options reach its lock: a crashed writer's lock older than staleMs is taken over", () => {
+  it("T1-STORE-CAS-2: a lease store's lock options reach its lock: a crashed writer's lock older than staleMs is taken over", () => {
     const dir2 = path.join(dir, 'leases-stale');
     const patient = new LeaseStore(dir2, { timeoutMs: 1_000, staleMs: 100 });
     const key = resourceKeys.card('repo1', 'T1-CRASHED');
@@ -159,6 +159,21 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     const older = new Date(written.getTime() - 1_000);
     utimesSync(lock, older, older);
     assert.equal(patient.claim(key, { actor: A, now: t0 }).status, 'acquired');
+    assert.equal(existsSync(lock), false);
+  });
+
+  it('T1-STORE-CAS-2: purging a released lease takes its lock: with the lock held it refuses and the record stays', () => {
+    const quick = new LeaseStore(path.join(dir, 'leases'), { timeoutMs: 50 });
+    const key = resourceKeys.card('repo1', 'T1-PURGE');
+    store.claim(key, { actor: A, now: t0 });
+    store.release(key, 0, A);
+    const lock = `${store.file(key)}.lock`;
+    writeFileSync(lock, `pid=${process.pid} at=${t0} nonce=claiming`, 'utf8');
+    assert.throws(() => quick.purgeReleased(key), /locked/);
+    assert.equal(existsSync(store.file(key)), true, 'the released record stays while another writer holds its lock');
+    unlinkSync(lock);
+    quick.purgeReleased(key);
+    assert.equal(existsSync(store.file(key)), false);
     assert.equal(existsSync(lock), false);
   });
 
