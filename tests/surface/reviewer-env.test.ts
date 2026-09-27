@@ -37,6 +37,18 @@ test('T0-REVIEWER-UTF8 acceptance 1: reviewerEnv adds PYTHONUTF8=1 and PYTHONIOE
   // Elsewhere only the exact name is the variable Python reads.
   assert.deepEqual(reviewerEnv({ PATH: '/bin', pythonutf8: '0', pythonioencoding: 'cp1252' }, 'linux'), { PATH: '/bin', pythonutf8: '0', pythonioencoding: 'cp1252', ...OURS });
   assert.deepEqual(reviewerEnv(), reviewerEnv(process.env, process.platform), 'the defaults are the process environment and platform');
+  // The default platform is the process's own: on Windows a variable the process environment spells in another case is
+  // the user's value (restored afterwards).
+  const saved = Object.entries(process.env).filter(([k]) => k.toUpperCase() === 'PYTHONUTF8');
+  try {
+    for (const [k] of saved) delete process.env[k];
+    process.env['pythonutf8'] = '0';
+    assert.deepEqual(reviewerEnv(), reviewerEnv(process.env, process.platform));
+    if (process.platform === 'win32') assert.equal(reviewerEnv()['PYTHONUTF8'], undefined, 'on Windows the lower-case spelling is the user value');
+  } finally {
+    delete process.env['pythonutf8'];
+    for (const [k, v] of saved) process.env[k] = v;
+  }
 });
 
 test('T0-REVIEWER-UTF8 acceptance 2: runPreReview and every angle of runReviewPanel spawn the reviewer with reviewerEnv() [R2]', async () => {
