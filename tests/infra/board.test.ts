@@ -105,18 +105,19 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
   it('acceptance 2: the bounds are the Limits table rows in its order, and a BOUND_FIRED payload that names no known bound fails to parse [R1]', () => {
     assert.deepEqual(BoundName.options, ['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
     const event = (type: string, data: Record<string, unknown>) => ({ seq: 0, ts: iso(), type, goalId: 'g-1', generation: 0, actor: actor('win-A'), data, prevHash: '0'.repeat(64), hash: 'a'.repeat(64) });
-    for (const bound of BoundName.options) assert.equal(JournalEvent.safeParse(event('BOUND_FIRED', { bound })).success, true, `${bound} parses`);
-    for (const data of [{ bound: 'lifecycle-repair' }, { bound: 'card-workers' }, { bound: 'Card-Deadline' }, { bound: 'constructor' }, { bound: 1 }, { bound: ['attempts'] }, {}]) {
-      assert.equal(JournalEvent.safeParse(event('BOUND_FIRED', data)).success, false, `${JSON.stringify(data)} names no known bound`);
+    for (const bound of BoundName.options) assert.equal(JournalEvent.safeParse(event('BOUND_FIRED', { bound, key: `g-1/-/${bound}/1` })).success, true, `${bound} parses`);
+    for (const data of [{ bound: 'lifecycle-repair', key: 'k' }, { bound: 'card-workers', key: 'k' }, { bound: 'Card-Deadline', key: 'k' }, { bound: 'constructor', key: 'k' }, { bound: 1, key: 'k' }, { bound: ['attempts'], key: 'k' }, { key: 'k' }, { bound: 'attempts' }, { bound: 'attempts', key: '' }, { bound: 'attempts', key: 1 }]) {
+      assert.equal(JournalEvent.safeParse(event('BOUND_FIRED', data)).success, false, `${JSON.stringify(data)} fails to parse`);
     }
     assert.equal(JournalEvent.safeParse(event('NOTE', { bound: 'lifecycle-repair' })).success, true, 'the payload rule reads BOUND_FIRED events only');
     const dir = tmpDir();
     try {
       const journal = Journal.forGoal(dir, 'g-1');
-      assert.throws(() => journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'lifecycle-repair' } }), 'the append boundary refuses it');
+      assert.throws(() => journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'lifecycle-repair', key: 'g-1/-/lifecycle-repair/1' } }), 'the append boundary refuses it');
+      assert.throws(() => journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'attempts' } }), 'a firing without its key is refused too');
       assert.equal(journal.readAll().length, 0, 'nothing is written');
-      journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'attempts' } });
-      assert.deepEqual(journal.readAll().map((e) => e.data), [{ bound: 'attempts' }]);
+      journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'attempts', key: 'g-1/T1-A/attempts/3' } });
+      assert.deepEqual(journal.readAll().map((e) => e.data), [{ bound: 'attempts', key: 'g-1/T1-A/attempts/3' }]);
     } finally {
       cleanup(dir);
     }
@@ -129,7 +130,8 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       const quiet = goalForCards(fx, ['T1-Q']);
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), ['Bounds: none fired'], 'no firing in any journal');
       const [a, b, c] = ['T1-A', 'T1-B', 'T1-C'].map((id) => goalForCards(fx, [id]).id) as [string, string, string];
-      const fire = (goalId: string, bound: string) => fx.journal(goalId).append({ type: 'BOUND_FIRED', goalId, generation: 0, data: { bound } });
+      let seq = 0;
+      const fire = (goalId: string, bound: string, key = `${goalId}/-/${bound}/${(seq += 1)}`) => fx.journal(goalId).append({ type: 'BOUND_FIRED', goalId, generation: 0, data: { bound, key } });
       const stop = (goalId: string, reason: string) => fx.journal(goalId).append({ type: 'GOAL_STOPPED', goalId, generation: 0, data: { reason, detail: 'fixture', nextAction: 'none', global: false } });
       const readmit = (goalId: string) => fx.journal(goalId).append({ type: 'GOAL_STATE', goalId, generation: 0, data: { from: 'STOP', to: 'CARDS', reason: 'deadline extension' } });
       const done = (goalId: string) => fx.journal(goalId).append({ type: 'GOAL_DONE', goalId, generation: 0, data: { cards: [], stages: {} } });
@@ -147,8 +149,9 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       done(b);
       // Goal c: two firings end in a review stop; a firing after it stays open, since a GOAL_STOPPED without a stop reason is no terminal event.
       fire(c, 'card-deadline');
-      fire(c, 'review-decisions');
+      fire(c, 'review-decisions', `${c}/T1-C/review-decisions/sha-c/2`);
       stop(c, 'review');
+      fire(c, 'review-decisions', `${c}/T1-C/review-decisions/sha-c/2`); // a retry of the same firing after its save failed
       fire(c, 'attempts');
       stop(c, 'not-a-stop-reason');
       const expected = 'Bounds: card-deadline 3 (DONE 1, STOP/review 1, STOP/time 1, open 0); review-decisions 1 (DONE 0, STOP/review 1, open 0); ci-rerun-allowed 1 (DONE 0, STOP/time 1, open 0); attempts 1 (DONE 0, open 1)';
@@ -173,7 +176,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
     try {
       writeCard(fx, { id: 'T1-A', title: 'a' });
       const goal = goalForCards(fx, ['T1-A']);
-      fx.journal(goal.id).append({ type: 'BOUND_FIRED', goalId: goal.id, generation: 0, data: { bound: 'attempts' } });
+      fx.journal(goal.id).append({ type: 'BOUND_FIRED', goalId: goal.id, generation: 0, data: { bound: 'attempts', key: `${goal.id}/T1-A/attempts/3` } });
       const snapshot = () => new Map(readdirSync(fx.paths.root, { recursive: true, encoding: 'utf8' }).map((p) => path.join(fx.paths.root, p)).filter((f) => statSync(f).isFile()).map((f) => [path.relative(fx.paths.root, f), createHash('sha256').update(readFileSync(f)).digest('hex')] as const));
       const boardFile = path.join('board', `${goal.id}.md`);
       const before = snapshot();
@@ -197,12 +200,13 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
   it('acceptance 7: docs/OPERATIONS.md names BOUND_FIRED and the board line, and the CHANGELOG Unreleased section carries the entry [R1] [R2]', () => {
     const operations = read('docs', 'OPERATIONS.md');
     for (const sentence of [
-      '- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY), whose payload `{ bound }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.',
-      '- The board prints one line over every goal journal in the state directory, `Bounds: <bound> <n> (DONE a, STOP/<reason> b, open c); ...`: the fired bounds in that order, the number of firings of each, and for each firing the first terminal event of its goal after it (`GOAL_DONE` is DONE, `GOAL_STOPPED` is STOP with its reason, none yet is open). With no firing the line is `Bounds: none fired`.',
+      '- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY), whose payload `{ bound, key }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound, or no key, fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.',
+      '- The event is journaled before the stop or state the firing causes is saved, and its `key` names the firing: the goal, the card when there is one, the bound and the value that fired it (the card or goal deadline, the candidate with its decision or no-verdict count, the number of attempts of the effort episode, the CI run id, the planning invocation count or the repair cycle count). A retry after a failed save journals the same key again, so the journal can hold one firing twice; the board counts each key once.',
+      '- The board prints one line over every goal journal in the state directory, `Bounds: <bound> <n> (DONE a, STOP/<reason> b, open c); ...`: the fired bounds in that order, the number of distinct firings of each, and for each firing the first terminal event of its goal after its first entry (`GOAL_DONE` is DONE, `GOAL_STOPPED` is STOP with its reason, none yet is open). With no firing the line is `Bounds: none fired`.',
     ]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = '- Bound telemetry, card T1-BOUND-TELEMETRY: each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. The README Limits table says the lifecycle repair bound is defined and not enforced.';
+    const entry = '- Bound telemetry, card T1-BOUND-TELEMETRY: each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. Each event carries a key naming the firing and is journaled before the stop it causes is saved, and the board counts each key once, so a retry after a failed save neither loses nor doubles a firing. The README Limits table says the lifecycle repair bound is defined and not enforced.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
