@@ -16,7 +16,7 @@ const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","r
 const REASON = '[spec] 6 tests missing @ src/t0-dra.ts: the empty input is not covered -> add a case for it';
 const BLOCK = JSON.stringify({ verdict: 'block', reasons: [REASON], axes: { spec: { verdict: 'block', reasons: [REASON] }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
 
-type ShipStep = 'base-sync-merged' | 'red-missing';
+type ShipStep = 'base-sync-merged' | 'red-missing' | 'dod-failed';
 /** A ship path whose ships end, in order, with a committed CHANGELOG base-sync merge or a rejected RED receipt. */
 class StepShipPath extends DryRunShipPath {
   private readonly steps: ShipStep[];
@@ -32,7 +32,9 @@ class StepShipPath extends DryRunShipPath {
     const stdout =
       step === 'base-sync-merged'
         ? ['Auto-merging CHANGELOG.md', 'CONFLICT (content): Merge conflict in CHANGELOG.md', 'Automatic merge failed; fix conflicts and then commit the result.', `[SHIP-BASE-SYNC-MERGED] refs/remotes/origin/main conflicted with HEAD ${req.candidateSha ?? 'unknown'} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${'c'.repeat(40)}`, '[SAGA-FAIL]'].join('\n')
-        : ['[TD85-RESUME] RED receipt rejected', '[SAGA-FAIL]'].join('\n');
+        : step === 'red-missing'
+          ? ['[TD85-RESUME] RED receipt rejected', '[SAGA-FAIL]'].join('\n')
+          : ['not ok 3 - parses the header', 'DoD 未通过（退出码 1）。修绿再 ship。', '[SAGA-FAIL]'].join('\n');
     return classifyShipOutput({ command: 'dry-run', args: [req.cardId], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout, stderr: '', startedAt: now, finishedAt: now, durationMs: 0, outputSha256: '' });
   }
 }
@@ -41,12 +43,13 @@ class StepShipPath extends DryRunShipPath {
 function setup(steps: ShipStep[] = []) {
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   const r2: string[] = [];
+  const r3: string[] = [];
   const prompts: string[] = [];
   const script = scriptedRunner({
     'git diff --name-only': { stdout: 'src/t0-dra.ts\u0000' },
     'git diff': { stdout: 'diff --git a/src/t0-dra.ts b/src/t0-dra.ts\n+export const dra = 1;\n' },
     'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
-    'fake-r3': { stdout: PASS },
+    'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
   });
   const recording: SyncRunner = (command, args, options) => {
     if (command === 'fake-r2') prompts.push(options?.input ?? '');
@@ -70,7 +73,7 @@ function setup(steps: ShipStep[] = []) {
       const episode = reopenEpisode(run.effort)!;
       return { ...run, effort: startAttempt(episode, 'medium', T) };
     });
-  return { fx, runner, ship, card, g, goalId: goal.id, first, record, legacyRunning, r2, prompts };
+  return { fx, runner, ship, card, g, goalId: goal.id, first, record, legacyRunning, r2, r3, prompts };
 }
 type Setup = ReturnType<typeof setup>;
 
@@ -119,6 +122,9 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: the sequence of issue 106: the di
     next = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, next.run)).run);
     assert.equal(next.directive.kind, 'build', `the merge is the repair to record, never a throw: ${next.directive.narration}`);
     assert.equal(next.run.pendingRepair?.kind, 'merge-conflict');
+    // Nothing runs: the repair is the next attempt, never the settled one.
+    if (next.directive.kind === 'build') assert.equal(next.directive.attempt, next.run.effort!.attempts.length + 1);
+    if (next.directive.kind === 'build') assert.notEqual(next.directive.attempt, opened!.n);
   } finally {
     s.fx.cleanup();
   }
@@ -178,6 +184,46 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 2: the pre-review hand-back of a sti
   }
 });
 
+test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 2: with no running attempt a fresh BUILD, a DoD-failure repair, a review-fix repair and a red-missing repair number the next attempt attempts.length + 1 [R2]', async () => {
+  // A fresh BUILD; R3 blocks decision 1 (a review-fix repair); decision 2 passes the repair; the ship fails its DoD.
+  const s = setup(['dod-failed']);
+  try {
+    const fresh = s.runner.next(s.g(), s.card, s.first.run);
+    assert.equal(fresh.directive.kind, 'build', fresh.directive.narration);
+    if (fresh.directive.kind === 'build') assert.equal(fresh.directive.attempt, 1);
+    let r = s.record(fresh.run, 'sha-1');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    s.r3.push(BLOCK);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', `the block is a review-fix repair: ${r.directive.narration}`);
+    const reviewFix = r.run.effort!.attempts.find((a) => a.outcome === 'running')!;
+    if (r.directive.kind === 'build') assert.deepEqual([r.directive.attempt, reviewFix.n], [2, 2], 'the attempt the review fix opened, one after the success');
+    r = s.record(r.run, 'sha-2');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', `the DoD failure is a counted repair: ${r.directive.narration}`);
+    assert.deepEqual(r.run.effort!.attempts.filter((a) => a.outcome === 'running'), []);
+    if (r.directive.kind === 'build') assert.deepEqual([r.directive.attempt, r.run.effort!.attempts.length], [3, 2]);
+  } finally {
+    s.fx.cleanup();
+  }
+  // A rejected RED receipt with nothing running: the repair is the next attempt.
+  const t = setup(['red-missing']);
+  try {
+    let r = t.record(t.first.run, 'sha-1');
+    r = t.runner.next(t.g(), t.card, (await t.runner.preReview(t.g(), t.card, r.run)).run);
+    r = t.runner.next(t.g(), t.card, (await t.runner.formalReview(t.g(), t.card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.pendingRepair?.kind, 'red-missing');
+    assert.deepEqual(r.run.effort!.attempts.filter((a) => a.outcome === 'running'), []);
+    if (r.directive.kind === 'build') assert.equal(r.directive.attempt, r.run.effort!.attempts.length + 1);
+  } finally {
+    t.fx.cleanup();
+  }
+});
+
 test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 4: passes count in the round number and blocks in the budget: block, block, pass and a base-sync candidate give round 4/4, and a block on round 4 still exhausts the budget [R3]', async () => {
   const s = setup(['base-sync-merged']);
   try {
@@ -206,10 +252,8 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 4: passes count in the round number 
     const blocked = await s.runner.preReview(s.g(), s.card, r.run);
     assert.match(s.prompts.at(-1) ?? '', /round 4 of 4\b/, 'the R2 prompt numbers the round the same way');
     assert.equal(blocked.result.outcome, 'block');
-    // The block on round 4 is the third of the cycle: the next candidate meets the exhausted budget.
+    // The block on round 4 is the third of the cycle: the budget is exhausted, and with onExhausted "stop" the gate stops.
     r = s.runner.next(s.g(), s.card, blocked.run);
-    assert.equal(r.directive.kind, 'build', r.directive.narration);
-    r = s.record(r.run, 'sha-5');
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.match(r.run.stop?.detail ?? '', /pre-review rounds exhausted \(3\/3 blocks in R3 cycle 0\)/);
   } finally {

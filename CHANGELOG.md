@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Disputed repair attempt, card T0-DISPUTE-RUNNING-ATTEMPT (issue 106): a dispute that sends the unchanged candidate back to review settles the repair attempt BUILD had opened as not counted (`review-disputed`), a ship repair takes a running attempt as the repair instead of throwing, so a committed base-sync merge always records its repair, and the pre-review round is never shown past its maximum.
+
 - Base-sync CHANGELOG edges, card T0-BASE-SYNC-CHANGELOG-EDGES (issue 60): a CHANGELOG merge the ship path committed but cannot read back ends with `[SHIP-BASE-SYNC-COMMITTED]` and a repair that records the worktree HEAD instead of resolving hunks; a failed listing, read or diff3 checkout names its error instead of posing as a conflict; a failed write says the file may be partly written and how to write the markers again; the resolver takes only entries and third-level subsection headings.
 
 - Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code.
