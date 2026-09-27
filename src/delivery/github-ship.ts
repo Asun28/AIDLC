@@ -509,7 +509,7 @@ export class GitHubShipPath implements ShipPath {
     const sha = git(['rev-parse', '--verify', 'HEAD']);
     const mergeSha = sha.exitCode === 0 ? sha.stdout.trim() : '';
     // Committed, but no commit to name: its own sentinel, never a MERGED without its commit (T0-BASE-SYNC-CHANGELOG R3 decision 1).
-    if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-COMMITTED]', detail: `the CHANGELOG.md merge is committed in ${wt} but its commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; read the merge from HEAD in ${wt}` };
+    if (!mergeSha) return { sentinel: '[SHIP-BASE-SYNC-COMMITTED]', detail: `the CHANGELOG.md merge is committed in ${wt} but its commit could not be read back (exit ${sha.exitCode}): ${flat(sha.stderr) || 'no output'}; the merge is the HEAD of that worktree` };
     log.push(encodeUntrusted(flat(`base sync: CHANGELOG.md resolved by keeping the entries both sides added to Unreleased; merge ${mergeSha}`)));
     return { sentinel: '[SHIP-BASE-SYNC-MERGED]', detail: `${ref} conflicted with HEAD ${head} only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${mergeSha}: a new candidate, not shipped; run the DoD on it and record it as the next attempt` };
   }

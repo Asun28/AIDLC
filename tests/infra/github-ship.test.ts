@@ -1254,6 +1254,7 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
       const line = sentinelLine(read.r, '[SHIP-BASE-SYNC-COMMITTED]');
       assert.match(line, /the CHANGELOG\.md merge is committed/, name);
       assert.ok(line.includes(read.wt), `${name}: the worktree to read HEAD from: ${line}`);
+      assert.match(line, /the merge is the HEAD of that worktree/, `${name}: where the merge is: ${line}`);
       assert.ok(line.includes(`exit ${exit}`) && (stderr === '' || line.includes(stderr)), `${name}: the read's exit and stderr: ${line}`);
       assert.doesNotMatch(read.r.receipt.stdout, new RegExp(MERGE_SHA), `${name}: no merge sha anywhere on the output`);
       assert.ok(afterMerge(read.calls).some((c) => c.key.startsWith('git commit')), `${name}: the merge was committed`);

@@ -8,7 +8,7 @@ import { makeFixture, writeCard } from './_harness.ts';
 const WT = 'D:/wt/AIDLC/T0-BSC';
 /** The base-sync lines the GitHub path prints for each outcome of the CHANGELOG merge, after git's own conflict lines. */
 const SENTINEL_LINE = {
-  committed: `[SHIP-BASE-SYNC-COMMITTED] the CHANGELOG.md merge is committed in ${WT} but its commit could not be read back (exit 128): fatal: bad HEAD; read the merge from HEAD in ${WT}`,
+  committed: `[SHIP-BASE-SYNC-COMMITTED] the CHANGELOG.md merge is committed in ${WT} but its commit could not be read back (exit 128): fatal: bad HEAD; the merge is the HEAD of that worktree`,
   merged: `[SHIP-BASE-SYNC-MERGED] refs/remotes/origin/main conflicted with HEAD sha-1 only in entries both sides added to the Unreleased section of CHANGELOG.md; merged by keeping both, the card's first, as ${'c'.repeat(40)}`,
   conflict: `[SHIP-BASE-SYNC-CONFLICT] refs/remotes/origin/main conflicts with HEAD sha-1 in CHANGELOG.md, src/x.ts; the merge is left in ${WT} for the merge-conflicts skill`,
 } as const;
