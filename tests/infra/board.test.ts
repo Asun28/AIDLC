@@ -237,7 +237,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       fx.controller.next(goal.id);
       assert.deepEqual(fx.events(goal.id).slice(seen).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]], 'journaled once, before anything else');
       assert.equal(fx.goal(goal.id).pendingFiring, undefined, 'and cleared');
-      assert.match(boundsLines(fx.controller.writeBoard(fx.goal(goal.id)))[0] ?? '', /^Bounds: arc-deadline 1 \([^;]*\)$/);
+      assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(goal.id))), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)'], 'acceptance 18: journaled after its GOAL_STOPPED, it is that stop\'s firing [R9]');
     } finally {
       fx.cleanup();
     }

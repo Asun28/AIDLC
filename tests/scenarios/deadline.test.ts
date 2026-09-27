@@ -417,3 +417,23 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and
     fx.cleanup();
   }
 });
+
+test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while its goal goes terminal counts as a firing of that stop once it lands [R9]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run).run.pendingFiring?.bound, 'card-deadline');
+    fx.advance(MINUTE_MS);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop', 'the goal stops on its stopped card');
+    repair();
+    fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED' || e.type === 'BOUND_FIRED').map((e) => e.type), ['GOAL_STOPPED', 'BOUND_FIRED'], 'the firing lands after the stop');
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: card-deadline 1 (DONE 0, STOP/time 1, open 0)'));
+  } finally {
+    fx.cleanup();
+  }
+});
