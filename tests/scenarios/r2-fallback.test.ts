@@ -5,6 +5,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CardRun, PreReviewRound } from '../../src/core/types.ts';
+import { reviewerEnv } from '../../src/review/pre-review.ts';
 
 /** The stderr the DeepSeek CLI printed on each round-3 angle of issue #92: a billing hold since T0-R2-BILLING-HOLD. */
 const INSUFFICIENT_BALANCE = 'ERROR 402: {"error":{"message":"Insufficient Balance (request_id: e1f8c686-3ba1-4d72-bbba-204d56dbd462)","type":"unknown_error","param":null,"code":"invalid_request_error"}}\n';
@@ -56,8 +57,8 @@ function setup(options: Options = {}) {
   const secondary: Output[] = [];
   const calls: string[][] = [];
   const hooks: { onDiff?: () => void; onReview?: (command: string) => void } = {};
-  /** The spawn options of every reviewer call: the shell and the timeout the dispatch chose. */
-  const spawned: Array<{ command: string; shell?: boolean; timeoutMs?: number }> = [];
+  /** The spawn options of every reviewer call: the shell, the timeout and the environment the dispatch chose. */
+  const spawned: Array<{ command: string; shell?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv }> = [];
   const script = scriptedRunner({
     'git diff --name-only': { stdout: `${changedPath}\u0000` },
     'git diff': () => {
@@ -76,7 +77,7 @@ function setup(options: Options = {}) {
     },
   });
   const recording: SyncRunner = (command, args, spawnOptions) => {
-    if (command.endsWith('-reviewer')) spawned.push({ command, shell: spawnOptions?.shell, timeoutMs: spawnOptions?.timeoutMs });
+    if (command.endsWith('-reviewer')) spawned.push({ command, shell: spawnOptions?.shell, timeoutMs: spawnOptions?.timeoutMs, env: spawnOptions?.env });
     return script(command, args, spawnOptions);
   };
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: recording });
@@ -153,6 +154,8 @@ test('T0-R2-FALLBACK acceptance 3: a primary held on 402 hands the round to the 
   assert.deepEqual(s.calls, [['primary-reviewer'], ['fallback-reviewer', '--effort', 'high']], 'the fallback ran with {effort} expanded to high for a small candidate');
   assertRecordedBy(s, passed, 'sonnet', 'high');
   assert.deepEqual(passed.run.preReview.rounds.map((r) => [r.reviewer, r.outcome, r.effort]), [['deepseek', 'quota-hold', undefined], ['sonnet', 'pass', 'high']]);
+  // Card T0-REVIEWER-UTF8: the R2 primary and the R2 fallback run with the reviewer environment.
+  assert.deepEqual(s.spawned.map((x) => [x.command, x.env]), [['primary-reviewer', reviewerEnv()], ['fallback-reviewer', reviewerEnv()]]);
   assertShips(s, passed.run);
 }));
 
