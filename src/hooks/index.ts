@@ -87,15 +87,21 @@ function normalise(p: string): string {
  * An `aidlc.config.json` the guards cannot use (card T0-HOOK-CONFIG-CLOSED): the file that failed and a detail that never
  * quotes its text. The guards that read the config deny what they cannot decide rather than take the defaults.
  */
-export interface HookConfigError {
-  file: string;
-  detail: string;
+export class HookConfigError {
+  readonly file: string;
+  readonly detail: string;
+  readonly legacy: Required<HookConfig>;
+  constructor(file: string, detail: string, legacy: Required<HookConfig> = DEFAULT_HOOK_CONFIG) {
+    this.file = file;
+    this.detail = detail;
+    this.legacy = legacy;
+  }
 }
 
 export type LoadedHookConfig = Required<HookConfig> | HookConfigError;
 
 export function isHookConfigError(config: LoadedHookConfig): config is HookConfigError {
-  return 'detail' in config;
+  return config instanceof HookConfigError;
 }
 
 /** Why `loadProjectConfig` refused the file, without its text: a JSON parser message quotes the source. */
@@ -108,9 +114,10 @@ function configErrorDetail(err: unknown): string {
 export interface ConfigProbe {
   stat(file: string): unknown;
   lstat(file: string): unknown;
+  read(file: string): string;
 }
 
-const FS_PROBE: ConfigProbe = { stat: statSync, lstat: lstatSync };
+const FS_PROBE: ConfigProbe = { stat: statSync, lstat: lstatSync, read: (file) => readFileSync(file, 'utf8') };
 
 /**
  * Whether the config file is there, absent, or cannot be reached. `existsSync` answers false for a lookup that fails for
@@ -145,12 +152,12 @@ export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): Load
   const file = path.join(cwd, CONFIG_FILE);
   const access = configAccess(file, probe);
   if (access === 'absent') return DEFAULT_HOOK_CONFIG;
-  if (access !== 'present') return { file, detail: `cannot be read: ${access.code}` };
+  if (access !== 'present') return new HookConfigError(file, `cannot be read: ${access.code}`);
   let hooks: ProjectConfig['hooks'];
   try {
     hooks = loadProjectConfig(cwd).config.hooks;
   } catch (err) {
-    return { file, detail: configErrorDetail(err) };
+    return new HookConfigError(file, configErrorDetail(err));
   }
   const config: Required<HookConfig> = {
     frozenPaths: hooks.frozenPaths,
@@ -166,7 +173,7 @@ export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): Load
         return true;
       }
     });
-    if (bad >= 0) return { file, detail: `hooks.${key}.${bad} is not a valid regular expression` };
+    if (bad >= 0) return new HookConfigError(file, `hooks.${key}.${bad} is not a valid regular expression`);
   }
   return config;
 }
