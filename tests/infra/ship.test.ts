@@ -136,6 +136,18 @@ describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
 describe('delivery/ship merge contract rule (T0-EXIT-ZERO-NOT-MERGED-3)', () => {
   /** What main read as merged on exit 0: [SAGA-DONE], a merge word, no sentinel, or no [SAGA-FAIL] (ship.ts on main 390d43e). */
   const mainReadMerged = (text: string) => /\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || [...text.matchAll(/\[[A-Z0-9-]+\]/g)].length === 0 || !/\[SAGA-FAIL\]/.test(text);
+  /**
+   * main's SENTINEL_MAP (ship.ts on 390d43e) for the corpus's failure markers, frozen in main's order: the first entry that
+   * matches decides, else unclassified (card T0-SHIP-FAILURE-ORACLE). Never the classifier under test.
+   */
+  const MAIN_FAILURES: Array<[RegExp, ShipOutcomeClass]> = [
+    [/\[SHIP-MERGE-FAIL\]/, 'merge-failed'],
+    [/\[CI-GATE-RED\]/, 'ci-red'],
+    [/\[SHIP-PUSH-FAIL\]/, 'push-failed'],
+    [/check-secrets/, 'secrets-blocked'],
+    [/DoD 未通过/, 'dod-failed'],
+  ];
+  const mainFailure = (text: string): ShipOutcomeClass => MAIN_FAILURES.find(([re]) => re.test(text))?.[1] ?? 'unclassified';
   const parts = ['[SAGA-DONE]', '[SAGA-FAIL] leg', '[CI-GATE-RED] ci', '[SHIP-MERGE-FAIL] x', '[SHIP-PUSH-FAIL] push', '[SHIP-TIME] 3s', '[CI-GATE-PASS] {"name":"check-secrets"}', 'PR #7 MERGED', '合并', 'merged_pr=#7', 'DoD 未通过', 'all good'];
   const texts: string[] = [''];
   for (let a = 0; a < parts.length; a++) {
@@ -145,18 +157,32 @@ describe('delivery/ship merge contract rule (T0-EXIT-ZERO-NOT-MERGED-3)', () => 
       for (let c = b + 1; c < parts.length; c++) texts.push(`${parts[a]}\n${parts[b]}\n${parts[c]}`);
     }
   }
+  it('a receipt carrying several failure markers classifies by main\'s precedence (T0-SHIP-FAILURE-ORACLE)', () => {
+    for (const [text, expected] of [
+      ['[SAGA-FAIL] leg\n[CI-GATE-RED] ci\n[SHIP-MERGE-FAIL] x', 'merge-failed'],
+      ['[SHIP-PUSH-FAIL] push\n[CI-GATE-RED] ci', 'ci-red'],
+      ['DoD 未通过\n[SHIP-PUSH-FAIL] push', 'push-failed'],
+      ['DoD 未通过\n[CI-GATE-PASS] {"name":"check-secrets"}', 'secrets-blocked'],
+    ] as const) {
+      assert.equal(mainFailure(text), expected, `the oracle: ${JSON.stringify(text)}`);
+      assert.equal(classifyShipOutput(receipt(text, 1)).outcome, expected, `nonzero exit: ${JSON.stringify(text)}`);
+    }
+    assert.equal(classifyShipOutput(receipt('[SAGA-FAIL] leg\n[CI-GATE-RED] ci\n[SHIP-MERGE-FAIL] x', 0)).outcome, 'merge-failed', 'exit 0 with [SAGA-FAIL] keeps main\'s class');
+  });
+
   it('every exit-0 receipt main read as merged is merged or merge-unconfirmed, and every other keeps its failure class', () => {
     assert.ok(texts.length > 200, `${texts.length} receipts`);
     for (const text of texts) {
       const outcome = classifyShipOutput(receipt(text, 0)).outcome;
-      // The baseline: the same receipt on a nonzero exit, whose path is unchanged from main (R3 decision 1 F2).
-      const baseline = classifyShipOutput(receipt(text, 1)).outcome;
+      // The expectation comes from the frozen copy of main's map, never from the classifier under test (T0-SHIP-FAILURE-ORACLE).
+      const expected = mainFailure(text);
+      assert.equal(classifyShipOutput(receipt(text, 1)).outcome, expected, `a nonzero exit keeps main's class ${expected}: ${JSON.stringify(text)}`);
       if (mainReadMerged(text)) assert.ok(outcome === 'merged' || outcome === 'merge-unconfirmed', `main read merged, now ${outcome}: ${JSON.stringify(text)}`);
-      else assert.equal(outcome, baseline, `main read the failure ${baseline}: ${JSON.stringify(text)}`);
+      else assert.equal(outcome, expected, `main read the failure ${expected}: ${JSON.stringify(text)}`);
       if (outcome === 'merged') {
         assert.ok(text.includes('[SAGA-DONE]') && !text.includes('[SAGA-FAIL]'), `merged only on the contract: ${JSON.stringify(text)}`);
         for (const [token] of text.matchAll(/\[[A-Z0-9-]+\]/g)) {
-          if (token !== '[SAGA-DONE]') assert.equal(classifyShipOutput(receipt(token, 1)).outcome, 'unclassified', `merged beside the mapped sentinel ${token}: ${JSON.stringify(text)}`);
+          if (token !== '[SAGA-DONE]') assert.equal(mainFailure(token), 'unclassified', `merged beside the mapped sentinel ${token}: ${JSON.stringify(text)}`);
         }
       }
     }

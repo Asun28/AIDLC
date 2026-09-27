@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-FAILURE-ORACLE
 title: The ship classifier's combination test compares every receipt read as a failure with a frozen, ordered copy of main's failure classes, not with the classifier under test (R3 decision 2 finding of T0-EXIT-ZERO-NOT-MERGED-3)
-status: todo
+status: merged
 branch: T0-SHIP-FAILURE-ORACLE
 worktree: D:\wt\AIDLC\T0-SHIP-FAILURE-ORACLE
 allow_paths:
