@@ -73,7 +73,9 @@ function setup(steps: ShipStep[] = []) {
       const episode = reopenEpisode(run.effort)!;
       return { ...run, effort: startAttempt(episode, 'medium', T) };
     });
-  return { fx, runner, ship, card, g, goalId: goal.id, first, record, legacyRunning, r2, r3, prompts };
+  /** Another runner over the same stores with a changed configuration. */
+  const runnerWith = (config: typeof fx.config) => new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: recording });
+  return { fx, runner, runnerWith, ship, card, g, goalId: goal.id, first, record, legacyRunning, r2, r3, prompts };
 }
 type Setup = ReturnType<typeof setup>;
 
@@ -146,6 +148,31 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a terminal episode keeps its runn
     const stored = s.fx.store.getCardRun(s.goalId, 'T0-DRA')!;
     assert.equal(stored.effort!.terminal, 'exhausted', 'the terminal is kept');
     assert.equal(stored.effort!.attempts.filter((a) => a.outcome === 'running').length, 1, 'a terminal episode takes no record');
+    assert.equal(s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').length, finishedBefore, 'nothing is journaled as settled');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a kept receipt reused because the pre-review rounds are exhausted settles nothing: the repair stays running and nothing is journaled (R3 decision 1 F1) [R1]', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    s.r2.push(BLOCK);
+    const blocked = await s.runner.preReview(s.g(), s.card, r.run);
+    r = s.runner.next(s.g(), s.card, blocked.run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const opened = r.run.effort!.attempts.find((a) => a.outcome === 'running')!;
+    // The rounds are cut to one: the block exhausts them, F1 stays open, and the kept receipt comes back without a dispute.
+    const oneRound = s.runnerWith({ ...s.fx.config, preReview: { ...s.fx.config.preReview, rounds: 1 } });
+    const finishedBefore = s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').length;
+    r = oneRound.next(s.g(), s.card, r.run);
+    assert.equal(r.directive.kind, 'stop', `exhausted with onExhausted "stop": ${r.directive.narration}`);
+    const stored = s.fx.store.getCardRun(s.goalId, 'T0-DRA')!;
+    assert.equal(stored.dodReceipt, 'dod:sha-1', 'the kept receipt was reused');
+    assert.equal(stored.findings.find((f) => f.id === 'F1')?.disposition, 'open', 'no finding was disputed');
+    assert.deepEqual(stored.effort!.attempts.filter((a) => a.outcome === 'running').map((a) => a.n), [opened.n], 'the repair is not settled');
+    assert.notEqual(stored.effort!.terminal, 'succeeded');
     assert.equal(s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').length, finishedBefore, 'nothing is journaled as settled');
   } finally {
     s.fx.cleanup();

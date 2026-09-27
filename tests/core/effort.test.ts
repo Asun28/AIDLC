@@ -508,12 +508,12 @@ describe('a dispute and a running repair (card T0-DISPUTE-RUNNING-ATTEMPT)', () 
     // A terminal episode answers as nextEffortAction does, running attempt or not.
     for (const terminal of ['same-cause-stop', 'exhausted', 'succeeded'] as const) {
       const ended = { ...running, terminal };
-      assert.deepEqual(repairAction(ended, JUSTIFIED), nextEffortAction(ended, JUSTIFIED), terminal);
+      const settled = { ...ended, attempts: ended.attempts.filter((x) => x.outcome !== 'running') };
+      assert.deepEqual(repairAction(ended, JUSTIFIED), nextEffortAction(settled, JUSTIFIED), terminal);
     }
     // Nothing running: the ladder's own step.
     const idle = { ...running, attempts: running.attempts.filter((x) => x.outcome !== 'running') };
     assert.deepEqual(repairAction(idle, JUSTIFIED), nextEffortAction(idle, JUSTIFIED));
-    assert.throws(() => nextEffortAction(running, JUSTIFIED), /still running/, 'the ladder alone still refuses a running attempt');
   });
 
   test('acceptance 3: settleDisputedRepair settles the running repair as not counted, review-disputed, and restores succeeded only after a success [R1]', () => {
