@@ -166,6 +166,25 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: the dry-run path does not verify a m
   }
 });
 
+test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: a merged ship keeps its verification: [SAGA-DONE] closes on the dry-run path, and with gh reading its PR OPEN it waits with the operation UNKNOWN rather than stopping [R2] [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero('[SAGA-DONE]'), { shipPath: 'dry-run' });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+  const fy = makeFixture();
+  try {
+    const s = shipped(fy, () => new ExitZero('PR #42\n[SAGA-DONE]'), { repository: 'o/r', exec: ghView('OPEN', HEAD) });
+    assert.equal(s.out.directive.kind, 'wait', s.out.directive.narration);
+    assert.equal(s.op.status, 'UNKNOWN');
+    assert.equal(s.stored.stop, undefined, 'a merged ship is never stopped by the merge-unconfirmed rule');
+  } finally {
+    fy.cleanup();
+  }
+});
+
 test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: a merge-unconfirmed ship whose candidate is replaced during the ship leaves its operation UNKNOWN, never failed [R2]', () => {
   const fx = makeFixture();
   try {

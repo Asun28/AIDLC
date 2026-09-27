@@ -203,10 +203,10 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const sentinels = [...new Set([...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]))];
   const resume = text.match(/\[SAGA-RESUME\]\s*(.+)/)?.[1]?.trim();
   const pr = text.match(/(?:PR|pull request)\s*#(\d+)/i)?.[1];
-  if (receipt.exitCode === 0 && !receipt.timedOut) {
-    if (/\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || sentinels.includes('[SAGA-DONE]') || sentinels.length === 0 || !/\[SAGA-FAIL\]/.test(text)) {
-      return { outcome: 'merged', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: 'ship exited 0 without a saga failure' };
-    }
+  // The merge contract is the adapter's [SAGA-DONE] sentinel without [SAGA-FAIL], never a word of the output (card
+  // T0-EXIT-ZERO-NOT-MERGED).
+  if (receipt.exitCode === 0 && !receipt.timedOut && sentinels.includes('[SAGA-DONE]') && !sentinels.includes('[SAGA-FAIL]')) {
+    return { outcome: 'merged', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: 'ship exited 0 with [SAGA-DONE], the merge contract' };
   }
   if (receipt.timedOut) return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: 'ship timed out; reconcile before retry' };
   for (const [re, cls] of SENTINEL_MAP) {
@@ -215,6 +215,8 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
     const line = failingLine(text, cls, re);
     return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
   }
+  // An exit 0 without the contract is no merge: the card machine reconciles it from the PR view, then the merge token.
+  if (receipt.exitCode === 0) return { outcome: 'merge-unconfirmed', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: "exit 0 without the adapter's merge contract ([SAGA-DONE]); the card machine reconciles the merge" };
   return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: `exit ${receipt.exitCode} with no known sentinel; STOP/tool with diagnostics` };
 }
 
@@ -321,7 +323,8 @@ export class DryRunShipPath implements ShipPath {
     this.requests.push(req);
     const outcome = this.outcomes[Math.min(this.requests.length - 1, this.outcomes.length - 1)] ?? 'merged';
     const now = new Date().toISOString();
-    const receipt: ExecReceipt = { command: 'dry-run', args: [req.cardId], cwd: '', exitCode: outcome === 'merged' ? 0 : 1, signal: null, timedOut: false, stdout: outcome, stderr: '', startedAt: now, finishedAt: now, durationMs: 0, outputSha256: '' };
+    // A merged dry-run prints the merge contract, so its receipt classifies as merged again; merge-unconfirmed exits 0 without it.
+    const receipt: ExecReceipt = { command: 'dry-run', args: [req.cardId], cwd: '', exitCode: outcome === 'merged' || outcome === 'merge-unconfirmed' ? 0 : 1, signal: null, timedOut: false, stdout: outcome === 'merged' ? '[SAGA-DONE] merged' : outcome, stderr: '', startedAt: now, finishedAt: now, durationMs: 0, outputSha256: '' };
     return { outcome, receipt, sentinels: [], detail: `dry-run outcome ${outcome}` };
   }
 

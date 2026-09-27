@@ -8,7 +8,8 @@
  * `MERGE_HEAD` proves the merge is in progress; local mode first checks that the main checkout has the base checked
  * out) -> push -> PR -> CI check runs green (required names present, every reported check green; the gate lines
  * carry the check runs as JSON with encoded names) -> squash merge matching the head commit -> merge token. Every
- * step prints a scaffold-style sentinel so `classifyShipOutput` can classify the outcome uniformly.
+ * failing step prints a sentinel `classifyShipOutput` classifies, and every exit-0 path prints `[SAGA-DONE]`, the merge
+ * contract (card T0-EXIT-ZERO-NOT-MERGED); a scaffold success prints no sentinel and is reconciled as `merge-unconfirmed`.
  * Authentication failure never silently becomes local mode.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
