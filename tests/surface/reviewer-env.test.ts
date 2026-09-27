@@ -37,17 +37,14 @@ test('T0-REVIEWER-UTF8 acceptance 1: reviewerEnv adds PYTHONUTF8=1 and PYTHONIOE
   // Elsewhere only the exact name is the variable Python reads.
   assert.deepEqual(reviewerEnv({ PATH: '/bin', pythonutf8: '0', pythonioencoding: 'cp1252' }, 'linux'), { PATH: '/bin', pythonutf8: '0', pythonioencoding: 'cp1252', ...OURS });
   assert.deepEqual(reviewerEnv(), reviewerEnv(process.env, process.platform), 'the defaults are the process environment and platform');
-  // The default platform is the process's own: on Windows a variable the process environment spells in another case is
-  // the user's value (restored afterwards).
-  const saved = Object.entries(process.env).filter(([k]) => k.toUpperCase() === 'PYTHONUTF8');
-  try {
-    for (const [k] of saved) delete process.env[k];
-    process.env['pythonutf8'] = '0';
-    assert.deepEqual(reviewerEnv(), reviewerEnv(process.env, process.platform));
-    if (process.platform === 'win32') assert.equal(reviewerEnv()['PYTHONUTF8'], undefined, 'on Windows the lower-case spelling is the user value');
-  } finally {
-    delete process.env['pythonutf8'];
-    for (const [k, v] of saved) process.env[k] = v;
+  // The default platform is the process's own: on Windows a spelling in another case is the user's value.
+  const lower = { Path: 'C:\\bin', pythonutf8: '0' };
+  assert.deepEqual(reviewerEnv(lower), reviewerEnv(lower, process.platform));
+  if (process.platform === 'win32') assert.equal(reviewerEnv(lower)['PYTHONUTF8'], undefined, 'on Windows the lower-case spelling is the user value');
+  // Each variable is decided on its own: a user PYTHONUTF8=0 alone still gets PYTHONIOENCODING=utf-8, which sets the
+  // reviewer's stdin encoding (the R2 cycle 0 round 1 advisory).
+  for (const platform of ['win32', 'linux'] as const) {
+    assert.deepEqual(reviewerEnv({ PATH: '/bin', PYTHONUTF8: '0' }, platform), { PATH: '/bin', PYTHONUTF8: '0', PYTHONIOENCODING: 'utf-8' }, `${platform}: PYTHONUTF8=0 alone`);
   }
 });
 
@@ -158,7 +155,7 @@ test('T0-REVIEWER-UTF8 acceptance 4: through the card runner an R2 round on a di
 const DOC_SENTENCES = [
   'Every reviewer process, R2 and R3, their fallbacks and the base-sync reviewer, runs with the process environment plus `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8`, each only when the environment gives that variable no non-empty value (on Windows in any letter case), so a Python reviewer reads the prompt piped to it as UTF-8 (card T0-REVIEWER-UTF8, issue 99).',
   'Without them Python on Windows decodes a piped stdin with the ANSI code page: every non-ASCII character reaches the reviewer garbled, and a UTF-8 byte the code page leaves undefined becomes a lone surrogate the API refuses, a round with no verdict.',
-  'A value the user set wins, so `PYTHONUTF8=0` or another `PYTHONIOENCODING` keeps that failure; a reviewer that is not Python, such as `claude` or `codex`, ignores both variables.',
+  "A value the user set wins for that variable, so a `PYTHONIOENCODING` naming another encoding keeps that failure (a user `PYTHONUTF8=0` alone does not, since the added `PYTHONIOENCODING=utf-8` still sets the reviewer's stdin encoding); a reviewer that is not Python, such as `claude` or `codex`, ignores both variables.",
 ];
 const CHANGELOG_SENTENCE =
   '- Reviewer UTF-8, card T0-REVIEWER-UTF8 (issue 99): every reviewer process runs with `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` unless the environment sets them, so the DeepSeek reviewer on Windows reads its piped prompt as UTF-8; a prompt with non-ASCII text used to reach it garbled, and one whose UTF-8 bytes the code page leaves undefined got no verdict on every angle.';
