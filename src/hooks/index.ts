@@ -299,21 +299,108 @@ function commandOf(segment: string): { name: string; qualified: boolean; args: s
   return { name: first.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, ''), qualified: /[\\/]/.test(first), args: tokens.slice(1) };
 }
 
-/** The flags of each `s` command a sed script carries, read with its own delimiter. */
-function sedFlags(segment: string): string {
-  const script = segment.slice(segment.search(/\s|$/));
+/**
+ * The words of the command that starts at `start` in `line`, up to the first separator outside quotes, each with its quotes
+ * removed. Only the program or script of an awk or sed command is read this way; segments are still split without quotes.
+ */
+function wordsFrom(line: string, start: number): string[] {
+  const words: string[] = [];
+  let i = start;
+  while (i < line.length) {
+    while (i < line.length && (line[i] === ' ' || line[i] === '\t')) i += 1;
+    if (i >= line.length || /[;|&\r\n]/.test(line[i]!)) break;
+    let word = '';
+    while (i < line.length && !/[\s;|&]/.test(line[i]!)) {
+      const c = line[i]!;
+      if (c === "'") {
+        const end = line.indexOf("'", i + 1);
+        const close = end === -1 ? line.length : end;
+        word += line.slice(i + 1, close);
+        i = close + 1;
+      } else if (c === '"') {
+        let j = i + 1;
+        while (j < line.length && line[j] !== '"') j += line[j] === '\\' ? 2 : 1;
+        word += line.slice(i + 1, Math.min(j, line.length));
+        i = j + 1;
+      } else if (c === '\\' && i + 1 < line.length) {
+        word += line[i + 1];
+        i += 2;
+      } else {
+        word += c;
+        i += 1;
+      }
+    }
+    words.push(word);
+  }
+  return words;
+}
+
+/** The argument words of each `name` command in a line: a name that starts a segment, after a prefix or a path. */
+function commandWords(line: string, name: 'awk' | 'sed'): string[][] {
+  const start = new RegExp(`(?:^|[;|&\\r\\n])\\s*(?:(?:sudo|time|env(?:\\s+\\w+=\\S+)*)\\s+)?(?:\\S*[\\\\/])?${name}(?:\\.exe)?(?=\\s)`, 'gi');
+  return [...line.matchAll(start)].map((m) => wordsFrom(line, m.index + m[0].length));
+}
+
+/** The program text of each awk command in a line: the first operand, unless `-f` names a program file. */
+function awkPrograms(line: string): string[] {
+  const programs: string[] = [];
+  for (const words of commandWords(line, 'awk')) {
+    for (let i = 0; i < words.length; i += 1) {
+      const w = words[i]!;
+      if (/^(?:-f|--file)(?:=|$)/.test(w) || /^-f./.test(w)) break;
+      if (w === '-F' || w === '-v') {
+        i += 1;
+        continue;
+      }
+      if (w.startsWith('-') && w.length > 1) continue;
+      programs.push(w);
+      break;
+    }
+  }
+  return programs;
+}
+
+/** The scripts of each sed command in a line: every `-e` or `--expression` value, else the first operand. */
+function sedScripts(line: string): string[] {
+  const scripts: string[] = [];
+  for (const words of commandWords(line, 'sed')) {
+    const own: string[] = [];
+    let operand: string | undefined;
+    for (let i = 0; i < words.length; i += 1) {
+      const w = words[i]!;
+      if (w === '-e' || w === '--expression') own.push(words[(i += 1)] ?? '');
+      else if (/^--expression=/.test(w)) own.push(w.slice('--expression='.length));
+      else if (/^-e./.test(w)) own.push(w.slice(2));
+      else if (w === '-f' || w === '--file' || w === '-l' || w === '--line-length') i += 1;
+      else if (!(w.startsWith('-') && w.length > 1) && operand === undefined) operand = w;
+    }
+    scripts.push(...(own.length ? own : operand === undefined ? [] : [operand]));
+  }
+  return scripts;
+}
+
+/** A sed address before a command letter: a line number, `$` or a /regex/, optionally a range, optionally negated. */
+const SED_ADDRESS = String.raw`(?:(?:\d+|\$|\/(?:\\.|[^\/])*\/)(?:\s*,\s*(?:\d+|\$|\/(?:\\.|[^\/])*\/))?\s*!?\s*)?`;
+const SED_E = new RegExp(String.raw`(?:^|[;{}\n])\s*` + SED_ADDRESS + String.raw`e(?=\s|$|[;}])`);
+const SED_W = new RegExp(String.raw`(?:^|[;{}\n])\s*` + SED_ADDRESS + String.raw`[wW]\s*\S`);
+
+/** The flags of each `s` command of a sed script, read with its own delimiter; an address may precede the `s`. */
+function sedFlags(script: string): string {
   let flags = '';
-  for (const m of script.matchAll(/(?<![\w-])s([^\w\s\\])(?:\\.|(?!\1).)*?\1(?:\\.|(?!\1).)*?\1([A-Za-z0-9]*)/g)) flags += m[2] ?? '';
+  for (const m of script.matchAll(/(?<![A-Za-z_-])s([^\w\s\\])(?:\\.|(?!\1).)*?\1(?:\\.|(?!\1).)*?\1([A-Za-z0-9]*)/g)) flags += m[2] ?? '';
   return flags;
 }
 
-/** The sed forms: `e` runs a command (the `e` command or the `e` flag); `w` and `W` and the in-place options write a file. */
-function sedForms(segment: string): { executes: boolean; writes: boolean } {
-  const script = segment.slice(segment.search(/\s|$/));
-  const flags = sedFlags(segment);
+/**
+ * The sed forms of a line, read in the scripts of its sed commands (never in their file operands): `e` runs a command (the
+ * `e` command, an address allowed before it, or the `e` flag); `w` and `W` and the `w` flag write a file, and so do the
+ * in-place options of the segment.
+ */
+function sedForms(segment: string, line: string): { executes: boolean; writes: boolean } {
+  const scripts = sedScripts(line);
   return {
-    executes: flags.includes('e') || /(?:^|[\s;{'"])e(?=\s|$|['";}])/.test(script),
-    writes: flags.includes('w') || /(?:^|[\s;{'"])[wW]\s+\S/.test(script) || /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment),
+    executes: scripts.some((s) => sedFlags(s).includes('e') || SED_E.test(s)),
+    writes: scripts.some((s) => sedFlags(s).includes('w') || SED_W.test(s)) || /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment),
   };
 }
 
@@ -355,22 +442,22 @@ function gitReads(args: string[]): boolean {
   return true;
 }
 
-/** The awk forms that run a command, read on the whole command line: a `|` splits the awk text from the command it feeds. */
-const AWK_EXECUTES = /\bsystem\s*\(|\|\s*getline\b|\bprintf?\b[^|;&\n]*\|/;
+/** The awk forms that run a command, read in the awk program text (`awkPrograms`), never in the shell line around it. */
+const AWK_EXECUTES = /\bsystem\s*\(|\|\s*getline\b|\bprintf?\b[^|]*\|/;
 
 /** Whether a read-only command's segment carries one of its executing forms (production-gate). */
 function executes(name: string, segment: string, line: string): boolean {
-  if (name === 'awk') return AWK_EXECUTES.test(line);
+  if (name === 'awk') return awkPrograms(line).some((program) => AWK_EXECUTES.test(program));
   if (name === 'find') return /\s-(?:exec|execdir|ok|okdir)(?=\s|$)/.test(segment);
-  if (name === 'sed') return sedForms(segment).executes;
+  if (name === 'sed') return sedForms(segment, line).executes;
   if (name === 'rg') return /\s--pre(?=[\s=]|$)/.test(segment);
   return false;
 }
 
 /** Whether a segment carries a file-writing form of its command (protect-paths); `print >` and the like are writes through `>`. */
-function writesFile(segment: string): boolean {
+function writesFile(segment: string, line: string): boolean {
   const { name, args } = commandOf(segment);
-  if (name === 'sed') return sedForms(segment).writes;
+  if (name === 'sed') return sedForms(segment, line).writes;
   if (name === 'awk') return /\s-i\s*inplace\b/.test(segment);
   if (name === 'find') return /\s-(?:delete|fprint|fprint0|fprintf|fls)(?=\s|$)/.test(segment);
   if (name === 'sort') return /\s(?:-[a-zA-Z]*o\S*|--output(?:=\S*)?)(?=\s|$)/.test(segment);
@@ -395,7 +482,7 @@ function writesFile(segment: string): boolean {
 
 /** Whether a Bash command writes a file: a write verb (`WRITE_VERBS`) or a file-writing form of one of its segments. */
 function writesFiles(cmd: string): boolean {
-  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some(writesFile);
+  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some((s) => writesFile(s, cmd));
 }
 
 /**

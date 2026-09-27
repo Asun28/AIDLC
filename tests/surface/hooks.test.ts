@@ -947,6 +947,10 @@ const GATE_ROWS: Array<[string, string, string]> = [
   ...['-exec', '-execdir', '-ok', '-okdir'].map((action): [string, string, string] => [`find ${action}`, `find . ${action} make ${RELEASE} {} +`, `find . ${action} make build {} +`]),
   ['the sed e command', `sed 'e make ${RELEASE}' in.txt`, `sed 'e make build' in.txt`],
   ['the sed e flag', `sed 's/x/make ${RELEASE}/e' in.txt`, `sed 's/x/make build/e' in.txt`],
+  ['the sed e command after a line address', `sed '1e make ${RELEASE}' in.txt`, `sed '1e date' in.txt`],
+  ['the sed e flag after an address', `sed '3s/x/make ${RELEASE}/e' in.txt`, `sed '3s/x/date/e' in.txt`],
+  ['the sed e command in a second -e script', `sed -e 's/a/b/' -e 'e make ${RELEASE}' in.txt`, `sed -e 's/a/b/' -e 'e date' in.txt`],
+  ['the sed e command after a semicolon in the script', `sed 's/a/b/;e make ${RELEASE}' in.txt`, `sed 's/a/b/;e date' in.txt`],
   ['rg --pre', 'rg --pre deploy-production x', 'rg --pre cat x'],
   ['git grep -O', `git grep -O ${RELEASE}`, 'git grep -O x'],
   ['git grep --open-files-in-pager', `git grep --open-files-in-pager=vim ${RELEASE}`, 'git grep --open-files-in-pager=vim x'],
@@ -959,6 +963,13 @@ const GATE_ROWS: Array<[string, string, string]> = [
 /** Read-only uses the forms leave read-only: each passes the gate although its text names a release. */
 const READ_ONLY_ROWS = [
   `awk '/deploy production/' log`,
+  // a shell pipe after an awk program that only prints, and a file operand named e: neither is an executing form
+  "awk '{print $1}' deploy-production.log | grep x",
+  "sed 's/a/b/' e deploy-production.log",
+  // an option value is no awk program: the file -f names, a -F field separator and a -v assignment
+  `awk -f 'system(.awk' ${RELEASE}.log`,
+  `awk -F 'system(' '{print $1}' ${RELEASE}.log`,
+  `awk -v 'x=system(' '{print $1}' ${RELEASE}.log`,
   `sed -n '/deploy/p' production.log`,
   "sed -i 's/production/prod/' deploy.yaml",
   'find . -name deploy-production',
@@ -1004,6 +1015,11 @@ const WRITE_ROWS: Array<[string, string, string]> = [
   ['the sed w command', "sed -n 'w contracts/copy.yaml' in.txt", "sed -n 'p' contracts/copy.yaml"],
   ['the sed W command', "sed -n 'W contracts/copy.yaml' in.txt", "sed -n 'p' contracts/copy.yaml"],
   ['the sed w flag', "sed 's/a/b/w contracts/out.yaml' in.txt", "sed 's/a/b/' contracts/out.yaml"],
+  ['the sed w command after a line address', "sed -n '3w contracts/x.yaml' in.txt", "sed -n '3p' contracts/x.yaml"],
+  ['the sed w command after a regex address', "sed -n '/re/w contracts/x.yaml' in.txt", "sed -n '/re/p' contracts/x.yaml"],
+  ['the sed W command after the last-line address', "sed -n '$W contracts/x.yaml' in.txt", "sed -n '$p' contracts/x.yaml"],
+  ['the sed w flag after an address', "sed '3s/a/b/w contracts/x.yaml' in.txt", "sed '3s/a/b/' contracts/x.yaml"],
+  ['the sed w command in a second -e script', "sed -e 's/a/b/' -e 'w contracts/x.yaml' in.txt", "sed -e 's/a/b/' contracts/x.yaml"],
   ['awk -i inplace', 'awk -f prog.txt -i inplace contracts/api.yaml', 'awk -f prog.txt contracts/api.yaml'],
   ...['-delete', '-fprint out.txt', '-fprint0 out.txt', '-fprintf out.txt %p', '-fls out.txt'].map((action): [string, string, string] => [`find ${action.split(' ')[0]}`, `find contracts/ ${action}`, 'find contracts/ -name x']),
   ['sort -o', 'sort -o contracts/api.yaml contracts/api.yaml', 'sort contracts/api.yaml'],
@@ -1029,6 +1045,8 @@ test('T0-HOOK-CLASSIFIER acceptance 3: protect-paths reads every file-writing fo
     assert.equal(decision(paths(reading)), 'defer', `${label} without the form: ${JSON.stringify(reading)}`);
     assert.deepEqual(paths(writing.replaceAll('contracts', 'src')), { exitCode: 0 }, `${label} without a frozen path`);
   }
+  // a file operand named w or W after the script is read, not written (R2 round 2)
+  for (const reading of ["sed 's/a/b/' w contracts/api.yaml", "sed 's/a/b/' W contracts/api.yaml"]) assert.equal(decision(paths(reading)), 'defer', reading);
   const { cwd, env } = envWithState();
   assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: "sed -i 's/production/prod/' deploy.yaml" } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 });
 });
@@ -1037,10 +1055,10 @@ test('T0-HOOK-CLASSIFIER acceptance 5: docs/OPERATIONS.md (Hooks) and the CHANGE
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
-  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, and the segment carries no executing form of it. `production-gate` tests every other segment against `hooks.productionPatterns`; the executing forms are awk `system(`, `print |`, `printf |` and `| getline`, find `-exec`, `-execdir`, `-ok` and `-okdir`, the sed `e` command and `e` flag, rg `--pre`, git grep `-O` and `--open-files-in-pager`, and the git branch, remote and worktree commands that change the repository (all but a branch listing, `git remote` alone or with `-v`, `show` or `get-url`, and `git worktree list`). `protect-paths` also reads as a write the file-writing forms sed `-i` (combined included), `--in-place`, `w`, `W` and the `w` flag, awk `-i inplace`, find `-delete`, `-fprint`, `-fprint0`, `-fprintf` and `-fls`, sort `-o` and `--output`, a uniq output operand, tree `-o`, yq `-i` and `--inplace`, git log, diff and show `--output`, and git worktree `add`, `remove`, `move` and `prune`; these never make `production-gate` test a segment, so an in-place edit of a file that names a release asks for no release authorization.';
+  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, and the segment carries no executing form of it. `production-gate` tests the mutating segments of this split and of the split before it (at `||`, `&&`, `;` and `|` only), so a release phrase one segment held before is still matched. `production-gate` tests every other segment against `hooks.productionPatterns`; the executing forms are awk `system(`, `print |`, `printf |` and `| getline`, find `-exec`, `-execdir`, `-ok` and `-okdir`, the sed `e` command and `e` flag, rg `--pre`, git grep `-O` and `--open-files-in-pager`, and the git branch, remote and worktree commands that change the repository (all but a branch listing, `git remote` alone or with `-v`, `show` or `get-url`, and `git worktree list`). `protect-paths` also reads as a write the file-writing forms sed `-i` (combined included), `--in-place`, `w`, `W` and the `w` flag, awk `-i inplace`, find `-delete`, `-fprint`, `-fprint0`, `-fprintf` and `-fls`, sort `-o` and `--output`, a uniq output operand, tree `-o`, yq `-i` and `--inplace`, git log, diff and show `--output`, and git worktree `add`, `remove`, `move` and `prune`; these never make `production-gate` test a segment, so an in-place edit of a file that names a release asks for no release authorization.';
   assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER (issue 120). The Bash guards read a segment as read-only from its first word alone, after stripping any path, and split only at `||`, `&&`, `;` and `|`, so a command that ran another command, changed repository state or wrote a file behind a read-only first word, or after a lone `&` or a line break, passed them. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `production-gate` tests the executing forms (awk `system(` and its pipes, find `-exec`, `-execdir`, `-ok` and `-okdir`, sed `e`, rg `--pre`, git grep `-O`) and the git branch, remote and worktree commands that change the repository, and `protect-paths` reads the file-writing forms (sed `-i`, `--in-place` and `w`, awk `-i inplace`, find `-delete`, `-fprint*` and `-fls`, sort `-o`, a uniq output operand, tree `-o`, yq `-i`, git `--output`, git worktree `add`, `remove`, `move` and `prune`) as writes. Every change adds a denial; none removes one.';
+  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER (issue 120). The Bash guards read a segment as read-only from its first word alone, after stripping any path, and split only at `||`, `&&`, `;` and `|`, so a command that ran another command, changed repository state or wrote a file behind a read-only first word, or after a lone `&` or a line break, passed them. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `production-gate` tests the mutating segments of the new split and of the split before it, so no release phrase it matched before is lost, `production-gate` tests the executing forms (awk `system(` and its pipes, find `-exec`, `-execdir`, `-ok` and `-okdir`, sed `e`, rg `--pre`, git grep `-O`) and the git branch, remote and worktree commands that change the repository, and `protect-paths` reads the file-writing forms (sed `-i`, `--in-place` and `w`, awk `-i inplace`, find `-delete`, `-fprint*` and `-fls`, sort `-o`, a uniq output operand, tree `-o`, yq `-i`, git `--output`, git worktree `add`, `remove`, `move` and `prune`) as writes. Every change adds a denial; none removes one.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
