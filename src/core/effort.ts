@@ -105,12 +105,13 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
 /**
  * The next step of a reopened episode whose repair may already be running (card T0-DISPUTE-RUNNING-ATTEMPT): a running
  * attempt is that repair, at its own number and effort, as `afterShipFailure` treats one; a terminal episode, and one with
- * nothing running, answer as the ladder does. `nextEffortAction` alone throws on a running attempt.
+ * nothing running, answer as the ladder does on the settled attempts, so the ladder never sees a running attempt, on
+ * which `nextEffortAction` throws (R3 decision 1 F2).
  */
 export function repairAction(episode: EffortEpisode, justification?: EscalationJustification): NextEffortAction {
   const running = episode.terminal ? undefined : episode.attempts.find((a) => a.outcome === 'running');
   if (running) return { action: 'attempt', effort: running.effort, n: running.n, escalated: running.effort !== episode.baseline };
-  return nextEffortAction(episode, justification);
+  return nextEffortAction({ ...episode, attempts: episode.attempts.filter((a) => a.outcome !== 'running') }, justification);
 }
 
 /**

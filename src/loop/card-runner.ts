@@ -501,10 +501,13 @@ export class CardRunner {
     const reusable = this.reusableReceipt(run);
     if (reusable) {
       // The unchanged candidate goes back to review with its kept receipt (consumed: a later check failure never resurrects
-      // it). When every finding of the block was disputed, the repair BUILD opened after the block is settled as not counted
-      // and the candidate's success stands (card T0-DISPUTE-RUNNING-ATTEMPT); exhausted rounds reuse it before BUILD opens one.
-      const repair = run.effort?.attempts.find((a) => a.outcome === 'running');
-      run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
+      // it). Only when every finding of the kept block is disputed (a formal block is reused on no other ground) is the repair
+      // BUILD opened after the block settled as not counted, the candidate's success standing (card T0-DISPUTE-RUNNING-ATTEMPT);
+      // exhausted pre-review rounds reuse the receipt with the finding open, and settle nothing (R3 decision 1 F1).
+      const kept = run.blockedReceipt;
+      const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
+      const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
+      run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
       if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
