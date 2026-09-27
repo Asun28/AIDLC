@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatStop, isGlobalStop, makeStop } from '../../src/core/stop.ts';
+import { formatStop, isGlobalStop, makeStop, toolStopNextAction } from '../../src/core/stop.ts';
 import { T0 } from './_fixtures.ts';
 
 describe('stop records', () => {
@@ -27,5 +27,12 @@ describe('stop records', () => {
     const line = formatStop(s);
     assert.match(line, /^STOP\/review \(branch\) second block -> next: adjudicate unresolved=op-9$/);
     assert.match(formatStop(makeStop('time', 'x', 'y', { at: T0 })), /\(global\)/);
+  });
+  test('T0-PROBE-STOP-TEXT (issue 111): the replacement card carries the candidate only when one was built', () => {
+    const replace = `then run \`aidlc goal resume g-1 --reason "..." --replace '{"T1-X":"<replacement>"}'\``;
+    assert.equal(toolStopNextAction('g-1', 'T1-X', 'the cause'), `the cause; this stop is final for card T1-X: fix the cause, register a replacement card that carries the candidate, ${replace}`);
+    assert.equal(toolStopNextAction('g-1', 'T1-X', 'the cause', false), `the cause; this stop is final for card T1-X: fix the cause, register a replacement card, ${replace}`);
+    assert.equal(makeStop('tool', 'd', 'the cause', { at: T0, finalFor: { goalId: 'g-1', cardId: 'T1-X', candidate: false } }).nextAction, toolStopNextAction('g-1', 'T1-X', 'the cause', false));
+    assert.equal(makeStop('tool', 'd', 'the cause', { at: T0, finalFor: { goalId: 'g-1', cardId: 'T1-X' } }).nextAction, toolStopNextAction('g-1', 'T1-X', 'the cause'), 'a candidate by default');
   });
 });

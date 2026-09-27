@@ -102,6 +102,33 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   return { action: 'attempt', effort: next, n, escalated: true };
 }
 
+/**
+ * The next step of a reopened episode whose repair may already be running (card T0-DISPUTE-RUNNING-ATTEMPT): a running
+ * attempt is that repair, at its own number and effort, as `afterShipFailure` treats one; a terminal episode, and one with
+ * nothing running, answer as the ladder does on the settled attempts, so the ladder never sees a running attempt, on
+ * which `nextEffortAction` throws (R3 decision 1 F2).
+ */
+export function repairAction(episode: EffortEpisode, justification?: EscalationJustification): NextEffortAction {
+  const running = episode.terminal ? undefined : episode.attempts.find((a) => a.outcome === 'running');
+  if (running) return { action: 'attempt', effort: running.effort, n: running.n, escalated: running.effort !== episode.baseline };
+  return nextEffortAction({ ...episode, attempts: episode.attempts.filter((a) => a.outcome !== 'running') }, justification);
+}
+
+/**
+ * A repair attempt a dispute made unneeded (card T0-DISPUTE-RUNNING-ATTEMPT): when every finding of a block is disputed the
+ * unchanged candidate goes back to review, so the attempt BUILD opened for the repair is settled as not counted
+ * (`review-disputed`), and the episode is succeeded again when its last evaluated attempt is a success, the one that bound
+ * the candidate. A terminal episode, and one with nothing running, are returned as they are.
+ */
+export function settleDisputedRepair(episode: EffortEpisode, finishedAt: string): EffortEpisode {
+  if (episode.terminal) return episode;
+  const idx = episode.attempts.findIndex((a) => a.outcome === 'running');
+  if (idx < 0) return episode;
+  const attempts = episode.attempts.map((a, i): Attempt => (i === idx ? { ...a, finishedAt, outcome: 'not-counted', notCountedReason: 'review-disputed' } : a));
+  const evaluated = attempts.filter((a) => a.outcome === 'success' || a.outcome === 'fail');
+  return { ...episode, attempts, terminal: evaluated[evaluated.length - 1]?.outcome === 'success' ? 'succeeded' : undefined };
+}
+
 export interface ShipFailureStep {
   episode: EffortEpisode;
   action: NextEffortAction;

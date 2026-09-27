@@ -179,4 +179,18 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     assert.equal(q.admit('codex:acct', B, iso(4)).status, 'admitted');
     assert.equal(q.admit('codex:acct', A, iso(5)).status, 'busy');
   });
+  it('T0-SHIP-QUOTA-RESET (issue 54): heldUntil names the later of a hold and the reset the pool already keeps; an equal, earlier or absent reset leaves the hold', () => {
+    const q = new ReviewQueue(path.join(dir, 'held-until'));
+    const hold = iso(15 * 60_000);
+    assert.equal(q.heldUntil('codex:none', hold, iso(0)), hold, 'a pool with no reset: the hold');
+    const other = q.enqueue(input({ pool: 'codex:later', candidateDigest: 'later', now: iso(0) })).request;
+    q.hold(other.key, iso(20 * 60_000 + 500), 'another request held the pool longer', iso(1));
+    assert.equal(q.heldUntil('codex:later', hold, iso(2)), iso(20 * 60_000 + 500), 'a later reset: the reset');
+    const same = q.enqueue(input({ pool: 'codex:same', candidateDigest: 'same', now: iso(0) })).request;
+    q.hold(same.key, hold, 'the same time', iso(1));
+    assert.equal(q.heldUntil('codex:same', hold, iso(2)), hold, 'an equal reset: the hold');
+    const earlier = q.enqueue(input({ pool: 'codex:earlier', candidateDigest: 'earlier', now: iso(0) })).request;
+    q.hold(earlier.key, iso(5 * 60_000), 'a shorter hold', iso(1));
+    assert.equal(q.heldUntil('codex:earlier', hold, iso(2)), hold, 'an earlier reset: the hold');
+  });
 });

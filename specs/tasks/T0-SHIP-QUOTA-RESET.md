@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-QUOTA-RESET
 title: A quota wait of the formal review or of the ship path names the later reset the reviewer's review pool already keeps, not its own hold or now plus 15 minutes (issue 54)
-status: todo
+status: merged
 branch: T0-SHIP-QUOTA-RESET
 worktree: D:\wt\AIDLC\T0-SHIP-QUOTA-RESET
 allow_paths:

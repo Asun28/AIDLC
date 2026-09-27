@@ -497,7 +497,7 @@ export const RoleProfile = z.object({
 });
 export type RoleProfile = z.infer<typeof RoleProfile>;
 
-export const NotCountedReason = z.enum(['expected-red', 'quota', 'admission-hold', 'tool-outage', 'env-setup']);
+export const NotCountedReason = z.enum(['expected-red', 'quota', 'admission-hold', 'tool-outage', 'env-setup', 'review-disputed']);
 export type NotCountedReason = z.infer<typeof NotCountedReason>;
 
 export const Attempt = z.object({
