@@ -147,19 +147,18 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     assert.equal(existsSync(`${store.file(key)}.lock`), false);
   });
 
-  it("T1-STORE-CAS-2: a lease store's lock options reach its lock: a crashed writer's lock older than staleMs is taken over", () => {
+  it("T1-STORE-CAS-2: a lease store's lock options reach its lock: a crashed writer's lock is refused at this store's deadline, naming its pid, and stays", () => {
     const dir2 = path.join(dir, 'leases-stale');
-    const patient = new LeaseStore(dir2, { timeoutMs: 1_000, staleMs: 100 });
+    const quick = new LeaseStore(dir2, { timeoutMs: 50 });
     const key = resourceKeys.card('repo1', 'T1-CRASHED');
-    const lock = `${patient.file(key)}.lock`;
+    const lock = `${quick.file(key)}.lock`;
     mkdirSync(dir2, { recursive: true });
     writeFileSync(lock, 'pid=999999999 at=2026-09-11T10:00:00.000Z nonce=crashed', 'utf8');
-    // One second older than it was written: past this store's 100 ms stale age, well within the default 30 s.
-    const written = statSync(lock).mtime;
-    const older = new Date(written.getTime() - 1_000);
-    utimesSync(lock, older, older);
-    assert.equal(patient.claim(key, { actor: A, now: t0 }).status, 'acquired');
-    assert.equal(existsSync(lock), false);
+    const started = Date.now();
+    assert.throws(() => quick.claim(key, { actor: A, now: t0 }), /is locked by pid 999999999, which is no longer running/);
+    assert.ok(Date.now() - started < 1_500, 'refused at this store\'s 50 ms deadline, not the default 2 s');
+    assert.equal(existsSync(lock), true);
+    unlinkSync(lock);
   });
 
   it('T1-STORE-CAS-2: purging a released lease takes its lock: with the lock held it refuses and the record stays', () => {

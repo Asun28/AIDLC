@@ -36,7 +36,7 @@ function onExclusiveCreate<T>(lock: string, before: () => void, body: () => T): 
 const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM' });
 
 /** Route one `node:fs` function through `wrap` while `body` runs: the boundary every lock step passes. */
-function throughFs<T>(name: 'readFileSync' | 'statSync' | 'unlinkSync' | 'openSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
+function throughFs<T>(name: 'readFileSync' | 'statSync' | 'unlinkSync' | 'openSync' | 'writeSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
   const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
   const real = target[name]!;
   target[name] = (...args: unknown[]) => wrap(real, args);
@@ -111,25 +111,23 @@ describe('state/store updateJson (T1-STORE-CAS-2 acceptance 1)', () => {
     assert.ok(!existsSync(absent) && !existsSync(`${absent}.lock`), 'no record is created and the lock is released');
   });
 
-  it('a stale lock whose owner process is gone is taken over, and so is a stale takeover marker; a live owner keeps its lock however old', () => {
+  it('a lock whose owner process is gone is refused with LOCKED naming the lock file, the process id and when deleting it is safe, and it stays however old; a live owner keeps its lock however old [R7]', () => {
     const file = seed('stale.json');
     const lock = `${file}.lock`;
     // A crashed writer names a pid no platform has (pid 1 is init on Linux, alive and unsignallable).
-    writeFileSync(lock, 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead', 'utf8');
+    const dead = 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead';
+    writeFileSync(lock, dead, 'utf8');
     utimesSync(lock, LONG_AGO, LONG_AGO);
-    assert.deepEqual(updateJson(file, Rec, (current) => ({ ...current!, n: 2 })), { id: 'x', n: 2 });
-    assert.ok(!existsSync(lock) && !existsSync(`${lock}.takeover`), 'the stale lock and the takeover marker are gone');
-    writeFileSync(lock, 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead', 'utf8');
-    writeFileSync(`${lock}.takeover`, 'pid=999999998 at=2020-01-01T00:00:00.000Z nonce=taker', 'utf8');
-    utimesSync(lock, LONG_AGO, LONG_AGO);
-    utimesSync(`${lock}.takeover`, LONG_AGO, LONG_AGO);
-    assert.deepEqual(updateJson(file, Rec, (current) => ({ ...current!, n: 3 })), { id: 'x', n: 3 });
-    assert.ok(!existsSync(lock) && !existsSync(`${lock}.takeover`));
+    const refused = settle(() => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }));
+    assert.ok(isCode('LOCKED')(refused.error), `LOCKED: ${String(refused.error)}`);
+    assert.ok(String((refused.error as Error | undefined)?.message).includes(`${lock} is locked by pid 999999999, which is no longer running; delete ${lock} only once pid 999999999 is confirmed dead, then run the command again`), `the refusal names the file, the pid and when deleting is safe: ${String(refused.error)}`);
+    assert.equal(textOf(lock), dead, 'the dead owner\'s lock stays in place');
+    assert.equal(readFileSync(file, 'utf8'), STORED);
     writeFileSync(lock, `pid=${process.pid} at=2020-01-01T00:00:00.000Z nonce=old-live`, 'utf8');
     utimesSync(lock, LONG_AGO, LONG_AGO);
-    assert.throws(() => updateJson(file, Rec, (current) => ({ ...current!, n: 4 }), { timeoutMs: 50, staleMs: 10 }), isCode('LOCKED'));
+    assert.throws(() => updateJson(file, Rec, (current) => ({ ...current!, n: 4 }), { timeoutMs: 50 }), (err: unknown) => isCode('LOCKED')(err) && /locked by another writer/.test((err as Error).message));
     assert.ok(existsSync(lock), 'the live owner keeps its lock');
-    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { id: 'x', n: 3 });
+    assert.equal(readFileSync(file, 'utf8'), STORED);
     unlinkSync(lock);
   });
 
@@ -140,24 +138,6 @@ describe('state/store updateJson (T1-STORE-CAS-2 acceptance 1)', () => {
     assert.throws(() => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }), isCode('LOCKED'));
     assert.ok(existsSync(lock), 'a lock younger than the stale age stays');
     assert.equal(readFileSync(file, 'utf8'), STORED);
-    unlinkSync(lock);
-  });
-
-  it('the takeover re-checks the lock under its marker: a stale lock replaced by a live one meanwhile is left to its new owner', () => {
-    const file = seed('recheck.json');
-    const lock = `${file}.lock`;
-    writeFileSync(lock, 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead', 'utf8');
-    utimesSync(lock, LONG_AGO, LONG_AGO);
-    // Right before this waiter takes the takeover marker, another waiter has removed the stale lock and a live writer has locked.
-    let replaced = false;
-    const live = `pid=${process.pid} at=2026-09-26T00:00:00.000Z nonce=new-owner`;
-    const replace = () => { if (!replaced) { replaced = true; writeFileSync(lock, live, 'utf8'); } };
-    let entered = false;
-    assert.throws(() => onExclusiveCreate(`${lock}.takeover`, replace, () => updateJson(file, Rec, (current) => { entered = true; return { ...current!, n: 2 }; }, { timeoutMs: 50 })), isCode('LOCKED'));
-    assert.ok(replaced, 'the waiter went for the takeover marker');
-    assert.equal(entered, false);
-    assert.equal(readFileSync(lock, 'utf8'), live, "the new owner's lock is left in place");
-    assert.ok(!existsSync(`${lock}.takeover`), 'the marker is released');
     unlinkSync(lock);
   });
 
@@ -235,97 +215,60 @@ describe('state/store updateJson lock ownership (T1-STORE-CAS-2)', () => {
   const DEAD = 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=dead';
   const LIVE = `pid=${process.pid} at=2026-09-27T00:00:00.000Z nonce=live-writer`;
 
-  it('acceptance 13: a takeover marker older than the stale age whose owner process is alive is left in place, and so is the stale lock behind it [R7]', () => {
-    const file = seed('live-marker.json');
-    const lock = `${file}.lock`;
-    const marker = `${lock}.takeover`;
-    const taker = `pid=${process.pid} at=2020-01-01T00:00:00.000Z nonce=suspended-taker`;
-    writeFileSync(lock, DEAD, 'utf8');
-    writeFileSync(marker, taker, 'utf8');
-    utimesSync(lock, LONG_AGO, LONG_AGO);
-    utimesSync(marker, LONG_AGO, LONG_AGO);
-    const outcome = settle(() => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }));
-    assert.equal(textOf(marker), taker, "the suspended taker's marker stays");
-    assert.equal(textOf(lock), DEAD, 'the stale lock is left to the taker that holds the marker');
-    assert.ok(isCode('LOCKED')(outcome.error), `the waiter refuses at the deadline: ${String(outcome.error)}`);
-    assert.equal(readFileSync(file, 'utf8'), STORED);
-    unlinkSync(marker);
-    unlinkSync(lock);
-  });
-
-  it('acceptance 13: a takeover marker whose owner process is gone is reclaimed and the stale lock behind it taken over [R7]', () => {
-    const file = seed('dead-marker.json');
-    const lock = `${file}.lock`;
-    const marker = `${lock}.takeover`;
-    writeFileSync(lock, DEAD, 'utf8');
-    writeFileSync(marker, 'pid=999999998 at=2020-01-01T00:00:00.000Z nonce=crashed-taker', 'utf8');
-    utimesSync(lock, LONG_AGO, LONG_AGO);
-    utimesSync(marker, LONG_AGO, LONG_AGO);
-    assert.deepEqual(updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 1_000 }), { id: 'x', n: 2 });
-    assert.equal(textOf(marker), undefined);
-    assert.equal(textOf(lock), undefined);
-  });
-
-  it('acceptance 13: a waiter holding the marker never removes a lock that a live writer holds by the time it removes, nor a marker another waiter holds by the time it releases [R7]', () => {
-    // The lock is judged stale under the marker, then a live writer's lock replaces it before the removal.
-    const file = seed('replaced-lock.json');
-    const lock = `${file}.lock`;
-    const marker = `${lock}.takeover`;
-    writeFileSync(lock, DEAD, 'utf8');
-    utimesSync(lock, LONG_AGO, LONG_AGO);
-    let holding = false;
-    let replaced = false;
-    const outcome = settle(() =>
-      throughFs(
-        'openSync',
-        (real, args) => {
-          const fd = real(...args);
-          if (String(args[0]) === marker && args[1] === 'wx') holding = true;
-          return fd;
-        },
-        () =>
-          throughFs(
-            'readFileSync',
-            (real, args) => {
-              const out = real(...args);
-              if (holding && !replaced && String(args[0]) === lock) {
-                replaced = true;
-                writeFileSync(lock, LIVE, 'utf8');
-              }
-              return out;
-            },
-            () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }),
-          ),
-      ),
-    );
-    assert.ok(replaced, 'the lock was replaced after the waiter judged it under the marker');
-    assert.equal(textOf(lock), LIVE, "the live writer's lock is never removed");
-    assert.ok(isCode('LOCKED')(outcome.error), `the waiter refuses at the deadline: ${String(outcome.error)}`);
-    assert.equal(textOf(marker), undefined, 'the waiter releases its own marker');
-    unlinkSync(lock);
-    // The marker changes hands while its first holder removes the stale lock: the release leaves the other waiter's marker.
-    const file2 = seed('replaced-marker.json');
-    const lock2 = `${file2}.lock`;
-    const marker2 = `${lock2}.takeover`;
-    const other = `pid=${process.pid} at=2026-09-27T00:00:00.000Z nonce=other-waiter`;
-    writeFileSync(lock2, DEAD, 'utf8');
-    utimesSync(lock2, LONG_AGO, LONG_AGO);
-    let swapped = false;
-    const written = throughFs(
-      'unlinkSync',
-      (real, args) => {
-        if (!swapped && String(args[0]) === lock2) {
-          swapped = true;
-          writeFileSync(marker2, other, 'utf8');
-        }
-        return real(...args);
-      },
-      () => updateJson(file2, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 1_000 }),
-    );
-    assert.ok(swapped);
-    assert.deepEqual(written, { id: 'x', n: 2 });
-    assert.equal(textOf(marker2), other, "the other waiter's marker is never removed");
-    unlinkSync(marker2);
+  it('acceptance 13: no updateJson path unlinks a lock or a marker whose text is not its own, under a live, a stale, a replaced or its own lock [R7]', () => {
+    // At the filesystem boundary: every exclusive create of a lock file and the text written into it, and every unlink of a
+    // lock or marker file with the text found there when it is removed.
+    const fds = new Map<unknown, string>();
+    const own = new Set<string>();
+    const foreign: string[] = [];
+    const watch = <T>(body: () => T): T =>
+      throughFs('openSync', (real, args) => {
+        const fd = real(...args);
+        if (args[1] === 'wx' && String(args[0]).includes('.lock')) fds.set(fd, String(args[0]));
+        return fd;
+      }, () =>
+        throughFs('writeSync', (real, args) => {
+          if (fds.has(args[0])) own.add(String(args[1]));
+          return real(...args);
+        }, () =>
+          throughFs('unlinkSync', (real, args) => {
+            const target = String(args[0]);
+            if (target.includes('.lock')) {
+              const text = textOf(target);
+              if (text === undefined || !own.has(text)) foreign.push(`${path.basename(target)}: ${text ?? 'gone'}`);
+            }
+            return real(...args);
+          }, body),
+        ),
+      );
+    // A live owner's lock, a dead owner's lock older than any stale age with a crashed taker's marker beside it, a lock that
+    // changes hands while the change runs, and this call's own lock.
+    const live = seed('boundary-live.json');
+    writeFileSync(`${live}.lock`, LIVE, 'utf8');
+    const stale = seed('boundary-stale.json');
+    writeFileSync(`${stale}.lock`, DEAD, 'utf8');
+    writeFileSync(`${stale}.lock.takeover`, 'pid=999999998 at=2020-01-01T00:00:00.000Z nonce=crashed-taker', 'utf8');
+    for (const f of [`${stale}.lock`, `${stale}.lock.takeover`]) utimesSync(f, LONG_AGO, LONG_AGO);
+    const replaced = seed('boundary-replaced.json');
+    const mine = seed('boundary-own.json');
+    const other = `pid=${process.pid} at=2026-09-27T00:00:00.000Z nonce=next-holder`;
+    const outcomes = watch(() => ({
+      live: settle(() => updateJson(live, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 })),
+      stale: settle(() => updateJson(stale, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 })),
+      replaced: settle(() => updateJson(replaced, Rec, (current) => { writeFileSync(`${replaced}.lock`, other, 'utf8'); return { ...current!, n: 2 }; })),
+      mine: settle(() => updateJson(mine, Rec, (current) => ({ ...current!, n: 2 }))),
+    }));
+    assert.deepEqual(foreign, [], 'no lock or marker is unlinked unless its text is the one this process created it with');
+    assert.ok(isCode('LOCKED')(outcomes.live.error), `live: ${String(outcomes.live.error)}`);
+    assert.ok(isCode('LOCKED')(outcomes.stale.error), `stale: ${String(outcomes.stale.error)}`);
+    assert.ok(isCode('LOCK_LOST')(outcomes.replaced.error), `replaced: ${String(outcomes.replaced.error)}`);
+    assert.deepEqual(outcomes.mine, { value: { id: 'x', n: 2 } });
+    assert.equal(textOf(`${live}.lock`), LIVE);
+    assert.equal(textOf(`${stale}.lock`), DEAD);
+    assert.ok(existsSync(`${stale}.lock.takeover`), "the crashed taker's marker stays too");
+    assert.equal(textOf(`${replaced}.lock`), other);
+    assert.equal(textOf(`${mine}.lock`), undefined, 'its own lock is released');
+    for (const f of [`${live}.lock`, `${stale}.lock`, `${stale}.lock.takeover`, `${replaced}.lock`]) unlinkSync(f);
   });
 
   it('acceptance 14: a lock file that cannot be read at the ownership check or the release leaves the change its result [R8]', () => {
