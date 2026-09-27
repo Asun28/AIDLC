@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-CONFIG-CLOSED-3
 title: (replaces T0-HOOK-CONFIG-CLOSED-2) While aidlc.config.json cannot be used, the hook guards deny every call the loader before T0-HOOK-CONFIG-CLOSED denied and, beyond it, every Bash command but a fixed list of aidlc doctor commands and every edit but the config file's own (issue 76 item 1)
-status: todo
+status: merged
 branch: T0-HOOK-CONFIG-CLOSED-3
 worktree: D:\wt\AIDLC\T0-HOOK-CONFIG-CLOSED-3
 allow_paths:
@@ -35,7 +35,7 @@ diagnosis:
 sweep: "grep -rn 'loadHookConfig\\|legacy\\|configAccess\\|probe.read' src/hooks/index.ts lists every decision between the defaults, main's reading and an error; grep -rn 'unusableConfig' src/hooks lists every guard that reads the config under an error."
 forbid: [changing config.ts, changing a guard function (productionGate, protectPaths, protectTests, secretsGuard, verifyBeforeDone), changing a guard's decision or output under a valid config, a config line in the Stop output, reading a Bash command under a broken config with any rule but the doctor list after main's decision]
 non_goals: ["issue 76 item 2, CI log classes", "issue 76 item 3, exit 0 read as merged (T0-EXIT-ZERO-NOT-MERGED)", "the PowerShell tool outside the guards: issue 117", "config discovery above cwd: issue 118", "the valid path's command classifier: issue 120", "Bash reads under a broken config: they go through the Read, Grep and Glob tools"]
-hygiene: "T0-HOOK-CONFIG-CLOSED-2 stopped after R3 decision 2 (F1: a race between the access probe and the read; F2: real-filesystem denial tests missing). The merge under ruling B was withdrawn because the hand-run Codex check of 6dc2148 found a fail-open that main does not have (a frozen aidlc.config.json that parses as JSON but fails the schema becomes editable through the repair exemption) and a data-shape change under a valid config (unknown hooks keys dropped). Pre-set ruling C: second successor T0-HOOK-CONFIG-CLOSED-3 carries 6dc2148 and closes F1, F2, Q1 and Q2; T0-HOOK-CONFIG-RACE is superseded by it. If -3 is blocked on its second R3 decision, #76 item 1 is held for the user; there is no -4. Ruled by aidlc-37 under the user's delegation of 2026-09-27T09:20Z. Before R3 decision 1, the same hand-run Codex check (does anything change under a valid config; is any fail-open new relative to main) answers no to both. The oracle reproduces main's decision in the test from the unchanged guard functions, so the invariant is checked against main's own code. The Codex pre-check of 7098895 answered no to both questions. R3 decision 1 blocked 7098895 on one finding: `aidlc hook protect-paths` passed an event carrying a non-doctor command beside the config path, because the file branch returned first; the repair compares any command with the doctor list before the edit exemption."
+hygiene: "T0-HOOK-CONFIG-CLOSED-2 stopped after R3 decision 2 (F1: a race between the access probe and the read; F2: real-filesystem denial tests missing). The merge under ruling B was withdrawn because the hand-run Codex check of 6dc2148 found a fail-open that main does not have (a frozen aidlc.config.json that parses as JSON but fails the schema becomes editable through the repair exemption) and a data-shape change under a valid config (unknown hooks keys dropped). Pre-set ruling C: second successor T0-HOOK-CONFIG-CLOSED-3 carries 6dc2148 and closes F1, F2, Q1 and Q2; T0-HOOK-CONFIG-RACE is superseded by it. If -3 is blocked on its second R3 decision, #76 item 1 is held for the user; there is no -4. Ruled by aidlc-37 under the user's delegation of 2026-09-27T09:20Z. Before R3 decision 1, the same hand-run Codex check (does anything change under a valid config; is any fail-open new relative to main) answers no to both. The oracle reproduces main's decision in the test from the unchanged guard functions, so the invariant is checked against main's own code. The Codex pre-check of 7098895 answered no to both questions. R3 decision 1 blocked 7098895 on one finding: `aidlc hook protect-paths` passed an event carrying a non-doctor command beside the config path, because the file branch returned first; the repair compares any command with the doctor list before the edit exemption. Merged under ruling B of aidlc-37 after R3 decision 2 (PR #130, squash 4ff67f6); the ruling and the Codex verdict are in the Ruling section below."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
 ---
 
@@ -50,3 +50,14 @@ npm run typecheck && node --test tests/surface/hooks.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Ruling
+Merged under ruling by aidlc-37 under the user's delegation of 2026-09-27T09:20Z (pre-set ruling B for T0-HOOK-CONFIG-CLOSED-3 decision 2). R3 decision 2 on ec84023 blocked on one finding: under a config that cannot be used, a command value that is not a string (null, a number, an object, an array) passes production-gate and protect-paths without the doctor comparison. The guards before these cards pass such values under every config (protectPaths reads only a string command, productionGate reads String(command)), and the card keeps their denial of a gated String(value) through its legacy decision, so this is a residual main also has, not a new fail-open. The hand-run Codex check of ec84023 answered no to both questions (no change under a valid config, no fail-open new relative to main). The residual is issue #129.
+
+Hand-run Codex check of ec84023 under the ruling (gpt-6-astra, medium, read-only; base 745c6d0; non-string command values named in Q2):
+
+```json
+{"q1_valid_config_change":false,"q2_new_fail_open":false,"findings":[]}
+```
+
+PR #130 squash-merged as 4ff67f6 (tree 3fcf0fe, equal to the tree of ec84023) on four required checks green.
