@@ -461,7 +461,7 @@ export class CardRunner {
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined; runningOp?: OperationRecord } {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
     // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
@@ -548,7 +548,7 @@ export class CardRunner {
     // reads the record as persisted and must not find the stop it cleared.
     if (revalidatedStop) next = save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
-    return { run, next, decision, lease };
+    return { run, next, decision, lease, runningOp };
   }
 
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
@@ -567,7 +567,7 @@ export class CardRunner {
     // The reconciliation may have lifted a stop (an ownership stop whose lease is gone): the guard is asked again on the
     // run as it stands now, before any action.
     if (checkpointMissing(run)) return checkpointWait(run);
-    const { decision } = assessed;
+    const { decision, runningOp } = assessed;
     let next = assessed.next;
 
     switch (decision.state) {
@@ -625,8 +625,7 @@ export class CardRunner {
         next = this.save(next);
         // A verified merge whose facts are unread (card T1-AUDIT-FACTS) waits on its merge operation: only the facts are read again.
         const pr = next.mergeVerified ? next.pr?.number : undefined;
-        const merge = pr ? this.ops.unresolved(goal.id, card.id).find((o) => o.kind === 'merge' && (o.status === 'issued' || o.status === 'running')) : undefined;
-        if (pr && merge) return this.recordMerge(goal, card, next, merge.id, this.readFacts(pr, this.viewPr(pr)));
+        if (pr && runningOp) return this.recordMerge(goal, card, next, runningOp.id, this.readFacts(pr, this.viewPr(pr)));
         return { run: next, directive: { kind: 'wait', cardId: card.id, on: decision.reason, pollSeconds: 60, narration: decision.reason } };
       }
       case 'CLOSE':
