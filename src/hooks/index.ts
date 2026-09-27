@@ -142,79 +142,46 @@ const CONFIG_KEYS = { 'production-gate': 'productionPatterns', 'protect-paths': 
 type ConfigGuard = keyof typeof CONFIG_KEYS;
 
 /**
- * Bash redirects that write no file, each up to the end of its destination: a descriptor into another (`2>&1`, `>&2`) or
- * any output into `/dev/null` (`2>/dev/null`, `&>>/dev/null`). Only the POSIX null device: in Bash `>nul` writes a file.
+ * The Bash commands a config that cannot be used lets through, compared as exact strings once trimmed (card
+ * T0-HOOK-CONFIG-CLOSED-2): no shell reading decides them. `npx` without `--no-install` may download a registry package
+ * and `npm run dev --` runs whatever the repository's dev script is, so neither is listed. The relative `node` scripts are
+ * this checkout's CLI: the config error is reached only when the event cwd itself holds the file (`loadHookConfig` does
+ * not look upward, issue 118), and the Bash call runs in that cwd.
  */
-const STREAM_REDIRECT = /(?:\d*>&\d|(?:\d*|&)>>?[ \t]*\/dev\/null)(?=[\s;&|]|$)/g;
-/** Command or process substitution: it runs a command inside any word, so no command carrying one is exempt. */
-const SUBSTITUTION = /`|\$\(|[<>]\(/;
-/** Command separators, including the ones `mutatingSegments` does not split at: a lone `&` and a line break. */
-const SEPARATOR = /\|\||&&|[;|&\r\n]/;
-/** One shell word that expands to itself: a plain word, a single-quoted one, or a double-quoted one without `$` or a backquote. */
-const WORD = String.raw`(?:[\w./:=\\-]+|'[^'\r\n]*'|"[^"$\x60\r\n]*")`;
-const DIRECTORY_CHANGE = new RegExp(String.raw`^(?:cd|pushd|popd)(?:[ \t]+${WORD})?$`);
-/** `aidlc doctor` bare, through `npx --no-install`, or through `node` and a script word (checked by `ownCli`). */
-const DOCTOR_RUN = new RegExp(String.raw`^(?:aidlc|npx[ \t]+--no-install[ \t]+aidlc|node[ \t]+(${WORD}))[ \t]+doctor(?:[ \t]+${WORD})*$`);
+const DOCTOR_COMMANDS = new Set(
+  ['aidlc', 'npx --no-install aidlc', 'node bin/aidlc.js', 'node node_modules/aidlc/bin/aidlc.js'].flatMap((cli) =>
+    ['', ' --json', ' 2>&1', ' --json 2>&1'].map((tail) => `${cli} doctor${tail}`),
+  ),
+);
 
-/** Whether a `node` script word names this checkout's own CLI: `bin/aidlc.js`, or the installed package's. */
-function ownCli(word: string, cwd: string): boolean {
-  const script = path.resolve(cwd, /^(["']).*\1$/.test(word) ? word.slice(1, -1) : word);
-  return [path.join(cwd, 'bin', 'aidlc.js'), path.join(cwd, 'node_modules', 'aidlc', 'bin', 'aidlc.js')].some((own) => path.relative(own, script) === '');
-}
-
-function isDoctorRun(segment: string, cwd: string): boolean {
-  const run = DOCTOR_RUN.exec(segment);
-  return Boolean(run) && (run![1] === undefined || ownCli(run![1], cwd));
-}
-
-/**
- * Whether `production-gate` passes a Bash command whatever the config holds: nothing substitutes a command, and each
- * segment, split at every separator once the redirects of `STREAM_REDIRECT` are set aside, is one the valid path reads as
- * read-only (`mutatingSegments`), a change of directory, or `aidlc doctor`.
- */
-function gatePassesAnyConfig(cmd: string, cwd: string): boolean {
-  if (SUBSTITUTION.test(cmd)) return false;
-  return cmd
-    .replace(STREAM_REDIRECT, ' ')
-    .split(SEPARATOR)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .every((seg) => mutatingSegments(seg).length === 0 || DIRECTORY_CHANGE.test(seg) || isDoctorRun(seg, cwd));
-}
-
-/** Whether `protect-paths` passes a Bash command whatever the config holds: no write verb once the redirects of `STREAM_REDIRECT` are set aside. */
-function pathsPassAnyConfig(cmd: string): boolean {
-  return !WRITE_VERBS.test(cmd.replace(STREAM_REDIRECT, ' '));
-}
+const CONFIG_REPAIR = 'Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`.';
 
 /** Whether a tool's target is the config file that failed, however its path is spelled. */
 function isConfigFile(target: string, cwd: string, error: HookConfigError): boolean {
   return path.relative(error.file, path.resolve(cwd, target)) === '';
 }
 
-function configLine(error: HookConfigError): string {
-  return `${error.file} cannot be used (${error.detail})`;
-}
-
-function configDenial(guard: ConfigGuard, error: HookConfigError): HookResult {
-  return deny('PreToolUse', `${configLine(error)}, so the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it and denies this call. Fix the file first: an Edit or Write of that file, reads and \`aidlc doctor\` pass.`);
+/** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes. */
+function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean): HookResult {
+  const file = quotePath(error.file);
+  const opening = bash ? `Bash is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
+  return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${CONFIG_REPAIR}`);
 }
 
 /**
- * A guard that reads the config, while it cannot be used: it passes a call only when every config would pass it, and the
- * repair. `protect-paths` denies any file but the config, since a frozen path may match it, and a Bash write;
- * `production-gate` denies a Bash command with a mutating segment; `protect-tests` reads the config only while a fix task
- * is active.
+ * A guard that reads the config, while it cannot be used: `production-gate` and `protect-paths` deny every Bash command but
+ * the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does the same while
+ * a fix task is active. Reads go through the Read, Grep and Glob tools, which no hook guards.
  */
 function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, error: HookConfigError): HookResult {
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
-  let passes: boolean;
-  if (guard === 'protect-tests') passes = typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error);
-  else if (guard === 'protect-paths' && typeof file === 'string') passes = isConfigFile(file, cwd, error);
-  else if (typeof cmd !== 'string' || !cmd) passes = true;
-  else passes = guard === 'protect-paths' ? pathsPassAnyConfig(cmd) : gatePassesAnyConfig(cmd, cwd);
-  return passes ? { exitCode: 0 } : configDenial(guard, error);
+  if (guard === 'protect-tests') {
+    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
+  }
+  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
+  if (typeof cmd !== 'string' || !cmd || DOCTOR_COMMANDS.has(cmd.trim())) return { exitCode: 0 };
+  return configDenial(guard, error, true);
 }
 
 /** Commands that only read; a deploy word inside their arguments (grep for "production") is not a deploy. */
@@ -464,7 +431,7 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
 /** The routing line for a new request, followed by the config error while the config cannot be used. */
 export function routeNewWork(event: HookEvent, configError?: HookConfigError): HookResult {
   const routed = routeLine(event);
-  const note = configError && `[aidlc] ${configLine(configError)}: the hook guards that read it deny every call they cannot decide until it is fixed. An Edit or Write of that file, reads and \`aidlc doctor\` pass.`;
+  const note = configError && `[aidlc] ${quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${CONFIG_REPAIR}`;
   const text = [routed, note].filter(Boolean).join('\n');
   return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
 }

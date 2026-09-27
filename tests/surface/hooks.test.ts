@@ -566,6 +566,8 @@ test('T0-HOOK-CONFIG-CLOSED-2 acceptance 2: while the config cannot be used, onl
     // a call with nothing to decide passes
     assert.deepEqual(runHook('production-gate', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
     assert.deepEqual(runHook('protect-paths', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
+    assert.deepEqual(runHook('production-gate', { tool_input: { command: '' } }, { cwd, env }), { exitCode: 0 });
+    assert.deepEqual(runHook('protect-paths', { tool_input: { command: '' } }, { cwd, env }), { exitCode: 0 });
   }
 });
 
