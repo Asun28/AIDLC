@@ -1,7 +1,7 @@
 ---
 id: T0-PROBE-STOP-TEXT
 title: The PREPARE stop for a failed worktree probe names the replacement path like every other tool stop, and the replacement carries the candidate only when one was built (issue 111)
-status: todo
+status: merged
 branch: T0-PROBE-STOP-TEXT
 worktree: D:\wt\AIDLC\T0-PROBE-STOP-TEXT
 allow_paths:

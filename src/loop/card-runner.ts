@@ -767,7 +767,9 @@ export class CardRunner {
       decision = decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
     }
     if (decision.action === 'stop') {
-      const stop = makeStop(decision.stopReason, decision.reason, 'resolve the worktree/ownership conflict before starting', { at: now, global: false });
+      // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
+      const tool = decision.stopReason === 'tool';
+      const stop = makeStop(decision.stopReason, decision.reason, tool ? 'inspect the git error in the detail' : 'resolve the worktree/ownership conflict before starting', { at: now, global: false, ...(tool ? { finalFor: { goalId: goal.id, cardId: card.id, candidate: Boolean(run.candidate) } } : {}) });
       const stopped = this.save({ ...run, state: 'STOP', stop, ownerGeneration: claim.lease.generation });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }

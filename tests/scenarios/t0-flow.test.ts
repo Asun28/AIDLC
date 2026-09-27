@@ -14,6 +14,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
+import { GitProbe } from '../../src/probes/git.ts';
 import * as cli from '../../src/cli/main.ts';
 import { countedFailures, reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
@@ -4762,11 +4763,89 @@ test('T0-TOOL-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased section
   const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
   const ops = read('docs/OPERATIONS.md');
   for (const sentence of [
-    "| `tool` | unclassified ship outcome, or no usable pre-review verdict twice in one cycle | final for the card: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`; `card next` returns the same stop, and a `[SAGA-RESUME]` command in the detail is a diagnostic only (a recorded card resume is issue 109) |",
+    "| `tool` | unclassified ship outcome, no usable pre-review verdict twice in one cycle, or a worktree probe that failed at PREPARE | final for the card: fix the cause, register a replacement card (carrying the candidate when one was built), then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`; `card next` returns the same stop, and a `[SAGA-RESUME]` command in the detail is a diagnostic only (a recorded card resume is issue 109) |",
     'STOP/tool, with the `[SAGA-RESUME]` command in its detail as a diagnostic only, and nothing pushed.',
   ]) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   const changelog = read('CHANGELOG.md');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const entry = "- Tool stop text, card T0-TOOL-STOP-TEXT (issue 85 item 2): a `tool` stop (an unclassified ship outcome, or no usable pre-review verdict twice in one cycle) says it is final for the card and names the one way on: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`. It never names `card next`, which returns the same stop; the ship's `[SAGA-RESUME]` command moves to the stop's detail as a labelled diagnostic. A recorded card resume is issue 109.";
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
+
+/** A card whose PREPARE runs the real worktree decision over a scripted git: the first `card next` of a fresh run. */
+function prepareWithGit(fx: ReturnType<typeof makeFixture>, id: string, script: (worktree: string) => Parameters<typeof scriptedRunner>[0]) {
+  writeCard(fx, { id, title: `the worktree probe of ${id}` });
+  const goal = goalForCards(fx, [id]);
+  const config = { ...fx.config, shipPath: 'github' as const };
+  const worktree = path.join(resolveWorktreeRoot(config, fx.repo.mainRoot), id);
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, git: new GitProbe(scriptedRunner(script(worktree))) });
+  const card = fx.card(id);
+  const r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), id));
+  return { goal, runner, card, r };
+}
+
+const worktreeList = (entries: Array<{ path: string; branch: string }>) => entries.map((e) => `worktree ${e.path}\nHEAD 1234567890abcdef1234567890abcdef12345678\nbranch refs/heads/${e.branch}\n`).join('\n') + '\n';
+
+test('T0-PROBE-STOP-TEXT (issue 111): a worktree probe that fails at PREPARE is a tool stop that names the git error and the replacement path, never card next, and card next returns the same stop [R1] [R2]', () => {
+  const fx = makeFixture();
+  try {
+    // Each case scripts its own git error, and the stop's detail must carry it whole: the probe step and git's own words.
+    const failing: Array<[string, (worktree: string) => Parameters<typeof scriptedRunner>[0], string]> = [
+      ['T1-PROBE', () => ({ 'git worktree list --porcelain': { exitCode: 128, stderr: 'fatal: not a git repository' } }), 'worktree probe failed: git worktree list --porcelain failed (exit 128): fatal: not a git repository'],
+      ['T1-COMMON', (worktree) => ({ 'git worktree list --porcelain': { stdout: worktreeList([{ path: fx.repo.mainRoot, branch: 'main' }, { path: worktree, branch: 'T1-COMMON' }]) }, 'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: unable to read the common git directory' } }), 'cannot verify common git directory: git rev-parse --git-common-dir failed (exit 128): fatal: unable to read the common git directory'],
+    ];
+    for (const [id, script, detail] of failing) {
+      const { goal, runner, card, r } = prepareWithGit(fx, id, script);
+      assert.equal(r.directive.kind, 'stop', `${id}: ${r.directive.narration}`);
+      const stop = r.run.stop!;
+      assert.equal(stop.reason, 'tool', id);
+      assert.equal(stop.detail, detail, `${id}: the detail names the git error`);
+      assert.equal(stop.nextAction, `inspect the git error in the detail; this stop is final for card ${id}: fix the cause, register a replacement card, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"${id}":"<replacement>"}'\``, id);
+      assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
+      const again = runner.next(fx.goal(goal.id), card, r.run);
+      assert.equal(again.directive.kind, 'stop', `${id}: card next returns the stop`);
+      assert.deepEqual(again.run.stop, stop, `${id}: the same stop`);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-PROBE-STOP-TEXT (issue 111): a run that already records a candidate (a takeover without a worktree, say) names the replacement that carries it [R2]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-BUILT', title: 'a built run at PREPARE' });
+    const goal = goalForCards(fx, ['T1-BUILT']);
+    const config = { ...fx.config, shipPath: 'github' as const };
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, git: new GitProbe(scriptedRunner({ 'git worktree list --porcelain': { exitCode: 128, stderr: 'fatal: not a git repository' } })) });
+    const fresh = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-BUILT');
+    const built = fx.store.updateCardRun(goal.id, 'T1-BUILT', (current) => ({ ...(current ?? fresh), candidate: { sha: 'sha-1', dirty: false, untracked: [], digest: 'digest-1' } }));
+    const r = runner.next(fx.goal(goal.id), fx.card('T1-BUILT'), built);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'tool');
+    assert.equal(r.run.stop?.nextAction, `inspect the git error in the detail; this stop is final for card T1-BUILT: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"T1-BUILT":"<replacement>"}'\``);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-PROBE-STOP-TEXT (issue 111): an ownership stop from the same worktree check keeps its own next action [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const { r } = prepareWithGit(fx, 'T1-ELSEWHERE', (worktree) => ({ 'git worktree list --porcelain': { stdout: worktreeList([{ path: fx.repo.mainRoot, branch: 'main' }, { path: path.join(path.dirname(worktree), 'elsewhere', 'T1-ELSEWHERE'), branch: 'T1-ELSEWHERE' }]) } }));
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'ownership');
+    assert.equal(r.run.stop?.nextAction, 'resolve the worktree/ownership conflict before starting');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-PROBE-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the probe stop [R3]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = "- Probe stop text, card T0-PROBE-STOP-TEXT (issue 111): the PREPARE stop for a failed worktree probe (the worktree list or the common git directory) takes the tool-stop next action of T0-TOOL-STOP-TEXT: it names the git error, says the stop is final for the card and names the replacement path through `aidlc goal resume --replace`, without the candidate when none was built. An ownership stop from the same check keeps its own next action.";
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
