@@ -306,6 +306,13 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     assert.deepEqual(cuts(spanning).map((f) => f.message), [message('hygiene', `see ${H}2`, 'see'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')], 'the lexer reads each pair of lines as one plain scalar; the readers read two keys');
   });
 
+  test('a key right after an empty literal or folded block scalar is reported, quoted or plain, top-level or nested (T0-FM-COMMENT-CUT-2, R3 decision 2 ruling) [R2]', () => {
+    for (const header of ['|', '>-']) {
+      const r = parseCardText(templateCard({}, `notes: ${header}\n"quoted key": see ${H}12\nmemo: ${header}\nsweep: see ${H}14\ndiagnosis:\n  root_cause: x\n  same_class: ${header}\n  "quoted nested": see ${H}13`), 'D:/x/specs/tasks/T1-FOO.md');
+      assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}12`, 'see'), message('sweep', `see ${H}14`, 'see'), message('diagnosis."quoted nested"', `see ${H}13`, 'see')], header);
+    }
+  });
+
   test('a comment after a block-scalar header is reported under its key or list item, and the body stays text (T0-FM-COMMENT-CUT-2) [R2]', () => {
     const r = parseCardText(templateCard({}, `sweep: | ${H}97\n  text ${H}98\nnon_goals:\n  - >- ${H}3\n    see ${H}4`), 'D:/x/specs/tasks/T1-FOO.md');
     assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `| ${H}97`, '|'), message('non_goals item 1', `>- ${H}3`, '>-')]);

@@ -152,7 +152,8 @@ export function referenceCuts(frontMatter: string): ReferenceCut[] {
       valueStart = dash[0].length;
     } else {
       const readerKey = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:[ \t]*/);
-      const [first, second, third] = tokens.filter((t) => t.at >= start && t.at < end && t.type !== 'space');
+      // An empty block-scalar body is a token of no length at the next line's start: it holds no key.
+      const [first, second, third] = tokens.filter((t) => t.at >= start && t.at < end && t.type !== 'space' && t.source !== '');
       let top: boolean;
       if (readerKey) {
         key = readerKey[2]!;
