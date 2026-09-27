@@ -451,13 +451,21 @@ export class CardRunner {
    * a hand-off recorded meanwhile, a pending entry decided meanwhile, a counter the write would regress), so
    * the command is re-run on the current record instead of dropping or undoing the entry. Paths that remove
    * an entry on purpose (a released reservation, an abandoned round) write through `updateCardRun` from the
-   * locked record. A bound firing is journaled once per key under that lock, before the write of the stop it causes.
+   * locked record. A bound firing is saved as `pendingFiring` in the write of the stop it causes and flushed right after.
    */
-  private save(run: CardRun, firing?: BoundEntry): CardRun {
-    return this.store.saveCardRun(run, firing && ((write) => {
-      journalFiring(this.journal(run.goalId), firing);
-      write();
-    }));
+  private save(run: CardRun, firing?: BoundEntry, within?: (write: () => void) => void): CardRun {
+    const saved = this.store.saveCardRun(firing ? { ...run, pendingFiring: firing.data } : run, within);
+    return firing ? this.flush(saved, firing.generation)! : saved;
+  }
+
+  /** The outbox flush (card T1-BOUND-TELEMETRY-2): a second write under the card-run lock journals the run's pending firing once per key and clears it; an append that throws writes nothing, so the firing stays pending with its stop. Returns the run as stored. */
+  private flush(run: CardRun | undefined, generation: number): CardRun | undefined {
+    if (!run?.pendingFiring) return run;
+    try {
+      return this.store.updateCardRun(run.goalId, run.cardId, (r) => (r?.pendingFiring ? (journalFiring(this.journal(r.goalId), { type: 'BOUND_FIRED', goalId: r.goalId, cardId: r.cardId, generation, data: r.pendingFiring }), { ...r, pendingFiring: undefined }) : r!));
+    } catch {
+      return this.store.getCardRun(run.goalId, run.cardId);
+    }
   }
 
   /**
@@ -568,8 +576,17 @@ export class CardRunner {
     return { run, next, decision, lease, firing };
   }
 
-  /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
+  /** The card's move between two outbox flushes (card T1-BOUND-TELEMETRY-2): a firing left pending is journaled before anything is selected, and while one stays pending the answer is its stop, or a wait, naming it, never a ship or a build. */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
+    const stored = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation);
+    const r = stored?.pendingFiring ? { run: stored } : this.step(goal, card, caller, options);
+    if (!r.run.pendingFiring && 'directive' in r) return r;
+    const narration = `BOUND_FIRED ${r.run.pendingFiring!.key} stays pending: the journal cannot take it yet; the ${r.run.stop ? 'stop' : 'state'} is saved, and the next call journals the firing`;
+    return { run: r.run, directive: r.run.stop ? { kind: 'stop', cardId: card.id, stop: r.run.stop, narration } : { kind: 'wait', cardId: card.id, on: 'journal', pollSeconds: 60, narration } };
+  }
+
+  /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
+  private step(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel }): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
@@ -682,7 +699,7 @@ export class CardRunner {
     // The handoff intent and the acquisition are looked up by resource and generation in every goal's journal, since the lease
     // is one resource per repository and card.
     const events = (type: 'NOTE' | 'LEASE_ACQUIRED', generation: number) => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === generation));
-    const stored = this.store.getCardRun(goal.id, card.id) ?? caller;
+    const stored = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation) ?? caller;
     let completed = false;
     let previous: { owner: ActorIdentity; generation: number } | undefined;
     const lease = this.leases.update(key, (existing) => {
@@ -742,7 +759,7 @@ export class CardRunner {
       if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
       else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
     })), (refusal) => `the takeover of card ${card.id} took lease generation ${lease.generation}, but its run update was refused (${refusal}); run ${scoped('takeover')} again to complete it`);
-    const saveHolding = (run: CardRun, firing?: BoundEntry) => this.store.saveCardRun(run, holding(firing && (() => journalFiring(journal, firing))));
+    const saveHolding = (run: CardRun, firing?: BoundEntry) => this.save(run, firing, holding());
     // The assessment, its lease renewal and its saves, runs once the run carries the generation.
     const { assessed, next } = unlessLocked(() => {
       const assessed = this.assess(goal, card, owned, now, saveHolding);
@@ -1439,7 +1456,7 @@ export class CardRunner {
   async formalReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; classified: ClassifiedVerdict; verdict?: Verdict; advisory: string[]; verdictRef?: string; logRef?: string; durationMs: number; receiptSha256: string; reviewer: string }> {
     if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
     // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
-    let persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    let persisted = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation) ?? run;
     const reviewDir = path.join(this.reviewCheckout(persisted), '.review');
     // A result retained for a reservation of this card whose commit did not land (the card-run lock was held by another
     // writer at the time) is committed now, under the same invocation, without running the reviewer again. The recovery
@@ -1920,8 +1937,7 @@ export class CardRunner {
                 }
                 case 'stop-review': {
                   const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
-                  journalFiring(this.journal(goal.id), boundFired(goal, classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions', candidateDigest, card.id));
-                  next = { ...next, state: 'STOP', stop };
+                  next = { ...next, state: 'STOP', stop, pendingFiring: boundFired(goal, classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions', candidateDigest, card.id).data };
                   break;
                 }
                 case 'wait-quota':
@@ -1952,7 +1968,7 @@ export class CardRunner {
       }
     }
     this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(committed.status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: committed.found.raised, reraised: committed.found.reraised, resolved: committed.found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, canonicalPublished: publication?.published, publicationError: publication?.error, policyHash: r.policyHash } });
-    return { run: committed.run, ...result, reviewer };
+    return { run: this.flush(committed.run, goal.generation)!, ...result, reviewer };
   }
 
   /**
@@ -2326,11 +2342,9 @@ export class CardRunner {
           history.stopped = true;
           return { ...latest, evidence };
         }
-        const patch = patchOf(latest);
-        if (fired) journalFiring(this.journal(goal.id), boundFired(goal, ...fired, card.id));
-        return { ...latest, ...patch, evidence };
+        return { ...latest, ...patchOf(latest), evidence, pendingFiring: fired ? boundFired(goal, ...fired, card.id).data : latest.pendingFiring };
       });
-      if (!history.superseded && !history.stopped) return then(saved);
+      if (!history.superseded && !history.stopped) return then(this.flush(saved, goal.generation)!);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' ? 'UNKNOWN' : 'failed';
       this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
@@ -2462,7 +2476,7 @@ export class CardRunner {
         const applied = finish(
           (latest) => {
             decided = rerunOn(latest.ci);
-            fired = decided.allowed ? ['ci-rerun-allowed', candidateDigest] : cls.class === 'transient' && !snapshotAllowed ? ['ci-rerun-denied', candidateDigest] : undefined;
+            fired = decided.allowed || (cls.class === 'transient' && !snapshotAllowed) ? [decided.allowed ? 'ci-rerun-allowed' : 'ci-rerun-denied', `${candidateDigest}/${latest.ci.reruns.filter((r) => r.candidate === candidateDigest).length}`] : undefined; // the key counts the candidate's reruns, a cancelled one included
             if (decided.allowed) return { state: 'SHIP', ci: recordRerunIntent(latest.ci, runId, 1, candidateDigest, now) };
             if (cls.class === 'code-defect') return refutePatch(latest, `ship ${result.outcome}: CI code defect (${cls.evidence[0] ?? ''})`);
             if (snapshotAllowed) return { state: 'WAIT' };

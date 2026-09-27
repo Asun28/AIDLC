@@ -699,6 +699,10 @@ const GitOid = z.string().regex(/^[0-9a-f]{40}$/, 'expected a lowercase SHA-1 gi
 export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
 export type ShippedFacts = z.infer<typeof ShippedFacts>;
 
+/** A bound of the README Limits table, in the table's order (card T1-BOUND-TELEMETRY); a `BOUND_FIRED` event names one as `{ bound }`. */
+export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
+export type BoundName = z.infer<typeof BoundName>;
+export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1) });
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -744,6 +748,8 @@ export const CardRun = z.object({
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
+  /** The outbox of a bound firing (card T1-BOUND-TELEMETRY-2): saved with the stop or state it causes, cleared once it is journaled. */
+  pendingFiring: BoundFired.optional(),
   updatedAt: IsoTimestamp,
 });
 export type CardRun = z.infer<typeof CardRun>;
@@ -853,6 +859,7 @@ export const Goal = z.object({
   stop: StopRecord.optional(),
   terminal: z.boolean().default(false),
   linkedFrom: z.string().optional(),
+  pendingFiring: BoundFired.optional(), // as on a card run
   createdAt: IsoTimestamp,
   updatedAt: IsoTimestamp,
 });
@@ -905,11 +912,7 @@ export const JournalEventType = z.enum([
 ]);
 export type JournalEventType = z.infer<typeof JournalEventType>;
 
-/** A bound of the README Limits table, in the table's order (card T1-BOUND-TELEMETRY); a `BOUND_FIRED` event names one as `{ bound }`. */
-export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
-export type BoundName = z.infer<typeof BoundName>;
-export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1) });
-/** The `BOUND_FIRED` entry of a firing, journaled before the stop it causes is saved; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own. */
+/** The `BOUND_FIRED` entry of a firing, its `data` saved as `pendingFiring` with the stop it causes; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own. */
 export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}` } });
 export type BoundEntry = ReturnType<typeof boundFired>;
 

@@ -9,7 +9,7 @@ import { StoreError, atomicWriteJson, findInterruptedWrites, listJsonFiles, read
 import type { StatePaths } from './paths.ts';
 
 export interface GoalStoreOptions {
-  /** How long `updateCardRun` waits for the card-run lock before it refuses (default 2 s). */
+  /** How long `updateCardRun` and `updateGoal` wait for the record's lock before they refuse (default 2 s). */
   lockTimeoutMs?: number;
 }
 
@@ -34,10 +34,17 @@ export class GoalStore {
     return path.join(this.paths.releases, `${attemptId}.json`);
   }
 
+  /** A goal write under the goal lock (`updateGoal`); a snapshot without `pendingFiring` keeps the persisted one, which only the flush clears (card T1-BOUND-TELEMETRY-2). */
   saveGoal(goal: Goal): Goal {
-    const next = Goal.parse({ ...goal, updatedAt: nowIso() });
-    atomicWriteJson(this.goalFile(goal.id), next);
-    return next;
+    return this.updateGoal(goal.id, (persisted) => ({ ...goal, pendingFiring: goal.pendingFiring ?? persisted?.pendingFiring }));
+  }
+
+  /** Read-modify-write of one goal record under `<file>.lock` (`updateJson`), refused with `LOCKED` like a card run's; a change that returns the record it received, or nothing, writes nothing. */
+  updateGoal(goalId: string, change: (current: Goal | undefined) => Goal | undefined): Goal {
+    return updateJson(this.goalFile(goalId), Goal, (persisted) => {
+      const next = change(persisted);
+      return next === persisted || !next ? next : Goal.parse({ ...next, updatedAt: nowIso() });
+    }, this.lock)!;
   }
 
   getGoal(goalId: string): Goal | undefined {
