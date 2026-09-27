@@ -11,6 +11,16 @@ const SRC = path.join(import.meta.dirname, '..', '..', 'src');
 const SOURCES = (readdirSync(SRC, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts')).map((f) => f.split(path.sep).join('/'));
 const source = (file: string) => readFileSync(path.join(SRC, file), 'utf8');
 const holds = (text: string) => detectQuotaHold(text).hold;
+/** The `-z` literals in code, in any quote spelling (T0-PARSE-GUARD-FOLLOWUPS): a string or a template without substitutions, never a comment. */
+const zLiterals = (text: string): number => {
+  let found = 0;
+  const visit = (node: ts.Node): void => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) && node.text === '-z') found++;
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile('scan.ts', text, ts.ScriptTarget.Latest, true));
+  return found;
+};
 
 describe('nulList (T1-PARSE-GUARD acceptance 3)', () => {
   test('splits a -z listing on NUL only: a name with a newline stays whole and empty entries are dropped [R3]', () => {
@@ -23,10 +33,17 @@ describe('nulList (T1-PARSE-GUARD acceptance 3)', () => {
     const nulSplit = /\.split\(\s*(?:'[^'\n]*|"[^"\n]*|\/[^/\n]*)(?:\\u0000|\\0|\\x00)/;
     const splitting = SOURCES.filter((f) => f !== 'core/parse-guard.ts' && nulSplit.test(source(f)));
     assert.deepEqual(splitting, [], `a NUL split outside nulList in: ${splitting.join(', ')}`);
-    const listing = SOURCES.filter((f) => source(f).includes("'-z'"));
+    const listing = SOURCES.filter((f) => zLiterals(source(f)) > 0);
     assert.ok(listing.length >= 3, `the -z listings resolved to ${listing.join(', ')}`);
     const unguarded = listing.filter((f) => !source(f).includes('nulList('));
     assert.deepEqual(unguarded, [], `a -z listing not read through nulList in: ${unguarded.join(', ')}`);
+  });
+  test('the -z literal finder finds a single-quoted, double-quoted or template -z in code and none in a comment (T0-PARSE-GUARD-FOLLOWUPS) [R5]', () => {
+    assert.equal(zLiterals("git(['diff', '-z']);"), 1, 'single quotes');
+    assert.equal(zLiterals('git(["diff", "-z"]);'), 1, 'double quotes');
+    assert.equal(zLiterals('git([`diff`, `-z`]);'), 1, 'a template');
+    assert.equal(zLiterals("const a = ['-z', \"-z\", `-z`];"), 3, 'each spelling counts');
+    assert.equal(zLiterals("// git(['-z'])\n/* git([\"-z\", `-z`]) */\nconst a = ['-zz', '-Z', ' -z'];"), 0, 'a comment, a longer argument, another case, a leading space');
   });
 });
 
@@ -65,6 +82,17 @@ describe('detectQuotaHold: a numeric status first, else the word rule (T1-PARSE-
     assert.equal(detectQuotaHold('Retry-After: 2 min').retryAfterMs, 120_000);
     assert.equal(detectQuotaHold('retry after 3 minutes').retryAfterMs, 180_000);
     assert.equal(detectQuotaHold('quota exceeded').retryAfterMs, undefined);
+  });
+  test('a retry-after unit is read only as a whole word: milliseconds and minutes words, and seconds for a seconds word, no unit or any other word (T0-PARSE-GUARD-FOLLOWUPS) [R1]', () => {
+    const delay = (unit: string) => detectQuotaHold(`retry after 30${unit}`).retryAfterMs;
+    for (const unit of [' milliseconds', ' millisecond', ' millis', ' msecs', ' msec', ' ms', 'ms', 'milliseconds', ' MILLISECONDS', ' Msec', ' ms.', ' ms)', ' ms and more']) assert.equal(delay(unit), 30, `30${unit}`);
+    for (const unit of [' m', ' min', ' mins', ' minute', ' minutes', 'min', 'm', ' Minutes', ' MIN', ' minutes;', ' m,']) assert.equal(delay(unit), 1_800_000, `30${unit}`);
+    for (const unit of [' s', ' sec', ' secs', ' second', ' seconds', 's', '', ' ', ' hours', ' h', 'h', 'hours', 'x', ' msx', ' minx', ' millisecondsx', ' mins2', ' m5', ' ms5', ' secondsx', ' mé', ' msé', ' mn', ' millisec']) assert.equal(delay(unit), 30_000, `30${unit}`);
+  });
+  test('docs/OPERATIONS.md states how the word rule reads a retry-after unit (T0-PARSE-GUARD-FOLLOWUPS) [R6]', () => {
+    const operations = readFileSync(path.join(import.meta.dirname, '..', '..', 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const sentence = 'The word rule reads the delay of a `retry after <n>` in the text with its unit as a whole word in any letter case (card T0-PARSE-GUARD-FOLLOWUPS): `ms`, `msec`, `msecs`, `millis`, `millisecond` and `milliseconds` are milliseconds, `m`, `min`, `mins`, `minute` and `minutes` are minutes, and a seconds word, no unit or any other word is seconds, so `retry after 30 milliseconds` waits 30 ms where it used to wait 30 minutes.';
+    assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   });
 });
 
@@ -145,5 +173,53 @@ describe('one module owns every quota matcher (T1-PARSE-GUARD acceptance 8)', ()
   test('src/core/parse-guard.ts is at most 30 lines [R5] [R6]', () => {
     const lines = source('core/parse-guard.ts').replace(/\r\n/g, '\n').replace(/\n$/, '').split('\n').length;
     assert.ok(lines <= 30, `src/core/parse-guard.ts has ${lines} lines`);
+  });
+});
+
+describe('a billing state holds (T0-R2-BILLING-HOLD, issue #92)', () => {
+  /** The stderr the DeepSeek CLI printed on the three round-3 angles of issue #92, one request id each. */
+  const RECEIPTS = ['1d3badb9-fdf0-4164-998c-5e841344d9ab', '85406a0c-3ea7-43fb-869c-89f032df1c09', 'e1f8c686-3ba1-4d72-bbba-204d56dbd462'].map(
+    (id) => `ERROR 402: {"error":{"message":"Insufficient Balance (request_id: ${id})","type":"unknown_error","param":null,"code":"invalid_request_error"}}\n`,
+  );
+  test('the word rule holds on insufficient balance and payment required in every spelling the separators split, naming the word as matched [R1]', () => {
+    const held: Array<[string, string]> = [
+      ['Insufficient Balance', 'Insufficient Balance'],
+      ['insufficient balance', 'insufficient balance'],
+      ['INSUFFICIENT BALANCE', 'INSUFFICIENT BALANCE'],
+      ['INSUFFICIENT_BALANCE', 'INSUFFICIENT BALANCE'],
+      ['insufficientBalance', 'insufficient Balance'],
+      ['InsufficientBalance', 'Insufficient Balance'],
+      ['insufficient-balance', 'insufficient-balance'],
+      ['insufficient balances', 'insufficient balances'],
+      ['insufficientbalance', 'insufficientbalance'],
+      ['INSUFFICIENTBALANCE', 'INSUFFICIENTBALANCE'],
+      ['Payment Required', 'Payment Required'],
+      ['payment_required', 'payment required'],
+      ['PaymentRequired', 'Payment Required'],
+      ['payment-required', 'payment-required'],
+      ['paymentrequired', 'paymentrequired'],
+      ['PAYMENTREQUIRED', 'PAYMENTREQUIRED'],
+      ['HTTP 402 Payment Required', 'Payment Required'],
+    ];
+    for (const [text, word] of held) assert.deepEqual(detectQuotaHold(text), { hold: true, via: 'text', evidence: word }, text);
+    for (const text of ['402', 'Error 402', 'sufficient balance', 'insufficient balancé', 'xinsufficient balance', 'insufficient balance2', 'payment requiredé', 'payments required', 'balance insufficient']) {
+      assert.deepEqual(detectQuotaHold(text), { hold: false, via: 'text' }, text);
+    }
+    assert.deepEqual(detectQuotaHold('Insufficient Balance', 402), { hold: false, via: 'structured', evidence: 'status 402' }, 'a status of 402 decides alone and does not hold');
+  });
+  test('the three round-3 receipts of issue #92 read as a quota hold that names Insufficient Balance, with no retry delay [R2]', () => {
+    assert.equal(RECEIPTS.length, 3);
+    for (const stderr of RECEIPTS) {
+      assert.deepEqual(classifyPreReview(undefined, { exitCode: 1, timedOut: false, stdout: '', stderr }), { outcome: 'quota-hold', runStatus: 'tool_error', reasons: ['via text: Insufficient Balance'], retryAfterMs: undefined }, stderr);
+    }
+  });
+  test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the billing hold [R3]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(import.meta.dirname, '..', '..', ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const sentence = 'The word rule also holds on a billing state, `insufficient balance` and `payment required` in the spellings the separators split (card T0-R2-BILLING-HOLD): a reviewer whose account has no balance, such as the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`, is a quota hold with `via text: Insufficient Balance` in its reasons, so the R2 gate waits and spends neither a round nor the no-verdict retry, where the round used to be a `tool_error` no-verdict round (issue #92); a bare `402` and a status of 402 do not hold.';
+    assert.ok(read('docs', 'OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- Billing hold, card T0-R2-BILLING-HOLD (issue #92): the quota word rule holds on `insufficient balance` and `payment required`, so a reviewer whose account has no balance (the DeepSeek CLI answering `ERROR 402: ... Insufficient Balance`) is a quota hold that names the billing word and spends neither an R2 round nor the no-verdict retry; it used to be a `tool_error` no-verdict round.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
