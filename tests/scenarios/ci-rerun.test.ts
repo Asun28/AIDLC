@@ -7,6 +7,9 @@ import { countedFailures } from '../../src/core/effort.ts';
 const TRANSIENT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact';
 const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3';
 
+/** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order. */
+const fired = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['bound']);
+
 function start(fx: ReturnType<typeof makeFixture>, ship: InjectedShipPath) {
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
   const goal = goalForCards(fx, ['T1-HELLO']);
@@ -33,6 +36,7 @@ test('Q7: a transient CI failure earns one persisted same-origin rerun, reconcil
     const types = fx.events(goal.id).map((e) => e.type);
     assert.ok(types.includes('CI_CLASSIFIED'));
     assert.ok(types.includes('CI_RERUN'));
+    assert.deepEqual(fired(fx, goal.id), ['ci-rerun-allowed'], 'T1-BOUND-TELEMETRY acceptance 1: the rerun journals one ci-rerun-allowed firing');
 
     const reconciled = runner.ciReconcile(fx.goal(goal.id), card, r.run, '12345', () => ({ status: 'completed', conclusion: 'success', attempt: 2 }));
     assert.equal(reconciled.state, 'SHIP');
@@ -46,6 +50,7 @@ test('Q7: a transient CI failure earns one persisted same-origin rerun, reconcil
     r = runner.next(fx.goal(goal.id), card, reconciled);
     assert.equal(r.directive.kind, 'close', `expected merged -> close, got ${r.directive.kind}: ${r.directive.narration}`);
     assert.equal(ship.requests.length, 2);
+    assert.deepEqual(fired(fx, goal.id), ['ci-rerun-allowed'], 'the reconciled rerun and the merge fire nothing more');
   } finally {
     fx.cleanup();
   }
@@ -68,6 +73,9 @@ test('Q7: the rerun allowance is per candidate; a second transient failure on th
     assert.equal(r.directive.kind, 'stop');
     assert.equal(r.run.stop?.reason, 'ci');
     assert.equal(r.run.ci.reruns.length, 1, 'no second rerun recorded');
+    assert.deepEqual(fired(fx, goal.id), ['ci-rerun-denied'], 'T1-BOUND-TELEMETRY acceptance 1: the denial journals one ci-rerun-denied firing');
+    assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['ci-rerun-denied'], 'the stopped card fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -85,6 +93,7 @@ test('Q7: a code-defect CI failure never reruns; it goes back to BUILD with a ne
     assert.equal(r.run.dodReceipt, undefined, 'the failed candidate needs a fresh DoD');
     const classified = fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED');
     assert.equal(classified?.data['class'], 'code-defect');
+    assert.deepEqual(fired(fx, goal.id), [], 'a code defect with attempts left fires no bound');
   } finally {
     fx.cleanup();
   }
@@ -139,8 +148,10 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: the same CI code defect twice without
     }
     assert.equal(r.run.effort?.terminal, 'same-cause-stop');
     assert.equal(countedFailures(r.run.effort!).length, 2);
+    assert.deepEqual(fired(fx, goal.id), ['attempts'], 'T1-BOUND-TELEMETRY acceptance 1: the ladder stop journals one attempts firing');
     r = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(r.directive.kind, 'stop', 'card next keeps returning the stop');
+    assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');
     assert.throws(() => runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:3', candidateSha: 'sha-3' }), /no attempt may start: same-cause-stop/);
     assert.equal(ship.requests.length, 2);
   } finally {
@@ -215,6 +226,7 @@ test('R7: pending check names in a wait line are no failure evidence; a red buil
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(r.run.stop?.reason, 'ci', 'diagnose before any rerun');
     assert.equal(r.run.ci.reruns.length, 0, 'flaky-tests in the wait line is not transient evidence');
+    assert.deepEqual(fired(fx, goal.id), [], 'T1-BOUND-TELEMETRY: an unclassified failure is no rerun the allowance denied');
     assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'unknown');
   } finally {
     fx.cleanup();

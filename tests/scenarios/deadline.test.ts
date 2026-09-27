@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath, T0, type Fixture } from './_harness.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { HOUR_MS, MINUTE_MS, addMs } from '../../src/core/types.ts';
+import { HOUR_MS, MINUTE_MS, RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
 import { effectiveGoalDeadline } from '../../src/core/deadlines.ts';
 import { makeStop } from '../../src/core/stop.ts';
+import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delivery/ship.ts';
+
+/** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
+const fired = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => `${String(e.data['bound'])}@${e.cardId ?? 'goal'}`);
 
 test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP survives a fresh controller', () => {
   const fx = makeFixture();
@@ -20,6 +24,7 @@ test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP su
     const g = fx.goal(goal.id);
     assert.equal(g.terminal, true);
     assert.equal(g.state, 'STOP');
+    assert.deepEqual(fired(fx, goal.id), ['arc-deadline@goal'], 'T1-BOUND-TELEMETRY acceptance 1: the goal deadline journals one arc-deadline firing');
 
     // A new controller over the same persisted state does not invent a clean start.
     const fresh = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, now: fx.now, cards: fx.registry });
@@ -27,6 +32,7 @@ test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP su
     assert.equal(again.kind, 'stop');
     assert.equal(fresh.mustGoal(goal.id).stop?.reason, 'time');
     assert.throws(() => fresh.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-HELLO'] } }), /terminal/);
+    assert.deepEqual(fired(fx, goal.id), ['arc-deadline@goal'], 'a late call on the stopped goal fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -47,10 +53,13 @@ test('Q8/Q25: a card deadline is min(start + 3h, goal deadline) and expiry stops
     const r = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
     assert.equal(r.directive.kind, 'stop');
     assert.equal(r.run.stop?.reason, 'time');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-A'], 'T1-BOUND-TELEMETRY acceptance 1: the card deadline journals one card-deadline firing');
     assert.equal(fx.goal(goal.id).terminal, false, 'the arc itself is still within its 12h limit');
     const d = fx.controller.next(goal.id);
     assert.equal(d.kind, 'run-card', 'independent ready work continues');
     if (d.kind === 'run-card') assert.equal(d.cardId, 'T1-B');
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-A'], 'the stopped card fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -222,6 +231,86 @@ test('R1: a T2 goal extended after a time stop passes the plan checkpoint again 
     const after = fx.controller.next(goal.id);
     assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.store.getCardRun(goal.id, 'T1-A')!).directive.kind, 'build', 'after the approval the worker continues');
     assert.ok(after.kind === 'wait' || after.kind === 'run-card', `after the approval the re-admitted card continues: ${after.kind}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A ship that returns after the card deadline: the fixture clock moves while it runs. */
+class LateShip extends InjectedShipPath {
+  private readonly fx: Fixture;
+  constructor(fx: Fixture, outcomes: ShipOutcomeClass[], stdoutText: string) {
+    super(outcomes, stdoutText);
+    this.fx = fx;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    this.fx.advance(4 * HOUR_MS);
+    return super.ship(req);
+  }
+}
+
+for (const [outcome, text, detail] of [
+  ['red-missing', '', /^RED receipt rejected .* after the card deadline/],
+  ['merge-failed', 'CONFLICT (content): Merge conflict in src/a.ts', /^merge conflict on the base sync after the card deadline/],
+] as const) {
+  test(`T1-BOUND-TELEMETRY acceptance 1: a ${outcome} ship result that returns after the card deadline stops the card for time and journals one card-deadline firing [R1]`, () => {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-LATE', title: 'the ship returns late' });
+      const goal = goalForCards(fx, ['T1-LATE'], { size: 'T1' });
+      const runner = fx.runner(new LateShip(fx, [outcome], text));
+      const card = fx.card('T1-LATE');
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-LATE'));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-LATE') });
+      r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'stop', r.directive.narration);
+      assert.equal(r.run.stop?.reason, 'time');
+      assert.match(r.run.stop?.detail ?? '', detail);
+      assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE']);
+      assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
+      assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE'], 'the stopped card fires nothing more');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T1-BOUND-TELEMETRY acceptance 1: an UNKNOWN operation past the card deadline and its grace stops the card and journals one reconciliation-grace firing for the card [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(goal, 'T1-A');
+    const op = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-A', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    fx.ops.markResult(op.id, 'UNKNOWN', { error: 'lookup failed' }, fx.now());
+    fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS);
+    const r = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'time');
+    assert.match(r.run.stop?.detail ?? '', /reconciliation grace expired/);
+    assert.equal(fx.goal(goal.id).terminal, false, 'the goal is within its 12 h limit');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A']);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A'], 'the stopped card fires nothing more');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY acceptance 1: an unresolved operation past the goal deadline and its grace stops the goal and journals one reconciliation-grace firing for the goal, not an arc-deadline one [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    if (d.kind === 'stop') assert.equal(d.stop.detail, 'reconciliation grace expired with unresolved operations');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal']);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal'], 'the stopped goal fires nothing more');
   } finally {
     fx.cleanup();
   }

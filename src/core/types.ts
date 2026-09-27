@@ -907,9 +907,15 @@ export const JournalEventType = z.enum([
   'INTENT_FILED',
   'MODEL_INVOCATION',
   'HOOK_DECISION',
+  'BOUND_FIRED',
   'NOTE',
 ]);
 export type JournalEventType = z.infer<typeof JournalEventType>;
+
+/** A bound of the README Limits table, in the table's order (card T1-BOUND-TELEMETRY); a `BOUND_FIRED` event names one as `{ bound }`. */
+export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
+export type BoundName = z.infer<typeof BoundName>;
+export const BoundFired = z.object({ bound: BoundName });
 
 export const JournalEvent = z.object({
   seq: z.number().int().nonnegative(),
