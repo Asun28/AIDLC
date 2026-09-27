@@ -7,6 +7,9 @@ import { Journal } from '../../src/state/journal.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 import { OperationLedger } from '../../src/coordination/reconcile.ts';
+import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { GitProbe } from '../../src/probes/git.ts';
+import { GhProbe } from '../../src/probes/gh.ts';
 
 const now = '2026-09-11T00:00:00.000Z';
 
@@ -215,4 +218,206 @@ test('T0-AUDIT-READMIT acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unrele
     'Of the goals in this repository\'s state when this card ran, the four that were resumed (g-20260915193112-db0472, g-20260917214550-c76e7f, g-20260918021545-195e85 and g-20260925014420-bcf1ef) reported 4, 4, 5 and 4 such events and now report none; every other goal reports what it reported before (docs/OPERATIONS.md).',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+// T1-AUDIT-FACTS: the facts journaled with a merge, re-derived from git and gh through scripted probes (no network).
+const HEAD = 'a'.repeat(40);
+const MERGE = 'b'.repeat(40);
+const TREE = 'c'.repeat(40);
+const OTHER = 'e'.repeat(40);
+const BASE = 'refs/remotes/origin/main';
+const FACTS = { headSha: HEAD, mergeSha: MERGE, tree: TREE, pr: 42 };
+const GH_VIEW = 'gh pr view 42 --repo o/r --json';
+const prJson = (over: Record<string, unknown> = {}) => ({ stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE }, ...over }) });
+
+/** git and gh answering as a repository and GitHub where the merge happened as recorded; `over` replaces single answers. */
+function probes(over: Record<string, Partial<ExecReceipt>> = {}, repository: string | undefined = 'o/r') {
+  const calls: string[] = [];
+  const script = scriptedRunner({
+    [`git cat-file -t ${MERGE}`]: { stdout: 'commit\n' },
+    [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${TREE}\n` },
+    [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 0 },
+    [GH_VIEW]: prJson(),
+    ...over,
+  });
+  const runner: SyncRunner = (command, args, options) => {
+    calls.push([command, ...args].join(' '));
+    return script(command, args, options);
+  };
+  return { calls, probes: { git: new GitProbe(runner), gh: new GhProbe(runner), cwd: 'D:/repo', base: BASE, repository } };
+}
+
+/** The events the card runner journals for one card shipped on the GitHub path; `result` is merged into the result's data. */
+function ship(journal: Journal, goalId: string, cardId: string, result: Record<string, unknown> = FACTS, op = `op-${cardId}`) {
+  journal.append({ type: 'OPERATION_INTENT', goalId, cardId, generation: 0, data: { operationId: op, kind: 'merge', candidateDigest: 'cand' } });
+  journal.append({ type: 'OPERATION_ISSUED', goalId, cardId, generation: 0, data: { operationId: op } });
+  journal.append({ type: 'OPERATION_RESULT', goalId, cardId, generation: 0, data: { operationId: op, status: 'succeeded', ...result } });
+}
+
+const mismatch = (detail: string) => ({ severity: 'block', code: 'FACT_MISMATCH', detail });
+const unverified = (detail: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail });
+const GIT_UNVERIFIED = [unverified('T1-A mergeSha object type: recorded commit, not re-derived (git)'), unverified(`T1-A tree: recorded ${TREE}, not re-derived (git)`), unverified(`T1-A mergeSha on ${BASE}: recorded ancestor, not re-derived (git)`)];
+const GH_UNVERIFIED = [unverified('T1-A pr 42 state: recorded MERGED, not re-derived (gh)'), unverified(`T1-A mergeSha: recorded ${MERGE}, not re-derived (gh)`), unverified(`T1-A headSha: recorded ${HEAD}, not re-derived (gh)`)];
+
+/** One goal with T1-A shipped with facts, verified with `p`, optionally sealed and under a full-audit claim. */
+function verifyShipped(p: ReturnType<typeof probes>['probes'] | undefined, options: { seal?: boolean; claim?: boolean } = {}) {
+  const f = fixture();
+  f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId, data: { text: 'ship T1-A' } });
+  ship(f.journal, f.goalId, 'T1-A');
+  const manifest = options.seal ? sealWith(f) : undefined;
+  return verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: manifest ? f.evidence : undefined, manifest, finalCandidateDigest: manifest ? 'cand-final' : undefined, hostCaptureBoundary: options.claim ? { present: true, detail: 'asserted' } : undefined, probes: p, now });
+}
+
+test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from git and gh, and one disagreement is a block naming the card, the fact and both values [R2]', () => {
+  const clean = verifyShipped(probes().probes, { seal: true });
+  assert.deepEqual(clean.findings, [], 'facts that match git and gh leave no finding');
+  assert.equal(clean.level, 'independently-verified');
+  const cases: Array<[string, Record<string, Partial<ExecReceipt>>, string]> = [
+    ['git cat-file -t names another object type', { [`git cat-file -t ${MERGE}`]: { stdout: 'tree\n' } }, 'T1-A mergeSha object type: recorded commit, re-derived tree'],
+    ['git rev-parse <mergeSha>^{tree} names another tree', { [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${OTHER}\n` } }, `T1-A tree: recorded ${TREE}, re-derived ${OTHER}`],
+    ['git merge-base --is-ancestor finds the merge off the base', { [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 1 } }, `T1-A mergeSha on ${BASE}: recorded ancestor, re-derived not an ancestor`],
+    ['gh reports the PR not merged', { [GH_VIEW]: prJson({ state: 'CLOSED' }) }, 'T1-A pr 42 state: recorded MERGED, re-derived CLOSED'],
+    ['gh reports another merge commit', { [GH_VIEW]: prJson({ mergeCommit: { oid: OTHER } }) }, `T1-A mergeSha: recorded ${MERGE}, re-derived ${OTHER}`],
+    ['gh reports no merge commit', { [GH_VIEW]: prJson({ mergeCommit: null }) }, `T1-A mergeSha: recorded ${MERGE}, re-derived none`],
+    ['gh reports another head', { [GH_VIEW]: prJson({ headRefOid: OTHER }) }, `T1-A headSha: recorded ${HEAD}, re-derived ${OTHER}`],
+  ];
+  for (const [name, over, detail] of cases) {
+    const report = verifyShipped(probes(over).probes, { seal: true, claim: true });
+    assert.deepEqual(report.findings, [mismatch(detail)], name);
+    assert.equal(report.level, 'traceable', `${name}: a fact git or GitHub contradicts is not independently verified`);
+    assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability', name);
+    assert.equal(report.prerequisite, 'audit level is traceable; resolve blocking findings', `${name}: the facts that matched still count for the card`);
+  }
+});
+
+test('T1-AUDIT-FACTS acceptance 3: a fact git or gh cannot answer is a FACT_UNVERIFIED warning and never counts as re-derived [R3]', () => {
+  const absent = { [`git cat-file -t ${MERGE}`]: { exitCode: 128, stderr: 'fatal: Not a valid object name' }, [`git rev-parse ${MERGE}^{tree}`]: { exitCode: 128, stderr: 'fatal: ambiguous argument' }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 128, stderr: 'fatal: Not a valid commit name' } };
+  const ghDown = { [GH_VIEW]: { exitCode: 1, stderr: 'error connecting to api.github.com' } };
+  const noRepository = probes({}, undefined);
+  const cases: Array<[string, ReturnType<typeof probes>['probes'] | undefined, unknown[], boolean]> = [
+    ['gh fails', probes(ghDown).probes, GH_UNVERIFIED, true],
+    ['no repository is configured for gh', noRepository.probes, GH_UNVERIFIED, true],
+    ['gh answers malformed JSON', probes({ [GH_VIEW]: { stdout: 'not json' } }).probes, GH_UNVERIFIED, true],
+    ['the merge commit is absent from the repository', probes(absent).probes, GIT_UNVERIFIED, true],
+    ['the merge commit is absent and gh fails', probes({ ...absent, ...ghDown }).probes, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
+    ['no probes at all', undefined, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
+  ];
+  for (const [name, p, findings, rederived] of cases) {
+    const report = verifyShipped(p, { seal: true, claim: true });
+    assert.deepEqual(report.findings, findings, name);
+    assert.equal(report.level, 'independently-verified', `${name}: an unverified fact is a warning only`);
+    if (rederived) {
+      assert.equal(report.fullyAuditedStatus, 'verified', `${name}: the facts that were re-derived still count`);
+    } else {
+      assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability', `${name}: a card with every fact unverified counts as having none`);
+      assert.equal(report.prerequisite, 'no re-derived fact for shipped card(s): T1-A', name);
+    }
+  }
+  assert.ok(noRepository.calls.length > 0 && noRepository.calls.every((c) => !c.startsWith('gh ')), `without a repository gh never runs: ${noRepository.calls.join(' | ')}`);
+});
+
+test('T1-AUDIT-FACTS acceptance 4 (unit): the claim names each shipped card without a re-derived fact, a reconciled merge included, after the other prerequisite [R4]', () => {
+  const f = fixture();
+  f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId });
+  ship(f.journal, f.goalId, 'T1-A');
+  ship(f.journal, f.goalId, 'T1-B', {});
+  // A merge left UNKNOWN and reconciled as succeeded by `aidlc ops reconcile` is shipped, and carries no facts.
+  f.journal.append({ type: 'OPERATION_INTENT', goalId: f.goalId, cardId: 'T1-C', generation: 0, data: { operationId: 'op-C', kind: 'merge', candidateDigest: 'cand' } });
+  f.journal.append({ type: 'OPERATION_RESULT', goalId: f.goalId, cardId: 'T1-C', generation: 0, data: { operationId: 'op-C', status: 'UNKNOWN' } });
+  f.journal.append({ type: 'OPERATION_RECONCILED', goalId: f.goalId, cardId: 'T1-C', data: { operationId: 'op-C', status: 'succeeded' } });
+  const manifest = sealWith(f);
+  const claim = (present: boolean) => verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: f.evidence, manifest, finalCandidateDigest: 'cand-final', hostCaptureBoundary: { present, detail: 'no export' }, probes: probes().probes, now });
+  const report = claim(true);
+  assert.deepEqual(report.findings, []);
+  assert.equal(report.level, 'independently-verified');
+  assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability');
+  assert.equal(report.prerequisite, 'no re-derived fact for shipped card(s): T1-B, T1-C');
+  assert.equal(claim(false).prerequisite, 'host capture boundary missing: no export; no re-derived fact for shipped card(s): T1-B, T1-C');
+});
+
+test('T1-AUDIT-FACTS acceptance 5: changing every narration and free-text field of a journal changes no finding and no level [R5]', () => {
+  const journalWith = (goalId: string, text: string, noted: Record<string, unknown>) => {
+    const f = fixture(goalId);
+    f.journal.append({ type: 'GOAL_CREATED', goalId, data: { text } });
+    ship(f.journal, goalId, 'T1-A', { ...FACTS, detail: text, narration: text });
+    ship(f.journal, goalId, 'T1-B', { reason: text });
+    f.journal.append({ type: 'CARD_STATE', goalId, cardId: 'T1-A', data: { from: 'SHIP', to: 'CLOSE', reason: text } });
+    f.journal.append({ type: 'NOTE', goalId, cardId: 'T1-B', data: { narration: text, ...noted } });
+    f.journal.append({ type: 'EVIDENCE_RETAINED', goalId, cardId: 'T1-B', data: { id: 'ship-op-T1-B', kind: 'artifact', note: text } });
+    f.journal.append({ type: 'GOAL_DONE', goalId, data: { reason: text } });
+    return verifyAudit({ goalId, journal: f.journal, hostCaptureBoundary: { present: true, detail: 'asserted' }, probes: probes().probes, now });
+  };
+  const plain = journalWith('g-plain', 'merged as recorded', FACTS);
+  const altered = journalWith('g-altered', `merge commit ${OTHER} tree ${OTHER} head ${OTHER} PR #7 FACT_MISMATCH`, { headSha: OTHER, mergeSha: OTHER, tree: OTHER, pr: 7 });
+  assert.deepEqual(altered.findings, plain.findings);
+  assert.equal(altered.level, plain.level);
+  assert.equal(altered.fullyAuditedStatus, plain.fullyAuditedStatus);
+  assert.equal(altered.prerequisite, plain.prerequisite);
+  assert.deepEqual(plain.findings, [], 'the facts of T1-A match git and gh');
+  assert.equal(plain.prerequisite, 'audit level is traceable; resolve blocking findings; no re-derived fact for shipped card(s): T1-B', 'the fact-shaped note of T1-B is no merge result');
+});
+
+test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the level and findings it reported before and runs no probe; only the merge result its writer journals carries facts [R2]', () => {
+  const merge = (cardId: string | undefined, op: string): [string, string | undefined, Record<string, unknown>] => ['OPERATION_INTENT', cardId, { operationId: op, kind: 'merge', candidateDigest: 'cand' }];
+  const cases: Array<[string, Array<[string, string | undefined, Record<string, unknown>]>]> = [
+    ['no merge at all', [['NOTE', undefined, { n: 1 }]]],
+    ['a failed merge result carrying facts', [merge('T1-A', 'op-1'), ['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'failed', ...FACTS }]]],
+    ['a merge left UNKNOWN carrying facts', [merge('T1-A', 'op-1'), ['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'UNKNOWN', ...FACTS }]]],
+    ['a succeeded result naming another card than its merge intent', [merge('T1-A', 'op-1'), ['OPERATION_RESULT', 'T1-B', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['a succeeded deploy result carrying facts', [['OPERATION_INTENT', 'T1-A', { operationId: 'op-1', kind: 'deploy' }], ['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['a succeeded result with no intent', [['OPERATION_RESULT', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['a merge intent and result that name no card (aidlc ops intent)', [merge(undefined, 'op-1'), ['OPERATION_RESULT', undefined, { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['facts on a note of a card with a merge intent', [merge('T1-A', 'op-1'), ['NOTE', 'T1-A', { operationId: 'op-1', status: 'succeeded', ...FACTS }]]],
+    ['a merge intent and result that carry no operation id', [['OPERATION_INTENT', 'T1-A', { kind: 'merge' }], ['OPERATION_RESULT', 'T1-A', { status: 'succeeded', ...FACTS }]]],
+  ];
+  for (const [name, events] of cases) {
+    const f = fixture();
+    f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId });
+    for (const [type, cardId, data] of events) f.journal.append({ type, goalId: f.goalId, cardId, generation: 0, data } as Parameters<Journal['append']>[0]);
+    const { calls, probes: p } = probes();
+    const report = verifyAudit({ goalId: f.goalId, journal: f.journal, hostCaptureBoundary: { present: true, detail: 'asserted' }, probes: p, now });
+    assert.deepEqual(report.findings, [], name);
+    assert.equal(report.level, 'traceable', name);
+    assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability', name);
+    assert.equal(report.prerequisite, 'audit level is traceable; resolve blocking findings', name);
+    assert.deepEqual(calls, [], `${name}: nothing to re-derive`);
+  }
+});
+
+/** The sentences card T1-AUDIT-FACTS adds to the docs and the CHANGELOG (acceptance 8). */
+const FACT_DOC_SENTENCES = {
+  operations: [
+    '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of every merge it verifies on the GitHub path, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a fetch of the base, never from the ship output.',
+    '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded merge commit and head.',
+    'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
+    '`--claim-full` is `verified` only when, in addition, every shipped card (a card whose merge operation succeeded, by its result or by `aidlc ops reconcile`) has at least one re-derived fact; otherwise the prerequisite names each card that has none, which includes every card of a journal written before this change.',
+  ],
+  architecture: [
+    '4. The merge result of a card shipped on the GitHub path carries `ShippedFacts` (`src/core/types.ts`: `headSha`, `mergeSha`, `tree`, `pr`), which the card runner reads from `gh pr view` and `git rev-parse <mergeSha>^{tree}` when it verifies the merge; `verifyAudit` takes injected git and gh probes (`aidlc audit verify` passes real ones) and re-derives each fact with `git cat-file -t`, `git rev-parse <mergeSha>^{tree}`, `git merge-base --is-ancestor <mergeSha> <base>` and `gh pr view <pr>`.',
+    'A disagreement is a `FACT_MISMATCH` block, a fact that cannot be re-derived is a `FACT_UNVERIFIED` warning, no check reads a narration or free-text field, and a "fully audited" claim also needs at least one re-derived fact for every shipped card.',
+  ],
+  changelog: [
+    '- Audit facts, card T1-AUDIT-FACTS: the card runner journals the merge `OPERATION_RESULT` of every merge it verifies on the GitHub path with the PR head, the merge commit, its tree and the PR number, read from `gh pr view` and `git rev-parse` after a fetch of the base, never from the ship output, and `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning.',
+    '`--claim-full` now also names each shipped card with no re-derived fact, so a journal written before this change reports `BLOCKED/capability` for every card it shipped; no check reads a narration or free-text field (docs/OPERATIONS.md).',
+  ],
+};
+
+test('T1-AUDIT-FACTS acceptance 8: docs/OPERATIONS.md (Audit), docs/ARCHITECTURE.md (Evidence and audit chain) and the CHANGELOG Unreleased section state what audit verify re-derives and what --claim-full requires [R2] [R4]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const section = (file: string[], heading: string) => {
+    const text = readFileSync(path.join(root, ...file), 'utf8').replace(/\r\n/g, '\n');
+    const start = text.indexOf(heading);
+    assert.ok(start >= 0, `${file.join('/')} has ${heading}`);
+    const end = text.indexOf('\n## ', start + 1);
+    return text.slice(start, end < 0 ? undefined : end);
+  };
+  const where: Array<[string[], string, string[]]> = [
+    [['docs', 'OPERATIONS.md'], '## Audit', FACT_DOC_SENTENCES.operations],
+    [['docs', 'ARCHITECTURE.md'], '## Evidence and audit chain', FACT_DOC_SENTENCES.architecture],
+    [['CHANGELOG.md'], '## Unreleased', FACT_DOC_SENTENCES.changelog],
+  ];
+  for (const [file, heading, sentences] of where) {
+    const text = section(file, heading);
+    for (const sentence of sentences) assert.ok(text.includes(sentence), `${file.join('/')} (${heading}) states: ${sentence}`);
+  }
 });

@@ -694,6 +694,11 @@ export const PrInfo = z.object({
 });
 export type PrInfo = z.infer<typeof PrInfo>;
 
+/** The facts of a verified merge, read from gh and git and journaled with its OPERATION_RESULT (card T1-AUDIT-FACTS). */
+const GitOid = z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, 'expected a lowercase git object id');
+export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
+export type ShippedFacts = z.infer<typeof ShippedFacts>;
+
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,

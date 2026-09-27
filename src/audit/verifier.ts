@@ -15,6 +15,8 @@ import path from 'node:path';
 import type { Journal } from '../state/journal.ts';
 import { fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
+import type { GitProbe } from '../probes/git.ts';
+import type { GhProbe } from '../probes/gh.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -45,6 +47,8 @@ export interface VerifierInput {
   /** Whether the host captured model turns / tool calls for the declared inventory (existing-host prerequisite). */
   hostCaptureBoundary?: { present: boolean; detail: string };
   finalCandidateDigest?: string;
+  /** The probes that re-derive the facts journaled with each merge (card T1-AUDIT-FACTS); `base` is the ref a merge must be on. */
+  probes?: { git: GitProbe; gh: GhProbe; cwd: string; base: string; repository?: string };
   now: string;
 }
 

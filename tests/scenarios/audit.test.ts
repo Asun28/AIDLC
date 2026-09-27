@@ -1,10 +1,26 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { test } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, candidateShaFor } from './_harness.ts';
 import { HOUR_MS, MINUTE_MS, addMs } from '../../src/core/types.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
+
+/** The CLI from the sources, never a compiled build that may be stale. */
+const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
+
+/** The GitHub ship path as the card runner sees it: the card merged as PR #42. */
+class MergedPr42 extends DryRunShipPath {
+  override ship(req: ShipRequest): ShipResult {
+    return { ...super.ship(req), prNumber: 42 };
+  }
+}
 
 function finishedGoal(fx: ReturnType<typeof makeFixture>) {
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
@@ -88,8 +104,11 @@ test('Q12/LC12: a "fully audited" claim without a host capture boundary is BLOCK
     assert.equal(blocked.level, 'independently-verified');
     assert.equal(blocked.fullyAuditedStatus, 'BLOCKED/capability');
     assert.ok(/capture boundary/.test(blocked.prerequisite ?? ''));
-    const verified = verifyAudit({ goalId, journal: fx.journal(goalId), operations: fx.ops, evidence: ev, manifest, finalCandidateDigest: digest, hostCaptureBoundary: { present: true, detail: 'asserted' }, now: fx.now() });
-    assert.equal(verified.fullyAuditedStatus, 'verified');
+    // T1-AUDIT-FACTS: the dry-run merge of T1-HELLO journals no facts, as every merge before that card, so the boundary
+    // alone no longer verifies the claim; the verified claim with facts is its acceptance 4 below.
+    const boundaryOnly = verifyAudit({ goalId, journal: fx.journal(goalId), operations: fx.ops, evidence: ev, manifest, finalCandidateDigest: digest, hostCaptureBoundary: { present: true, detail: 'asserted' }, now: fx.now() });
+    assert.equal(boundaryOnly.fullyAuditedStatus, 'BLOCKED/capability');
+    assert.equal(boundaryOnly.prerequisite, 'no re-derived fact for shipped card(s): T1-HELLO');
   } finally {
     fx.cleanup();
   }
@@ -156,6 +175,61 @@ test('T0-AUDIT-READMIT acceptance 2 end to end: a goal stopped for time, re-admi
     const report = verifyAudit({ goalId: goal.id, journal: fx.journal(goal.id), operations: fx.ops, now: fx.now() });
     assert.equal(report.findings.find((f) => f.code === 'WORK_AFTER_TERMINAL'), undefined, JSON.stringify(report.findings));
     assert.equal(report.level, 'traceable', JSON.stringify(report.findings));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-AUDIT-FACTS acceptance 4: aidlc audit verify --claim-full is BLOCKED naming each shipped card with no re-derived fact, every card of a journal written before the facts included, and verified once every shipped card has one [R4]', () => {
+  const fx = makeFixture();
+  try {
+    // A repository whose main holds the merge commit: the CLI runs git for real, and never gh (no repository is configured).
+    const git = (...args: string[]) => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: fx.tmp, encoding: 'utf8' });
+      assert.equal(r.status, 0, r.stderr);
+      return r.stdout.trim();
+    };
+    git('init', '-q', '-b', 'main');
+    writeFileSync(path.join(fx.tmp, 'hello.txt'), 'hello\n');
+    git('add', 'hello.txt');
+    git('commit', '-q', '-m', 'merge');
+    const merge = git('rev-parse', 'HEAD');
+    const tree = git('rev-parse', 'HEAD^{tree}');
+    // Two cards shipped on a path that journals no facts, as every merge journaled before this card.
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    writeCard(fx, { id: 'T1-WORLD', title: 'print world' });
+    const before = goalForCards(fx, ['T1-HELLO', 'T1-WORLD']);
+    driveCardToDone(fx, before.id, 'T1-HELLO');
+    driveCardToDone(fx, before.id, 'T1-WORLD');
+    sealed(fx, before.id);
+    // One card merged as PR #42 on the GitHub path: the runner reads its facts from the scripted gh and git.
+    writeCard(fx, { id: 'T1-FACTS', title: 'facts of a merge' });
+    const after = goalForCards(fx, ['T1-FACTS']);
+    const head = 'a'.repeat(40);
+    const script = scriptedRunner({ 'gh pr view 42 --repo o/r --json': { stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: head, mergeCommit: { oid: merge } }) }, 'git fetch': {}, [`git rev-parse ${merge}^{tree}`]: { stdout: `${tree}\n` } });
+    const github = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r' }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new MergedPr42(), now: fx.now, runner: script });
+    const card = fx.card('T1-FACTS');
+    const dry = fx.runner();
+    let r = dry.next(fx.goal(after.id), card, fx.controller.ensureCardRun(fx.goal(after.id), 'T1-FACTS'));
+    r = dry.next(fx.goal(after.id), card, r.run);
+    r = github.next(fx.goal(after.id), card, dry.recordAttempt(fx.goal(after.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: head }));
+    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    sealed(fx, after.id);
+    const verify = (goalId: string) => {
+      const out = spawnSync(process.execPath, [MAIN, 'audit', 'verify', '--goal', goalId, '--claim-full', '--capture-boundary', '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 60_000 });
+      assert.equal(out.status, 0, out.stderr);
+      return (JSON.parse(out.stdout) as Array<{ level: string; fullyAuditedStatus: string; prerequisite?: string; findings: unknown[] }>)[0]!;
+    };
+    const old = verify(before.id);
+    assert.equal(old.level, 'independently-verified', JSON.stringify(old.findings));
+    assert.equal(old.fullyAuditedStatus, 'BLOCKED/capability');
+    assert.equal(old.prerequisite, 'no re-derived fact for shipped card(s): T1-HELLO, T1-WORLD');
+    const withFacts = verify(after.id);
+    const gh = (fact: string, value: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `T1-FACTS ${fact}: recorded ${value}, not re-derived (gh)` });
+    assert.deepEqual(withFacts.findings, [gh('pr 42 state', 'MERGED'), gh('mergeSha', merge), gh('headSha', head)], 'git re-derived the commit, its tree and its place on main');
+    assert.equal(withFacts.level, 'independently-verified');
+    assert.equal(withFacts.fullyAuditedStatus, 'verified');
+    assert.equal(withFacts.prerequisite, undefined);
   } finally {
     fx.cleanup();
   }
