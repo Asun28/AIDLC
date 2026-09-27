@@ -1,7 +1,7 @@
 ---
 id: T0-UNWRITTEN-EVENT-TYPES
 title: The seven journal event types no code writes are removed, and the verifier's trace check reads CARD_DISPATCHED only (issue 101, plan finding F4)
-status: todo
+status: merged
 branch: T0-UNWRITTEN-EVENT-TYPES
 worktree: D:\wt\AIDLC\T0-UNWRITTEN-EVENT-TYPES
 allow_paths:
