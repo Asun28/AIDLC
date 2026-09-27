@@ -9,12 +9,13 @@ allow_paths:
   - src/delivery/ship.ts
   - src/loop/card-runner.ts
   - tests/infra/github-ship.test.ts
+  - tests/infra/github-ship-merge-refused.test.ts
   - tests/infra/ship.test.ts
   - tests/scenarios/base-sync-committed.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T0-BASE-SYNC-CHANGELOG-EDGES.md
-dod_command: npm run typecheck && node --test tests/infra/github-ship.test.ts tests/infra/ship.test.ts tests/scenarios/base-sync-committed.test.ts
+dod_command: npm run typecheck && node --test tests/infra/github-ship.test.ts tests/infra/github-ship-merge-refused.test.ts tests/infra/ship.test.ts tests/scenarios/base-sync-committed.test.ts
 dod_exit: 0
 requirements:
   - R1. WHEN the CHANGELOG.md merge of the base sync is committed but its commit cannot be read back (the `git rev-parse --verify HEAD` after the commit exits non-zero or prints nothing), the GitHub ship path shall return the new sentinel `[SHIP-BASE-SYNC-COMMITTED]` instead of `[SHIP-BASE-SYNC-FAIL]`, and its detail shall say the merge is committed and name the read's exit and stderr; `SENTINEL_MAP` shall classify it as `merge-failed`, and the card runner's merge-conflict repair shall tell the agent to check that the worktree HEAD is that merge, rerun the DoD on it and record it as the attempt, never to resolve every hunk. It never names a merge commit, so it is never `[SHIP-BASE-SYNC-MERGED]` (T0-BASE-SYNC-CHANGELOG R3 decision 1).
@@ -39,7 +40,7 @@ non_goals: [conflicts in paths other than CHANGELOG.md, the base sync of the sca
 diagnosis:
   root_cause: "mergeChangelog (src/delivery/github-ship.ts) returns undefined, so the caller's [SHIP-BASE-SYNC-CONFLICT] without the error, when the unmerged listing, a read of CHANGELOG.md or the diff3 checkout fails; its write-failure details assume the file kept its conflict or its diff3 markers, though a failed write can leave it truncated; a committed merge whose commit cannot be read back returns [SHIP-BASE-SYNC-FAIL], which the card runner narrates as 'resolve every hunk' although no conflict remains; unionUnreleasedInsertions accepts any added line but a ## heading; and the write-failure tests use chmod 0o444, which does not stop root (issue 60, the advisories of R2 cycle 1 and R3 decision 2 on T0-BASE-SYNC-CHANGELOG-2)."
   same_class: "Every failure return of mergeChangelog (listing, first read, diff3 checkout, second read, restore write, resolution write, commit read-back) and every line shape the resolver accepts."
-hygiene: "Issue 60, the five advisories on T0-BASE-SYNC-CHANGELOG-2. The one card-runner.ts hunk is the step text of the base-sync merge-conflict repair (lines 2478-2481 before this card), clear of the ranges other sessions hold (1-45, 690-730, 2300-2340), told to aidlc-37 before the edit and approved by it (aidlc-a6 edits lines 21 and 2309-2322, aidlc-b7 lines 36 and 706-719). Run the mutation sweep over every new branch before the first review; the doc test reads the exact sentences (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS); every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8)."
+hygiene: "Issue 60, the five advisories on T0-BASE-SYNC-CHANGELOG-2. The older base-sync tests (tests/infra/github-ship.test.ts, tests/infra/github-ship-merge-refused.test.ts) list no unmerged path by default instead of relying on the failed listing that R3 now reports, and the listing case of T0-BASE-SYNC-CHANGELOG acceptance 2 moves to acceptance 4 here, which asserts its new result. The one card-runner.ts hunk is the step text of the base-sync merge-conflict repair (lines 2478-2481 before this card), clear of the ranges other sessions hold (1-45, 690-730, 2300-2340), told to aidlc-37 before the edit and approved by it (aidlc-a6 edits lines 21 and 2309-2322, aidlc-b7 lines 36 and 706-719). Run the mutation sweep over every new branch before the first review; the doc test reads the exact sentences (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS); every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8)."
 doc_sync: docs/OPERATIONS.md (base sync paragraph), CHANGELOG.md
 ---
 
@@ -50,7 +51,7 @@ The base-sync CHANGELOG merge of the GitHub ship path reports each of its own fa
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/infra/github-ship.test.ts tests/infra/ship.test.ts tests/scenarios/base-sync-committed.test.ts
+npm run typecheck && node --test tests/infra/github-ship.test.ts tests/infra/github-ship-merge-refused.test.ts tests/infra/ship.test.ts tests/scenarios/base-sync-committed.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
