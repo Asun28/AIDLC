@@ -137,11 +137,26 @@ export type ProjectConfig = z.infer<typeof ProjectConfig>;
 
 export const CONFIG_FILE = 'aidlc.config.json';
 
+/** An `aidlc.config.json` that is not JSON or fails the schema; a file that cannot be read throws Node's own error. */
+export class ConfigError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'ConfigError';
+  }
+}
+
 export function loadProjectConfig(root: string): { config: ProjectConfig; file: string; found: boolean } {
   const file = path.join(root, CONFIG_FILE);
   if (!existsSync(file)) return { config: ProjectConfig.parse({}), file, found: false };
-  const parsed = ProjectConfig.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-  if (!parsed.success) throw new Error(`${CONFIG_FILE}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  const text = readFileSync(file, 'utf8');
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch (err) {
+    throw new ConfigError(`${CONFIG_FILE}: ${(err as Error).message}`, { cause: err });
+  }
+  const parsed = ProjectConfig.safeParse(raw);
+  if (!parsed.success) throw new ConfigError(`${CONFIG_FILE}: ${parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
   return { config: parsed.data, file, found: true };
 }
 

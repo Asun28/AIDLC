@@ -874,11 +874,12 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F2): the off prompts are byte-equal to t
   for (const stage of ['pre', 'formal'] as const) {
     for (const perspective of [undefined, 'ac-coverage', 'bugs']) {
       const key = `${stage}/${perspective ?? 'single'}`;
-      // T1-OPUS55-PROMPTS adds two sentences on purpose (the end-of-turn line, and for R2 the every-finding sentence);
-      // with exactly those removed each prompt is still the pre-change prompt, byte for byte.
-      const off = withoutOpus55Sentences(buildReviewPrompt({ ...input, stage, perspective }));
+      // T1-OPUS55-PROMPTS adds two sentences on purpose (the end-of-turn line, and for R2 the every-finding sentence), and
+      // T0-R2-PASS-NOTES two lines (a pass lists its notes once, the verdict line is checked for balance); with exactly those
+      // removed each prompt is still the pre-change prompt, byte for byte.
+      const off = withoutAddedSentences(buildReviewPrompt({ ...input, stage, perspective }));
       assert.equal(sha(off), PRE_CHANGE[key], `${key} with coverage off is the pre-change prompt`);
-      const on = withoutOpus55Sentences(buildReviewPrompt({ ...input, stage, perspective, coverage: true }));
+      const on = withoutAddedSentences(buildReviewPrompt({ ...input, stage, perspective, coverage: true }));
       if (stage === 'pre' && perspective === 'ac-coverage') assert.notEqual(sha(on), PRE_CHANGE[key], 'the asked angle differs');
       else assert.equal(sha(on), PRE_CHANGE[key], `${key} is the pre-change prompt with coverage requested too`);
     }
@@ -1126,9 +1127,15 @@ const END_OF_TURN = 'End your reply with that JSON line: a progress note, a summ
 /** The R2 sentence that asks for every finding (T1-OPUS55-PROMPTS R8). */
 const EVERY_FINDING = 'Report every finding you can defend, not only the ones that block: the block rule above decides only whether a finding blocks, not whether it is reported.';
 
-/** A prompt with exactly the sentences T1-OPUS55-PROMPTS added removed, for the pre-change hash pins. */
-function withoutOpus55Sentences(prompt: string): string {
-  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '');
+/** The two lines T0-R2-PASS-NOTES adds after the advisory-tag line of every review prompt (issue #82). */
+const PASS_NOTES_LINES = [
+  'A pass that carries notes lists each note once, in the top-level `reasons`, and leaves the `reasons` of both axes empty, so the verdict line stays short.',
+  'Before you send the verdict line, check that it is one complete JSON document: every `{` and `[` is closed by its `}` or `]`, and the line ends with the `}` that closes the document. A line one closing brace short does not parse and returns no verdict.',
+];
+
+/** A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added removed, for the pre-change hash pins. */
+function withoutAddedSentences(prompt: string): string {
+  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '');
 }
 
 test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single pass and each perspective, carries the end-of-turn line [R7]', () => {
