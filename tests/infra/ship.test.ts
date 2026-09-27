@@ -18,6 +18,7 @@ const SENTINELS: Array<[string, ShipOutcomeClass]> = [
   ['[SHIP-MERGE-FAIL]', 'merge-failed'],
   ['[SHIP-BASE-SYNC-CONFLICT]', 'merge-failed'],
   ['[SHIP-BASE-SYNC-FAIL]', 'merge-failed'],
+  ['[SHIP-BASE-SYNC-COMMITTED]', 'merge-failed'],
   ['[CI-GATE-TIMEOUT]', 'ci-timeout'],
   ['[CI-GATE-RED]', 'ci-red'],
   ['[CI-GATE-HEAD-MOVED]', 'ci-red'],

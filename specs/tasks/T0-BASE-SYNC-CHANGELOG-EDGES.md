@@ -1,7 +1,7 @@
 ---
 id: T0-BASE-SYNC-CHANGELOG-EDGES
 title: The base-sync CHANGELOG merge reports its own failures precisely - a committed merge whose commit cannot be read back, a partial write, a failed listing, read or diff3 checkout - and resolves only entries and subsections (issue 60)
-status: todo
+status: merged
 branch: T0-BASE-SYNC-CHANGELOG-EDGES
 worktree: D:\wt\AIDLC\T0-BASE-SYNC-CHANGELOG-EDGES
 allow_paths:
