@@ -531,6 +531,12 @@ describe('a dispute and a running repair (card T0-DISPUTE-RUNNING-ATTEMPT)', () 
     const afterFail = settleDisputedRepair(startAttempt(failed, 'medium', at(3)), at(4));
     assert.equal(afterFail.attempts.find((x) => x.n === 2)?.notCountedReason, 'review-disputed');
     assert.equal(afterFail.terminal, undefined);
+    // The last evaluated attempt decides, not the first: a success, then a failure, then the repair.
+    const firstSuccess = finishAttempt(startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', at(1)), { finishedAt: at(2), outcome: 'success' });
+    const successThenFail = finishAttempt(startAttempt(reopenAfterReviewBlock(firstSuccess, 'R2 block'), 'medium', at(3)), { finishedAt: at(4), outcome: 'fail', cause: 'dod: x' });
+    const afterBoth = settleDisputedRepair(startAttempt({ ...successThenFail, terminal: undefined }, 'medium', at(5)), at(6));
+    assert.equal(afterBoth.attempts.find((x) => x.n === 3)?.notCountedReason, 'review-disputed');
+    assert.equal(afterBoth.terminal, undefined, 'the last evaluated attempt is a failure');
     // Nothing running: unchanged.
     const idle = { ...running, attempts: running.attempts.filter((x) => x.outcome !== 'running') };
     assert.deepEqual(settleDisputedRepair(idle, at(4)), idle);

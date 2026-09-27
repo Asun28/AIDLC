@@ -130,6 +130,28 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: the sequence of issue 106: the di
   }
 });
 
+test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a terminal episode keeps its running attempt when the dispute sends the candidate back, and nothing is journaled [R1]', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    s.r2.push(BLOCK);
+    const blocked = await s.runner.preReview(s.g(), s.card, r.run);
+    r = s.runner.next(s.g(), s.card, blocked.run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    // A ladder stop recorded meanwhile (as T0-RUNNING-REPAIR-STOP leaves one): the episode is terminal with the repair running.
+    const stopped = s.fx.store.updateCardRun(s.goalId, 'T0-DRA', (current) => ({ ...current!, effort: { ...current!.effort!, terminal: 'exhausted' } }));
+    const finishedBefore = s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').length;
+    const disputed = s.runner.disputeFinding(s.g(), s.card, stopped, 'F1', 'src/t0-dra.test.ts covers the empty input at line 12');
+    r = s.runner.next(s.g(), s.card, disputed);
+    const stored = s.fx.store.getCardRun(s.goalId, 'T0-DRA')!;
+    assert.equal(stored.effort!.terminal, 'exhausted', 'the terminal is kept');
+    assert.equal(stored.effort!.attempts.filter((a) => a.outcome === 'running').length, 1, 'a terminal episode takes no record');
+    assert.equal(s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').length, finishedBefore, 'nothing is journaled as settled');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
 /** R2 and R3 pass on sha-1, then the stored run gets a running attempt: the ship's answer. */
 async function shipWithLegacyRunning(step: ShipStep) {
   const s = setup([step]);
