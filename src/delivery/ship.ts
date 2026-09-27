@@ -204,12 +204,15 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
   const resume = text.match(/\[SAGA-RESUME\]\s*(.+)/)?.[1]?.trim();
   const pr = text.match(/(?:PR|pull request)\s*#(\d+)/i)?.[1];
   // The merge contract is the adapter's [SAGA-DONE] sentinel beside no failure marker, never a word of the output (card
-  // T0-EXIT-ZERO-NOT-MERGED). Beside [SAGA-FAIL] or a bracketed sentinel of the map it is conflicting evidence, which gh
-  // decides as merge-unconfirmed: a failure class would send a PR that did merge back into repair (R3 decision 1 F2).
-  if (receipt.exitCode === 0 && !receipt.timedOut && sentinels.includes('[SAGA-DONE]')) {
+  // T0-EXIT-ZERO-NOT-MERGED). Every other exit 0 that was read as merged before it ([SAGA-DONE] or a merge word, no sentinel,
+  // or no [SAGA-FAIL]) is merge-unconfirmed and verified: a failure class would send a PR that did merge back into repair
+  // (R3 decision 1 F2, T0-EXIT-ZERO-NOT-MERGED-3). The words only route a receipt to verification; a receipt read as a failure keeps its class.
+  if (receipt.exitCode === 0 && !receipt.timedOut) {
     const failed = sentinels.includes('[SAGA-FAIL]') || sentinels.some((s) => SENTINEL_MAP.some(([re]) => re.test(s)));
-    if (!failed) return { outcome: 'merged', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: 'ship exited 0 with [SAGA-DONE], the merge contract' };
-    return { outcome: 'merge-unconfirmed', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: 'exit 0 with [SAGA-DONE] beside a failure marker; the card machine reconciles the merge' };
+    if (sentinels.includes('[SAGA-DONE]') && !failed) return { outcome: 'merged', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: 'ship exited 0 with [SAGA-DONE], the merge contract' };
+    if (/\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || sentinels.length === 0 || !/\[SAGA-FAIL\]/.test(text)) {
+      return { outcome: 'merge-unconfirmed', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: sentinels.includes('[SAGA-DONE]') ? 'exit 0 with [SAGA-DONE] beside a failure marker; the card machine reconciles the merge' : "exit 0 without the adapter's merge contract ([SAGA-DONE]); the card machine reconciles the merge" };
+    }
   }
   if (receipt.timedOut) return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: 'ship timed out; reconcile before retry' };
   for (const [re, cls] of SENTINEL_MAP) {
@@ -218,9 +221,6 @@ export function classifyShipOutput(receipt: ExecReceipt): ShipResult {
     const line = failingLine(text, cls, re);
     return { outcome: cls, receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: line === undefined ? detail : `${detail}; failing line: ${line}` };
   }
-  // An exit 0 without the contract is no merge: the card machine reconciles it from the PR view, then the merge token. One
-  // that reports [SAGA-FAIL] with no mapped sentinel stays unclassified (R3 decision 1 F1).
-  if (receipt.exitCode === 0 && !sentinels.includes('[SAGA-FAIL]')) return { outcome: 'merge-unconfirmed', receipt, sentinels, resumeCommand: resume, prNumber: pr ? Number(pr) : undefined, detail: "exit 0 without the adapter's merge contract ([SAGA-DONE]); the card machine reconciles the merge" };
   return { outcome: 'unclassified', receipt, sentinels, resumeCommand: resume, detail: `exit ${receipt.exitCode} with no known sentinel; STOP/tool with diagnostics` };
 }
 

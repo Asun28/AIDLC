@@ -2354,7 +2354,10 @@ export class CardRunner {
       // as none (R3 decision 1 F3, F4). A merged ship reads its view as before (issue 131).
       const answered = pr !== undefined && view && view.number === pr && ['OPEN', 'MERGED', 'CLOSED'].includes(view.state) && typeof view.headRefOid === 'string' && view.headRefOid !== '' ? view : undefined;
       const checked = unconfirmed ? answered : view;
-      if (unconfirmed) mergeVerified = answered ? answered.state === 'MERGED' && !!sha && answered.headRefOid === sha : !!sha && token?.tip === sha;
+      // An unconfirmed ship is verified as main verified a merged one where main's evidence was sound: the dry-run path, which
+      // merges nothing, and a token at the candidate, the scaffold's merge contract, whatever gh answers; otherwise a valid gh
+      // answer decides (T0-EXIT-ZERO-NOT-MERGED-3).
+      if (unconfirmed) mergeVerified = this.config.shipPath === 'dry-run' || (!!sha && token?.tip === sha) || (!!answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha);
       else if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
       else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
