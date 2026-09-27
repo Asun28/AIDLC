@@ -1,7 +1,7 @@
 ---
 id: T0-TAKEOVER-LOCKED-HINT
 title: A card takeover that meets a held lock after its lease write names the generation it took and the command that goes on from there, instead of a bare LOCKED (issue 87 item 3)
-status: todo
+status: merged
 branch: T0-TAKEOVER-LOCKED-HINT
 worktree: D:\wt\AIDLC\T0-TAKEOVER-LOCKED-HINT
 allow_paths:
