@@ -154,6 +154,29 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a terminal episode keeps its runn
   }
 });
 
+test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a disputed R3 block settles the review-fix repair the same way, and decision 2 runs on the unchanged candidate [R1]', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'review', r.directive.narration);
+    s.r3.push(BLOCK);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.directive.kind, 'build', `the block is a review-fix repair: ${r.directive.narration}`);
+    const opened = r.run.effort!.attempts.find((a) => a.outcome === 'running')!;
+    const disputed = s.runner.disputeFinding(s.g(), s.card, r.run, 'F1', 'src/t0-dra.test.ts covers the empty input at line 12');
+    r = s.runner.next(s.g(), s.card, disputed);
+    assert.equal(r.directive.kind, 'review', `decision 2 on the unchanged candidate: ${r.directive.narration}`);
+    const settled = r.run.effort!.attempts.find((a) => a.n === opened.n)!;
+    assert.deepEqual([settled.outcome, settled.notCountedReason], ['not-counted', 'review-disputed']);
+    assert.equal(r.run.effort!.terminal, 'succeeded');
+    const finished = s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_FINISHED').at(-1)!;
+    assert.deepEqual([finished.data['n'], finished.data['reason']], [opened.n, 'review-disputed']);
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
 test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a kept receipt reused because the pre-review rounds are exhausted settles nothing: the repair stays running and nothing is journaled (R3 decision 1 F1) [R1]', async () => {
   const s = setup();
   try {
