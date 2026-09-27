@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code.
+
 - Reviewer UTF-8, card T0-REVIEWER-UTF8 (issue 99): every reviewer process runs with `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` unless the environment sets them, so the DeepSeek reviewer on Windows reads its piped prompt as UTF-8; a prompt with non-ASCII text used to reach it garbled, and one whose UTF-8 bytes the code page leaves undefined got no verdict on every angle.
 
 - Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.
