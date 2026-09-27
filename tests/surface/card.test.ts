@@ -286,10 +286,24 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
 
   test('the body of a literal or a folded block scalar is text under a plain key, a quoted key, a key with an anchor or a tag, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
     for (const header of ['|', '>-', '|2+', `| ${H} a note`]) {
-      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    - see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n  inner:see ${H}50\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    - see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
       const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
       assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('non_goals.other', `x ${H}101`, 'x'), message('sweep', `see ${H}12`, 'see')], header);
     }
+  });
+
+  test('a key written without a space after its colon is read from its value as the reader reads it: a quoted value is kept, and the second of two such lines is reported (T0-FM-COMMENT-CUT-2) [R1] [R2]', () => {
+    const quoted = parseCardText(templateCard({ title: '' }, `title:"issue ${H}97"\nforbid:["a ${H}1", b]\ndiagnosis:\n  root_cause:"see ${H}98"`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in quoted));
+    assert.equal(quoted.card.title, `"issue ${H}97"`);
+    assert.deepEqual(quoted.card.forbid, [`a ${H}1`, 'b']);
+    assert.equal(quoted.card.diagnosis?.root_cause, `"see ${H}98"`);
+    assert.deepEqual(cuts(quoted), [], 'a quoted value the reader keeps whole gives no finding');
+    const spanning = parseCardText(templateCard({}, `sweep:see it\nhygiene:see ${H}2\ndiagnosis:\n  root_cause:ok\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in spanning));
+    assert.equal(spanning.card.hygiene, 'see');
+    assert.equal(spanning.card.diagnosis?.same_class, 'see issue');
+    assert.deepEqual(cuts(spanning).map((f) => f.message), [message('hygiene', `see ${H}2`, 'see'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')], 'the lexer reads each pair of lines as one plain scalar; the readers read two keys');
   });
 
   test('a comment after a block-scalar header is reported under its key or list item, and the body stays text (T0-FM-COMMENT-CUT-2) [R2]', () => {
