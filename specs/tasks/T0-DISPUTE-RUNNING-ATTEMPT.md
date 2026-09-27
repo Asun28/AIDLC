@@ -1,7 +1,7 @@
 ---
 id: T0-DISPUTE-RUNNING-ATTEMPT
 title: A dispute that sends the unchanged candidate back to review settles the repair attempt BUILD opened, a later ship takes a running attempt as its repair instead of throwing, and the pre-review round is never numbered past its maximum (issue 106)
-status: todo
+status: merged
 branch: T0-DISPUTE-RUNNING-ATTEMPT
 worktree: D:\wt\AIDLC\T0-DISPUTE-RUNNING-ATTEMPT
 allow_paths:
