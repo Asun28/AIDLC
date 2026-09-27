@@ -12,7 +12,7 @@
  * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
  * only about the cards this session owns.
  */
-import { loadHookConfig, readStdinJson, runHook, type HookEvent, type HookName, type HookResult } from './index.ts';
+import { isBlock, loadHookConfig, readStdinJson, runHook, type HookEvent, type HookName, type HookResult } from './index.ts';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
 
@@ -31,16 +31,6 @@ export function hookNamesFor(event: HookEvent): HookName[] {
       return ['route-new-work'];
     default:
       return [];
-  }
-}
-
-function isBlock(r: HookResult): boolean {
-  if (r.exitCode === 2) return true;
-  if (!r.stdout) return false;
-  try {
-    return (JSON.parse(r.stdout) as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision === 'deny';
-  } catch {
-    return false;
   }
 }
 

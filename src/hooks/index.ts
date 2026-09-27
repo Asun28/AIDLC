@@ -34,7 +34,7 @@ import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
-import { CONFIG_FILE, ConfigError, loadProjectConfig, type ProjectConfig } from '../config.ts';
+import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
 
 export interface HookEvent {
@@ -61,6 +61,17 @@ export function defer(event: string, context: string): HookResult {
   return { exitCode: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: event, permissionDecision: 'defer', additionalContext: context } }) };
 }
 
+/** Whether a guard result stops the tool: exit code 2, or a `deny` decision. */
+export function isBlock(r: HookResult): boolean {
+  if (r.exitCode === 2) return true;
+  if (!r.stdout) return false;
+  try {
+    return (JSON.parse(r.stdout) as { hookSpecificOutput?: { permissionDecision?: string } }).hookSpecificOutput?.permissionDecision === 'deny';
+  } catch {
+    return false;
+  }
+}
+
 export function stopContext(context: string): HookResult {
   return { exitCode: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'Stop', additionalContext: context } }) };
 }
@@ -84,8 +95,9 @@ function normalise(p: string): string {
 }
 
 /**
- * An `aidlc.config.json` the guards cannot use (card T0-HOOK-CONFIG-CLOSED): the file that failed and a detail that never
- * quotes its text. The guards that read the config deny what they cannot decide rather than take the defaults.
+ * An `aidlc.config.json` the guards cannot use (cards T0-HOOK-CONFIG-CLOSED to -3): the file that failed, a detail that
+ * never quotes its text, and `legacy`, the reading the loader before these cards took from the same text
+ * (`legacyHookConfig`). A class, so no `hooks` key a valid config may carry is ever read as an error.
  */
 export class HookConfigError {
   readonly file: string;
@@ -104,13 +116,7 @@ export function isHookConfigError(config: LoadedHookConfig): config is HookConfi
   return config instanceof HookConfigError;
 }
 
-/** Why `loadProjectConfig` refused the file, without its text: a JSON parser message quotes the source. */
-function configErrorDetail(err: unknown): string {
-  if (err instanceof ConfigError) return err.cause ? 'not valid JSON; `aidlc doctor` prints where' : err.message.slice(`${CONFIG_FILE}: `.length);
-  return `cannot be read: ${(err as NodeJS.ErrnoException).code ?? 'UNREADABLE'}`;
-}
-
-/** The two lookups `loadHookConfig` makes before reading the file; injectable, since no test can deny access on every platform. */
+/** The lookups and the one read `loadHookConfig` makes; injectable, since no test can deny access on every platform. */
 export interface ConfigProbe {
   stat(file: string): unknown;
   lstat(file: string): unknown;
@@ -142,30 +148,54 @@ function configAccess(file: string, probe: ConfigProbe): 'present' | 'absent' | 
 }
 
 /**
- * The hook settings of the `aidlc.config.json` in `cwd`, read through the schema the CLI uses, so the hooks and the CLI
- * refuse the same file. An absent file gives the defaults, as it does for the CLI; a file the lookup cannot reach is a
- * read failure (`configAccess`). A pattern of `productionPatterns` or `testPathPatterns` that does not compile is an
- * error too: the guard would throw on it and the hook entry exit 0. A `frozenPaths` entry that does not compile is matched
- * as literal text (`protectPaths`), so it is no error.
+ * The reading the hook loader took before card T0-HOOK-CONFIG-CLOSED, kept as the floor of every decision: the defaults
+ * overlaid with the raw `hooks` value of the text, or the defaults when there is no text, it is not JSON or `hooks` cannot
+ * be read from it. A valid config is exactly this reading; under a config error each guard decides on it first
+ * (`unusableConfig`), so a broken config denies at least what it denied before.
+ */
+function legacyHookConfig(text: string | undefined): Required<HookConfig> {
+  if (text === undefined) return DEFAULT_HOOK_CONFIG;
+  try {
+    const cfg = JSON.parse(text) as { hooks?: HookConfig };
+    return { ...DEFAULT_HOOK_CONFIG, ...(cfg.hooks ?? {}) };
+  } catch {
+    return DEFAULT_HOOK_CONFIG;
+  }
+}
+
+/**
+ * The hook settings of the `aidlc.config.json` in `cwd`. The file is looked up (`configAccess`) and read once; its text is
+ * checked with the schema the CLI uses (`ProjectConfig`), so the hooks and the CLI refuse the same file. A valid config is
+ * the reading of `legacyHookConfig`, unknown `hooks` keys included. An absent file gives the defaults, as it does for the
+ * CLI; a lookup that fails, a read that fails, and a file the lookup found that the read no longer finds are read failures.
+ * A pattern of `productionPatterns` or `testPathPatterns` that does not compile is an error too: the guard would throw on
+ * it and the hook entry exit 0. A `frozenPaths` entry that does not compile is matched as literal text (`protectPaths`),
+ * so it is no error.
  */
 export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): LoadedHookConfig {
   const file = path.join(cwd, CONFIG_FILE);
   const access = configAccess(file, probe);
   if (access === 'absent') return DEFAULT_HOOK_CONFIG;
   if (access !== 'present') return new HookConfigError(file, `cannot be read: ${access.code}`);
-  let hooks: ProjectConfig['hooks'];
+  let text: string;
   try {
-    hooks = loadProjectConfig(cwd).config.hooks;
+    text = probe.read(file);
   } catch (err) {
-    return new HookConfigError(file, configErrorDetail(err));
+    const code = (err as NodeJS.ErrnoException).code ?? 'UNREADABLE';
+    return new HookConfigError(file, code === 'ENOENT' ? 'cannot be read (changed during the read)' : `cannot be read: ${code}`);
   }
-  const config: Required<HookConfig> = {
-    frozenPaths: hooks.frozenPaths,
-    testPathPatterns: hooks.testPathPatterns ?? DEFAULT_HOOK_CONFIG.testPathPatterns,
-    productionPatterns: hooks.productionPatterns ?? DEFAULT_HOOK_CONFIG.productionPatterns,
-  };
+  const legacy = legacyHookConfig(text);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    // The parser's message quotes the source, so the detail names the failure only.
+    return new HookConfigError(file, 'not valid JSON; `aidlc doctor` prints where', legacy);
+  }
+  const parsed = ProjectConfig.safeParse(raw);
+  if (!parsed.success) return new HookConfigError(file, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '), legacy);
   for (const key of ['productionPatterns', 'testPathPatterns'] as const) {
-    const bad = config[key].findIndex((p) => {
+    const bad = legacy[key].findIndex((p) => {
       try {
         new RegExp(p, 'i');
         return false;
@@ -173,9 +203,9 @@ export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): Load
         return true;
       }
     });
-    if (bad >= 0) return new HookConfigError(file, `hooks.${key}.${bad} is not a valid regular expression`);
+    if (bad >= 0) return new HookConfigError(file, `hooks.${key}.${bad} is not a valid regular expression`, legacy);
   }
-  return config;
+  return legacy;
 }
 
 /** The config key each guard that reads the config needs. */
@@ -210,11 +240,29 @@ function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean)
 }
 
 /**
- * A guard that reads the config, while it cannot be used: `production-gate` and `protect-paths` deny every Bash command but
- * the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does the same while
- * a fix task is active. Reads go through the Read, Grep and Glob tools, which no hook guards.
+ * What a guard decided before card T0-HOOK-CONFIG-CLOSED on the same text: the unchanged guard on the legacy reading. The
+ * hook entry turned a throw into a pass, so a throw is a pass here too.
+ */
+function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, legacy: Required<HookConfig>): HookResult {
+  try {
+    if (guard === 'production-gate') return productionGate(event, env, legacy, cwd);
+    if (guard === 'protect-paths') return protectPaths(event, legacy);
+    return protectTests(event, cwd, env, legacy);
+  } catch {
+    return { exitCode: 0 };
+  }
+}
+
+/**
+ * A guard that reads the config, while it cannot be used. It first decides as it did before on the `hooks` values the file
+ * still yields (`legacyDecision`), and a block there is the answer, with its own text: a broken config denies at least
+ * what it denied before, a frozen config file included. Beyond that, `production-gate` and `protect-paths` deny every Bash
+ * command but the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does
+ * the same while a fix task is active. Reads go through the Read, Grep and Glob tools, which no hook guards.
  */
 function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, error: HookConfigError): HookResult {
+  const before = legacyDecision(guard, event, cwd, env, error.legacy);
+  if (isBlock(before)) return before;
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
   if (guard === 'protect-tests') {
