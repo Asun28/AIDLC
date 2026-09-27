@@ -695,6 +695,19 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 3: under a broken config that freezes n
     // a call with nothing to decide passes
     assert.deepEqual(runHook('production-gate', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
     assert.deepEqual(runHook('protect-paths', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
+    // a command beside a file path is compared with the doctor list all the same, the config path included (R3 decision 1)
+    for (const guard of ['production-gate', 'protect-paths'] as const) {
+      for (const target of ['aidlc.config.json', file, 'src/a.ts']) {
+        for (const command of ['node mutate.js', '', 'aidlc doctor; rm -rf src']) {
+          assert.equal(denyReason(runHook(guard, { tool_input: { command, file_path: target } }, { cwd, env })), bashDenial(file, detail, guard), `${guard} ${JSON.stringify(command)} ${target}`);
+        }
+      }
+    }
+    assert.deepEqual(runHook('protect-paths', { tool_input: { command: 'aidlc doctor', file_path: 'aidlc.config.json' } }, { cwd, env }), { exitCode: 0 });
+    assert.equal(denyReason(runHook('protect-paths', { tool_input: { command: 'aidlc doctor', file_path: 'src/a.ts' } }, { cwd, env })), editDenial(file, detail, 'protect-paths'));
+    assert.deepEqual(runHook('production-gate', { tool_input: { command: 'aidlc doctor', file_path: 'src/a.ts' } }, { cwd, env }), { exitCode: 0 });
+    assert.equal(denyReason(run({ tool_name: 'Bash', tool_input: { command: 'node mutate.js', file_path: 'aidlc.config.json' } })), bashDenial(file, detail, 'production-gate'));
+    assert.equal(denyReason(run({ tool_name: 'Edit', tool_input: { command: 'node mutate.js', file_path: 'aidlc.config.json' } })), bashDenial(file, detail, 'protect-paths'));
   }
 });
 

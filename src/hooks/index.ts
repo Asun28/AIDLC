@@ -268,9 +268,11 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
   if (guard === 'protect-tests') {
     return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
   }
+  // A command is compared with the doctor list whatever else the event carries, so a file path beside it (the config's
+  // own included) never lets it through.
+  if (typeof cmd === 'string' && !DOCTOR_COMMANDS.has(cmd.trim())) return configDenial(guard, error, true);
   if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
-  if (typeof cmd !== 'string' || DOCTOR_COMMANDS.has(cmd.trim())) return { exitCode: 0 };
-  return configDenial(guard, error, true);
+  return { exitCode: 0 };
 }
 
 /** Commands that only read; a deploy word inside their arguments (grep for "production") is not a deploy. */
