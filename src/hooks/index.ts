@@ -378,7 +378,7 @@ function writesFile(segment: string): boolean {
     const operands: string[] = [];
     for (let i = 0; i < args.length; i += 1) {
       const a = args[i]!;
-      if (/^-[fsw]$/.test(a)) i += 1;
+      if (/^-[fsw]$/.test(a) || /^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i += 1;
       else if (!a.startsWith('-') || a === '-') operands.push(a);
     }
     return operands.length >= 2;
@@ -404,19 +404,32 @@ function writesFiles(cmd: string): boolean {
  * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER).
  */
 export function mutatingSegments(cmd: string): string[] {
-  return commandSegments(cmd).filter((s) => {
-    const { name, qualified, args } = commandOf(s);
-    if (qualified) return true;
-    if (name === 'git') return !gitReads(args);
-    if (!READ_ONLY_TOOLS.has(name)) return true;
-    return executes(name, s, cmd);
-  });
+  return commandSegments(cmd).filter((s) => isMutating(s, cmd));
+}
+
+function isMutating(segment: string, line: string): boolean {
+  const { name, qualified, args } = commandOf(segment);
+  if (qualified) return true;
+  if (name === 'git') return !gitReads(args);
+  if (!READ_ONLY_TOOLS.has(name)) return true;
+  return executes(name, segment, line);
+}
+
+/** The split before card T0-HOOK-CLASSIFIER, at `||`, `&&`, `;` and `|` only. */
+function mainSegments(cmd: string): string[] {
+  return cmd
+    .split(/\|\||&&|;|\|/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string): HookResult {
   const cmd = String(event.tool_input?.['command'] ?? '');
   if (!cmd) return { exitCode: 0 };
-  const segments = mutatingSegments(cmd);
+  // The mutating segments of both splits: the split before card T0-HOOK-CLASSIFIER keeps in one segment every release phrase
+  // it matched before (`make deploy & echo production`), and the new split adds the commands a lone `&` or a line break hid.
+  // For the same text the classification marks at least what it marked before, so no denial is lost.
+  const segments = [...new Set([...mainSegments(cmd).filter((s) => isMutating(s, cmd)), ...mutatingSegments(cmd)])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).

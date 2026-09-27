@@ -908,6 +908,26 @@ test('T0-HOOK-CLASSIFIER acceptance 1: a command splits at a lone ampersand and 
   assert.deepEqual(mutatingSegments('cat notes\r\nmake y'), ['make y']);
   assert.deepEqual(mutatingSegments('cat notes\rmake y'), ['make y']);
   assert.deepEqual(mutatingSegments('make a & make b'), ['make a', 'make b']);
+  // a release phrase main matched in one segment is still matched: production-gate also tests the segments of the split
+  // before this card (the hand-run Codex pre-check of 9596a37)
+  const { cwd, env } = envWithState();
+  const release = ['make deploy', 'echo production'];
+  for (const joint of [' & ', '\r']) {
+    const command = release.join(joint);
+    const r = productionGate({ tool_name: 'Bash', tool_input: { command } }, env, DEFAULT_HOOK_CONFIG, cwd);
+    assert.equal(r.exitCode, 2, JSON.stringify(command));
+    assert.ok(r.stderr?.includes('release authorization'), JSON.stringify(command));
+  }
+  // across a separator main split at, the phrase was never in one segment: main passed these and so does the card, which
+  // adds no denial but its listed forms; the default patterns also stop at a line feed (`[^\n]*`)
+  for (const joint of [' | ', ' ; ', ' && ', ' || ', '\n', '\r\n']) {
+    assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: release.join(joint) } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 }, JSON.stringify(joint));
+  }
+  // and under a config that cannot be used, the legacy decision gives the same exit 2
+  const broken = withConfig(UNUSABLE_CONFIGS[0]![0]);
+  const brokenRun = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: release.join(' & ') } }, { cwd: broken.cwd, env: broken.env });
+  assert.equal(brokenRun.exitCode, 2);
+  assert.ok(brokenRun.stderr?.includes('release authorization'));
 });
 
 const RELEASE = 'deploy production';
@@ -938,7 +958,7 @@ const GATE_ROWS: Array<[string, string, string]> = [
 
 /** Read-only uses the forms leave read-only: each passes the gate although its text names a release. */
 const READ_ONLY_ROWS = [
-  `awk '/deploy/ && /production/' log`,
+  `awk '/deploy production/' log`,
   `sed -n '/deploy/p' production.log`,
   "sed -i 's/production/prod/' deploy.yaml",
   'find . -name deploy-production',
@@ -989,6 +1009,8 @@ const WRITE_ROWS: Array<[string, string, string]> = [
   ['sort -o', 'sort -o contracts/api.yaml contracts/api.yaml', 'sort contracts/api.yaml'],
   ['sort --output', 'sort --output=contracts/x.txt in.txt', 'sort in.txt contracts/x.txt'],
   ['a uniq output operand', 'uniq in.txt contracts/out.txt', 'uniq -f 2 contracts/in.txt'],
+  ['a uniq output operand after a long option', 'uniq --skip-fields 2 in.txt contracts/out.txt', 'uniq --skip-fields 2 contracts/in.txt'],
+  ['a uniq output operand after another long option', 'uniq --check-chars 3 in.txt contracts/out.txt', 'uniq --skip-chars 1 contracts/in.txt'],
   ['tree -o', 'tree -o contracts/tree.txt', 'tree contracts/'],
   ['yq -i', "yq -i '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
   ['yq --inplace', "yq --inplace '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
