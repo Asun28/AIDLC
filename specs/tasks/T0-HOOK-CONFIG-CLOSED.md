@@ -36,6 +36,7 @@ forbid: [changing a guard's decision under a config that parses, changing config
 non_goals: ["issue 76 item 2, CI log classes", "issue 76 item 3, exit 0 read as merged", "the PowerShell tool outside the guards: issue 117", "config discovery above cwd: issue 118"]
 hygiene: "Issue 76 item 1, decided under the delegation of 2026-09-27T09:20Z: fail closed with the repair open. Stop gets no config line: Stop context re-invokes the model at every turn end, and the DoD note of verify-before-done looped about 12 turns on 2026-09-26 while a session waited for a ruling; the error reaches the session through every PreToolUse denial and every user prompt instead. Ships after T1-BOUND-TELEMETRY and T0-EXTEND-RUNNING-CARD."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+superseded_by: T0-HOOK-CONFIG-CLOSED-2
 ---
 
 # T0-HOOK-CONFIG-CLOSED
