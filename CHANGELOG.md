@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Base-sync CHANGELOG edges, card T0-BASE-SYNC-CHANGELOG-EDGES (issue 60): a CHANGELOG merge the ship path committed but cannot read back ends with `[SHIP-BASE-SYNC-COMMITTED]` and a repair that records the worktree HEAD instead of resolving hunks; a failed listing, read or diff3 checkout names its error instead of posing as a conflict; a failed write says the file may be partly written and how to write the markers again; the resolver takes only entries and `### ` subsections.
+
 - Reviewer UTF-8, card T0-REVIEWER-UTF8 (issue 99): every reviewer process runs with `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` unless the environment sets them, so the DeepSeek reviewer on Windows reads its piped prompt as UTF-8; a prompt with non-ASCII text used to reach it garbled, and one whose UTF-8 bytes the code page leaves undefined got no verdict on every angle.
 
 - Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.

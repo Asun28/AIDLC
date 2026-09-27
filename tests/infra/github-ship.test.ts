@@ -51,6 +51,9 @@ function runnerWith(overrides: Record<string, Partial<ExecReceipt> | ((args: str
     [MERGE_TREE]: { stdout: 'e'.repeat(40) + '\n' },
     [MERGE_HEAD]: { stdout: 'f'.repeat(40) + '\n' },
     [MAIN_BRANCH]: { stdout: 'refs/heads/main\n' },
+    // No unmerged path by default: a failed listing is its own failure (card T0-BASE-SYNC-CHANGELOG-EDGES), and the CHANGELOG
+    // tests list their own paths.
+    'git diff --name-only --diff-filter=U -z': { stdout: '' },
     'git push': {},
     'gh pr list': { stdout: '[]' },
     'gh pr create': { stdout: 'https://github.com/o/r/pull/42\n' },
@@ -1152,12 +1155,12 @@ describe('GitHubShipPath base sync of CHANGELOG entries (T0-BASE-SYNC-CHANGELOG)
     const cases: Array<[string, string, Partial<ExecReceipt> | undefined]> = [
       ['a conflict in another path besides CHANGELOG.md', INSERTIONS, { stdout: 'CHANGELOG.md\u0000src/other.ts\u0000' }],
       ['a single unmerged path that is not CHANGELOG.md', INSERTIONS, { stdout: 'src/other.ts\u0000' }],
-      ['an unmerged listing that fails', INSERTIONS, { exitCode: 128, stdout: 'CHANGELOG.md\u0000', stderr: 'fatal: index unreadable' }],
       ['a CHANGELOG hunk outside ## Unreleased', outside, undefined],
       ['a CHANGELOG hunk where the base side edits a line', baseEdits, undefined],
       ['a CHANGELOG hunk where the card rewrites an existing entry', cardRewrites, undefined],
       ['a CHANGELOG hunk that adds a ## heading', heading, undefined],
     ];
+    // A listing that fails is no shape for the skill but a failure naming its error: T0-BASE-SYNC-CHANGELOG-EDGES acceptance 4.
     for (const [name, text, unmerged] of cases) {
       const { r, calls, file } = shipWith(text, unmerged);
       assert.ok(r.sentinels.includes('[SHIP-BASE-SYNC-CONFLICT]') && !r.sentinels.includes('[SHIP-BASE-SYNC-MERGED]'), `${name}: ${r.sentinels.join(' ')}`);

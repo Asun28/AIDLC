@@ -69,6 +69,9 @@ const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
   // CHANGELOG merge the path committed itself carries the same lines: it is a new candidate, built and reviewed like one.
   [/\[SHIP-BASE-SYNC-CONFLICT\]/, 'merge-failed'],
   [/\[SHIP-BASE-SYNC-MERGED\]/, 'merge-failed'],
+  // A CHANGELOG merge committed but whose commit could not be read back (card T0-BASE-SYNC-CHANGELOG-EDGES): the same repair,
+  // with its own detail, since it names no commit.
+  [/\[SHIP-BASE-SYNC-COMMITTED\]/, 'merge-failed'],
   [/\[SHIP-BASE-SYNC-FAIL\]/, 'merge-failed'],
   [/\[CI-GATE-TIMEOUT\]/, 'ci-timeout'],
   [/\[CI-GATE-RED\]|\[CI-GATE-JOBS-DRIFT\]|\[CI-GATE-WF-MISSING\]|\[CI-GATE-NOHEAD\]|\[CI-GATE-HEAD-MOVED\]/, 'ci-red'],
