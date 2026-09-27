@@ -192,6 +192,11 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     ['--- FAIL: TestParse (0.00s)', '--- fail: testparse (N.Ns)'],
     ['FAIL  src/a.test.ts', 'fail src/a.test.ts'],
     ['FAILED tests/test_a.py::test_parse - AssertionError: x', 'failed tests/test_a.py::test_parse - assertionerror: x'],
+    // A directive is a word: a description with a longer word after the hash is not one; a spec test may be named like the heading.
+    ['not ok 10 - counts # todos', 'not ok N - counts # todos'],
+    ['✖ failing tests are reported (2ms)', '✖ failing tests are reported (Nms)'],
+    // Controls, the Unicode line separator included, are spaces before the shape is matched.
+    ['✖\u2028a separated name', '✖ a separated name'],
   ];
 
   it('acceptance 1: a dod-failed or verify-failed receipt names its first failing test or compile line, for every shape', () => {
@@ -210,6 +215,8 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
       'ok 1 - passes', 'not ok 4 - pending # TODO later', 'not ok 5 - no db # SKIP', 'not ok 6 - lower # todo', 'not ok 7 - tight #SKIP', 'not okay 1 - x', 'not ok', 'not ok   ',
       '✖ failing tests:', '✖ failing tests', '✖', '✖   ', '--- FAIL:', '--- FAIL:   ', 'the FAIL count is 0', 'FAIL', 'FAIL   ', 'FAILED', 'FAILURE: x', 'FAILEDx y',
       'error TS: x', 'errorTS2322: x', '# fail 1', 'failed tests/a.py::t', 'WARNING: gate 2 integration/e2e failed (exit code 1)',
+      // Each shape is matched at the start of the line, in its own letter case, with its number and word boundaries.
+      'not ok - no number', 'not ok 1x - y', 'ok 3 - says not ok 4 - inside', 'NOT OK 1 - x', 'suberror TS2322: x', 'Error TS2322: x', 'see --- FAIL: TestX above',
     ];
     for (const outcome of ['dod-failed', 'verify-failed'] as const) {
       for (const raw of NOT_FAILING) expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](raw))), undefined, `${outcome} ${JSON.stringify(raw)}`);
@@ -258,9 +265,12 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
       assert.deepEqual({ ...withLine, receipt: undefined }, { ...without, receipt: undefined }, `${cls}: the detail and every other field are unchanged`);
       assert.doesNotMatch(withLine.detail, /failing line/);
     }
-    for (const [text, exit, extra] of [['not ok 1 - x\n[SAGA-DONE]', 0, {}], ['not ok 1 - x', 1, {}], ['not ok 1 - x', 1, { timedOut: true }]] as const) {
-      const r = classifyShipOutput(receipt(text, exit, extra));
-      assert.doesNotMatch(r.detail, /failing line/, `${r.outcome}: ${r.detail}`);
+    // Merged, unclassified and timed-out results with failing lines equal those of the same receipt without them.
+    for (const [text, exit, extra] of [['[SAGA-DONE]', 0, {}], ['something odd happened', 1, {}], ['something odd happened', 1, { timedOut: true }]] as const) {
+      const without = classifyShipOutput(receipt(text, exit, extra));
+      const withLine = classifyShipOutput(receipt(`not ok 1 - a failing test\n✖ a failing test\n${text}`, exit, extra));
+      assert.deepEqual({ ...withLine, receipt: undefined }, { ...without, receipt: undefined }, `${without.outcome}: the detail and every other field are unchanged`);
+      assert.doesNotMatch(withLine.detail, /failing line/, `${withLine.outcome}: ${withLine.detail}`);
     }
   });
 
