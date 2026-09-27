@@ -89,6 +89,7 @@ test('stripComment reads a comment as YAML does: a hash inside a quoted scalar i
     ['see {k, "y #6"}', 'see {k, "y', 'a brace inside a plain value opens no flow mapping'],
     ['[plain #1, "q #2"]', '[plain', 'a plain item of a flow list'],
     ['a\t#tab', 'a', 'a tab before the hash'],
+    ['| #97', '|', 'a comment after a block-scalar header'],
   ];
   for (const [value, stripped, label] of cut) assert.equal(stripComment(value), stripped, label);
 });
@@ -99,15 +100,17 @@ test('flowItems splits a one-line flow list only at a comma outside a quoted ite
   assert.deepEqual(flowItems('["a \\" , b", \'it\'\'s, ok\', z]'), ['"a \\" , b"', "'it''s, ok'", 'z'], 'an escaped quote before the comma');
   assert.deepEqual(flowItems('[plain, text, with "quotes, inside"]'), ['plain', 'text', 'with "quotes', 'inside"'], 'a quote inside a plain item opens nothing');
   assert.deepEqual(flowItems('[note: a, b]'), ['note: a', 'b'], 'a colon separates no items');
+  assert.deepEqual(flowItems('[a:"b, c", d]'), ['a:"b', 'c"', 'd'], 'a colon inside a plain item opens no quote, as YAML reads it (T0-FM-COMMENT-CUT-2)');
+  assert.deepEqual(flowItems('[[a, b], {c: d, e: f}]'), ['[a, b]', '{c: d, e: f}'], 'a nested flow collection stays whole (T0-FM-COMMENT-CUT-2)');
   assert.equal(flowItems('a, b'), undefined, 'not a flow list');
 });
 
 test('docs/OPERATIONS.md states the comment rule of card front matter (T0-FM-COMMENT-CUT) [R4]', () => {
   const operations = readFileSync(path.join(import.meta.dirname, '..', '..', 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const sentences = [
-    'Card front matter (card T0-FM-COMMENT-CUT, issue 97). A hash sign after a space or a tab starts a comment, as YAML reads it, except inside a quoted scalar (`"..."` or `\'...\'`, also as an item of a flow list), where it is text; a hash directly after any other character (`PR#84`, `plan.md#45-x`, a non-breaking space) is text as well, and an inline list splits only at a comma outside a quoted item.',
-    '`aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every value a comment cuts when the comment begins with a hash directly followed by text, which is how an issue or a PR number reads, giving the key (read with or without a space after its colon, as the card readers read it) or the list item, the full raw value and the text kept: blocking on a card that is neither `merged` nor superseded, a warning otherwise.',
-    'A comment of a hash, a space and text, the form the installed card template uses to annotate its keys, is not reported, and neither is a line in the body of a block scalar (`|` or `>`), where YAML reads a hash as text; write a reference without the hash (`issue 45`), or quote the value.',
+    'Card front matter (card T0-FM-COMMENT-CUT-2, issue 97). The card readers and `aidlc cards validate` read comments as the yaml package\'s lexer reads them: a hash sign after a space or a tab starts a comment, except inside a quoted scalar (`"..."` or `\'...\'`, also as an item of a flow list) or the body of a block scalar (`|` or `>`), where it is text; a hash directly after any other character (`PR#84`, `plan.md#45-x`, a non-breaking space) is text as well, and an inline list splits only at the commas of its top level.',
+    '`aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every comment that begins with a hash directly followed by text, which is how an issue or a PR number reads, after value text on a key line (the key read with or without a space after its colon, as the card readers read it) or a list-item line, a block-scalar header line included, giving the key or the list item, the full raw value and the text kept: blocking on a card that is neither `merged` nor superseded, a warning otherwise.',
+    'A comment of a hash, a space and text, the form the installed card template uses to annotate its keys, is not reported; write a reference without the hash (`issue 45`), or quote the value.',
   ];
   for (const sentence of sentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
 });

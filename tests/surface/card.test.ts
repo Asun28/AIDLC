@@ -281,12 +281,24 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
   });
 
-  test('the body of a literal or a folded block scalar is text under a key, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
-    for (const header of ['|', '>-', '|2+', `| ${H} a note`, `>- ${H}3`]) {
-      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\nsweep: see ${H}12`;
+  test('the body of a literal or a folded block scalar is text under a plain key, a quoted key, a key with an anchor or a tag, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
+    for (const header of ['|', '>-', '|2+', `| ${H} a note`]) {
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
       const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
       assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('non_goals.other', `x ${H}101`, 'x'), message('sweep', `see ${H}12`, 'see')], header);
     }
+  });
+
+  test('a comment after a block-scalar header is reported under its key or list item, and the body stays text (T0-FM-COMMENT-CUT-2) [R2]', () => {
+    const r = parseCardText(templateCard({}, `sweep: | ${H}97\n  text ${H}98\nnon_goals:\n  - >- ${H}3\n    see ${H}4`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `| ${H}97`, '|'), message('non_goals item 1', `>- ${H}3`, '>-')]);
+  });
+
+  test('a quoted key is a key line, and an inline list reads a colon inside a plain item as YAML does (T0-FM-COMMENT-CUT-2) [R1] [R2]', () => {
+    const r = parseCardText(templateCard({}, `"quoted key": see ${H}103\nnon_goals: [a:"b, c", d]`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.deepEqual(r.card.non_goals, ['a:"b', 'c"', 'd']);
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}103`, 'see')]);
   });
 
   test('a quoted inline item holding a comma is read whole with its hash and gives no finding [R1] [R2]', () => {
@@ -316,7 +328,7 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     const root = path.resolve(import.meta.dirname, '..', '..');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT (issue 97): a hash after a space or a tab starts a comment, as YAML reads it, a hash inside a quoted value or a quoted flow-list item is kept, and an inline list splits only at a comma outside a quoted item; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every value a comment cuts at a hash directly followed by text (an issue or a PR number), with the raw and the kept text, blocking on a card that is neither merged nor superseded, and reads a block-scalar body as text; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
+    const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT-2 (issue 97): the card readers and `aidlc cards validate` read comments, flow-list items and block-scalar bodies with the yaml package\'s lexer, so a hash inside a quoted value, a quoted flow-list item or a block scalar is kept and an inline list splits only at its top-level commas; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every comment at a hash directly followed by text (an issue or a PR number) that cuts a key or list-item value, with the raw and the kept text, blocking on a card that is neither merged nor superseded; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
