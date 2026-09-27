@@ -112,10 +112,9 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     assert.ok(!existsSync(`${store.cardFile('goal-u', 'T1-U')}.lock`), 'the lock is released');
   });
 
-  it('waits for a held lock and refuses after the timeout; a lock older than the stale age is taken over', () => {
-    // The refusal is timed with a short deadline; the takeovers get a patient one, so a loaded runner never turns a
-    // takeover that landed into a refusal at the deadline. A live lock names this process (alive on every platform);
-    // a crashed writer names a pid no platform has (pid 1 is init on Linux, alive and unsignallable).
+  it('waits for a held lock and refuses after the timeout; a lock whose owner process is gone is refused too and stays (T1-STORE-CAS-2)', () => {
+    // A live lock names this process (alive on every platform); a crashed writer names a pid no platform has (pid 1 is init
+    // on Linux, alive and unsignallable).
     const quick = new GoalStore(paths, { lockTimeoutMs: 60 });
     const store = new GoalStore(paths, { lockTimeoutMs: 2_000 });
     store.saveCardRun(makeCardRun('goal-l', 'T1-L'));
@@ -127,17 +126,10 @@ describe('state/goal-store updateCardRun (T1-REVIEW-FINDINGS acceptance 2)', () 
     writeFileSync(lock, 'pid=999999999 (crashed)', 'utf8');
     const old = new Date(Date.now() - 120_000);
     utimesSync(lock, old, old);
-    const next = store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale lock' }));
-    assert.equal(next.blocker, 'after a stale lock');
-    assert.ok(!existsSync(lock));
-    assert.ok(!existsSync(`${lock}.takeover`), 'the takeover marker is released');
-    // A crashed taker-over leaves a stale takeover marker: it is aged out the same way and never blocks forever.
-    writeFileSync(lock, 'pid=999999999 (crashed)', 'utf8');
-    writeFileSync(`${lock}.takeover`, 'pid=999999998 (crashed during takeover)', 'utf8');
-    utimesSync(lock, old, old);
-    utimesSync(`${lock}.takeover`, old, old);
-    assert.equal(store.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale takeover marker' })).blocker, 'after a stale takeover marker');
-    assert.ok(!existsSync(lock) && !existsSync(`${lock}.takeover`));
+    assert.throws(() => quick.updateCardRun('goal-l', 'T1-L', (current) => ({ ...current!, blocker: 'after a stale lock' })), /is locked by pid 999999999, which is no longer running/);
+    assert.equal(readFileSync(lock, 'utf8'), 'pid=999999999 (crashed)', "the crashed writer's lock stays for the operator");
+    assert.equal(store.getCardRun('goal-l', 'T1-L')?.blocker, undefined);
+    unlinkSync(lock);
   });
 
   it('the write and the release are ownership-checked: a lock lost to another owner refuses the write and leaves that owner\'s lock', () => {
@@ -198,21 +190,22 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
     }
   };
 
-  it('a stale lock whose owner process is alive is never taken over: the waiter refuses at the deadline; a dead owner\'s lock is', () => {
-    // The refusal of a live owner's old lock is timed with a short deadline; the takeover of a dead owner's gets a patient one.
-    const quick = new GoalStore(paths, { lockTimeoutMs: 60, staleLockMs: 10 });
-    const store = new GoalStore(paths, { lockTimeoutMs: 2_000, staleLockMs: 10 });
+  it('an old lock is never taken over, whether its owner process is alive or gone: the waiter refuses at the deadline (T1-STORE-CAS-2)', () => {
+    const quick = new GoalStore(paths, { lockTimeoutMs: 60 });
+    const store = new GoalStore(paths);
     store.saveCardRun(makeCardRun('goal-p', 'T1-P'));
     const lock = `${store.cardFile('goal-p', 'T1-P')}.lock`;
     writeFileSync(lock, `pid=${process.pid} at=old nonce=x`, 'utf8'); // this process is alive
     const old = new Date(Date.now() - 120_000);
     utimesSync(lock, old, old);
-    assert.throws(() => quick.updateCardRun('goal-p', 'T1-P', (current) => current!), /locked/);
+    assert.throws(() => quick.updateCardRun('goal-p', 'T1-P', (current) => current!), /locked by another writer/);
     assert.ok(existsSync(lock), 'a live owner keeps its lock however old');
     unlinkSync(lock);
     writeFileSync(lock, 'pid=999999999 at=old nonce=y', 'utf8'); // no such process
     utimesSync(lock, old, old);
-    assert.equal(store.updateCardRun('goal-p', 'T1-P', (current) => ({ ...current!, blocker: 'after a dead owner' })).blocker, 'after a dead owner');
+    assert.throws(() => quick.updateCardRun('goal-p', 'T1-P', (current) => ({ ...current!, blocker: 'after a dead owner' })), /is locked by pid 999999999, which is no longer running/);
+    assert.ok(existsSync(lock), "a dead owner's lock stays too");
+    unlinkSync(lock);
   });
 
   it('the deadline is checked before every retry acquisition: a wait that overran it never runs the change even when the lock is free by then', () => {
@@ -234,24 +227,6 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
       assert.throws(() => store.updateCardRun('goal-f', 'T1-F', (current) => { entered = true; return current!; }), /locked/);
     });
     assert.equal(entered, false, 'an expired waiter refuses instead of entering late');
-  });
-
-  it('ageMs treats only a vanished file as gone: a permission error on the lock propagates instead of looping to the deadline', () => {
-    const store = new GoalStore(paths, { lockTimeoutMs: 200 });
-    store.saveCardRun(makeCardRun('goal-e', 'T1-E'));
-    const lock = `${store.cardFile('goal-e', 'T1-E')}.lock`;
-    writeFileSync(lock, 'pid=1 at=now nonce=w', 'utf8');
-    try {
-      withStatOf(lock, () => {
-        const err = new Error('EACCES: permission denied, stat') as NodeJS.ErrnoException;
-        err.code = 'EACCES';
-        throw err;
-      }, () => {
-        assert.throws(() => store.updateCardRun('goal-e', 'T1-E', (current) => current!), (err: unknown) => err instanceof Error && /EACCES/.test(err.message) && !/locked by another writer/.test(err.message));
-      });
-    } finally {
-      unlinkSync(lock);
-    }
   });
 
   it('saveCardRun refuses a snapshot that lacks, regresses or un-decides a persisted ledger entry, so controller writers are covered too', () => {
@@ -286,7 +261,7 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
   });
 
   it('a lock this process cannot read is never taken over: the read error propagates instead of counting as a dead owner', () => {
-    const store = new GoalStore(paths, { lockTimeoutMs: 200, staleLockMs: 10 });
+    const store = new GoalStore(paths, { lockTimeoutMs: 200 });
     store.saveCardRun(makeCardRun('goal-u', 'T1-U'));
     const lock = `${store.cardFile('goal-u', 'T1-U')}.lock`;
     writeFileSync(lock, `pid=${process.pid} at=old nonce=u`, 'utf8');
@@ -343,5 +318,15 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     assert.equal(legacy.revision, 0);
     assert.equal(store.saveCardRun({ ...legacy, blocker: 'legacy' }).revision, 1);
     assert.throws(() => store.saveCardRun({ ...legacy, blocker: 'again' }), /changed since it was read/i);
+  });
+
+  it('T1-STORE-CAS-2 acceptance 1: an update whose change returns the stored record writes nothing, so the revision stays and a snapshot at it still writes', () => {
+    const store = new GoalStore(paths);
+    const v0 = store.saveCardRun(makeCardRun('goal-n', 'T1-N'));
+    const bytes = readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8');
+    const same = store.updateCardRun('goal-n', 'T1-N', (current) => current!);
+    assert.equal(same.revision, v0.revision, 'no write, no revision');
+    assert.equal(readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8'), bytes, 'the record is not rewritten');
+    assert.equal(store.saveCardRun({ ...v0, blocker: 'still current' }).revision, v0.revision + 1, 'the snapshot read before the no-op update is still current');
   });
 });
