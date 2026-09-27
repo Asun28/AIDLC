@@ -27,7 +27,7 @@ acceptance:
   - 4. tests/scenarios/dispute-running-attempt.test.ts - a cycle of block, block and pass followed by a new candidate gives a pre-review directive with round 4 and maxRounds 4, the narration "round 4/4" and an R2 prompt of "round 4 of 4"; a first round still reads "1/3"; a block on round 4 is the third block of the cycle and exhausts the budget as before (onExhausted), so the budget still counts blocks only. [R3] [dod arm 1]
   - 5. docs/OPERATIONS.md and CHANGELOG.md Unreleased carry the rules under this card id; a test reads the exact sentences this card adds and fails with any one removed. [R4] [dod arm 1]
 depends_on: [T0-BASE-SYNC-CHANGELOG-2]
-budget: 420
+budget: 520
 tdd: true
 sweep: "grep -n 'nextEffortAction(\\|reusableReceipt(run)\\|decided.length + 1\\|maxRounds: cfg.rounds' src/loop/card-runner.ts: the reuse of the kept receipt (501-502) moves the card to SHIP and leaves the attempt BUILD opened running; the pre-review hand-back (1147), the red-missing repair (2457) and the base-sync merge-conflict repair (2485) call nextEffortAction, which throws on a running attempt; the round is decided rounds + 1 and the maximum shown is preReview.rounds (1170, 1174, 2110). Lines measured on main cc471ed."
 forbid: [weakening or skipping a test to go green, a card-runner.ts change outside lines 17, 501-502, 1147, 1149, 1174, 2110, 2343, 2457 and 2485 (measured on main cc471ed), discarding an attempt record, a change to the pre-review block budget or to how an R2 cycle is counted, src code (effort.ts, card-runner.ts) calling nextEffortAction on an episode with a running attempt]

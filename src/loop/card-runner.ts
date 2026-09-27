@@ -1173,7 +1173,7 @@ export class CardRunner {
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
       // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
-      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log and fix the pre-review command (or clear preReview.command to skip R2)`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -2507,7 +2507,7 @@ export class CardRunner {
               : `resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt`;
           return buildWith((latest) => ({ dodReceipt: undefined, blockedReceipt: undefined, effort: reopenEpisode(latest.effort), pendingRepair: { kind: 'merge-conflict', detail, at: now } }), `Merge conflict on the base sync (${result.detail}): ${step}. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.`, repairEffort, ['merge-conflicts', ...this.buildSkills(goal, card)]);
         }
-        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false }));
+        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}${result.resumeCommand ? `; the ship path's resume marker, a diagnostic that does not lift this stop: ${result.resumeCommand}` : ''}`, 'inspect the ship output and the retained receipt', { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } }));
       }
     }
   }
