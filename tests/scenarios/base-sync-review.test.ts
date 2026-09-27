@@ -5,7 +5,8 @@ import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath, classifyShipOutput, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
+import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { reviewerEnv } from '../../src/review/pre-review.ts';
 import { MINUTE_MS, addMs, type ReviewInvocation } from '../../src/core/types.ts';
 
 // Card T0-BASE-SYNC-REVIEW: a candidate made by resolving a base-sync conflict after both R3 decisions gets one more decision
@@ -79,8 +80,14 @@ async function atBaseSync(opts: { baseSync?: boolean; fallback?: boolean; steps?
       return answer(out);
     },
   });
+  /** The environment of every reviewer spawn, in order (card T0-REVIEWER-UTF8). */
+  const spawnEnv: Array<[string, NodeJS.ProcessEnv | undefined]> = [];
+  const recording: SyncRunner = (command, args, options) => {
+    if (command.startsWith('fake-')) spawnEnv.push([command, options?.env]);
+    return script(command, args, options);
+  };
   const ship = new SequenceShip(opts.steps ?? ['base-sync', 'base-sync']);
-  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: recording });
   writeCard(fx, { id: 'T0-BSR', title: 'base-sync review', allowPaths: ['src/t0-bsr.ts'] });
   const goal = fx.controller.createGoal({ text: 'implement T0-BSR', source: 'card', ref: 'T0-BSR', affectedSurfaces: [] }, { cards: ['T0-BSR'] });
   fx.controller.next(goal.id);
@@ -105,7 +112,7 @@ async function atBaseSync(opts: { baseSync?: boolean; fallback?: boolean; steps?
   };
   let r = await reviewed('sha-1');
   assert.equal(r.directive.kind, 'review', r.directive.narration);
-  const handle = { fx, runner, card, g, goal, ship, primary, cx, r2, cxArgs, pArgs, hooks, reviewed, decide, state };
+  const handle = { fx, runner, card, g, goal, ship, primary, cx, r2, cxArgs, pArgs, hooks, reviewed, decide, state, spawnEnv };
   if (opts.blockFirst) {
     // Decision 1 blocks: the card returns to REVIEW_FIX, and the caller records the repair.
     primary.push(BLOCK);
@@ -131,6 +138,9 @@ test('acceptance 1: with both decisions used, a base-sync candidate gets a revie
     const { f, r: after } = await s.decide();
     assert.equal(f.classified.outcome, 'pass');
     assert.deepEqual(s.cxArgs[0]?.slice(0, 2), ['--effort', 'medium'], 'the base-sync reviewer runs with its own effort policy, medium by default');
+    // Card T0-REVIEWER-UTF8: the base-sync reviewer runs with the reviewer environment, as every reviewer before it did.
+    assert.deepEqual(s.spawnEnv.filter(([command]) => command === 'fake-cx'), [['fake-cx', reviewerEnv()]]);
+    assert.ok(s.spawnEnv.length > 1 && s.spawnEnv.every(([, env]) => JSON.stringify(env) === JSON.stringify(reviewerEnv())), 'the R2 and R3 reviewers before it too');
     const inv = f.run.review.invocations.at(-1)!;
     assert.equal(inv.reviewer, 'codex-bs');
     assert.equal((inv as { baseSync?: boolean }).baseSync, true, 'the invocation is marked as a base-sync decision');
