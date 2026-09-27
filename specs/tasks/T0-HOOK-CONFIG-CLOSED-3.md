@@ -1,0 +1,63 @@
+---
+id: T0-HOOK-CONFIG-CLOSED-3
+title: (replaces T0-HOOK-CONFIG-CLOSED-2) While aidlc.config.json cannot be used, the hook guards deny every call the loader before T0-HOOK-CONFIG-CLOSED denied and, beyond it, every Bash command but a fixed list of aidlc doctor commands and every edit but the config file's own (issue 76 item 1)
+status: merged
+branch: T0-HOOK-CONFIG-CLOSED-3
+worktree: D:\wt\AIDLC\T0-HOOK-CONFIG-CLOSED-3
+allow_paths:
+  - src/hooks/index.ts
+  - src/hooks/entry.ts
+  - tests/surface/hooks.test.ts
+  - docs/OPERATIONS.md
+  - CHANGELOG.md
+  - specs/tasks/T0-HOOK-CONFIG-CLOSED-3.md
+dod_command: npm run typecheck && node --test tests/surface/hooks.test.ts
+dod_exit: 0
+requirements:
+  - R1. The rule of this card is an invariant. For any text of `aidlc.config.json` and any tool call, the guards shall deny every call that the hook loader of main before T0-HOOK-CONFIG-CLOSED denied (its reading `{ ...DEFAULT_HOOK_CONFIG, ...JSON.parse(text).hooks }`, the defaults when the file is missing, unreadable or not JSON, a throw inside a guard read as a pass). What a broken config still yields can only add denials, never remove one.
+  - R2. `loadHookConfig(cwd)` shall look the file up (stat, then lstat), read it once, and return, for a config that parses under `ProjectConfig` and whose `hooks.productionPatterns` and `hooks.testPathPatterns` entries compile, exactly the reading of R1, unknown `hooks` keys included, so nothing changes under a valid config. Otherwise it shall return a config error carrying the file, a detail that never quotes the file text (not valid JSON; the schema paths and messages; a pattern named by key and index; a read failure by its code), and the reading of R1 of the same text. A path that neither resolves nor exists as a link is absent and gives the defaults; any other failed lookup is a read failure, and a file the lookup found but the read no longer finds is the read failure `cannot be read (changed during the read)`. The lookups and the read are injectable (`ConfigProbe`).
+  - R3. WHEN the config is an error, each guard that reads it (`production-gate`, `protect-paths`, `protect-tests`) shall first decide as its unchanged function on the reading of R1 of the same text, a throw read as a pass, and return that result when it blocks (exit 2 or a deny, with its own text such as `FROZEN`). Otherwise it applies the rule of T0-HOOK-CONFIG-CLOSED-2, so `production-gate` and `protect-paths` deny every command an event carries, an empty or blank one included and whatever file path it carries beside it, except one that equals, once trimmed, one of the sixteen doctor commands (`aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` and `node node_modules/aidlc/bin/aidlc.js doctor`, each alone, followed by ` --json`, by ` 2>&1`, or by ` --json 2>&1`), `protect-paths` denies an Edit, Write or MultiEdit whose target is not the config file that failed, and `protect-tests` does the same while a fix task is active; each such denial names the file JSON-quoted and what still passes, as T0-HOOK-CONFIG-CLOSED-2 wrote it.
+  - R4. WHEN the config is an error, `secrets-guard` shall run as before, the UserPromptSubmit output shall carry the config error with the repair, and the Stop output shall stay as it is.
+  - R5. `docs/OPERATIONS.md` (Hooks) and the CHANGELOG Unreleased section shall state R1 to R4.
+acceptance:
+  - 1. `tests/surface/hooks.test.ts`, loader, with each config text of T0-HOOK-CONFIG-CLOSED-2 giving its detail and the reading of R1; a valid config with an unknown hooks key (`{"hooks":{"extra":true}}`) giving the reading with that key; a probe that finds the file whose read then fails with ENOENT giving `cannot be read (changed during the read)` and one whose read fails with EACCES giving `cannot be read: EACCES`, each with the exact Bash and Edit denials; the stubbed lookup failures of T0-HOOK-CONFIG-CLOSED-2; an absent file giving the defaults. [R2] [dod arm 1]
+  - 2. The same file, an oracle table of config texts (valid; valid with an unknown key; not JSON; schema-invalid with `aidlc.config.json` frozen, the input `{"mode":"invalid","hooks":{"frozenPaths":["aidlc\\.config\\.json"]}}` verbatim; schema-invalid with another path frozen; schema-invalid with a production pattern that matches a doctor command; an invalid pattern; a frozenPaths value that is not a list; a directory at the config path) crossed with calls (a doctor command, another Bash command, a gated release command, an Edit of the config, an Edit of another file, an Edit of a frozen file, an Edit of a test file) with and without a fix task. In every cell where main's decision (the unchanged guards on the reading of R1, in dispatch order, a throw read as a pass) blocks, the new decision blocks, and under a valid config the two results are equal. [R1] [R3] [dod arm 1]
+  - 3. The same file, every rule and every pinned command of T0-HOOK-CONFIG-CLOSED-2 acceptance 2 holds under a broken config that freezes nothing and sets no patterns, and an event that carries a command beside a file path (the config path included) is denied unless the command is a doctor command, by each guard alone and in dispatch. [R3] [R4] [dod arm 1]
+  - 4. The same file, the UserPromptSubmit output, the Stop output and the JSON-quoted path holding a line break hold as in T0-HOOK-CONFIG-CLOSED-2 acceptance 3. [R4] [dod arm 1]
+  - 5. The same file, on the real filesystem, a link to nothing, a directory without search permission and a loop of links each give the loader result and the exact Bash denial of `production-gate` and Edit denial of `protect-paths`; a case the platform cannot make is a skipped test named for the reason, not a pass. [R2] [dod arm 1]
+  - 6. The same file reads the sentences this card adds to the Hooks section of `docs/OPERATIONS.md` and its CHANGELOG Unreleased entry. [R5] [dod arm 1]
+depends_on: []
+budget: 600
+tdd: true
+diagnosis:
+  root_cause: "loadHookConfig (src/hooks/index.ts:85) parsed aidlc.config.json with JSON.parse and no schema, and returned DEFAULT_HOOK_CONFIG from its catch, so a file that does not parse left hooks.frozenPaths empty and protect-paths blocked nothing; an invalid productionPatterns or testPathPatterns entry threw inside its guard and the hook entry exited 0. T0-HOOK-CONFIG-CLOSED replaced the Bash exemption of a broken config with a partial Bash grammar (two R3 blocks). T0-HOOK-CONFIG-CLOSED-2 replaced the grammar with an exact list, but a schema-invalid config lost the denials its parseable hooks values gave on main, so a frozen aidlc.config.json became editable through the repair (the hand-run Codex check of 6dc2148), unknown hooks keys were dropped under a valid config, a file found by the probe and gone at the read gave the defaults, and the real-filesystem cases did not assert their denials (R3 decision 2, F1 and F2)."
+  same_class: "Every decision the hooks take from aidlc.config.json goes through loadHookConfig and the three guards that read it (production-gate, protect-paths, protect-tests); under a config error each first runs as itself on main's reading, so the invariant of R1 holds for any value main's reading yields, a value its guard cannot use included. An invalid hooks.frozenPaths entry is not an error: protect-paths matches it as a literal substring on purpose. verify-before-done reads the planning directories through loadProjectConfig and reports a failure by code. Known limits, each with its issue: the valid path's command classifier (issue 120), the PowerShell tool outside every guard (issue 117), config discovery above cwd (issue 118). Items 2 and 3 of issue 76 are other modules (core/ci-policy.ts, delivery/ship.ts)."
+sweep: "grep -rn 'loadHookConfig\\|legacy\\|configAccess\\|probe.read' src/hooks/index.ts lists every decision between the defaults, main's reading and an error; grep -rn 'unusableConfig' src/hooks lists every guard that reads the config under an error."
+forbid: [changing config.ts, changing a guard function (productionGate, protectPaths, protectTests, secretsGuard, verifyBeforeDone), changing a guard's decision or output under a valid config, a config line in the Stop output, reading a Bash command under a broken config with any rule but the doctor list after main's decision]
+non_goals: ["issue 76 item 2, CI log classes", "issue 76 item 3, exit 0 read as merged (T0-EXIT-ZERO-NOT-MERGED)", "the PowerShell tool outside the guards: issue 117", "config discovery above cwd: issue 118", "the valid path's command classifier: issue 120", "Bash reads under a broken config: they go through the Read, Grep and Glob tools"]
+hygiene: "T0-HOOK-CONFIG-CLOSED-2 stopped after R3 decision 2 (F1: a race between the access probe and the read; F2: real-filesystem denial tests missing). The merge under ruling B was withdrawn because the hand-run Codex check of 6dc2148 found a fail-open that main does not have (a frozen aidlc.config.json that parses as JSON but fails the schema becomes editable through the repair exemption) and a data-shape change under a valid config (unknown hooks keys dropped). Pre-set ruling C: second successor T0-HOOK-CONFIG-CLOSED-3 carries 6dc2148 and closes F1, F2, Q1 and Q2; T0-HOOK-CONFIG-RACE is superseded by it. If -3 is blocked on its second R3 decision, #76 item 1 is held for the user; there is no -4. Ruled by aidlc-37 under the user's delegation of 2026-09-27T09:20Z. Before R3 decision 1, the same hand-run Codex check (does anything change under a valid config; is any fail-open new relative to main) answers no to both. The oracle reproduces main's decision in the test from the unchanged guard functions, so the invariant is checked against main's own code. The Codex pre-check of 7098895 answered no to both questions. R3 decision 1 blocked 7098895 on one finding: `aidlc hook protect-paths` passed an event carrying a non-doctor command beside the config path, because the file branch returned first; the repair compares any command with the doctor list before the edit exemption. Merged under ruling B of aidlc-37 after R3 decision 2 (PR #130, squash 4ff67f6); the ruling and the Codex verdict are in the Ruling section below."
+doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+---
+
+# T0-HOOK-CONFIG-CLOSED-3
+
+## Deliverable
+A broken `aidlc.config.json` denies at least what it denied before this card family, and beyond that only what the exact repair list allows, with nothing changed under a valid config.
+
+## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
+```powershell
+npm run typecheck && node --test tests/surface/hooks.test.ts
+```
+- Expected exit code: 0
+- Assertion: every listed test passes and the typecheck is clean.
+
+## Ruling
+Merged under ruling by aidlc-37 under the user's delegation of 2026-09-27T09:20Z (pre-set ruling B for T0-HOOK-CONFIG-CLOSED-3 decision 2). R3 decision 2 on ec84023 blocked on one finding: under a config that cannot be used, a command value that is not a string (null, a number, an object, an array) passes production-gate and protect-paths without the doctor comparison. The guards before these cards pass such values under every config (protectPaths reads only a string command, productionGate reads String(command)), and the card keeps their denial of a gated String(value) through its legacy decision, so this is a residual main also has, not a new fail-open. The hand-run Codex check of ec84023 answered no to both questions (no change under a valid config, no fail-open new relative to main). The residual is issue #129.
+
+Hand-run Codex check of ec84023 under the ruling (gpt-6-astra, medium, read-only; base 745c6d0; non-string command values named in Q2):
+
+```json
+{"q1_valid_config_change":false,"q2_new_fail_open":false,"findings":[]}
+```
+
+PR #130 squash-merged as 4ff67f6 (tree 3fcf0fe, equal to the tree of ec84023) on four required checks green.
