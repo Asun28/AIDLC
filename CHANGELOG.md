@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Probe stop text, card T0-PROBE-STOP-TEXT (issue 111): the PREPARE stop for a failed worktree probe (the worktree list or the common git directory) takes the tool-stop next action of T0-TOOL-STOP-TEXT: it names the git error, says the stop is final for the card and names the replacement path through `aidlc goal resume --replace`, without the candidate when none was built. An ownership stop from the same check keeps its own next action.
+
 - Tool stop text, card T0-TOOL-STOP-TEXT (issue 85 item 2): a `tool` stop (an unclassified ship outcome, or no usable pre-review verdict twice in one cycle) says it is final for the card and names the one way on: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason "..." --replace '{"<card>":"<replacement>"}'`. It never names `card next`, which returns the same stop; the ship's `[SAGA-RESUME]` command moves to the stop's detail as a labelled diagnostic. A recorded card resume is issue 109.
 
 - Base-sync CHANGELOG edges, card T0-BASE-SYNC-CHANGELOG-EDGES (issue 60): a CHANGELOG merge the ship path committed but cannot read back ends with `[SHIP-BASE-SYNC-COMMITTED]` and a repair that records the worktree HEAD instead of resolving hunks; a failed listing, read or diff3 checkout names its error instead of posing as a conflict; a failed write says the file may be partly written and how to write the markers again; the resolver takes only entries and third-level subsection headings.

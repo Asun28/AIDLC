@@ -4665,6 +4665,24 @@ test('T0-PROBE-STOP-TEXT (issue 111): a worktree probe that fails at PREPARE is 
   }
 });
 
+test('T0-PROBE-STOP-TEXT (issue 111): a run that already records a candidate (a takeover without a worktree, say) names the replacement that carries it [R2]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-BUILT', title: 'a built run at PREPARE' });
+    const goal = goalForCards(fx, ['T1-BUILT']);
+    const config = { ...fx.config, shipPath: 'github' as const };
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, git: new GitProbe(scriptedRunner({ 'git worktree list --porcelain': { exitCode: 128, stderr: 'fatal: not a git repository' } })) });
+    const fresh = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-BUILT');
+    const built = fx.store.updateCardRun(goal.id, 'T1-BUILT', (current) => ({ ...(current ?? fresh), candidate: { sha: 'sha-1', dirty: false, untracked: [], digest: 'digest-1' } }));
+    const r = runner.next(fx.goal(goal.id), fx.card('T1-BUILT'), built);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'tool');
+    assert.equal(r.run.stop?.nextAction, `inspect the git error in the detail; this stop is final for card T1-BUILT: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"T1-BUILT":"<replacement>"}'\``);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-PROBE-STOP-TEXT (issue 111): an ownership stop from the same worktree check keeps its own next action [R2]', () => {
   const fx = makeFixture();
   try {

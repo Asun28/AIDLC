@@ -11,10 +11,11 @@ const GLOBAL_REASONS: ReadonlySet<StopReason> = new Set<StopReason>(['auth', 'au
 /**
  * The next action of a stop that nothing lifts (card T0-TOOL-STOP-TEXT, issue 85 item 2): a `tool` stop is selected before
  * anything else, so the command that made it returns it again and the way on is a replacement card through `goal resume`
- * (a recorded resume is issue 109). It gives the cause first and never names `card next`.
+ * (a recorded resume is issue 109). It gives the cause first and never names `card next`; the replacement carries the
+ * candidate only when one was built (`candidate`, default true; a stop at PREPARE has none, issue 111).
  */
-export function toolStopNextAction(goalId: string, cardId: string, cause: string, _candidate = true): string {
-  return `${cause}; this stop is final for card ${cardId}: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goalId} --reason "..." --replace '{"${cardId}":"<replacement>"}'\``;
+export function toolStopNextAction(goalId: string, cardId: string, cause: string, candidate = true): string {
+  return `${cause}; this stop is final for card ${cardId}: fix the cause, register a replacement card${candidate ? ' that carries the candidate' : ''}, then run \`aidlc goal resume ${goalId} --reason "..." --replace '{"${cardId}":"<replacement>"}'\``;
 }
 
 export function makeStop(
@@ -27,7 +28,7 @@ export function makeStop(
     reason,
     detail,
     // `finalFor` marks a stop nothing lifts: its next action is the cause followed by the replacement path.
-    nextAction: options.finalFor ? toolStopNextAction(options.finalFor.goalId, options.finalFor.cardId, nextAction) : nextAction,
+    nextAction: options.finalFor ? toolStopNextAction(options.finalFor.goalId, options.finalFor.cardId, nextAction, options.finalFor.candidate) : nextAction,
     global: options.global ?? GLOBAL_REASONS.has(reason),
     at: options.at ?? nowIso(),
     unresolvedOperations: options.unresolvedOperations ?? [],
