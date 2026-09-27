@@ -510,3 +510,23 @@ test('T0-R2-FALLBACK-3: without a fallback a no-verdict recorded under an earlie
   });
   assert.deepEqual(next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!).directive, preReviewOf('deepseek', ' (retry: the previous run produced no verdict)'));
 }, { fallback: false }));
+
+test('T0-TOOL-STOP-TEXT (issue 85 item 2): the stop for a second no-verdict in a cycle names the replacement path and never card next, and card next returns the same stop [R1] [R2] [R3]', withCard(async (s) => {
+  s.primary.push({ stdout: 'I cannot decide.\n' }, { stdout: 'I still cannot decide.\n' });
+  let d = preReviewDirective(s, s.run);
+  const first = await review(s, d.run);
+  assert.equal(first.result.outcome, 'no-verdict');
+  d = preReviewDirective(s, first.run);
+  const second = await review(s, d.run);
+  assert.equal(second.result.outcome, 'no-verdict');
+  const stopped = next(s, second.run);
+  assert.equal(stopped.directive.kind, 'stop', stopped.directive.narration);
+  const stop = stopped.run.stop!;
+  assert.equal(stop.reason, 'tool');
+  assert.equal(stop.nextAction, `inspect the retained output under .review/${s.card.id}.pre.*.log and fix the pre-review command (or clear preReview.command to skip R2); this stop is final for card ${s.card.id}: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${s.goalId} --reason "..." --replace '{"${s.card.id}":"<replacement>"}'\``);
+  assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
+  if (stopped.directive.kind === 'stop') assert.deepEqual(stopped.directive.stop, stop);
+  const again = next(s, stopped.run);
+  assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
+  assert.deepEqual(again.run.stop, stop, 'the same stop');
+}));

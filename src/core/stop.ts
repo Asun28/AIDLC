@@ -8,16 +8,26 @@ import { nowIso, type StopReason, type StopRecord } from './types.ts';
 
 const GLOBAL_REASONS: ReadonlySet<StopReason> = new Set<StopReason>(['auth', 'audit', 'cancelled', 'ownership', 'risk', 'frozen', 'time']);
 
+/**
+ * The next action of a stop that nothing lifts (card T0-TOOL-STOP-TEXT, issue 85 item 2): a `tool` stop is selected before
+ * anything else, so the command that made it returns it again and the way on is a replacement card through `goal resume`
+ * (a recorded resume is issue 109). It gives the cause first and never names `card next`.
+ */
+export function toolStopNextAction(goalId: string, cardId: string, cause: string): string {
+  return `${cause}; this stop is final for card ${cardId}: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goalId} --reason "..." --replace '{"${cardId}":"<replacement>"}'\``;
+}
+
 export function makeStop(
   reason: StopReason,
   detail: string,
   nextAction: string,
-  options: { global?: boolean; unresolvedOperations?: string[]; at?: string } = {},
+  options: { global?: boolean; unresolvedOperations?: string[]; at?: string; finalFor?: { goalId: string; cardId: string } } = {},
 ): StopRecord {
   return {
     reason,
     detail,
-    nextAction,
+    // `finalFor` marks a stop nothing lifts: its next action is the cause followed by the replacement path.
+    nextAction: options.finalFor ? toolStopNextAction(options.finalFor.goalId, options.finalFor.cardId, nextAction) : nextAction,
     global: options.global ?? GLOBAL_REASONS.has(reason),
     at: options.at ?? nowIso(),
     unresolvedOperations: options.unresolvedOperations ?? [],
