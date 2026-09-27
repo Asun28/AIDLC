@@ -35,6 +35,9 @@ function fired(fx: ReturnType<typeof makeFixture>, goalId: string): unknown[] {
   return fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['bound']);
 }
 
+/** The keys of those firings: goal/card/bound/the persisted value that fired it (R3 decision 1). */
+const keysOf = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length + 1));
+
 test('Q1/Q8/Q10/Q15: a T0 card flows PREPARE -> BUILD -> SHIP -> CLOSE -> DONE and the goal finishes development-only', () => {
   const fx = makeFixture();
   try {
@@ -591,6 +594,7 @@ test('formal review guards: an advisory block proceeds, a hold blocks the comman
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
     assert.deepEqual(fired(fx, goal.id), ['review-decisions', 'review-decisions'], 'T1-BOUND-TELEMETRY acceptance 1: the gate that refuses a third decision journals one more review-decisions firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-GUARD/review-decisions/sha-1c', 'T1-GUARD/review-decisions/sha-3']);
     const stoppedRun = CardRun.parse({ ...third, state: 'STOP', stop: makeStop('review', 'second substantive block', 'human ruling', { at: fx.now(), global: false }), review: { ...third.review, substantiveDecisions: 1, substantiveBlocks: 1 }, updatedAt: fx.now() });
     await assert.rejects(() => runner.formalReview(fx.goal(goal.id), card, stoppedRun), /stopped/, 'a stopped card run never dispatches a review');
   } finally {
@@ -1348,6 +1352,7 @@ test('T1-REVIEW-FINDINGS: an R3 block on the same candidate is re-decided only w
     assert.equal(f.run.stop?.reason, 'review');
     assert.match(f.run.stop?.detail ?? '', /second substantive block.*F1 re-raised after the author.s dispute/s);
     assert.deepEqual(fired(fx, goal.id), ['review-decisions'], 'T1-BOUND-TELEMETRY acceptance 1: the command-path second block journals one review-decisions firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-FR3/review-decisions/sha-1']);
     assert.equal(f.run.findings.find((x) => x.id === 'F1')?.reraised.length, 1);
     assert.equal(f.run.findings.find((x) => x.id === 'F2')?.resolvedAt, fx.now());
   } finally {
@@ -4802,6 +4807,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: the same cause twice without progress mak
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(r.run.stop?.detail, 'effort episode same-cause-stop');
     assert.deepEqual(fired(fx, goal.id), ['attempts']);
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-SAME/attempts/2']);
     assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');
   } finally {
@@ -4828,6 +4834,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: three baseline failures without progress 
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.match(r.run.stop?.detail ?? '', /^exhausted: third baseline attempt failed without evidenced progress/);
     assert.deepEqual(fired(fx, goal.id), ['attempts']);
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-EXH/attempts/3']);
     assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');
   } finally {
@@ -4863,6 +4870,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a second formal review without a verdict 
     assert.equal(f.run.stop?.reason, 'review');
     assert.match(f.run.stop?.detail ?? '', /no verdict after initial dispatch plus one retry/);
     assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry']);
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-NV/no-verdict-retry/sha-1']);
     assert.equal(runner.next(fx.goal(goal.id), card, f.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry'], 'the stopped card fires nothing more');
   } finally {
@@ -4883,6 +4891,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a planning allowance spent without an acc
     assert.equal(second.directive.kind, 'stop', second.directive.narration);
     if (second.directive.kind === 'stop') assert.match(second.directive.stop.detail, /^planning allowance/);
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations']);
+    assert.deepEqual(keysOf(fx, goal.id), ['-/planning-invocations/2']);
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: planning-invocations 1 (DONE 0, STOP/checkpoint 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations'], 'the stopped goal fires nothing more');
@@ -4908,6 +4917,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a second integrated acceptance failure af
     assert.equal(second.directive.kind, 'stop');
     assert.equal(fx.goal(goal.id).stop?.reason, 'arc-verify');
     assert.deepEqual(fired(fx, goal.id), ['integration-repair']);
+    assert.deepEqual(keysOf(fx, goal.id), ['-/integration-repair/1']);
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: integration-repair 1 (DONE 0, STOP/arc-verify 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
   } finally {
     fx.cleanup();
@@ -4996,7 +5006,7 @@ test('T0-PROBE-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased sectio
  * T1-BOUND-TELEMETRY R3 decision 1: the first call of `fs[name]` that `hit` accepts throws while `act` runs, a failure at the
  * write boundary every writer passes through; returns what `act` returned or threw.
  */
-async function failOnce(name: 'renameSync' | 'appendFileSync', hit: (args: unknown[]) => boolean, act: () => unknown): Promise<unknown> {
+async function failOnce(name: 'renameSync' | 'appendFileSync' | 'openSync', hit: (args: unknown[]) => boolean, act: () => unknown): Promise<unknown> {
   const mod = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
   const real = mod[name]!;
   let armed = true;
@@ -5057,7 +5067,7 @@ for (const [outcome, text] of [['red-missing', ''], ['merge-failed', 'CONFLICT (
       const r = runner.next(fx.goal(goal.id), card, run);
       assert.equal(r.run.stop?.reason, 'card', r.directive.narration);
       assert.match(r.run.stop?.detail ?? '', /cannot admit a repair attempt: exhausted/);
-      assert.deepEqual(fired(fx, goal.id), ['attempts']);
+      assert.deepEqual(keysOf(fx, goal.id), ['T1-SPENT/attempts/3']);
     } finally {
       fx.cleanup();
     }
@@ -5204,6 +5214,43 @@ test('T1-BOUND-TELEMETRY R3 decision 1, condition 2: a ship-path no-verdict stop
     assert.equal(stopped.run.stop?.reason, 'review', stopped.directive.narration);
     for (let i = 0; i < 3; i += 1) runner.next(fx.goal(goal.id), card, stopped.run);
     assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['key']), [`${goal.id}/T1-NVK/no-verdict-retry/sha-nvk`]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY R3 decision 1: a takeover past the card deadline saves the deadline stop with its one firing', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-TAKE', title: 'taken over past its deadline' });
+    const goal = goalForCards(fx, ['T1-TAKE'], { size: 'T1' });
+    const card = fx.card('T1-TAKE');
+    fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TAKE'));
+    fx.advance(3 * 3600_000 + 60_000);
+    setActorForTests(actorB);
+    const taken = fx.runner().takeover(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-TAKE')!);
+    assert.equal(taken.run.stop?.reason, 'time');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY R3 decision 1: an owner that revalidates its ownership stop past the deadline saves the deadline stop with its firing the first time, even when the next save fails', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-REVAL', title: 'the owner renews an expired lease past the deadline' });
+    const goal = goalForCards(fx, ['T1-REVAL'], { size: 'T1' });
+    const card = fx.card('T1-REVAL');
+    const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-REVAL')).run;
+    const stopped = fx.store.saveCardRun(CardRun.parse({ ...prepared, state: 'STOP', stop: makeStop('ownership', 'the lease expired', 'renew it', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+    fx.advance(3 * 3600_000 + 60_000);
+    let locks = 0;
+    const lockFile = path.resolve(`${fx.store.cardFile(goal.id, 'T1-REVAL')}.lock`);
+    const failed = await failOnce('openSync', (args) => path.resolve(String(args[0])) === lockFile && (locks += 1) === 2, () => fx.runner().next(fx.goal(goal.id), card, stopped));
+    assert.match(String(failed), /injected openSync failure/);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-REVAL')?.stop?.reason, 'time', 'the revalidation saved the deadline stop');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline'], 'with its firing');
   } finally {
     fx.cleanup();
   }

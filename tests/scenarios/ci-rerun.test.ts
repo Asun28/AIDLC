@@ -10,6 +10,9 @@ const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/ru
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order. */
 const fired = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['bound']);
 
+/** The keys of those firings: goal/card/bound/the persisted value that fired it (R3 decision 1). */
+const keysOf = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length + 1));
+
 function start(fx: ReturnType<typeof makeFixture>, ship: InjectedShipPath) {
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
   const goal = goalForCards(fx, ['T1-HELLO']);
@@ -37,6 +40,7 @@ test('Q7: a transient CI failure earns one persisted same-origin rerun, reconcil
     assert.ok(types.includes('CI_CLASSIFIED'));
     assert.ok(types.includes('CI_RERUN'));
     assert.deepEqual(fired(fx, goal.id), ['ci-rerun-allowed'], 'T1-BOUND-TELEMETRY acceptance 1: the rerun journals one ci-rerun-allowed firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/ci-rerun-allowed/sha-t1-hello']);
 
     const reconciled = runner.ciReconcile(fx.goal(goal.id), card, r.run, '12345', () => ({ status: 'completed', conclusion: 'success', attempt: 2 }));
     assert.equal(reconciled.state, 'SHIP');
@@ -74,6 +78,7 @@ test('Q7: the rerun allowance is per candidate; a second transient failure on th
     assert.equal(r.run.stop?.reason, 'ci');
     assert.equal(r.run.ci.reruns.length, 1, 'no second rerun recorded');
     assert.deepEqual(fired(fx, goal.id), ['ci-rerun-denied'], 'T1-BOUND-TELEMETRY acceptance 1: the denial journals one ci-rerun-denied firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/ci-rerun-denied/sha-t1-hello']);
     assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['ci-rerun-denied'], 'the stopped card fires nothing more');
   } finally {
@@ -149,6 +154,7 @@ test('T0-SHIP-REPAIR-ATTEMPT acceptance 3: the same CI code defect twice without
     assert.equal(r.run.effort?.terminal, 'same-cause-stop');
     assert.equal(countedFailures(r.run.effort!).length, 2);
     assert.deepEqual(fired(fx, goal.id), ['attempts'], 'T1-BOUND-TELEMETRY acceptance 1: the ladder stop journals one attempts firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/attempts/2']);
     r = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(r.directive.kind, 'stop', 'card next keeps returning the stop');
     assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');

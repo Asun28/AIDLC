@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { outcomeOf, renderBoard } from '../../src/state/board.ts';
+import { journalFiring, outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
-import { BoundName, JournalEvent } from '../../src/core/types.ts';
+import { BoundName, JournalEvent, boundFired } from '../../src/core/types.ts';
 import { ProjectConfig } from '../../src/config.ts';
 import { Journal } from '../../src/state/journal.ts';
 import { goalForCards, makeFixture, writeCard } from '../scenarios/_harness.ts';
@@ -116,8 +116,9 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.throws(() => journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'lifecycle-repair', key: 'g-1/-/lifecycle-repair/1' } }), 'the append boundary refuses it');
       assert.throws(() => journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'attempts' } }), 'a firing without its key is refused too');
       assert.equal(journal.readAll().length, 0, 'nothing is written');
-      journal.append({ type: 'BOUND_FIRED', goalId: 'g-1', generation: 0, data: { bound: 'attempts', key: 'g-1/T1-A/attempts/3' } });
-      assert.deepEqual(journal.readAll().map((e) => e.data), [{ bound: 'attempts', key: 'g-1/T1-A/attempts/3' }]);
+      journal.append({ type: 'NOTE', goalId: 'g-1', generation: 0, data: { key: 'g-1/T1-A/attempts/3' } });
+      for (let i = 0; i < 2; i += 1) journalFiring(journal, boundFired({ id: 'g-1', generation: 0 }, 'attempts', 3, 'T1-A'));
+      assert.deepEqual(journal.readAll().filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'attempts', key: 'g-1/T1-A/attempts/3' }], 'one entry per key; an event of another type is no firing');
     } finally {
       cleanup(dir);
     }
@@ -164,7 +165,9 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       const broken = goalForCards(fx, ['T1-D']).id;
       fire(broken, 'arc-deadline');
       appendFileSync(fx.journal(broken).file, 'not a journal line\n', 'utf8');
-      const named = expected.replace('; review-decisions', '; arc-deadline 1 (DONE 0, open 1); review-decisions') + `; incomplete: lines that do not parse in "${broken}"`;
+      mkdirSync(path.join(fx.paths.journal, 'g-dir.jsonl')); // a journal that cannot be read at all
+      appendFileSync(path.join(fx.paths.journal, '_host.jsonl'), 'not a journal line\n', 'utf8'); // the host journal is no goal journal
+      const named = expected.replace('; review-decisions', '; arc-deadline 1 (DONE 0, open 1); review-decisions') + `; incomplete: lines that do not parse in "${broken}", "g-dir"`;
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), [named]);
     } finally {
       fx.cleanup();
@@ -177,6 +180,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       writeCard(fx, { id: 'T1-A', title: 'a' });
       const goal = goalForCards(fx, ['T1-A']);
       writeFileSync(path.join(fx.paths.goals, 'g-damaged.json'), '{ not json', 'utf8');
+      Journal.forGoal(fx.paths.journal, 'g-orphan').append({ type: 'BOUND_FIRED', goalId: 'g-orphan', generation: 0, data: { bound: 'attempts', key: 'g-orphan/-/attempts/1' } }); // a journal without a goal record is read too
       fx.advance(3 * 3600_000 + 60_000);
       const kind = (() => {
         try {
@@ -187,7 +191,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       })();
       assert.equal(kind, 'stop', 'the goal deadline stop is saved');
       assert.equal(fx.goal(goal.id).terminal, true);
-      assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)']);
+      assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0); attempts 1 (DONE 0, open 1)']);
     } finally {
       fx.cleanup();
     }
