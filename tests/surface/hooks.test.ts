@@ -4,7 +4,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, sy
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { DEFAULT_HOOK_CONFIG, HookConfigError, loadHookConfig, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type ConfigProbe, type HookConfig, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
+import { DEFAULT_HOOK_CONFIG, HookConfigError, loadHookConfig, mutatingSegments, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type ConfigProbe, type HookConfig, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
 import { AuthorizationRecord, CardRun, Goal, addMs, nowIso, type ActorIdentity, type AuthorizationRecord as AuthRec } from '../../src/core/types.ts';
 import { classifyRequest } from '../../src/core/router.ts';
@@ -891,4 +891,354 @@ test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section st
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const entry = '- Command values that are not strings, card T0-HOOK-CONFIG-NONSTRING (issue 129): while `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` compared the `command` of an event with the doctor list only when it was a string, so a hand-written hook event whose `command` was null, a number, an object or an array passed them, beside the config path too. A present `command` that is not one of the doctor commands is now denied whatever its type, after the decision the guards took before these cards on the same text; an event without a `command` is decided as before, and nothing changes under a valid config.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
+
+// ---------------------------------------------------------------- T0-HOOK-CLASSIFIER-3 (issue 120)
+
+const GATE_TEXT = 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
+
+/** The split pins of acceptance 1, reused by the invariant of acceptance 6. */
+const SPLIT_PINS = ['make deploy 2>&1 production', 'make deploy >&2 production', 'make deploy &> log production', 'make deploy &>> log production', 'make a && make b', 'make a || make b ; make c | make d', 'cat notes & make y', 'cat notes\nmake y', 'cat notes\r\nmake y', 'cat notes\rmake y', 'make a & make b'];
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 1: a command splits at a lone ampersand and a line break, and the guards decide as main did wherever main denied', () => {
+  // redirects and && split as before: one segment holds the whole release phrase
+  for (const command of SPLIT_PINS.slice(0, 4)) assert.deepEqual(mutatingSegments(command), [command], command);
+  assert.deepEqual(mutatingSegments('make a && make b'), ['make a', 'make b']);
+  assert.deepEqual(mutatingSegments('make a || make b ; make c | make d'), ['make a', 'make b', 'make c', 'make d']);
+  // the tail after a lone ampersand and after each line break is its own segment
+  assert.deepEqual(mutatingSegments('cat notes & make y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\nmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\r\nmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('cat notes\rmake y'), ['make y']);
+  assert.deepEqual(mutatingSegments('make a & make b'), ['make a', 'make b']);
+  // a release phrase main matched in one segment is still matched (the Codex pre-check of 9596a37)
+  const { cwd, env } = envWithState();
+  const release = ['make deploy', 'echo production'];
+  for (const joint of [' & ', '\r']) {
+    assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: release.join(joint) } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 2, stderr: GATE_TEXT }, JSON.stringify(joint));
+  }
+  // across a separator main split at, and across a line feed the default patterns stop at, main passed and so does the card
+  for (const joint of [' | ', ' ; ', ' && ', ' || ', '\n', '\r\n']) {
+    assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: release.join(joint) } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 }, JSON.stringify(joint));
+  }
+  // main's segments come first: a pattern that does not compile is reached where main reached it (the pre-check of 267486f)
+  const invalidLast = { ...DEFAULT_HOOK_CONFIG, productionPatterns: ['deploy', '['] };
+  assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: 'git branch topic; make deploy' } }, env, invalidLast, cwd), { exitCode: 2, stderr: GATE_TEXT });
+  const broken = withConfig(JSON.stringify({ hooks: { productionPatterns: ['deploy', '['] } }));
+  assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git branch topic; make deploy' } }, { cwd: broken.cwd, env: broken.env }), { exitCode: 2, stderr: GATE_TEXT });
+  const brokenJson = withConfig(UNUSABLE_CONFIGS[0]![0]);
+  assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: release.join(' & ') } }, { cwd: brokenJson.cwd, env: brokenJson.env }), { exitCode: 2, stderr: GATE_TEXT });
+  // under a config that cannot be used, the legacy decision keeps main's reading, so main's config-error deny stays (pre-check of a9d986d)
+  const topic = withConfig(JSON.stringify({ hooks: { productionPatterns: ['topic', '['] } }));
+  const remote = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git remote add topic url' } }, { cwd: topic.cwd, env: topic.env });
+  assert.equal(decision(remote), 'deny');
+  assert.ok(denyReason(remote).startsWith('Bash is denied while '), denyReason(remote));
+  const frozenBroken = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/'], productionPatterns: ['['] } }));
+  const worktree = runHook('protect-paths', { tool_name: 'Bash', tool_input: { command: 'git worktree add contracts/wt' } }, { cwd: frozenBroken.cwd, env: frozenBroken.env });
+  assert.equal(decision(worktree), 'deny');
+  assert.ok(denyReason(worktree).startsWith('Bash is denied while '), denyReason(worktree));
+});
+
+const RELEASE = 'deploy production';
+
+/** One row per separator, path-qualified first word and git remote or worktree subcommand: [label, command naming a release, the same form without one]. */
+const GATE_ROWS: Array<[string, string, string]> = [
+  ['a lone ampersand', `cat notes & make ${RELEASE}`, 'cat notes & make build'],
+  ['a line break', `cat notes\nmake ${RELEASE}`, 'cat notes\nmake build'],
+  ['a carriage return and a line break', `cat notes\r\nmake ${RELEASE}`, 'cat notes\r\nmake build'],
+  ['a carriage return', `cat notes\rmake ${RELEASE}`, 'cat notes\rmake build'],
+  ['a POSIX path first word', `/usr/bin/grep ${RELEASE}.log`, '/usr/bin/grep build x.log'],
+  ['a Windows path first word', `C:\\tools\\grep.exe ${RELEASE}.log`, 'C:\\tools\\grep.exe build x.log'],
+  ...['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'set-branches', 'prune', 'update'].map((sub): [string, string, string] => [`git remote ${sub}`, `git remote ${sub} production-deploy`, `git remote ${sub} origin`]),
+  ...['add', 'remove', 'move', 'prune', 'lock', 'unlock', 'repair'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} ../production-deploy`, `git worktree ${sub} ../x`]),
+];
+
+/** The forms moved to issue 135 and the inputs of the Codex pre-checks main passed: read-only here, as on main. */
+const MOVED_FORMS = [
+  `awk 'BEGIN{system("make ${RELEASE}")}'`,
+  `awk '{print "${RELEASE}" | "sh"}' in.txt`,
+  `awk 'BEGIN{"${RELEASE}" | getline x}'`,
+  `sed 'e make ${RELEASE}' in.txt`,
+  `sed 's/x/make ${RELEASE}/e' in.txt`,
+  `find . -exec make ${RELEASE} {} +`,
+  `find . -okdir make ${RELEASE} {} +`,
+  'rg --pre deploy-production x',
+  `git grep -O ${RELEASE}`,
+  'git branch -D release/production-deploy',
+  'git branch release/production-deploy',
+  // the pre-check of 267486f: a redirect `>&` before a file named awk or sed
+  `awk '{print $0}' >&awk 'system("${RELEASE}")'`,
+  `sed 'p' >&sed 'e ${RELEASE}'`,
+  // the pre-check of a9d986d: an option word after a lone ampersand or a line break belongs to the next command
+  `rg x & echo --pre ${RELEASE}`,
+  `find .\necho -exec ${RELEASE}`,
+];
+
+/** Read-only uses: each passes the gate although its text names a release. */
+const READ_ONLY_ROWS = [
+  ...MOVED_FORMS,
+  `awk '/deploy production/' log`,
+  `sed -n '/deploy/p' production.log`,
+  "sed -i 's/production/prod/' deploy.yaml",
+  'find . -name deploy-production',
+  `rg ${RELEASE}.log`,
+  `git grep ${RELEASE}`,
+  "git branch --list '*production*deploy*'",
+  'git remote',
+  'git remote -v',
+  'git remote show production-deploy',
+  'git remote get-url production-deploy',
+  'git worktree list',
+  // a changing subcommand that is not the third word is not read
+  'git remote -v add production-deploy',
+  'git worktree --quiet add ../production-deploy',
+  // listings whose text names a release through an env prefix: only the classification keeps them read-only
+  'env deploy=production git remote',
+  'env deploy=production git remote -v',
+  'env deploy=production git worktree list',
+  // a form word inside another command's arguments is no form
+  `grep "git remote add ${RELEASE}" x.log`,
+  `echo git worktree add ${RELEASE}`,
+  `grep ${RELEASE}.log 2>&1`,
+  `grep ${RELEASE}.log && echo done`,
+];
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 2: production-gate tests every separator, path-qualified first word and changing git remote or worktree subcommand, and leaves the rest read-only', () => {
+  const { cwd, env } = envWithState();
+  const gate = (command: string) => productionGate({ tool_name: 'Bash', tool_input: { command } }, env, DEFAULT_HOOK_CONFIG, cwd);
+  for (const [label, named, plain] of GATE_ROWS) {
+    assert.deepEqual(gate(named), { exitCode: 2, stderr: GATE_TEXT }, `${label}: ${JSON.stringify(named)}`);
+    assert.deepEqual(gate(plain), { exitCode: 0 }, `${label} without a release: ${JSON.stringify(plain)}`);
+  }
+  for (const command of READ_ONLY_ROWS) assert.deepEqual(gate(command), { exitCode: 0 }, JSON.stringify(command));
+});
+
+/** One row per git worktree writing subcommand: [label, command writing under the frozen contracts/, the same command without it]. */
+const WRITE_ROWS: Array<[string, string, string]> = ['add', 'remove', 'move', 'prune'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} contracts/wt`, 'git worktree list contracts/wt']);
+
+/** Reads under the frozen path, as on main: the file-writing options moved to issue 135 and the pre-check inputs of a9d986d. */
+const DEFER_ROWS = [
+  "sed -n -i 's/a/b/' contracts/api.yaml",
+  "sed --in-place 's/a/b/' contracts/api.yaml",
+  'awk -f prog.txt -i inplace contracts/api.yaml',
+  'find contracts/ -delete',
+  'sort -o contracts/api.yaml contracts/api.yaml',
+  'uniq in.txt contracts/out.txt',
+  'tree -o contracts/tree.txt',
+  "yq -i '.a = 1' contracts/api.yaml",
+  'git log --output=contracts/out.txt',
+  "sed -n 'w contracts/copy.yaml' in.txt",
+  "sed -e 's/ -i / x /' contracts/api.yaml",
+  `awk 'BEGIN { x = " -i inplace " }' contracts/api.yaml`,
+  'grep "git worktree add contracts/wt" notes.txt',
+  // a writing subcommand that is not the third word is not read
+  'git worktree --quiet add contracts/wt',
+];
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 3: protect-paths reads a git worktree writing subcommand as a write, and the moved option forms defer as on main', () => {
+  const config = { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] };
+  const paths = (command: string) => protectPaths({ tool_name: 'Bash', tool_input: { command } }, config);
+  for (const [label, writing, reading] of WRITE_ROWS) {
+    const denied = paths(writing);
+    assert.equal(decision(denied), 'deny', `${label}: ${JSON.stringify(writing)}`);
+    assert.ok(denyReason(denied).startsWith('FROZEN: '), label);
+    assert.equal(decision(paths(reading)), 'defer', `${label} without the subcommand: ${JSON.stringify(reading)}`);
+    assert.deepEqual(paths(writing.replaceAll('contracts', 'src')), { exitCode: 0 }, `${label} without a frozen path`);
+  }
+  for (const reading of DEFER_ROWS) assert.equal(decision(paths(reading)), 'defer', reading);
+  const { cwd, env } = envWithState();
+  assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: "sed -i 's/production/prod/' deploy.yaml" } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 });
+});
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 5: docs/OPERATIONS.md (Hooks) and the CHANGELOG Unreleased section state the classifier', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
+  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER-3, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, except `git remote` with `add`, `remove`, `rm`, `rename`, `set-url`, `set-head`, `set-branches`, `prune` or `update` as its third word and `git worktree` with `add`, `remove`, `move`, `prune`, `lock`, `unlock` or `repair`. `production-gate` tests first the segments it tested before, in the same order and classification, and then the ones the new split adds, so wherever it denied before it decides as before; under a config that cannot be used its legacy decision uses the classification before this card alone. `protect-paths` also reads `git worktree add`, `remove`, `move` and `prune` as writes. The one-process hook dispatch (`dispatchHook`) decides in two passes: every guard first, in the same order, with the classification before this card, and the new forms only when none of them blocked, so wherever the dispatch blocked before, the same guard blocks with the same result (a token `secrets-guard` catches, a frozen-path write `protect-paths` catches, a locked test `protect-tests` catches). No other word is read: option forms (find `-exec`, sed `-i`, sort `-o` and the like) and awk programs and sed scripts are issue 135.';
+  assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
+  assert.ok(!hooks.includes('(card T0-HOOK-CLASSIFIER,') && !hooks.includes('(card T0-HOOK-CLASSIFIER-2,'), 'the replaced paragraphs are gone');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER-3 (issue 120, replacing T0-HOOK-CLASSIFIER and T0-HOOK-CLASSIFIER-2). The Bash guards split a command only at `||`, `&&`, `;` and `|` and read a path-qualified first word by its base name, so a second command after a lone `&` or a line break, or a program named by a path, passed them as read-only, and `git remote` and `git worktree` changes were read as reads. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `git remote` and `git worktree` subcommands that change the repository (the third word) are mutating, and `protect-paths` reads `git worktree add`, `remove`, `move` and `prune` as writes. `production-gate` tests the segments it tested before first, the hook dispatch runs every guard with the classification before this card first and the new forms only when no guard blocked, and the legacy decision of a config that cannot be used keeps the classification before this card, so wherever a guard or the dispatch denied before, the same guard denies with the same reason. Option and program forms are issue 135.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  assert.ok(!unreleased.includes('card T0-HOOK-CLASSIFIER (issue 120)') && !unreleased.includes('card T0-HOOK-CLASSIFIER-2 (issue 120'), 'the replaced entries are gone');
+});
+
+/** Main's classifier before these cards, as the oracle of acceptance 6: its split, its classification and its lists. */
+const MAIN_READ_ONLY_TOOLS = new Set(['grep', 'rg', 'egrep', 'fgrep', 'findstr', 'cat', 'head', 'tail', 'less', 'more', 'sed', 'awk', 'wc', 'ls', 'dir', 'find', 'echo', 'printf', 'type', 'diff', 'sort', 'uniq', 'cut', 'tr', 'jq', 'yq', 'stat', 'file', 'which', 'where', 'pwd', 'tree', 'select-string', 'get-content', 'get-childitem', 'test-path', 'write-output', 'write-host']);
+const MAIN_READ_ONLY_GIT = new Set(['log', 'diff', 'show', 'status', 'blame', 'grep', 'ls-files', 'rev-parse', 'branch', 'remote', 'worktree']);
+const MAIN_WRITE_VERBS = /set-content|out-file|add-content|new-item|tee-object|\btee\b|\bcp\b|copy-item|\bmv\b|move-item|remove-item|\brm\b|\bdel\b|\bri\b|sed\s+-i|perl\s+-i|awk\s+-i|git\s+apply|git\s+checkout|git\s+restore|\bpatch\b|>>|>/i;
+
+function mainGateHits(cmd: string, patterns: string[]): boolean {
+  const segments = cmd
+    .split(/\|\||&&|;|\|/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .filter((s) => {
+      const tokens = s.replace(/^\s*(?:sudo|time|env(?:\s+\w+=\S+)*)\s+/i, '').split(/\s+/);
+      const first = (tokens[0] ?? '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
+      if (MAIN_READ_ONLY_TOOLS.has(first)) return false;
+      if (first === 'git' && MAIN_READ_ONLY_GIT.has((tokens[1] ?? '').toLowerCase())) return false;
+      return true;
+    });
+  return segments.some((seg) => patterns.some((p) => new RegExp(p, 'i').test(seg)));
+}
+
+/** The commands of the invariants of acceptances 6 and 7. */
+const INVARIANT_COMMANDS = [
+  ...SPLIT_PINS,
+  ...GATE_ROWS.flatMap(([, named, plain]) => [named, plain]),
+  ...READ_ONLY_ROWS,
+  ...WRITE_ROWS.flatMap(([, writing, reading]) => [writing, reading]),
+  ...DEFER_ROWS,
+  ...[' & ', '\r', ' | ', ' ; ', ' && ', ' || ', '\n', '\r\n'].map((joint) => ['make deploy', 'echo production'].join(joint)),
+  'git branch topic; make deploy',
+  'git branch topic',
+  'git remote add topic url',
+  'make build; make deploy',
+  'cat notes & make deploy',
+  // a path-qualified read-only first word main skipped comes before main's match: main's order reaches the match first
+  '/usr/bin/grep x; make deploy production',
+  'C:\\tools\\grep.exe x; make deploy production',
+];
+
+const FROZEN_REASON = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 6: wherever main denied or threw, production-gate and protect-paths decide identically', () => {
+  const { cwd, env } = envWithState();
+  const commands = INVARIANT_COMMANDS;
+  const patternLists = [DEFAULT_HOOK_CONFIG.productionPatterns, ['deploy', '['], ['[', 'deploy'], [...DEFAULT_HOOK_CONFIG.productionPatterns, '['], ['topic', '[']];
+  let decided = 0;
+  for (const patterns of patternLists) {
+    const config = { ...DEFAULT_HOOK_CONFIG, productionPatterns: patterns };
+    for (const command of commands) {
+      const event = { tool_name: 'Bash', tool_input: { command } };
+      let main: 'deny' | 'pass' = 'pass';
+      let thrown: string | undefined;
+      try {
+        main = mainGateHits(command, patterns) ? 'deny' : 'pass';
+      } catch (err) {
+        thrown = (err as Error).message;
+      }
+      const label = `${JSON.stringify(patterns)} ${JSON.stringify(command)}`;
+      if (thrown !== undefined) {
+        decided += 1;
+        assert.throws(() => productionGate(event, env, config, cwd), (err: Error) => err.message === thrown, label);
+      } else if (main === 'deny') {
+        decided += 1;
+        assert.deepEqual(productionGate(event, env, config, cwd), { exitCode: 2, stderr: GATE_TEXT }, label);
+      }
+    }
+  }
+  const frozen = { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] };
+  for (const command of commands) {
+    if (/contracts\//i.test(command) && MAIN_WRITE_VERBS.test(command)) {
+      decided += 1;
+      const r = protectPaths({ tool_name: 'Bash', tool_input: { command } }, frozen);
+      assert.equal(decision(r), 'deny', command);
+      assert.equal(denyReason(r), FROZEN_REASON, command);
+    }
+  }
+  assert.ok(decided > 40, `the invariant decided ${decided} cells where main denied or threw`);
+});
+
+/** A GitHub token shape, built here so that the text of this file carries none. */
+const TOKEN = 'ghp_' + 'A1b2C3d4E5'.repeat(3) + 'F6g7H8';
+const TOKEN_REASON = 'Blocked: content looks like a GitHub token. Credentials never enter a diff; use environment variables or a placeholder.';
+
+/** Inputs where main's dispatch blocks through a guard after production-gate and a form of this card also denies. */
+const DISPATCH_ROWS = [
+  // secrets-guard: git remote add is a new form and the text names a release (the pre-check of 8444dd0)
+  `git remote add deploy production ${TOKEN}`,
+  `cat notes & make deploy production ${TOKEN}`,
+  // protect-paths: a frozen-path write whose release phrase a new form also gates
+  'git worktree add ../production-deploy > contracts/log.txt',
+  'cat notes > contracts/a.txt & make deploy production',
+  // secrets-guard after a frozen path a new protect-paths form writes
+  `git worktree add contracts/wt ${TOKEN}`,
+];
+
+/** A deny result as the guards print it. */
+function denied(reason: string): HookResult {
+  return { exitCode: 0, stdout: JSON.stringify({ hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny', permissionDecisionReason: reason } }) };
+}
+
+/**
+ * Main's dispatch before these cards, as the oracle of acceptance 7: every guard in main's order (`hookNamesFor`, not
+ * changed), production-gate and protect-paths with main's split, classification and `WRITE_VERBS`, secrets-guard and
+ * protect-tests as they are (not changed); the first block, or undefined. Under a config that cannot be used, a Bash
+ * command meets production-gate first: main's legacy decision on the reading the loader keeps, else the config deny.
+ */
+function mainDispatchBlock(event: HookEvent, cwd: string, env: NodeJS.ProcessEnv): HookResult | undefined {
+  const loaded = loadHookConfig(cwd);
+  const cmd = event.tool_input?.['command'];
+  const file = event.tool_input?.['file_path'];
+  if (loaded instanceof HookConfigError) {
+    assert.equal(event.tool_name, 'Bash', 'the oracle rebuilds a broken config for Bash only');
+    let hit = false;
+    try {
+      hit = typeof cmd === 'string' && mainGateHits(cmd, loaded.legacy.productionPatterns);
+    } catch {
+      hit = false;
+    }
+    return hit ? { exitCode: 2, stderr: GATE_TEXT } : denied(bashDenial(loaded.file, loaded.detail, 'production-gate'));
+  }
+  const frozen = (target: string) => loaded.frozenPaths.some((f) => new RegExp(f, 'i').test(target.replace(/\\/g, '/').toLowerCase()));
+  for (const name of hookNamesFor(event)) {
+    if (name === 'production-gate') {
+      if (typeof cmd === 'string' && mainGateHits(cmd, loaded.productionPatterns)) return { exitCode: 2, stderr: GATE_TEXT };
+    } else if (name === 'protect-paths') {
+      if ((typeof file === 'string' && frozen(file)) || (typeof cmd === 'string' && frozen(cmd) && MAIN_WRITE_VERBS.test(cmd))) return denied(FROZEN_REASON);
+    } else {
+      const r = runHook(name, event, { cwd, env, config: loaded });
+      if (isBlock(r)) return r;
+    }
+  }
+  return undefined;
+}
+
+test('T0-HOOK-CLASSIFIER-3 acceptance 7: wherever main\'s dispatch blocked, dispatchHook returns the same guard\'s block, and the added denials follow', () => {
+  const bash = (command: string): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  const edit = (file_path: string, command: string): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path, command } });
+  const configs = [
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }),
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'], productionPatterns: ['deploy'] } }),
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'], productionPatterns: ['deploy', '['] } }),
+    JSON.stringify({ hooks: { productionPatterns: ['topic', '['] } }),
+    UNUSABLE_CONFIGS[0]![0],
+  ];
+  const commands = [...INVARIANT_COMMANDS, ...DISPATCH_ROWS];
+  let decided = 0;
+  for (const text of configs) {
+    const { cwd, env } = withConfig(text);
+    const valid = !(loadHookConfig(cwd) instanceof HookConfigError);
+    for (const e of [env, { ...env, AIDLC_FIX_TASK: 'T1-FIX' }]) {
+      const events = [...commands.map(bash)];
+      if (valid) for (const file of ['src/a.ts', 'tests/a.test.ts', '.env.local', 'contracts/api.yaml']) events.push(...[...WRITE_ROWS.map(([, writing]) => writing), ...DISPATCH_ROWS].map((command) => edit(file, command)));
+      for (const event of events) {
+        const main = mainDispatchBlock(event, cwd, e);
+        if (!main) continue;
+        decided += 1;
+        assert.deepEqual(dispatchHook(event, { cwd, env: e }), main, `${text} ${JSON.stringify(event.tool_name)} ${JSON.stringify(event.tool_input)} fix task ${Boolean(e['AIDLC_FIX_TASK'])}`);
+      }
+    }
+  }
+  assert.ok(decided > 900, `the invariant decided ${decided} cells where main's dispatch blocked`);
+  // the named rows: main's block, by the guard main's dispatch reached
+  const { cwd, env } = withConfig(configs[0]!);
+  assert.deepEqual(dispatchHook(bash(`git remote add deploy production ${TOKEN}`), { cwd, env }), denied(TOKEN_REASON));
+  assert.deepEqual(dispatchHook(bash('git worktree add ../production-deploy > contracts/log.txt'), { cwd, env }), denied(FROZEN_REASON));
+  assert.deepEqual(dispatchHook(bash(`git worktree add contracts/wt ${TOKEN}`), { cwd, env }), denied(TOKEN_REASON));
+  const locked = dispatchHook(edit('tests/a.test.ts', 'git worktree add contracts/wt'), { cwd, env: { ...env, AIDLC_FIX_TASK: 'T1-FIX' } });
+  assert.ok(denyReason(locked).startsWith('A fix task is active (T1-FIX); test files are locked.'), denyReason(locked));
+  const broken = withConfig(configs[2]!);
+  const configDeny = dispatchHook(bash(`git remote add deploy production ${TOKEN}`), { cwd: broken.cwd, env: broken.env });
+  assert.ok(denyReason(configDeny).startsWith('Bash is denied while '), denyReason(configDeny));
+  // the added denials still reach the dispatch when no guard of main's dispatch blocks
+  assert.deepEqual(dispatchHook(bash('cat notes & make deploy production'), { cwd, env }), { exitCode: 2, stderr: GATE_TEXT });
+  assert.deepEqual(dispatchHook(bash('git remote add deploy production'), { cwd, env }), { exitCode: 2, stderr: GATE_TEXT });
+  assert.deepEqual(dispatchHook(bash('git worktree add contracts/wt'), { cwd, env }), denied(FROZEN_REASON));
+  assert.deepEqual(dispatchHook(edit('src/a.ts', 'git worktree add contracts/wt'), { cwd, env }), denied(FROZEN_REASON));
+  // where nothing blocks, main's advisory is returned: the frozen-path note of the first pass
+  assert.equal(decision(dispatchHook(bash('git worktree list contracts/wt'), { cwd, env })), 'defer');
 });
