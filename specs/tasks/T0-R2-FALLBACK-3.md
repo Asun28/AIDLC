@@ -1,7 +1,7 @@
 ---
 id: T0-R2-FALLBACK-3
 title: A preReview.fallback reviewer runs R2 while the primary holds, with settings of its own and never the primary's, a round in flight keeps the timeout it was dispatched with, and DeepSeek is the primary again (part 2 of issue #92; third attempt after T0-R2-FALLBACK and T0-R2-FALLBACK-2, authorised by the user)
-status: todo
+status: merged
 branch: T0-R2-FALLBACK-3
 worktree: D:\wt\AIDLC\T0-R2-FALLBACK-3
 allow_paths:
