@@ -97,7 +97,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
 
   // Merge facts (card T1-AUDIT-FACTS). A card is shipped when a merge intent of the card has a succeeded result or
   // reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's card and
-  // operation, status succeeded) and never from narration. Each card counts the facts git and gh re-derived as recorded.
+  // operation, status succeeded) and never from narration. Each card counts the facts git or gh answered.
   const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId]));
   const rederived = new Map<string, number>();
   for (const e of events) {
@@ -163,15 +163,15 @@ export function verifyAudit(input: VerifierInput): AuditReport {
 }
 
 /**
- * Re-derives one card's merge facts from git and gh (card T1-AUDIT-FACTS) and returns how many matched: a disagreement is a
- * FACT_MISMATCH block naming the card, the fact and both values; a fact git or gh cannot answer is a FACT_UNVERIFIED warning.
+ * Re-derives one card's merge facts from git and gh (card T1-AUDIT-FACTS) and returns how many git or gh answered: a
+ * disagreement is a FACT_MISMATCH block naming the card, the fact and both values; a fact neither answers is FACT_UNVERIFIED.
  */
 function rederive(card: string, facts: ShippedFacts, probes: VerifierInput['probes'], findings: AuditFinding[]): number {
-  let matched = 0;
+  let answered = 0;
   const check = (fact: string, recorded: string, derived: string | undefined, source: 'git' | 'gh') => {
-    if (derived === undefined) findings.push({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${recorded}, not re-derived (${source})` });
-    else if (derived !== recorded) findings.push({ severity: 'block', code: 'FACT_MISMATCH', detail: `${card} ${fact}: recorded ${recorded}, re-derived ${derived}` });
-    else matched += 1;
+    if (derived === undefined) return void findings.push({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${recorded}, not re-derived (${source})` });
+    answered += 1;
+    if (derived !== recorded) findings.push({ severity: 'block', code: 'FACT_MISMATCH', detail: `${card} ${fact}: recorded ${recorded}, re-derived ${derived}` });
   };
   const onBase = probes?.git.contains(probes.cwd, probes.base, facts.mergeSha);
   check('mergeSha object type', 'commit', probes?.git.objectType(probes.cwd, facts.mergeSha), 'git');
@@ -186,5 +186,5 @@ function rederive(card: string, facts: ShippedFacts, probes: VerifierInput['prob
   check(`pr ${facts.pr} state`, 'MERGED', view?.state, 'gh');
   check('mergeSha', facts.mergeSha, view && (view.mergeCommit ?? 'none'), 'gh');
   check('headSha', facts.headSha, view && (view.headRefOid ?? 'none'), 'gh');
-  return matched;
+  return answered;
 }
