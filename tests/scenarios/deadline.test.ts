@@ -407,6 +407,12 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: {} });
     assert.deepEqual(fx.events(goal.id).slice(seen, seen + 2).map((e) => e.type), ['BOUND_FIRED', 'GOAL_STOPPED'], 'the firing is journaled before the report');
     assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]);
+    writeCard(fx, { id: 'T1-B', title: 'b' }); // the goal grace and the planning allowance name a refused firing too (mutants M65, M66)
+    const [grace, plan] = [goalForCards(fx, ['T1-B']), fx.controller.createGoal({ text: 'build the hello feature', source: 'natural-language', affectedSurfaces: [], explicitSize: 'T1' })];
+    for (const g of [grace, plan]) damageJournal(fx, g.id);
+    fx.ops.recordIntent({ kind: 'merge', goalId: grace.id, cardId: 'T1-B', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS));
+    assert.match(fx.controller.next(grace.id).narration, /reconciliation-grace\/.* stays pending/);
+    assert.match([0, 1].map(() => fx.controller.report({ goalId: plan.id, generation: 0, result: 'plan-failed', data: {} }).directive.narration)[1]!, /planning-invocations\/.* stays pending/);
   } finally {
     fx.cleanup();
   }
