@@ -4,6 +4,8 @@ import { countDiffLines, selectReviewEffort, selectReviewEffortFromDiff } from '
 import * as effortModule from '../../src/core/review-effort.ts';
 import { pathAllowed } from '../../src/review/pre-review.ts';
 import type { ReviewEffortPolicy } from '../../src/core/types.ts';
+import { ReviewEffortPolicy as ReviewEffortPolicySchema } from '../../src/core/types.ts';
+import { ZodError } from 'zod';
 
 /** This repository's policy: medium, high from 500 changed lines or a change under core, coordination or state. */
 const POLICY: ReviewEffortPolicy = { default: 'medium', high: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } };
@@ -146,5 +148,46 @@ describe('selectReviewEffortFromDiff fail-closed scope (T1-OPUS55-R3-3 acceptanc
 describe('review-effort survivors of the wider mutation sweep (T1-OPUS55-R3-3 acceptance 12)', () => {
   test('a diff of blank lines only is empty, not decorated: the default is kept [R5]', () => {
     assert.equal(selectReviewEffortFromDiff(POLICY, '\n  \n', ['src/loop/x.ts'], pathAllowed), 'medium');
+  });
+});
+
+describe('the xhigh rule (T0-R2-FALLBACK acceptance 2)', () => {
+  /** This repository's R2 fallback policy: high, xhigh from 500 changed lines or a change under core, coordination or state. */
+  const FALLBACK = ReviewEffortPolicySchema.parse({ default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } });
+  /** Both rules: high from 100 lines or docs, xhigh from 500 lines or src/core. */
+  const BOTH = ReviewEffortPolicySchema.parse({ default: 'medium', high: { minChangedLines: 100, paths: ['docs/**'] }, xhigh: { minChangedLines: 500, paths: ['src/core/**'] } });
+  const COLOURED = '\u001b[32m+x\u001b[0m\n';
+  test('xhigh at and above minChangedLines and on a matching path; the default below it and elsewhere [R2]', () => {
+    assert.equal(selectReviewEffort(FALLBACK, { changedLines: 499, changedPaths: ['src/loop/card-runner.ts'] }, pathAllowed), 'high');
+    assert.equal(selectReviewEffort(FALLBACK, { changedLines: 500, changedPaths: ['src/loop/card-runner.ts'] }, pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffort(FALLBACK, { changedLines: 1200, changedPaths: ['docs/OPERATIONS.md'] }, pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffort(FALLBACK, { changedLines: 1, changedPaths: ['docs/OPERATIONS.md', 'src/state/store.ts'] }, pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffort(FALLBACK, { changedLines: 0, changedPaths: [] }, pathAllowed), 'high');
+  });
+  test('xhigh is checked before high, and high still applies below xhigh [R2]', () => {
+    assert.equal(selectReviewEffort(BOTH, { changedLines: 600, changedPaths: ['docs/a.md'] }, pathAllowed), 'xhigh', 'both rules match: xhigh');
+    assert.equal(selectReviewEffort(BOTH, { changedLines: 1, changedPaths: ['docs/a.md', 'src/core/x.ts'] }, pathAllowed), 'xhigh', 'both paths match: xhigh');
+    assert.equal(selectReviewEffort(BOTH, { changedLines: 150, changedPaths: ['src/loop/x.ts'] }, pathAllowed), 'high');
+    assert.equal(selectReviewEffort(BOTH, { changedLines: 1, changedPaths: ['docs/a.md'] }, pathAllowed), 'high');
+    assert.equal(selectReviewEffort(BOTH, { changedLines: 99, changedPaths: ['src/loop/x.ts'] }, pathAllowed), 'medium');
+  });
+  test('an xhigh rule with a max default is refused; with any lower default it parses [R2]', () => {
+    assert.throws(() => ReviewEffortPolicySchema.parse({ default: 'max', xhigh: { minChangedLines: 1 } }), (err: unknown) => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === 'xhigh'));
+    for (const level of ['medium', 'high', 'xhigh']) assert.doesNotThrow(() => ReviewEffortPolicySchema.parse({ default: level, xhigh: { minChangedLines: 1 } }), level);
+    assert.deepEqual(ReviewEffortPolicySchema.parse({ xhigh: { minChangedLines: 3 } }), { default: 'medium', xhigh: { minChangedLines: 3, paths: [] } });
+  });
+  test('a diff with no diff --git section selects xhigh under an xhigh rule; a policy without one is unchanged [R2]', () => {
+    assert.equal(selectReviewEffortFromDiff(FALLBACK, COLOURED, ['src/x.ts'], pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffortFromDiff(BOTH, COLOURED, ['src/x.ts'], pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffortFromDiff(POLICY, COLOURED, ['src/x.ts'], pathAllowed), 'high');
+    assert.equal(selectReviewEffortFromDiff({ default: 'max' }, COLOURED, ['src/x.ts'], pathAllowed), 'max');
+    assert.equal(selectReviewEffortFromDiff(ReviewEffortPolicySchema.parse({ default: 'xhigh', xhigh: { minChangedLines: 9 } }), COLOURED, ['src/x.ts'], pathAllowed), 'xhigh');
+  });
+  test('selectReviewEffortFromDiff counts the lines and matches the changed paths for the xhigh rule [R2]', () => {
+    const small = (file: string) => `diff --git a/${file} b/${file}\n@@ -1 +1 @@\n-a\n+b\n`;
+    assert.equal(selectReviewEffortFromDiff(FALLBACK, small('src/core/x.ts'), ['src/core/x.ts'], pathAllowed), 'xhigh');
+    assert.equal(selectReviewEffortFromDiff(FALLBACK, small('src/loop/x.ts'), ['src/loop/x.ts'], pathAllowed), 'high');
+    const large = `diff --git a/src/loop/x.ts b/src/loop/x.ts\n@@ -1,250 +1,250 @@\n${'-a\n+b\n'.repeat(250)}`;
+    assert.equal(selectReviewEffortFromDiff(FALLBACK, large, ['src/loop/x.ts'], pathAllowed), 'xhigh', '500 changed lines');
   });
 });

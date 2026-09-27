@@ -289,10 +289,15 @@ export const ReviewEffortPolicy = z.object({
   default: ReviewEffortLevel.default('medium'),
   /** `high` when the candidate's added plus deleted lines reach `minChangedLines` or a changed path matches a `paths` glob. */
   high: z.object({ minChangedLines: z.number().int().min(0), paths: z.array(z.string()).default([]) }).optional(),
+  /** `xhigh` on the same test as `high`, checked before it (card T0-R2-FALLBACK). */
+  xhigh: z.object({ minChangedLines: z.number().int().min(0), paths: z.array(z.string()).default([]) }).optional(),
 }).superRefine((policy, ctx) => {
   // The rule selects `high`; above a default of `xhigh` or `max` it would lower the level for the larger or riskier candidate.
   if (policy.high && (policy.default === 'xhigh' || policy.default === 'max')) {
     ctx.addIssue({ code: 'custom', path: ['high'], message: `effort.high would lower the level below the default ${policy.default}: drop the high rule or lower the default` });
+  }
+  if (policy.xhigh && policy.default === 'max') {
+    ctx.addIssue({ code: 'custom', path: ['xhigh'], message: 'effort.xhigh would lower the level below the default max: drop the xhigh rule or lower the default' });
   }
 });
 export type ReviewEffortPolicy = z.infer<typeof ReviewEffortPolicy>;
@@ -354,6 +359,10 @@ export const PreReviewRound = z.object({
   receiptSha256: z.string().optional(),
   /** Quota hold: no new round before this time; the hold never counts as a decision. */
   holdUntil: IsoTimestamp.optional(),
+  /** The level `{effort}` expanded to for the reviewer that ran; absent when its argv carried no `{effort}` (card T0-R2-FALLBACK). */
+  effort: ReviewEffortLevel.optional(),
+  /** The timeout the round was dispatched with, recorded when a fallback is configured; a round in flight expires on it (card T0-R2-FALLBACK-3). */
+  timeoutMs: z.number().int().positive().optional(),
   /** Concurrent angles of a panel round. */
   perspectives: z.array(PerspectiveRecord).optional(),
   /** The reservation id of the dispatch (the retention file stem); a pending record is replaced by the decided one under it. */
