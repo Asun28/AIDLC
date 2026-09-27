@@ -1,7 +1,7 @@
 ---
 id: T1-AUDIT-FACTS-2
 title: The merge result of a shipped card journals its head SHA, merge SHA, tree hash and PR number when git and gh can read them, and aidlc audit verify re-derives each fact and names every shipped card without facts (successor of T1-AUDIT-FACTS)
-status: todo
+status: merged
 branch: T1-AUDIT-FACTS-2
 worktree: D:\wt\AIDLC\T1-AUDIT-FACTS-2
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
@@ -64,3 +64,6 @@ npm run check
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every test passes, with the pass count in the receipt.
+
+## Ruling
+2026-09-28, the monitoring session aidlc-37 under the user's delegation of 2026-09-27T09:20Z ("ask session aidlc-37 ... for any questions and decisions"): R3 decision 2 on 05a4f8f blocked on two first-round misses in `src/audit/verifier.ts` (F1 the recorded PR number was never compared with gh's `number`; F2 a gh answer of `{}` counted as answered). Ruling: repair both on this card (ed3616f: the PR number re-derived, a field gh leaves out is FACT_UNVERIFIED and counts as nothing), then one R2 round by hand with the loop's own prompt builder (three DeepSeek angles, pass) and a one-shot Codex check on the repair diff 05a4f8f..ed3616f (pass, no reasons), and merge under the ruling. Merged as PR #113 (0523f1c, tree 34779d2), head 4142ae1 after base syncs with #112 and its closure. The goal stays STOP/review; this closure is done on main by hand.

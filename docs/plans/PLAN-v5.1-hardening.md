@@ -49,7 +49,7 @@ spend another wave's 12 h arc.
 | Wave | Goal | Cards, in order | Starts when |
 |---|---|---|---|
 | 1 | v5.1 wave 1 | T1-PARSE-GUARD (merged, PR #78), T1-STORE-CAS (stopped), replaced by T1-STORE-CAS-2 (merged under a ruling, PR #100) | plan approved |
-| 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, ruling of aidlc-37), then T1-BOUND-TELEMETRY | wave 1 DONE |
+| 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, merged under a ruling of aidlc-37, PR #113), then T1-BOUND-TELEMETRY | wave 1 DONE |
 | 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
 | deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
 

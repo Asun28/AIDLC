@@ -497,7 +497,7 @@ export const RoleProfile = z.object({
 });
 export type RoleProfile = z.infer<typeof RoleProfile>;
 
-export const NotCountedReason = z.enum(['expected-red', 'quota', 'admission-hold', 'tool-outage', 'env-setup']);
+export const NotCountedReason = z.enum(['expected-red', 'quota', 'admission-hold', 'tool-outage', 'env-setup', 'review-disputed']);
 export type NotCountedReason = z.infer<typeof NotCountedReason>;
 
 export const Attempt = z.object({
@@ -693,6 +693,11 @@ export const PrInfo = z.object({
   mergeCommit: z.string().optional(),
 });
 export type PrInfo = z.infer<typeof PrInfo>;
+
+/** The facts of a verified merge, read from gh and git and journaled with its OPERATION_RESULT (card T1-AUDIT-FACTS). */
+const GitOid = z.string().regex(/^[0-9a-f]{40}$/, 'expected a lowercase SHA-1 git object id');
+export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
+export type ShippedFacts = z.infer<typeof ShippedFacts>;
 
 export const CardRun = z.object({
   goalId: z.string().min(1),
