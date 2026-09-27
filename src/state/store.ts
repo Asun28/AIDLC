@@ -131,7 +131,7 @@ export function createExclusive(file: string, text: string): boolean {
     fd = openSync(file, 'wx');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'EEXIST' || (code === 'EPERM' && ageMs(file) !== undefined)) return false;
+    if (code === 'EEXIST' || (code === 'EPERM' && present(file))) return false;
     throw err;
   }
   try {
@@ -152,29 +152,27 @@ export function createExclusive(file: string, text: string): boolean {
  * lock file (`<file>.lock`, created with `wx` and naming its process), and the record it returns is written atomically;
  * a change that throws, or returns the record it received or nothing, writes nothing. A waiter refuses with `LOCKED` at
  * the deadline (`timeoutMs`, default 2 s), which is checked before every retry, so a wait that overran it never runs
- * `change` on a lock freed meanwhile. A lock older than `staleMs` (default 30 s) whose owner process is gone belongs to a
- * crashed writer and is taken over through a serialized marker; a live owner keeps its lock however old. The write is
- * ownership-checked (a writer whose lock changed hands refuses with `LOCK_LOST`) and runs inside `within` when given, so a
- * caller holds another lock until the record is on disk. The release removes only this writer's lock, and neither it nor
- * an unreadable lock replaces the change's result or error. The lock is not reentrant: nested sections take the card-run
- * lock before the lease lock.
+ * `change` on a lock freed meanwhile. No lock is ever removed but by the writer that created it: a lock whose owner process
+ * is gone is refused like any other, naming the file and the process id for the operator. The write is ownership-checked
+ * (a writer whose lock changed hands refuses with `LOCK_LOST`) and runs inside `within` when given, so a caller holds
+ * another lock until the record is on disk. The release removes only this writer's lock, and neither it nor an unreadable
+ * lock replaces the change's result or error. The lock is not reentrant: nested sections take the card-run lock before the
+ * lease lock.
  */
-export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, opts: { timeoutMs?: number; staleMs?: number; within?: (write: () => void) => void } = {}): T | undefined {
+export function updateJson<T>(file: string, schema: ZodType<T>, change: (current: T | undefined) => T | undefined, opts: { timeoutMs?: number; within?: (write: () => void) => void } = {}): T | undefined {
   const lock = `${file}.lock`;
   const owner = `pid=${process.pid} at=${new Date().toISOString()} nonce=${randomBytes(4).toString('hex')}`;
   const deadline = Date.now() + (opts.timeoutMs ?? 2_000);
-  const staleMs = opts.staleMs ?? 30_000;
   while (!createExclusive(lock, owner)) {
-    if (staleOwner(lock, staleMs) !== undefined) takeOverStaleLock(lock, owner, staleMs);
-    else sleepSync(10);
-    if (Date.now() >= deadline) throw new StoreError('LOCKED', file, `locked by another writer (${readLockOwner(lock) ?? 'unknown owner'}); run the command again`);
+    sleepSync(10);
+    if (Date.now() >= deadline) throw locked(file, lock);
   }
   try {
     const current = readJson(file, schema);
     const next = change(current);
     if (next === undefined || next === current) return current;
     const write = (): void => {
-      // A lock this writer cannot read is still its own: no waiter removes a lock it cannot read.
+      // A lock this writer cannot read is still its own: no other writer removes a lock.
       let holder: string | undefined = owner;
       try {
         holder = readLockOwner(lock);
@@ -189,11 +187,22 @@ export function updateJson<T>(file: string, schema: ZodType<T>, change: (current
     return next;
   } finally {
     try {
-      removeIfOwner(lock, owner);
+      if (readLockOwner(lock) === owner) unlinkSync(lock);
     } catch {
-      /* the change's outcome stands; a lock left behind is taken over once stale after this process ends */
+      /* the change's outcome stands; a lock left behind is refused with its process id named until the operator removes it */
     }
   }
+}
+
+/**
+ * The refusal of a lock another writer holds. A lock naming a process that is no longer running (a crashed writer) is named
+ * with its file and process id, so the operator can delete it once that process is confirmed dead; it is never removed here.
+ */
+function locked(file: string, lock: string): StoreError {
+  const holder = readLockOwner(lock);
+  const pid = Number(/\bpid=(\d+)/.exec(holder ?? '')?.[1]);
+  if (Number.isInteger(pid) && pid > 0 && !processAlive(pid)) return new StoreError('LOCKED', file, `${lock} is locked by pid ${pid}, which is no longer running; delete ${lock} only once pid ${pid} is confirmed dead, then run the command again`);
+  return new StoreError('LOCKED', file, `locked by another writer (${holder ?? 'unknown owner'}); run the command again`);
 }
 
 /** Block the thread for `ms` (a lock retry between two synchronous file operations). */
@@ -201,62 +210,21 @@ function sleepSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
-/** The owner text of a lock or marker older than the stale age whose owner process is gone (one naming no process counts as gone); undefined otherwise. */
-function staleOwner(file: string, staleMs: number): string | undefined {
-  const age = ageMs(file);
-  if (age === undefined || age <= staleMs) return undefined;
-  const text = readLockOwner(file);
-  return text !== undefined && !ownerAlive(text) ? text : undefined;
-}
-
-/**
- * Stale-lock takeover, serialized among waiters by a second exclusive marker (`<lock>.takeover`): the one waiter holding
- * the marker judges the lock again and removes it only while it still names the dead owner it judged, and releases only its
- * own marker. A marker is reclaimed like a lock: once it is older than the stale age and its owner process is gone, so a
- * suspended live taker keeps it. Errors other than a vanished file propagate.
- */
-function takeOverStaleLock(lock: string, owner: string, staleMs: number): void {
-  const marker = `${lock}.takeover`;
-  if (!createExclusive(marker, owner)) {
-    const dead = staleOwner(marker, staleMs);
-    if (dead !== undefined) removeIfOwner(marker, dead);
-    else sleepSync(10);
-    return;
-  }
+/** Whether a path exists, a file Windows is still deleting included (its stat fails with EPERM); any other stat failure propagates. */
+function present(file: string): boolean {
   try {
-    const dead = staleOwner(lock, staleMs);
-    if (dead !== undefined) removeIfOwner(lock, dead);
-  } finally {
-    removeIfOwner(marker, owner);
-  }
-}
-
-/** Remove a lock or marker only while it still names `text`; a file already gone is not an error, anything else propagates. */
-function removeIfOwner(file: string, text: string): void {
-  if (readLockOwner(file) !== text) return;
-  try {
-    unlinkSync(file);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
-}
-
-/** Age of a file by its mtime, undefined when it is gone; a file being deleted (EPERM on Windows) is fresh; any other stat failure propagates. */
-function ageMs(file: string): number | undefined {
-  try {
-    return Date.now() - statSync(file).mtimeMs;
+    statSync(file);
+    return true;
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') return undefined;
-    if (code === 'EPERM') return 0;
+    if (code === 'ENOENT') return false;
+    if (code === 'EPERM') return true;
     throw err;
   }
 }
 
-/** Whether the process an owner text names is still running (a process this one may not signal counts as running). */
-function ownerAlive(text: string): boolean {
-  const pid = Number(/\bpid=(\d+)/.exec(text)?.[1]);
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+/** Whether a process is still running (a process this one may not signal counts as running). */
+function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
@@ -265,7 +233,7 @@ function ownerAlive(text: string): boolean {
   }
 }
 
-/** The owner text of a lock file, undefined when it is gone; any other read failure propagates (a lock this process cannot read is never taken over or released). */
+/** The owner text of a lock file, undefined when it is gone; any other read failure propagates. */
 function readLockOwner(lock: string): string | undefined {
   try {
     return readFileSync(lock, 'utf8').trim() || 'unknown owner';

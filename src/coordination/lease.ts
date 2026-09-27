@@ -34,9 +34,9 @@ export interface ReconcileReport {
 
 export class LeaseStore {
   readonly dir: string;
-  private readonly lock: { timeoutMs?: number; staleMs?: number };
+  private readonly lock: { timeoutMs?: number };
 
-  constructor(dir: string, lock: { timeoutMs?: number; staleMs?: number } = {}) {
+  constructor(dir: string, lock: { timeoutMs?: number } = {}) {
     this.dir = dir;
     this.lock = lock;
   }

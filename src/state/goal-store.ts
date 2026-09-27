@@ -11,17 +11,15 @@ import type { StatePaths } from './paths.ts';
 export interface GoalStoreOptions {
   /** How long `updateCardRun` waits for the card-run lock before it refuses (default 2 s). */
   lockTimeoutMs?: number;
-  /** A lock file older than this is a crashed writer's and is taken over (default 30 s). */
-  staleLockMs?: number;
 }
 
 export class GoalStore {
   readonly paths: StatePaths;
-  private readonly lock: { timeoutMs?: number; staleMs?: number };
+  private readonly lock: { timeoutMs?: number };
 
   constructor(paths: StatePaths, options: GoalStoreOptions = {}) {
     this.paths = paths;
-    this.lock = { timeoutMs: options.lockTimeoutMs, staleMs: options.staleLockMs };
+    this.lock = { timeoutMs: options.lockTimeoutMs };
   }
 
   goalFile(goalId: string): string {

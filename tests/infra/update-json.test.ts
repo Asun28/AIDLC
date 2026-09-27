@@ -331,3 +331,31 @@ describe('state/store updateJson: a lock being deleted (T1-STORE-CAS-2 sweep)', 
     unlinkSync(lock);
   });
 });
+
+describe('state/store updateJson: the refusal and the EPERM scope (T1-STORE-CAS-2 sweep)', () => {
+  const dir = tmpDir();
+  after(() => cleanup(dir));
+
+  it('a lock that names no process is refused as another writer\'s, never as a dead pid [R7]', () => {
+    const file = path.join(dir, 'nameless.json');
+    writeFileSync(file, STORED, 'utf8');
+    const lock = `${file}.lock`;
+    writeFileSync(lock, '', 'utf8');
+    const outcome = settle(() => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }));
+    assert.ok(isCode('LOCKED')(outcome.error) && /locked by another writer \(unknown owner\)/.test(String(outcome.error)), `refused: ${String(outcome.error)}`);
+    assert.ok(!/pid/.test(String(outcome.error)), 'no process id is named');
+    assert.equal(textOf(lock), '');
+    unlinkSync(lock);
+  });
+
+  it('an exclusive create refused with EPERM while the lock path itself answers EPERM (Windows, being deleted) is busy: LOCKED at the deadline [R9]', () => {
+    const file = path.join(dir, 'pending.json');
+    writeFileSync(file, STORED, 'utf8');
+    const lock = `${file}.lock`;
+    const outcome = settle(() =>
+      throughFs('statSync', (real, args) => { if (String(args[0]) === lock) throw errno('EPERM'); return real(...args); }, () =>
+        onExclusiveCreate(lock, () => { throw eperm(); }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }))));
+    assert.ok(isCode('LOCKED')(outcome.error), `busy, not the EPERM: ${String(outcome.error)}`);
+    assert.equal(readFileSync(file, 'utf8'), STORED);
+  });
+});
