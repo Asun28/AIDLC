@@ -4871,7 +4871,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a second formal review without a verdict 
     assert.equal(f.run.stop?.reason, 'review');
     assert.match(f.run.stop?.detail ?? '', /no verdict after initial dispatch plus one retry/);
     assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry']);
-    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-NV/no-verdict-retry/sha-1']);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => [String(e.data['key']).slice(goal.id.length), e.data['stoppedAt']]), [['@0/T1-NV/no-verdict-retry/sha-1', f.run.stop?.at]], 'the key, and the time of the stop it caused (T1-BOUND-TELEMETRY-2)');
     assert.equal(runner.next(fx.goal(goal.id), card, f.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry'], 'the stopped card fires nothing more');
   } finally {

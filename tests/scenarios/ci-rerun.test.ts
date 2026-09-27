@@ -44,7 +44,7 @@ test('Q7: a transient CI failure earns one persisted same-origin rerun, reconcil
     assert.ok(types.includes('CI_CLASSIFIED'));
     assert.ok(types.includes('CI_RERUN'));
     assert.deepEqual(fired(fx, goal.id), ['ci-rerun-allowed'], 'T1-BOUND-TELEMETRY acceptance 1: the rerun journals one ci-rerun-allowed firing');
-    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/ci-rerun-allowed/sha-t1-hello/0']);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => [String(e.data['key']).slice(goal.id.length), e.data['stoppedAt']]), [['@0/T1-HELLO/ci-rerun-allowed/sha-t1-hello/0', fx.now()]], 'the key, and the clock time of the grant (T1-BOUND-TELEMETRY-2)');
 
     const reconciled = runner.ciReconcile(fx.goal(goal.id), card, r.run, '12345', () => ({ status: 'completed', conclusion: 'success', attempt: 2 }));
     assert.equal(reconciled.state, 'SHIP');
