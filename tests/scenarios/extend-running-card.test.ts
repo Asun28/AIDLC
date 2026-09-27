@@ -158,7 +158,7 @@ test('T0-EXTEND-RUNNING-CARD acceptance 1: the run is read under the card-run lo
     fx.store.updateCardRun(goal.id, 'T1-E', (current) => ({ ...current!, state: 'STOP', stop: timeStop() }));
     /** Another session's writes, landing between the extension's listing of the runs and its update of each. */
     const race = () => {
-      fx.store.updateCardRun(goal.id, 'T1-A', (current) => ({ ...current!, worktree: 'D:/wt/raced' }));
+      fx.store.updateCardRun(goal.id, 'T1-A', (current) => ({ ...current!, worktree: 'D:/wt/raced', deadline: addMs(T0, 5 * HOUR_MS) }));
       fx.store.updateCardRun(goal.id, 'T1-B', (current) => ({ ...current!, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) }));
       fx.store.updateCardRun(goal.id, 'T1-C', (current) => ({ ...current!, deadline: addMs(T0, 30 * HOUR_MS) }));
       // A card next that read the old deadline stops T1-D for time; another session re-admits T1-E.
@@ -194,6 +194,7 @@ test('T0-EXTEND-RUNNING-CARD acceptance 1: the run is read under the card-run lo
     const events = fx.events(goal.id);
     assert.deepEqual(events.filter((x) => x.type === 'CARD_STATE' && x.data['to'] === 'readmitted').map((x) => x.cardId), ['T1-D'], 'the re-admission is journaled for the run stopped under the lock');
     assert.deepEqual(deadlineNotes(events).map((x) => x.cardId), ['T1-A', 'T1-E'], 'only the moved runs are journaled');
+    assert.deepEqual(deadlineNotes(events)[0]!.data['cardDeadline'], { from: addMs(T0, 5 * HOUR_MS), to: until, by: 'lead' }, 'the NOTE names the deadline read under the lock');
   } finally {
     fx.cleanup();
   }
@@ -245,7 +246,7 @@ const ARCHITECTURE_PHRASE =
   'and moves the deadline of every run of that projection still in progress to the new goal deadline when that is later (journaled as `NOTE`, card T0-EXTEND-RUNNING-CARD)';
 /** The CHANGELOG entry, one line under Unreleased. */
 const CHANGELOG_ENTRY =
-  '- Extension moves running cards, card T0-EXTEND-RUNNING-CARD (issue 105): `aidlc goal extend` also moves the deadline of every card run of the goal\'s current projection still in progress (neither DONE nor stopped) to the new goal deadline when that is later, journaled as a `NOTE` naming the card and both deadlines, so the next `aidlc card next` no longer stops the card for time right after the extension; the `run-card` directive\'s `cardDeadline` is the stored deadline of the card\'s run, where it used to be recomputed from the card\'s start.';
+  '- Extension moves running cards, card T0-EXTEND-RUNNING-CARD (issue 105): `aidlc goal extend` also moves the deadline of every card run of the goal\'s current projection still in progress (neither DONE nor stopped) to the new goal deadline when that is later, journaled as a `NOTE` naming the card and both deadlines, so the next `aidlc card next` no longer stops the card for time right after the extension; each run, a time-stopped one included, is decided on its record read under the card-run lock, so a time stop that lands during the extension is re-admitted and a concurrent write no longer fails the extension with `CARD_RUN_STALE`; the `run-card` directive\'s `cardDeadline` is the stored deadline of the card\'s run, where it used to be recomputed from the card\'s start.';
 
 test('T0-EXTEND-RUNNING-CARD acceptance 4: docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md Unreleased state the rule [R3]', () => {
   const operations = read('docs', 'OPERATIONS.md');

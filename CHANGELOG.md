@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Extension moves running cards, card T0-EXTEND-RUNNING-CARD (issue 105): `aidlc goal extend` also moves the deadline of every card run of the goal's current projection still in progress (neither DONE nor stopped) to the new goal deadline when that is later, journaled as a `NOTE` naming the card and both deadlines, so the next `aidlc card next` no longer stops the card for time right after the extension; the `run-card` directive's `cardDeadline` is the stored deadline of the card's run, where it used to be recomputed from the card's start.
+- Extension moves running cards, card T0-EXTEND-RUNNING-CARD (issue 105): `aidlc goal extend` also moves the deadline of every card run of the goal's current projection still in progress (neither DONE nor stopped) to the new goal deadline when that is later, journaled as a `NOTE` naming the card and both deadlines, so the next `aidlc card next` no longer stops the card for time right after the extension; each run, a time-stopped one included, is decided on its record read under the card-run lock, so a time stop that lands during the extension is re-admitted and a concurrent write no longer fails the extension with `CARD_RUN_STALE`; the `run-card` directive's `cardDeadline` is the stored deadline of the card's run, where it used to be recomputed from the card's start.
 
 - Disputed repair attempt, card T0-DISPUTE-RUNNING-ATTEMPT (issue 106): a dispute that sends the unchanged candidate back to review settles the repair attempt BUILD had opened as not counted (`review-disputed`), a ship repair takes a running attempt as the repair instead of throwing, so a committed base-sync merge always records its repair, and the pre-review round is never shown past its maximum.
 

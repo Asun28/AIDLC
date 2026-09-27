@@ -717,23 +717,27 @@ export class GoalController {
     for (const run of this.store.listCardRuns(goal.id)) {
       // Only the current projection is re-admitted: a run of a card superseded or removed by a revision keeps its stop.
       if (!readmitted.cards.includes(run.cardId)) continue;
-      if (run.stop?.reason !== 'time') {
-        // A run in progress keeps the deadline fixed at its start unless it moves here, and the next call would stop it for
-        // time right after the extension (issue 105). Read under the card-run lock: a DONE or stopped run stays, and no
-        // deadline moves earlier.
-        let from: string | undefined;
-        this.store.updateCardRun(goal.id, run.cardId, (current) => {
-          if (!current || current.state === 'DONE' || current.state === 'STOP' || Date.parse(newDeadline) <= Date.parse(current.deadline)) return current!;
-          from = current.deadline;
-          return { ...current, deadline: newDeadline };
-        });
-        if (from) this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from, to: newDeadline, by } } });
-        continue;
-      }
-      // The run is in progress again: the controller waits on it instead of re-stopping the goal, and the runner re-derives
-      // BUILD, SHIP or CLOSE from the evidence of the run on its next call.
-      this.store.saveCardRun(CardRun.parse({ ...run, state: 'BUILD', stop: undefined, deadline: Date.parse(newDeadline) > Date.parse(run.deadline) ? newDeadline : run.deadline, updatedAt: this.clock() }));
-      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
+      // Each run is decided on the record read under the card-run lock, so a stop or a re-admission that landed after the
+      // listing counts (R2 cycle 0 round 1). A run stopped for time is in progress again: the controller waits on it instead
+      // of re-stopping the goal, and the runner re-derives BUILD, SHIP or CLOSE from the evidence of the run on its next call.
+      // A run in progress keeps the deadline fixed at its start unless it moves here, and the next call would stop it for
+      // time right after the extension (issue 105). A DONE run and a stop for any other reason stay; no deadline moves earlier.
+      let change: 'readmitted' | 'moved' | undefined;
+      let from = run.deadline;
+      this.store.updateCardRun(goal.id, run.cardId, (current) => {
+        if (!current) return current!;
+        from = current.deadline;
+        const deadline = Date.parse(newDeadline) > Date.parse(current.deadline) ? newDeadline : current.deadline;
+        if (current.stop?.reason === 'time') {
+          change = 'readmitted';
+          return { ...current, state: 'BUILD', stop: undefined, deadline };
+        }
+        if (current.state === 'DONE' || current.state === 'STOP' || deadline === current.deadline) return current;
+        change = 'moved';
+        return { ...current, deadline };
+      });
+      if (change === 'readmitted') this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
+      if (change === 'moved') this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from, to: newDeadline, by } } });
     }
     const saved = this.store.saveGoal(readmitted);
     this.writeBoard(saved);
