@@ -141,6 +141,8 @@ export const ProjectConfig = z.object({
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
+  /** CI failure classes (card T0-CI-RERUN-STRUCTURED): the job steps whose failure is infrastructure, the structured evidence for the one rerun. */
+  ci: z.object({ transientSteps: z.array(nonBlank).default(['Set up job', 'Complete job']) }).prefault({}),
 })
   .superRefine((config, ctx) => {
     // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.

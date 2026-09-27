@@ -132,7 +132,8 @@ export interface CiClassification {
   evidence: string[];
 }
 
-export function classifyCiFailure(jobs: CiJob[], extraLog?: string): CiClassification {
+export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[] } = {}): CiClassification {
+  void options;
   const failed = jobs.filter((j) => j.conclusion && !['success', 'neutral', 'skipped'].includes(j.conclusion.toLowerCase()));
   const texts = [...failed.map((j) => j.logExcerpt ?? ''), extraLog ?? ''].filter((t) => t.length > 0);
   const evidence: string[] = [];

@@ -1,13 +1,14 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canRerun, classifyCiFailure, gateChecks, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
+import { classifyShipOutput } from '../../src/delivery/ship.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
 describe('CI classification (Q7)', () => {
-  test('transient infrastructure patterns classify as transient', () => {
+  test('a transient log pattern alone is unknown: log text never grants a rerun, and its match stays as evidence (T0-CI-RERUN-STRUCTURED)', () => {
     const c = classifyCiFailure([{ name: 'test', conclusion: 'failure', logExcerpt: 'npm ERR! network read ECONNRESET' }]);
-    assert.equal(c.class, 'transient');
+    assert.equal(c.class, 'unknown');
     assert.deepEqual(c.failedJobs, ['test']);
     assert.ok(c.evidence.some((e) => e.startsWith('transient:')));
   });
@@ -20,7 +21,7 @@ describe('CI classification (Q7)', () => {
 
   test('no evidence is unknown; extra log text is considered', () => {
     assert.equal(classifyCiFailure([{ name: 'lint', conclusion: 'failure' }]).class, 'unknown');
-    assert.equal(classifyCiFailure([{ name: 'lint', conclusion: 'failure' }], 'The hosted runner encountered an error and lost communication').class, 'transient');
+    assert.equal(classifyCiFailure([{ name: 'lint', conclusion: 'failure' }], 'The hosted runner encountered an error and lost communication').class, 'unknown', 'a lost runner in the log alone is no rerun');
   });
 
   test('successful / neutral / skipped jobs are not failures', () => {
@@ -33,9 +34,55 @@ describe('CI classification (Q7)', () => {
     assert.equal(c.class, 'unknown');
   });
 
-  test('a cancelled job without code evidence is transient only with transient evidence', () => {
-    assert.equal(classifyCiFailure([{ name: 'a', conclusion: 'cancelled', logExcerpt: 'The operation was canceled.' }]).class, 'transient');
+  test('a cancelled job is unknown, whatever its log says (T0-CI-RERUN-STRUCTURED)', () => {
+    assert.equal(classifyCiFailure([{ name: 'a', conclusion: 'cancelled', logExcerpt: 'The operation was canceled.' }]).class, 'unknown');
     assert.equal(classifyCiFailure([{ name: 'a', conclusion: 'cancelled' }]).class, 'unknown');
+  });
+});
+
+describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
+  /** A red gate line naming the checks, as the GitHub ship path prints it. */
+  const gate = (checks: Array<{ name: string; conclusion: string }>) => `[CI-GATE-RED] ${JSON.stringify(checks)}`;
+  /** A step line for a check: its failed step, or null when the record places none. */
+  const step = (check: string, name: string | null) => `[CI-GATE-STEP] ${JSON.stringify({ check, job: '456', step: name === null ? null : { number: 3, name, conclusion: 'failure' } })}`;
+  const ship = (text: string, transientSteps?: string[]) => classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: text }], undefined, transientSteps ? { transientSteps } : undefined);
+  const build = [{ name: 'build', conclusion: 'failure' }];
+
+  test('acceptance 1: a red check whose failed step is Set up job or Complete job is transient; a project step, a null step or no step line is unknown [R3]', () => {
+    for (const infra of ['Set up job', 'Complete job']) assert.equal(ship(`${gate(build)}\n${step('build', infra)}`).class, 'transient', infra);
+    assert.equal(ship(`${gate(build)}\n${step('build', 'Run npm run check')}\nnpm ERR! network ECONNRESET`).class, 'unknown', 'a project step is no infrastructure under the default list');
+    assert.equal(ship(`${gate(build)}\n${step('build', null)}`).class, 'unknown', 'no failed step placed');
+    assert.equal(ship(`${gate(build)}\nnpm ERR! network ECONNRESET`).class, 'unknown', 'no step line: no structured evidence');
+    assert.equal(ship(`${gate(build)}\n${step('other', 'Set up job')}`).class, 'unknown', 'a step line of another check is no evidence for this one');
+  });
+
+  test('acceptance 1: a startup_failure conclusion is transient; every red check needs evidence [R3]', () => {
+    assert.equal(ship(gate([{ name: 'build', conclusion: 'startup_failure' }])).class, 'transient');
+    assert.equal(classifyCiFailure([{ name: 'build', conclusion: 'startup_failure' }]).class, 'transient', 'a failed job passed in directly');
+    const two = [{ name: 'build', conclusion: 'failure' }, { name: 'lint', conclusion: 'failure' }];
+    assert.equal(ship(`${gate(two)}\n${step('build', 'Set up job')}`).class, 'unknown', 'lint carries no evidence');
+    assert.equal(ship(`${gate(two)}\n${step('build', 'Set up job')}\n${step('lint', 'Complete job')}`).class, 'transient', 'both carry evidence');
+    assert.equal(ship(gate([{ name: 'build', conclusion: 'cancelled' }])).class, 'unknown', 'a cancelled check without evidence');
+  });
+
+  test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
+    const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
+    assert.equal(ship(text).class, 'unknown');
+    assert.equal(ship(text, ['Set up job', 'Complete job', 'Run npm ci']).class, 'transient', 'a listed project step grants the rerun');
+    assert.equal(ship(`${gate(build)}\n${step('build', 'Set up job')}`, ['Run npm ci']).class, 'unknown', 'the list replaces the default');
+  });
+
+  test('acceptance 1: code-defect and security evidence win over structured transient evidence; a step name is no log evidence [R3]', () => {
+    assert.equal(ship(`${gate(build)}\n${step('build', 'Set up job')}\nAssertionError: expected 1 to equal 2`).class, 'code-defect');
+    assert.equal(ship(`${gate([{ name: 'gitleaks', conclusion: 'failure' }])}\n${step('gitleaks', 'Set up job')}`).class, 'security');
+    const named = ship(`${gate(build)}\n${step('build', 'AssertionError flaky retrying in 5')}`);
+    assert.equal(named.class, 'unknown', 'the step name reaches no log pattern');
+    assert.ok(!named.evidence.some((e) => e.startsWith('code:') || e.startsWith('transient:')), named.evidence.join('; '));
+  });
+
+  test('acceptance 2: a [CI-GATE-STEP] line is no ship sentinel [R2]', () => {
+    const r = classifyShipOutput({ command: 'x', args: [], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout: step('build', 'Set up job'), stderr: '', startedAt: T0, finishedAt: T0, durationMs: 0, outputSha256: '' });
+    assert.equal(r.outcome, 'unclassified');
   });
 });
 
