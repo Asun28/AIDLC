@@ -1086,8 +1086,9 @@ export class CardRunner {
       // A round whose dispatch failed before any receipt (its retained failure marker, no log) never ran: it expires at once.
       const reviewDir = path.join(this.reviewCheckout(run), '.review');
       const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
-      // A round runs under the timeout of the reviewer it names: the fallback's own, or the primary's (card T0-R2-FALLBACK).
-      const timeoutOf = (r: PreReviewRound) => (cfg.fallback && r.reviewer === cfg.fallback.reviewer ? cfg.fallback.timeoutMs : cfg.timeoutMs);
+      // A round runs under the timeout its reservation recorded, whatever the configuration says now; a round with none
+      // recorded (dispatched without a fallback configured) under the primary's (card T0-R2-FALLBACK-3).
+      const timeoutOf = (r: PreReviewRound) => r.timeoutMs ?? cfg.timeoutMs;
       const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
@@ -2084,7 +2085,7 @@ export class CardRunner {
         this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
       }
       fileStem = `${card.id}.pre.${numbering.cycle}.${numbering.round}.${numbering.attemptNo}.${randomUUID().slice(0, 8)}`;
-      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}) };
+      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}), ...(primary.fallback ? { timeoutMs: cfg.timeoutMs } : {}) };
       priorFindings = this.priorFindingsFor(current);
       seen = this.findingsSnapshot(current);
       return { ...current, preReview: { ...current.preReview, rounds: [...current.preReview.rounds, reservation] } };
