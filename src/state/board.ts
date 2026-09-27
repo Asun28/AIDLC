@@ -65,21 +65,20 @@ export function boundsLine(journals: JournalEvent[][], damaged: string[] = []): 
   return `Bounds: ${parts.join('; ') || 'none fired'}${incomplete}`;
 }
 
+/** What `read` returns, or undefined when it throws. */
+function orUndefined<T>(read: () => T): T | undefined {
+  try {
+    return read();
+  } catch {
+    return undefined;
+  }
+}
+
 /** The events of one journal file that parse, read one line at a time; `damaged` when a line does not or the file cannot be read. */
 function readEvents(file: string): { events: JournalEvent[]; damaged: boolean } {
-  let lines: string[];
-  try {
-    lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : [];
-  } catch {
-    return { events: [], damaged: true };
-  }
-  const events = lines.flatMap((line) => {
-    try {
-      return [JournalEvent.parse(JSON.parse(line))];
-    } catch {
-      return [];
-    }
-  });
+  const lines = orUndefined(() => (existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.trim()) : []));
+  if (!lines) return { events: [], damaged: true };
+  const events = lines.flatMap((line) => orUndefined(() => [JournalEvent.parse(JSON.parse(line))]) ?? []);
   return { events, damaged: events.length < lines.length };
 }
 
@@ -88,10 +87,12 @@ export function journalFiring(journal: Journal, entry: BoundEntry): void {
   if (!readEvents(journal.file).events.some((e) => e.type === 'BOUND_FIRED' && e.data['key'] === entry.data.key)) journal.append(entry);
 }
 
-/** The Bounds line over every goal journal file in `dir`, whatever the goal records say; a journal with lines that do not parse is named. */
+/** The Bounds line over every goal journal file in `dir`, whatever the goal records say; a journal with lines that do not parse, or a `dir` that cannot be listed, is named. */
 export function boundsOfJournals(dir: string): string {
   const host = path.basename(Journal.host(dir).file);
-  const files = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.jsonl') && f !== host).sort() : [];
+  const listed = orUndefined(() => (existsSync(dir) ? readdirSync(dir) : []));
+  if (!listed) return boundsLine([], [path.basename(dir)]);
+  const files = listed.filter((f) => f.endsWith('.jsonl') && f !== host).sort();
   const read = files.map((f) => ({ name: f.slice(0, -'.jsonl'.length), ...readEvents(path.join(dir, f)) }));
   return boundsLine(read.map((r) => r.events), read.filter((r) => r.damaged).map((r) => r.name));
 }
