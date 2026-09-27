@@ -33,7 +33,10 @@ export function splitFrontMatter(text: string): FrontMatterDoc | undefined {
   return { raw: text, frontMatter, body, yaml, yamlError };
 }
 
-/** A token the yaml package's lexer reads, typed by `CST.tokenType`, with its offset in the lexed text. */
+/**
+ * A token the yaml package's lexer reads, with its offset in the lexed text: typed by `CST.tokenType`, except a plain scalar
+ * or a block-scalar body, which the lexer marks and which is typed `scalar`.
+ */
 interface Token {
   type: CST.TokenType | null;
   source: string;
@@ -44,15 +47,20 @@ interface Token {
  * The tokens the yaml package's lexer reads in `text`, each with its offset, leaving out the control tokens that carry no
  * source text (card T0-FM-COMMENT-CUT-2). The yaml Lexer decides comment versus text, for both the readers and the report: a
  * hash sign after a space or a tab starts a comment, except inside a quoted scalar or a block-scalar body, and a hash directly
- * after any other character, a non-breaking space included, is text. A block-scalar body is one token, from the start of its
- * first line to the end of its last.
+ * after any other character, a non-breaking space included, is text.
  */
 function lex(text: string): Token[] {
   const tokens: Token[] = [];
   let at = 0;
+  let scalar = false;
   for (const source of new Lexer().lex(text)) {
-    if (source === CST.SCALAR || source === CST.DOCUMENT || source === CST.FLOW_END) continue;
-    tokens.push({ type: CST.tokenType(source), source, at });
+    if (source === CST.SCALAR) {
+      scalar = true;
+      continue;
+    }
+    if (source === CST.DOCUMENT || source === CST.FLOW_END) continue;
+    tokens.push({ type: scalar ? 'scalar' : CST.tokenType(source), source, at });
+    scalar = false;
     at += source.length;
   }
   return tokens;
@@ -105,18 +113,27 @@ export interface ReferenceCut {
 }
 
 /**
- * Every reference-like comment in the front matter (card T0-FM-COMMENT-CUT-2): a comment the yaml lexer reads that begins with
- * a hash directly followed by a non-blank character, which is how an issue or a PR number reads, after value text on a key
- * line or a list-item line, since the reader shortens that value by it. The lines are read from the lexer's tokens: a list
- * item starts with its `-` indicator, and a key line with a key (plain or quoted) followed by the `:` indicator, the value
- * starting at the next token. A plain key written with no space after its colon (`sweep:see`) is one plain scalar to the
- * lexer; the key the card readers read there is taken from that token's text with their own key pattern. A block-scalar
- * header line is a key or list-item line like any other; the body is one token that starts with its indentation, so no
- * key or item starts on its lines. A comment of a hash, a space and text is an annotation and is not listed.
+ * Every reference-like comment in the front matter (card T0-FM-COMMENT-CUT-2): a comment that begins with a hash directly
+ * followed by a non-blank character, which is how an issue or a PR number reads, after value text on a key line or a
+ * list-item line, since the reader shortens that value by it. The comment of a line is the one the lexer reads in the line's
+ * value, the reading `stripComment` gives the reader. A list-item line is a line the readers read as an item (a dash and a
+ * blank, as `blockList` reads it); a key line holds a plain key the readers read (with or without a space after its colon,
+ * as `scalar` and the nested-key reader read it, also where the lexer reads the line as part of a plain scalar begun on an
+ * earlier line) or a key the lexer reads (plain or quoted, followed by the `:` indicator). The lines of a block-scalar body,
+ * the scalar the lexer reads after a header, are text. A comment of a hash, a space and text is an annotation and is not
+ * listed.
  */
 export function referenceCuts(frontMatter: string): ReferenceCut[] {
   const tokens = lex(frontMatter);
-  const comments = tokens.filter((t) => t.type === 'comment' && /^#\S/.test(t.source));
+  const bodies: Token[] = [];
+  let header = false;
+  for (const t of tokens) {
+    if (t.type === 'block-scalar-header') header = true;
+    else if (t.type === 'scalar') {
+      if (header) bodies.push(t);
+      header = false;
+    }
+  }
   const cuts: ReferenceCut[] = [];
   let parent = '';
   let item = 0;
@@ -125,32 +142,35 @@ export function referenceCuts(frontMatter: string): ReferenceCut[] {
     const start = lineStart;
     const end = start + line.length;
     lineStart = end + 1;
-    const [first, second, third] = tokens.filter((t) => t.at >= start && t.at < end && t.type !== 'space');
+    if (bodies.some((t) => start >= t.at && start < t.at + t.source.length)) continue;
+    const dash = line.match(/^\s*-\s+/);
     let key: string;
     let valueStart: number;
-    if (first?.type === 'seq-item-ind') {
+    if (dash) {
       item += 1;
       key = `${parent} item ${item}`;
-      valueStart = second?.at ?? end;
+      valueStart = dash[0].length;
     } else {
-      const bare = first?.source.match(/^([A-Za-z_][\w-]*)[ \t]*:/);
-      if (first && second?.type === 'map-value-ind') {
+      const readerKey = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:[ \t]*/);
+      const [first, second, third] = tokens.filter((t) => t.at >= start && t.at < end && t.type !== 'space');
+      let top: boolean;
+      if (readerKey) {
+        key = readerKey[2]!;
+        valueStart = readerKey[0].length;
+        top = !readerKey[1];
+      } else if (first && second?.type === 'map-value-ind') {
         key = first.source;
-        valueStart = third?.at ?? end;
-      } else if (first && bare) {
-        key = bare[1]!;
-        valueStart = first.at + bare[0].length;
+        valueStart = (third?.at ?? end) - start;
+        top = first.at === start;
       } else continue;
-      if (first.at === start) {
+      if (top) {
         parent = key;
         item = 0;
       } else key = `${parent}.${key}`;
     }
-    const comment = comments.find((c) => c.at >= start && c.at < end);
-    if (!comment) continue;
-    const raw = frontMatter.slice(valueStart, end).replace(/[ \t\r]+$/, '');
-    const kept = frontMatter.slice(valueStart, comment.at).trim();
-    if (kept) cuts.push({ key, raw, kept, comment: frontMatter.slice(comment.at, end).replace(/[ \t\r]+$/, '') });
+    const raw = line.slice(valueStart).replace(/[ \t\r]+$/, '');
+    const at = commentStart(raw);
+    if (at >= 0 && /^#\S/.test(raw.slice(at))) cuts.push({ key, raw, kept: raw.slice(0, at).trim(), comment: raw.slice(at) });
   }
   return cuts;
 }
