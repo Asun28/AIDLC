@@ -292,6 +292,15 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
   }
 });
 
+test('T1-AUDIT-FACTS R2 advisory: a card whose every fact git and gh answer but contradict is blocked by FACT_MISMATCH, never named as having no re-derived fact [R4]', () => {
+  const contradicted = { [`git cat-file -t ${MERGE}`]: { stdout: 'tree\n' }, [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${OTHER}\n` }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 1 }, [GH_VIEW]: prJson({ state: 'CLOSED', headRefOid: OTHER, mergeCommit: { oid: OTHER } }) };
+  const report = verifyShipped(probes(contradicted).probes, { seal: true, claim: true });
+  assert.deepEqual(report.findings.map((x) => x.code), Array(6).fill('FACT_MISMATCH'), JSON.stringify(report.findings));
+  assert.equal(report.level, 'traceable');
+  assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability');
+  assert.equal(report.prerequisite, 'audit level is traceable; resolve blocking findings');
+});
+
 test('T1-AUDIT-FACTS acceptance 3: a fact git or gh cannot answer is a FACT_UNVERIFIED warning and never counts as re-derived [R3]', () => {
   const absent = { [`git cat-file -t ${MERGE}`]: { exitCode: 128, stderr: 'fatal: Not a valid object name' }, [`git rev-parse ${MERGE}^{tree}`]: { exitCode: 128, stdout: `${MERGE}^{tree}\n`, stderr: 'fatal: ambiguous argument' }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 128, stderr: 'fatal: Not a valid commit name' } };
   const ghDown = { [GH_VIEW]: { exitCode: 1, stderr: 'error connecting to api.github.com' } };
@@ -399,14 +408,16 @@ test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the le
 const FACT_DOC_SENTENCES = {
   operations: [
     '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of every merge it verifies on the GitHub path, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a fetch of the base, never from the ship output.',
-    'A merge whose facts cannot all be read when it is verified (gh or the fetch failing) journals none, and `--claim-full` then names its card.',
+    'A verified merge whose facts cannot all be read (gh failing or naming no merge commit, the fetch failing, the tree unreadable) waits with its merge operation unresolved and journals no result; each `aidlc card next` reads only the facts again, never the ship or the merge, and the card closes only once they are read and journaled with the one succeeded result.',
     '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded merge commit and head.',
     'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
     '`--claim-full` is `verified` only when, in addition, every shipped card (a card whose merge operation succeeded, by its result or by `aidlc ops reconcile`) has at least one re-derived fact; otherwise the prerequisite names each card that has none, which includes every card of a journal written before this change.',
+    'A card whose facts git and gh answer but contradict is not named there: its `FACT_MISMATCH` blocks the claim.',
   ],
   architecture: [
     '4. The merge result of a card shipped on the GitHub path carries `ShippedFacts` (`src/core/types.ts`: `headSha`, `mergeSha`, `tree`, `pr`), which the card runner reads from `gh pr view` and `git rev-parse <mergeSha>^{tree}` when it verifies the merge; `verifyAudit` takes injected git and gh probes (`aidlc audit verify` passes real ones) and re-derives each fact with `git cat-file -t`, `git rev-parse <mergeSha>^{tree}`, `git merge-base --is-ancestor <mergeSha> <base>` and `gh pr view <pr>`.',
     'A disagreement is a `FACT_MISMATCH` block, a fact that cannot be re-derived is a `FACT_UNVERIFIED` warning, no check reads a narration or free-text field, and a "fully audited" claim also needs at least one re-derived fact for every shipped card.',
+    'A verified merge whose facts cannot all be read yet waits on its unresolved merge operation, and the card closes only once they are journaled.',
   ],
   readme: [
     '- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.',
@@ -414,6 +425,7 @@ const FACT_DOC_SENTENCES = {
   changelog: [
     '- Audit facts, card T1-AUDIT-FACTS: the card runner journals the merge `OPERATION_RESULT` of every merge it verifies on the GitHub path with the PR head, the merge commit, its tree and the PR number, read from `gh pr view` and `git rev-parse` after a fetch of the base, never from the ship output, and `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning.',
     '`--claim-full` now also names each shipped card with no re-derived fact, so a journal written before this change reports `BLOCKED/capability` for every card it shipped; no check reads a narration or free-text field (docs/OPERATIONS.md).',
+    'A verified merge whose facts cannot be read yet waits, and the card closes only with them.',
   ],
 };
 
