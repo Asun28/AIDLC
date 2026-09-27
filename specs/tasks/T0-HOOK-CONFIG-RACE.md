@@ -31,6 +31,7 @@ forbid: [changing config.ts, changing a guard's decision under a config that par
 non_goals: ["the PowerShell tool outside the guards: issue 117", "config discovery above cwd: issue 118", "the valid path's command classifier: issue 120"]
 hygiene: "Carries F1 and F2 of R3 decision 2 of T0-HOOK-CONFIG-CLOSED-2 (6dc2148), which merged under the ruling of aidlc-37 (delegation of 2026-09-27T09:20Z, pre-set ruling B). Starts after T0-HOOK-CONFIG-CLOSED-2 merges; the next card of the same session is issue 117."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+superseded_by: T0-HOOK-CONFIG-CLOSED-3
 ---
 
 # T0-HOOK-CONFIG-RACE
