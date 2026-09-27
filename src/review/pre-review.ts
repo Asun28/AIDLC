@@ -826,13 +826,39 @@ export interface RunPreReviewOptions extends ReviewRetentionOptions {
   shell?: boolean;
 }
 
+/**
+ * The variables that make a Python reviewer read the prompt piped to it as UTF-8 (card T0-REVIEWER-UTF8, issue 99):
+ * without them Python on Windows decodes a piped stdin with the ANSI code page.
+ */
+const REVIEWER_UTF8: ReadonlyArray<readonly [string, string]> = [
+  ['PYTHONUTF8', '1'],
+  ['PYTHONIOENCODING', 'utf-8'],
+];
+
+/**
+ * The environment of a reviewer process: the process environment, never mutated, plus each variable of REVIEWER_UTF8
+ * the environment gives no non-empty value, so a value the user set wins and an empty one, which Python ignores, is
+ * replaced. Windows reads a variable in any letter case, so there a spelling in another case counts and an empty one is
+ * dropped before ours is set; elsewhere only the exact name is the variable. A reviewer that is not Python ignores both.
+ */
+export function reviewerEnv(base: NodeJS.ProcessEnv = process.env, platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  for (const [name, value] of REVIEWER_UTF8) {
+    const spellings = Object.keys(env).filter((k) => (platform === 'win32' ? k.toUpperCase() === name : k === name));
+    if (spellings.some((k) => env[k])) continue;
+    for (const k of spellings) delete env[k];
+    env[name] = value;
+  }
+  return env;
+}
+
 /** Run one reviewer process synchronously (single full pass). */
 export function runPreReview(o: RunPreReviewOptions): PreReviewResult {
   const { argv, promptInArgv } = expandCommand(o.command, { ...(o.vars ?? {}), instructions: o.vars?.['instructions'] ?? o.prompt });
   const [cmd, ...args] = argv;
   if (!cmd) throw new Error('review command is empty');
   // Dynamic text never goes through a shell: argv instructions force a direct spawn.
-  const receipt = o.runner(cmd, args, { cwd: o.cwd, input: promptInArgv ? '' : o.prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
+  const receipt = o.runner(cmd, args, { cwd: o.cwd, env: reviewerEnv(), input: promptInArgv ? '' : o.prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
   return finalizeReview(receipt, o);
 }
 
@@ -1011,7 +1037,7 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
       let receipt: ExecReceipt;
       const startedAt = new Date().toISOString();
       try {
-        receipt = await o.runner(cmd, args, { cwd: o.cwd, input: promptInArgv ? '' : prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
+        receipt = await o.runner(cmd, args, { cwd: o.cwd, env: reviewerEnv(), input: promptInArgv ? '' : prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
       } catch (err) {
         const finishedAt = new Date().toISOString();
         const stderr = `[spawn error] ${(err as Error).message}`;

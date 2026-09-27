@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEWER-UTF8
 title: Every reviewer process runs with PYTHONUTF8=1 and PYTHONIOENCODING=utf-8 unless the environment sets them, so a Python reviewer on Windows reads its piped prompt as UTF-8 instead of the code page (issue 99)
-status: todo
+status: merged
 branch: T0-REVIEWER-UTF8
 worktree: D:\wt\AIDLC\T0-REVIEWER-UTF8
 allow_paths:

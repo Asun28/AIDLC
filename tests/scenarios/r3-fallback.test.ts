@@ -5,7 +5,8 @@ import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
+import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
+import { reviewerEnv } from '../../src/review/pre-review.ts';
 import { RECONCILE_GRACE_MS, type CardRun, type ReviewInvocation, type Verdict } from '../../src/core/types.ts';
 
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -67,8 +68,14 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
       return answer(backup.shift() ?? PASS);
     },
   });
+  /** The environment of every reviewer spawn, in order (card T0-REVIEWER-UTF8). */
+  const spawnEnv: Array<[string, NodeJS.ProcessEnv | undefined]> = [];
+  const recording: SyncRunner = (command, args, options) => {
+    if (command.startsWith('fake-')) spawnEnv.push([command, options?.env]);
+    return script(command, args, options);
+  };
   const ship = new RawShipPath(['merged', 'merged', 'merged', 'merged'], opts.shipVerdict);
-  const makeRunner = (config = fx.config, repo = fx.repo) => new CardRunner({ paths: fx.paths, repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+  const makeRunner = (config = fx.config, repo = fx.repo) => new CardRunner({ paths: fx.paths, repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: recording });
   const runner = makeRunner();
   /** Open a card of its own goal and bring it to the review directive; every card reviews the same stubbed diff. */
   const open = async (id: string, sha: string) => {
@@ -86,7 +93,7 @@ async function atReview(withFallback = true, opts: { gateRequired?: boolean; shi
     return { card, goalId: goal.id, g: () => fx.goal(goal.id), run: r.run };
   };
   const a = await open('T0-FB', 'sha-1');
-  return { fx, runner, makeRunner, ship, open, card: a.card, goalId: a.goalId, g: a.g, primary, backup, calls, argv, hooks, run: a.run };
+  return { fx, runner, makeRunner, ship, open, card: a.card, goalId: a.goalId, g: a.g, primary, backup, calls, argv, hooks, run: a.run, spawnEnv };
 }
 
 function reviewerOf(d: { kind: string; reviewer?: string }): string | undefined {
@@ -94,7 +101,7 @@ function reviewerOf(d: { kind: string; reviewer?: string }): string | undefined 
 }
 
 test('a primary quota hold dispatches the fallback instead of WAIT; its pass is published under the fallback name and ships [R2] [R5]', async () => {
-  const { fx, runner, card, g, primary, calls, run, goalId } = await atReview();
+  const { fx, runner, card, g, primary, calls, run, goalId, spawnEnv } = await atReview();
   try {
     primary.push(HOLD_60);
     let f = await runner.formalReview(g(), card, run);
@@ -105,6 +112,8 @@ test('a primary quota hold dispatches the fallback instead of WAIT; its pass is 
     f = await runner.formalReview(g(), card, r.run);
     assert.equal(f.classified.outcome, 'pass');
     assert.deepEqual(calls, ['primary', 'backup']);
+    // Card T0-REVIEWER-UTF8: the R3 primary and the R3 fallback run with the reviewer environment.
+    assert.deepEqual(spawnEnv.filter(([command]) => command !== 'fake-r2'), [['fake-p', reviewerEnv()], ['fake-b', reviewerEnv()]]);
     assert.equal(f.run.review.substantiveDecisions, 1);
     assert.equal(f.run.review.invocations.at(-1)?.reviewer, 'backup');
     assert.ok(f.verdictRef && existsSync(f.verdictRef));
