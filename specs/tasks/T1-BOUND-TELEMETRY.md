@@ -36,7 +36,7 @@ acceptance:
   - 6. `git diff --numstat origin/main...HEAD -- src` is at most +50 net; the close-out states it and the W2+W4 running total against +400. [R1]
   - 7. `docs/OPERATIONS.md` names `BOUND_FIRED` and the board line; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/infra/board.test.ts). [R1] [R2] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
-budget: 400
+budget: 600
 tdd: true
 sweep: "Survey of main at 5983a1e. Limits constants types.ts:998-1007, MAX_BASELINE_ATTEMPTS effort.ts:14. Firing points: card 3h card-machine.ts:97-103 via card-runner.ts:553-554 (CARD_STATE), card-runner.ts:2336-2337 and 2364-2365 (stopWith, no event); arc 12h controller.ts:209-212 (GOAL_STOPPED time); grace controller.ts:200-203, card-machine.ts:59-68; review decisions review-policy.ts:198-202, card-runner.ts:2262-2264; no-verdict retry review-policy.ts:193-195, card-runner.ts:2283-2286; CI rerun ci-policy.ts:187-204, card-runner.ts:2303-2323 (CI_RERUN only when allowed); attempts effort.ts:81-101, STOP card-runner.ts:803-806 (no event); planning controller.ts:252-256; integration repair controller.ts:514-516, arc.ts:191; lifecycle repair MAX_LIFECYCLE_REPAIR_CYCLES never read, counter types.ts:797 never incremented; workers arc.ts:140-148 is a cap, not a firing. Board: renderBoard board.ts:46-86, hardcoded denominators."
 forbid: [a new config key, a new file under .aidlc/, a counter kept outside the journal, a change to any bound's value]
