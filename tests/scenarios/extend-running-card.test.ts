@@ -147,18 +147,23 @@ test('T0-EXTEND-RUNNING-CARD acceptance 2: a run in BUILD of a card superseded b
   }
 });
 
-test('T0-EXTEND-RUNNING-CARD acceptance 1: the run is read under the card-run lock, so a write that lands after the listing is kept: a changed field stays, a run stopped meanwhile and a deadline moved later meanwhile are not moved [R1]', () => {
+test('T0-EXTEND-RUNNING-CARD acceptance 1: the run is read under the card-run lock, so a write that lands after the listing is kept: a changed field stays, a run stopped meanwhile and a deadline moved later meanwhile are not moved, a time stop landing meanwhile is re-admitted, and a time stop re-admitted meanwhile is moved (R2 cycle 0 round 1) [R1]', () => {
   const fx = makeFixture();
   try {
-    const ids = ['T1-A', 'T1-B', 'T1-C'];
+    const ids = ['T1-A', 'T1-B', 'T1-C', 'T1-D', 'T1-E'];
     for (const id of ids) writeCard(fx, { id, title: id.toLowerCase() });
     const goal = goalForCards(fx, ids, { size: 'T1' });
     for (const id of ids) fx.store.saveCardRun({ ...fx.controller.ensureCardRun(fx.goal(goal.id), id), state: 'BUILD' });
+    const timeStop = () => makeStop('time', 'admission deadline reached', 'extend', { at: fx.now(), global: false });
+    fx.store.updateCardRun(goal.id, 'T1-E', (current) => ({ ...current!, state: 'STOP', stop: timeStop() }));
     /** Another session's writes, landing between the extension's listing of the runs and its update of each. */
     const race = () => {
       fx.store.updateCardRun(goal.id, 'T1-A', (current) => ({ ...current!, worktree: 'D:/wt/raced' }));
       fx.store.updateCardRun(goal.id, 'T1-B', (current) => ({ ...current!, state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) }));
       fx.store.updateCardRun(goal.id, 'T1-C', (current) => ({ ...current!, deadline: addMs(T0, 30 * HOUR_MS) }));
+      // A card next that read the old deadline stops T1-D for time; another session re-admits T1-E.
+      fx.store.updateCardRun(goal.id, 'T1-D', (current) => ({ ...current!, state: 'STOP', stop: timeStop() }));
+      fx.store.updateCardRun(goal.id, 'T1-E', (current) => ({ ...current!, state: 'BUILD', stop: undefined }));
     };
     let raced = false;
     class RacingStore extends GoalStore {
@@ -182,7 +187,13 @@ test('T0-EXTEND-RUNNING-CARD acceptance 1: the run is read under the card-run lo
     assert.equal(b.stop?.reason, 'review', 'the stop that landed after the listing is kept');
     assert.equal(b.deadline, addMs(T0, 3 * HOUR_MS), 'a run stopped meanwhile is not moved');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-C')!.deadline, addMs(T0, 30 * HOUR_MS), 'a deadline moved later meanwhile is not moved earlier');
-    assert.deepEqual(deadlineNotes(fx.events(goal.id)).map((e) => e.cardId), ['T1-A'], 'only the moved run is journaled');
+    const d = fx.store.getCardRun(goal.id, 'T1-D')!;
+    assert.deepEqual([d.state, d.stop, d.deadline], ['BUILD', undefined, until], 'a time stop that landed after the listing is re-admitted');
+    const e = fx.store.getCardRun(goal.id, 'T1-E')!;
+    assert.deepEqual([e.state, e.stop, e.deadline], ['BUILD', undefined, until], 'a time stop re-admitted after the listing is moved as a running card');
+    const events = fx.events(goal.id);
+    assert.deepEqual(events.filter((x) => x.type === 'CARD_STATE' && x.data['to'] === 'readmitted').map((x) => x.cardId), ['T1-D'], 'the re-admission is journaled for the run stopped under the lock');
+    assert.deepEqual(deadlineNotes(events).map((x) => x.cardId), ['T1-A', 'T1-E'], 'only the moved runs are journaled');
   } finally {
     fx.cleanup();
   }
