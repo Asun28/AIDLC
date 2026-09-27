@@ -37,6 +37,7 @@ forbid: [editing src/loop/card-runner.ts or any other src module, a blocking fin
 non_goals: ["reading card fields from the strict YAML parse (escape processing and multi-line scalars): a larger change of every card field", "editing the merged and superseded cards the rule cuts: they are history and get a warning", "a multi-line quoted scalar: the readers read one line per value, as before", "changing how scalar and blockList read a key holding a block scalar: the report treats its body as text, as YAML does, and the readers are unchanged"]
 hygiene: "Filed from issue 97 (plan finding F11). The coordinating session recommended YAML semantics and a validate report, left blocking or warning to this card with the constraint that main stays green; the hash-space exemption keeps the installed template's annotations quiet. Mutation sweep before the first review (docs/LESSONS.md 2026-09-24); every property of an acceptance item asserted on every case (docs/LESSONS.md 2026-09-26 T0-SHIP-MERGE-REFUSED); a self-test case per spelling a scanner accepts or refuses (docs/LESSONS.md 2026-09-24 T1-OPUS55-PROMPTS). R3 decision 1 blocked on four findings, repaired in REVIEW_FIX: a block-scalar body reported as a cut, a quoted inline item split at its comma, a key without a space after its colon read by the readers but not by the report, and a non-breaking space taken as comment separation."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+superseded_by: T0-FM-COMMENT-CUT-2
 ---
 
 # T0-FM-COMMENT-CUT
