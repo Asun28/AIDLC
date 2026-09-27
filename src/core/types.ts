@@ -909,8 +909,8 @@ export type JournalEventType = z.infer<typeof JournalEventType>;
 export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
 export type BoundName = z.infer<typeof BoundName>;
 export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1) });
-/** The `BOUND_FIRED` entry of a firing, journaled before the stop it causes is saved; `key` names the firing (goal, card, bound, the value that fired it), so a retry journals the same key. */
-export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}/${cardId ?? '-'}/${bound}/${value}` } });
+/** The `BOUND_FIRED` entry of a firing, journaled before the stop it causes is saved; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own. */
+export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}` } });
 export type BoundEntry = ReturnType<typeof boundFired>;
 
 export const JournalEvent = z.object({
