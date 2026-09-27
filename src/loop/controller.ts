@@ -43,7 +43,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { renderBoard, outcomeOf } from '../state/board.ts';
+import { boundsOfJournals, journalFiring, renderBoard, outcomeOf } from '../state/board.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import { loadCardRegistry, validateRegistry, type CardRegistry } from '../artifacts/card.ts';
 import type { ProjectConfig } from '../config.ts';
@@ -207,7 +207,7 @@ export class GoalController {
     if (unresolved.length) {
       const admission = checkAdmission(effectiveGoalDeadline(goal.deadlines), now, goal.deadlines.graceMs);
       if (admission.phase === 'expired') {
-        this.journal(goal.id).append(boundFired(goal, 'reconciliation-grace'));
+        journalFiring(this.journal(goal.id), boundFired(goal, 'reconciliation-grace', effectiveGoalDeadline(goal.deadlines)));
         goal = this.persistStop(goal, makeStop('time', 'reconciliation grace expired with unresolved operations', 'hand off the exact environment and unresolved operation ids to the named owner', { at: now, unresolvedOperations: unresolved.map((o) => o.id) }));
         return Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Reconciliation grace expired.' });
       }
@@ -217,7 +217,7 @@ export class GoalController {
     // 2. Deadline.
     const admission = checkAdmission(effectiveGoalDeadline(goal.deadlines), now, goal.deadlines.graceMs);
     if (admission.phase !== 'open') {
-      this.journal(goal.id).append(boundFired(goal, 'arc-deadline'));
+      journalFiring(this.journal(goal.id), boundFired(goal, 'arc-deadline', effectiveGoalDeadline(goal.deadlines)));
       goal = this.persistStop(goal, makeStop('time', `goal admission deadline ${effectiveGoalDeadline(goal.deadlines)} reached`, 'hand off with the existing branches/PRs and evidence; an extension must be explicit and recorded (aidlc goal extend)', { at: now, global: false }));
       return Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Admission deadline reached; no new planned work.' });
     }
@@ -261,7 +261,7 @@ export class GoalController {
     }
     const allowance = MAX_PLANNING_INVOCATIONS - goal.counters.planningInvocations;
     if (allowance <= 0 && !goal.planRef) {
-      this.journal(goal.id).append(boundFired(goal, 'planning-invocations'));
+      journalFiring(this.journal(goal.id), boundFired(goal, 'planning-invocations', goal.counters.planningInvocations));
       const g = this.persistStop(goal, makeStop('checkpoint', 'planning allowance (initial + one corrective invocation) exhausted without an accepted plan', 'a material new requirement or independently evidenced gap may start a linked new episode; cosmetic revisions cannot refund attempts', { at: now, global: false }));
       return Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Planning allowance exhausted.' });
     }
@@ -524,7 +524,7 @@ export class GoalController {
         if (goal.state !== 'VERIFY_ARC') throw new GoalTransitionError(goal.state, 'CARDS', 'arc-failed is only accepted in VERIFY_ARC');
         const repair = canOpenIntegrationRepair(goal.counters.integrationRepairCycles);
         if (!repair.allowed) {
-          j.append(boundFired(goal, 'integration-repair'));
+          journalFiring(j, boundFired(goal, 'integration-repair', goal.counters.integrationRepairCycles));
           goal = this.persistStopValue(goal, makeStop('arc-verify', `integrated acceptance failed again: ${String(d['detail'] ?? '')}`, 'second failure of the bounded repair cycle; hand off with evidence', { at: now, global: false }));
           break;
         }
@@ -756,9 +756,7 @@ export class GoalController {
     const cs = cards ?? goal.cards.map((id) => registry!.cards.find((c) => c.card.id === id)?.card).filter((c): c is Card => Boolean(c));
     const rs = runs ?? this.store.listCardRuns(goal.id);
     const os = outcomes ?? prerequisitesClosedElsewhere(cs, (id) => registry!.cards.find((r) => r.card.id === id)?.card.status);
-    // The Bounds line reads every goal journal; one that does not parse is left out (audit verify names it), so no view blocks a transition.
-    const journals = this.store.listGoals().map((g) => { try { return this.journal(g.id).readAll(); } catch { return []; } });
-    const text = renderBoard(goal, cs, rs, this.clock(), os, journals);
+    const text = renderBoard(goal, cs, rs, this.clock(), os, boundsOfJournals(this.paths.journal));
     mkdirSync(this.paths.board, { recursive: true });
     writeFileSync(path.join(this.paths.board, `${goal.id}.md`), text, 'utf8');
     if (this.boardMirror) {
