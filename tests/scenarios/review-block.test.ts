@@ -18,7 +18,7 @@ const BLOCK: Verdict = {
 const fired = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['bound']);
 
 /** The keys of those firings: goal/card/bound/the persisted value that fired it (R3 decision 1). */
-const keysOf = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length + 1));
+const keysOf = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length));
 
 function tierSCard(fx: ReturnType<typeof makeFixture>) {
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello', tier: 'S', reviewGate: 'codex {verdict:pass}', acceptance: ['1. hello() returns hello. [dod arm 1]'] });
@@ -96,7 +96,7 @@ test('Q6: after REVIEW_FIX a repaired candidate ships once more; a second substa
     assert.equal(r.run.review.substantiveBlocks, 2);
     assert.equal(ship.requests.length, 2, 'no third ship request');
     assert.deepEqual(fired(fx, goal.id), ['review-decisions'], 'T1-BOUND-TELEMETRY acceptance 1: the second block journals one review-decisions firing');
-    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/review-decisions/sha-repaired']);
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/review-decisions/sha-repaired']);
     assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['review-decisions'], 'the stopped card fires nothing more');
   } finally {
@@ -823,7 +823,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a review-blocked ship with no readable ve
     assert.equal(r.run.stop?.reason, 'review');
     assert.match(r.run.stop?.detail ?? '', /no verdict after initial dispatch plus one retry/);
     assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry']);
-    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/no-verdict-retry/sha-second']);
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/no-verdict-retry/sha-second']);
   } finally {
     fx.cleanup();
   }
@@ -881,7 +881,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a review fix whose repair attempts exhaus
       assert.match(r.directive.stop.detail, /^exhausted: /);
     }
     assert.deepEqual(fired(fx, goal.id), ['attempts']);
-    assert.deepEqual(keysOf(fx, goal.id), ['T1-HELLO/attempts/4'], 'the success and three failed repairs');
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/attempts/4'], 'the success and three failed repairs');
     assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');
   } finally {

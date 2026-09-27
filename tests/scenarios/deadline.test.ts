@@ -11,8 +11,8 @@ import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delive
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
 const fired = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => `${String(e.data['bound'])}@${e.cardId ?? 'goal'}`);
 
-/** The keys of those firings: goal/card/bound/the persisted value that fired it (R3 decision 1). */
-const keysOf = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length + 1));
+/** The keys of those firings after the goal id: @generation/card/bound/the persisted value that fired it (R3 decision 1, R2 on cc53042). */
+const keysOf = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length));
 
 test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP survives a fresh controller', () => {
   const fx = makeFixture();
@@ -272,7 +272,7 @@ for (const [outcome, text, detail] of [
       assert.equal(r.run.stop?.reason, 'time');
       assert.match(r.run.stop?.detail ?? '', detail);
       assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE']);
-      assert.deepEqual(keysOf(fx, goal.id), [`T1-LATE/card-deadline/${addMs(T0, 3 * HOUR_MS)}`]);
+      assert.deepEqual(keysOf(fx, goal.id), [`@0/T1-LATE/card-deadline/${addMs(T0, 3 * HOUR_MS)}`]);
       assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
       assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE'], 'the stopped card fires nothing more');
     } finally {
@@ -296,7 +296,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: an UNKNOWN operation past the card deadli
     assert.match(r.run.stop?.detail ?? '', /reconciliation grace expired/);
     assert.equal(fx.goal(goal.id).terminal, false, 'the goal is within its 12 h limit');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A']);
-    assert.deepEqual(keysOf(fx, goal.id), [`T1-A/reconciliation-grace/${run.deadline}`]);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/T1-A/reconciliation-grace/${run.deadline}`]);
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), r.run).directive.kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A'], 'the stopped card fires nothing more');
   } finally {
@@ -315,10 +315,29 @@ test('T1-BOUND-TELEMETRY acceptance 1: an unresolved operation past the goal dea
     assert.equal(d.kind, 'stop', d.narration);
     if (d.kind === 'stop') assert.equal(d.stop.detail, 'reconciliation grace expired with unresolved operations');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal']);
-    assert.deepEqual(keysOf(fx, goal.id), [`-/reconciliation-grace/${effectiveGoalDeadline(goal.deadlines)}`]);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/reconciliation-grace/${effectiveGoalDeadline(goal.deadlines)}`]);
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: reconciliation-grace 1 (DONE 0, STOP/time 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal'], 'the stopped goal fires nothing more');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY R2 on cc53042: a resumed generation that the arc deadline stops again journals its own firing, one per generation however often it is called [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    for (let i = 0; i < 2; i += 1) assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    // A resume keeps the deadline, so generation 1 is stopped by the same bound on the same persisted value.
+    assert.equal(fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'user asked to continue' } }).directive.kind, 'stop');
+    for (let i = 0; i < 2; i += 1) assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).generation, 1);
+    const deadline = effectiveGoalDeadline(goal.deadlines);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${deadline}`, `@1/-/arc-deadline/${deadline}`]);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: arc-deadline 2 (DONE 0, STOP/time 2, open 0)'));
   } finally {
     fx.cleanup();
   }
