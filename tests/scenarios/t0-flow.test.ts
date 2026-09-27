@@ -4673,3 +4673,66 @@ test('T1-AUDIT-FACTS-2 acceptance 1: a verified merge whose facts cannot all be 
     assert.equal(shipped.merges, 1, `${broken}: the merge ran once`);
   }
 });
+
+/** The output of a ship refused for a reason that is not a conflict, as a ship path prints it: the sentinel, the saga lines and the resume marker. */
+const refusedOutput = (cardId: string) => `[SHIP-MERGE-FAIL] Pull request #7 is not mergeable: the base branch policy prohibits the merge\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next ${cardId}\n`;
+
+/** A ship whose result is read from that output by classifyShipOutput, as every real ship path's is. */
+class ResumeMarkerShipPath extends DryRunShipPath {
+  last: ShipResult | undefined;
+  constructor() {
+    super(['merge-failed']);
+  }
+  override ship(req: ShipRequest): ShipResult {
+    const r = super.ship(req);
+    this.last = classifyShipOutput({ ...r.receipt, exitCode: 1, stdout: refusedOutput(req.cardId), stderr: '' });
+    return this.last;
+  }
+}
+
+test('T0-TOOL-STOP-TEXT (issue 85 item 2): an unclassified ship outcome stops with the replacement path as its next action and the resume marker as a labelled diagnostic, and card next returns the same stop [R1] [R2] [R3]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-TOOLSHIP', title: 'the ship is refused for another reason' });
+    const goal = fx.controller.createGoal({ text: 'implement T1-TOOLSHIP', source: 'card', ref: 'T1-TOOLSHIP', affectedSurfaces: [] }, { cards: ['T1-TOOLSHIP'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-TOOLSHIP'] } });
+    const ship = new ResumeMarkerShipPath();
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-TOOLSHIP');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TOOLSHIP'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, built);
+    // The ship's own output is read as every real ship path's is: a merge refusal with no conflict diagnostic, and the marker.
+    assert.equal(ship.last?.outcome, 'merge-failed');
+    assert.equal(ship.last?.resumeCommand, 'aidlc card next T1-TOOLSHIP', 'classifyShipOutput extracts the [SAGA-RESUME] command');
+    assert.equal(hasConflictDiagnostic(ship.last!.receipt), false);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    const stop = r.run.stop!;
+    assert.equal(stop.reason, 'tool');
+    assert.equal(stop.nextAction, `inspect the ship output and the retained receipt; this stop is final for card T1-TOOLSHIP: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"T1-TOOLSHIP":"<replacement>"}'\``);
+    assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
+    assert.equal(stop.detail, "unclassified ship outcome (exit 1): sentinel \\[SHIP-MERGE-FAIL\\]; the ship path's resume marker, a diagnostic that does not lift this stop: aidlc card next T1-TOOLSHIP");
+    if (r.directive.kind === 'stop') assert.deepEqual(r.directive.stop, stop);
+    const again = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
+    assert.deepEqual(again.run.stop, stop, 'the same stop');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-TOOL-STOP-TEXT: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the tool stop text [R4]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
+  const ops = read('docs/OPERATIONS.md');
+  for (const sentence of [
+    "| `tool` | unclassified ship outcome, or no usable pre-review verdict twice in one cycle | final for the card: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`; `card next` returns the same stop, and a `[SAGA-RESUME]` command in the detail is a diagnostic only (a recorded card resume is issue 109) |",
+    'STOP/tool, with the `[SAGA-RESUME]` command in its detail as a diagnostic only, and nothing pushed.',
+  ]) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = "- Tool stop text, card T0-TOOL-STOP-TEXT (issue 85 item 2): a `tool` stop (an unclassified ship outcome, or no usable pre-review verdict twice in one cycle) says it is final for the card and names the one way on: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason \"...\" --replace '{\"<card>\":\"<replacement>\"}'`. It never names `card next`, which returns the same stop; the ship's `[SAGA-RESUME]` command moves to the stop's detail as a labelled diagnostic. A recorded card resume is issue 109.";
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
