@@ -1,7 +1,7 @@
 ---
 id: T0-FM-COMMENT-CUT-2
 title: (replaces T0-FM-COMMENT-CUT) Card front matter reads comments, flow-list items and block-scalar bodies with the yaml package's lexer, and cards validate reports every value a comment cuts at a hash directly followed by text (issue 97)
-status: todo
+status: merged
 branch: T0-FM-COMMENT-CUT-2
 worktree: D:\wt\AIDLC\T0-FM-COMMENT-CUT-2
 allow_paths:
@@ -50,3 +50,6 @@ npm run typecheck && node --test tests/surface/frontmatter.test.ts tests/surface
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Ruling
+2026-09-27, the monitoring session aidlc-37 under the user's delegation ("I am away ask session is aidlc-37, the monitoring session for any questions and decisions."): option A. R3 decision 2 on b75ae10 blocked on one finding: a quoted key on the line right after an empty block scalar gave no finding, because the lexer reads an empty body as a token of no length at that line's start, which displaced the key and `:` tokens. One commit on b75ae10 (f1648d2) leaves tokens of no length out of the key filter, with regression tests for a quoted key after an empty literal and an empty folded scalar, top-level and nested, and a plain key after an empty scalar. DoD 39/39, `npm run check` 1141 pass and 0 fail, the sweep's mutant for the new condition killed (48 of 50, two argued equivalent), and a one-shot read-only Codex review of b75ae10..f1648d2 passed with one advisory: a quoted-key block header right after an empty scalar is not in the tests (Codex checked it by hand). Merged as PR #103 (7cc66c7). The goal g-20260927083931-d5b135 is cancelled with this ruling; the verdicts, the one-shot review and the merge facts are retained on it.

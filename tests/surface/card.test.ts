@@ -1,6 +1,6 @@
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { computeTier, loadCardRegistry, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
@@ -223,4 +223,138 @@ test('renderCard output re-parses with zero blocking findings', () => {
   assert.deepEqual(r.card.depends_on, ['T1-FOO']);
   assert.deepEqual(r.card.resources, ['port:8080']);
   assert.throws(() => renderCard({ id: 'bad-id', title: 't', allowPaths: ['x'], dodCommand: 'node x', acceptance: [], deliverable: 'd' }));
+});
+
+describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
+  const H = '#';
+  /** The three known cases of the issue, as they were written. */
+  const KNOWN: Array<[string, string, string]> = [
+    ['T1-PARSE-GUARD acceptance 7', `7. Each of the six items of issue ${H}45 has a test with the decided outcome (a timeout with quota text on stderr stays \`timeout\`), and the ${H}41 cases (capitalised abbreviations, the numbered-list branch, capitalised With and Subagent, opening quotes) have prose-lint tests (tests/core/parse-guard.test.ts, tests/surface/prose.test.ts). [R4] [dod arm 1]`, '7. Each of the six items of issue'],
+    ['T1-STORE-CAS-2 acceptance 14', `14. Issue ${H}87 item 1: a lock file that cannot be read at the ownership check or the release leaves the change's return value or its thrown error as the result of \`updateJson\` (tests/infra/update-json.test.ts). [R8] [dod arm 1]`, '14. Issue'],
+    ['T1-STORE-CAS-2 acceptance 15', `15. Issue ${H}87 item 2: an exclusive create that fails with EPERM while the lock path does not exist propagates the error instead of waiting for \`LOCKED\` (tests/infra/update-json.test.ts). [R9] [dod arm 1]`, '15. Issue'],
+  ];
+  const cuts = (r: ReturnType<typeof parseCardText>) => ('error' in r ? r.findings : r.findings).filter((f) => f.sentinel === '[CARD-FM-COMMENT-CUT]');
+  const message = (key: string, raw: string, kept: string) => {
+    const at = raw.length - raw.slice(kept.length).trimStart().length;
+    return `${key}: the comment "${raw.slice(at)}" cuts "${raw}" to "${kept}"; write the number without the hash sign, or quote the value`;
+  };
+  const withItem = (item: string, overrides: Partial<Record<string, string>> = {}, extra = '') => parseCardText(templateCard({ acceptance: `\n  - 1. foo returns bar for baz input. [dod arm 1]\n  - ${item}`, ...overrides }, extra), 'D:/x/specs/tasks/T1-FOO.md');
+
+  test('the three known cases give one finding each, naming the item with its raw and kept text; quoted, they keep the hash and give none [R1] [R2]', () => {
+    for (const [label, item, kept] of KNOWN) {
+      const r = withItem(item);
+      assert.ok(!('error' in r), label);
+      assert.deepEqual(cuts(r).map((f) => ({ severity: f.severity, message: f.message })), [{ severity: 'block', message: message('acceptance item 2', item, kept) }], label);
+      assert.equal(r.card.acceptance[1], kept, `${label}: the reader keeps what YAML keeps`);
+      const quoted = withItem(`"${item.replace(/"/g, '\\"')}"`);
+      assert.ok(!('error' in quoted), label);
+      assert.deepEqual(cuts(quoted), [], `${label}, quoted: no finding`);
+      assert.ok(quoted.card.acceptance[1]!.includes(`${H}87`) || quoted.card.acceptance[1]!.includes(`${H}45`), `${label}, quoted: the hash is kept`);
+    }
+  });
+
+  test('blocking on a todo, in-progress or in-review card; a warning on a merged or superseded card [R2]', () => {
+    const [, item] = KNOWN[1]!;
+    for (const status of ['todo', 'in-progress', 'in-review']) assert.deepEqual(cuts(withItem(item, { status })).map((f) => f.severity), ['block'], status);
+    assert.deepEqual(cuts(withItem(item, { status: 'merged' })).map((f) => f.severity), ['warn'], 'merged');
+    assert.deepEqual(cuts(withItem(item, {}, 'superseded_by: T1-BAR')).map((f) => f.severity), ['warn'], 'superseded');
+  });
+
+  test('a title, a nested diagnosis key and an inline flow list are reported under their key; a hash-space comment gives no finding [R2]', () => {
+    const title = parseCardText(templateCard({ title: `fix the cut (issue ${H}97)` }), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(title).map((f) => f.message), [message('title', `fix the cut (issue ${H}97)`, 'fix the cut (issue')]);
+    const crlf = parseCardText(templateCard({ title: `fix the cut (issue ${H}97)` }, `notes: |\n  - issue ${H}45\n  inner:see ${H}50\n"quoted key": see ${H}103`).replace(/\n/g, '\r\n'), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(crlf).map((f) => f.message), [message('title', `fix the cut (issue ${H}97)`, 'fix the cut (issue'), message('"quoted key"', `see ${H}103`, 'see')], 'a CRLF card: the offsets of the lexer tokens hold');
+    const nested = parseCardText(templateCard({}, `diagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class: see issue ${H}97 and ${H}45`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(nested).map((f) => f.message), [message('diagnosis.same_class', `see issue ${H}97 and ${H}45`, 'see issue')]);
+    const inline = parseCardText(templateCard({}, `non_goals: [the plain item ${H}5, "the quoted item ${H}6"]`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(inline).map((f) => f.message), [message('non_goals', `[the plain item ${H}5, "the quoted item ${H}6"]`, '[the plain item')]);
+    const quotedInline = parseCardText(templateCard({}, `non_goals: ["the quoted item ${H}6", 'another ${H}7']`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(quotedInline), []);
+    assert.ok(!('error' in quotedInline) && quotedInline.card.non_goals?.[0] === `the quoted item ${H}6`, 'a quoted flow-list item keeps its hash');
+    assert.deepEqual(cuts(parseCardText(templateCard(), 'D:/x/specs/tasks/T1-FOO.md')), [], 'the scaffold template card annotates its keys with hash-space comments');
+  });
+
+  test('a key written without a space after its colon is reported, top-level and nested, as the readers read and cut it [R2]', () => {
+    const r = parseCardText(templateCard({}, `sweep:see issue ${H}12\nhygiene :see issue ${H}13\ndiagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.equal(r.card.sweep, 'see issue', 'the reader reads the top-level key and cuts it');
+    assert.equal(r.card.hygiene, 'see issue', 'the reader reads a key with a space before its colon and none after it');
+    assert.equal(r.card.diagnosis?.same_class, 'see issue', 'the reader reads the nested key and cuts it');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('hygiene', `see issue ${H}13`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
+  });
+
+  test('the body of a literal or a folded block scalar is text under a plain key, a quoted key, a key with an anchor or a tag, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
+    for (const header of ['|', '>-', '|2+', `| ${H} a note`]) {
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n  inner:see ${H}50\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    - see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
+      const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
+      assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('non_goals.other', `x ${H}101`, 'x'), message('sweep', `see ${H}12`, 'see')], header);
+    }
+  });
+
+  test('a key written without a space after its colon is read from its value as the reader reads it: a quoted value is kept, and the second of two such lines is reported (T0-FM-COMMENT-CUT-2) [R1] [R2]', () => {
+    const quoted = parseCardText(templateCard({ title: '' }, `title:"issue ${H}97"\nforbid:["a ${H}1", b]\ndiagnosis:\n  root_cause:"see ${H}98"`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in quoted));
+    assert.equal(quoted.card.title, `"issue ${H}97"`);
+    assert.deepEqual(quoted.card.forbid, [`a ${H}1`, 'b']);
+    assert.equal(quoted.card.diagnosis?.root_cause, `"see ${H}98"`);
+    assert.deepEqual(cuts(quoted), [], 'a quoted value the reader keeps whole gives no finding');
+    const spanning = parseCardText(templateCard({}, `sweep:see it\nhygiene:see ${H}2\ndiagnosis:\n  root_cause:ok\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in spanning));
+    assert.equal(spanning.card.hygiene, 'see');
+    assert.equal(spanning.card.diagnosis?.same_class, 'see issue');
+    assert.deepEqual(cuts(spanning).map((f) => f.message), [message('hygiene', `see ${H}2`, 'see'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')], 'the lexer reads each pair of lines as one plain scalar; the readers read two keys');
+  });
+
+  test('a key right after an empty literal or folded block scalar is reported, quoted or plain, top-level or nested (T0-FM-COMMENT-CUT-2, R3 decision 2 ruling) [R2]', () => {
+    for (const header of ['|', '>-']) {
+      const r = parseCardText(templateCard({}, `notes: ${header}\n"quoted key": see ${H}12\nmemo: ${header}\nsweep: see ${H}14\ndiagnosis:\n  root_cause: x\n  same_class: ${header}\n  "quoted nested": see ${H}13`), 'D:/x/specs/tasks/T1-FOO.md');
+      assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}12`, 'see'), message('sweep', `see ${H}14`, 'see'), message('diagnosis."quoted nested"', `see ${H}13`, 'see')], header);
+    }
+  });
+
+  test('a comment after a block-scalar header is reported under its key or list item, and the body stays text (T0-FM-COMMENT-CUT-2) [R2]', () => {
+    const r = parseCardText(templateCard({}, `sweep: | ${H}97\n  text ${H}98\nnon_goals:\n  - >- ${H}3\n    see ${H}4`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `| ${H}97`, '|'), message('non_goals item 1', `>- ${H}3`, '>-')]);
+  });
+
+  test('a quoted key is a key line, and an inline list reads a colon inside a plain item as YAML does (T0-FM-COMMENT-CUT-2) [R1] [R2]', () => {
+    // An inline list left open ends at the next key, where the lexer adds a marker of no length: the offsets after it hold.
+    const r = parseCardText(templateCard({}, `forbid: [a, b\n"quoted key": see ${H}103\n'single key': see ${H}104\nhygiene: ${H}45 first\nnon_goals: [a:"b, c", d]\ndiagnosis:\n  root_cause: x\n  "quoted nested": see ${H}105`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.deepEqual(r.card.non_goals, ['a:"b', 'c"', 'd']);
+    assert.equal(r.card.hygiene, `${H}45 first`, 'a hash at the value start is text, as before');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}103`, 'see'), message("'single key'", `see ${H}104`, 'see'), message('diagnosis."quoted nested"', `see ${H}105`, 'see')]);
+  });
+
+  test('a quoted inline item holding a comma is read whole with its hash and gives no finding [R1] [R2]', () => {
+    const r = parseCardText(templateCard({}, `non_goals: ["see issue, ${H}45", 'a, b ${H}46', plain]`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.deepEqual(r.card.non_goals, [`see issue, ${H}45`, `a, b ${H}46`, 'plain']);
+    assert.deepEqual(cuts(r), []);
+  });
+
+  test('a hash after a non-breaking space is text: the title is read whole and gives no finding [R1] [R2]', () => {
+    const r = parseCardText(templateCard({ title: `fix the cut\u00a0${H}97` }), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.equal(r.card.title, `fix the cut\u00a0${H}97`);
+    assert.deepEqual(cuts(r), []);
+  });
+
+  test('this repository loads with no blocking comment cut, and T0-PASS-REASONS-WORDING keeps its issue number [R3]', () => {
+    const root = path.resolve(import.meta.dirname, '..', '..');
+    const registry = loadCardRegistry(path.join(root, 'specs', 'tasks'));
+    const blocking = registry.cards.flatMap((c) => c.findings.filter((f) => f.sentinel === '[CARD-FM-COMMENT-CUT]' && f.severity === 'block').map((f) => `${c.card.id} ${f.message}`));
+    assert.deepEqual(blocking, []);
+    const wording = registry.cards.find((c) => c.card.id === 'T0-PASS-REASONS-WORDING')!;
+    assert.ok(wording.card.title.endsWith('(issue 91)'), wording.card.title);
+  });
+
+  test('the CHANGELOG Unreleased section states the comment rule and the report [R4]', () => {
+    const root = path.resolve(import.meta.dirname, '..', '..');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT-2 (issue 97): the card readers and `aidlc cards validate` read comments, flow-list items and block-scalar bodies with the yaml package\'s lexer, so a hash inside a quoted value, a quoted flow-list item or a block scalar is kept and an inline list splits only at its top-level commas; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every comment at a hash directly followed by text (an issue or a PR number) that cuts a key or list-item value, with the raw and the kept text, blocking on a card that is neither merged nor superseded; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  });
 });
