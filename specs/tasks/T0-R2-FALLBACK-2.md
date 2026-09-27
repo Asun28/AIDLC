@@ -34,6 +34,7 @@ acceptance:
   - 6. `tests/surface/config.test.ts`: a table over `timeoutMs`, `shell` (with the primary's `shell` true and false), `maxDiffBytes`, `answerMarker` and `effort` shows that a fallback that omits the field gets the fallback schema's default and one that sets it gets its own value, never the primary's; the shared fields are the primary's; the keys of `PreReviewConfig` are exactly the fallback schema's keys, the four shared ones and `fallback`. `tests/scenarios/r2-fallback.test.ts`: a fallback that omits `shell`, `timeoutMs` and `answerMarker` is spawned with the platform shell default and the fallback default timeout under a primary that sets both, and its unmarked verdict passes under a primary marker. [R4] [dod arm 1]
   - 7. `tests/surface/config.test.ts` reads the exact sentences this card adds to `docs/OPERATIONS.md` and the CHANGELOG Unreleased section, fails with any one removed, and fails if the temporary sentence of a8293d7 is still in `docs/OPERATIONS.md`. [R5] [R6] [dod arm 1]
 depends_on: []
+superseded_by: T0-R2-FALLBACK-3
 budget: 820
 tdd: true
 diagnosis:
