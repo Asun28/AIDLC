@@ -31,7 +31,7 @@ function sealWith(f: ReturnType<typeof fixture>, candidate = 'cand-final') {
 test('Q12: intact journal + sealed manifest => independently-verified; not claimed fully audited', () => {
   const f = fixture();
   f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId, data: { text: 'x' } });
-  f.journal.append({ type: 'MODEL_INVOCATION', goalId: f.goalId, data: { invocationId: 'inv-1' } });
+  f.journal.append({ type: 'CARD_DISPATCHED', goalId: f.goalId, cardId: 'T1-A', data: { invocationId: 'inv-1' } });
   f.journal.append({ type: 'GOAL_DONE', goalId: f.goalId });
   const manifest = sealWith(f);
   const report = verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: f.evidence, manifest, operations: f.operations, finalCandidateDigest: 'cand-final', now });
@@ -79,8 +79,9 @@ test('work after a terminal disposition and missing trace ids are blocking', () 
   const report = verifyAudit({ goalId: f.goalId, journal: f.journal, now });
   assert.ok(report.findings.some((x) => x.code === 'WORK_AFTER_TERMINAL'));
   assert.equal(report.level, 'recorded');
+  assert.ok(!report.findings.some((x) => x.code === 'TRACE_MISSING'), 'a child ref alone carries the trace');
   const g = fixture('g2');
-  g.journal.append({ type: 'MODEL_INVOCATION', goalId: g.goalId, data: {} });
+  g.journal.append({ type: 'CARD_DISPATCHED', goalId: g.goalId, cardId: 'T1-A', data: {} });
   const r2 = verifyAudit({ goalId: g.goalId, journal: g.journal, now });
   assert.ok(r2.findings.some((x) => x.code === 'TRACE_MISSING'));
 });
