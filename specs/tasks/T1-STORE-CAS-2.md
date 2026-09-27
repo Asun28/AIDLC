@@ -1,7 +1,7 @@
 ---
 id: T1-STORE-CAS-2
 title: One locked read-modify-write primitive carries every lease and card-run write (successor of T1-STORE-CAS), and the takeover holds the lease lock until its run write lands, so no paused or stale takeover writes an old generation
-status: todo
+status: merged
 branch: T1-STORE-CAS-2
 worktree: D:\wt\AIDLC\T1-STORE-CAS-2
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
@@ -80,3 +80,6 @@ npm run check && node -e "const cp=require('child_process');const sec=t=>{const 
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every test passes, with the pass count in the receipt; the second arm prints the src net and the Sessions byte counts and exits 0 only when both shrank.
+
+## Ruling
+2026-09-27, the user, in session: merge the candidate as it stands. R3 decision 2 on 4fc3d21 blocked on the owner-only release (it reads the lock and then unlinks it, so a lock replaced between the two is removed) and on the matching test. A lock file has no atomic delete-if-still-named step and Node has no OS file lock; with automatic reclaim removed, only a live lock deleted by hand can be replaced there. The window is stated in the `docs/OPERATIONS.md` Sessions section next to the recovery step, and acceptance 13 names it. Merged as PR #100 (27fa9df, tree 6dfea86), head 31bb0e5, which differs from 4fc3d21 by that sentence, its prose assertion and a merge of main. The goal stays STOP/review; this closure is done on main by hand.
