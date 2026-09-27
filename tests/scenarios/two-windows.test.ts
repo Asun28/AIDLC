@@ -1683,14 +1683,7 @@ test('T1-BOUND-TELEMETRY-2 acceptance 7: two overlapping goal deadline calls on 
       let overlapped: string | undefined;
       // The second call runs whole inside the first: at its firing append (finding 2), or before it takes the goal lock.
       throughFs(at === 'the goal lock' ? 'openSync' : 'appendFileSync', (real, args) => {
-        if (overlapped === undefined && hit(args)) {
-          overlapped = 'running';
-          try {
-            overlapped = other.next(goal.id).kind;
-          } catch (err) {
-            overlapped = String(err);
-          }
-        }
+        if (overlapped === undefined && hit(args)) overlapped = ((overlapped = 'running'), other.next(goal.id).kind);
         return real(...args);
       }, () => fx.controller.next(goal.id));
       assert.ok(overlapped !== undefined, `${at}: the second call overlapped the first`);

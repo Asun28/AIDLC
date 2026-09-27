@@ -702,7 +702,7 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
 /** A bound of the README Limits table, in the table's order (card T1-BOUND-TELEMETRY); a `BOUND_FIRED` event names one as `{ bound }`. */
 export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
 export type BoundName = z.infer<typeof BoundName>;
-export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1) });
+export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1), stoppedAt: IsoTimestamp.optional() });
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -912,8 +912,8 @@ export const JournalEventType = z.enum([
 ]);
 export type JournalEventType = z.infer<typeof JournalEventType>;
 
-/** The `BOUND_FIRED` entry of a firing, its `data` saved as `pendingFiring` with the stop it causes; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own. */
-export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}` } });
+/** The `BOUND_FIRED` entry of a firing, its `data` saved as `pendingFiring` with the stop it causes; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own; `stoppedAt` is the persisted time of the stop or state it causes, which the board classifies it by (card T1-BOUND-TELEMETRY-2). */
+export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string, stoppedAt?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}`, ...(stoppedAt ? { stoppedAt } : {}) } });
 export type BoundEntry = ReturnType<typeof boundFired>;
 
 export const JournalEvent = z.object({

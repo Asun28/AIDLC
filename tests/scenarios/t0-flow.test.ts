@@ -5041,7 +5041,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F1: a card whose ownership stop is lifted
     const runner = fx.runner();
     let r = runner.next(fx.goal(goal.id), fx.card('T1-OWN'), stopped);
     assert.equal(r.run.stop?.reason, 'time', r.directive.narration);
-    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'card-deadline', key: `${goal.id}@0/T1-OWN/card-deadline/${run.deadline}` }]);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'card-deadline', key: `${goal.id}@0/T1-OWN/card-deadline/${run.deadline}`, stoppedAt: r.run.stop?.at }]);
     r = runner.next(fx.goal(goal.id), fx.card('T1-OWN'), r.run);
     assert.deepEqual(fired(fx, goal.id), ['card-deadline'], 'the stop the run holds fires nothing more');
     fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 13 * 3600_000), 'more time'); // later than the 12 h arc deadline

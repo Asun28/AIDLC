@@ -454,7 +454,7 @@ export class CardRunner {
    * locked record. A bound firing is saved as `pendingFiring` in the write of the stop it causes and flushed right after.
    */
   private save(run: CardRun, firing?: BoundEntry, within?: (write: () => void) => void): CardRun {
-    const saved = this.store.saveCardRun(firing ? { ...run, pendingFiring: firing.data } : run, within);
+    const saved = this.store.saveCardRun(firing ? { ...run, pendingFiring: { ...firing.data, stoppedAt: run.stop?.at } } : run, within);
     return firing ? this.flush(saved, firing.generation)! : saved;
   }
 
@@ -1937,7 +1937,7 @@ export class CardRunner {
                 }
                 case 'stop-review': {
                   const stop = makeStop('review', this.withContest(rec.decision.detail, next.findings), 'return the retained verdict evidence for human adjudication; no counter reset', { at: after, global: false });
-                  next = { ...next, state: 'STOP', stop, pendingFiring: boundFired(goal, classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions', candidateDigest, card.id).data };
+                  next = { ...next, state: 'STOP', stop, pendingFiring: boundFired(goal, classified.outcome === 'no-verdict' ? 'no-verdict-retry' : 'review-decisions', candidateDigest, card.id, stop.at).data };
                   break;
                 }
                 case 'wait-quota':
@@ -2342,7 +2342,8 @@ export class CardRunner {
           history.stopped = true;
           return { ...latest, evidence };
         }
-        return { ...latest, ...patchOf(latest), evidence, ...(fired && { pendingFiring: boundFired(goal, ...fired, card.id).data }) };
+        const patched = { ...latest, ...patchOf(latest), evidence };
+        return fired ? { ...patched, pendingFiring: boundFired(goal, ...fired, card.id, patched.stop?.at ?? now).data } : patched;
       });
       if (!history.superseded && !history.stopped) return then(this.flush(saved, goal.generation)!);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;

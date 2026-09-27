@@ -418,7 +418,7 @@ export class GoalController {
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
     this.store.saveGoal(next);
-    this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
+    this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages, at: now } });
     this.leases.release(resourceKeys.goal(this.repo.key, goal.id), this.leases.read(resourceKeys.goal(this.repo.key, goal.id))?.generation ?? 0);
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
@@ -659,7 +659,7 @@ export class GoalController {
   /** A goal stop written only over a record that is not terminal, with its firing pending in the same write; only the writer whose change wrote it flushes the firing and journals GOAL_STOPPED (card T1-BOUND-TELEMETRY-2). */
   private persistStop(goal: Goal, stop: StopRecord, pendingFiring?: Goal['pendingFiring']): Goal {
     let won = false;
-    const saved = this.store.updateGoal(goal.id, (g) => (!g || g.terminal ? g : ((won = true), { ...transitionGoal(goal, 'STOP', this.clock(), {}, stop), pendingFiring })));
+    const saved = this.store.updateGoal(goal.id, (g) => (!g || g.terminal ? g : ((won = true), { ...transitionGoal(goal, 'STOP', this.clock(), {}, stop), pendingFiring: pendingFiring && { ...pendingFiring, stoppedAt: stop.at } })));
     return won ? this.persistStopValue(this.flush(saved).goal, stop, true) : saved;
   }
 
@@ -676,7 +676,7 @@ export class GoalController {
 
   private persistStopValue(goal: Goal, stop: StopRecord, saved = false): Goal {
     const next = saved ? goal : transitionGoal({ ...goal, state: goal.state }, 'STOP', this.clock(), {}, stop);
-    this.journal(goal.id).append({ type: 'GOAL_STOPPED', goalId: goal.id, generation: goal.generation, data: { reason: stop.reason, detail: stop.detail, nextAction: stop.nextAction, global: stop.global } });
+    this.journal(goal.id).append({ type: 'GOAL_STOPPED', goalId: goal.id, generation: goal.generation, data: { reason: stop.reason, detail: stop.detail, nextAction: stop.nextAction, global: stop.global, at: stop.at } });
     this.writeBoard(next);
     return next;
   }

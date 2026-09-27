@@ -42,7 +42,7 @@ export function outcomeOf(run: CardRun | undefined, card: Card): CardOutcome {
 
 /**
  * The Bounds line: per bound, in the Limits table order, its distinct firings (a key the journal holds twice counts once) and
- * for each the goal's first `GOAL_DONE`, or `GOAL_STOPPED` with a stop reason, after the key's first entry, else open.
+ * for each the goal's first `GOAL_DONE`, or `GOAL_STOPPED` with a stop reason, whose `at` is at or after the firing's `stoppedAt`, else open; an entry without its time counts after the key's first entry.
  */
 export function boundsLine(journals: JournalEvent[][], damaged: string[] = [], pending: string[] = []): string {
   const tally = new Map<BoundName, Map<string, number>>();
@@ -51,7 +51,7 @@ export function boundsLine(journals: JournalEvent[][], damaged: string[] = [], p
     const fired = e.type === 'BOUND_FIRED' ? BoundFired.safeParse(e.data).data : undefined;
     if (!fired || seen.has(fired.key)) return;
     seen.add(fired.key);
-    const end = events.slice(i + 1).find((t) => t.type === 'GOAL_DONE' || (t.type === 'GOAL_STOPPED' && StopReason.safeParse(t.data['reason']).success));
+    const end = events.find((t, j) => (t.type === 'GOAL_DONE' || (t.type === 'GOAL_STOPPED' && StopReason.safeParse(t.data['reason']).success)) && (typeof t.data['at'] === 'string' && fired.stoppedAt ? t.data['at'] >= fired.stoppedAt : j > i));
     const outcome = !end ? 'open' : end.type === 'GOAL_DONE' ? 'DONE' : `STOP/${String(end.data['reason'])}`;
     const counts = tally.get(fired.bound) ?? new Map([['DONE', 0], ['open', 0]]);
     tally.set(fired.bound, counts.set(outcome, (counts.get(outcome) ?? 0) + 1));
