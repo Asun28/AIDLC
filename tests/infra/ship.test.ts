@@ -309,6 +309,28 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE-2)', () => {
     }
   });
 
+  it('acceptance 3: a C0 control inside a sequence is executed as the terminal parser does, so the sequence is removed whole (T0-SHIP-FAILING-LINE-2 R3 decision 1 F2)', () => {
+    const E = '\u001b';
+    const SI = '\u000f';
+    // Each form carries C0 controls (SI, SO, DEL) inside it: 7-bit and 8-bit CSI, a charset escape, and controls
+    // between ESC and the byte that picks the sequence.
+    const FORMS = [`${E}[3${SI}1m`, `${E}[${SI}38:2\u000e:255;0;0m`, `${E}[3\u007f1m`, `\u009b3${SI}1m`, `${E}(${SI}B`, `${E}${SI}[31m`, `${E}${SI}]8;;https://example.test/a\u0007`, `${E}[1 ${SI}2m`];
+    for (const outcome of ['dod-failed', 'verify-failed'] as const) {
+      for (const form of FORMS) {
+        for (const name of ['alpha', 'beta']) {
+          expectDetail(outcome, kept(receipt(TEXT[outcome](`${form}not ok 1 - ${name}`))), `not ok N - ${name}`, `${outcome} ${JSON.stringify(form)} ${name}`);
+        }
+        // Inside a test name no parameter or final byte of the sequence reaches the cause.
+        expectDetail(outcome, kept(receipt(TEXT[outcome](`not ok 1 - alpha ${form}tail`))), 'not ok N - alpha tail', `${outcome} ${JSON.stringify(form)} in a name`);
+      }
+      // A line feed inside a sequence is executed, so it keeps its line; a C1 control ends a sequence, and CAN or SUB cancels it.
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`ok 1 - passes${E}[3\n1mnot ok 2 - two`))), 'not ok N - two', `${outcome} line feed inside a CSI`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}[31\u0085not ok 3 - after a C1 control`))), 'not ok N - after a cN control', `${outcome} C1 control ends a CSI`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}[31\u0018not ok 4 - after CAN`, `${E}(\u001anot ok 5 - after SUB`))), 'not ok N - after can', `${outcome} CAN cancels a CSI`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}(\u001anot ok 5 - after SUB`))), 'not ok N - after sub', `${outcome} SUB cancels an escape`);
+    }
+  });
+
   it('acceptance 3: the cut to 160 characters counts code points, so it never splits a character (T0-SHIP-FAILING-LINE R2 cycle 0 advisory)', () => {
     const r = kept(receipt(dodText(`✖ ${'a'.repeat(157)}\u{1F600}\u{1F600}`)));
     const line = r.detail.slice(`${SENT['dod-failed']}; failing line: `.length);

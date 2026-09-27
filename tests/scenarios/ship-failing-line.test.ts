@@ -6,7 +6,8 @@ import { goalForCards, makeFixture, writeCard } from './_harness.ts';
 
 /**
  * A ship path that classifies one scaffold-style receipt per ship, as ScaffoldShipPath does with the output of
- * task.ps1, and keeps the dry-run path's scripted reviewer (card T0-SHIP-FAILING-LINE-2).
+ * task.ps1, and keeps the dry-run path's scripted reviewer (card T0-SHIP-FAILING-LINE-2). Each classification leaves
+ * its input unchanged and returns it as given (T0-SHIP-FAILING-LINE-2 R3 decision 1 F1).
  */
 class ReceiptShipPath extends DryRunShipPath {
   private readonly texts: string[];
@@ -17,7 +18,12 @@ class ReceiptShipPath extends DryRunShipPath {
   override ship(req: ShipRequest): ShipResult {
     const dry = super.ship(req);
     const stdout = this.texts[Math.min(this.requests.length, this.texts.length) - 1]!;
-    return classifyShipOutput({ ...dry.receipt, command: 'pwsh', exitCode: 1, stdout });
+    const input = { ...dry.receipt, command: 'pwsh', exitCode: 1, stdout };
+    const snapshot = structuredClone(input);
+    const r = classifyShipOutput(input);
+    assert.deepEqual(input, snapshot, 'the input receipt is unchanged');
+    assert.deepEqual(r.receipt, snapshot, 'the result carries the receipt as given');
+    return r;
   }
 }
 
