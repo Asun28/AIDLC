@@ -1208,7 +1208,9 @@ export class CardRunner {
       }
       disputedNote = ` Every finding of the last decision on this candidate is disputed; the next decision runs on the unchanged candidate with the author's notes.`;
     }
-    const { cfg, waitUntil } = this.formalReviewerNow(run, digest, now);
+    const { cfg, waitUntil: held } = this.formalReviewerNow(run, digest, now);
+    // The reviewer's pool can keep a later reset than its own hold (issue 54): the wait names the hold the pool keeps.
+    const waitUntil = held && this.queue.heldUntil(this.formalPool(goal, cfg), held, now);
     if (waitUntil) {
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
@@ -2269,9 +2271,11 @@ export class CardRunner {
     // The queue slot and the operation are settled before the outcome is applied. Only a review-no-verdict outcome holds the
     // pool on a quota message: the receipt is the output of the whole ship command (git, gh, the CI gate log), so any other
     // outcome settles its request whatever quota words it carries, and a merged or CI-red ship never leaves its request held.
-    const holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
+    let holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
     if (result.outcome === 'review-no-verdict' && classified.outcome === 'quota-hold') {
       this.queue.hold(reviewKey, holdUntil, 'reviewer reported rate limit/quota', now);
+      // The pool can keep a later reset than this hold (issue 54): the wait below names the hold the pool keeps.
+      holdUntil = this.queue.heldUntil(goal.reviewPool, holdUntil, now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
     } else if (result.outcome === 'unclassified' && result.receipt.timedOut) {
       this.queue.markLost(reviewKey, 'ship timed out; look up the review before releasing the slot', now);

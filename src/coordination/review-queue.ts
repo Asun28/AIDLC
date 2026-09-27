@@ -185,8 +185,13 @@ export class ReviewQueue {
     return held;
   }
 
-  heldUntil(_pool: string, hold: string, _now: string = nowIso()): string {
-    return hold;
+  /**
+   * How long a hold on `pool` lasts (card T0-SHIP-QUOTA-RESET, issue 54): `hold` keeps the later of the pool's reset and a
+   * new hold, so a wait names the later of `hold` and the reset the pool keeps; a pool with no reset leaves `hold`.
+   */
+  heldUntil(pool: string, hold: string, now: string = nowIso()): string {
+    const resetAt = this.pool(pool, now).resetAt;
+    return resetAt && Date.parse(resetAt) > Date.parse(hold) ? resetAt : hold;
   }
 
   cancel(key: string, reason: string, now: string = nowIso()): ReviewRequest | undefined {
