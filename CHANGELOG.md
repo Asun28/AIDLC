@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Ship failing line, card T0-SHIP-FAILING-LINE (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.
+- Ship failing line, card T0-SHIP-FAILING-LINE-2 (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.
 
 - R3 reconcile timeout, card T0-R3-RECONCILE-TIMEOUT (issue #96): a formal reservation records the timeout of the reviewer it is dispatched to, and a pending decision with no result is reconciled against that recorded timeout, so a configuration change while it runs (the fallback or the base-sync reviewer renamed or removed, a timeout changed) no longer charges it early; a reservation written before the field is reconciled as before.
 

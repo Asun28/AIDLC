@@ -99,7 +99,7 @@ export function encodeUntrusted(text: string): string {
 
 /**
  * The ship failures that count on the effort ladder, and where the failing line their detail names is read (card
- * T0-SHIP-FAILING-LINE): a failing test or compile line of the DoD or verify output, or the gate line itself.
+ * T0-SHIP-FAILING-LINE-2): a failing test or compile line of the DoD or verify output, or the gate line itself.
  */
 const FAILING_LINE_AT: Partial<Record<ShipOutcomeClass, 'test' | 'gate'>> = { 'dod-failed': 'test', 'verify-failed': 'test', 'scope-blocked': 'gate', 'budget-over': 'gate' };
 

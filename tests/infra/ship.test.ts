@@ -161,7 +161,7 @@ describe('delivery/ship DryRunShipPath', () => {
   });
 });
 
-describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
+describe('delivery/ship failing line (T0-SHIP-FAILING-LINE-2)', () => {
   type Counted = 'dod-failed' | 'verify-failed' | 'scope-blocked' | 'budget-over';
   // The constant detail each counted outcome had before this card: the first alternative of its sentinel pattern.
   const SENT: Record<Counted, string> = {
@@ -181,7 +181,7 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     assert.equal(r.detail, line === undefined ? SENT[outcome] : `${SENT[outcome]}; failing line: ${line}`, `${label}: detail`);
   }
 
-  /** Classify a receipt: the input is never changed and the result carries it as given (R3 decision 1 F1). */
+  /** Classify a receipt: the input is never changed and the result carries it as given (T0-SHIP-FAILING-LINE R3 decision 1 F1). */
   function kept(input: ExecReceipt): ReturnType<typeof classifyShipOutput> {
     const snapshot = structuredClone(input);
     const r = classifyShipOutput(input);
@@ -228,7 +228,7 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
       'error TS: x', 'errorTS2322: x', '# fail 1', 'failed tests/a.py::t', 'WARNING: gate 2 integration/e2e failed (exit code 1)',
       // Each shape is matched at the start of the line, in its own letter case, with its number and word boundaries.
       'not ok - no number', 'not ok 1x - y', 'ok 3 - says not ok 4 - inside', 'NOT OK 1 - x', 'suberror TS2322: x', 'Error TS2322: x', 'see --- FAIL: TestX above',
-      // A TAP test line carrying another shape is still judged by the TAP rule (R3 decision 1 F3), and a TypeScript
+      // A TAP test line carrying another shape is still judged by the TAP rule (T0-SHIP-FAILING-LINE R3 decision 1 F3), and a TypeScript
       // diagnostic is read only at the start of the line or after a location without spaces.
       'ok 1 - error TS2322: handled', 'not ok 1 - error TS2322: pending # TODO later', 'not ok 2 - error TS2322: skipped # SKIP',
       'ok 3 - src/a.ts(1,2): error TS2322: x', 'not ok 4 - FAIL src/a.test.ts # SKIP', 'ok 5 - --- FAIL: TestX', 'not ok 6 - ✖ x # TODO',
@@ -270,7 +270,7 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     assert.ok(r.sentinels.includes('[SAGA-DONE]') && r.resumeCommand === 'pwsh -File scripts\\task.ps1 -TaskId T1-FOO -Phase ship -Base main', 'sentinels and resume are read from the receipt as before');
   });
 
-  it('acceptance 3: complete ANSI escape sequences are removed before the shape is matched (R3 decision 1 F2)', () => {
+  it('acceptance 3: complete ANSI escape sequences are removed before the shape is matched (T0-SHIP-FAILING-LINE R3 decision 1 F2)', () => {
     const E = '\u001b';
     const WRAPPED = [
       `${E}[38:2:255:0:0mnot ok 1 - header${E}[0m`,
@@ -285,7 +285,31 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     }
   });
 
-  it('acceptance 3: the cut to 160 characters counts code points, so it never splits a character (R2 cycle 0 advisory)', () => {
+  it('acceptance 3: every terminal control sequence is removed from the whole receipt before it is split, so no payload line is read (T0-SHIP-FAILING-LINE R3 decision 2)', () => {
+    const E = '\u001b';
+    // OSC, DCS, SOS, PM and APC, with their 7-bit and 8-bit introducers; BEL, the 7-bit ST and the 8-bit ST.
+    const INTRODUCERS = [`${E}]`, `${E}P`, `${E}X`, `${E}^`, `${E}_`, '\u009d', '\u0090', '\u0098', '\u009e', '\u009f'];
+    const TERMINATORS = ['\u0007', `${E}\\`, '\u009c'];
+    for (const outcome of ['dod-failed', 'verify-failed'] as const) {
+      for (const intro of INTRODUCERS) {
+        for (const end of TERMINATORS) {
+          const text = TEXT[outcome](`${intro}8;;payload`, 'not ok 9 - hidden', `still payload${end}ok 2 - after`, 'not ok 1 - real');
+          expectDetail(outcome, kept(receipt(text)), 'not ok N - real', `${outcome} ${JSON.stringify(intro)} ${JSON.stringify(end)}`);
+        }
+      }
+      // CAN, SUB and the next ESC end a control string: its payload is dropped and what follows is read.
+      for (const cut of ['\u0018', '\u001a', `${E}[0m`]) {
+        const text = TEXT[outcome](`${E}Ppayload`, `not ok 9 - hidden${cut}not ok 3 - after the cut`, 'not ok 1 - real');
+        expectDetail(outcome, kept(receipt(text)), 'not ok N - after the cut', `${outcome} cut by ${JSON.stringify(cut)}`);
+      }
+      // An unterminated control string removes the rest of the text; a failing line before it is still read.
+      expectDetail(outcome, kept(receipt(TEXT[outcome](`${E}]8;;payload`, 'not ok 9 - hidden', 'not ok 1 - after'))), undefined, `${outcome} unterminated`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome]('not ok 1 - before', `${E}]8;;payload`, 'not ok 9 - hidden'))), 'not ok N - before', `${outcome} before an unterminated string`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](), 1, { stderr: `${E}Ppayload\nnot ok 9 - hidden` })), undefined, `${outcome} unterminated in stderr`);
+    }
+  });
+
+  it('acceptance 3: the cut to 160 characters counts code points, so it never splits a character (T0-SHIP-FAILING-LINE R2 cycle 0 advisory)', () => {
     const r = kept(receipt(dodText(`✖ ${'a'.repeat(157)}\u{1F600}\u{1F600}`)));
     const line = r.detail.slice(`${SENT['dod-failed']}; failing line: `.length);
     assert.equal(line, `✖ ${'a'.repeat(157)}\u{1F600}`);
@@ -325,13 +349,13 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
   });
 });
 
-/** The sentences card T0-SHIP-FAILING-LINE adds to docs/OPERATIONS.md, after the ship repair paragraph. */
+/** The sentences card T0-SHIP-FAILING-LINE-2 adds to docs/OPERATIONS.md, after the ship repair paragraph. */
 const FAILING_LINE_DOC_SENTENCES = [
-  "The detail of a `dod-failed` or `verify-failed` ship names the first failing test or compile line of the ship output, and the detail of a `scope-blocked` or `budget-over` ship names its gate line, the first line matching the outcome's sentinel (card T0-SHIP-FAILING-LINE): `sentinel <sentinel>; failing line: <line>`.",
+  "The detail of a `dod-failed` or `verify-failed` ship names the first failing test or compile line of the ship output, and the detail of a `scope-blocked` or `budget-over` ship names its gate line, the first line matching the outcome's sentinel (card T0-SHIP-FAILING-LINE-2): `sentinel <sentinel>; failing line: <line>`.",
   'A failing line is a TAP `not ok <n>` line without a `# TODO` or `# SKIP` directive (a TAP `ok <n>` or `not ok <n>` line is judged by that rule alone, whatever else it carries), a node:test `✖ ` line other than the `✖ failing tests:` heading, a TypeScript diagnostic at the start of the line (`error TS<code>: `, bare or after a location without spaces such as `src/a.ts(3,7): ` or `src/a.ts:3:7 - `), a Go `--- FAIL: ` line, or a line starting with `FAIL` or `FAILED`, whitespace and more text.',
-  'The line is a cause string only: its ANSI escape sequences are removed whole and its control characters become spaces, it is normalised as causes are (lower case, digit runs as `N`), cut to 160 code points, and its brackets and percent signs are encoded, so it never forms a sentinel.',
+  'The line is a cause string only: every terminal control sequence is removed from the whole ship output before it is split into lines (a control string such as an OSC or a DCS through its BEL or ST, or through the end of the output when it has none), its control characters become spaces, it is normalised as causes are (lower case, digit runs as `N`), cut to 160 code points, and its brackets and percent signs are encoded, so it never forms a sentinel.',
   'Two ship failures on different lines are two causes, and the same line twice without progress stops the card as same-cause-stop; a `dod-failed` or `verify-failed` ship with no failing line keeps the constant detail `sentinel <sentinel>`, so two of them in a row are still one cause.',
-  'The failing line picks the cause the ladder counts and never gates a merge: a line of another shape (a TypeScript diagnostic whose path has a space, among them) is not read, two lines that differ only in their digits or after 160 code points are one cause, and a failing-shaped line printed by passing output is read as the failing line; each misread costs at most one attempt, a card stopped one attempt early for a person to resume, or one more attempt within the ladder.',
+  'The failing line picks the cause the ladder counts and never gates a merge: a line of another shape (a TypeScript diagnostic whose path has a space, among them) is not read, two lines that differ only in their digits or after 160 code points are one cause, a failing-shaped line printed by passing output is read as the failing line, and an unterminated control string removes the rest of the output, so a failing line printed after it is not read; each misread costs at most one attempt, a card stopped one attempt early for a person to resume, or one more attempt within the ladder.',
 ];
 const FAILING_LINE_CHANGELOG_SENTENCE =
-  '- Ship failing line, card T0-SHIP-FAILING-LINE (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.';
+  '- Ship failing line, card T0-SHIP-FAILING-LINE-2 (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.';

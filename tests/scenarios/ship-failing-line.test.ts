@@ -6,7 +6,7 @@ import { goalForCards, makeFixture, writeCard } from './_harness.ts';
 
 /**
  * A ship path that classifies one scaffold-style receipt per ship, as ScaffoldShipPath does with the output of
- * task.ps1, and keeps the dry-run path's scripted reviewer (card T0-SHIP-FAILING-LINE).
+ * task.ps1, and keeps the dry-run path's scripted reviewer (card T0-SHIP-FAILING-LINE-2).
  */
 class ReceiptShipPath extends DryRunShipPath {
   private readonly texts: string[];
@@ -92,7 +92,7 @@ function twoShipFailures(outcome: Counted, first: string, second: string) {
 for (const outcome of Object.keys(CASES) as Counted[]) {
   const c = CASES[outcome];
 
-  test(`T0-SHIP-FAILING-LINE acceptance 4 (${outcome}): two ship failures on different lines are two causes, and the ladder admits attempt 3`, () => {
+  test(`T0-SHIP-FAILING-LINE-2 acceptance 4 (${outcome}): two ship failures on different lines are two causes, and the ladder admits attempt 3`, () => {
     const { directive, effort } = twoShipFailures(outcome, c.a, c.b);
     assert.equal(directive.kind, 'build', directive.narration);
     if (directive.kind === 'build') assert.equal(directive.attempt, 3);
@@ -100,7 +100,7 @@ for (const outcome of Object.keys(CASES) as Counted[]) {
     assert.deepEqual(countedFailures(effort).map((a) => a.cause), [c.causeA, c.causeB]);
   });
 
-  test(`T0-SHIP-FAILING-LINE acceptance 4 (${outcome}): the same line twice, its numbers changed, stops the card as same-cause-stop`, () => {
+  test(`T0-SHIP-FAILING-LINE-2 acceptance 4 (${outcome}): the same line twice, its numbers changed, stops the card as same-cause-stop`, () => {
     const { directive, effort } = twoShipFailures(outcome, c.a, c.again);
     assert.equal(directive.kind, 'stop', directive.narration);
     if (directive.kind === 'stop') assert.match(directive.stop.detail, /same-cause-stop/);
@@ -110,7 +110,7 @@ for (const outcome of Object.keys(CASES) as Counted[]) {
 
   const none = c.none;
   if (none) {
-    test(`T0-SHIP-FAILING-LINE acceptance 4 (${outcome}): two ship failures with no failing line are one cause and stop the card`, () => {
+    test(`T0-SHIP-FAILING-LINE-2 acceptance 4 (${outcome}): two ship failures with no failing line are one cause and stop the card`, () => {
       const { directive, effort } = twoShipFailures(outcome, none[0], none[1]);
       assert.equal(directive.kind, 'stop', directive.narration);
       assert.equal(effort.terminal, 'same-cause-stop');
