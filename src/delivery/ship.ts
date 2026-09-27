@@ -120,10 +120,12 @@ function isFailingLine(line: string): boolean {
 }
 
 /**
- * ANSI escape sequences (ECMA-48), removed whole: a control string (OSC, DCS, SOS, PM, APC) up to its BEL or ST, a CSI
- * with any parameter and intermediate bytes (colon-separated colours included), and any other escape.
+ * Terminal control sequences (ECMA-48, xterm), removed whole from the receipt text before it is split into lines: a
+ * control string (OSC, DCS, SOS, PM or APC, 7-bit or 8-bit introducer) with its payload, lines included, through its BEL
+ * or ST, through a CAN or SUB that cancels it, up to the next ESC, or through the end of the text when it has none; a CSI
+ * (7-bit or 8-bit) with any parameter and intermediate bytes, colon-separated colours included; and any other escape.
  */
-const ANSI_ESCAPE = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u001b\u009c]*(?:\u0007|\u001b\\|\u009c)|(?:\u001b\[|\u009b)[0-?]*[ -\/]*[@-~]|\u001b[ -\/]*[0-~]/g;
+const CONTROL_SEQUENCE = /(?:\u001b[\]PX^_]|[\u0090\u0098\u009d-\u009f])[^\u0007\u0018\u001a\u001b\u009c]*(?:\u0007|\u0018|\u001a|\u001b\\|\u009c)?|(?:\u001b\[|\u009b)[0-?]*[ -\/]*[@-~]|\u001b[ -\/]*[0-~]/g;
 
 const FAILING_LINE_WIDTH = 160;
 
@@ -141,15 +143,17 @@ function firstCodePoints(text: string, width: number): string {
 
 /**
  * The failing line of a ship failure as a cause string only, or undefined when the outcome counts no attempt or no line
- * qualifies: ANSI escapes removed, control characters as spaces, normalised as effort causes are, cut to 160 code
- * points and encoded, so the line only tells two failures apart and can never form a sentinel.
+ * qualifies: terminal control sequences removed from the whole text, then per line control characters as spaces,
+ * normalised as effort causes are, cut to 160 code points and encoded, so the line only tells two failures apart and can
+ * never form a sentinel.
  */
 function failingLine(text: string, outcome: ShipOutcomeClass, sentinel: RegExp): string | undefined {
   const at = FAILING_LINE_AT[outcome];
   if (!at) return undefined;
   const line = text
+    .replace(CONTROL_SEQUENCE, '')
     .split(/\r?\n/)
-    .map((l) => l.replace(ANSI_ESCAPE, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
+    .map((l) => l.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ').trim())
     .find((l) => (at === 'gate' ? sentinel.test(l) : isFailingLine(l)));
   return line === undefined ? undefined : encodeUntrusted(firstCodePoints(normaliseCause(line), FAILING_LINE_WIDTH));
 }
