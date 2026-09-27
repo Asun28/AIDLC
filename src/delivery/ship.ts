@@ -31,6 +31,7 @@ export type ShipOutcomeClass =
   | 'auth-failed'
   | 'no-reviewer'
   | 'red-missing'
+  | 'merge-unconfirmed'
   | 'unclassified';
 
 export interface ShipResult {

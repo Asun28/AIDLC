@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, encodeUntrusted, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import type { ExecReceipt } from '../../src/probes/exec.ts';
 import { normaliseCause } from '../../src/core/effort.ts';
 import { cleanup, tmpDir } from './helpers.ts';
@@ -51,12 +51,14 @@ describe('delivery/ship (classification of the scaffold ship saga)', () => {
     }
   });
 
-  it('exit 0 without a saga failure is merged; exit 0 with SAGA-FAIL still classifies the sentinel', () => {
+  it('exit 0 is merged only on the [SAGA-DONE] contract; exit 0 with SAGA-FAIL still classifies the sentinel', () => {
     const merged = classifyShipOutput(receipt('[SHIP-TIME] merge 3s\n[SAGA-DONE]\n', 0));
     assert.equal(merged.outcome, 'merged');
     assert.match(merged.detail, /exited 0/);
+    // T0-EXIT-ZERO-NOT-MERGED acceptance 1: the defect's own assertion. This line asserted merged; an exit 0 that prints no
+    // merge contract is not a merge.
     const plain = classifyShipOutput(receipt('all good', 0));
-    assert.equal(plain.outcome, 'merged');
+    assert.equal(plain.outcome, 'merge-unconfirmed');
     const contradictory = classifyShipOutput(receipt('[SAGA-FAIL]\n[CI-GATE-RED]\n', 0));
     assert.equal(contradictory.outcome, 'ci-red');
   });
@@ -72,6 +74,51 @@ describe('delivery/ship (classification of the scaffold ship saga)', () => {
     const unknown = classifyShipOutput(receipt('something odd happened', 1));
     assert.equal(unknown.outcome, 'unclassified');
     assert.match(unknown.detail, /exit 1 with no known sentinel/);
+  });
+});
+
+describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
+  it('acceptance 1: each alternative that read an exit 0 as merged without the contract is merge-unconfirmed; a failure sentinel on exit 0 fails closed [R1]', () => {
+    const scaffoldSuccess = 'PR #7 已 squash 合并（远端分支由仓库设置自动删；已铸 T24-MERGETOKEN 合并凭据）。合并后跑：scripts\\task.ps1 -TaskId T1-FOO -Phase cleanup';
+    for (const text of ['PR #7 MERGED', scaffoldSuccess, 'merged_pr=#7', 'done', '', '[SHIP-TIME] merge 3s', '[SAGA-FAIL] leg failed']) {
+      const r = classifyShipOutput(receipt(text, 0));
+      assert.equal(r.outcome, 'merge-unconfirmed', JSON.stringify(text));
+      assert.match(r.detail, /exit 0 without the adapter's merge contract/, JSON.stringify(text));
+    }
+    assert.equal(classifyShipOutput(receipt('PR #7 MERGED', 0)).prNumber, 7, 'the PR the ship reported travels to the reconcile');
+    assert.equal(classifyShipOutput(receipt('[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', 0)).outcome, 'merge-failed', 'a failure sentinel on exit 0 fails closed');
+    assert.equal(classifyShipOutput(receipt('[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate\n[CI-GATE-RED] job ci red\n', 0)).outcome, 'ci-red', '[SAGA-FAIL] beside [SAGA-DONE] is no merge');
+    assert.equal(classifyShipOutput(receipt(`title ${encodeUntrusted('[SAGA-DONE]')}`, 0)).outcome, 'merge-unconfirmed', 'untrusted text cannot carry the contract');
+    assert.equal(classifyShipOutput(receipt('[SAGA-DONE]', 1)).outcome, 'unclassified', 'a nonzero exit is never merged');
+  });
+
+  it('acceptance 2: a scaffold success prints no sentinel and stays merge-unconfirmed with its token on disk; the adapter does not upgrade it [R1]', () => {
+    const dir = tmpDir();
+    try {
+      const mainRoot = path.join(dir, 'repo');
+      const tokens = path.join(mainRoot, '.git', 'scaffold-merged');
+      mkdirSync(tokens, { recursive: true });
+      writeFileSync(path.join(tokens, 'T1-OK'), `tip=${'a'.repeat(40)}\nmerged_pr=#12\nutc=${new Date().toISOString()}\n`, 'utf8');
+      const ship = new ScaffoldShipPath({ mainRoot, worktreeRoot: path.join(dir, 'wt'), runner: () => receipt('PR #12 已 squash 合并（远端分支由仓库设置自动删；已铸 T24-MERGETOKEN 合并凭据）。\n', 0) });
+      const r = ship.ship({ cardId: 'T1-OK', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'merge-unconfirmed');
+      assert.equal(r.prNumber, 12);
+      assert.equal(ship.readMergeToken('T1-OK')?.mergedPr, 12, 'the token stays for the card machine to read');
+    } finally {
+      cleanup(dir);
+    }
+  });
+
+  it('acceptance 2: a merged dry-run prints [SAGA-DONE] and classifies as merged again; a merge-unconfirmed dry-run exits 0 [R3]', () => {
+    const req = { cardId: 'T1-FOO', base: 'main', mode: 'remote' as const };
+    const merged = new DryRunShipPath(['merged']).ship(req);
+    assert.match(merged.receipt.stdout, /\[SAGA-DONE\]/);
+    assert.equal(classifyShipOutput(merged.receipt).outcome, 'merged');
+    const unconfirmed = new DryRunShipPath(['merge-unconfirmed']).ship(req);
+    assert.equal(unconfirmed.outcome, 'merge-unconfirmed');
+    assert.equal(unconfirmed.receipt.exitCode, 0);
+    assert.equal(classifyShipOutput(unconfirmed.receipt).outcome, 'merge-unconfirmed');
+    assert.equal(new DryRunShipPath(['ci-red']).ship(req).receipt.exitCode, 1, 'a failure still exits 1');
   });
 });
 
