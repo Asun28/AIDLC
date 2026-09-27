@@ -77,13 +77,14 @@ export class GoalStore {
    * Read-modify-write of one card run under the card-run lock (`updateJson`): `change` receives the record as persisted
    * at that moment and returns the record to write, so two writers never work from the same snapshot. Every write over a
    * persisted record takes the next revision, so a later snapshot write must carry it (`saveCardRun`); the creating write
-   * keeps revision 0, the value its caller holds. A change that returns the record it received writes nothing.
+   * keeps revision 0, the value its caller holds. A change that returns the record it received writes nothing; `within`
+   * runs the write inside another lock section (`updateJson`).
    */
-  updateCardRun(goalId: string, cardId: string, change: (current: CardRun | undefined) => CardRun): CardRun {
+  updateCardRun(goalId: string, cardId: string, change: (current: CardRun | undefined) => CardRun, within?: (write: () => void) => void): CardRun {
     return updateJson(this.cardFile(goalId, cardId), CardRun, (persisted) => {
       const next = change(persisted);
       return next === persisted ? next : CardRun.parse({ ...next, revision: persisted ? persisted.revision + 1 : 0, updatedAt: nowIso() });
-    }, this.lock)!;
+    }, { ...this.lock, within })!;
   }
 
   listCardRuns(goalId: string): CardRun[] {

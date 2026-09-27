@@ -147,10 +147,12 @@ export class LeaseStore {
     return out;
   }
 
-  /** Remove a released lease file (housekeeping only). */
+  /** Remove a released lease file (housekeeping only), under the lease's lock so a claim meanwhile is never removed. */
   purgeReleased(resourceKey: string): void {
-    const existing = this.read(resourceKey);
-    if (existing?.released) unlinkSync(this.file(resourceKey));
+    this.update(resourceKey, (existing) => {
+      if (existing?.released) unlinkSync(this.file(resourceKey));
+      return existing;
+    });
   }
 }
 

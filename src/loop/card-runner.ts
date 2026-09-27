@@ -644,9 +644,10 @@ export class CardRunner {
    * generation the run does not carry is an interrupted takeover (or an interrupted claim), completed without another
    * advance; one the run carries refuses, since `card next` renews it. A missing or released lease, a live lease of another
    * session and an unresolved operation refuse before any write. After the lease write the run takes the generation under
-   * the card-run lock and, inside it, the lease lock, which journals one acquisition per generation only while the lease is
-   * still this session's at that generation (a takeover lost meanwhile refuses and writes nothing more); a stop saved
-   * meanwhile stays, and the state is selected again through `assess`. A process that ends between the lease write and the
+   * the card-run lock and, inside it, the lease lock, both held until the run record is on disk; one acquisition per
+   * generation is journaled there, and only while the locked run does not carry the generation yet and the lease is still
+   * this session's acquisition (otherwise the takeover refuses and writes nothing more); a stop saved meanwhile stays, and
+   * the state is selected again through `assess`. A process that ends between the lease write and the
    * run update leaves a takeover this command, run again, completes. The goal lease is not touched (`aidlc goal takeover`).
    */
   takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; completed: boolean; previousOwner?: ActorIdentity; previousGeneration?: number } {
@@ -656,6 +657,7 @@ export class CardRunner {
     const journal = this.journal(goal.id);
     // Every hint names the goal this command runs under: the default goal of a later command may be another one.
     const scoped = (command: string) => `\`aidlc card ${command} ${card.id} --goal ${goal.id}\``;
+    const owns = (generation: number) => new Error(`this session owns card ${card.id} at generation ${generation}; run ${scoped('next')}`);
     // The handoff intent and the acquisition are looked up by resource and generation in every goal's journal, since the lease
     // is one resource per repository and card.
     const events = (type: 'NOTE' | 'LEASE_ACQUIRED', generation: number) => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === generation));
@@ -666,7 +668,7 @@ export class CardRunner {
       if (!existing) throw new Error(`card ${card.id} has no lease record; run ${scoped('next')} to claim it`);
       if (existing.released) throw new Error(`the lease of card ${card.id} is released (generation ${existing.generation}); run ${scoped('next')} to claim it`);
       completed = existing.owner.session === me.session && existing.owner.host === me.host;
-      if (completed && stored.ownerGeneration === existing.generation) throw new Error(`this session owns card ${card.id} at generation ${existing.generation}; run ${scoped('next')}`);
+      if (completed && stored.ownerGeneration === existing.generation) throw owns(existing.generation);
       const next = completed ? existing : this.leases.successor(key, existing, { operation: `card:${card.id}`, now });
       const unresolved = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
       if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
@@ -687,22 +689,30 @@ export class CardRunner {
       }
       return next;
     })!;
-    // The run takes the generation under the card-run lock, then the lease lock (never the reverse), only while the lease is
-    // still this session's acquisition: one lost to another session meanwhile leaves the run and the journal as they are.
-    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
-      this.leases.update(key, (held) => {
-        if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
-          throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
-        }
-        // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
-        // generation): a completion after one journals the completion instead of a second acquisition.
-        const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
-        if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
-        else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
-        return held;
-      });
-      return { ...(current ?? caller), ownerGeneration: lease.generation };
-    });
+    // The run takes the generation under the card-run lock, then the lease lock (never the reverse), both held until the run
+    // record is on disk, and only while the run read under the lock does not carry the generation yet and the lease is still
+    // this session's acquisition: otherwise nothing is journaled or written.
+    const owned = this.store.updateCardRun(
+      goal.id,
+      card.id,
+      (current) => {
+        if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
+        return { ...(current ?? caller), ownerGeneration: lease.generation };
+      },
+      (write) =>
+        this.leases.update(key, (held) => {
+          if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
+            throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
+          }
+          // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
+          // generation): a completion after one journals the completion instead of a second acquisition.
+          const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
+          if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
+          else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
+          write();
+          return held;
+        }),
+    );
     const assessed = this.assess(goal, card, owned, now);
     const next = this.save(assessed.next);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
