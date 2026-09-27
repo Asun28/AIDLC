@@ -141,18 +141,48 @@ export function loadHookConfig(cwd: string): LoadedHookConfig {
 const CONFIG_KEYS = { 'production-gate': 'productionPatterns', 'protect-paths': 'frozenPaths', 'protect-tests': 'testPathPatterns' } as const;
 type ConfigGuard = keyof typeof CONFIG_KEYS;
 
-/** Redirects that write no file: into another stream (`2>&1`, `>&2`) or the null device. */
-const STREAM_REDIRECT = /\d*>&\d|\d*>>?\s*(?:\/dev\/null|\$null|nul)(?![\w./\\-])/gi;
-const DIRECTORY_CHANGE = new Set(['cd', 'chdir', 'pushd', 'popd', 'set-location', 'sl']);
-/** `aidlc doctor` as the CLI is run: bare, through npx, through a bin script or `npm run dev --`; plain arguments only. */
-const DOCTOR_RUN = /^(?:(?:npx\s+(?:--no-install\s+)?)?aidlc|node\s+\S*aidlc\.js|npm\s+run\s+dev\s+--)\s+doctor(?:\s+[\w./:=\\-]+)*$/i;
+/**
+ * Bash redirects that write no file, each up to the end of its destination: a descriptor into another (`2>&1`, `>&2`) or
+ * any output into `/dev/null` (`2>/dev/null`, `&>>/dev/null`). Only the POSIX null device: in Bash `>nul` writes a file.
+ */
+const STREAM_REDIRECT = /(?:\d*>&\d|(?:\d*|&)>>?[ \t]*\/dev\/null)(?=[\s;&|]|$)/g;
+/** Command or process substitution: it runs a command inside any word, so no command carrying one is exempt. */
+const SUBSTITUTION = /`|\$\(|[<>]\(/;
+/** Command separators, including the ones `mutatingSegments` does not split at: a lone `&` and a line break. */
+const SEPARATOR = /\|\||&&|[;|&\r\n]/;
+/** One shell word that expands to itself: a plain word, a single-quoted one, or a double-quoted one without `$` or a backquote. */
+const WORD = String.raw`(?:[\w./:=\\-]+|'[^'\r\n]*'|"[^"$\x60\r\n]*")`;
+const DIRECTORY_CHANGE = new RegExp(String.raw`^(?:cd|pushd|popd)(?:[ \t]+${WORD})?$`);
+/** `aidlc doctor` bare, through `npx --no-install`, or through `node` and a script word (checked by `ownCli`). */
+const DOCTOR_RUN = new RegExp(String.raw`^(?:aidlc|npx[ \t]+--no-install[ \t]+aidlc|node[ \t]+(${WORD}))[ \t]+doctor(?:[ \t]+${WORD})*$`);
 
-/** Whether `production-gate` passes a Bash command whatever the config holds: every mutating segment is a change of directory or `aidlc doctor`. */
-function gatePassesAnyConfig(cmd: string): boolean {
-  return mutatingSegments(cmd.replace(STREAM_REDIRECT, ' ')).every((seg) => DOCTOR_RUN.test(seg) || DIRECTORY_CHANGE.has((seg.split(/\s+/)[0] ?? '').toLowerCase()));
+/** Whether a `node` script word names this checkout's own CLI: `bin/aidlc.js`, or the installed package's. */
+function ownCli(word: string, cwd: string): boolean {
+  const script = path.resolve(cwd, /^(["']).*\1$/.test(word) ? word.slice(1, -1) : word);
+  return [path.join(cwd, 'bin', 'aidlc.js'), path.join(cwd, 'node_modules', 'aidlc', 'bin', 'aidlc.js')].some((own) => path.relative(own, script) === '');
 }
 
-/** Whether `protect-paths` passes a Bash command whatever the config holds: no write verb once stream and null-device redirects are set aside. */
+function isDoctorRun(segment: string, cwd: string): boolean {
+  const run = DOCTOR_RUN.exec(segment);
+  return Boolean(run) && (run![1] === undefined || ownCli(run![1], cwd));
+}
+
+/**
+ * Whether `production-gate` passes a Bash command whatever the config holds: nothing substitutes a command, and each
+ * segment, split at every separator once the redirects of `STREAM_REDIRECT` are set aside, is one the valid path reads as
+ * read-only (`mutatingSegments`), a change of directory, or `aidlc doctor`.
+ */
+function gatePassesAnyConfig(cmd: string, cwd: string): boolean {
+  if (SUBSTITUTION.test(cmd)) return false;
+  return cmd
+    .replace(STREAM_REDIRECT, ' ')
+    .split(SEPARATOR)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .every((seg) => mutatingSegments(seg).length === 0 || DIRECTORY_CHANGE.test(seg) || isDoctorRun(seg, cwd));
+}
+
+/** Whether `protect-paths` passes a Bash command whatever the config holds: no write verb once the redirects of `STREAM_REDIRECT` are set aside. */
 function pathsPassAnyConfig(cmd: string): boolean {
   return !WRITE_VERBS.test(cmd.replace(STREAM_REDIRECT, ' '));
 }
@@ -183,7 +213,7 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
   if (guard === 'protect-tests') passes = typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error);
   else if (guard === 'protect-paths' && typeof file === 'string') passes = isConfigFile(file, cwd, error);
   else if (typeof cmd !== 'string' || !cmd) passes = true;
-  else passes = guard === 'protect-paths' ? pathsPassAnyConfig(cmd) : gatePassesAnyConfig(cmd);
+  else passes = guard === 'protect-paths' ? pathsPassAnyConfig(cmd) : gatePassesAnyConfig(cmd, cwd);
   return passes ? { exitCode: 0 } : configDenial(guard, error);
 }
 

@@ -523,10 +523,19 @@ test('T0-HOOK-CONFIG-CLOSED acceptance 1 and 2: while the config cannot be used,
     passes({ tool_name: 'MultiEdit', tool_input: { file_path: path.join(cwd, 'src', '..', 'aidlc.config.json'), edits: [] } });
     // a config file in another directory is not the repair
     denied({ tool_name: 'Edit', tool_input: { file_path: path.join(cwd, 'sub', 'aidlc.config.json'), old_string: 'a', new_string: 'b' } }, 'protect-paths');
-    // reads, a change of directory and aidlc doctor in each spelling
-    for (const command of ['git log --oneline -3', 'grep -rn frozen src 2>/dev/null', 'cat aidlc.config.json | head -5', 'aidlc doctor', 'npx --no-install aidlc doctor --json', 'npx aidlc doctor', 'node bin/aidlc.js doctor 2>&1', 'node D:/repo/bin/aidlc.js doctor', 'npm run dev -- doctor', 'cd D:/repo && aidlc doctor']) {
+    // reads, a change of directory and aidlc doctor in each spelling, with redirects into a stream or /dev/null
+    for (const command of ['git log --oneline -3', 'grep -rn frozen src 2>/dev/null', 'cat aidlc.config.json | head -5', 'aidlc doctor', 'npx --no-install aidlc doctor --json', 'node bin/aidlc.js doctor 2>&1', 'node ./bin/aidlc.js doctor >/dev/null', `node '${path.join(cwd, 'node_modules', 'aidlc', 'bin', 'aidlc.js')}' doctor --json`, 'aidlc doctor &>/dev/null', 'aidlc doctor &>>/dev/null --json', 'cd && aidlc doctor', `cd "${cwd}" && aidlc doctor 2>&1`, 'pushd src; popd']) {
       passes({ tool_name: 'Bash', tool_input: { command } });
     }
+    // a command hidden in a separator, a substitution or a line break, another script, a file redirect, and the spellings
+    // that run code the checkout does not own (npx may install from the registry, npm run dev runs the repository's script)
+    for (const command of ['cd . & node mutate.js', 'cd $(touch proof)', 'aidlc doctor\nnode mutate.js', 'node $(touch${IFS}proof)/aidlc.js doctor', 'aidlc doctor `touch proof`', 'cat `node mutate.js`', 'cat x & node mutate.js', 'cat x\nnode mutate.js', 'cat $(node mutate.js)', 'cd "$HOME"', 'aidlc doctor >nul:report', 'aidlc doctor 2>/dev/null.txt', 'node other/aidlc.js doctor', `node ${path.join(cwd, '..', 'bin', 'aidlc.js')} doctor`, 'npx aidlc doctor', 'npm run dev -- doctor', 'aidlc doctor --cwd "$HOME"']) {
+      denied({ tool_name: 'Bash', tool_input: { command } }, 'production-gate');
+    }
+    // in Bash `>nul` writes a file named nul
+    denied({ tool_name: 'Bash', tool_input: { command: 'echo x >nul' } }, 'protect-paths');
+    denied({ tool_name: 'Bash', tool_input: { command: 'grep x src 2>/dev/null >nul:report' } }, 'protect-paths');
+    denied({ tool_name: 'Bash', tool_input: { command: 'grep x src 2>/dev/null.txt' } }, 'protect-paths');
     // secrets-guard runs as before, on the repair too
     const awsLike = ['AKIA', 'ABCDEFGHIJKLMNOP'].join('');
     const secret = run({ tool_name: 'Write', tool_input: { file_path: 'aidlc.config.json', content: `{"key": "${awsLike}"}` } });
@@ -544,6 +553,19 @@ test('T0-HOOK-CONFIG-CLOSED acceptance 1 and 2: while the config cannot be used,
     assert.equal(denyReason(runHook('protect-paths', { tool_input: { command: 'cp a b' } }, { cwd, env })), configDenial(file, detail, 'protect-paths'));
     assert.deepEqual(runHook('protect-paths', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
   }
+});
+
+test('T0-HOOK-CONFIG-CLOSED acceptance 2: aidlc doctor through a quoted script path passes in a checkout whose path has spaces', () => {
+  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc hooks spaced '));
+  const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], AIDLC_STATE_DIR: path.join(cwd, 'state') };
+  writeFileSync(path.join(cwd, 'aidlc.config.json'), '{', 'utf8');
+  const run = (command: string) => dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } }, { cwd, env });
+  for (const quote of ['"', "'"]) {
+    assert.deepEqual(run(`node ${quote}${path.join(cwd, 'bin', 'aidlc.js')}${quote} doctor`), { exitCode: 0 }, quote);
+    assert.deepEqual(run(`cd ${quote}${cwd}${quote} && node ${quote}${path.join(cwd, 'node_modules', 'aidlc', 'bin', 'aidlc.js')}${quote} doctor --json`), { exitCode: 0 }, quote);
+    assert.equal(decision(run(`node ${quote}${path.join(cwd, 'other', 'aidlc.js')}${quote} doctor`)), 'deny', quote);
+  }
+  assert.equal(decision(run(`node ${path.join(cwd, 'bin', 'aidlc.js')} doctor`)), 'deny', 'an unquoted path with a space is two words');
 });
 
 test('T0-HOOK-CONFIG-CLOSED acceptance 3: every prompt names the config error, and the Stop output is the one a valid config gives', () => {
@@ -595,7 +617,7 @@ test('T0-HOOK-CONFIG-CLOSED acceptance 5: docs/OPERATIONS.md (Hooks) and the CHA
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
-  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED, issue 76): when the file is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, `production-gate`, `protect-paths` and `protect-tests` deny each call that some valid config would deny, naming the error without quoting the file, and pass the repair: an Edit or Write of that file, a read-only command, a change of directory and `aidlc doctor`. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A missing file still gives the defaults, as it does for the CLI, and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
+  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED, issue 76): when the file is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, `production-gate`, `protect-paths` and `protect-tests` deny each call that some valid config would deny, naming the error without quoting the file, and pass the repair: an Edit or Write of that file, a read-only command, a change of directory and `aidlc doctor` (bare, through `npx --no-install`, or through `node` and the `bin/aidlc.js` of that checkout), with no command substituted and no file redirect. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A missing file still gives the defaults, as it does for the CLI, and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
   assert.ok(hooks.includes(sentence), `docs/OPERATIONS.md (Hooks) states: ${sentence}`);
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
