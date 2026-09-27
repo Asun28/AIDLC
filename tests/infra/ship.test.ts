@@ -1,9 +1,11 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import type { ExecReceipt } from '../../src/probes/exec.ts';
+import { normaliseCause } from '../../src/core/effort.ts';
 import { cleanup, tmpDir } from './helpers.ts';
 
 function receipt(stdout: string, exitCode = 1, extra: Partial<ExecReceipt> = {}): ExecReceipt {
@@ -158,3 +160,128 @@ describe('delivery/ship DryRunShipPath', () => {
     assert.equal(new DryRunShipPath().ship(req).outcome, 'merged');
   });
 });
+
+describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
+  type Counted = 'dod-failed' | 'verify-failed' | 'scope-blocked' | 'budget-over';
+  // The constant detail each counted outcome had before this card: the first alternative of its sentinel pattern.
+  const SENT: Record<Counted, string> = {
+    'dod-failed': 'sentinel DoD 未通过',
+    'verify-failed': 'sentinel verify\\.ps1 未过',
+    'scope-blocked': 'sentinel \\[SHIP-SCOPE-BLOCK\\]',
+    'budget-over': 'sentinel \\[CARD-BUDGET-OVER\\]',
+  };
+  const SAGA = '[SAGA-FAIL] ship\n[SAGA-RESUME] pwsh -File scripts\\task.ps1 -TaskId T1-FOO -Phase ship -Base main';
+  const dodText = (...lines: string[]) => ['=== R2 DoD 闸门（必须全绿） ===', '运行: node --test', 'TAP version 13', 'ok 1 - passes', ...lines, '# fail 1', 'DoD 未通过（退出码 1）。修绿再 ship。', SAGA].join('\n');
+  const verifyText = (...lines: string[]) => ['ok 1 - the card DoD', '=== R2 verify 总闸 ===', ...lines, 'WARNING: pytest 失败（退出码 1）', 'verify: FAIL', 'verify.ps1 未过（项目级回归红）。修绿再 ship。', SAGA].join('\n');
+  const TEXT: Record<'dod-failed' | 'verify-failed', (...lines: string[]) => string> = { 'dod-failed': dodText, 'verify-failed': verifyText };
+
+  /** The one check of a counted outcome: its class, and a detail naming the line (or the constant detail when `line` is undefined). */
+  function expectDetail(outcome: Counted, r: ReturnType<typeof classifyShipOutput>, line: string | undefined, label: string): void {
+    assert.equal(r.outcome, outcome, `${label}: outcome`);
+    assert.equal(r.detail, line === undefined ? SENT[outcome] : `${SENT[outcome]}; failing line: ${line}`, `${label}: detail`);
+  }
+
+  // Each failing-line shape R1 lists, and the line it gives: ANSI-free, normalised as causes are, encoded.
+  const SHAPES: Array<[string, string]> = [
+    ['not ok 3 - parses the header', 'not ok N - parses the header'],
+    ['    not ok 12 - a nested case', 'not ok N - a nested case'],
+    ['not ok 8 - handles \\#skip tags', 'not ok N - handles \\#skip tags'],
+    ['✖ parses the header (1.234ms)', '✖ parses the header (N.Nms)'],
+    ["src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.", "src/a.ts(N,N): error tsN: type 'string' is not assignable to type 'number'."],
+    ["src/a.ts:3:7 - error TS2304: Cannot find name 'x'.", "src/a.ts:N:N - error tsN: cannot find name 'x'."],
+    ['--- FAIL: TestParse (0.00s)', '--- fail: testparse (N.Ns)'],
+    ['FAIL  src/a.test.ts', 'fail src/a.test.ts'],
+    ['FAILED tests/test_a.py::test_parse - AssertionError: x', 'failed tests/test_a.py::test_parse - assertionerror: x'],
+  ];
+
+  it('acceptance 1: a dod-failed or verify-failed receipt names its first failing test or compile line, for every shape', () => {
+    for (const outcome of ['dod-failed', 'verify-failed'] as const) {
+      for (const [raw, line] of SHAPES) expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](raw))), line, `${outcome} ${raw}`);
+      // The first failing line in receipt order, whatever its shape; stdout is read before stderr.
+      const several = TEXT[outcome]('ok 2 - also passes', "src/b.ts(1,1): error TS1005: ';' expected.", 'not ok 3 - b', '✖ c (1ms)', 'FAILED tests/d.py::d');
+      expectDetail(outcome, classifyShipOutput(receipt(several)), "src/b.ts(N,N): error tsN: ';' expected.", `${outcome} several`);
+      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](), 1, { stderr: 'not ok 1 - from stderr' })), 'not ok N - from stderr', `${outcome} stderr`);
+      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome]('not ok 1 - from stdout'), 1, { stderr: 'not ok 2 - from stderr' })), 'not ok N - from stdout', `${outcome} stdout first`);
+    }
+  });
+
+  it('acceptance 1: a passing line, a TODO or SKIP line, the spec heading and a FAIL word inside a line are never the failing line', () => {
+    const NOT_FAILING = [
+      'ok 1 - passes', 'not ok 4 - pending # TODO later', 'not ok 5 - no db # SKIP', 'not ok 6 - lower # todo', 'not ok 7 - tight #SKIP', 'not okay 1 - x', 'not ok', 'not ok   ',
+      '✖ failing tests:', '✖ failing tests', '✖', '✖   ', '--- FAIL:', '--- FAIL:   ', 'the FAIL count is 0', 'FAIL', 'FAIL   ', 'FAILED', 'FAILURE: x', 'FAILEDx y',
+      'error TS: x', 'errorTS2322: x', '# fail 1', 'failed tests/a.py::t', 'WARNING: gate 2 integration/e2e failed (exit code 1)',
+    ];
+    for (const outcome of ['dod-failed', 'verify-failed'] as const) {
+      for (const raw of NOT_FAILING) expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](raw))), undefined, `${outcome} ${JSON.stringify(raw)}`);
+      // A non-failing line before a failing one is skipped, not taken.
+      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](...NOT_FAILING, 'not ok 9 - the real one'))), 'not ok N - the real one', `${outcome} after non-failing lines`);
+    }
+  });
+
+  it('acceptance 2: a scope-blocked or budget-over receipt names its gate line; two budget lines that differ only in their counts are one detail', () => {
+    const scope = "[SHIP-SCOPE-BLOCK] out-of-scope changes (not under the card's allow_paths): src/a.ts, docs/b.md";
+    const scopeText = (gate: string) => ['[SAGA-FAIL] scope', 'not ok 1 - a DoD line is not a gate line', gate, 'Fix (L18): revert card-external changes out of this branch with a reverse commit', SAGA].join('\n');
+    expectDetail('scope-blocked', classifyShipOutput(receipt(scopeText(scope))), "%5Bship-scope-block%5D out-of-scope changes (not under the card's allow_paths): src/a.ts, docs/b.md", 'scope block');
+    expectDetail('scope-blocked', classifyShipOutput(receipt(scopeText("Exception: [SHIP-SCOPE-ALLOW-EMPTY] no allow_paths list items parsed from the front-matter"))), 'exception: %5Bship-scope-allow-empty%5D no allow_paths list items parsed from the front-matter', 'scope allow-empty');
+    const budget = (used: number, limit: number) => `[CARD-BUDGET-OVER] this card's diff is ${used} lines against a budget of ${limit} declared on the BASE card`;
+    const over = classifyShipOutput(receipt([budget(812, 720), SAGA].join('\n')));
+    expectDetail('budget-over', over, "%5Bcard-budget-over%5D this card's diff is N lines against a budget of N declared on the base card", 'budget over');
+    assert.equal(classifyShipOutput(receipt([budget(905, 400), SAGA].join('\n'))).detail, over.detail, 'the counts are normalised');
+    expectDetail('budget-over', classifyShipOutput(receipt(['[R3-DIFF-TOO-LARGE] diff of 2400 lines exceeds 2000', SAGA].join('\n'))), '%5BrN-diff-too-large%5D diff of N lines exceeds N', 'diff too large');
+  });
+
+  it('acceptance 3: the failing line is a cause string only: escapes removed, controls as spaces, normalised, cut to 160 characters, encoded', () => {
+    const raw = `\u001b[31m✖ [SAGA-DONE] 100% of [x]\tcase\u2028two\u0085three ${'long '.repeat(40)}(12ms)\u001b[39m`;
+    const r = classifyShipOutput(receipt(dodText(raw)));
+    const cut = normaliseCause(`✖ [SAGA-DONE] 100% of [x] case two three ${'long '.repeat(40)}(12ms)`).slice(0, 160);
+    assert.equal(cut.length, 160);
+    expectDetail('dod-failed', r, cut.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D'), 'encoded');
+    const line = r.detail.slice(`${SENT['dod-failed']}; failing line: `.length);
+    assert.ok(!/[[\]\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(line), `no bracket or control character: ${JSON.stringify(line)}`);
+    assert.ok(line.startsWith('✖ %5Bsaga-done%5D N%25 of %5Bx%5D case two three long'), line);
+    // Nothing but the detail reads the line: the same receipt with a line that is not a failing line gives the same result.
+    const plain = classifyShipOutput(receipt(dodText(raw.replace('✖', '·'))));
+    expectDetail('dod-failed', plain, undefined, 'the same text, not a failing line');
+    assert.deepEqual({ ...r, detail: '', receipt: undefined }, { ...plain, detail: '', receipt: undefined });
+    assert.ok(r.sentinels.includes('[SAGA-DONE]') && r.resumeCommand === 'pwsh -File scripts\\task.ps1 -TaskId T1-FOO -Phase ship -Base main', 'sentinels and resume are read from the receipt as before');
+  });
+
+  it('acceptance 4: with no failing line the four outcomes keep their constant detail, and every other outcome keeps its detail', () => {
+    expectDetail('dod-failed', classifyShipOutput(receipt(dodText('Error: something broke'))), undefined, 'dod no line');
+    expectDetail('verify-failed', classifyShipOutput(receipt(verifyText('Traceback (most recent call last):'))), undefined, 'verify no line');
+    expectDetail('dod-failed', classifyShipOutput(receipt('RED 检查失败：dod_command 退出 0（已是 GREEN）。')), undefined, 'red check');
+    for (const [sentinel, cls] of SENTINELS) {
+      if (cls === 'dod-failed' || cls === 'verify-failed' || cls === 'scope-blocked' || cls === 'budget-over') continue;
+      const without = classifyShipOutput(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\n`));
+      const withLine = classifyShipOutput(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\nnot ok 1 - a failing test\n✖ a failing test\n`));
+      assert.equal(withLine.outcome, cls);
+      assert.deepEqual({ ...withLine, receipt: undefined }, { ...without, receipt: undefined }, `${cls}: the detail and every other field are unchanged`);
+      assert.doesNotMatch(withLine.detail, /failing line/);
+    }
+    for (const [text, exit, extra] of [['not ok 1 - x\n[SAGA-DONE]', 0, {}], ['not ok 1 - x', 1, {}], ['not ok 1 - x', 1, { timedOut: true }]] as const) {
+      const r = classifyShipOutput(receipt(text, exit, extra));
+      assert.doesNotMatch(r.detail, /failing line/, `${r.outcome}: ${r.detail}`);
+    }
+  });
+
+  it('acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unreleased section state the rule and its limit', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    assert.equal(FAILING_LINE_DOC_SENTENCES.length, 5);
+    for (const sentence of FAILING_LINE_DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    assert.ok(unreleased.includes(FAILING_LINE_CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${FAILING_LINE_CHANGELOG_SENTENCE}`);
+  });
+});
+
+/** The sentences card T0-SHIP-FAILING-LINE adds to docs/OPERATIONS.md, after the ship repair paragraph. */
+const FAILING_LINE_DOC_SENTENCES = [
+  "The detail of a `dod-failed` or `verify-failed` ship names the first failing test or compile line of the ship output, and the detail of a `scope-blocked` or `budget-over` ship names its gate line, the first line matching the outcome's sentinel (card T0-SHIP-FAILING-LINE): `sentinel <sentinel>; failing line: <line>`.",
+  'A failing line is a TAP `not ok <n>` line without a `# TODO` or `# SKIP` directive, a node:test `✖ ` line other than the `✖ failing tests:` heading, a line carrying a TypeScript `error TS<code>:`, a Go `--- FAIL: ` line, or a line starting with `FAIL` or `FAILED`, whitespace and more text.',
+  'The line is a cause string only: its ANSI escapes are removed and its control characters become spaces, it is normalised as causes are (lower case, digit runs as `N`), cut to 160 characters, and its brackets and percent signs are encoded, so it never forms a sentinel.',
+  'Two ship failures on different lines are two causes, and the same line twice without progress stops the card as same-cause-stop; a `dod-failed` or `verify-failed` ship with no failing line keeps the constant detail `sentinel <sentinel>`, so two of them in a row are still one cause.',
+  'The failing line picks the cause the ladder counts and never gates a merge: a line of another shape is not read, two lines that differ only in their digits or after 160 characters are one cause, and a failing-shaped line printed by passing output is read as the failing line; each misread costs at most one attempt, a card stopped one attempt early for a person to resume, or one more attempt within the ladder.',
+];
+const FAILING_LINE_CHANGELOG_SENTENCE =
+  '- Ship failing line, card T0-SHIP-FAILING-LINE (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.';
