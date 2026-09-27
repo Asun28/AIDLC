@@ -37,11 +37,12 @@ export function splitFrontMatter(text: string): FrontMatterDoc | undefined {
  * Where a YAML comment starts in a one-line value, or -1 (card T0-FM-COMMENT-CUT): the first hash sign after whitespace that
  * is outside a quoted scalar. A quoted scalar opens only where a scalar starts (the value start, or after `[`, `{`, `,` or
  * `:` inside a flow collection) and closes at its unescaped closing quote (a backslash escapes in a double-quoted scalar, a
- * doubled quote in a single-quoted one). A hash directly after a non-blank character, or at the value start, is text.
+ * doubled quote in a single-quoted one). A hash directly after a non-blank character, or at the value start, is text. A
+ * value is a flow collection when it starts with `[` or `{`; in valid YAML only a comment follows its closing bracket.
  */
 export function commentStart(value: string): number {
   let quote: '"' | "'" | undefined;
-  let flow = 0;
+  let flow = false;
   let scalarStart = true;
   for (let i = 0; i < value.length; i += 1) {
     const ch = value[i]!;
@@ -60,12 +61,9 @@ export function commentStart(value: string): number {
     if (scalarStart && (ch === '"' || ch === "'")) {
       quote = ch;
       scalarStart = false;
-    } else if ((ch === '[' || ch === '{') && (scalarStart || flow > 0)) {
-      flow += 1;
-      scalarStart = true;
-    } else if (flow > 0 && (ch === ']' || ch === '}')) {
-      flow -= 1;
-    } else if (flow > 0 && (ch === ',' || ch === ':')) {
+    } else if (scalarStart && (ch === '[' || ch === '{')) {
+      flow = true;
+    } else if (flow && (ch === ',' || ch === ':')) {
       scalarStart = true;
     } else {
       scalarStart = false;
@@ -97,7 +95,6 @@ export function referenceCuts(frontMatter: string): ReferenceCut[] {
   let parent = '';
   let item = 0;
   for (const line of frontMatter.split(/\r?\n/)) {
-    if (/^\s*#/.test(line)) continue;
     const kv = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]+(.*?))?[ \t\r]*$/);
     const listItem = kv ? undefined : line.match(/^\s*-\s+(.*?)[ \t\r]*$/);
     let key: string;

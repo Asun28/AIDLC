@@ -69,6 +69,7 @@ test('stripComment reads a comment as YAML does: a hash inside a quoted scalar i
     ["['a #1', 'b #2']", 'single-quoted items of a flow list'],
     ['[x, "y #3"]', 'a quoted item after a comma'],
     ['{k: "v", w: "z #4"}', 'a quoted value after a comma in a flow mapping'],
+    ['[[a, b], "c #7", {d: "e #8"}]', 'quoted scalars after nested flow collections'],
     ['PR#84 merged', 'a hash after a non-blank character'],
     ['docs/plan.md#45-module-design', 'a hash inside a path'],
     ['#45 first', 'a hash at the value start'],
@@ -83,7 +84,8 @@ test('stripComment reads a comment as YAML does: a hash inside a quoted scalar i
     ['value   # comment', 'value', 'a hash-space comment'],
     ["the card's issue #45", "the card's issue", 'an apostrophe inside a plain value opens nothing'],
     ['a "b" c #45', 'a "b" c', 'a quote inside a plain value opens nothing'],
-    ['see [x] and "y" #5', 'see [x] and "y"', 'a bracket inside a plain value opens no flow list'],
+    ['see [x, "y #5"]', 'see [x, "y', 'a bracket inside a plain value opens no flow list'],
+    ['see {k, "y #6"}', 'see {k, "y', 'a brace inside a plain value opens no flow mapping'],
     ['[plain #1, "q #2"]', '[plain', 'a plain item of a flow list'],
     ['a\t#tab', 'a', 'a tab before the hash'],
   ];
