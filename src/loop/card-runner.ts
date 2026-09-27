@@ -38,6 +38,7 @@ import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { FormalReviewConfig, ProjectConfig } from '../config.ts';
 import { resolveWorktreeRoot } from '../config.ts';
+import { preReviewFallbackSettings, type PreReviewer } from '../config.ts';
 
 /** One formal reviewer's settings: the primary `formalReview`, its `fallback` or its `baseSync` reviewer. */
 type FormalReviewer = Omit<FormalReviewConfig, 'fallback' | 'baseSync'>;
@@ -1063,10 +1064,13 @@ export class CardRunner {
       // A round whose dispatch failed before any receipt (its retained failure marker, no log) never ran: it expires at once.
       const reviewDir = path.join(this.reviewCheckout(run), '.review');
       const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
-      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + cfg.timeoutMs + RECONCILE_GRACE_MS);
+      // A round runs under the timeout its reservation recorded, whatever the configuration says now; a round with none
+      // recorded (dispatched without a fallback configured) under the primary's (card T0-R2-FALLBACK-3).
+      const timeoutOf = (r: PreReviewRound) => r.timeoutMs ?? cfg.timeoutMs;
+      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
-        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
+        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((timeoutOf(pending) + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
       }
       // Abandonment is decided on the locked record: only a round still pending and still expired there is dropped, and
       // only that drop is journaled; a round decided meanwhile stays and drives the gate from here on.
@@ -1125,23 +1129,28 @@ export class CardRunner {
       }
       disputedNote = ` Every finding of round ${last.round} is disputed; the round runs on the unchanged candidate with the author's notes.`;
     }
+    // The pre-reviewer of this dispatch: the primary, or its fallback while the primary holds (card T0-R2-FALLBACK).
+    const { cfg: reviewer, waitUntil } = this.preReviewerNow(run, digest, now);
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
-    if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
+    if (waitUntil) {
       const next = this.save({ ...run, state: 'WAIT' });
-      const pollSeconds = Math.max(60, Math.ceil((Date.parse(last.holdUntil) - Date.parse(now)) / 1000));
-      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'pre-review-quota', pollSeconds, narration: `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit; holding until ${last.holdUntil} (no round consumed). Continue independent work within limits, then run \`aidlc card next ${card.id}\`.` } };
+      const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
+      const held = cfg.fallback ? `Pre-reviewers ${cfg.reviewer} and fallback ${cfg.fallback.reviewer} both reported a quota/rate limit` : `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit`;
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'pre-review-quota', pollSeconds, narration: `${held}; holding until ${waitUntil} (no round consumed). Continue independent work within limits, then run \`aidlc card next ${card.id}\`.` } };
     }
     // One no-verdict retry per cycle (initial run plus one retry), like R3.
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
-      const stop = makeStop('tool', `pre-reviewer ${cfg.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     const round = decided.length + 1;
-    const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : last?.outcome === 'quota-hold' ? ' (the previous run reported a quota hold; retry once it clears)' : '';
+    const switched = reviewer.reviewer !== cfg.reviewer ? ` (the primary ${cfg.reviewer} is on a quota hold; its fallback runs)` : '';
+    const retry = last?.outcome === 'no-verdict' ? (cfg.fallback && last.reviewer !== reviewer.reviewer ? ` (retry: the previous run, by ${last.reviewer}, produced no verdict)` : ' (retry: the previous run produced no verdict)') : last?.outcome === 'quota-hold' && !switched && (!cfg.fallback || last.reviewer === reviewer.reviewer) ? ' (the previous run reported a quota hold; retry once it clears)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
-    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: cfg.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${cfg.reviewer}) before the ship${retry}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
+    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: reviewer.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${reviewer.reviewer}) before the ship${retry}${switched}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
   }
 
   /**
@@ -1947,8 +1956,33 @@ export class CardRunner {
     return { run, found, status: outcome.status };
   }
 
-  /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering. */
-  private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number } {
+  /**
+   * The pre-reviewer to dispatch for a candidate (card T0-R2-FALLBACK), the R2 twin of `formalReviewerNow`: the primary
+   * unless it holds an unexpired quota hold, then the configured fallback unless it holds one too. With both held,
+   * `waitUntil` is the earlier hold and `cfg` the reviewer whose hold clears first. With a fallback, a reviewer's hold is its
+   * latest round of the card on any candidate, since a quota belongs to the reviewer and a repaired candidate has no round
+   * of its own yet; without one it is the latest round of the cycle on the candidate, as before the fallback existed.
+   */
+  private preReviewerNow(run: CardRun, candidateDigest: string | undefined, now: string): { cfg: PreReviewer; waitUntil?: string } {
+    const primary = this.config.preReview;
+    const holdOf = (round: PreReviewRound | undefined): string | undefined => (round?.outcome === 'quota-hold' && round.holdUntil && Date.parse(round.holdUntil) > Date.parse(now) ? round.holdUntil : undefined);
+    const recorded = [...run.preReview.rounds].reverse().filter((r) => r.outcome !== 'pending');
+    const fallback = primary.fallback;
+    if (!fallback) {
+      const hold = holdOf(recorded.find((r) => r.cycle === run.review.substantiveBlocks && r.candidateDigest === candidateDigest));
+      return hold ? { cfg: primary, waitUntil: hold } : { cfg: primary };
+    }
+    const primaryHold = holdOf(recorded.find((r) => r.reviewer === primary.reviewer));
+    if (!primaryHold) return { cfg: primary };
+    // The fallback's own settings and schema defaults, never the primary's (card T0-R2-FALLBACK-2).
+    const fallbackCfg = preReviewFallbackSettings(primary)!;
+    const fallbackHold = holdOf(recorded.find((r) => r.reviewer === fallback.reviewer));
+    if (!fallbackHold) return { cfg: fallbackCfg };
+    return Date.parse(fallbackHold) < Date.parse(primaryHold) ? { cfg: fallbackCfg, waitUntil: fallbackHold } : { cfg: primary, waitUntil: primaryHold };
+  }
+
+  /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering and the pre-reviewer to run. */
+  private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number; reviewer: PreReviewer } {
     const cfg = this.config.preReview;
     if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run: ${current.stop?.nextAction ?? 'resolve the stop first'}`);
     const cycle = current.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
@@ -1957,10 +1991,8 @@ export class CardRunner {
     if (inFlight) throw new Error(inFlight);
     const rounds = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
     const pendingInCycle = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome === 'pending').length;
-    const lastRound = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
-    if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
-      throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
-    }
+    const { cfg: reviewer, waitUntil } = this.preReviewerNow(current, candidateDigest, now);
+    if (waitUntil) throw new Error(`pre-reviewer ${reviewer.reviewer} is on a quota hold until ${waitUntil}; do not re-run before it clears`);
     // The rounds cap holds whatever the dispositions: exhausted rounds are decided by the gate (STOP, or the hand-off to R3).
     const blocksSoFar = rounds.filter((r) => r.outcome === 'block').length;
     if (blocksSoFar >= cfg.rounds) throw new Error(`the pre-review rounds of cycle ${cycle} are exhausted (${blocksSoFar}/${cfg.rounds} blocks); run \`aidlc card next ${card.id}\`: the gate stops the card or hands the residual findings to R3, it never dispatches another round`);
@@ -1971,13 +2003,13 @@ export class CardRunner {
       const answered = this.blockAnswered(current, { stage: 'pre', cycle: lastDecided.cycle, round: lastDecided.round });
       if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, `pre-review round ${lastDecided.round}`, answered.open));
     }
-    return { cycle, round: rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + pendingInCycle + 1, attemptNo: forCandidate.length + 1 };
+    return { cycle, round: rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + pendingInCycle + 1, attemptNo: forCandidate.length + 1, reviewer };
   }
 
   /** R2: run the configured pre-reviewer on the committed candidate and record the round. */
   async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
-    const cfg = this.config.preReview;
-    if (!cfg.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
+    const primary = this.config.preReview;
+    if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
@@ -1987,18 +2019,23 @@ export class CardRunner {
     const baseRef = persisted.base?.oid ?? this.config.base;
     const candidateSha = this.pinnedCandidate(persisted, cwd);
     const candidateDigest = persisted.candidate?.digest ?? candidateSha;
-    this.preReviewAdmission(persisted, card, candidateSha, candidateDigest, now);
+    // The primary, or its fallback while the primary holds (card T0-R2-FALLBACK); re-checked on the locked record below.
+    const cfg = this.preReviewAdmission(persisted, card, candidateSha, candidateDigest, now).reviewer;
+    const capName = cfg.reviewer === primary.reviewer ? 'preReview.maxDiffBytes' : 'preReview.fallback.maxDiffBytes';
     const reviewPolicy = this.reviewPolicy();
     const hash = policyHash(reviewPolicy);
     // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const lessons = reviewLessons(this.lessonsFile());
     // A diff above the cap is refused here, before the reservation: no round, receipt or event records it (R7).
-    const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', 'preReview.maxDiffBytes');
+    const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // `{effort}` in the fallback's argv expands to the level its policy selects over the collected diff, as for R3; the primary
+    // has no effort policy, and its argv is dispatched as before.
+    const effort = cfg.reviewer !== primary.reviewer && cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     const since = this.lastReviewedSha(persisted, 'pre');
-    const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, 'preReview.maxDiffBytes') : undefined;
+    const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
     const reviewDir = path.join(cwd, '.review');
     // Reserve the round under the card-run lock before dispatch: the guards are re-checked on the locked record (a dispute
     // withdrawn or a round recorded since the first read refuses here), the owner's lease is renewed and fenced in the same
@@ -2014,14 +2051,19 @@ export class CardRunner {
       const current = locked ?? persisted;
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       this.refuseChangedCheckout(current, cwd, candidateSha);
-      numbering = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
+      const admitted = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
+      // The reviewer is re-read on the locked record at the clock of the lock: a hold recorded, or one that expired while the
+      // diff was collected, since the first read hands the dispatch back.
+      const atLock = this.preReviewerNow(current, candidateDigest, this.clock()).cfg.reviewer;
+      if (atLock !== cfg.reviewer) throw new Error(`the pre-reviewer changed since the first read (${cfg.reviewer}, now ${atLock}: a hold was recorded or cleared meanwhile); run the command again`);
+      numbering = { cycle: admitted.cycle, round: admitted.round, attemptNo: admitted.attemptNo };
       if (this.lastReviewedSha(current, 'pre') !== since) throw new Error('a pre-review round was decided since the delta was collected; run the command again');
       if (current.ownerGeneration !== undefined) {
         this.renewOwnLease(card.id, current, now);
         this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
       }
       fileStem = `${card.id}.pre.${numbering.cycle}.${numbering.round}.${numbering.attemptNo}.${randomUUID().slice(0, 8)}`;
-      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [] };
+      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}), ...(primary.fallback ? { timeoutMs: cfg.timeoutMs } : {}) };
       priorFindings = this.priorFindingsFor(current);
       seen = this.findingsSnapshot(current);
       return { ...current, preReview: { ...current.preReview, rounds: [...current.preReview.rounds, reservation] } };
@@ -2044,7 +2086,7 @@ export class CardRunner {
       const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
       const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
@@ -2067,7 +2109,7 @@ export class CardRunner {
     const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
     const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives, coverage: result.coverage };
-    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
+    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer}${effort ? ` (effort ${effort})` : ''} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
     // The angle that wrote each reason, from the structured result: every cited reason of the angle's own document (root
     // list and both axes), so a single-angle panel, whose reasons carry no trailing tag, keeps its angle on axis findings too.
     const perspectiveByReason: Record<string, string> = {};
@@ -2105,7 +2147,7 @@ export class CardRunner {
       after,
     );
     const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage } });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}) } });
     return { run: saved, result, round: record };
   }
 

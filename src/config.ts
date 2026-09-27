@@ -9,6 +9,22 @@ import { ReviewEffortPolicy } from './core/types.ts';
 
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
+/**
+ * The reviewer R2 dispatches while the primary holds an unexpired quota or billing hold (card T0-R2-FALLBACK); it shares the
+ * primary's rounds, angles, coverage and no-verdict retry. No argument may be empty: a reviewer runs through a shell on
+ * Windows, which drops an empty argument (write `--flag=`).
+ */
+export const PreReviewFallback = z.object({
+  command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => /\S/.test(a)), 'preReview.fallback.command must not carry an empty or blank argument: the Windows shell drops it (write --flag= instead)'),
+  reviewer: z.string().refine((name) => name.trim().length > 0, 'preReview.fallback.reviewer must name the reviewer'),
+  timeoutMs: z.number().int().positive().default(10 * 60 * 1000),
+  shell: z.boolean().optional(),
+  maxDiffBytes: z.number().int().positive().default(300_000),
+  answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
+  /** How `{effort}` in the command is chosen per candidate (src/core/review-effort.ts); absent = `medium`. */
+  effort: ReviewEffortPolicy.optional(),
+});
+
 /** Pre-review (R2): a second-model review before the ship. An empty command disables the stage. */
 export const PreReviewConfig = z.object({
   /** argv of the reviewer; the prompt arrives on stdin and the verdict JSON must be the last stdout line. */
@@ -27,8 +43,23 @@ export const PreReviewConfig = z.object({
   maxDiffBytes: z.number().int().positive().default(300_000),
   /** The stdout line after which a reviewer's answer starts (its reasoning comes before it); empty reads the whole stdout. */
   answerMarker: z.string().regex(/^$|\S/, 'must be empty or not blank').default(''),
+  fallback: PreReviewFallback.optional(),
 });
 export type PreReviewConfig = z.infer<typeof PreReviewConfig>;
+/** One pre-reviewer's dispatch settings: the primary `preReview`, or the settings `preReviewFallbackSettings` builds. */
+export type PreReviewer = Omit<PreReviewConfig, 'fallback'> & { effort?: ReviewEffortPolicy };
+
+/**
+ * The fallback's dispatch settings (card T0-R2-FALLBACK-2): every field of the fallback schema comes from the fallback alone,
+ * its schema default when the fallback omits it, never the primary's value; the parse applies those defaults again, so an
+ * object built without it gets them too. Only the fields the fallback schema has none of, the primary's `rounds`,
+ * `perspectives`, `coverage` and `onExhausted`, are shared.
+ */
+export function preReviewFallbackSettings(preReview: PreReviewConfig): PreReviewer | undefined {
+  if (!preReview.fallback) return undefined;
+  const own = PreReviewFallback.parse(preReview.fallback);
+  return { ...own, rounds: preReview.rounds, perspectives: preReview.perspectives, coverage: preReview.coverage, onExhausted: preReview.onExhausted };
+}
 
 /**
  * Formal review (R3) as a command before the ship. Placeholders in argv: {instructions} {base} {head}
@@ -126,6 +157,10 @@ export const ProjectConfig = z.object({
     const fold = (name: string) => name.trim().toLowerCase();
     if (config.formalReview.fallback && fold(config.formalReview.fallback.reviewer) === fold(config.formalReview.reviewer)) {
       ctx.addIssue({ code: 'custom', path: ['formalReview', 'fallback', 'reviewer'], message: 'formalReview.fallback.reviewer must differ from formalReview.reviewer: the ledger tells the two reviewers apart by name' });
+    }
+    // R2 rounds are told apart by reviewer name too: a fallback under the primary's name would read the primary's hold as its own.
+    if (config.preReview.fallback && fold(config.preReview.fallback.reviewer) === fold(config.preReview.reviewer)) {
+      ctx.addIssue({ code: 'custom', path: ['preReview', 'fallback', 'reviewer'], message: 'preReview.fallback.reviewer must differ from preReview.reviewer: the rounds tell the two reviewers apart by name' });
     }
     const baseSync = config.formalReview.baseSync;
     const others = [config.formalReview.reviewer, ...(config.formalReview.fallback ? [config.formalReview.fallback.reviewer] : [])];
