@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -1163,7 +1163,7 @@ export class CardRunner {
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
       // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
-      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log and fix the pre-review command (or clear preReview.command to skip R2)`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
@@ -2323,20 +2323,29 @@ export class CardRunner {
     if (result.outcome === 'merged') {
       const token = this.shipPath.readMergeToken(card.id);
       const pr = result.prNumber ?? token?.mergedPr;
+      // The PR as GitHub reports it: the merge check when the token does not settle it, and the facts of a verified merge.
+      let view: PrInfo | undefined;
+      if (pr && this.config.repository) {
+        try {
+          view = this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
+        } catch {
+          view = undefined;
+        }
+      }
       let mergeVerified = false;
       if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
-      else if (pr && this.config.repository) {
-        try {
-          const view = this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
-          mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
-        } catch {
-          mergeVerified = false;
-        }
+      else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
+      // The facts ride in the merge's one result (card T1-AUDIT-FACTS-2), from gh and git only, never from the ship output or the
+      // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
+      // read leaves the result without facts; audit verify names the card (FACT_MISSING).
+      let facts: ShippedFacts | undefined;
+      if (mergeVerified && view?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
+        facts = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number }).data;
       }
       return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : 'merge reported but not verified against the intended base' });
-        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN' } });
+        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
       });
     }
@@ -2501,7 +2510,7 @@ export class CardRunner {
               : `resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt`;
           return buildWith((latest) => ({ dodReceipt: undefined, blockedReceipt: undefined, effort: reopenEpisode(latest.effort), pendingRepair: { kind: 'merge-conflict', detail, at: now } }), `Merge conflict on the base sync (${result.detail}): ${step}. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.`, repairEffort, ['merge-conflicts', ...this.buildSkills(goal, card)]);
         }
-        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false }));
+        return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}${result.resumeCommand ? `; the ship path's resume marker, a diagnostic that does not lift this stop: ${result.resumeCommand}` : ''}`, 'inspect the ship output and the retained receipt', { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } }));
       }
     }
   }

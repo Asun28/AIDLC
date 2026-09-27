@@ -11,6 +11,7 @@ import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePa
 import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
 import { GitProbe } from '../probes/git.ts';
+import { GhProbe } from '../probes/gh.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
@@ -954,10 +955,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action((o: { goal?: string; all?: boolean; claimFull?: boolean; captureBoundary?: boolean }) => {
       const c = ctx(g());
       const ids = o.all ? c.store.listGoals().map((x) => x.id) : [latestActiveGoalId(c, o.goal)];
+      // The merge facts are re-derived by real git and gh (card T1-AUDIT-FACTS) against origin/<base>, else the local branch.
+      const git = new GitProbe();
+      const probes = { git, gh: new GhProbe(), cwd: c.root, repository: c.config.repository, base: git.resolveBase(c.root, c.config.base)?.ref ?? c.config.base };
       const reports = ids.map((id) => {
         const ev = new EvidenceStore(c.paths.evidence, id);
         const mf = existsSync(ev.manifestFile()) ? Manifest.parse(JSON.parse(readFileSync(ev.manifestFile(), 'utf8'))) : undefined;
-        return verifyAudit({ goalId: id, journal: Journal.forGoal(c.paths.journal, id), operations: new OperationLedger(c.paths.operations), evidence: ev, manifest: mf, hostCaptureBoundary: o.claimFull ? { present: Boolean(o.captureBoundary), detail: o.captureBoundary ? 'asserted by operator' : 'no host capture boundary asserted' } : undefined, finalCandidateDigest: mf?.finalCandidateDigest, now: new Date().toISOString() });
+        return verifyAudit({ goalId: id, journal: Journal.forGoal(c.paths.journal, id), operations: new OperationLedger(c.paths.operations), evidence: ev, manifest: mf, hostCaptureBoundary: o.claimFull ? { present: Boolean(o.captureBoundary), detail: o.captureBoundary ? 'asserted by operator' : 'no host capture boundary asserted' } : undefined, finalCandidateDigest: mf?.finalCandidateDigest, probes, now: new Date().toISOString() });
       });
       out(c, reports, () => reports.map((r) => [`${r.goalId}: level=${r.level} journal=${r.journal.events} events chain=${r.journal.ok ? 'ok' : 'BROKEN'}${r.manifest ? ` manifest=${r.manifest.sealed ? (r.manifest.sealOk ? 'sealed' : 'SEAL BROKEN') : 'unsealed'}` : ''} fully-audited=${r.fullyAuditedStatus}${r.prerequisite ? ` (${r.prerequisite})` : ''}`, ...r.findings.map((f) => `  ${f.severity === 'block' ? 'BLOCK' : 'warn '} ${f.code} ${f.detail}`)].join('\n')).join('\n'));
       if (reports.some((r) => r.findings.some((f) => f.severity === 'block'))) process.exitCode = 1;
