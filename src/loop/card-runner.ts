@@ -459,7 +459,7 @@ export class CardRunner {
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
     // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
@@ -472,7 +472,7 @@ export class CardRunner {
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
-      run = this.save({ ...run, state: 'CLOSE', stop: undefined });
+      run = save({ ...run, state: 'CLOSE', stop: undefined });
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
@@ -497,7 +497,7 @@ export class CardRunner {
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
     const reusable = this.reusableReceipt(run);
-    if (reusable) run = this.save({ ...run, dodReceipt: reusable, blockedReceipt: undefined }); // consumed: a later check failure never resurrects it
+    if (reusable) run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined }); // consumed: a later check failure never resurrects it
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
     const reviewExhausted = run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX');
@@ -544,7 +544,7 @@ export class CardRunner {
     let next: CardRun = { ...run, state: decision.state, stop: decision.stop ?? run.stop, blocker: decision.state === 'STOP' ? decision.reason : undefined };
     // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
     // reads the record as persisted and must not find the stop it cleared.
-    if (revalidatedStop) next = this.save(next);
+    if (revalidatedStop) next = save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
     return { run, next, decision, lease };
   }
@@ -648,8 +648,9 @@ export class CardRunner {
    * the card-run lock and, inside it, the lease lock, both held until the run record is on disk; one acquisition per
    * generation is journaled there, and only while the locked run does not carry the generation yet and the lease is still
    * this session's acquisition (otherwise the takeover refuses and writes nothing more); a stop saved meanwhile stays, and
-   * the state is selected again through `assess`. A process that ends between the lease write and the
-   * run update leaves a takeover this command, run again, completes. The goal lease is not touched (`aidlc goal takeover`).
+   * the state is selected again through `assess`, whose saves and the final one revalidate and hold the lease the same way.
+   * A process that ends between the lease write and the run update leaves a takeover this command, run again, completes.
+   * The goal lease is not touched (`aidlc goal takeover`).
    */
   takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; completed: boolean; previousOwner?: ActorIdentity; previousGeneration?: number } {
     const now = this.clock();
@@ -690,26 +691,31 @@ export class CardRunner {
       }
       return next;
     })!;
-    // The run takes the generation under the card-run lock, then the lease lock (never the reverse), both held until the run
-    // record is on disk, and only while the run read under the lock does not carry the generation yet and the lease is still
-    // this session's acquisition: otherwise nothing is journaled or written.
-    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
-      if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
-      return { ...(current ?? caller), ownerGeneration: lease.generation };
-    }, (write) => this.leases.update(key, (held) => {
+    // Every run write of the takeover, the assessment's saves included, runs under the card-run lock and then the lease lock
+    // (never the reverse), both held until the run record is on disk, and only while the lease is still this session's
+    // acquisition: otherwise nothing more is journaled or written.
+    const holding = (then?: () => void) => (write: () => void) => this.leases.update(key, (held) => {
       if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
         throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
       }
-      // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
-      // generation): a completion after one journals the completion instead of a second acquisition.
+      then?.();
+      write();
+      return held;
+    });
+    // The run update refuses when the run read under the lock carries the generation already. One acquisition per generation
+    // across goals, whatever journaled it (PREPARE's claim journals one before it saves the generation): a completion after
+    // one journals the completion instead of a second acquisition.
+    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
+      if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
+      return { ...(current ?? caller), ownerGeneration: lease.generation };
+    }, holding(() => {
       const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
       if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
       else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
-      write();
-      return held;
     }));
-    const assessed = this.assess(goal, card, owned, now);
-    const next = this.save(assessed.next);
+    const saveHolding = (run: CardRun) => this.store.saveCardRun(run, holding());
+    const assessed = this.assess(goal, card, owned, now, saveHolding);
+    const next = saveHolding(assessed.next);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 

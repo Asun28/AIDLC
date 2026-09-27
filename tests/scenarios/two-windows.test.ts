@@ -556,7 +556,7 @@ test('T0-CARD-TAKEOVER, goal stopped: a goal the dispatch stopped on the card ow
  * Route one `node:fs` function through `wrap` while `body` runs (the ESM binding of a builtin follows the CJS export after a
  * sync): the boundary every writer of the state directory passes, never an injected collaborator.
  */
-function throughFs<T>(name: 'openSync' | 'readFileSync' | 'renameSync' | 'appendFileSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
+function throughFs<T>(name: 'openSync' | 'readFileSync' | 'renameSync' | 'appendFileSync' | 'unlinkSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
   const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
   const real = target[name]!;
   target[name] = (...args: unknown[]) => wrap(real, args);
@@ -1465,17 +1465,19 @@ test('T1-STORE-CAS-2: the acquisition is journaled before the run write, so a ru
 });
 
 test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the assessment saves included, lands with the lease lock held: at each paused rename a release and another takeover refuse with locked and change nothing', () => {
-  const fx = makeFixture({ actor: actorA });
+  const fx = makeFixture({ actor: actorA, config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
   try {
     const quick = new LeaseStore(fx.paths.leases, { timeoutMs: 50 });
     const windowC = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: quick, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
     const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
     let cards = 0;
+    type Variant = 'stopped' | 'merged' | 'receipt';
     /**
-     * A card A prepared and B read stopped for ownership (`merged`: its merge verified too, so the assessment reconciles the
-     * stop to CLOSE); its lease has expired. Returns the goal id.
+     * A card A prepared and B read stopped for ownership; its lease has expired. `merged`: its merge is verified too, so the
+     * assessment reconciles the stop to CLOSE; `receipt`: the pre-review block of its candidate exhausted the cycle and kept
+     * the DoD receipt, which the assessment restores. Returns the goal id.
      */
-    const stoppedCard = (id: string, merged: boolean): string => {
+    const stoppedCard = (id: string, variant: Variant): string => {
       cards += 1;
       writeCard(fx, { id, title: `card ${id}` });
       const goal = goalForCards(fx, [id]);
@@ -1483,7 +1485,12 @@ test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the ass
       assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
       setActorForTests(actorB);
       assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.store.getCardRun(goal.id, id)!).run.stop?.reason, 'ownership');
-      if (merged) fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, id)!, mergeVerified: true });
+      const run = fx.store.getCardRun(goal.id, id)!;
+      if (variant === 'merged') fx.store.saveCardRun({ ...run, mergeVerified: true });
+      if (variant === 'receipt') {
+        const round = { round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'd-kept', requestedAt: fx.now(), durationMs: 0, outcome: 'block' as const, reasons: ['[spec] 6 tests @ src/x.ts:1: no RED -> add one'] };
+        fx.store.saveCardRun({ ...run, candidate: { sha: 'sha-kept', dirty: false, untracked: [], digest: 'd-kept' }, dodReceipt: undefined, blockedReceipt: { dodReceipt: 'dod:kept', candidateDigest: 'd-kept', stage: 'pre', cycle: 0 }, preReview: { ...run.preReview, rounds: [round] } });
+      }
       fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
       return goal.id;
     };
@@ -1507,15 +1514,17 @@ test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the ass
         setActorForTests(actorA);
       }
     };
-    for (const merged of [false, true]) {
+    for (const variant of ['stopped', 'merged', 'receipt'] as const) {
       // How many times the takeover renames the run record: the run update, the assessment's saves and the final save.
       let renames = 0;
-      const probeGoal = stoppedCard(`T1-PROBE-${merged ? 'M' : 'S'}`, merged);
-      assert.equal(takeoverPausing(probeGoal, `T1-PROBE-${merged ? 'M' : 'S'}`, (n) => { renames = n; }).error, undefined);
-      assert.ok(renames >= 3, `the takeover renames the run record ${renames} times: the update, an assessment save and the final save`);
+      const tag = variant[0]!.toUpperCase();
+      const probeGoal = stoppedCard(`T1-PROBE-${tag}`, variant);
+      assert.equal(takeoverPausing(probeGoal, `T1-PROBE-${tag}`, (n) => { renames = n; }).error, undefined);
+      assert.ok(renames >= (variant === 'receipt' ? 4 : 3), `${variant}: the takeover renames the run record ${renames} times: the update, the assessment's saves and the final save`);
+      if (variant === 'receipt') assert.equal(fx.store.getCardRun(probeGoal, `T1-PROBE-${tag}`)?.dodReceipt, 'dod:kept', 'the assessment restored the kept receipt');
       for (let at = 1; at <= renames; at += 1) {
-        const id = `T1-AT-${merged ? 'M' : 'S'}${at}`;
-        const goalId = stoppedCard(id, merged);
+        const id = `T1-AT-${tag}${at}`;
+        const goalId = stoppedCard(id, variant);
         const key = resourceKeys.card(fx.repo.key, id);
         const state = () => ({ run: fx.store.getCardRun(goalId, id), lease: fx.leases.read(key), events: fx.events(goalId).length });
         let paused: ReturnType<typeof state> | undefined;
@@ -1532,7 +1541,7 @@ test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the ass
           setActorForTests(actorB);
           after = state();
         });
-        const where = `${merged ? 'merged' : 'stopped'} run, rename ${at} of ${renames}`;
+        const where = `${variant} run, rename ${at} of ${renames}`;
         assert.ok(paused, `${where}: the rename was reached`);
         assert.match(String(release.error), /locked/, `${where}: the release refuses while the run write is paused: ${String(release.error)}`);
         assert.match(String(byC.error), /locked/, `${where}: C's takeover refuses while the run write is paused: ${String(byC.error)}`);
@@ -1544,7 +1553,44 @@ test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the ass
         assert.equal(fx.leases.read(key)?.released, false);
       }
     }
-    assert.ok(cards >= 8, `${cards} cards exercised`);
+    assert.ok(cards >= 13, `${cards} cards exercised`);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS-2 R3 decision 1 F2: a release that lands between the run update and the assessment makes the takeover refuse at its next run write, which leaves the run as the update wrote it', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-BETWEEN', title: 'card T1-BETWEEN' });
+    const goal = goalForCards(fx, ['T1-BETWEEN']);
+    const key = resourceKeys.card(fx.repo.key, 'T1-BETWEEN');
+    const current = () => fx.store.getCardRun(goal.id, 'T1-BETWEEN')!;
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-BETWEEN'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-BETWEEN')).directive.kind, 'prepare');
+    setActorForTests(actorB);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-BETWEEN'), current()).run.stop?.reason, 'ownership');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    // The run update's section ends when its card-run lock is removed; another process of B releases the lease right then.
+    const runLock = `${fx.store.cardFile(goal.id, 'T1-BETWEEN')}.lock`;
+    let updated: ReturnType<typeof current> | undefined;
+    const outcome = settle(() =>
+      throughFs(
+        'unlinkSync',
+        (real, args) => {
+          const out = real(...args);
+          if (updated === undefined && String(args[0]) === runLock) {
+            updated = current();
+            fx.leases.release(key, 1, actorB);
+          }
+          return out;
+        },
+        () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-BETWEEN'), current()),
+      ),
+    );
+    assert.equal(updated?.ownerGeneration, 1, 'the run update landed before the release');
+    assert.match(String(outcome.error), /changed hands after this takeover acquired generation 1: the lease is released at generation 1/, `refused: ${String(outcome.error)}`);
+    assert.deepEqual(current(), updated, 'no later run write of the takeover lands');
   } finally {
     setActorForTests(actorA);
     fx.cleanup();

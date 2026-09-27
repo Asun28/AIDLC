@@ -57,16 +57,17 @@ export class GoalStore {
    * A plain write of a card run, serialized through the card-run lock like every other write (see `updateCardRun`),
    * as a compare-and-set on the run revision: a snapshot that does not carry the persisted revision was read before
    * another write landed and is refused whatever it changes (a candidate, a receipt, a stop, a ledger entry), so the
-   * caller re-runs its command on the current record. The ledgers name the entry when they can (`staleLedger`).
+   * caller re-runs its command on the current record. The ledgers name the entry when they can (`staleLedger`). `within`
+   * is `updateCardRun`'s.
    */
-  saveCardRun(run: CardRun): CardRun {
+  saveCardRun(run: CardRun, within?: (write: () => void) => void): CardRun {
     return this.updateCardRun(run.goalId, run.cardId, (persisted) => {
       if (persisted && run.revision !== persisted.revision) {
         const why = staleLedger(persisted, run);
         throw new StoreError('CARD_RUN_STALE', this.cardFile(run.goalId, run.cardId), `card run ${run.cardId} changed since it was read (revision ${persisted.revision} persisted, ${run.revision} read${why ? `: ${why} was recorded meanwhile` : ''}); run the command again`);
       }
       return run;
-    });
+    }, within);
   }
 
   getCardRun(goalId: string, cardId: string): CardRun | undefined {
