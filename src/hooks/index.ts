@@ -4,7 +4,8 @@
  *
  * Protocol: read the event JSON from stdin, never crash the tool (exit 0 fail-open for
  * advisory hooks), and block with either `hookSpecificOutput.permissionDecision: "deny"` or
- * exit code 2 with the reason on stderr. Blocks explain themselves.
+ * exit code 2 with the reason on stderr. Blocks explain themselves. An `aidlc.config.json` that cannot be used never
+ * turns a guard off: the guards that read it deny what some valid config would deny and pass the repair (`loadHookConfig`).
  *
  * Hooks:
  *  - production-gate   (PreToolUse Bash): deploy+production needs a matching release authorization.
@@ -33,7 +34,7 @@ import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
-import { loadProjectConfig } from '../config.ts';
+import { CONFIG_FILE, ConfigError, loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
 
 export interface HookEvent {
@@ -82,6 +83,10 @@ function normalise(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
+/**
+ * An `aidlc.config.json` the guards cannot use (card T0-HOOK-CONFIG-CLOSED): the file that failed and a detail that never
+ * quotes its text. The guards that read the config deny what they cannot decide rather than take the defaults.
+ */
 export interface HookConfigError {
   file: string;
   detail: string;
@@ -93,15 +98,93 @@ export function isHookConfigError(config: LoadedHookConfig): config is HookConfi
   return 'detail' in config;
 }
 
+/** Why `loadProjectConfig` refused the file, without its text: a JSON parser message quotes the source. */
+function configErrorDetail(err: unknown): string {
+  if (err instanceof ConfigError) return err.cause ? 'not valid JSON; `aidlc doctor` prints where' : err.message.slice(`${CONFIG_FILE}: `.length);
+  return `cannot be read: ${(err as NodeJS.ErrnoException).code ?? 'UNREADABLE'}`;
+}
+
+/**
+ * The hook settings of the `aidlc.config.json` in `cwd`, read through the schema the CLI uses, so the hooks and the CLI
+ * refuse the same file. A missing file gives the defaults, as it does for the CLI. A pattern of `productionPatterns` or
+ * `testPathPatterns` that does not compile is an error too: the guard would throw on it and the hook entry exit 0. A
+ * `frozenPaths` entry that does not compile is matched as literal text (`protectPaths`), so it is no error.
+ */
 export function loadHookConfig(cwd: string): LoadedHookConfig {
-  const file = path.join(cwd, 'aidlc.config.json');
-  if (!existsSync(file)) return DEFAULT_HOOK_CONFIG;
+  const file = path.join(cwd, CONFIG_FILE);
+  let hooks: ProjectConfig['hooks'];
   try {
-    const cfg = JSON.parse(readFileSync(file, 'utf8')) as { hooks?: HookConfig };
-    return { ...DEFAULT_HOOK_CONFIG, ...(cfg.hooks ?? {}) };
-  } catch {
-    return DEFAULT_HOOK_CONFIG;
+    hooks = loadProjectConfig(cwd).config.hooks;
+  } catch (err) {
+    return { file, detail: configErrorDetail(err) };
   }
+  const config: Required<HookConfig> = {
+    frozenPaths: hooks.frozenPaths,
+    testPathPatterns: hooks.testPathPatterns ?? DEFAULT_HOOK_CONFIG.testPathPatterns,
+    productionPatterns: hooks.productionPatterns ?? DEFAULT_HOOK_CONFIG.productionPatterns,
+  };
+  for (const key of ['productionPatterns', 'testPathPatterns'] as const) {
+    const bad = config[key].findIndex((p) => {
+      try {
+        new RegExp(p, 'i');
+        return false;
+      } catch {
+        return true;
+      }
+    });
+    if (bad >= 0) return { file, detail: `hooks.${key}.${bad} is not a valid regular expression` };
+  }
+  return config;
+}
+
+/** The config key each guard that reads the config needs. */
+const CONFIG_KEYS = { 'production-gate': 'productionPatterns', 'protect-paths': 'frozenPaths', 'protect-tests': 'testPathPatterns' } as const;
+type ConfigGuard = keyof typeof CONFIG_KEYS;
+
+/** Redirects that write no file: into another stream (`2>&1`, `>&2`) or the null device. */
+const STREAM_REDIRECT = /\d*>&\d|\d*>>?\s*(?:\/dev\/null|\$null|nul)(?![\w./\\-])/gi;
+const DIRECTORY_CHANGE = new Set(['cd', 'chdir', 'pushd', 'popd', 'set-location', 'sl']);
+/** `aidlc doctor` as the CLI is run: bare, through npx, through a bin script or `npm run dev --`; plain arguments only. */
+const DOCTOR_RUN = /^(?:(?:npx\s+(?:--no-install\s+)?)?aidlc|node\s+\S*aidlc\.js|npm\s+run\s+dev\s+--)\s+doctor(?:\s+[\w./:=\\-]+)*$/i;
+
+/** Whether `production-gate` passes a Bash command whatever the config holds: every mutating segment is a change of directory or `aidlc doctor`. */
+function gatePassesAnyConfig(cmd: string): boolean {
+  return mutatingSegments(cmd.replace(STREAM_REDIRECT, ' ')).every((seg) => DOCTOR_RUN.test(seg) || DIRECTORY_CHANGE.has((seg.split(/\s+/)[0] ?? '').toLowerCase()));
+}
+
+/** Whether `protect-paths` passes a Bash command whatever the config holds: no write verb once stream and null-device redirects are set aside. */
+function pathsPassAnyConfig(cmd: string): boolean {
+  return !WRITE_VERBS.test(cmd.replace(STREAM_REDIRECT, ' '));
+}
+
+/** Whether a tool's target is the config file that failed, however its path is spelled. */
+function isConfigFile(target: string, cwd: string, error: HookConfigError): boolean {
+  return path.relative(error.file, path.resolve(cwd, target)) === '';
+}
+
+function configLine(error: HookConfigError): string {
+  return `${error.file} cannot be used (${error.detail})`;
+}
+
+function configDenial(guard: ConfigGuard, error: HookConfigError): HookResult {
+  return deny('PreToolUse', `${configLine(error)}, so the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it and denies this call. Fix the file first: an Edit or Write of that file, reads and \`aidlc doctor\` pass.`);
+}
+
+/**
+ * A guard that reads the config, while it cannot be used: it passes a call only when every config would pass it, and the
+ * repair. `protect-paths` denies any file but the config, since a frozen path may match it, and a Bash write;
+ * `production-gate` denies a Bash command with a mutating segment; `protect-tests` reads the config only while a fix task
+ * is active.
+ */
+function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, error: HookConfigError): HookResult {
+  const file = event.tool_input?.['file_path'];
+  const cmd = event.tool_input?.['command'];
+  let passes: boolean;
+  if (guard === 'protect-tests') passes = typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error);
+  else if (guard === 'protect-paths' && typeof file === 'string') passes = isConfigFile(file, cwd, error);
+  else if (typeof cmd !== 'string' || !cmd) passes = true;
+  else passes = guard === 'protect-paths' ? pathsPassAnyConfig(cmd) : gatePassesAnyConfig(cmd);
+  return passes ? { exitCode: 0 } : configDenial(guard, error);
 }
 
 /** Commands that only read; a deploy word inside their arguments (grep for "production") is not a deploy. */
@@ -348,16 +431,24 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   return contexts;
 }
 
-export function routeNewWork(event: HookEvent, _configError?: HookConfigError): HookResult {
+/** The routing line for a new request, followed by the config error while the config cannot be used. */
+export function routeNewWork(event: HookEvent, configError?: HookConfigError): HookResult {
+  const routed = routeLine(event);
+  const note = configError && `[aidlc] ${configLine(configError)}: the hook guards that read it deny every call they cannot decide until it is fixed. An Edit or Write of that file, reads and \`aidlc doctor\` pass.`;
+  const text = [routed, note].filter(Boolean).join('\n');
+  return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
+}
+
+function routeLine(event: HookEvent): string | undefined {
   const prompt = String(event.prompt ?? '');
-  if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return { exitCode: 0 };
+  if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return undefined;
   const routing = classifyRequest({ text: prompt });
   const guidance = routing.size === 'T2'
     ? 'T2: brief -> plan -> plan-forge audit -> card projection; one product checkpoint approves plan + projection together before execution.'
     : routing.size === 'T1'
       ? 'T1: concise plan points -> valid cards -> arc; no full forge where routing policy permits.'
       : 'T0: one coherent card via card-loop; no planning funnel.';
-  return { exitCode: 0, stdout: `${formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.` };
+  return `${formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.`;
 }
 
 export function readStdinJson(text: string): HookEvent {
@@ -373,21 +464,23 @@ export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | '
 export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig } = {}): HookResult {
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
-  const loaded = options.config ?? loadHookConfig(cwd);
-  const config = isHookConfigError(loaded) ? DEFAULT_HOOK_CONFIG : loaded;
+  const config = options.config ?? loadHookConfig(cwd);
+  // A config that cannot be used is never replaced by the defaults; the Stop output does not name it, since Stop context
+  // starts another model turn at every turn end, while a prompt names it once per user turn.
+  const error = isHookConfigError(config) ? config : undefined;
   switch (name) {
     case 'production-gate':
-      return productionGate(event, env, config, cwd);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd);
     case 'protect-paths':
-      return protectPaths(event, config);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config);
     case 'protect-tests':
-      return protectTests(event, cwd, env, config);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectTests(event, cwd, env, config);
     case 'secrets-guard':
       return secretsGuard(event);
     case 'verify-before-done':
       return verifyBeforeDone(cwd, env, hookSession(event, env));
     case 'route-new-work':
-      return routeNewWork(event);
+      return routeNewWork(event, error);
     default:
       return { exitCode: 0 };
   }

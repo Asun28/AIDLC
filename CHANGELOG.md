@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED (issue 76 item 1): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now `production-gate`, `protect-paths` and `protect-tests` deny each call that some valid config would deny, naming the error without quoting the file, and an Edit or Write of that file, a read-only command, a change of directory and `aidlc doctor` pass. `route-new-work` names the error on every prompt; the Stop output is unchanged. A missing file still gives the defaults.
+
 - Probe stop text, card T0-PROBE-STOP-TEXT (issue 111): the PREPARE stop for a failed worktree probe (the worktree list or the common git directory) takes the tool-stop next action of T0-TOOL-STOP-TEXT: it names the git error, says the stop is final for the card and names the replacement path through `aidlc goal resume --replace`, without the candidate when none was built. An ownership stop from the same check keeps its own next action.
 
 - Disputed repair attempt, card T0-DISPUTE-RUNNING-ATTEMPT (issue 106): a dispute that sends the unchanged candidate back to review settles the repair attempt BUILD had opened as not counted (`review-disputed`), a ship repair takes a running attempt as the repair instead of throwing, so a committed base-sync merge always records its repair, and the pre-review round is never shown past its maximum.
