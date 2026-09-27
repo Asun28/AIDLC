@@ -696,6 +696,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the transient-CI branch decides the re
     assert.ok(persisted.ci.reruns.some((x) => x.runId === '999'), 'the rerun another window persisted survives');
     assert.equal(persisted.ci.reruns.length, 1, 'no second rerun is granted once the allowance is consumed');
     assert.notEqual(after!.directive.kind, 'ship', after!.directive.narration);
+    assert.deepEqual(fired(fx, goal.id), [], 'T1-BOUND-TELEMETRY: the WAIT on a rerun taken meanwhile fires no denial');
     // (2) The pre-dispatch cleanup: a failing operation store never masks the lock error nor skips the pool cancellation.
     const fresh = fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, state: 'SHIP', stop: undefined, dodReceipt: 'dod:1', ci: { reruns: [] } }));
     const lock = `${fx.store.cardFile(goal.id, 'T1-HELLO')}.lock`;
@@ -825,6 +826,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a review-blocked ship with no readable ve
 
 for (const [label, ledger, bound] of [
   ['two substantive blocks', { substantiveDecisions: 2, substantiveBlocks: 2 }, 'review-decisions'],
+  ['two substantive blocks after the one retry', { substantiveDecisions: 2, substantiveBlocks: 2, noVerdictRetriesUsed: 1 }, 'review-decisions'],
   ['a second no-verdict retry', { noVerdictRetriesUsed: 2 }, 'no-verdict-retry'],
 ] as const) {
   test(`T1-BOUND-TELEMETRY acceptance 1: a run whose ledger holds ${label} without a stop is stopped by the card selection, which journals one ${bound} firing [R1]`, () => {

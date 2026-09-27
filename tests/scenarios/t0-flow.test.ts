@@ -676,6 +676,7 @@ test('review panel: perspectives run concurrently in R2 and R3, any block blocks
     f = await runner.formalReview(fx.goal(goal.id), card, r.run);
     assert.equal(f.run.state, 'STOP', 'a stop saved meanwhile survives the review');
     assert.equal(f.run.review.substantiveDecisions, 1, 'no decision is recorded on a stopped run');
+    assert.deepEqual(fired(fx, goal.id), [], 'T1-BOUND-TELEMETRY: a stop saved meanwhile is no bound the review fired');
     assert.ok(!f.run.review.invocations.some((i) => i.outcome === 'pending'));
     // The scope gate blocks an R2 round and refuses an R3 dispatch with no reviewer process at all.
     let spawns = 0;
@@ -4847,6 +4848,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a planning allowance spent without an acc
     assert.equal(second.directive.kind, 'stop', second.directive.narration);
     if (second.directive.kind === 'stop') assert.match(second.directive.stop.detail, /^planning allowance/);
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations']);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: planning-invocations 1 (DONE 0, STOP/checkpoint 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['planning-invocations'], 'the stopped goal fires nothing more');
   } finally {
@@ -4871,6 +4873,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: a second integrated acceptance failure af
     assert.equal(second.directive.kind, 'stop');
     assert.equal(fx.goal(goal.id).stop?.reason, 'arc-verify');
     assert.deepEqual(fired(fx, goal.id), ['integration-repair']);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: integration-repair 1 (DONE 0, STOP/arc-verify 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
   } finally {
     fx.cleanup();
   }

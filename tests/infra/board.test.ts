@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -125,7 +125,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
   it('acceptance 3: the board prints one Bounds line over every goal journal: each fired bound in the fixed order, its count, and the first terminal event of the goal after each firing [R2]', () => {
     const fx = makeFixture();
     try {
-      for (const id of ['T1-A', 'T1-B', 'T1-C', 'T1-Q']) writeCard(fx, { id, title: id.toLowerCase() });
+      for (const id of ['T1-A', 'T1-B', 'T1-C', 'T1-D', 'T1-Q']) writeCard(fx, { id, title: id.toLowerCase() });
       const quiet = goalForCards(fx, ['T1-Q']);
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), ['Bounds: none fired'], 'no firing in any journal');
       const [a, b, c] = ['T1-A', 'T1-B', 'T1-C'].map((id) => goalForCards(fx, [id]).id) as [string, string, string];
@@ -135,6 +135,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       const done = (goalId: string) => fx.journal(goalId).append({ type: 'GOAL_DONE', goalId, generation: 0, data: { cards: [], stages: {} } });
       // Goal a: the first terminal event after both firings is the time stop, not the DONE that follows the re-admission.
       fire(a, 'ci-rerun-allowed');
+      fx.journal(a).append({ type: 'NOTE', goalId: a, generation: 0, data: { bound: 'attempts' } });
       fire(a, 'card-deadline');
       stop(a, 'time');
       readmit(a);
@@ -156,6 +157,11 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.ok(board.split('\n').includes(expected), 'the line starts with Bounds:');
       assert.equal(readFileSync(path.join(fx.paths.board, `${quiet.id}.md`), 'utf8'), board, 'the board file carries the same line');
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(c))), [expected], 'every goal board carries the same line');
+      // A goal journal that does not parse is left out of the line and never blocks the board of another goal.
+      const broken = goalForCards(fx, ['T1-D']).id;
+      fire(broken, 'arc-deadline');
+      appendFileSync(fx.journal(broken).file, 'not a journal line\n', 'utf8');
+      assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), [expected]);
     } finally {
       fx.cleanup();
     }

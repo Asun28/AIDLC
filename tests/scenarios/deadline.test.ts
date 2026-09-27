@@ -25,6 +25,7 @@ test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP su
     assert.equal(g.terminal, true);
     assert.equal(g.state, 'STOP');
     assert.deepEqual(fired(fx, goal.id), ['arc-deadline@goal'], 'T1-BOUND-TELEMETRY acceptance 1: the goal deadline journals one arc-deadline firing');
+    assert.ok(fx.controller.writeBoard(g).split('\n').includes('Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
 
     // A new controller over the same persisted state does not invent a clean start.
     const fresh = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, now: fx.now, cards: fx.registry });
@@ -309,6 +310,7 @@ test('T1-BOUND-TELEMETRY acceptance 1: an unresolved operation past the goal dea
     assert.equal(d.kind, 'stop', d.narration);
     if (d.kind === 'stop') assert.equal(d.stop.detail, 'reconciliation grace expired with unresolved operations');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal']);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: reconciliation-grace 1 (DONE 0, STOP/time 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal'], 'the stopped goal fires nothing more');
   } finally {
