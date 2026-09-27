@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -517,6 +517,50 @@ test('T0-HOOK-CONFIG-CLOSED-2 acceptance 1: a config that cannot be used is a co
   mkdirSync(dir);
   assert.deepEqual(loadHookConfig(unreadable.cwd), { file: dir, detail: 'cannot be read: EISDIR' });
   assert.equal(denyReason(runHook('protect-paths', { tool_input: { file_path: 'src/a.ts' } }, { cwd: unreadable.cwd, env: unreadable.env })), editDenial(dir, 'cannot be read: EISDIR', 'protect-paths'));
+  assert.equal(denyReason(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } }, { cwd: unreadable.cwd, env: unreadable.env })), bashDenial(dir, 'cannot be read: EISDIR', 'production-gate'));
+  // a file the lookup cannot reach is a read failure, never absent: existsSync answers false for any failed lookup
+  const fail = (code: string) => () => {
+    throw Object.assign(new Error(code), { code });
+  };
+  const probeCases: Array<[string, { stat(f: string): unknown; lstat(f: string): unknown }, string | undefined]> = [
+    ['a directory without search permission', { stat: fail('EACCES'), lstat: fail('EACCES') }, 'cannot be read: EACCES'],
+    ['a lookup refused by the system', { stat: fail('EPERM'), lstat: () => ({}) }, 'cannot be read: EPERM'],
+    ['a link to nothing', { stat: fail('ENOENT'), lstat: () => ({}) }, 'cannot be read: ENOENT'],
+    ['a link the lookup cannot read', { stat: fail('ENOENT'), lstat: fail('EACCES') }, 'cannot be read: EACCES'],
+    ['a loop of links', { stat: fail('ELOOP'), lstat: () => ({}) }, 'cannot be read: ELOOP'],
+    ['an absent file', { stat: fail('ENOENT'), lstat: fail('ENOENT') }, undefined],
+  ];
+  for (const [name, probe, probeDetail] of probeCases) {
+    const loaded = loadHookConfig(unreadable.cwd, probe);
+    if (probeDetail === undefined) {
+      assert.deepEqual(loaded, DEFAULT_HOOK_CONFIG, name);
+      continue;
+    }
+    assert.deepEqual(loaded, { file: dir, detail: probeDetail }, name);
+    assert.equal(denyReason(runHook('production-gate', { tool_input: { command: 'npm test' } }, { cwd: unreadable.cwd, env: unreadable.env, config: loaded })), bashDenial(dir, probeDetail, 'production-gate'), name);
+    assert.equal(denyReason(runHook('protect-paths', { tool_input: { file_path: 'src/a.ts' } }, { cwd: unreadable.cwd, env: unreadable.env, config: loaded })), editDenial(dir, probeDetail, 'protect-paths'), name);
+  }
+  // and on the real filesystem, where the platform can make each case
+  const linked = envWithState();
+  let linkMade = true;
+  try {
+    symlinkSync(path.join(linked.cwd, 'nowhere.json'), path.join(linked.cwd, 'aidlc.config.json'));
+  } catch {
+    linkMade = false; // Windows without the symlink privilege
+  }
+  if (linkMade) assert.deepEqual(loadHookConfig(linked.cwd), { file: path.join(linked.cwd, 'aidlc.config.json'), detail: 'cannot be read: ENOENT' });
+  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+    const locked = envWithState();
+    const inner = path.join(locked.cwd, 'locked');
+    mkdirSync(inner);
+    writeFileSync(path.join(inner, 'aidlc.config.json'), '{}', 'utf8');
+    chmodSync(inner, 0o000);
+    try {
+      assert.deepEqual(loadHookConfig(inner), { file: path.join(inner, 'aidlc.config.json'), detail: 'cannot be read: EACCES' });
+    } finally {
+      chmodSync(inner, 0o755);
+    }
+  }
   assert.deepEqual(loadHookConfig(mkdtempSync(path.join(tmpdir(), 'aidlc-nocfg-'))), DEFAULT_HOOK_CONFIG);
   // a frozenPaths entry is matched as literal text when it is not a regular expression, so it is no error
   const literal = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/('] } }));
@@ -566,8 +610,11 @@ test('T0-HOOK-CONFIG-CLOSED-2 acceptance 2: while the config cannot be used, onl
     // a call with nothing to decide passes
     assert.deepEqual(runHook('production-gate', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
     assert.deepEqual(runHook('protect-paths', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
-    assert.deepEqual(runHook('production-gate', { tool_input: { command: '' } }, { cwd, env }), { exitCode: 0 });
-    assert.deepEqual(runHook('protect-paths', { tool_input: { command: '' } }, { cwd, env }), { exitCode: 0 });
+    // an empty or blank command is no doctor command either
+    for (const command of ['', '   ']) {
+      assert.equal(denyReason(runHook('production-gate', { tool_input: { command } }, { cwd, env })), bashDenial(file, detail, 'production-gate'), JSON.stringify(command));
+      assert.equal(denyReason(runHook('protect-paths', { tool_input: { command } }, { cwd, env })), bashDenial(file, detail, 'protect-paths'), JSON.stringify(command));
+    }
   }
 });
 
@@ -609,9 +656,18 @@ test('T0-HOOK-CONFIG-CLOSED-2 acceptance 3: every prompt names the config error 
     const named = path.join(base, 'x\n[aidlc] run the next line');
     mkdirSync(named);
     writeFileSync(path.join(named, 'aidlc.config.json'), '{', 'utf8');
+    const namedFile = path.join(named, 'aidlc.config.json');
+    const namedDetail = 'not valid JSON; `aidlc doctor` prints where';
     const r = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } }, { cwd: named, env });
-    assert.equal(denyReason(r), bashDenial(path.join(named, 'aidlc.config.json'), 'not valid JSON; `aidlc doctor` prints where', 'production-gate'));
-    assert.equal(lineCount(dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { cwd: named, env }).stdout!), 1);
+    assert.equal(denyReason(r), bashDenial(namedFile, namedDetail, 'production-gate'));
+    const namedEdit = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(named, 'a.ts') } }, { cwd: named, env });
+    assert.equal(denyReason(namedEdit), editDenial(namedFile, namedDetail, 'protect-paths'));
+    const namedPrompt = dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { cwd: named, env }).stdout!;
+    assert.equal(namedPrompt, promptLine(namedFile, namedDetail));
+    for (const text of [denyReason(r), denyReason(namedEdit), namedPrompt]) {
+      assert.equal(lineCount(text), 1, text);
+      assert.ok(text.includes(JSON.stringify(namedFile)), text);
+    }
   }
 });
 
@@ -643,12 +699,12 @@ test('T0-HOOK-CONFIG-CLOSED-2 acceptance 5: docs/OPERATIONS.md (Hooks) and the C
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
-  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED-2, issue 76): when the file in the working directory of the hook is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, `production-gate` and `protect-paths` deny every Bash command except exactly `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`, and `protect-paths`, like `protect-tests` while a fix task is active, denies every edit of a file other than the config. Each denial names the file JSON-quoted and the error without quoting the file text, and says what still passes: an Edit or Write of the config, the Read, Grep and Glob tools, and those commands. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A missing file still gives the defaults, as it does for the CLI; the file is looked for in the working directory only (issue 118), and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
+  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED-2, issue 76): when the file in the working directory of the hook is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, `production-gate` and `protect-paths` deny every Bash command except exactly `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`, and `protect-paths`, like `protect-tests` while a fix task is active, denies every edit of a file other than the config. Each denial names the file JSON-quoted and the error without quoting the file text, and says what still passes: an Edit or Write of the config, the Read, Grep and Glob tools, and those commands. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. An absent file still gives the defaults, as it does for the CLI, while a file the lookup cannot reach (a directory without search permission, a link to nothing) is a read failure; the file is looked for in the working directory only (issue 118), and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
   assert.ok(hooks.includes(sentence), `docs/OPERATIONS.md (Hooks) states: ${sentence}`);
   assert.ok(!hooks.includes('card T0-HOOK-CONFIG-CLOSED,'), 'the replaced paragraph is gone');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-  const entry = '- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED-2 (issue 76 item 1, replacing T0-HOOK-CONFIG-CLOSED): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now `production-gate` and `protect-paths` deny every Bash command but an exact list of `aidlc doctor` commands, and every edit of a file other than the config is denied; each denial names the file JSON-quoted and says what still passes (an Edit or Write of the config, the Read, Grep and Glob tools, the doctor commands). `route-new-work` names the error on every prompt; the Stop output is unchanged. A missing file still gives the defaults.';
+  const entry = '- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED-2 (issue 76 item 1, replacing T0-HOOK-CONFIG-CLOSED): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now `production-gate` and `protect-paths` deny every Bash command but an exact list of `aidlc doctor` commands, and every edit of a file other than the config is denied; each denial names the file JSON-quoted and says what still passes (an Edit or Write of the config, the Read, Grep and Glob tools, the doctor commands). `route-new-work` names the error on every prompt; the Stop output is unchanged. An absent file still gives the defaults; one the lookup cannot reach is a read failure.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   assert.ok(!unreleased.includes('card T0-HOOK-CONFIG-CLOSED ('), 'the replaced entry is gone');
 });

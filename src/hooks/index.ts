@@ -23,7 +23,7 @@
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
@@ -104,14 +104,48 @@ function configErrorDetail(err: unknown): string {
   return `cannot be read: ${(err as NodeJS.ErrnoException).code ?? 'UNREADABLE'}`;
 }
 
+/** The two lookups `loadHookConfig` makes before reading the file; injectable, since no test can deny access on every platform. */
+export interface ConfigProbe {
+  stat(file: string): unknown;
+  lstat(file: string): unknown;
+}
+
+const FS_PROBE: ConfigProbe = { stat: statSync, lstat: lstatSync };
+
+/**
+ * Whether the config file is there, absent, or cannot be reached. `existsSync` answers false for a lookup that fails for
+ * any reason (EACCES on a directory, a link to nothing), which would read as absent; here only a path that neither
+ * resolves nor exists as a link is absent, and any other failure is named by its code.
+ */
+function configAccess(file: string, probe: ConfigProbe): 'present' | 'absent' | { code: string } {
+  try {
+    probe.stat(file);
+    return 'present';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'UNREADABLE';
+    if (code !== 'ENOENT') return { code };
+  }
+  try {
+    probe.lstat(file);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? 'UNREADABLE';
+    return code === 'ENOENT' ? 'absent' : { code };
+  }
+  return { code: 'ENOENT' };
+}
+
 /**
  * The hook settings of the `aidlc.config.json` in `cwd`, read through the schema the CLI uses, so the hooks and the CLI
- * refuse the same file. A missing file gives the defaults, as it does for the CLI. A pattern of `productionPatterns` or
- * `testPathPatterns` that does not compile is an error too: the guard would throw on it and the hook entry exit 0. A
- * `frozenPaths` entry that does not compile is matched as literal text (`protectPaths`), so it is no error.
+ * refuse the same file. An absent file gives the defaults, as it does for the CLI; a file the lookup cannot reach is a
+ * read failure (`configAccess`). A pattern of `productionPatterns` or `testPathPatterns` that does not compile is an
+ * error too: the guard would throw on it and the hook entry exit 0. A `frozenPaths` entry that does not compile is matched
+ * as literal text (`protectPaths`), so it is no error.
  */
-export function loadHookConfig(cwd: string): LoadedHookConfig {
+export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): LoadedHookConfig {
   const file = path.join(cwd, CONFIG_FILE);
+  const access = configAccess(file, probe);
+  if (access === 'absent') return DEFAULT_HOOK_CONFIG;
+  if (access !== 'present') return { file, detail: `cannot be read: ${access.code}` };
   let hooks: ProjectConfig['hooks'];
   try {
     hooks = loadProjectConfig(cwd).config.hooks;
@@ -180,7 +214,7 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
     return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
   }
   if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
-  if (typeof cmd !== 'string' || !cmd || DOCTOR_COMMANDS.has(cmd.trim())) return { exitCode: 0 };
+  if (typeof cmd !== 'string' || DOCTOR_COMMANDS.has(cmd.trim())) return { exitCode: 0 };
   return configDenial(guard, error, true);
 }
 
