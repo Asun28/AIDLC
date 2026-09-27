@@ -54,7 +54,7 @@ acceptance:
   - 15. A held goal lock makes a goal write refuse with `StoreError` `LOCKED` naming the file and leaves the record byte-identical; after the lock is released the same write succeeds (tests/infra/goal-store.test.ts). [R7] [dod arm 1]
   - 16. At the start of `card next`, controller `next` and controller `report`, a pending firing is journaled and cleared before selection or dispatch; a flush that throws leaves the stop in place, the command reports the pending firing, and no ship or other work directive is dispatched (tests/scenarios/t0-flow.test.ts, tests/scenarios/deadline.test.ts). [R6] [R8] [dod arm 1]
   - 17. Every `saveGoal` caller in `diagnosis.same_class` keeps its result under the lock, and goal extend, the hooks and the board either succeed as before or refuse with a named `LOCKED` error, never a partial write (tests/infra/goal-store.test.ts, tests/scenarios/two-windows.test.ts). [R7] [dod arm 1]
-  - 18. A goal firing the journal refuses, then its GOAL_STOPPED, then recovery and the flush, is counted on the Bounds line as that stop's firing (`STOP/<reason>`), not open; so is a card firing that stays pending while its goal goes terminal (tests/infra/board.test.ts, tests/scenarios/deadline.test.ts). [R9] [dod arm 1]
+  - 18. A goal firing the journal refuses, then its GOAL_STOPPED, then recovery and the flush, is counted on the Bounds line as that stop's firing (`STOP/<reason>`), not open; so is a card firing that stays pending while its goal goes terminal; in a journal that mixes entries written before this card (no times) with new ones, the new entries are classified by time even where their positions disagree; an old-shape line (BOUND_FIRED without stoppedAt, GOAL_STOPPED and GOAL_DONE without at) parses unchanged; GOAL_STOPPED takes its time from the persisted stop and GOAL_DONE from the controller clock, never the wall clock (tests/infra/board.test.ts, tests/scenarios/deadline.test.ts). [R9] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
@@ -71,7 +71,7 @@ doc_sync: README.md (Limits), docs/OPERATIONS.md (Bound telemetry), docs/ARCHITE
 # T1-BOUND-TELEMETRY-2
 
 ## Deliverable
-Invariant the reviewers check: a bound stop is persisted whatever the journal does, and a firing is journaled at most once per key and at least once after the journal recovers. A firing's classification depends on persisted facts, never on when it was journaled.
+Invariant the reviewers check: a bound stop is persisted whatever the journal does, and a firing is journaled at most once per key and at least once after the journal recovers. A firing journaled by this code, and a terminal event journaled by this code, carry persisted times, and the board classifies them by those times alone; entries written before this card carry no times, and only those fall back to journal position.
 
 Each bound that fires leaves one `BOUND_FIRED` event in the journal, and `aidlc board` shows in one line how often each bound fired and how the goals ended afterwards. The stop a bound causes is saved first, together with its pending firing, in one record write; the firing is journaled afterwards, once per key, and replayed by every later call until it lands. A journal that cannot be read in full, or a firing still pending, is named on the board, never read as none fired.
 
@@ -84,3 +84,4 @@ npm run check
 
 ## Amendments
 - 2026-09-28, by aidlc-37 under the user's delegation of 2026-09-27T09:20Z: src cap +140 -> +146 (W5 +164 -> +158), budget 1400 -> 1460, docs/ARCHITECTURE.md added to allow_paths and doc_sync, R9 and acceptance 18 added. Reason: "R3 decision 1 of T1-BOUND-TELEMETRY blocked on late-firing classification; the successor fixes it and syncs ARCHITECTURE." Terminal journal events are not deferred: each firing carries the persisted time of the stop it caused and the board classifies by it.
+- 2026-09-28, by aidlc-37 under the same delegation: the positional fallback is scoped to entries that carry no time; acceptance 18 pins a mixed journal, an old-shape line and the clock sources.
