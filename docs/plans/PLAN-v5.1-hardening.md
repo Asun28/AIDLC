@@ -182,7 +182,7 @@ integration repair. The board renders one line over every goal journal:
 being the goal's terminal event after the firing. The worker cap is a cap,
 not a firing, and is not counted. `MAX_LIFECYCLE_REPAIR_CYCLES` is defined
 and never enforced; the Limits table says so (finding F2). No new config, no
-new file. Target +50 src lines, raised to +90 by the monitoring session for the R3 decision 1 repair (keyed, journal-idempotent firings; per-journal board reads), then to +140 for the successor T1-BOUND-TELEMETRY-2: R3 decision 2 blocked on six findings rooted in journal-before-persist, so the successor persists each stop first with `pendingFiring` in the same locked write (an outbox), flushes the firing afterwards and locks goal writes.
+new file. Target +50 src lines, raised to +90 by the monitoring session for the R3 decision 1 repair (keyed, journal-idempotent firings; per-journal board reads), then to +140 and +146 for the successor T1-BOUND-TELEMETRY-2: R3 decision 2 blocked on six findings rooted in journal-before-persist, so the successor persists each stop first with `pendingFiring` in the same locked write (an outbox), flushes the firing afterwards and locks goal writes; +146 because R3 decision 1 of T1-BOUND-TELEMETRY blocked on late-firing classification; the successor fixes it and syncs ARCHITECTURE (a firing is classified by the persisted time of its stop, never by its journal position).
 
 **W5, T1-RUN-DRIVER** (wave 3, last card; the W0 gate is lifted by the
 approval, so the token measurement below waits for the deferred W0).
@@ -239,10 +239,10 @@ deleted), tests excluded, stated in every card's close-out.
 | T1-PARSE-GUARD | W1 | below 0 (estimate -3 to -7) | STOP/scope at 0 or above |
 | T1-STORE-CAS | W3 | below 0 (estimate -45) | STOP/scope at 0 or above |
 | T1-AUDIT-FACTS | W2 | at most +140 | shared +400 |
-| T1-BOUND-TELEMETRY-2 | W4 | at most +140 (raised from +50 to +90 for the R3 decision 1 repair, then to +140 for the successor) | shared +400 |
+| T1-BOUND-TELEMETRY-2 | W4 | at most +146 (raised from +50 to +90 for the R3 decision 1 repair, then to +140 and +146 for the successor) | shared +400 |
 | T1-INIT-SURFACE | W6 | at most +15 | own |
 | T1-README-SCOPE | W7 | 0 | no src/ change |
-| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +164 after W2 +96 and W4 +140; its rule to stop and ask which part to drop may trigger, and that question goes to the user) | shared +400 |
+| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +158 after W2 +96 and W4 +146; its rule to stop and ask which part to drop may trigger, and that question goes to the user) | shared +400 |
 | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 (deferred) | 0 | no src/ change |
 
 The card `budget:` field is the churn cap (added plus deleted, all files),
