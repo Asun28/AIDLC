@@ -358,5 +358,10 @@ describe('state/goal-store goal writes under the store lock (T1-BOUND-TELEMETRY-
     store.saveGoal({ ...goal, maxWorkers: 1 });
     assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'a snapshot without it keeps it');
     assert.equal(store.getGoal('goal-outbox')?.maxWorkers, 1);
+    const other = { bound: 'attempts', key: 'goal-outbox@0/T1-A/attempts/3' };
+    assert.deepEqual(store.saveGoal({ ...goal, pendingFiring: other } as Goal).pendingFiring, other, 'a snapshot with its own firing writes it');
+    atomicWriteJson(store.goalFile('goal-outbox'), { ...store.getGoal('goal-outbox'), updatedAt: iso() });
+    const bytes = readFileSync(store.goalFile('goal-outbox'), 'utf8');
+    for (const change of [(g: Goal | undefined) => g, () => undefined]) assert.deepEqual([store.updateGoal('goal-outbox', change).pendingFiring, readFileSync(store.goalFile('goal-outbox'), 'utf8')], [other, bytes], 'an update that returns the record, or nothing, writes nothing');
   });
 });

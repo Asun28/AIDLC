@@ -260,7 +260,7 @@ test('T1-BOUND-TELEMETRY-2 acceptance 6: a CI rerun granted, cancelled and grant
     const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 50 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now });
     const stored = () => fx.store.getCardRun(goal.id, 'T1-HELLO')!;
     assert.equal(runner.next(fx.goal(goal.id), card, run1).directive.kind, 'ship', 'the first grant');
-    fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-HELLO', data: { ci: { reruns: stored().ci.reruns.map((r) => ({ ...r, outcome: 'cancelled' })) } } });
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-HELLO', data: { ci: { reruns: [...stored().ci.reruns.map((r) => ({ ...r, outcome: 'cancelled' })), { runId: '5', attempt: 1, candidate: 'sha-other', requestedAt: T0, outcome: 'success' }] } } }); // another candidate's rerun is not counted
     ship.lock = `${fx.store.cardFile(goal.id, 'T1-HELLO')}.lock`;
     assert.throws(() => runner.next(fx.goal(goal.id), card, stored()), /LOCKED/, 'the save of the second grant is refused');
     unlinkSync(ship.lock);
@@ -287,6 +287,7 @@ test('T1-BOUND-TELEMETRY-2 acceptance 9: a CI-denied ship result whose firing th
     assert.equal(r.directive.kind, 'stop');
     assert.match(r.directive.narration, /ci-rerun-denied\/sha-t1-hello\/1 stays pending/, 'the command names the pending firing');
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).includes(`\nBounds: none fired; incomplete: lines that do not parse in "${goal.id}"; pending firings or unreadable records in "${goal.id}"\n`), 'the board names the journal and the goal');
+    assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'card-result', cardId: 'T1-HELLO', data: { pendingFiring: undefined } }), /pendingFiring is loop-owned/, 'a raw patch never clears it');
     writeFileSync(file, readFileSync(file, 'utf8').replace('not a journal line\n', ''), 'utf8');
     assert.equal(runner.next(fx.goal(goal.id), card, stopped).directive.kind, 'stop');
     assert.equal(ship.requests.length, 1, 'the ship path is not invoked again');

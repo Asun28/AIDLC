@@ -5179,7 +5179,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: the R3 gate stop past two decisions i
   }
 });
 
-test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is saved with its firing pending, and the next card next journals it', async () => {
+test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is saved with its firing pending, and the next formal review journals it first', async () => {
   const fx = makeFixture({ config: { formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const script = scriptedRunner({
@@ -5195,7 +5195,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is saved with 
     const f = await runner.formalReview(fx.goal(goal.id), card, runner.next(fx.goal(goal.id), card, run).run);
     assert.equal(f.classified.outcome, 'no-verdict');
     const second = runner.next(fx.goal(goal.id), card, f.run).run;
-    await firingFailsOnce(fx, goal.id, 'T1-NVF', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF') ?? second), 'review', 'no-verdict-retry', () => runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF')!));
+    await firingFailsOnce(fx, goal.id, 'T1-NVF', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF') ?? second), 'review', 'no-verdict-retry', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF')!).catch(() => undefined));
   } finally {
     fx.cleanup();
   }
@@ -5224,7 +5224,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1, condition 2: a ship-path no-verdict stop
   }
 });
 
-test('T1-BOUND-TELEMETRY R3 decision 1: a takeover past the card deadline saves the deadline stop with its one firing', () => {
+test('T1-BOUND-TELEMETRY R3 decision 1: a takeover past the card deadline saves the deadline stop with its one firing, and a takeover run again journals it first when it stayed pending', async () => {
   const fx = makeFixture({ actor: actorA });
   try {
     writeCard(fx, { id: 'T1-TAKE', title: 'taken over past its deadline' });
@@ -5233,9 +5233,10 @@ test('T1-BOUND-TELEMETRY R3 decision 1: a takeover past the card deadline saves 
     fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TAKE'));
     fx.advance(3 * 3600_000 + 60_000);
     setActorForTests(actorB);
-    const taken = fx.runner().takeover(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-TAKE')!);
-    assert.equal(taken.run.stop?.reason, 'time');
-    assert.deepEqual(fired(fx, goal.id), ['card-deadline']);
+    const taken = (await failOnce('appendFileSync', firingLine, () => fx.runner().takeover(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-TAKE')!))) as ReturnType<CardRunner['takeover']>;
+    assert.deepEqual([taken.run.stop?.reason, taken.run.pendingFiring?.bound], ['time', 'card-deadline']);
+    assert.throws(() => fx.runner().takeover(fx.goal(goal.id), card, taken.run), /owns card T1-TAKE/, 'this session owns it now');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline'], 'journaled before the takeover refused (T1-BOUND-TELEMETRY-2)');
   } finally {
     fx.cleanup();
   }

@@ -339,6 +339,7 @@ test('T1-BOUND-TELEMETRY R2 on cc53042: a resumed generation that the arc deadli
     const deadline = effectiveGoalDeadline(goal.deadlines);
     assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${deadline}`, `@1/-/arc-deadline/${deadline}`]);
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: arc-deadline 2 (DONE 0, STOP/time 2, open 0)'));
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.generation), [0, 1], 'each entry carries the generation of its firing (T1-BOUND-TELEMETRY-2)');
   } finally {
     fx.cleanup();
   }
@@ -357,6 +358,8 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pendin
     writeCard(fx, { id: 'T1-A', title: 'a' });
     const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: {} });
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } }); // the card fires in generation 1
     fx.advance(3 * HOUR_MS + MINUTE_MS);
     const repair = damageJournal(fx, goal.id);
     const next = () => fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
@@ -365,14 +368,17 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pendin
     assert.match(stopped.directive.narration, /card-deadline\/.* stays pending/);
     fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 13 * HOUR_MS), 'more time'); // re-admits the run; the firing stays pending
     assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
+    const records = () => [fx.store.cardFile(goal.id, 'T1-A'), fx.journal(goal.id).file].map((f) => readFileSync(f, 'utf8'));
+    const before = records();
     const held = next();
     assert.deepEqual([held.directive.kind, held.run.state], ['wait', 'BUILD'], `no work is dispatched: ${held.directive.narration}`);
+    assert.deepEqual(records(), before, 'nothing is selected or written');
     assert.match(held.directive.narration, /card-deadline\/.* stays pending/);
     repair();
     const seen = fx.events(goal.id).length;
     const resumed = next();
     assert.notEqual(resumed.directive.kind, 'wait', resumed.directive.narration);
-    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 1).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/T1-A/card-deadline/${run.deadline}`]], 'journaled before selection');
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 1).map((e) => [e.type, e.data['key'], e.generation]), [['BOUND_FIRED', `${goal.id}@1/T1-A/card-deadline/${run.deadline}`, 1]], 'journaled before selection');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
   } finally {
     fx.cleanup();
@@ -394,11 +400,13 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and
     const refused = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
     assert.deepEqual([refused.directive.kind, fx.goal(goal.id).generation], ['stop', 0], 'the resume is not applied');
     assert.match(refused.directive.narration, /arc-deadline\/.* stays pending/, 'report names the pending firing');
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 12 * HOUR_MS), 'more time'); // re-admits the goal; its firing stays pending
+    assert.equal(fx.controller.next(goal.id).kind, 'wait', 'a re-admitted goal whose firing stays pending waits on the journal');
     repair();
     const seen = fx.events(goal.id).length;
-    fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
-    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 2).map((e) => e.type), ['BOUND_FIRED', 'GOAL_TAKEOVER'], 'the firing of generation 0 is journaled before the resume');
-    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, `@1/-/arc-deadline/${goal.deadlines.goalDeadline}`]);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: {} });
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 2).map((e) => e.type), ['BOUND_FIRED', 'GOAL_STOPPED'], 'the firing is journaled before the report');
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]);
   } finally {
     fx.cleanup();
   }

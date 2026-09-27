@@ -118,6 +118,8 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.equal(journal.readAll().length, 0, 'nothing is written');
       journal.append({ type: 'NOTE', goalId: 'g-1', generation: 0, data: { key: 'g-1/T1-A/attempts/3' } });
       for (let i = 0; i < 2; i += 1) journalFiring(journal, boundFired({ id: 'g-1', generation: 0 }, 'attempts', 3, 'T1-A'));
+      journalFiring(Journal.forGoal(dir, 'g-new'), boundFired({ id: 'g-new', generation: 0 }, 'attempts', 1));
+      assert.equal(Journal.forGoal(dir, 'g-new').readAll().length, 1, 'a journal not written yet is absent, not damaged (T1-BOUND-TELEMETRY-2)');
       assert.deepEqual(journal.readAll().filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'attempts', key: 'g-1@0/T1-A/attempts/3' }], 'one entry per key; an event of another type is no firing');
     } finally {
       cleanup(dir);
@@ -263,6 +265,10 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.equal(boundsOfJournals(path.join(dir, 'linked')), 'Bounds: none fired; incomplete: lines that do not parse in "linked"', 'a dangling journal directory is named');
       assert.equal(boundsOfJournals(path.join(dir, 'file')), 'Bounds: none fired; incomplete: lines that do not parse in "file"');
       assert.equal(boundsOfJournals(path.join(dir, 'absent')), 'Bounds: none fired', 'an absent journal directory holds no firing');
+      assert.equal(boundsOfJournals(path.join(dir, 'bad\0name')), 'Bounds: none fired; incomplete: lines that do not parse in "bad\\u0000name"', 'a path lstat refuses for another reason is named');
+      mkdirSync(path.join(dir, 'cards', 'g-b'), { recursive: true });
+      for (const [f, text] of [['journals/g-a.json', '{}'], ['journals/g-b.json', '{}'], ['journals/g-a.json.lock', 'pid=1'], ['cards/g-a', '']] as const) writeFileSync(path.join(dir, f), text, 'utf8');
+      assert.equal(boundsOfJournals(path.join(dir, 'absent'), { goals: journals, cards: path.join(dir, 'cards') }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-a"', 'a card-run directory that cannot be listed is named; a lock file is no record');
     } finally {
       cleanup(dir);
     }

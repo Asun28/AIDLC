@@ -2342,7 +2342,7 @@ export class CardRunner {
           history.stopped = true;
           return { ...latest, evidence };
         }
-        return { ...latest, ...patchOf(latest), evidence, pendingFiring: fired ? boundFired(goal, ...fired, card.id).data : latest.pendingFiring };
+        return { ...latest, ...patchOf(latest), evidence, ...(fired && { pendingFiring: boundFired(goal, ...fired, card.id).data }) };
       });
       if (!history.superseded && !history.stopped) return then(this.flush(saved, goal.generation)!);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
