@@ -33,13 +33,13 @@ acceptance:
   - 4. `contextPack` returns the same bytes for the same inputs, includes each named part, keeps LESSONS lines that name the card's paths or modules and no other, and cuts at the declared budget from the LESSONS end first, never cutting the acceptance list (tests/core/context-pack.test.ts). [R3] [dod arm 1]
   - 5. `git diff --numstat origin/main...HEAD -- src` plus the recorded W2 and W4 deltas is at most +400; the close-out states the three and the total. [R4]
   - 6. `docs/OPERATIONS.md` documents `aidlc run`, `board --watch` and the context pack, and states how `aidlc run` relates to the `/goal` recipe of T0-UNATTENDED-RUNS; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/scenarios/run-driver.test.ts). [R1] [R2] [R3] [dod arm 1]
-depends_on: [T1-README-SCOPE, T1-BOUND-TELEMETRY]
+depends_on: [T1-README-SCOPE, T1-BOUND-TELEMETRY-2]
 budget: 900
 tdd: true
 sweep: "Survey of main at 5983a1e. No command loops next, act and report: next (main.ts:334-342) and report (344-376) are single-shot; the only loop is the CI poll in github-ship.ts:245. Providers (providers/types.ts:25-40) return CompletionResult with optional usage; claude-api.ts:90-93 and claude-code.ts:63 fill it; the loop never calls a provider (evals main.ts:933 and doctor 185 only). aidlc board has no watch mode; renderBoard board.ts:46-86. The run-card context (controller.ts:360) carries revision, generation, reviewPool, modules, dataImpact, wave, workers and arcReasons. T0-UNATTENDED-RUNS (merged, PR 61) documents /goal as the outer driver and names the directive kinds done, stop, ask, checkpoint and wait."
 forbid: [state owned by the driver, a model deciding which card runs next, approving a checkpoint, merging, or reporting a done, stop, ask, checkpoint or wait directive from the driver, a web view, a new top-level src/ directory]
 non_goals: [measuring tokens per card against a baseline (deferred W0), cloud or remote execution, running several goals at once, a TUI library, changing the directive contract beyond carrying the context pack]
-hygiene: "The W0 gate and the token measurement against the baseline were lifted on 2026-09-26 (no eval now; the measurement waits for the deferred W0). If the three parts do not fit the remaining budget, stop and ask which part to drop."
+hygiene: "The W0 gate and the token measurement against the baseline were lifted on 2026-09-26 (no eval now; the measurement waits for the deferred W0). If the three parts do not fit the remaining budget, stop and ask which part to drop. On 2026-09-28 the W5 cap fell from +214 to +164 (W4 +140 for T1-BOUND-TELEMETRY-2), so this rule may trigger; that question goes to the user, not to the monitoring session."
 doc_sync: docs/OPERATIONS.md (Running a goal), README.md (Quick start), CHANGELOG.md
 ---
 

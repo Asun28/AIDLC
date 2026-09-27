@@ -49,7 +49,7 @@ spend another wave's 12 h arc.
 | Wave | Goal | Cards, in order | Starts when |
 |---|---|---|---|
 | 1 | v5.1 wave 1 | T1-PARSE-GUARD (merged, PR #78), T1-STORE-CAS (stopped), replaced by T1-STORE-CAS-2 (merged under a ruling, PR #100) | plan approved |
-| 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, merged under a ruling of aidlc-37, PR #113), then T1-BOUND-TELEMETRY | wave 1 DONE |
+| 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, merged under a ruling of aidlc-37, PR #113), then T1-BOUND-TELEMETRY (stopped on R3 decision 2), replaced by T1-BOUND-TELEMETRY-2 (outbox design, ruling of aidlc-37) | wave 1 DONE |
 | 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
 | deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
 
@@ -182,7 +182,7 @@ integration repair. The board renders one line over every goal journal:
 being the goal's terminal event after the firing. The worker cap is a cap,
 not a firing, and is not counted. `MAX_LIFECYCLE_REPAIR_CYCLES` is defined
 and never enforced; the Limits table says so (finding F2). No new config, no
-new file. Target +50 src lines, raised to +90 by the monitoring session for the R3 decision 1 repair (keyed, journal-idempotent firings; per-journal board reads).
+new file. Target +50 src lines, raised to +90 by the monitoring session for the R3 decision 1 repair (keyed, journal-idempotent firings; per-journal board reads), then to +140 for the successor T1-BOUND-TELEMETRY-2: R3 decision 2 blocked on six findings rooted in journal-before-persist, so the successor persists each stop first with `pendingFiring` in the same locked write (an outbox), flushes the firing afterwards and locks goal writes.
 
 **W5, T1-RUN-DRIVER** (wave 3, last card; the W0 gate is lifted by the
 approval, so the token measurement below waits for the deferred W0).
@@ -239,10 +239,10 @@ deleted), tests excluded, stated in every card's close-out.
 | T1-PARSE-GUARD | W1 | below 0 (estimate -3 to -7) | STOP/scope at 0 or above |
 | T1-STORE-CAS | W3 | below 0 (estimate -45) | STOP/scope at 0 or above |
 | T1-AUDIT-FACTS | W2 | at most +140 | shared +400 |
-| T1-BOUND-TELEMETRY | W4 | at most +90 (raised from +50 for its R3 decision 1 repair) | shared +400 |
+| T1-BOUND-TELEMETRY-2 | W4 | at most +140 (raised from +50 to +90 for the R3 decision 1 repair, then to +140 for the successor) | shared +400 |
 | T1-INIT-SURFACE | W6 | at most +15 | own |
 | T1-README-SCOPE | W7 | 0 | no src/ change |
-| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +214 after W2 +96 and W4 +90) | shared +400 |
+| T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +164 after W2 +96 and W4 +140; its rule to stop and ask which part to drop may trigger, and that question goes to the user) | shared +400 |
 | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 (deferred) | 0 | no src/ change |
 
 The card `budget:` field is the churn cap (added plus deleted, all files),
@@ -383,6 +383,13 @@ filed as an issue by the card named.
   directory, so a closure that cleans up before `aidlc evidence retain`
   loses the retained verdict and log files (T1-PARSE-GUARD lost them; its
   review outputs were retained from the session's own copies).
+- F11 (issue 97): the card front matter reader cut a value at whitespace
+  followed by a hash sign, so card text naming an issue that way lost its
+  tail; fixed by T0-FM-COMMENT-CUT-2.
+- F12 (issue 128): after a successful attempt the loop records no new
+  candidate until a review block or a ship failure reopens the episode, so
+  a fix for an R2 advisory has no path into the running card
+  (T1-BOUND-TELEMETRY, T0-HOOK-CONFIG-CLOSED-2).
 
 New findings from running the waves are appended here by the card that meetsthem, never worked around.
 
