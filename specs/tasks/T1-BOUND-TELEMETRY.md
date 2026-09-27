@@ -43,6 +43,7 @@ forbid: [a new config key, a new file under .aidlc/, a counter kept outside the 
 non_goals: [enforcing the lifecycle repair bound, counting the worker cap, a per-bound history view, tuning any default, firing the release reconciliation grace or the R2 round limits (issue 126)]
 hygiene: "Lesson 2026-09-18 T1-REVIEW-STATS: derive the count from the event the loop persists at the firing, never from a counter kept for enforcement."
 doc_sync: README.md (Limits), docs/OPERATIONS.md (board), CHANGELOG.md
+superseded_by: T1-BOUND-TELEMETRY-2
 ---
 
 # T1-BOUND-TELEMETRY
@@ -81,3 +82,6 @@ Every site keys its firing `goal/card-or-dash/bound/value`, the value read from 
 - 2026-09-28, `budget:` 800 -> 950, by aidlc-37 under the user's delegation of 2026-09-27T09:20Z: "862 of the 929 churn lines are tests, each pinning an R3 decision 1 finding (F1-F6 at the write boundary, class C), a condition set by aidlc-37 (one entry per key, keys from persisted facts), or a sweep survivor. src is +87 against the +90 cap, and the W2+W4 total is +183. Trimming them would weaken the proof R3 decision 2 reads." This is the last raise; an R2 fix that would pass 950 goes to aidlc-37 first.
 - 2026-09-28, `budget:` 950 -> 980, by aidlc-37 under the user's delegation of 2026-09-27T09:20Z: "R2 retry on cc53042 blocked (edge-cases): the firing key omitted goal.generation, so a resumed generation's firing on the same persisted value was deduplicated. The repair adds one scenario (about 20 lines) and carries the dirscan fix (6b5e8e4, 4a863c0) that R2 raised earlier." This is the final raise; beyond 980 the answer is a trim or a successor.
 - 2026-09-28, candidate record: attempt 3 on 4a863c0 was refused (card-runner.ts:865, the episode had succeeded on cc53042; issue 128), so cc53042 stayed the candidate until the R2 retry on it blocked and reopened the episode. The repair carries the dirscan fix as 34680cc and 6826930 (cherry-picked from 6b5e8e4 and 4a863c0, issue 127) and the generation key as 8750adc and 07e8207.
+
+## Ruling
+- 2026-09-28, Ruling by aidlc-37 under the user's delegation of 2026-09-27T09:20Z: R3 decision 2 on b4de1bc blocked on six findings (the CI key named the candidate alone; goal firings were not serialized; a damaged journal read as holding no key; a failed firing append left a CI-denied card in SHIP without its stop; a dangling or unlistable journal file or directory read as none fired), so the card stopped (STOP/review, second substantive block). First successor T1-BOUND-TELEMETRY-2 carries b4de1bc and persists each stop first with pendingFiring in the same locked write (an outbox). Goal g-20260927122725-25e8cb was cancelled with this ruling; the 36 review files were retained as goal evidence.
