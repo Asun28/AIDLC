@@ -1163,7 +1163,7 @@ export class CardRunner {
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
       // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
-      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log and fix the pre-review command (or clear preReview.command to skip R2)`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
