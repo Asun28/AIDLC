@@ -1599,10 +1599,10 @@ test('T1-STORE-CAS-2 R3 decision 1 F2: a release that lands between the run upda
   }
 });
 
-test('T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a takeover refused with LOCKED after its lease write names the generation it took and the command that goes on: the takeover again at the run update, card next at a save of the assessment [R1] [R2]', () => {
+test('T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a takeover refused with LOCKED after its lease write names the generation it took and the command that goes on: the takeover again at the run update, card next at its assessment [R1] [R2]', () => {
   const fx = makeFixture({ actor: actorA });
   try {
-    const ids = ['T1-RUNLOCK', 'T1-SAVELOCK'];
+    const ids = ['T1-RUNLOCK', 'T1-RENEWLOCK', 'T1-SAVELOCK', 'T1-GARBLED'];
     for (const id of ids) writeCard(fx, { id, title: `card ${id}` });
     const goal = goalForCards(fx, ids);
     const key = (id: string) => resourceKeys.card(fx.repo.key, id);
@@ -1613,7 +1613,7 @@ test('T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a takeover refused with LOCKED 
     const windowB = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }), queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
     const lockOf = (id: string) => `${fx.leases.file(key(id))}.lock`;
     // Another live writer holds the lease lock when the takeover creates it for the n-th time: the lease section (1), the
-    // run update (2), then the first save of the assessment (3).
+    // run update (2), then the assessment: its lease renewal (3) and its save (4).
     const heldAt = (id: string, n: number) => {
       const outcome = settle(() => onLock(lockOf(id), { before: (at) => { if (at === n) writeFileSync(lockOf(id), `pid=${process.pid} at=${fx.now()} nonce=other`, 'utf8'); } }, () => windowB.takeover(fx.goal(goal.id), fx.card(id), current(id))));
       unlinkSync(lockOf(id));
@@ -1624,6 +1624,7 @@ test('T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a takeover refused with LOCKED 
     const atRun = heldAt('T1-RUNLOCK', 2);
     assert.ok(atRun instanceof StoreError, `a StoreError: ${String(atRun)}`);
     assert.equal(atRun.code, 'LOCKED');
+    assert.equal(atRun.file, fx.leases.file(key('T1-RUNLOCK')), 'the file of the lock it met');
     assert.ok(atRun.message.includes('the takeover of card T1-RUNLOCK took lease generation 1, but its run update was refused (LOCKED: locked by another writer'), atRun.message);
     assert.ok(atRun.message.includes(`; run \`aidlc card takeover T1-RUNLOCK --goal ${goal.id}\` again to complete it`), atRun.message);
     assert.equal(fx.leases.read(key('T1-RUNLOCK'))?.generation, 1, 'the lease carries the new generation');
@@ -1635,14 +1636,22 @@ test('T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a takeover refused with LOCKED 
     assert.equal(again.completed, true);
     assert.equal(current('T1-RUNLOCK').ownerGeneration, 1, 'the run carries the generation');
     assert.equal(acquired('T1-RUNLOCK').length, 1, 'one acquisition for it');
-    // R2: the first save of the assessment is refused after the run update landed
-    const atSave = heldAt('T1-SAVELOCK', 3);
-    assert.ok(atSave instanceof StoreError, `a StoreError: ${String(atSave)}`);
-    assert.equal(atSave.code, 'LOCKED');
-    assert.ok(atSave.message.includes('the takeover of card T1-SAVELOCK is done and the run carries lease generation 1, but a save of its assessment was refused (LOCKED: locked by another writer'), atSave.message);
-    assert.ok(atSave.message.includes(`; run \`aidlc card next T1-SAVELOCK --goal ${goal.id}\` to go on`), atSave.message);
-    assert.equal(current('T1-SAVELOCK').ownerGeneration, 1, 'the run carries the generation');
-    assert.equal(fx.leases.read(key('T1-SAVELOCK'))?.generation, 1);
+    // R2: the assessment is refused after the run update landed, at its lease renewal and at its save
+    for (const [id, n] of [['T1-RENEWLOCK', 3], ['T1-SAVELOCK', 4]] as const) {
+      const atAssessment = heldAt(id, n);
+      assert.ok(atAssessment instanceof StoreError, `${id}: a StoreError: ${String(atAssessment)}`);
+      assert.equal(atAssessment.code, 'LOCKED', id);
+      assert.ok(atAssessment.message.includes(`the takeover of card ${id} is done and the run carries lease generation 1, but its assessment was refused (LOCKED: locked by another writer`), atAssessment.message);
+      assert.ok(atAssessment.message.includes(`; run \`aidlc card next ${id} --goal ${goal.id}\` to go on`), atAssessment.message);
+      assert.equal(current(id).ownerGeneration, 1, `${id}: the run carries the generation`);
+      assert.equal(fx.leases.read(key(id))?.generation, 1, id);
+      assert.equal(acquired(id).length, 1, `${id}: one acquisition`);
+    }
+    // Any other refusal passes through as it is: a run record that is no longer JSON when the run update reads it
+    const garbled = settle(() => onLock(lockOf('T1-GARBLED'), { before: (at) => { if (at === 1) writeFileSync(fx.store.cardFile(goal.id, 'T1-GARBLED'), '{', 'utf8'); } }, () => windowB.takeover(fx.goal(goal.id), fx.card('T1-GARBLED'), current('T1-GARBLED')))).error;
+    assert.ok(garbled instanceof StoreError, `a StoreError: ${String(garbled)}`);
+    assert.equal(garbled.code, 'MALFORMED_JSON', garbled.message);
+    assert.ok(!garbled.message.includes('the takeover of card'), garbled.message);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();

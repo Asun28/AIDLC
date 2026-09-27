@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code.
+
 - Pass reasons wording, card T0-PASS-REASONS-WORDING (issue #91): every review prompt says `reasons` is empty on a pass that carries no notes, where it said `reasons` is empty on pass, so it agrees with the line that a pass with notes lists each note once in the top-level `reasons`; `REVIEW.md` and the configs are unchanged, so the policy hash is unchanged.
 
 - Card front matter comments, card T0-FM-COMMENT-CUT-2 (issue 97): the card readers and `aidlc cards validate` read comments, flow-list items and block-scalar bodies with the yaml package's lexer, so a hash inside a quoted value, a quoted flow-list item or a block scalar is kept and an inline list splits only at its top-level commas; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every comment at a hash directly followed by text (an issue or a PR number) that cuts a key or list-item value, with the raw and the kept text, blocking on a card that is neither merged nor superseded; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.
