@@ -255,6 +255,7 @@ function ship(journal: Journal, goalId: string, cardId: string, result: Record<s
 }
 
 const mismatch = (detail: string) => ({ severity: 'block', code: 'FACT_MISMATCH', detail });
+const missing = (card: string) => ({ severity: 'warn', code: 'FACT_MISSING', detail: `${card}: its merge result carries no facts` });
 const unverified = (detail: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail });
 const gitUnverified = (base = BASE) => [unverified('T1-A mergeSha object type: recorded commit, not re-derived (git)'), unverified(`T1-A tree: recorded ${TREE}, not re-derived (git)`), unverified(`T1-A mergeSha on ${base}: recorded ancestor, not re-derived (git)`)];
 const GIT_UNVERIFIED = gitUnverified();
@@ -348,11 +349,28 @@ test('T1-AUDIT-FACTS acceptance 4 (unit): the claim names each shipped card with
   const manifest = sealWith(f);
   const claim = (present: boolean) => verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: f.evidence, manifest, finalCandidateDigest: 'cand-final', hostCaptureBoundary: { present, detail: 'no export' }, probes: probes().probes, now });
   const report = claim(true);
-  assert.deepEqual(report.findings, []);
+  assert.deepEqual(report.findings, ['T1-B', 'T1-C', 'T1-D', 'T1-E', 'T1-F', 'T1-G', 'T1-H'].map(missing));
   assert.equal(report.level, 'independently-verified');
   assert.equal(report.fullyAuditedStatus, 'BLOCKED/capability');
   assert.equal(report.prerequisite, named);
   assert.equal(claim(false).prerequisite, `host capture boundary missing: no export; ${named}`);
+});
+
+test('T1-AUDIT-FACTS-2 acceptance 10: a shipped card whose merge result carries no facts is a FACT_MISSING warning and blocks the claim; a goal whose cards all carry facts has none [R6]', () => {
+  const goal = (cards: Array<[string, Record<string, unknown>]>, claim?: boolean) => {
+    const f = fixture();
+    f.journal.append({ type: 'GOAL_CREATED', goalId: f.goalId });
+    for (const [card, result] of cards) ship(f.journal, f.goalId, card, result);
+    const manifest = sealWith(f);
+    return verifyAudit({ goalId: f.goalId, journal: f.journal, evidence: f.evidence, manifest, finalCandidateDigest: 'cand-final', hostCaptureBoundary: claim ? { present: true, detail: 'asserted' } : undefined, probes: probes().probes, now });
+  };
+  const mixed = goal([['T1-A', FACTS], ['T1-B', {}]]);
+  assert.deepEqual(mixed.findings, [missing('T1-B')], 'plain verify names the card without facts, never a silent pass');
+  assert.equal(mixed.level, 'independently-verified');
+  const claimed = goal([['T1-A', FACTS], ['T1-B', {}]], true);
+  assert.deepEqual([claimed.fullyAuditedStatus, claimed.prerequisite], ['BLOCKED/capability', 'no re-derived fact for shipped card(s): T1-B']);
+  const complete = goal([['T1-A', FACTS], ['T1-B', FACTS]], true);
+  assert.deepEqual([complete.findings, complete.fullyAuditedStatus], [[], 'verified']);
 });
 
 test('T1-AUDIT-FACTS acceptance 5: changing every narration and free-text field of a journal changes no finding and no level [R5]', () => {
@@ -373,7 +391,7 @@ test('T1-AUDIT-FACTS acceptance 5: changing every narration and free-text field 
   assert.equal(altered.level, plain.level);
   assert.equal(altered.fullyAuditedStatus, plain.fullyAuditedStatus);
   assert.equal(altered.prerequisite, plain.prerequisite);
-  assert.deepEqual(plain.findings, [], 'the facts of T1-A match git and gh');
+  assert.deepEqual(plain.findings, [missing('T1-B')], 'the facts of T1-A match git and gh');
   assert.equal(plain.prerequisite, 'audit level is traceable; resolve blocking findings; no re-derived fact for shipped card(s): T1-B', 'the fact-shaped note of T1-B is no merge result');
 });
 
@@ -404,12 +422,12 @@ test('T1-AUDIT-FACTS acceptance 6: a journal with no shipped card reports the le
   }
 });
 
-/** The sentences card T1-AUDIT-FACTS adds to the docs, the README Status section and the CHANGELOG (acceptance 8). */
+/** The sentences cards T1-AUDIT-FACTS and T1-AUDIT-FACTS-2 add to the docs, the README Status section and the CHANGELOG (acceptance 8). */
 const FACT_DOC_SENTENCES = {
   operations: [
-    '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of every merge it verifies on the GitHub path, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a fetch of the base, never from the ship output.',
-    'A verified merge whose facts cannot all be read (gh failing or naming no merge commit, the fetch failing, the tree unreadable) waits with its merge operation unresolved and journals no result; each `aidlc card next` reads only the facts again, never the ship or the merge, and the card closes only once they are read and journaled with the one succeeded result.',
-    'Like a running ship, that wait outlasts the card deadline; `aidlc ops reconcile <opId> --status succeeded` ends it without facts, and `--claim-full` then names the card.',
+    '`MANIFEST_UNSEALED`, `MANIFEST_TRAILING`, `FACT_UNVERIFIED`, `FACT_MISSING`.',
+    '`verify` re-derives the facts journaled with each merge (card T1-AUDIT-FACTS-2): the card runner records the PR head (`headSha`), the merge commit (`mergeSha`), its tree and the PR number of a merge it verifies through a PR, read from `gh pr view` and from `git rev-parse <mergeSha>^{tree}` after a successful fetch of the base, never from the ship output.',
+    'The facts ride in the one merge `OPERATION_RESULT` only when all of them can be read; otherwise that result carries none (gh failing or naming no merge commit, the fetch failing, the tree unreadable, a merge without a PR), and `verify` reports a `FACT_MISSING` warning naming each shipped card whose merge result carries no facts, which `--claim-full` refuses.',
     '`verify` checks that `git cat-file -t` reads the merge commit as a commit, that `git rev-parse` gives the recorded tree, that `git merge-base --is-ancestor` finds the commit on the base (`origin/<base>`, else the local branch) and that `gh pr view` reports the PR `MERGED` with the recorded merge commit and head.',
     'A disagreement is a blocking `FACT_MISMATCH` that names the card, the fact, the recorded and the re-derived value, and keeps the level below `independently-verified`; a fact git or gh cannot answer (the commit absent from the checkout, gh failing, no `repository` configured) is a `FACT_UNVERIFIED` warning and never counts as re-derived.',
     '`--claim-full` is `verified` only when, in addition, every shipped card (a card whose merge operation succeeded, by its result or by `aidlc ops reconcile`) has at least one re-derived fact; otherwise the prerequisite names each card that has none, which includes every card of a journal written before this change.',
@@ -418,15 +436,14 @@ const FACT_DOC_SENTENCES = {
   architecture: [
     '4. The merge result of a card shipped on the GitHub path carries `ShippedFacts` (`src/core/types.ts`: `headSha`, `mergeSha`, `tree`, `pr`), which the card runner reads from `gh pr view` and `git rev-parse <mergeSha>^{tree}` when it verifies the merge; `verifyAudit` takes injected git and gh probes (`aidlc audit verify` passes real ones) and re-derives each fact with `git cat-file -t`, `git rev-parse <mergeSha>^{tree}`, `git merge-base --is-ancestor <mergeSha> <base>` and `gh pr view <pr>`.',
     'A disagreement is a `FACT_MISMATCH` block, a fact that cannot be re-derived is a `FACT_UNVERIFIED` warning, no check reads a narration or free-text field, and a "fully audited" claim also needs at least one re-derived fact for every shipped card.',
-    'A verified merge whose facts cannot all be read yet waits on its unresolved merge operation, and the card closes only once they are journaled.',
+    'The facts ride in the one merge result only when they can all be read; a shipped card whose merge result carries none is a `FACT_MISSING` warning and blocks a "fully audited" claim.',
   ],
   readme: [
     '- "Fully audited" is never assumed. `aidlc audit verify --claim-full` reports `verified` only with a sealed manifest, an intact journal, an asserted host capture boundary and, for every shipped card, at least one fact of its merge re-derived from git or GitHub; otherwise it reports `BLOCKED/capability` with the exact prerequisite.',
   ],
   changelog: [
-    '- Audit facts, card T1-AUDIT-FACTS: the card runner journals the merge `OPERATION_RESULT` of every merge it verifies on the GitHub path with the PR head, the merge commit, its tree and the PR number, read from `gh pr view` and `git rev-parse` after a fetch of the base, never from the ship output, and `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning.',
+    '- Audit facts, card T1-AUDIT-FACTS-2 (the successor of T1-AUDIT-FACTS): the card runner journals the one merge `OPERATION_RESULT` of a merge it verifies through a PR with the PR head, the merge commit, its tree and the PR number when `gh pr view`, a fetch of the base and `git rev-parse` can all read them, never from the ship output, and without them otherwise; `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning, and a shipped card whose merge result carries no facts is a `FACT_MISSING` warning.',
     '`--claim-full` now also names each shipped card with no re-derived fact, so a journal written before this change reports `BLOCKED/capability` for every card it shipped; no check reads a narration or free-text field (docs/OPERATIONS.md).',
-    'A verified merge whose facts cannot be read yet waits, and the card closes only with them.',
   ],
 };
 

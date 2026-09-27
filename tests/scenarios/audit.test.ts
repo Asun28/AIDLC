@@ -213,28 +213,44 @@ test('T1-AUDIT-FACTS acceptance 4: aidlc audit verify --claim-full is BLOCKED na
     const head = 'a'.repeat(40);
     const script = scriptedRunner({ 'gh pr view 42 --repo o/r --json': { stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: head, mergeCommit: { oid: merge } }) }, 'git fetch': {}, [`git rev-parse ${merge}^{tree}`]: { stdout: `${tree}\n` } });
     const github = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r' }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new MergedPr42(), now: fx.now, runner: script });
-    const card = fx.card('T1-FACTS');
-    const dry = fx.runner();
-    let r = dry.next(fx.goal(after.id), card, fx.controller.ensureCardRun(fx.goal(after.id), 'T1-FACTS'));
-    r = dry.next(fx.goal(after.id), card, r.run);
-    r = github.next(fx.goal(after.id), card, dry.recordAttempt(fx.goal(after.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: head }));
-    assert.equal(r.directive.kind, 'close', r.directive.narration);
+    const shipWithFacts = (goalId: string, cardId: string) => {
+      const card = fx.card(cardId);
+      const dry = fx.runner();
+      let r = dry.next(fx.goal(goalId), card, fx.controller.ensureCardRun(fx.goal(goalId), cardId));
+      r = dry.next(fx.goal(goalId), card, r.run);
+      r = github.next(fx.goal(goalId), card, dry.recordAttempt(fx.goal(goalId), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: head }));
+      assert.equal(r.directive.kind, 'close', r.directive.narration);
+    };
+    shipWithFacts(after.id, 'T1-FACTS');
     sealed(fx, after.id);
-    const verify = (goalId: string) => {
-      const out = spawnSync(process.execPath, [MAIN, 'audit', 'verify', '--goal', goalId, '--claim-full', '--capture-boundary', '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 60_000 });
+    const verify = (goalId: string, ...flags: string[]) => {
+      const out = spawnSync(process.execPath, [MAIN, 'audit', 'verify', '--goal', goalId, ...flags, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 60_000 });
       assert.equal(out.status, 0, out.stderr);
       return (JSON.parse(out.stdout) as Array<{ level: string; fullyAuditedStatus: string; prerequisite?: string; findings: unknown[] }>)[0]!;
     };
-    const old = verify(before.id);
+    const claim = ['--claim-full', '--capture-boundary'];
+    const old = verify(before.id, ...claim);
     assert.equal(old.level, 'independently-verified', JSON.stringify(old.findings));
     assert.equal(old.fullyAuditedStatus, 'BLOCKED/capability');
     assert.equal(old.prerequisite, 'no re-derived fact for shipped card(s): T1-HELLO, T1-WORLD');
-    const withFacts = verify(after.id);
-    const gh = (fact: string, value: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `T1-FACTS ${fact}: recorded ${value}, not re-derived (gh)` });
-    assert.deepEqual(withFacts.findings, [gh('pr 42 state', 'MERGED'), gh('mergeSha', merge), gh('headSha', head)], 'git re-derived the commit, its tree and its place on main');
+    const withFacts = verify(after.id, ...claim);
+    const gh = (card: string, fact: string, value: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${value}, not re-derived (gh)` });
+    const ghFacts = (card: string) => [gh(card, 'pr 42 state', 'MERGED'), gh(card, 'mergeSha', merge), gh(card, 'headSha', head)];
+    assert.deepEqual(withFacts.findings, ghFacts('T1-FACTS'), 'git re-derived the commit, its tree and its place on main; no FACT_MISSING');
     assert.equal(withFacts.level, 'independently-verified');
     assert.equal(withFacts.fullyAuditedStatus, 'verified');
     assert.equal(withFacts.prerequisite, undefined);
+    // T1-AUDIT-FACTS-2 acceptance 10 [R6]: plain verify names every shipped card without facts, and only those, in a mixed goal too.
+    const missing = (card: string) => ({ severity: 'warn', code: 'FACT_MISSING', detail: `${card}: its merge result carries no facts` });
+    assert.deepEqual(verify(before.id).findings, [missing('T1-HELLO'), missing('T1-WORLD')]);
+    writeCard(fx, { id: 'T1-MIXED', title: 'a merge with facts' });
+    writeCard(fx, { id: 'T1-PLAIN', title: 'a merge without facts' });
+    const mixed = goalForCards(fx, ['T1-MIXED', 'T1-PLAIN']);
+    shipWithFacts(mixed.id, 'T1-MIXED');
+    driveCardToDone(fx, mixed.id, 'T1-PLAIN');
+    assert.deepEqual(verify(mixed.id).findings, [...ghFacts('T1-MIXED'), missing('T1-PLAIN')]);
+    const mixedClaim = verify(mixed.id, ...claim);
+    assert.deepEqual([mixedClaim.fullyAuditedStatus, mixedClaim.prerequisite], ['BLOCKED/capability', 'audit level is traceable; resolve blocking findings; no re-derived fact for shipped card(s): T1-PLAIN']);
   } finally {
     fx.cleanup();
   }

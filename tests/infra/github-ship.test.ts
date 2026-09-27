@@ -47,7 +47,6 @@ function runnerWith(overrides: Record<string, Partial<ExecReceipt> | ((args: str
     'git rev-parse --verify HEAD': { stdout: HEAD + '\n' },
     [FETCH]: {},
     [RESOLVE_REMOTE]: { stdout: BASE_OID + '\n' },
-    [`git rev-parse ${'b'.repeat(40)}^{tree}`]: { stdout: `${'c'.repeat(40)}\n` },
     [RESOLVE_LOCAL]: { stdout: BASE_OID + '\n' },
     [MERGE_TREE]: { stdout: 'e'.repeat(40) + '\n' },
     [MERGE_HEAD]: { stdout: 'f'.repeat(40) + '\n' },
