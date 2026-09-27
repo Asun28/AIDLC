@@ -276,11 +276,12 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
   });
 
   test('a key written without a space after its colon is reported, top-level and nested, as the readers read and cut it [R2]', () => {
-    const r = parseCardText(templateCard({}, `sweep:see issue ${H}12\ndiagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
+    const r = parseCardText(templateCard({}, `sweep:see issue ${H}12\nhygiene :see issue ${H}13\ndiagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
     assert.ok(!('error' in r));
     assert.equal(r.card.sweep, 'see issue', 'the reader reads the top-level key and cuts it');
+    assert.equal(r.card.hygiene, 'see issue', 'the reader reads a key with a space before its colon and none after it');
     assert.equal(r.card.diagnosis?.same_class, 'see issue', 'the reader reads the nested key and cuts it');
-    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('hygiene', `see issue ${H}13`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
   });
 
   test('the body of a literal or a folded block scalar is text under a plain key, a quoted key, a key with an anchor or a tag, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
