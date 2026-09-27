@@ -338,6 +338,9 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
   /** The Sessions sentence: the same, with the takeover's nested hold and every window that remains, each with its recovery. */
   const LOCK_SESSIONS =
     "Every lease write, every card-run write, the takeover's ledger check and a ship's fence and intent run under one exclusive lock per record (`updateJson`, `<file>.lock`), and every run write of a takeover, the assessment's saves included, holds the card-run lock and then the lease lock until the run record is on disk, while `recordAttempt` and a raw `card report` patch stay unfenced, goal, release and review-pool records stay last-writer-wins, a takeover whose process ends between the lease write and the run update is completed by running `aidlc card takeover` again, and a review commit, reservation or finding disposition whose fence read the lease before a takeover's lease write still lands, ahead of that takeover's run update.";
+  /** The Sessions sentence: the release's two steps, the window the ruling of 2026-09-27 accepted. */
+  const RELEASE_GAP =
+    'A writer releases its own lock in two steps, a read that finds its own text and then the unlink, so a lock deleted by hand and replaced between the two is removed as well; deleting only the lock of a process confirmed dead, as above, keeps that from happening (ruling of 2026-09-27).';
   /** The Sessions sentence: the recovery step for a lock whose owner process is gone. */
   const RECOVERY =
     "A lock whose owner process is gone is never removed automatically: the command refuses with `LOCKED` naming the lock file and the process id; delete that file only once that process is confirmed dead, then run the command again.";
@@ -362,6 +365,8 @@ describe('one lock primitive in the docs (T1-STORE-CAS-2)', () => {
   test('acceptance 13: the Sessions section states the recovery step for a lock whose owner process is gone [R7]', () => {
     assert.equal(RECOVERY.split(SENTENCE_BREAK).length, 1, 'one sentence');
     assert.ok(sessions().includes(RECOVERY), `docs/OPERATIONS.md Sessions states: ${RECOVERY}`);
+    assert.equal(RELEASE_GAP.split(SENTENCE_BREAK).length, 1, 'the release gap is one sentence');
+    assert.ok(sessions().includes(RELEASE_GAP), `docs/OPERATIONS.md Sessions states: ${RELEASE_GAP}`);
   });
 
   test('acceptance 10: CHANGELOG.md Unreleased carries the entry, docs/ARCHITECTURE.md keeps the card-run lock phrase and states the primitive, and docs/OPERATIONS.md describes the lock [R1]', () => {
