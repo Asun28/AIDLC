@@ -86,9 +86,13 @@ describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
       assert.match(r.detail, /exit 0 without the adapter's merge contract/, JSON.stringify(text));
     }
     assert.equal(classifyShipOutput(receipt('PR #7 MERGED', 0)).prNumber, 7, 'the PR the ship reported travels to the reconcile');
-    assert.equal(classifyShipOutput(receipt('[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', 0)).outcome, 'merge-failed', 'a failure sentinel on exit 0 fails closed');
+    // Ruling of aidlc-37: main read an exit 0 without [SAGA-FAIL] as merged, so a failure sentinel on it is verified, not a failure.
+    assert.equal(classifyShipOutput(receipt('[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', 0)).outcome, 'merge-unconfirmed');
     // R3 decision 1 F1: [SAGA-FAIL] with no mapped sentinel stays unclassified, as before this card.
     assert.equal(classifyShipOutput(receipt('[SAGA-FAIL] leg failed', 0)).outcome, 'unclassified');
+    for (const text of ['[SAGA-FAIL] CI-gate\n[CI-GATE-RED] job ci red\nPR #7 MERGED', '[SAGA-FAIL] leg failed\nmerged_pr=#7', '[SAGA-FAIL] leg failed 合并']) {
+      assert.equal(classifyShipOutput(receipt(text, 0)).outcome, 'merge-unconfirmed', `a merge word beside [SAGA-FAIL] routes to verification: ${JSON.stringify(text)}`);
+    }
     // R3 decision 1 F2, ruled by aidlc-37: [SAGA-DONE] beside a failure marker is conflicting evidence, so gh decides.
     for (const text of ['[SAGA-DONE]\n[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', '[CI-GATE-RED] job ci red\n[SAGA-DONE]', '[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate', '[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate\n[CI-GATE-RED] job ci red\n']) {
       assert.equal(classifyShipOutput(receipt(text, 0)).outcome, 'merge-unconfirmed', JSON.stringify(text));
@@ -126,6 +130,29 @@ describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
     assert.equal(unconfirmed.receipt.exitCode, 0);
     assert.equal(classifyShipOutput(unconfirmed.receipt).outcome, 'merge-unconfirmed');
     assert.equal(new DryRunShipPath(['ci-red']).ship(req).receipt.exitCode, 1, 'a failure still exits 1');
+  });
+});
+
+describe('delivery/ship merge contract rule (T0-EXIT-ZERO-NOT-MERGED-3)', () => {
+  /** What main read as merged on exit 0: [SAGA-DONE], a merge word, no sentinel, or no [SAGA-FAIL] (ship.ts on main 390d43e). */
+  const mainReadMerged = (text: string) => /\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || [...text.matchAll(/\[[A-Z0-9-]+\]/g)].length === 0 || !/\[SAGA-FAIL\]/.test(text);
+  const parts = ['[SAGA-DONE]', '[SAGA-FAIL] leg', '[CI-GATE-RED] ci', '[SHIP-MERGE-FAIL] x', '[SHIP-TIME] 3s', '[CI-GATE-PASS] {"name":"check-secrets"}', 'PR #7 MERGED', '合并', 'merged_pr=#7', 'DoD 未通过', 'all good'];
+  const texts: string[] = [''];
+  for (let a = 0; a < parts.length; a++) {
+    texts.push(parts[a]!);
+    for (let b = a + 1; b < parts.length; b++) {
+      texts.push(`${parts[a]}\n${parts[b]}`);
+      for (let c = b + 1; c < parts.length; c++) texts.push(`${parts[a]}\n${parts[b]}\n${parts[c]}`);
+    }
+  }
+  it('every exit-0 receipt main read as merged is merged or merge-unconfirmed, and every other keeps its failure class', () => {
+    assert.ok(texts.length > 200, `${texts.length} receipts`);
+    for (const text of texts) {
+      const outcome = classifyShipOutput(receipt(text, 0)).outcome;
+      if (mainReadMerged(text)) assert.ok(outcome === 'merged' || outcome === 'merge-unconfirmed', `main read merged, now ${outcome}: ${JSON.stringify(text)}`);
+      else assert.ok(outcome !== 'merged' && outcome !== 'merge-unconfirmed', `main read a failure, now ${outcome}: ${JSON.stringify(text)}`);
+      if (outcome === 'merged') assert.ok(text.includes('[SAGA-DONE]') && !text.includes('[SAGA-FAIL]'), `merged only on the contract: ${JSON.stringify(text)}`);
+    }
   });
 });
 

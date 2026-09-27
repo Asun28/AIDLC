@@ -121,10 +121,12 @@ for (const [state, head, why] of [['OPEN', HEAD, 'open at the candidate'], ['CLO
   });
 }
 
-test('T0-EXIT-ZERO-NOT-MERGED acceptance 3: gh answering wins over the merge token: a token at the candidate with the PR OPEN stops, a stale token with the PR MERGED at the candidate closes [R2]', () => {
+test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 3: a token at the candidate is the scaffold merge contract and closes whatever gh answers (the local merge, the PR OPEN); over a stale token gh decides [R2]', () => {
   const fx = makeFixture();
   try {
-    assertNotMerged(shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghView('OPEN', HEAD) }), 'OPEN', HEAD);
+    const s = shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD }), { repository: 'o/r', exec: ghView('OPEN', HEAD) });
+    assert.equal(s.out.directive.kind, 'close', `the scaffold local merge closes: ${s.out.directive.narration}`);
+    assert.equal(s.op.status, 'succeeded');
   } finally {
     fx.cleanup();
   }
@@ -215,12 +217,16 @@ test('T0-EXIT-ZERO-NOT-MERGED-2 acceptance 4: a run with no candidate sha whose 
   }
 });
 
-test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: the dry-run path does not verify a merge-unconfirmed ship [R2]', () => {
-  const fx = makeFixture();
-  try {
-    assertUnknown(shipped(fx, () => new ExitZero('all good'), { shipPath: 'dry-run' }));
-  } finally {
-    fx.cleanup();
+test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 4: the dry-run path, which merges nothing, verifies a merge-unconfirmed ship as main verified a merged one, whatever gh answers [R2]', () => {
+  for (const options of [{ shipPath: 'dry-run' as const }, { shipPath: 'dry-run' as const, repository: 'o/r', exec: ghView('OPEN', HEAD) }, { shipPath: 'dry-run' as const, repository: 'o/r', exec: ghView('CLOSED', OTHER), candidateSha: null }]) {
+    const fx = makeFixture();
+    try {
+      const s = shipped(fx, () => new ExitZero('all good'), options);
+      assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+      assert.equal(s.op.status, 'succeeded');
+    } finally {
+      fx.cleanup();
+    }
   }
 });
 
