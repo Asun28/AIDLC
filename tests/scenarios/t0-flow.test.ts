@@ -5074,8 +5074,11 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F4: a card deadline stop whose save is re
     const refused = await failOnce('renameSync', renameTo(fx.store.cardFile(goal.id, 'T1-RETRY')), () => fx.runner().next(fx.goal(goal.id), fx.card('T1-RETRY'), run));
     assert.match(String(refused), /injected renameSync failure/);
     assert.notEqual(fx.store.getCardRun(goal.id, 'T1-RETRY')?.state, 'STOP', 'the refused save left no stop');
+    fx.advance(60_000); // the key is never read from the clock
     assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-RETRY'), run).run.stop?.reason, 'time');
     assert.equal(boundsOf(fx, goal.id), 'Bounds: card-deadline 1 (DONE 0, open 1)');
+    for (let i = 0; i < 3; i += 1) fx.runner().next(fx.goal(goal.id), fx.card('T1-RETRY'), run);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['key']), [`${goal.id}/T1-RETRY/card-deadline/${run.deadline}`], 'one journal entry per key');
   } finally {
     fx.cleanup();
   }
@@ -5090,8 +5093,11 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F5: a goal deadline stop whose goal save 
     const refused = await failOnce('renameSync', renameTo(fx.store.goalFile(goal.id)), () => fx.controller.next(goal.id));
     assert.match(String(refused), /injected renameSync failure/);
     assert.equal(fx.goal(goal.id).terminal, false, 'the refused save left the goal open');
+    fx.advance(60_000); // the key is never read from the clock
     assert.equal(fx.controller.next(goal.id).kind, 'stop');
     assert.equal(boundsOf(fx, goal.id), 'Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)');
+    for (let i = 0; i < 3; i += 1) fx.controller.next(goal.id);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['key']), [`${goal.id}/-/arc-deadline/${goal.deadlines.goalDeadline}`], 'one journal entry per key');
   } finally {
     fx.cleanup();
   }
@@ -5175,6 +5181,29 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: a command-path R3 stop is never saved
     assert.equal(f.classified.outcome, 'no-verdict');
     const second = runner.next(fx.goal(goal.id), card, f.run).run;
     await firingFailsOnce(fx, goal.id, 'T1-NVF', () => runner.formalReview(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVF') ?? second), 'review', 'no-verdict-retry');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY R3 decision 1, condition 2: a ship-path no-verdict stop whose save is refused, then stopped by the card selection, is one journal entry under one key from persisted facts', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-NVK', title: 'the no-verdict stop save is refused once', tier: 'S', reviewGate: 'codex {verdict:pass}' });
+    const goal = goalForCards(fx, ['T1-NVK']);
+    const runner = fx.runner(new DryRunShipPath(['review-no-verdict']));
+    const card = fx.card('T1-NVK');
+    const r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-NVK'));
+    const run = runner.next(fx.goal(goal.id), card, runner.recordAttempt(fx.goal(goal.id), card, runner.next(fx.goal(goal.id), card, r.run).run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-nvk' })).run;
+    assert.equal(run.review.noVerdictRetriesUsed, 1, 'the first no-verdict is the retry');
+    const stopWrite = (args: unknown[]) => renameTo(fx.store.cardFile(goal.id, 'T1-NVK'))(args) && /"state":\s*"STOP"/.test(readFileSync(String(args[0]), 'utf8'));
+    const refused = await failOnce('renameSync', stopWrite, () => runner.next(fx.goal(goal.id), card, run));
+    assert.match(String(refused), /injected renameSync failure/);
+    fx.advance(60_000);
+    const stopped = runner.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-NVK')!);
+    assert.equal(stopped.run.stop?.reason, 'review', stopped.directive.narration);
+    for (let i = 0; i < 3; i += 1) runner.next(fx.goal(goal.id), card, stopped.run);
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['key']), [`${goal.id}/T1-NVK/no-verdict-retry/sha-nvk`]);
   } finally {
     fx.cleanup();
   }

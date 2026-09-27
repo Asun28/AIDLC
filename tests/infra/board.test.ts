@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { outcomeOf, renderBoard } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -160,11 +160,34 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.ok(board.split('\n').includes(expected), 'the line starts with Bounds:');
       assert.equal(readFileSync(path.join(fx.paths.board, `${quiet.id}.md`), 'utf8'), board, 'the board file carries the same line');
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(c))), [expected], 'every goal board carries the same line');
-      // A goal journal that does not parse is left out of the line and never blocks the board of another goal.
+      // R3 decision 1 F7: a journal with a line that does not parse keeps its readable firings and is named, never read as none fired.
       const broken = goalForCards(fx, ['T1-D']).id;
       fire(broken, 'arc-deadline');
       appendFileSync(fx.journal(broken).file, 'not a journal line\n', 'utf8');
-      assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), [expected]);
+      const named = expected.replace('; review-decisions', '; arc-deadline 1 (DONE 0, open 1); review-decisions') + `; incomplete: lines that do not parse in "${broken}"`;
+      assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(quiet.id))), [named]);
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('R3 decision 1 F8: a goal record that does not parse blocks neither another goal\'s stop nor its Bounds line', () => {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      writeFileSync(path.join(fx.paths.goals, 'g-damaged.json'), '{ not json', 'utf8');
+      fx.advance(3 * 3600_000 + 60_000);
+      const kind = (() => {
+        try {
+          return fx.controller.next(goal.id).kind;
+        } catch (err) {
+          return String(err);
+        }
+      })();
+      assert.equal(kind, 'stop', 'the goal deadline stop is saved');
+      assert.equal(fx.goal(goal.id).terminal, true);
+      assert.deepEqual(boundsLines(readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8')), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)']);
     } finally {
       fx.cleanup();
     }
@@ -201,12 +224,13 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
     const operations = read('docs', 'OPERATIONS.md');
     for (const sentence of [
       '- Each bound of the README Limits table journals one `BOUND_FIRED` event when it fires (card T1-BOUND-TELEMETRY), whose payload `{ bound, key }` names it: `card-deadline`, `arc-deadline`, `reconciliation-grace`, `review-decisions`, `no-verdict-retry`, `ci-rerun-allowed`, `ci-rerun-denied`, `attempts`, `planning-invocations` or `integration-repair`; an event that names another bound, or no key, fails to parse. The worker cap is a cap, not a firing, and the lifecycle repair bound is defined and not enforced, so neither is journaled.',
-      '- The event is journaled before the stop or state the firing causes is saved, and its `key` names the firing: the goal, the card when there is one, the bound and the value that fired it (the card or goal deadline, the candidate with its decision or no-verdict count, the number of attempts of the effort episode, the CI run id, the planning invocation count or the repair cycle count). A retry after a failed save journals the same key again, so the journal can hold one firing twice; the board counts each key once.',
+      '- The event is journaled before the stop or state the firing causes is saved, under the lock that guards that save (the card-run lock for a card firing; a goal firing is guarded by the goal lease), and only when the journal holds no `BOUND_FIRED` with the same key. The key names the firing from persisted facts only, never the clock: the goal, the card when there is one, the bound and the stored card or goal deadline, the candidate digest (review decisions, no-verdict retry, CI rerun), the number of attempts recorded on the effort episode, the planning invocation count or the repair cycle count. A retry after a refused save finds its key and journals nothing more, and a later `card next` or `aidlc next` on the stopped card or goal journals nothing.',
       '- The board prints one line over every goal journal in the state directory, `Bounds: <bound> <n> (DONE a, STOP/<reason> b, open c); ...`: the fired bounds in that order, the number of distinct firings of each, and for each firing the first terminal event of its goal after its first entry (`GOAL_DONE` is DONE, `GOAL_STOPPED` is STOP with its reason, none yet is open). With no firing the line is `Bounds: none fired`.',
+      '- The line reads every goal journal file of the state directory, whatever the goal records say, one line at a time: a line that does not parse is left out and the Bounds line ends with `; incomplete: lines that do not parse in "<journal>"`, naming each such journal, so a damaged journal never reads as none fired and never blocks another goal or its stop.',
     ]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = '- Bound telemetry, card T1-BOUND-TELEMETRY: each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. Each event carries a key naming the firing and is journaled before the stop it causes is saved, and the board counts each key once, so a retry after a failed save neither loses nor doubles a firing. The README Limits table says the lifecycle repair bound is defined and not enforced.';
+    const entry = '- Bound telemetry, card T1-BOUND-TELEMETRY: each bound of the README Limits table journals one `BOUND_FIRED` event naming it when it fires (the card and arc deadlines, the reconciliation grace, the review decisions, the no-verdict retry, a CI rerun allowed or denied, the implementation attempts, the planning invocations and the integration repair cycle), and `aidlc board` prints one `Bounds:` line with the number of firings of each bound and the goal outcomes that followed them, so the defaults can be judged from data. Each event carries a key naming the firing from persisted facts and is journaled once per key, before the stop it causes is saved, so a retry after a refused save neither loses nor doubles a firing; the board reads every goal journal file line by line and names a journal with lines that do not parse. The README Limits table says the lifecycle repair bound is defined and not enforced.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
