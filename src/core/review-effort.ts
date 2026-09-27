@@ -13,11 +13,15 @@ export interface ReviewEffortInput {
 /** Whether a changed path matches one of the globs. */
 export type PathMatcher = (changedPath: string, globs: string[]) => boolean;
 
-/** `medium` without a policy; `high` when the changed lines reach `high.minChangedLines` or a changed path matches `high.paths`; the policy's `default` otherwise. */
+/**
+ * `medium` without a policy; `xhigh` when the changed lines reach `xhigh.minChangedLines` or a changed path matches
+ * `xhigh.paths`; else `high` on the same test of the `high` rule; the policy's `default` otherwise.
+ */
 export function selectReviewEffort(policy: ReviewEffortPolicy | undefined, input: ReviewEffortInput, matches: PathMatcher): ReviewEffortLevel {
   if (!policy) return 'medium';
-  const high = policy.high;
-  if (high && (input.changedLines >= high.minChangedLines || input.changedPaths.some((p) => matches(p, high.paths)))) return 'high';
+  const reached = (rule: { minChangedLines: number; paths: string[] }) => input.changedLines >= rule.minChangedLines || input.changedPaths.some((p) => matches(p, rule.paths));
+  if (policy.xhigh && reached(policy.xhigh)) return 'xhigh';
+  if (policy.high && reached(policy.high)) return 'high';
   return policy.default;
 }
 
@@ -42,10 +46,10 @@ export function countDiffLines(diff: string): number {
  * The level for the collected candidate diff: its hunk lines counted, and the path rule matched against the changed paths
  * alone, which name a renamed file by its source and its destination (`collectCandidateDiff` lists them with `--no-renames`).
  * Fail closed: a non-empty diff with no `diff --git ` section (coloured, or written by an external driver) is not a count of
- * zero and selects `high`, or the policy's `xhigh` or `max` default when that is higher.
+ * zero and selects `high`, `xhigh` under an `xhigh` rule, or the policy's `xhigh` or `max` default when that is higher.
  */
 export function selectReviewEffortFromDiff(policy: ReviewEffortPolicy | undefined, diff: string, changedPaths: string[], matches: PathMatcher): ReviewEffortLevel {
   const lines = diff.split(/\r?\n/);
-  if (diff.trim() && !lines.some((l) => l.startsWith('diff --git '))) return policy?.default === 'xhigh' || policy?.default === 'max' ? policy.default : 'high';
+  if (diff.trim() && !lines.some((l) => l.startsWith('diff --git '))) return policy?.default === 'xhigh' || policy?.default === 'max' ? policy.default : policy?.xhigh ? 'xhigh' : 'high';
   return selectReviewEffort(policy, { changedLines: countDiffLines(diff), changedPaths }, matches);
 }
