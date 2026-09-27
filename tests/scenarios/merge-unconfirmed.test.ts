@@ -236,15 +236,17 @@ const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'ut
 
 /** The sentences this card adds to docs/OPERATIONS.md. */
 const OPERATIONS_SENTENCES = [
-  "A ship is `merged` only on its adapter's merge contract, the `[SAGA-DONE]` sentinel without `[SAGA-FAIL]` (card T0-EXIT-ZERO-NOT-MERGED): an exit 0 without it is `merge-unconfirmed`, never a merge read from the words of the output, and a scaffold success, which prints no sentinel, is one.",
+  "A ship is `merged` only on its adapter's merge contract, the `[SAGA-DONE]` sentinel beside no failure marker, neither `[SAGA-FAIL]` nor a bracketed sentinel of the sentinel map (card T0-EXIT-ZERO-NOT-MERGED): an exit 0 without it is `merge-unconfirmed`, never a merge read from the words of the output, and a scaffold success, which prints no sentinel, is one.",
+  "`[SAGA-DONE]` beside a failure marker is conflicting evidence and `merge-unconfirmed` too, so gh decides whether the PR merged, while an exit 0 that reports `[SAGA-FAIL]` with no mapped sentinel stays `unclassified`.",
   'The card machine reconciles a `merge-unconfirmed` ship from the PR the ship reported or its merge token names: when gh answers, a PR MERGED at the candidate closes the card, and a PR OPEN, CLOSED or MERGED at another head stops it as `tool` with the operation failed (merge the PR by hand, then register a replacement card and resume the goal).',
+  'gh answers only with a PR view whose number is the PR asked for, whose state is OPEN, MERGED or CLOSED and whose head is named; any other answer counts as none.',
   'Only when gh does not answer does the merge token decide: a tip at the candidate closes the card, and a stale tip or no token leaves the operation `UNKNOWN` while the card waits on `merge-verify` until the reconciliation grace ends.',
 ];
 /** The phrase this card adds to docs/ARCHITECTURE.md (the outcome to state map). */
 const ARCHITECTURE_PHRASE = "merge-unconfirmed -> CLOSE, STOP/tool or WAIT (gh's PR view first, then the merge token; card T0-EXIT-ZERO-NOT-MERGED)";
 /** The CHANGELOG entry, one line under Unreleased. */
 const CHANGELOG_ENTRY =
-  '- Exit 0 is not a merge, card T0-EXIT-ZERO-NOT-MERGED (issue 76 item 3): `classifyShipOutput` classifies an exit-0 ship as `merged` only on the `[SAGA-DONE]` sentinel without `[SAGA-FAIL]`, where it used to accept `MERGED`, 合并 or `merged_pr=` in the text, no sentinel, or no `[SAGA-FAIL]`; any other exit 0 is the new outcome `merge-unconfirmed`, which the card machine reconciles from gh\'s PR view, then the merge token: a merge at the candidate closes the card, a PR gh reads as not merged at the candidate stops it as `tool`, and one gh cannot answer waits with the operation `UNKNOWN`. A scaffold success, which prints no sentinel, now takes that path, and `DryRunShipPath` prints `[SAGA-DONE]` on `merged`.';
+  '- Exit 0 is not a merge, card T0-EXIT-ZERO-NOT-MERGED (issue 76 item 3): `classifyShipOutput` classifies an exit-0 ship as `merged` only on the `[SAGA-DONE]` sentinel beside no failure marker, where it used to accept `MERGED`, 合并 or `merged_pr=` in the text, no sentinel, or no `[SAGA-FAIL]`; `[SAGA-DONE]` beside a failure marker, and any other exit 0 that does not report `[SAGA-FAIL]`, is the new outcome `merge-unconfirmed`, which the card machine reconciles from gh\'s PR view (counted only when it names the PR asked for, a known state and a head), then the merge token: a merge at the candidate closes the card, a PR gh reads as not merged at the candidate stops it as `tool`, and one gh cannot answer waits with the operation `UNKNOWN`. A scaffold success, which prints no sentinel, now takes that path, and `DryRunShipPath` prints `[SAGA-DONE]` on `merged`.';
 
 test('T0-EXIT-ZERO-NOT-MERGED acceptance 5: docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md Unreleased state the rule [R4]', () => {
   const operations = read('docs', 'OPERATIONS.md');

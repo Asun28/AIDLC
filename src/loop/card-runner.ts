@@ -2350,7 +2350,11 @@ export class CardRunner {
       }
       let mergeVerified = false;
       const sha = run.candidate?.sha;
-      if (unconfirmed) mergeVerified = view ? view.state === 'MERGED' && !!sha && view.headRefOid === sha : !!sha && token?.tip === sha;
+      // gh answers an unconfirmed ship only with the PR it asked for, in a known state, at a named head; any other answer counts
+      // as none (R3 decision 1 F3, F4). A merged ship reads its view as before (issue 131).
+      const answered = view && view.number === pr && ['OPEN', 'MERGED', 'CLOSED'].includes(view.state) && typeof view.headRefOid === 'string' && view.headRefOid !== '' ? view : undefined;
+      const checked = unconfirmed ? answered : view;
+      if (unconfirmed) mergeVerified = answered ? answered.state === 'MERGED' && !!sha && answered.headRefOid === sha : !!sha && token?.tip === sha;
       else if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
       else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
@@ -2358,11 +2362,11 @@ export class CardRunner {
       // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
       // read leaves the result without facts; audit verify names the card (FACT_MISSING).
       let facts: ShippedFacts | undefined;
-      if (mergeVerified && view?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
-        facts = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number }).data;
+      if (mergeVerified && checked?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
+        facts = ShippedFacts.safeParse({ headSha: checked.headRefOid, mergeSha: checked.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, checked.mergeCommit), pr: checked.number }).data;
       }
-      if (unconfirmed && view && !mergeVerified) {
-        const seen = view;
+      if (unconfirmed && answered && !mergeVerified) {
+        const seen = answered;
         const stop = makeStop('tool', `ship exited 0 without its merge contract and gh reads PR #${pr} as ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}, not merged at the candidate ${sha ?? '(no candidate sha)'}`, `merge PR #${pr} by hand once its head is the candidate, or find why the ship path exited 0 without merging`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
         return finish(() => ({ state: 'STOP', stop }), (next) => {
           this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` });
@@ -2370,7 +2374,7 @@ export class CardRunner {
           return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         });
       }
-      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
+      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : 'merge reported but not verified against the intended base' });
         this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
