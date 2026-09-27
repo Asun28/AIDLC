@@ -1,7 +1,7 @@
 ---
 id: T0-TOOL-STOP-TEXT
 title: The pre-review and ship tool stops name the one way on that exists, a replacement card through goal resume, and never card next, which returns the same stop (issue 85 item 2)
-status: todo
+status: merged
 branch: T0-TOOL-STOP-TEXT
 worktree: D:\wt\AIDLC\T0-TOOL-STOP-TEXT
 allow_paths:

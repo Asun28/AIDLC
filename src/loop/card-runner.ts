@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -1218,7 +1218,9 @@ export class CardRunner {
       }
       disputedNote = ` Every finding of the last decision on this candidate is disputed; the next decision runs on the unchanged candidate with the author's notes.`;
     }
-    const { cfg, waitUntil } = this.formalReviewerNow(run, digest, now);
+    const { cfg, waitUntil: held } = this.formalReviewerNow(run, digest, now);
+    // The reviewer's pool can keep a later reset than its own hold (issue 54): the wait names the hold the pool keeps.
+    const waitUntil = held && this.queue.heldUntil(this.formalPool(goal, cfg), held, now);
     if (waitUntil) {
       const next = this.save({ ...run, state: 'WAIT' });
       const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
@@ -2279,9 +2281,11 @@ export class CardRunner {
     // The queue slot and the operation are settled before the outcome is applied. Only a review-no-verdict outcome holds the
     // pool on a quota message: the receipt is the output of the whole ship command (git, gh, the CI gate log), so any other
     // outcome settles its request whatever quota words it carries, and a merged or CI-red ship never leaves its request held.
-    const holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
+    let holdUntil = new Date(Date.parse(now) + 15 * 60 * 1000).toISOString();
     if (result.outcome === 'review-no-verdict' && classified.outcome === 'quota-hold') {
       this.queue.hold(reviewKey, holdUntil, 'reviewer reported rate limit/quota', now);
+      // The pool can keep a later reset than this hold (issue 54): the wait below names the hold the pool keeps.
+      holdUntil = this.queue.heldUntil(goal.reviewPool, holdUntil, now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
     } else if (result.outcome === 'unclassified' && result.receipt.timedOut) {
       this.queue.markLost(reviewKey, 'ship timed out; look up the review before releasing the slot', now);
@@ -2329,20 +2333,29 @@ export class CardRunner {
     if (result.outcome === 'merged') {
       const token = this.shipPath.readMergeToken(card.id);
       const pr = result.prNumber ?? token?.mergedPr;
+      // The PR as GitHub reports it: the merge check when the token does not settle it, and the facts of a verified merge.
+      let view: PrInfo | undefined;
+      if (pr && this.config.repository) {
+        try {
+          view = this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
+        } catch {
+          view = undefined;
+        }
+      }
       let mergeVerified = false;
       if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
-      else if (pr && this.config.repository) {
-        try {
-          const view = this.gh.prView(this.config.repository, pr, this.repo.mainRoot);
-          mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
-        } catch {
-          mergeVerified = false;
-        }
+      else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
+      // The facts ride in the merge's one result (card T1-AUDIT-FACTS-2), from gh and git only, never from the ship output or the
+      // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
+      // read leaves the result without facts; audit verify names the card (FACT_MISSING).
+      let facts: ShippedFacts | undefined;
+      if (mergeVerified && view?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
+        facts = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number }).data;
       }
       return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : 'merge reported but not verified against the intended base' });
-        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN' } });
+        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
       });
     }

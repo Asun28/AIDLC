@@ -7,7 +7,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 import { reviewerEnv } from '../../src/review/pre-review.ts';
-import { RECONCILE_GRACE_MS, type CardRun, type ReviewInvocation, type Verdict } from '../../src/core/types.ts';
+import { RECONCILE_GRACE_MS, addMs, type CardRun, type ReviewInvocation, type Verdict } from '../../src/core/types.ts';
 
 const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
 const BLOCK = '{"verdict":"block","reasons":["[spec] 6 tests @ src/t0-fb.ts:1: no RED -> add a failing test"],"axes":{"spec":{"verdict":"block","reasons":["tests"]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -735,5 +735,58 @@ test('T0-R3-RECONCILE-TIMEOUT acceptance 3: a pending fallback decision with no 
     await assertReconciledAt(s, s.runner, invocationId, TEN_MIN);
   } finally {
     s.fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-RESET (issue 54): a formal-review quota wait names the later reset the reviewer pool already keeps', async () => {
+  const { fx, runner, card, g, primary, hooks, run } = await atReview(false);
+  try {
+    const later = addMs(fx.now(), 90_000);
+    hooks.onPrimary = () => {
+      const pool = g().reviewPool;
+      const other = fx.queue.enqueue({ pool, repository: 'Asun28/other', candidateDigest: 'other-1', base: 'main', policyVersion: 'p', reviewer: 'primary', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() }).request;
+      fx.queue.hold(other.key, later, 'another card held the pool longer', fx.now());
+    };
+    primary.push(HOLD_60);
+    const f = await runner.formalReview(g(), card, run);
+    assert.equal(f.classified.outcome, 'quota-hold');
+    const r = runner.next(g(), card, f.run);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') {
+      assert.equal(r.directive.on, 'review-quota');
+      assert.equal(r.directive.pollSeconds, 90, 'the pool reset, not the 60-second hold');
+      assert.ok(r.directive.narration.includes(`holding until ${later}`), r.directive.narration);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-RESET (issue 54): with both reviewers held the wait names the chosen reviewer and its own pool reset, never the other pool', async () => {
+  const { fx, runner, card, g, primary, backup, hooks, run } = await atReview();
+  try {
+    const own = addMs(fx.now(), 90_000);
+    const others = addMs(fx.now(), 150_000);
+    const holdPool = (pool: string, until: string, digest: string) => {
+      const other = fx.queue.enqueue({ pool, repository: 'Asun28/other', candidateDigest: digest, base: 'main', policyVersion: 'p', reviewer: 'x', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() }).request;
+      fx.queue.hold(other.key, until, 'another card held the pool longer', fx.now());
+    };
+    hooks.onPrimary = () => holdPool(`${g().reviewPool}/primary`, own, 'other-p');
+    hooks.onBackup = () => holdPool(`${g().reviewPool}/backup`, others, 'other-b');
+    primary.push(HOLD_60);
+    let f = await runner.formalReview(g(), card, run);
+    let r = runner.next(g(), card, f.run);
+    assert.equal(reviewerOf(r.directive), 'backup');
+    backup.push(HOLD_120);
+    f = await runner.formalReview(g(), card, r.run);
+    r = runner.next(g(), card, f.run);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') {
+      assert.equal(r.directive.pollSeconds, 90, "the primary's earlier hold, raised to its own pool's reset");
+      assert.ok(r.directive.narration.includes(`holding until ${own}`), r.directive.narration);
+      assert.ok(!r.directive.narration.includes(others), 'never the other pool');
+    }
+  } finally {
+    fx.cleanup();
   }
 });
