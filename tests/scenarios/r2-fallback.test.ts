@@ -55,7 +55,7 @@ function setup(options: Options = {}) {
   const primary: Output[] = [];
   const secondary: Output[] = [];
   const calls: string[][] = [];
-  const hooks: { onDiff?: () => void } = {};
+  const hooks: { onDiff?: () => void; onReview?: (command: string) => void } = {};
   /** The spawn options of every reviewer call: the shell and the timeout the dispatch chose. */
   const spawned: Array<{ command: string; shell?: boolean; timeoutMs?: number }> = [];
   const script = scriptedRunner({
@@ -65,10 +65,12 @@ function setup(options: Options = {}) {
       return { stdout: `diff --git a/${changedPath} b/${changedPath}\n@@ -1 +1 @@\n-export const gate = 0;\n+export const gate = 1;\n` };
     },
     'primary-reviewer': (args) => {
+      hooks.onReview?.('primary-reviewer');
       calls.push(['primary-reviewer', ...args]);
       return primary.shift() ?? PASS;
     },
     'fallback-reviewer': (args) => {
+      hooks.onReview?.('fallback-reviewer');
       calls.push(['fallback-reviewer', ...args]);
       return secondary.shift() ?? PASS;
     },
@@ -293,28 +295,35 @@ test('T0-R2-FALLBACK acceptance 4: a reservation whose reviewer changed since th
   assert.equal(preReviewDirective(s, afterHold).reviewer, 'deepseek', 'the gate now names the primary');
 }));
 
-test('T0-R2-FALLBACK acceptance 4: a pending round expires on the timeout of the reviewer it names: the fallback round is still in flight when a primary round would be dropped [R3]', async () => {
-  for (const [reviewer, stillPending] of [['sonnet', true], ['deepseek', false]] as const) {
+/**
+ * The pending round of the card checked at both edges of its expiry through `runner`: 1 ms before its dispatch time plus
+ * `timeoutMs` plus the grace it is still in flight, with the WAIT directive giving `minutes`, field for field; at that
+ * instant it is dropped and the gate asks for a round again.
+ */
+function assertExpiry(s: Setup, runner: CardRunner, timeoutMs: number, minutes: number): void {
+  const pending = s.fx.store.getCardRun(s.goalId, s.card.id)!.preReview.rounds.find((r) => r.outcome === 'pending')!;
+  const expiry = Date.parse(pending.requestedAt) + timeoutMs + GRACE_MS;
+  const gate = () => runner.next(s.fx.goal(s.goalId), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!);
+  s.fx.advance(expiry - 1 - Date.parse(s.fx.now()));
+  let r = gate();
+  assert.deepEqual(r.directive, { kind: 'wait', cardId: 'T1-GATE', on: `pre-review:${pending.reservationId}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${minutes} minutes after its dispatch when nothing came back.` }, '1 ms before the expiry the round is in flight');
+  assert.equal(r.run.preReview.rounds.find((x) => x.reservationId === pending.reservationId)?.outcome, 'pending');
+  s.fx.advance(1);
+  r = gate();
+  assert.equal(r.directive.kind, 'pre-review', `at the expiry the round is dropped: ${r.directive.narration}`);
+  assert.equal(r.run.preReview.rounds.some((x) => x.reservationId === pending.reservationId), false, 'at the expiry the round is dropped');
+}
+
+test('T0-R2-FALLBACK acceptance 4: a pending round expires on the timeout of the reviewer it names: the fallback round is in flight until its own 600 s and the grace, a primary round until 1 s and the grace [R3]', async () => {
+  for (const [reviewer, timeoutMs, minutes] of [['sonnet', 600_000, 15], ['deepseek', 1_000, 5]] as const) {
     const s = setup({ fallbackTimeoutMs: 600_000 });
     try {
-      const reservationId = `T1-GATE.pre.0.1.1.${reviewer === 'sonnet' ? 'aaaaaaaa' : 'bbbbbbbb'}`;
       s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
         const latest = current!;
-        const pending: PreReviewRound = { round: 1, cycle: 0, reviewer, candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId, advisory: [], timeoutMs: reviewer === 'sonnet' ? 600_000 : 1_000 };
+        const pending: PreReviewRound = { round: 1, cycle: 0, reviewer, candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: `T1-GATE.pre.0.1.1.${reviewer === 'sonnet' ? 'aaaaaaaa' : 'bbbbbbbb'}`, advisory: [], timeoutMs };
         return { ...latest, preReview: { ...latest.preReview, rounds: [...latest.preReview.rounds, pending] } };
       });
-      // Past the primary's 1 s timeout and the grace, well inside the fallback's 600 s.
-      s.fx.advance(1_000 + GRACE_MS + 1_000);
-      const r = next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!);
-      if (stillPending) {
-        assert.equal(r.directive.kind, 'wait', r.directive.narration);
-        if (r.directive.kind === 'wait') assert.equal(r.directive.on, `pre-review:${reservationId}`);
-        assert.ok(r.directive.narration.endsWith('A round is dropped 15 minutes after its dispatch when nothing came back.'), `the fallback timeout of 600 s plus the 5 min grace: ${r.directive.narration}`);
-        assert.equal(r.run.preReview.rounds.at(-1)?.outcome, 'pending', 'the fallback round keeps running');
-      } else {
-        assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
-        assert.deepEqual(r.run.preReview.rounds, [], 'the abandoned primary round is dropped');
-      }
+      assertExpiry(s, s.runner, timeoutMs, minutes);
     } finally {
       s.fx.cleanup();
     }
@@ -430,16 +439,26 @@ function injectPending(s: Setup, reviewer: string, timeoutMs: number | undefined
 }
 const IN_FLIGHT_15 = 'A round is dropped 15 minutes after its dispatch when nothing came back.';
 
-test('T0-R2-FALLBACK-3 acceptance 8: with a fallback configured the decided rounds record the timeout they were dispatched with, the primary and the fallback each their own [R3]', withCard(async (s) => {
+/** The recorded timeout of the pending round, read inside each reviewer call while the round is in flight. */
+function watchReservations(s: Setup): Array<{ command: string; recorded: boolean; timeoutMs?: number }> {
+  const seen: Array<{ command: string; recorded: boolean; timeoutMs?: number }> = [];
+  s.hooks.onReview = (command) => {
+    const pending = s.fx.store.getCardRun(s.goalId, s.card.id)!.preReview.rounds.find((r) => r.outcome === 'pending')!;
+    seen.push({ command, recorded: 'timeoutMs' in pending, ...(pending.timeoutMs !== undefined ? { timeoutMs: pending.timeoutMs } : {}) });
+  };
+  return seen;
+}
+
+test('T0-R2-FALLBACK-3 acceptance 8: with a fallback configured the reservation records the dispatch timeout while the reviewer runs, the primary and the fallback each their own, and the decided round keeps it [R3]', withCard(async (s) => {
+  const seen = watchReservations(s);
   s.primary.push({ stderr: INSUFFICIENT_BALANCE, exitCode: 1 });
-  const first = next(s, s.run);
-  const held = await review(s, first.run);
+  const held = await review(s, next(s, s.run).run);
   assert.equal(held.round.reviewer, 'deepseek');
-  assert.equal(held.round.timeoutMs, 1_000, 'the primary round records the primary timeout');
-  const d = next(s, held.run);
-  const passed = await review(s, d.run);
+  assert.equal(held.round.timeoutMs, 1_000, 'the decided primary round keeps the primary timeout');
+  const passed = await review(s, next(s, held.run).run);
   assert.equal(passed.round.reviewer, 'sonnet');
-  assert.equal(passed.round.timeoutMs, 600_000, 'the fallback round records the fallback timeout');
+  assert.equal(passed.round.timeoutMs, 600_000, 'the decided fallback round keeps the fallback timeout');
+  assert.deepEqual(seen, [{ command: 'primary-reviewer', recorded: true, timeoutMs: 1_000 }, { command: 'fallback-reviewer', recorded: true, timeoutMs: 600_000 }], 'the pending reservation carries the timeout while each reviewer runs');
 }, { fallbackTimeoutMs: 600_000 }));
 
 for (const [change, preReview] of [
@@ -447,33 +466,19 @@ for (const [change, preReview] of [
   ['removed', { fallback: undefined }],
   ['given other timeouts', { timeoutMs: 1_000, fallback: { command: ['fallback-reviewer'], reviewer: 'sonnet', timeoutMs: 1_000, shell: false } }],
 ] as const) {
-  test(`T0-R2-FALLBACK-3 acceptance 8: a pending fallback round keeps its recorded timeout and its WAIT minutes when the fallback is ${change} while it runs [R3]`, withCard(async (s) => {
-    const reservationId = injectPending(s, 'sonnet', 600_000);
-    const changed = runnerWith(s, preReview as Record<string, unknown>);
-    // Past the primary 1 s and the grace: under the recorded 600 s the round is still in flight.
-    s.fx.advance(1_000 + GRACE_MS + 1_000);
-    let r = changed.next(s.fx.goal(s.goalId), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!);
-    assert.equal(r.directive.kind, 'wait', r.directive.narration);
-    if (r.directive.kind === 'wait') assert.equal(r.directive.on, `pre-review:${reservationId}`);
-    assert.ok(r.directive.narration.endsWith(IN_FLIGHT_15), r.directive.narration);
-    assert.equal(r.run.preReview.rounds.at(-1)?.outcome, 'pending');
-    // Past the recorded 600 s and the grace, it is dropped.
-    s.fx.advance(600_000);
-    r = changed.next(s.fx.goal(s.goalId), s.card, s.fx.store.getCardRun(s.goalId, s.card.id)!);
-    assert.notEqual(r.directive.kind, 'wait', r.directive.narration);
-    assert.deepEqual(r.run.preReview.rounds, [], 'dropped past its own timeout');
+  test(`T0-R2-FALLBACK-3 acceptance 8: a pending fallback round keeps its recorded timeout and its WAIT minutes when the fallback is ${change} while it runs, in flight until 600 s and the grace and dropped at that instant [R3]`, withCard(async (s) => {
+    injectPending(s, 'sonnet', 600_000);
+    assertExpiry(s, runnerWith(s, preReview as Record<string, unknown>), 600_000, 15);
   }, { fallbackTimeoutMs: 600_000 }));
 }
 
-test('T0-R2-FALLBACK-3 acceptance 8: a pending round with no recorded timeout expires on the primary timeout, as before [R3]', withCard(async (s) => {
+test('T0-R2-FALLBACK-3 acceptance 8: a pending round with no recorded timeout expires on the primary timeout, as before, at both edges [R3]', withCard(async (s) => {
   injectPending(s, 'deepseek', undefined);
-  s.fx.advance(1_000 + GRACE_MS + 1_000);
-  const r = next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!);
-  assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
-  assert.deepEqual(r.run.preReview.rounds, []);
+  assertExpiry(s, s.runner, 1_000, 5);
 }, { fallbackTimeoutMs: 600_000 }));
 
-test('T0-R2-FALLBACK-3 acceptance 8: without a fallback no round records a timeout [R3]', withCard(async (s) => {
+test('T0-R2-FALLBACK-3 acceptance 8: without a fallback no reservation and no round records a timeout [R3]', withCard(async (s) => {
+  const seen = watchReservations(s);
   s.primary.push({ stderr: INSUFFICIENT_BALANCE, exitCode: 1 });
   const held = await review(s, next(s, s.run).run);
   assert.equal('timeoutMs' in held.round, false);
@@ -481,4 +486,24 @@ test('T0-R2-FALLBACK-3 acceptance 8: without a fallback no round records a timeo
   const passed = await review(s, next(s, held.run).run);
   assert.equal('timeoutMs' in passed.round, false);
   assert.equal(passed.run.preReview.rounds.some((r) => 'timeoutMs' in r), false);
+  assert.deepEqual(seen, [{ command: 'primary-reviewer', recorded: false }, { command: 'primary-reviewer', recorded: false }], 'no reservation records a timeout while the reviewer runs');
+}, { fallback: false }));
+
+test('T0-R2-FALLBACK-3: a no-verdict retry on another reviewer than the one whose round had no verdict names that reviewer [R3]', withCard(async (s) => {
+  const afterHold = await holdPrimary(s, s.run);
+  s.secondary.push({ stdout: 'I cannot decide.\n' });
+  const noVerdict = await review(s, next(s, afterHold).run);
+  assert.equal(noVerdict.round.reviewer, 'sonnet');
+  assert.equal(noVerdict.result.outcome, 'no-verdict');
+  s.fx.advance(HOLD_MS + 1_000);
+  assert.deepEqual(next(s, noVerdict.run).directive, preReviewOf('deepseek', ' (retry: the previous run, by sonnet, produced no verdict)'), 'the primary retries a no-verdict of the fallback');
+}));
+
+test('T0-R2-FALLBACK-3: without a fallback a no-verdict recorded under an earlier reviewer name keeps the retry wording it had [R3]', withCard(async (s) => {
+  s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
+    const latest = current!;
+    const noVerdict: PreReviewRound = { round: 1, cycle: 0, reviewer: 'renamed-reviewer', candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'no-verdict', runStatus: 'malformed', reasons: [], reservationId: 'T1-GATE.pre.0.1.1.abababab', advisory: [] };
+    return { ...latest, preReview: { ...latest.preReview, rounds: [noVerdict] } };
+  });
+  assert.deepEqual(next(s, s.fx.store.getCardRun(s.goalId, s.card.id)!).directive, preReviewOf('deepseek', ' (retry: the previous run produced no verdict)'));
 }, { fallback: false }));
