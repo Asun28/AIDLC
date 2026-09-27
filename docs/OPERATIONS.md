@@ -318,7 +318,7 @@ A merge GitHub refuses after the checks passed (card T0-SHIP-MERGE-REFUSED) is r
 | `frozen` | a frozen contract or schema would change | route the change through version review |
 | `checkpoint` | plan/projection checkpoint rejected or planning allowance exhausted | revise under a recorded revision or close the goal |
 | `review` | second substantive block, or no verdict after the single retry | hand the PR and verdict evidence to a human adjudicator |
-| `tool` | unclassified ship outcome, or no usable pre-review verdict twice in one cycle | final for the card: fix the cause, register a replacement card that carries the candidate, then `aidlc goal resume <goal> --reason "..." --replace '{"<card>":"<replacement>"}'`; `card next` returns the same stop, and a `[SAGA-RESUME]` command in the detail is a diagnostic only (a recorded card resume is issue 109) |
+| `tool` | unclassified ship outcome, no usable pre-review verdict twice in one cycle, or a worktree probe that failed at PREPARE | final for the card: fix the cause, register a replacement card (carrying the candidate when one was built), then `aidlc goal resume <goal> --reason "..." --replace '{"<card>":"<replacement>"}'`; `card next` returns the same stop, and a `[SAGA-RESUME]` command in the detail is a diagnostic only (a recorded card resume is issue 109) |
 | `ci` | unclassified CI failure or rerun allowance consumed | diagnose the failure before any rerun |
 | `auth` | account or permission guard failed | `gh auth login` for the configured account; never downgrade to local mode |
 | `time` | admission deadline or reconciliation grace reached | hand off with branches, PRs and evidence; `aidlc goal extend` is the explicit extension and re-admits the goal and its time-stopped cards |
