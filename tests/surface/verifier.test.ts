@@ -230,8 +230,8 @@ const FACTS = { headSha: HEAD, mergeSha: MERGE, tree: TREE, pr: 42 };
 const GH_VIEW = 'gh pr view 42 --repo o/r --json';
 const prJson = (over: Record<string, unknown> = {}) => ({ stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE }, ...over }) });
 
-/** git and gh answering as a repository and GitHub where the merge happened as recorded; `over` replaces single answers. */
-function probes(over: Record<string, Partial<ExecReceipt>> = {}, repository: string | undefined = 'o/r') {
+/** git and gh answering as a repository and GitHub where the merge happened as recorded; `over` replaces single answers, `noRepository` leaves gh no repository. */
+function probes(over: Record<string, Partial<ExecReceipt>> = {}, options: { noRepository?: boolean } = {}) {
   const calls: string[] = [];
   const script = scriptedRunner({
     [`git cat-file -t ${MERGE}`]: { stdout: 'commit\n' },
@@ -244,7 +244,7 @@ function probes(over: Record<string, Partial<ExecReceipt>> = {}, repository: str
     calls.push([command, ...args].join(' '));
     return script(command, args, options);
   };
-  return { calls, probes: { git: new GitProbe(runner), gh: new GhProbe(runner), cwd: 'D:/repo', base: BASE, repository } };
+  return { calls, probes: { git: new GitProbe(runner), gh: new GhProbe(runner), cwd: 'D:/repo', base: BASE, repository: options.noRepository ? undefined : 'o/r' } };
 }
 
 /** The events the card runner journals for one card shipped on the GitHub path; `result` is merged into the result's data. */
@@ -256,7 +256,8 @@ function ship(journal: Journal, goalId: string, cardId: string, result: Record<s
 
 const mismatch = (detail: string) => ({ severity: 'block', code: 'FACT_MISMATCH', detail });
 const unverified = (detail: string) => ({ severity: 'warn', code: 'FACT_UNVERIFIED', detail });
-const GIT_UNVERIFIED = [unverified('T1-A mergeSha object type: recorded commit, not re-derived (git)'), unverified(`T1-A tree: recorded ${TREE}, not re-derived (git)`), unverified(`T1-A mergeSha on ${BASE}: recorded ancestor, not re-derived (git)`)];
+const gitUnverified = (base = BASE) => [unverified('T1-A mergeSha object type: recorded commit, not re-derived (git)'), unverified(`T1-A tree: recorded ${TREE}, not re-derived (git)`), unverified(`T1-A mergeSha on ${base}: recorded ancestor, not re-derived (git)`)];
+const GIT_UNVERIFIED = gitUnverified();
 const GH_UNVERIFIED = [unverified('T1-A pr 42 state: recorded MERGED, not re-derived (gh)'), unverified(`T1-A mergeSha: recorded ${MERGE}, not re-derived (gh)`), unverified(`T1-A headSha: recorded ${HEAD}, not re-derived (gh)`)];
 
 /** One goal with T1-A shipped with facts, verified with `p`, optionally sealed and under a full-audit claim. */
@@ -293,14 +294,14 @@ test('T1-AUDIT-FACTS acceptance 2: verify re-derives every fact of a merge from 
 test('T1-AUDIT-FACTS acceptance 3: a fact git or gh cannot answer is a FACT_UNVERIFIED warning and never counts as re-derived [R3]', () => {
   const absent = { [`git cat-file -t ${MERGE}`]: { exitCode: 128, stderr: 'fatal: Not a valid object name' }, [`git rev-parse ${MERGE}^{tree}`]: { exitCode: 128, stderr: 'fatal: ambiguous argument' }, [`git merge-base --is-ancestor ${MERGE} ${BASE}`]: { exitCode: 128, stderr: 'fatal: Not a valid commit name' } };
   const ghDown = { [GH_VIEW]: { exitCode: 1, stderr: 'error connecting to api.github.com' } };
-  const noRepository = probes({}, undefined);
+  const noRepository = probes({}, { noRepository: true });
   const cases: Array<[string, ReturnType<typeof probes>['probes'] | undefined, unknown[], boolean]> = [
     ['gh fails', probes(ghDown).probes, GH_UNVERIFIED, true],
     ['no repository is configured for gh', noRepository.probes, GH_UNVERIFIED, true],
     ['gh answers malformed JSON', probes({ [GH_VIEW]: { stdout: 'not json' } }).probes, GH_UNVERIFIED, true],
     ['the merge commit is absent from the repository', probes(absent).probes, GIT_UNVERIFIED, true],
     ['the merge commit is absent and gh fails', probes({ ...absent, ...ghDown }).probes, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
-    ['no probes at all', undefined, [...GIT_UNVERIFIED, ...GH_UNVERIFIED], false],
+    ['no probes at all (no base ref is known)', undefined, [...gitUnverified('the base'), ...GH_UNVERIFIED], false],
   ];
   for (const [name, p, findings, rederived] of cases) {
     const report = verifyShipped(p, { seal: true, claim: true });

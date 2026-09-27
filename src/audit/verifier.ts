@@ -17,6 +17,7 @@ import { fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
 import type { GitProbe } from '../probes/git.ts';
 import type { GhProbe } from '../probes/gh.ts';
+import { ShippedFacts, type PrInfo } from '../core/types.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -94,6 +95,19 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });
 
+  // Merge facts (card T1-AUDIT-FACTS). A card is shipped when a merge intent of the card has a succeeded result or
+  // reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's card and
+  // operation, status succeeded) and never from narration. Each card counts the facts git and gh re-derived as recorded.
+  const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && e.cardId && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId!]));
+  const rederived = new Map<string, number>();
+  for (const e of events) {
+    const card = merges.get(e.data['operationId']);
+    if (!card || e.cardId !== card || e.data['status'] !== 'succeeded' || (e.type !== 'OPERATION_RESULT' && e.type !== 'OPERATION_RECONCILED')) continue;
+    const facts = e.type === 'OPERATION_RESULT' ? ShippedFacts.safeParse(e.data).data : undefined;
+    rederived.set(card, (rederived.get(card) ?? 0) + (facts ? rederive(card, facts, input.probes, findings) : 0));
+  }
+  const noFacts = [...rederived].filter(([, n]) => n === 0).map(([card]) => card);
+
   // Manifest / artifacts.
   let manifestInfo: AuditReport['manifest'];
   if (input.manifest && input.evidence) {
@@ -123,15 +137,16 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let level: AuditLevel = 'none';
   if (chain.events > 0) level = 'recorded';
   if (chain.events > 0 && chain.ok && !blocks.some((b) => ['OP_UNRESOLVED', 'OP_INTENT_MISSING', 'TRACE_MISSING', 'WORK_AFTER_TERMINAL', 'JOURNAL_CHAIN'].includes(b.code))) level = 'traceable';
-  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE')) level = 'independently-verified';
+  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE' || b.code === 'FACT_MISMATCH')) level = 'independently-verified';
 
   let fullyAuditedStatus: AuditReport['fullyAuditedStatus'] = 'not-claimed';
   let prerequisite: string | undefined;
   if (input.hostCaptureBoundary) {
-    if (input.hostCaptureBoundary.present && level === 'independently-verified') fullyAuditedStatus = 'verified';
+    if (input.hostCaptureBoundary.present && level === 'independently-verified' && noFacts.length === 0) fullyAuditedStatus = 'verified';
     else {
       fullyAuditedStatus = 'BLOCKED/capability';
-      prerequisite = input.hostCaptureBoundary.present ? `audit level is ${level}; resolve blocking findings` : `host capture boundary missing: ${input.hostCaptureBoundary.detail}`;
+      const host = !input.hostCaptureBoundary.present ? `host capture boundary missing: ${input.hostCaptureBoundary.detail}` : level !== 'independently-verified' ? `audit level is ${level}; resolve blocking findings` : '';
+      prerequisite = [host, noFacts.length ? `no re-derived fact for shipped card(s): ${noFacts.join(', ')}` : ''].filter(Boolean).join('; ');
     }
   }
   return {
@@ -145,4 +160,31 @@ export function verifyAudit(input: VerifierInput): AuditReport {
     manifest: manifestInfo,
     checkedAt: input.now,
   };
+}
+
+/**
+ * Re-derives one card's merge facts from git and gh (card T1-AUDIT-FACTS) and returns how many matched: a disagreement is a
+ * FACT_MISMATCH block naming the card, the fact and both values; a fact git or gh cannot answer is a FACT_UNVERIFIED warning.
+ */
+function rederive(card: string, facts: ShippedFacts, probes: VerifierInput['probes'], findings: AuditFinding[]): number {
+  let matched = 0;
+  const check = (fact: string, recorded: string, derived: string | undefined, source: 'git' | 'gh') => {
+    if (derived === undefined) findings.push({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${recorded}, not re-derived (${source})` });
+    else if (derived !== recorded) findings.push({ severity: 'block', code: 'FACT_MISMATCH', detail: `${card} ${fact}: recorded ${recorded}, re-derived ${derived}` });
+    else matched += 1;
+  };
+  const onBase = probes?.git.contains(probes.cwd, probes.base, facts.mergeSha);
+  check('mergeSha object type', 'commit', probes?.git.objectType(probes.cwd, facts.mergeSha), 'git');
+  check('tree', facts.tree, probes?.git.treeOf(probes.cwd, facts.mergeSha), 'git');
+  check(`mergeSha on ${probes?.base ?? 'the base'}`, 'ancestor', onBase === undefined ? undefined : onBase ? 'ancestor' : 'not an ancestor', 'git');
+  let view: PrInfo | undefined;
+  try {
+    view = probes?.repository ? probes.gh.prView(probes.repository, facts.pr, probes.cwd) : undefined;
+  } catch {
+    view = undefined;
+  }
+  check(`pr ${facts.pr} state`, 'MERGED', view?.state, 'gh');
+  check('mergeSha', facts.mergeSha, view && (view.mergeCommit ?? 'none'), 'gh');
+  check('headSha', facts.headSha, view && (view.headRefOid ?? 'none'), 'gh');
+  return matched;
 }
