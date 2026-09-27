@@ -2321,7 +2321,7 @@ export class CardRunner {
       });
       if (!history.superseded && !history.stopped) return then(saved);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
-      const status = result.outcome === 'merged' ? 'UNKNOWN' : 'failed';
+      const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed';
       this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
       this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status, outcome: result.outcome, superseded: history.superseded, stoppedMeanwhile: history.stopped } });
       const merged = status === 'UNKNOWN' ? ', and its merge is an unresolved operation to reconcile' : '';
@@ -2332,7 +2332,11 @@ export class CardRunner {
       return { run: saved, directive: { kind: 'wait', cardId: card.id, on: 'candidate-changed', pollSeconds: 0, narration: `The candidate changed while the ship was in flight (${candidateDigest.slice(0, 12)} shipped, ${history.newer} recorded meanwhile): the ship result (${result.outcome}) is recorded as history for the shipped candidate${merged}; run \`aidlc card next ${card.id}\` for the current candidate.` } };
     };
 
-    if (result.outcome === 'merged') {
+    if (result.outcome === 'merged' || result.outcome === 'merge-unconfirmed') {
+      // An exit 0 without the adapter's merge contract (card T0-EXIT-ZERO-NOT-MERGED) is reconciled, never read as a merge:
+      // gh's PR view decides when gh answers, the merge token only when it does not, and a PR gh reads as not merged at the
+      // candidate stops the card.
+      const unconfirmed = result.outcome === 'merge-unconfirmed';
       const token = this.shipPath.readMergeToken(card.id);
       const pr = result.prNumber ?? token?.mergedPr;
       // The PR as GitHub reports it: the merge check when the token does not settle it, and the facts of a verified merge.
@@ -2345,20 +2349,42 @@ export class CardRunner {
         }
       }
       let mergeVerified = false;
-      if (this.config.shipPath === 'dry-run') mergeVerified = true;
+      const sha = run.candidate?.sha;
+      // gh answers an unconfirmed ship only with the PR it asked for, in a known state, at a named head; any other answer counts
+      // as none (R3 decision 1 F3, F4). A merged ship reads its view as before (issue 131).
+      const answered = pr !== undefined && view && view.number === pr && ['OPEN', 'MERGED', 'CLOSED'].includes(view.state) && typeof view.headRefOid === 'string' && view.headRefOid !== '' ? view : undefined;
+      // The facts of an unconfirmed ship belong to the verified candidate or to nobody: only a valid view MERGED at it gives
+      // them (R3 decision 1 F4); a merged ship reads its view as before (issue 131).
+      const checked = unconfirmed ? (answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha ? answered : undefined) : view;
+      // An unconfirmed ship is verified as main verified a merged one where main's evidence was sound: the dry-run path, which
+      // merges nothing, and a token at the candidate, the scaffold's merge contract, whatever gh answers; otherwise a valid gh
+      // answer decides (T0-EXIT-ZERO-NOT-MERGED-3).
+      if (unconfirmed) mergeVerified = this.config.shipPath === 'dry-run' || (!!sha && token?.tip === sha) || (!!answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha);
+      else if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
       else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
       // The facts ride in the merge's one result (card T1-AUDIT-FACTS-2), from gh and git only, never from the ship output or the
       // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
       // read leaves the result without facts; audit verify names the card (FACT_MISSING).
       let facts: ShippedFacts | undefined;
-      if (mergeVerified && view?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
-        facts = ShippedFacts.safeParse({ headSha: view.headRefOid, mergeSha: view.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, view.mergeCommit), pr: view.number }).data;
+      if (mergeVerified && checked?.mergeCommit && this.git.fetchBase(this.repo.mainRoot, this.config.base).exitCode === 0) {
+        facts = ShippedFacts.safeParse({ headSha: checked.headRefOid, mergeSha: checked.mergeCommit, tree: this.git.treeOf(this.repo.mainRoot, checked.mergeCommit), pr: checked.number }).data;
       }
-      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr ? { number: pr, state: 'MERGED' as const, headRefOid: token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
-        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : 'merge reported but not verified against the intended base' });
+      // Without a candidate sha no head gh reports is refuted: only OPEN or CLOSED is then a non-merge (T0-EXIT-ZERO-NOT-MERGED-2).
+      if (unconfirmed && answered && !mergeVerified && (answered.state !== 'MERGED' || !!sha)) {
+        const seen = answered;
+        const stop = makeStop('tool', `ship exited 0 without its merge contract and gh reads PR #${pr} as ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}, not merged at the candidate ${sha ?? '(no candidate sha)'}`, `merge PR #${pr} by hand once its head is the candidate, or find why the ship path exited 0 without merging`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
+        return finish(() => ({ state: 'STOP', stop }), (next) => {
+          this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` });
+          this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
+          return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
+        });
+      }
+      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
+        const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
+        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
         this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
-        return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: 'Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE.' } };
+        return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
       });
     }
 
