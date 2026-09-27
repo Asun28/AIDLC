@@ -4789,16 +4789,17 @@ const worktreeList = (entries: Array<{ path: string; branch: string }>) => entri
 test('T0-PROBE-STOP-TEXT (issue 111): a worktree probe that fails at PREPARE is a tool stop that names the git error and the replacement path, never card next, and card next returns the same stop [R1] [R2]', () => {
   const fx = makeFixture();
   try {
-    const failing: Array<[string, (worktree: string) => Parameters<typeof scriptedRunner>[0], RegExp]> = [
-      ['T1-PROBE', () => ({ 'git worktree list --porcelain': { exitCode: 128, stderr: 'fatal: not a git repository' } }), /^worktree probe failed: /],
-      ['T1-COMMON', (worktree) => ({ 'git worktree list --porcelain': { stdout: worktreeList([{ path: fx.repo.mainRoot, branch: 'main' }, { path: worktree, branch: 'T1-COMMON' }]) }, 'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: not a git repository' } }), /^cannot verify common git directory: /],
+    // Each case scripts its own git error, and the stop's detail must carry it whole: the probe step and git's own words.
+    const failing: Array<[string, (worktree: string) => Parameters<typeof scriptedRunner>[0], string]> = [
+      ['T1-PROBE', () => ({ 'git worktree list --porcelain': { exitCode: 128, stderr: 'fatal: not a git repository' } }), 'worktree probe failed: git worktree list --porcelain failed (exit 128): fatal: not a git repository'],
+      ['T1-COMMON', (worktree) => ({ 'git worktree list --porcelain': { stdout: worktreeList([{ path: fx.repo.mainRoot, branch: 'main' }, { path: worktree, branch: 'T1-COMMON' }]) }, 'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: unable to read the common git directory' } }), 'cannot verify common git directory: git rev-parse --git-common-dir failed (exit 128): fatal: unable to read the common git directory'],
     ];
     for (const [id, script, detail] of failing) {
       const { goal, runner, card, r } = prepareWithGit(fx, id, script);
       assert.equal(r.directive.kind, 'stop', `${id}: ${r.directive.narration}`);
       const stop = r.run.stop!;
       assert.equal(stop.reason, 'tool', id);
-      assert.match(stop.detail, detail, id);
+      assert.equal(stop.detail, detail, `${id}: the detail names the git error`);
       assert.equal(stop.nextAction, `inspect the git error in the detail; this stop is final for card ${id}: fix the cause, register a replacement card, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"${id}":"<replacement>"}'\``, id);
       assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
       const again = runner.next(fx.goal(goal.id), card, r.run);
