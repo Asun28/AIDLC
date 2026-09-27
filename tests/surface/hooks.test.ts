@@ -897,11 +897,12 @@ test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section st
 
 const GATE_TEXT = 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
 
-test('T0-HOOK-CLASSIFIER-2 acceptance 1: a command splits at a lone ampersand and a line break, and the gate decides as main did wherever main denied', () => {
+/** The split pins of acceptance 1, reused by the invariant of acceptance 6. */
+const SPLIT_PINS = ['make deploy 2>&1 production', 'make deploy >&2 production', 'make deploy &> log production', 'make deploy &>> log production', 'make a && make b', 'make a || make b ; make c | make d', 'cat notes & make y', 'cat notes\nmake y', 'cat notes\r\nmake y', 'cat notes\rmake y', 'make a & make b'];
+
+test('T0-HOOK-CLASSIFIER-2 acceptance 1: a command splits at a lone ampersand and a line break, and the guards decide as main did wherever main denied', () => {
   // redirects and && split as before: one segment holds the whole release phrase
-  for (const command of ['make deploy 2>&1 production', 'make deploy >&2 production', 'make deploy &> log production', 'make deploy &>> log production']) {
-    assert.deepEqual(mutatingSegments(command), [command], command);
-  }
+  for (const command of SPLIT_PINS.slice(0, 4)) assert.deepEqual(mutatingSegments(command), [command], command);
   assert.deepEqual(mutatingSegments('make a && make b'), ['make a', 'make b']);
   assert.deepEqual(mutatingSegments('make a || make b ; make c | make d'), ['make a', 'make b', 'make c', 'make d']);
   // the tail after a lone ampersand and after each line break is its own segment
@@ -920,18 +921,27 @@ test('T0-HOOK-CLASSIFIER-2 acceptance 1: a command splits at a lone ampersand an
   for (const joint of [' | ', ' ; ', ' && ', ' || ', '\n', '\r\n']) {
     assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: release.join(joint) } }, env, DEFAULT_HOOK_CONFIG, cwd), { exitCode: 0 }, JSON.stringify(joint));
   }
-  // main's segments come first: a pattern that does not compile is reached where main reached it (the Codex pre-check of 267486f)
+  // main's segments come first: a pattern that does not compile is reached where main reached it (the pre-check of 267486f)
   const invalidLast = { ...DEFAULT_HOOK_CONFIG, productionPatterns: ['deploy', '['] };
   assert.deepEqual(productionGate({ tool_name: 'Bash', tool_input: { command: 'git branch topic; make deploy' } }, env, invalidLast, cwd), { exitCode: 2, stderr: GATE_TEXT });
   const broken = withConfig(JSON.stringify({ hooks: { productionPatterns: ['deploy', '['] } }));
   assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git branch topic; make deploy' } }, { cwd: broken.cwd, env: broken.env }), { exitCode: 2, stderr: GATE_TEXT });
   const brokenJson = withConfig(UNUSABLE_CONFIGS[0]![0]);
   assert.deepEqual(dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: release.join(' & ') } }, { cwd: brokenJson.cwd, env: brokenJson.env }), { exitCode: 2, stderr: GATE_TEXT });
+  // under a config that cannot be used, the legacy decision keeps main's reading, so main's config-error deny stays (pre-check of a9d986d)
+  const topic = withConfig(JSON.stringify({ hooks: { productionPatterns: ['topic', '['] } }));
+  const remote = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git remote add topic url' } }, { cwd: topic.cwd, env: topic.env });
+  assert.equal(decision(remote), 'deny');
+  assert.ok(denyReason(remote).startsWith('Bash is denied while '), denyReason(remote));
+  const frozenBroken = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/'], productionPatterns: ['['] } }));
+  const worktree = runHook('protect-paths', { tool_name: 'Bash', tool_input: { command: 'git worktree add contracts/wt' } }, { cwd: frozenBroken.cwd, env: frozenBroken.env });
+  assert.equal(decision(worktree), 'deny');
+  assert.ok(denyReason(worktree).startsWith('Bash is denied while '), denyReason(worktree));
 });
 
 const RELEASE = 'deploy production';
 
-/** One row per executing form, separator and path-qualified first word: [label, command naming a release, the same form without one]. */
+/** One row per separator, path-qualified first word and git remote or worktree subcommand: [label, command naming a release, the same form without one]. */
 const GATE_ROWS: Array<[string, string, string]> = [
   ['a lone ampersand', `cat notes & make ${RELEASE}`, 'cat notes & make build'],
   ['a line break', `cat notes\nmake ${RELEASE}`, 'cat notes\nmake build'],
@@ -939,66 +949,61 @@ const GATE_ROWS: Array<[string, string, string]> = [
   ['a carriage return', `cat notes\rmake ${RELEASE}`, 'cat notes\rmake build'],
   ['a POSIX path first word', `/usr/bin/grep ${RELEASE}.log`, '/usr/bin/grep build x.log'],
   ['a Windows path first word', `C:\\tools\\grep.exe ${RELEASE}.log`, 'C:\\tools\\grep.exe build x.log'],
-  ...['-exec', '-execdir', '-ok', '-okdir'].map((action): [string, string, string] => [`find ${action}`, `find . ${action} make ${RELEASE} {} +`, `find . ${action} make build {} +`]),
-  ['rg --pre', 'rg --pre deploy-production x', 'rg --pre cat x'],
-  ['git grep -O', `git grep -O ${RELEASE}`, 'git grep -O x'],
-  ['git grep --open-files-in-pager', `git grep --open-files-in-pager=vim ${RELEASE}`, 'git grep --open-files-in-pager=vim x'],
-  ...['-d', '-D', '--delete', '-m', '-M', '--move', '-c', '-C', '--copy', '-f', '--force', '-u', '--set-upstream-to', '--unset-upstream', '--edit-description', '-t', '--track', '--no-track'].map((flag): [string, string, string] => [`git branch ${flag}`, `git branch --contains release/production-deploy ${flag}`, `git branch --contains feature/x ${flag}`]),
-  ['git branch with a new name', 'git branch release/production-deploy', 'git branch feature/x'],
   ...['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'set-branches', 'prune', 'update'].map((sub): [string, string, string] => [`git remote ${sub}`, `git remote ${sub} production-deploy`, `git remote ${sub} origin`]),
   ...['add', 'remove', 'move', 'prune', 'lock', 'unlock', 'repair'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} ../production-deploy`, `git worktree ${sub} ../x`]),
 ];
 
-/** The awk program and sed script forms left to issue 135: read-only here, as on main. */
-const PROGRAM_FORMS = [
+/** The forms moved to issue 135 and the inputs of the Codex pre-checks main passed: read-only here, as on main. */
+const MOVED_FORMS = [
   `awk 'BEGIN{system("make ${RELEASE}")}'`,
   `awk '{print "${RELEASE}" | "sh"}' in.txt`,
-  `awk '{printf "${RELEASE}" | "sh"}' in.txt`,
   `awk 'BEGIN{"${RELEASE}" | getline x}'`,
   `sed 'e make ${RELEASE}' in.txt`,
   `sed 's/x/make ${RELEASE}/e' in.txt`,
-  `sed '1e make ${RELEASE}' in.txt`,
-  `sed -e 's/a/b/' -e 'e make ${RELEASE}' in.txt`,
-  // the redirect inputs of the Codex pre-check of 267486f
+  `find . -exec make ${RELEASE} {} +`,
+  `find . -okdir make ${RELEASE} {} +`,
+  'rg --pre deploy-production x',
+  `git grep -O ${RELEASE}`,
+  'git branch -D release/production-deploy',
+  'git branch release/production-deploy',
+  // the pre-check of 267486f: a redirect `>&` before a file named awk or sed
   `awk '{print $0}' >&awk 'system("${RELEASE}")'`,
   `sed 'p' >&sed 'e ${RELEASE}'`,
+  // the pre-check of a9d986d: an option word after a lone ampersand or a line break belongs to the next command
+  `rg x & echo --pre ${RELEASE}`,
+  `find .\necho -exec ${RELEASE}`,
 ];
 
-/** Read-only uses the forms leave read-only: each passes the gate although its text names a release. */
+/** Read-only uses: each passes the gate although its text names a release. */
 const READ_ONLY_ROWS = [
-  ...PROGRAM_FORMS,
+  ...MOVED_FORMS,
   `awk '/deploy production/' log`,
-  "awk '{print $1}' deploy-production.log | grep x",
-  "sed 's/a/b/' e deploy-production.log",
   `sed -n '/deploy/p' production.log`,
   "sed -i 's/production/prod/' deploy.yaml",
   'find . -name deploy-production',
   `rg ${RELEASE}.log`,
   `git grep ${RELEASE}`,
   "git branch --list '*production*deploy*'",
-  'git branch -vv --merged production-deploy',
-  'git branch --contains production-deploy',
   'git remote',
   'git remote -v',
   'git remote show production-deploy',
   'git remote get-url production-deploy',
   'git worktree list',
+  // a changing subcommand that is not the third word is not read
+  'git remote -v add production-deploy',
+  'git worktree --quiet add ../production-deploy',
   // listings whose text names a release through an env prefix: only the classification keeps them read-only
-  'env deploy=production git branch',
-  'env deploy=production git branch -a',
   'env deploy=production git remote',
   'env deploy=production git remote -v',
-  'env deploy=production git remote --verbose',
   'env deploy=production git worktree list',
   // a form word inside another command's arguments is no form
-  `grep "find . -exec make ${RELEASE}" x.log`,
   `grep "git remote add ${RELEASE}" x.log`,
-  `echo rg --pre ${RELEASE}`,
+  `echo git worktree add ${RELEASE}`,
   `grep ${RELEASE}.log 2>&1`,
   `grep ${RELEASE}.log && echo done`,
 ];
 
-test('T0-HOOK-CLASSIFIER-2 acceptance 2: production-gate tests every executing form, separator and path-qualified first word, and leaves the read-only uses read-only', () => {
+test('T0-HOOK-CLASSIFIER-2 acceptance 2: production-gate tests every separator, path-qualified first word and changing git remote or worktree subcommand, and leaves the rest read-only', () => {
   const { cwd, env } = envWithState();
   const gate = (command: string) => productionGate({ tool_name: 'Bash', tool_input: { command } }, env, DEFAULT_HOOK_CONFIG, cwd);
   for (const [label, named, plain] of GATE_ROWS) {
@@ -1008,47 +1013,36 @@ test('T0-HOOK-CLASSIFIER-2 acceptance 2: production-gate tests every executing f
   for (const command of READ_ONLY_ROWS) assert.deepEqual(gate(command), { exitCode: 0 }, JSON.stringify(command));
 });
 
-/** One row per file-writing form: [label, command writing under the frozen contracts/, the same command without the form]. */
-const WRITE_ROWS: Array<[string, string, string]> = [
-  ['sed -i after another option', "sed -n -i 's/a/b/' contracts/api.yaml", "sed -n 's/a/b/' contracts/api.yaml"],
-  ['sed -ni', "sed -ni 's/a/b/' contracts/api.yaml", "sed -n 's/a/b/' contracts/api.yaml"],
-  ['sed -i.bak', "sed -i.bak 's/a/b/' contracts/api.yaml", "sed 's/a/b/' contracts/api.yaml"],
-  ['sed --in-place', "sed --in-place 's/a/b/' contracts/api.yaml", "sed 's/a/b/' contracts/api.yaml"],
-  ['awk -i inplace', 'awk -f prog.txt -i inplace contracts/api.yaml', 'awk -f prog.txt contracts/api.yaml'],
-  ...['-delete', '-fprint out.txt', '-fprint0 out.txt', '-fprintf out.txt %p', '-fls out.txt'].map((action): [string, string, string] => [`find ${action.split(' ')[0]}`, `find contracts/ ${action}`, 'find contracts/ -name x']),
-  ['sort -o', 'sort -o contracts/api.yaml contracts/api.yaml', 'sort contracts/api.yaml'],
-  ['sort --output', 'sort --output=contracts/x.txt in.txt', 'sort in.txt contracts/x.txt'],
-  ['a uniq output operand', 'uniq in.txt contracts/out.txt', 'uniq -f 2 contracts/in.txt'],
-  ['a uniq output operand after a long option', 'uniq --skip-fields 2 in.txt contracts/out.txt', 'uniq --skip-fields 2 contracts/in.txt'],
-  ['a uniq output operand after another long option', 'uniq --check-chars 3 in.txt contracts/out.txt', 'uniq --skip-chars 1 contracts/in.txt'],
-  ['tree -o', 'tree -o contracts/tree.txt', 'tree contracts/'],
-  ['yq -i', "yq -i '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
-  ['yq --inplace', "yq --inplace '.a = 1' contracts/api.yaml", "yq '.a' contracts/api.yaml"],
-  ...['log', 'diff', 'show'].map((sub): [string, string, string] => [`git ${sub} --output`, `git ${sub} --output=contracts/out.txt`, `git ${sub} -- contracts/`]),
-  ['git log --output with a separate value', 'git log --output contracts/log.txt', 'git log -- contracts/'],
-  ...['add', 'remove', 'move', 'prune'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} contracts/wt`, 'git worktree list contracts/wt']),
-];
+/** One row per git worktree writing subcommand: [label, command writing under the frozen contracts/, the same command without it]. */
+const WRITE_ROWS: Array<[string, string, string]> = ['add', 'remove', 'move', 'prune'].map((sub): [string, string, string] => [`git worktree ${sub}`, `git worktree ${sub} contracts/wt`, 'git worktree list contracts/wt']);
 
-/** Reads under the frozen path: the sed script writes left to issue 135, file operands named w or W, and form words in another command's arguments. */
+/** Reads under the frozen path, as on main: the file-writing options moved to issue 135 and the pre-check inputs of a9d986d. */
 const DEFER_ROWS = [
+  "sed -n -i 's/a/b/' contracts/api.yaml",
+  "sed --in-place 's/a/b/' contracts/api.yaml",
+  'awk -f prog.txt -i inplace contracts/api.yaml',
+  'find contracts/ -delete',
+  'sort -o contracts/api.yaml contracts/api.yaml',
+  'uniq in.txt contracts/out.txt',
+  'tree -o contracts/tree.txt',
+  "yq -i '.a = 1' contracts/api.yaml",
+  'git log --output=contracts/out.txt',
   "sed -n 'w contracts/copy.yaml' in.txt",
-  "sed 's/a/b/w contracts/out.yaml' in.txt",
-  "sed -n '3w contracts/x.yaml' in.txt",
-  "sed 's/a/b/' w contracts/api.yaml",
-  "sed 's/a/b/' W contracts/api.yaml",
-  'grep "sort -o contracts/x.txt" notes.txt',
-  'grep "yq --inplace contracts/api.yaml" notes.txt',
-  'grep "find contracts/ -delete" notes.txt',
+  "sed -e 's/ -i / x /' contracts/api.yaml",
+  `awk 'BEGIN { x = " -i inplace " }' contracts/api.yaml`,
+  'grep "git worktree add contracts/wt" notes.txt',
+  // a writing subcommand that is not the third word is not read
+  'git worktree --quiet add contracts/wt',
 ];
 
-test('T0-HOOK-CLASSIFIER-2 acceptance 3: protect-paths reads every file-writing form as a write, and no file-writing form asks production-gate', () => {
+test('T0-HOOK-CLASSIFIER-2 acceptance 3: protect-paths reads a git worktree writing subcommand as a write, and the moved option forms defer as on main', () => {
   const config = { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] };
   const paths = (command: string) => protectPaths({ tool_name: 'Bash', tool_input: { command } }, config);
   for (const [label, writing, reading] of WRITE_ROWS) {
     const denied = paths(writing);
     assert.equal(decision(denied), 'deny', `${label}: ${JSON.stringify(writing)}`);
     assert.ok(denyReason(denied).startsWith('FROZEN: '), label);
-    assert.equal(decision(paths(reading)), 'defer', `${label} without the form: ${JSON.stringify(reading)}`);
+    assert.equal(decision(paths(reading)), 'defer', `${label} without the subcommand: ${JSON.stringify(reading)}`);
     assert.deepEqual(paths(writing.replaceAll('contracts', 'src')), { exitCode: 0 }, `${label} without a frozen path`);
   }
   for (const reading of DEFER_ROWS) assert.equal(decision(paths(reading)), 'defer', reading);
@@ -1060,12 +1054,12 @@ test('T0-HOOK-CLASSIFIER-2 acceptance 5: docs/OPERATIONS.md (Hooks) and the CHAN
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
-  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER-2, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, and the segment carries no executing form of it, read from its own words. `production-gate` tests first the segments it tested before, in the same order and classification, and then the ones the new split and the forms add, so wherever it denied before it decides as before; the executing forms are find `-exec`, `-execdir`, `-ok` and `-okdir`, rg `--pre`, git grep `-O` and `--open-files-in-pager`, and the git branch, remote and worktree commands that change the repository (all but a branch listing, `git remote` alone or with `-v`, `show` or `get-url`, and `git worktree list`). `protect-paths` also reads as a write the file-writing forms sed `-i` (combined included) and `--in-place`, awk `-i inplace`, find `-delete`, `-fprint`, `-fprint0`, `-fprintf` and `-fls`, sort `-o` and `--output`, a uniq output operand, tree `-o`, yq `-i` and `--inplace`, git log, diff and show `--output`, and git worktree `add`, `remove`, `move` and `prune`; these never make `production-gate` test a segment, so an in-place edit of a file that names a release asks for no release authorization. The awk program and sed script forms (awk `system(`, pipes and `getline`, sed `e`, `w` and `W`) are not read yet (issue 135).';
+  const paragraph = 'Which Bash segments the guards read as read-only (card T0-HOOK-CLASSIFIER-2, issue 120): a command splits at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before), and a segment is read-only only when its first word is a bare name on the read-only lists, without a path, except `git remote` with `add`, `remove`, `rm`, `rename`, `set-url`, `set-head`, `set-branches`, `prune` or `update` as its third word and `git worktree` with `add`, `remove`, `move`, `prune`, `lock`, `unlock` or `repair`. `production-gate` tests first the segments it tested before, in the same order and classification, and then the ones the new split adds, so wherever it denied before it decides as before; under a config that cannot be used its legacy decision uses the classification before this card alone. `protect-paths` also reads `git worktree add`, `remove`, `move` and `prune` as writes. No other word is read: option forms (find `-exec`, sed `-i`, sort `-o` and the like) and awk programs and sed scripts are issue 135.';
   assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
   assert.ok(!hooks.includes('(card T0-HOOK-CLASSIFIER,'), 'the replaced paragraph is gone');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER-2 (issue 120, replacing T0-HOOK-CLASSIFIER). The Bash guards read a segment as read-only from its first word alone, after stripping any path, and split only at `||`, `&&`, `;` and `|`, so a command that ran another command, changed repository state or wrote a file behind a read-only first word, or after a lone `&` or a line break, passed them. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `production-gate` tests the segments it tested before first and then the executing forms (find `-exec`, `-execdir`, `-ok` and `-okdir`, rg `--pre`, git grep `-O`) and the git branch, remote and worktree commands that change the repository, and `protect-paths` reads the file-writing forms (sed `-i` and `--in-place`, awk `-i inplace`, find `-delete`, `-fprint*` and `-fls`, sort `-o`, a uniq output operand, tree `-o`, yq `-i`, git `--output`, git worktree `add`, `remove`, `move` and `prune`) as writes. Every change adds a denial; wherever a guard denied before, it decides as before. The awk program and sed script forms are issue 135.';
+  const entry = '- Changed (behaviour under a valid config): the Bash command classifier, card T0-HOOK-CLASSIFIER-2 (issue 120, replacing T0-HOOK-CLASSIFIER). The Bash guards split a command only at `||`, `&&`, `;` and `|` and read a path-qualified first word by its base name, so a second command after a lone `&` or a line break, or a program named by a path, passed them as read-only, and `git remote` and `git worktree` changes were read as reads. Now a command also splits at a lone `&` and a line break (`2>&1`, `>&2`, `&>`, `&>>` and `&&` as before), a path-qualified first word is never read-only, `git remote` and `git worktree` subcommands that change the repository (the third word) are mutating, and `protect-paths` reads `git worktree add`, `remove`, `move` and `prune` as writes. `production-gate` tests the segments it tested before first, and the legacy decision of a config that cannot be used keeps the classification before this card, so wherever a guard denied before it decides as before. Option and program forms are issue 135.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   assert.ok(!unreleased.includes('card T0-HOOK-CLASSIFIER (issue 120)'), 'the replaced entry is gone');
 });
@@ -1093,47 +1087,52 @@ function mainGateHits(cmd: string, patterns: string[]): boolean {
 test('T0-HOOK-CLASSIFIER-2 acceptance 6: wherever main denied or threw, production-gate and protect-paths decide identically', () => {
   const { cwd, env } = envWithState();
   const commands = [
+    ...SPLIT_PINS,
     ...GATE_ROWS.flatMap(([, named, plain]) => [named, plain]),
     ...READ_ONLY_ROWS,
     ...WRITE_ROWS.flatMap(([, writing, reading]) => [writing, reading]),
     ...DEFER_ROWS,
     ...[' & ', '\r', ' | ', ' ; ', ' && ', ' || ', '\n', '\r\n'].map((joint) => ['make deploy', 'echo production'].join(joint)),
     'git branch topic; make deploy',
+    'git branch topic',
+    'git remote add topic url',
     'make build; make deploy',
     'cat notes & make deploy',
     // a path-qualified read-only first word main skipped comes before main's match: main's order reaches the match first
     '/usr/bin/grep x; make deploy production',
     'C:\\tools\\grep.exe x; make deploy production',
   ];
-  const patternLists = [DEFAULT_HOOK_CONFIG.productionPatterns, ['deploy', '['], ['[', 'deploy'], [...DEFAULT_HOOK_CONFIG.productionPatterns, '[']];
+  const patternLists = [DEFAULT_HOOK_CONFIG.productionPatterns, ['deploy', '['], ['[', 'deploy'], [...DEFAULT_HOOK_CONFIG.productionPatterns, '['], ['topic', '[']];
   let decided = 0;
   for (const patterns of patternLists) {
     const config = { ...DEFAULT_HOOK_CONFIG, productionPatterns: patterns };
     for (const command of commands) {
       const event = { tool_name: 'Bash', tool_input: { command } };
-      let main: 'deny' | 'pass' | 'throw';
+      let main: 'deny' | 'pass' = 'pass';
+      let thrown: string | undefined;
       try {
         main = mainGateHits(command, patterns) ? 'deny' : 'pass';
-      } catch {
-        main = 'throw';
+      } catch (err) {
+        thrown = (err as Error).message;
       }
-      if (main === 'deny') {
+      const label = `${JSON.stringify(patterns)} ${JSON.stringify(command)}`;
+      if (thrown !== undefined) {
         decided += 1;
-        assert.deepEqual(productionGate(event, env, config, cwd), { exitCode: 2, stderr: GATE_TEXT }, `${JSON.stringify(patterns)} ${JSON.stringify(command)}`);
-      }
-      if (main === 'throw') {
+        assert.throws(() => productionGate(event, env, config, cwd), (err: Error) => err.message === thrown, label);
+      } else if (main === 'deny') {
         decided += 1;
-        assert.throws(() => productionGate(event, env, config, cwd), `${JSON.stringify(patterns)} ${JSON.stringify(command)}`);
+        assert.deepEqual(productionGate(event, env, config, cwd), { exitCode: 2, stderr: GATE_TEXT }, label);
       }
     }
   }
   const frozen = { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] };
+  const frozenReason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   for (const command of commands) {
     if (/contracts\//i.test(command) && MAIN_WRITE_VERBS.test(command)) {
       decided += 1;
       const r = protectPaths({ tool_name: 'Bash', tool_input: { command } }, frozen);
       assert.equal(decision(r), 'deny', command);
-      assert.ok(denyReason(r).startsWith('FROZEN: '), command);
+      assert.equal(denyReason(r), frozenReason, command);
     }
   }
   assert.ok(decided > 40, `the invariant decided ${decided} cells where main denied or threw`);

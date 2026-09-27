@@ -245,8 +245,8 @@ function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean)
  */
 function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, legacy: Required<HookConfig>): HookResult {
   try {
-    if (guard === 'production-gate') return productionGate(event, env, legacy, cwd);
-    if (guard === 'protect-paths') return protectPaths(event, legacy);
+    if (guard === 'production-gate') return productionGate(event, env, legacy, cwd, true);
+    if (guard === 'protect-paths') return protectPaths(event, legacy, true);
     return protectTests(event, cwd, env, legacy);
   } catch {
     return { exitCode: 0 };
@@ -299,81 +299,31 @@ function commandOf(segment: string): { name: string; qualified: boolean; args: s
   return { name: first.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, ''), qualified: /[\\/]/.test(first), args: tokens.slice(1) };
 }
 
-const BRANCH_MUTATING = new Set(['--delete', '--move', '--copy', '--force', '--set-upstream-to', '--unset-upstream', '--edit-description', '--track', '--no-track']);
-const BRANCH_VALUE_OPTIONS = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--format', '--sort']);
+/** The git remote and worktree subcommands that change the repository, read as the third word only (no flag is read). */
+const GIT_REMOTE_CHANGES = new Set(['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'set-branches', 'prune', 'update']);
+const GIT_WORKTREE_CHANGES = new Set(['add', 'remove', 'move', 'prune', 'lock', 'unlock', 'repair']);
+/** The git worktree subcommands that also write files (protect-paths). */
+const GIT_WORKTREE_WRITES = new Set(['add', 'remove', 'move', 'prune']);
 
-/** Whether `git branch <args>` only lists: no changing option, and a name only in a listing or as a listing option's value. */
-function branchLists(args: string[]): boolean {
-  const listing = args.some((a) => a === '--list' || (/^-[a-zA-Z]+$/.test(a) && a.includes('l')));
-  for (let i = 0; i < args.length; i += 1) {
-    const a = args[i]!;
-    if (a.startsWith('--')) {
-      const key = a.split('=')[0]!;
-      if (BRANCH_MUTATING.has(key)) return false;
-      if (BRANCH_VALUE_OPTIONS.has(key) && !a.includes('=')) i += 1;
-      continue;
-    }
-    if (a.startsWith('-') && a.length > 1) {
-      if (/[dDmMcCfut]/.test(a.slice(1))) return false;
-      continue;
-    }
-    if (!listing) return false;
-  }
-  return true;
-}
-
-/** Whether a git segment only reads (`args` after `git`): the read-only subcommands without their executing or changing forms. */
+/**
+ * Whether a git segment only reads (`args` after `git`): a read-only subcommand, except `git remote <sub>` and
+ * `git worktree <sub>` whose third word is a listed changing subcommand. No other word is read (issue 135 reads options).
+ */
 function gitReads(args: string[]): boolean {
   const sub = (args[0] ?? '').toLowerCase();
   if (!READ_ONLY_GIT.has(sub)) return false;
-  const rest = args.slice(1);
-  if (sub === 'grep') return !rest.some((a) => /^-O/.test(a) || /^--open-files-in-pager(?:=|$)/.test(a));
-  if (sub === 'branch') return branchLists(rest);
-  if (sub === 'remote') {
-    const r = rest.filter((a) => a !== '-v' && a !== '--verbose');
-    return r.length === 0 || r[0] === 'show' || r[0] === 'get-url';
-  }
-  if (sub === 'worktree') return rest[0] === 'list';
+  if (sub === 'remote') return !GIT_REMOTE_CHANGES.has(args[1] ?? '');
+  if (sub === 'worktree') return !GIT_WORKTREE_CHANGES.has(args[1] ?? '');
   return true;
 }
 
 /**
- * Whether a read-only command's segment carries one of its executing options (production-gate), read from that segment's own
- * words. No awk program and no sed script is read (issue 135).
- */
-function executes(name: string, segment: string): boolean {
-  if (name === 'find') return /\s-(?:exec|execdir|ok|okdir)(?=\s|$)/.test(segment);
-  if (name === 'rg') return /\s--pre(?=[\s=]|$)/.test(segment);
-  return false;
-}
-
-/**
- * Whether a segment carries a file-writing option or subcommand of its own command (protect-paths), read from its own words;
- * `print >` and the like are writes through `>`, and the sed `w` and `W` script forms are issue 135.
+ * Whether a segment writes files through a subcommand of its own command (protect-paths): `git worktree <sub>` with a listed
+ * writing subcommand as the third word. No option of any command is read (issue 135).
  */
 function writesFile(segment: string): boolean {
   const { name, args } = commandOf(segment);
-  if (name === 'sed') return /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment);
-  if (name === 'awk') return /\s-i\s*inplace\b/.test(segment);
-  if (name === 'find') return /\s-(?:delete|fprint|fprint0|fprintf|fls)(?=\s|$)/.test(segment);
-  if (name === 'sort') return /\s(?:-[a-zA-Z]*o\S*|--output(?:=\S*)?)(?=\s|$)/.test(segment);
-  if (name === 'uniq') {
-    const operands: string[] = [];
-    for (let i = 0; i < args.length; i += 1) {
-      const a = args[i]!;
-      if (/^-[fsw]$/.test(a) || /^--(?:skip-fields|skip-chars|check-chars)$/.test(a)) i += 1;
-      else if (!a.startsWith('-') || a === '-') operands.push(a);
-    }
-    return operands.length >= 2;
-  }
-  if (name === 'tree') return /\s-o\S*(?=\s|$)/.test(segment);
-  if (name === 'yq') return /\s(?:-[a-zA-Z]*i\S*|--inplace(?:=\S*)?)(?=\s|$)/.test(segment);
-  if (name === 'git') {
-    const sub = (args[0] ?? '').toLowerCase();
-    if (['log', 'diff', 'show'].includes(sub)) return /\s--output(?:=\S*)?(?=\s|$)/.test(segment);
-    if (sub === 'worktree') return ['add', 'remove', 'move', 'prune'].includes(args[1] ?? '');
-  }
-  return false;
+  return name === 'git' && (args[0] ?? '').toLowerCase() === 'worktree' && GIT_WORKTREE_WRITES.has(args[1] ?? '');
 }
 
 /** Whether a Bash command writes a file: a write verb (`WRITE_VERBS`) or a file-writing form of one of its segments. */
@@ -394,8 +344,7 @@ function isMutating(segment: string): boolean {
   const { name, qualified, args } = commandOf(segment);
   if (qualified) return true;
   if (name === 'git') return !gitReads(args);
-  if (!READ_ONLY_TOOLS.has(name)) return true;
-  return executes(name, segment);
+  return !READ_ONLY_TOOLS.has(name);
 }
 
 /** The classification before card T0-HOOK-CLASSIFIER: a first word on the read-only lists, any path stripped, reads. */
@@ -414,14 +363,15 @@ function mainSegments(cmd: string): string[] {
     .filter((s) => s.length > 0);
 }
 
-export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string): HookResult {
+export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string, classic = false): HookResult {
   const cmd = String(event.tool_input?.['command'] ?? '');
   if (!cmd) return { exitCode: 0 };
   // The segments main tested come first, in main's order and classified as main classified them, so every match and every
   // pattern error main reached is reached first and the gate decides as main did wherever main denied or threw; then the
-  // segments the new classification and the new split add (a lone `&` or a line break hid them, card T0-HOOK-CLASSIFIER-2).
-  const main = mainSegments(cmd);
-  const segments = [...new Set([...main.filter(mainMutating), ...main.filter(isMutating), ...mutatingSegments(cmd)])];
+  // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used,
+  // tests main's segments alone, so it decides exactly as main did.
+  const main = mainSegments(cmd).filter(mainMutating);
+  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd)])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).
@@ -453,7 +403,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   return { exitCode: 2, stderr: reason };
 }
 
-export function protectPaths(event: HookEvent, config: Required<HookConfig>): HookResult {
+export function protectPaths(event: HookEvent, config: Required<HookConfig>, classic = false): HookResult {
   if (!config.frozenPaths.length) return { exitCode: 0 };
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
@@ -467,7 +417,7 @@ export function protectPaths(event: HookEvent, config: Required<HookConfig>): Ho
   const reason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   if (typeof file === 'string' && matches(file)) return deny('PreToolUse', reason);
   if (typeof cmd === 'string' && matches(cmd)) {
-    if (writesFiles(cmd)) return deny('PreToolUse', reason);
+    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd)) return deny('PreToolUse', reason);
     return defer('PreToolUse', 'Note: this command references a frozen path. Read-only use may continue; any write must go through version review.');
   }
   return { exitCode: 0 };
