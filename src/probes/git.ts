@@ -134,10 +134,25 @@ export class GitProbe {
     return { behind: behind ?? 0, ahead: ahead ?? 0 };
   }
 
-  /** Whether `base` contains `sha` (merge verification on the intended base). */
-  contains(cwd: string, baseRef: string, sha: string): boolean {
+  /** Whether `base` contains `sha` (merge verification on the intended base); undefined when git cannot answer (an exit other than 0 or 1). */
+  contains(cwd: string, baseRef: string, sha: string): boolean | undefined {
     const r = this.git(cwd, ['merge-base', '--is-ancestor', sha, baseRef]);
-    return r.exitCode === 0;
+    return r.exitCode === 0 ? true : r.exitCode === 1 ? false : undefined;
+  }
+
+  /** `git cat-file -t <oid>`: the object type, or undefined when git cannot read the object (card T1-AUDIT-FACTS). */
+  objectType(cwd: string, oid: string): string | undefined {
+    return this.answer(cwd, ['cat-file', '-t', oid]);
+  }
+
+  /** `git rev-parse <oid>^{tree}`: the tree of a commit, or undefined when git cannot resolve it (card T1-AUDIT-FACTS). */
+  treeOf(cwd: string, oid: string): string | undefined {
+    return this.answer(cwd, ['rev-parse', `${oid}^{tree}`]);
+  }
+
+  private answer(cwd: string, args: string[]): string | undefined {
+    const r = this.git(cwd, args);
+    return r.exitCode === 0 ? r.stdout.trim() : undefined;
   }
 
   commonDir(cwd: string): string {

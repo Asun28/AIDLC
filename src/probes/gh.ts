@@ -123,6 +123,14 @@ export class GhProbe {
   }
 
   /**
+   * `gh pr view <pr> --json number,state,mergeCommit,headRefOid` as GitHub printed it, no field checked, so an absent field stays
+   * apart from an explicit null (card T1-AUDIT-FACTS-2). Throws when gh fails or the JSON is malformed.
+   */
+  prFacts(repo: string, number: number, cwd?: string): Record<string, unknown> | null {
+    return this.json<Record<string, unknown> | null>(['pr', 'view', String(number), '--repo', repo, '--json', 'number,state,mergeCommit,headRefOid'], cwd);
+  }
+
+  /**
    * The merge state GitHub reports for a PR (T0-SHIP-MERGE-REFUSED): `mergeable` and `mergeStateStatus` from the JSON
    * only, each kept only when it is a value GitHub defines, else undefined. Throws when gh fails or the JSON is malformed.
    */

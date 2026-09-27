@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { makeFixture, writeCard, driveCardToDone, candidateShaFor, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
 import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
-import { CardRun, addMs, type Verdict } from '../../src/core/types.ts';
+import { CardRun, ShippedFacts, addMs, type JournalEvent, type Verdict } from '../../src/core/types.ts';
+import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actorA, actorB } from './_harness.ts';
@@ -4561,6 +4562,116 @@ test('T0-SHIP-NOTHING-REFUTED acceptance 3: docs/OPERATIONS.md and the CHANGELOG
     "The build directive of a ship failure names the ladder's attempt number, where it used to count not-counted attempts and name a number the next build directive did not.",
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+/** What the card runner cannot read after a GitHub merge (card T1-AUDIT-FACTS-2); the ship path's own reads are unaffected. */
+type FactsBroken = 'gh' | 'no-merge-commit' | 'fetch' | 'tree';
+
+/**
+ * One card shipped on the real GitHub ship path with scripted git and gh (card T1-AUDIT-FACTS-2); the ship output names another
+ * commit, tree, head and PR than gh and git report. `broken` is what the runner cannot read after the merge; `calls` is the
+ * number of `card next` calls (default 1). Each step records its directive, the merge results journaled so far and the merge
+ * operation's status.
+ */
+function shipOnGitHub(candidateSha: string, options: { ghHead?: string; broken?: FactsBroken; calls?: number } = {}) {
+  const [HEAD, MERGE, TREE, OTHER] = ['a', 'b', 'c', 'e'].map((c) => c.repeat(40)) as [string, string, string, string];
+  /** The GitHub ship path whose output names another commit, tree, head and PR than gh and git report. */
+  class NoisyGitHubShipPath extends GitHubShipPath {
+    override ship(req: ShipRequest): ShipResult {
+      const r = super.ship(req);
+      r.receipt.stdout = `${r.receipt.stdout}\nmerged ${OTHER} tree ${OTHER} head ${OTHER} PR #7`;
+      return r;
+    }
+  }
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-FACTS', title: 'facts of a merge' });
+    const goal = goalForCards(fx, ['T1-FACTS']);
+    const card = fx.card('T1-FACTS');
+    const dry = fx.runner();
+    let r = dry.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-FACTS'));
+    r = dry.next(fx.goal(goal.id), card, r.run);
+    const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha });
+    mkdirSync(path.join(fx.config.worktreeRoot, 'T1-FACTS', '.review'), { recursive: true });
+    // The merge commit reaches the checkout through a fetch after the merge ('fetch': it is there already); the ship path's own
+    // gh read after the merge is the first one, the runner's come after it.
+    const broken = options.broken;
+    let merged = false;
+    let fetched = false;
+    let viewsAfterMerge = 0;
+    let merges = 0;
+    const script = scriptedRunner({
+      'gh api user -q .login': { stdout: 'alice\n' },
+      'git add -A': {},
+      'git diff --cached --quiet': {},
+      'git rev-parse --verify HEAD': { stdout: `${HEAD}\n` },
+      'git fetch': () => {
+        if (merged && broken === 'fetch') return { exitCode: 128, stderr: 'fatal: unable to access the remote' };
+        fetched ||= merged;
+        return {};
+      },
+      'git rev-parse --verify --quiet refs/remotes/origin/main^{commit}': { stdout: `${'d'.repeat(40)}\n` },
+      'git merge-tree --write-tree HEAD': { stdout: `${'f'.repeat(40)}\n` },
+      'git push': {},
+      'gh pr list': { stdout: '[]' },
+      'gh pr create': { stdout: 'https://github.com/o/r/pull/42\n' },
+      'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }] }) },
+      'gh pr merge': () => ((merges += 1), (merged = true), {}),
+      'gh pr view 42 --repo o/r --json': () => {
+        const runnerRead = merged && (viewsAfterMerge += 1) > 1;
+        if (runnerRead && broken === 'gh') return { exitCode: 1, stderr: 'HTTP 502' };
+        return { stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: options.ghHead ?? HEAD, baseRefName: 'main', mergeCommit: runnerRead && broken === 'no-merge-commit' ? null : { oid: MERGE } }) };
+      },
+      [`git rev-parse ${MERGE}^{tree}`]: () => ((fetched || broken === 'fetch') && broken !== 'tree' ? { stdout: `${TREE}\n` } : { exitCode: 128, stderr: `fatal: ambiguous argument '${MERGE}^{tree}'` }),
+    });
+    const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
+    const ship = new NoisyGitHubShipPath({ mainRoot: fx.tmp, worktreeRoot: fx.config.worktreeRoot, repository: 'o/r', runner: script, ...github, sleep: () => {} });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+    const steps: Array<{ kind: string; narration: string; state: string; results: JournalEvent[]; opStatus?: string }> = [];
+    let run = built;
+    for (let call = 1; call <= (options.calls ?? 1); call += 1) {
+      const step = runner.next(fx.goal(goal.id), card, run);
+      run = step.run;
+      const events = fx.events(goal.id);
+      const opId = events.find((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge')?.data['operationId'];
+      steps.push({ kind: step.directive.kind, narration: step.directive.narration, state: step.run.state, results: events.filter((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === opId), opStatus: typeof opId === 'string' ? fx.ops.get(opId)?.status : undefined });
+    }
+    return { steps, merges, facts: { headSha: options.ghHead ?? HEAD, mergeSha: MERGE, tree: TREE, pr: 42 } };
+  } finally {
+    fx.cleanup();
+  }
+}
+
+test('T1-AUDIT-FACTS-2 acceptance 1: a merge verified on the GitHub ship path journals the PR head, the merge commit, its tree and the PR number from gh and git, never from the ship output [R1]', () => {
+  const HEAD = 'a'.repeat(40);
+  const verified = shipOnGitHub(HEAD);
+  const [first] = verified.steps;
+  assert.equal(first?.kind, 'close', first?.narration);
+  assert.equal(first?.results.length, 1, 'one result for the merge');
+  assert.equal(first?.results[0]?.data['status'], 'succeeded');
+  assert.deepEqual(ShippedFacts.safeParse(first?.results[0]?.data).data, verified.facts, JSON.stringify(first?.results[0]?.data));
+  // The token (tip = the candidate) verifies the merge; the head journaled is the one gh reports, never the candidate or the token's.
+  const byToken = shipOnGitHub(HEAD, { ghHead: '9'.repeat(40) });
+  assert.equal(byToken.steps[0]?.kind, 'close', byToken.steps[0]?.narration);
+  assert.deepEqual(ShippedFacts.safeParse(byToken.steps[0]?.results[0]?.data).data, byToken.facts, JSON.stringify(byToken.steps[0]?.results[0]?.data));
+  // A merge the runner cannot verify (the PR head is not the candidate) journals no facts.
+  const unverified = shipOnGitHub('e'.repeat(40)).steps[0];
+  assert.equal(unverified?.kind, 'wait', unverified?.narration);
+  assert.equal(unverified?.results.length, 1);
+  assert.equal(unverified?.results[0]?.data['status'], 'UNKNOWN');
+  assert.equal(ShippedFacts.safeParse(unverified?.results[0]?.data).success, false, JSON.stringify(unverified?.results[0]?.data));
+});
+
+test('T1-AUDIT-FACTS-2 acceptance 1: a verified merge whose facts cannot all be read journals its one result without them and enters CLOSE, with no wait, second result or pending record [R1]', () => {
+  for (const broken of ['gh', 'no-merge-commit', 'fetch', 'tree'] as const) {
+    const shipped = shipOnGitHub('a'.repeat(40), { broken, calls: 2 });
+    for (const [i, step] of shipped.steps.entries()) {
+      assert.deepEqual([step.kind, step.state], ['close', 'CLOSE'], `${broken} call ${i + 1}: ${step.narration}`);
+      assert.deepEqual(step.results.map((e) => e.data), [{ operationId: step.results[0]?.data['operationId'], status: 'succeeded' }], `${broken} call ${i + 1}: one result, no facts`);
+      assert.equal(step.opStatus, 'succeeded', broken);
+    }
+    assert.equal(shipped.merges, 1, `${broken}: the merge ran once`);
+  }
 });
 
 /** The output of a ship refused for a reason that is not a conflict, as a ship path prints it: the sentinel, the saga lines and the resume marker. */

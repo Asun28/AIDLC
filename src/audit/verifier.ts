@@ -15,6 +15,9 @@ import path from 'node:path';
 import type { Journal } from '../state/journal.ts';
 import { fileSha256, type EvidenceStore, type Manifest } from './manifest.ts';
 import type { OperationLedger } from '../coordination/reconcile.ts';
+import type { GitProbe } from '../probes/git.ts';
+import type { GhProbe } from '../probes/gh.ts';
+import { ShippedFacts } from '../core/types.ts';
 
 export type AuditLevel = 'none' | 'recorded' | 'traceable' | 'independently-verified';
 
@@ -45,6 +48,8 @@ export interface VerifierInput {
   /** Whether the host captured model turns / tool calls for the declared inventory (existing-host prerequisite). */
   hostCaptureBoundary?: { present: boolean; detail: string };
   finalCandidateDigest?: string;
+  /** The probes that re-derive the facts journaled with each merge (card T1-AUDIT-FACTS); `base` is the ref a merge must be on. */
+  probes?: { git: GitProbe; gh: GhProbe; cwd: string; base: string; repository?: string };
   now: string;
 }
 
@@ -90,6 +95,23 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });
 
+  // Merge facts (cards T1-AUDIT-FACTS and T1-AUDIT-FACTS-2). A card is shipped when a merge intent of the card has a succeeded
+  // result or reconciliation; the facts are read only from the result its one writer journals (OPERATION_RESULT of the intent's
+  // card and operation, status succeeded) and never from narration. Each card counts the facts git or gh answered; a shipped
+  // card whose merge result carries no facts is FACT_MISSING.
+  const merges = new Map(events.filter((e) => e.type === 'OPERATION_INTENT' && e.data['kind'] === 'merge' && typeof e.data['operationId'] === 'string').map((e) => [e.data['operationId'], e.cardId]));
+  const rederived = new Map<string, number>();
+  const withFacts = new Set<string>();
+  for (const e of events) {
+    const card = merges.get(e.data['operationId']);
+    if (!card || e.cardId !== card || e.data['status'] !== 'succeeded' || (e.type !== 'OPERATION_RESULT' && e.type !== 'OPERATION_RECONCILED')) continue;
+    const facts = e.type === 'OPERATION_RESULT' ? ShippedFacts.safeParse(e.data).data : undefined;
+    if (facts) withFacts.add(card);
+    rederived.set(card, (rederived.get(card) ?? 0) + (facts ? rederive(card, facts, input.probes, findings) : 0));
+  }
+  for (const card of rederived.keys()) if (!withFacts.has(card)) findings.push({ severity: 'warn', code: 'FACT_MISSING', detail: `${card}: its merge result carries no facts` });
+  const noFacts = [...rederived].filter(([, n]) => n === 0).map(([card]) => card);
+
   // Manifest / artifacts.
   let manifestInfo: AuditReport['manifest'];
   if (input.manifest && input.evidence) {
@@ -119,15 +141,16 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   let level: AuditLevel = 'none';
   if (chain.events > 0) level = 'recorded';
   if (chain.events > 0 && chain.ok && !blocks.some((b) => ['OP_UNRESOLVED', 'OP_INTENT_MISSING', 'TRACE_MISSING', 'WORK_AFTER_TERMINAL', 'JOURNAL_CHAIN'].includes(b.code))) level = 'traceable';
-  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE')) level = 'independently-verified';
+  if (level === 'traceable' && manifestInfo?.sealed && manifestInfo.sealOk && !blocks.some((b) => b.code.startsWith('ARTIFACT') || b.code.startsWith('MANIFEST') || b.code === 'EVIDENCE_STALE_CANDIDATE' || b.code === 'FACT_MISMATCH')) level = 'independently-verified';
 
   let fullyAuditedStatus: AuditReport['fullyAuditedStatus'] = 'not-claimed';
   let prerequisite: string | undefined;
   if (input.hostCaptureBoundary) {
-    if (input.hostCaptureBoundary.present && level === 'independently-verified') fullyAuditedStatus = 'verified';
+    if (input.hostCaptureBoundary.present && level === 'independently-verified' && noFacts.length === 0) fullyAuditedStatus = 'verified';
     else {
       fullyAuditedStatus = 'BLOCKED/capability';
-      prerequisite = input.hostCaptureBoundary.present ? `audit level is ${level}; resolve blocking findings` : `host capture boundary missing: ${input.hostCaptureBoundary.detail}`;
+      const host = !input.hostCaptureBoundary.present ? `host capture boundary missing: ${input.hostCaptureBoundary.detail}` : level !== 'independently-verified' ? `audit level is ${level}; resolve blocking findings` : '';
+      prerequisite = [host, noFacts.length ? `no re-derived fact for shipped card(s): ${noFacts.join(', ')}` : ''].filter(Boolean).join('; ');
     }
   }
   return {
@@ -141,4 +164,36 @@ export function verifyAudit(input: VerifierInput): AuditReport {
     manifest: manifestInfo,
     checkedAt: input.now,
   };
+}
+
+/**
+ * Re-derives one card's merge facts from git and gh (card T1-AUDIT-FACTS) and returns how many git or gh answered: a
+ * disagreement is a FACT_MISMATCH block naming the card, the fact and both values; a fact neither answers is FACT_UNVERIFIED.
+ */
+function rederive(card: string, facts: ShippedFacts, probes: VerifierInput['probes'], findings: AuditFinding[]): number {
+  let answered = 0;
+  const check = (fact: string, recorded: string, derived: string | undefined, source: 'git' | 'gh') => {
+    if (derived === undefined) return void findings.push({ severity: 'warn', code: 'FACT_UNVERIFIED', detail: `${card} ${fact}: recorded ${recorded}, not re-derived (${source})` });
+    answered += 1;
+    if (derived !== recorded) findings.push({ severity: 'block', code: 'FACT_MISMATCH', detail: `${card} ${fact}: recorded ${recorded}, re-derived ${derived}` });
+  };
+  const onBase = probes?.git.contains(probes.cwd, probes.base, facts.mergeSha);
+  check('mergeSha object type', 'commit', probes?.git.objectType(probes.cwd, facts.mergeSha), 'git');
+  check('tree', facts.tree, probes?.git.treeOf(probes.cwd, facts.mergeSha), 'git');
+  check(`mergeSha on ${probes?.base ?? 'the base'}`, 'ancestor', onBase === undefined ? undefined : onBase ? 'ancestor' : 'not an ancestor', 'git');
+  let pr: Record<string, unknown> | null | undefined;
+  try {
+    pr = probes?.repository ? probes.gh.prFacts(probes.repository, facts.pr, probes.cwd) : undefined;
+  } catch {
+    pr = undefined;
+  }
+  // A field gh answers is one of the expected type or an explicit null ('none', a mismatch); an absent field or one of another
+  // type answers nothing (R3 decision 2 F2).
+  const field = (value: unknown, type: 'string' | 'number') => (value === null ? 'none' : typeof value === type ? String(value) : undefined);
+  const commit = pr?.['mergeCommit'];
+  check(`pr ${facts.pr} state`, 'MERGED', field(pr?.['state'], 'string'), 'gh');
+  check('mergeSha', facts.mergeSha, commit === null ? 'none' : field((commit as { oid?: unknown } | undefined)?.oid, 'string'), 'gh');
+  check('headSha', facts.headSha, field(pr?.['headRefOid'], 'string'), 'gh');
+  check('pr', String(facts.pr), field(pr?.['number'], 'number'), 'gh');
+  return answered;
 }
