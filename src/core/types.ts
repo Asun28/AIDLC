@@ -361,6 +361,8 @@ export const PreReviewRound = z.object({
   holdUntil: IsoTimestamp.optional(),
   /** The level `{effort}` expanded to for the reviewer that ran; absent when its argv carried no `{effort}` (card T0-R2-FALLBACK). */
   effort: ReviewEffortLevel.optional(),
+  /** The timeout the round was dispatched with, recorded when a fallback is configured; a round in flight expires on it (card T0-R2-FALLBACK-3). */
+  timeoutMs: z.number().int().positive().optional(),
   /** Concurrent angles of a panel round. */
   perspectives: z.array(PerspectiveRecord).optional(),
   /** The reservation id of the dispatch (the retention file stem); a pending record is replaced by the decided one under it. */
