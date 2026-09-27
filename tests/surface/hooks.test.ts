@@ -12,7 +12,7 @@ import { stagesForTarget } from '../../src/core/goal-machine.ts';
 import { computeGoalDeadlines } from '../../src/core/deadlines.ts';
 import { hostName, resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
-import { loadProjectConfig } from '../../src/config.ts';
+import { ConfigError, loadProjectConfig } from '../../src/config.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 
 function envWithState(): { cwd: string; env: NodeJS.ProcessEnv; stateDir: string } {
@@ -1296,12 +1296,15 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 1: from every cwd inside the repositor
   const cwds = [root, sub, wt, wtSub];
   // a valid config at the root: the subdirectory's own file and the worktree's committed copy are never read
   writeFileSync(file, JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }), 'utf8');
-  for (const cwd of cwds) assert.deepEqual(loadHookConfig(cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] }, cwd);
-  // a config that cannot be used: the same error, naming the root's file, from every cwd
+  for (const cwd of cwds) {
+    assert.deepEqual(loadHookConfig(cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] }, cwd);
+    assert.equal(loadProjectConfig(resolveRepoIdentity(cwd).mainRoot).file, file, `the CLI reads the same file from ${cwd}`);
+  }
+  // a config that cannot be used: the same error, naming the root's file, from every cwd, and the CLI refuses that file
   writeFileSync(file, NOT_JSON, 'utf8');
   for (const cwd of cwds) {
     assert.deepEqual(loadHookConfig(cwd), new HookConfigError(file, NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG), cwd);
-    assert.equal((loadHookConfig(cwd) as HookConfigError).file, loadProjectConfig(resolveRepoIdentity(cwd).mainRoot).file, cwd);
+    assert.throws(() => loadProjectConfig(resolveRepoIdentity(cwd).mainRoot), ConfigError, cwd);
   }
   // no config at the root: the defaults, although the subdirectory and the worktree each hold one
   rmSync(file);
