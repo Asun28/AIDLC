@@ -1463,3 +1463,90 @@ test('T1-STORE-CAS-2: the acquisition is journaled before the run write, so a ru
     fx.cleanup();
   }
 });
+
+test('T1-STORE-CAS-2 R3 decision 1 F2 F4: every run write of a takeover, the assessment saves included, lands with the lease lock held: at each paused rename a release and another takeover refuse with locked and change nothing', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const quick = new LeaseStore(fx.paths.leases, { timeoutMs: 50 });
+    const windowC = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: quick, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    const actorC = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+    let cards = 0;
+    /**
+     * A card A prepared and B read stopped for ownership (`merged`: its merge verified too, so the assessment reconciles the
+     * stop to CLOSE); its lease has expired. Returns the goal id.
+     */
+    const stoppedCard = (id: string, merged: boolean): string => {
+      cards += 1;
+      writeCard(fx, { id, title: `card ${id}` });
+      const goal = goalForCards(fx, [id]);
+      setActorForTests(actorA);
+      assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.controller.ensureCardRun(fx.goal(goal.id), id)).directive.kind, 'prepare');
+      setActorForTests(actorB);
+      assert.equal(fx.runner().next(fx.goal(goal.id), fx.card(id), fx.store.getCardRun(goal.id, id)!).run.stop?.reason, 'ownership');
+      if (merged) fx.store.saveCardRun({ ...fx.store.getCardRun(goal.id, id)!, mergeVerified: true });
+      fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+      return goal.id;
+    };
+    /** B's takeover of `id` with `at(n, file)` run before the n-th rename of the run record. */
+    const takeoverPausing = (goalId: string, id: string, at: (n: number) => void) => {
+      const runFile = fx.store.cardFile(goalId, id);
+      let n = 0;
+      setActorForTests(actorB);
+      try {
+        return settle(() =>
+          throughFs(
+            'renameSync',
+            (real, args) => {
+              if (String(args[1]) === runFile) at((n += 1));
+              return real(...args);
+            },
+            () => fx.runner().takeover(fx.goal(goalId), fx.card(id), fx.store.getCardRun(goalId, id)!),
+          ),
+        );
+      } finally {
+        setActorForTests(actorA);
+      }
+    };
+    for (const merged of [false, true]) {
+      // How many times the takeover renames the run record: the run update, the assessment's saves and the final save.
+      let renames = 0;
+      const probeGoal = stoppedCard(`T1-PROBE-${merged ? 'M' : 'S'}`, merged);
+      assert.equal(takeoverPausing(probeGoal, `T1-PROBE-${merged ? 'M' : 'S'}`, (n) => { renames = n; }).error, undefined);
+      assert.ok(renames >= 3, `the takeover renames the run record ${renames} times: the update, an assessment save and the final save`);
+      for (let at = 1; at <= renames; at += 1) {
+        const id = `T1-AT-${merged ? 'M' : 'S'}${at}`;
+        const goalId = stoppedCard(id, merged);
+        const key = resourceKeys.card(fx.repo.key, id);
+        const state = () => ({ run: fx.store.getCardRun(goalId, id), lease: fx.leases.read(key), events: fx.events(goalId).length });
+        let paused: ReturnType<typeof state> | undefined;
+        let after: ReturnType<typeof state> | undefined;
+        let release: { error?: unknown } = {};
+        let byC: { error?: unknown } = {};
+        const taken = takeoverPausing(goalId, id, (n) => {
+          if (n !== at) return;
+          paused = state();
+          release = settle(() => quick.release(key, 1, actorB));
+          fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+          setActorForTests(actorC);
+          byC = settle(() => windowC.takeover(fx.goal(goalId), fx.card(id), fx.store.getCardRun(goalId, id)!));
+          setActorForTests(actorB);
+          after = state();
+        });
+        const where = `${merged ? 'merged' : 'stopped'} run, rename ${at} of ${renames}`;
+        assert.ok(paused, `${where}: the rename was reached`);
+        assert.match(String(release.error), /locked/, `${where}: the release refuses while the run write is paused: ${String(release.error)}`);
+        assert.match(String(byC.error), /locked/, `${where}: C's takeover refuses while the run write is paused: ${String(byC.error)}`);
+        assert.deepEqual(after, paused, `${where}: the refused release and takeover change nothing`);
+        assert.equal(taken.error, undefined, `${where}: B's takeover lands: ${String(taken.error)}`);
+        assert.equal(fx.store.getCardRun(goalId, id)?.ownerGeneration, 1, `${where}: the run carries the takeover generation`);
+        assert.equal(fx.leases.read(key)?.generation, 1, `${where}: and so does the lease`);
+        assert.equal(fx.leases.read(key)?.owner.session, 'win-B');
+        assert.equal(fx.leases.read(key)?.released, false);
+      }
+    }
+    assert.ok(cards >= 8, `${cards} cards exercised`);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
