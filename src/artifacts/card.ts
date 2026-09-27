@@ -10,7 +10,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Card, CARD_ID_REGEX, type ProjectTier } from '../core/types.ts';
-import { blockList, hasKey, renderFrontMatter, scalar, splitFrontMatter, stripComment } from './frontmatter.ts';
+import { blockList, hasKey, referenceCuts, renderFrontMatter, scalar, splitFrontMatter, stripComment } from './frontmatter.ts';
 
 export interface CardFinding {
   sentinel: string;
@@ -121,6 +121,12 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
     return { error: 'card schema violation', findings };
   }
   const card = parsed.data;
+  // A value a comment cuts at a reference-like hash reaches every reader shortened (card T0-FM-COMMENT-CUT): blocking on a
+  // card still to run, a warning on a merged or superseded one.
+  const active = card.status !== 'merged' && !card.superseded_by;
+  for (const cut of referenceCuts(fm)) {
+    findings.push({ sentinel: '[CARD-FM-COMMENT-CUT]', severity: active ? 'block' : 'warn', message: `${cut.key}: the comment "${cut.comment}" cuts "${cut.raw}" to "${cut.kept}"; write the number without the hash sign, or quote the value` });
+  }
   // --- scaffold rule set ---------------------------------------------------------------
   if (file && path.basename(file, '.md') !== card.id) findings.push({ sentinel: '[CARD-ID-FILENAME]', severity: 'block', message: `id ${card.id} != file name ${path.basename(file, '.md')}` });
   if (card.branch !== card.id) findings.push({ sentinel: '[CARD-BRANCH-DRIFT]', severity: 'block', message: `branch ${card.branch} must equal id ${card.id}` });

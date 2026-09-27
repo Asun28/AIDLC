@@ -1,6 +1,6 @@
 ---
 id: T0-PASS-REASONS-WORDING
-title: The review prompt says `reasons` is empty on a pass that carries no notes, so it agrees with the pass-notes line T0-R2-PASS-NOTES added (issue #91)
+title: The review prompt says `reasons` is empty on a pass that carries no notes, so it agrees with the pass-notes line T0-R2-PASS-NOTES added (issue 91)
 status: todo
 branch: T0-PASS-REASONS-WORDING
 worktree: D:\wt\AIDLC\T0-PASS-REASONS-WORDING

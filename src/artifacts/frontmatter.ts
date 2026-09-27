@@ -1,7 +1,7 @@
 /**
  * Front matter parsing compatible with the scaffold's card parser:
  * `(?s)\A﻿?---\r?\n(.*?)\r?\n---`, scalars via `^key[ \t]*:[ \t]*(.*?)`, trailing
- * `\s+#.*$` comments stripped, block lists only (`- item`), and a strict YAML fallback.
+ * comments stripped as YAML reads them (never inside a quoted scalar), block lists only (`- item`), and a strict YAML fallback.
  */
 import YAML from 'yaml';
 
@@ -33,8 +33,92 @@ export function splitFrontMatter(text: string): FrontMatterDoc | undefined {
   return { raw: text, frontMatter, body, yaml, yamlError };
 }
 
+/**
+ * Where a YAML comment starts in a one-line value, or -1 (card T0-FM-COMMENT-CUT): the first hash sign after whitespace that
+ * is outside a quoted scalar. A quoted scalar opens only where a scalar starts (the value start, or after `[`, `{`, `,` or
+ * `:` inside a flow collection) and closes at its unescaped closing quote (a backslash escapes in a double-quoted scalar, a
+ * doubled quote in a single-quoted one). A hash directly after a non-blank character, or at the value start, is text.
+ */
+export function commentStart(value: string): number {
+  let quote: '"' | "'" | undefined;
+  let flow = 0;
+  let scalarStart = true;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i]!;
+    if (quote === '"') {
+      if (ch === '\\') i += 1;
+      else if (ch === '"') quote = undefined;
+      continue;
+    }
+    if (quote === "'") {
+      if (ch === "'" && value[i + 1] === "'") i += 1;
+      else if (ch === "'") quote = undefined;
+      continue;
+    }
+    if (/\s/.test(ch)) continue;
+    if (ch === '#' && i > 0 && /\s/.test(value[i - 1]!)) return i;
+    if (scalarStart && (ch === '"' || ch === "'")) {
+      quote = ch;
+      scalarStart = false;
+    } else if ((ch === '[' || ch === '{') && (scalarStart || flow > 0)) {
+      flow += 1;
+      scalarStart = true;
+    } else if (flow > 0 && (ch === ']' || ch === '}')) {
+      flow -= 1;
+    } else if (flow > 0 && (ch === ',' || ch === ':')) {
+      scalarStart = true;
+    } else {
+      scalarStart = false;
+    }
+  }
+  return -1;
+}
+
 export function stripComment(value: string): string {
-  return value.replace(/\s+#.*$/, '').trim();
+  const at = commentStart(value);
+  return (at < 0 ? value : value.slice(0, at)).trim();
+}
+
+/** A front-matter value a comment cuts at a hash directly followed by text: where it is, its raw text, the kept text and the comment. */
+export interface ReferenceCut {
+  key: string;
+  raw: string;
+  kept: string;
+  comment: string;
+}
+
+/**
+ * Every value line of the front matter (a key, a nested key or a list item) that a comment cuts where the comment begins
+ * with a hash directly followed by a non-blank character, which is how an issue or a PR number reads (card
+ * T0-FM-COMMENT-CUT). A comment of a hash, a space and text is an annotation and is not listed.
+ */
+export function referenceCuts(frontMatter: string): ReferenceCut[] {
+  const cuts: ReferenceCut[] = [];
+  let parent = '';
+  let item = 0;
+  for (const line of frontMatter.split(/\r?\n/)) {
+    if (/^\s*#/.test(line)) continue;
+    const kv = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:(?:[ \t]+(.*?))?[ \t\r]*$/);
+    const listItem = kv ? undefined : line.match(/^\s*-\s+(.*?)[ \t\r]*$/);
+    let key: string;
+    let raw: string;
+    if (kv) {
+      if (!kv[1]) {
+        parent = kv[2]!;
+        item = 0;
+        key = parent;
+      } else key = `${parent}.${kv[2]}`;
+      raw = kv[3] ?? '';
+    } else if (listItem) {
+      item += 1;
+      key = `${parent} item ${item}`;
+      raw = listItem[1] ?? '';
+    } else continue;
+    const at = commentStart(raw);
+    if (at < 0 || !/^#\S/.test(raw.slice(at))) continue;
+    cuts.push({ key, raw, kept: raw.slice(0, at).trim(), comment: raw.slice(at) });
+  }
+  return cuts;
 }
 
 /** Scalar lookup the scaffold way: first line `key: value`, comments stripped. */
