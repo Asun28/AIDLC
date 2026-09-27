@@ -102,6 +102,16 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   return { action: 'attempt', effort: next, n, escalated: true };
 }
 
+/** The next step of a reopened episode whose repair may already be running (card T0-DISPUTE-RUNNING-ATTEMPT): as the ladder answers. */
+export function repairAction(episode: EffortEpisode, justification?: EscalationJustification): NextEffortAction {
+  return nextEffortAction(episode, justification);
+}
+
+/** A repair attempt a dispute made unneeded (card T0-DISPUTE-RUNNING-ATTEMPT): the episode as it is. */
+export function settleDisputedRepair(episode: EffortEpisode, _finishedAt: string): EffortEpisode {
+  return episode;
+}
+
 export interface ShipFailureStep {
   episode: EffortEpisode;
   action: NextEffortAction;
