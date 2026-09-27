@@ -1,0 +1,85 @@
+---
+id: T1-STORE-CAS-2
+title: One locked read-modify-write primitive carries every lease and card-run write (successor of T1-STORE-CAS), and the takeover holds the lease lock until its run write lands, so no paused or stale takeover writes an old generation
+status: merged
+branch: T1-STORE-CAS-2
+worktree: D:\wt\AIDLC\T1-STORE-CAS-2
+plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
+allow_paths:
+  - src/state/store.ts
+  - src/state/goal-store.ts
+  - src/coordination/lease.ts
+  - src/coordination/reconcile.ts
+  - src/loop/card-runner.ts
+  - src/core/review-policy.ts
+  - src/state/journal.ts
+  - tests/infra/update-json.test.ts
+  - tests/infra/store.test.ts
+  - tests/infra/goal-store.test.ts
+  - tests/infra/lease.test.ts
+  - tests/infra/journal.test.ts
+  - tests/infra/reconcile.test.ts
+  - tests/scenarios/two-windows.test.ts
+  - tests/scenarios/t0-flow.test.ts
+  - tests/scenarios/review-block.test.ts
+  - tests/scenarios/r3-fallback.test.ts
+  - tests/surface/prose.test.ts
+  - tests/surface/templates.test.ts
+  - docs/OPERATIONS.md
+  - docs/ARCHITECTURE.md
+  - docs/REQUIREMENTS-TRACEABILITY.md
+  - README.md
+  - CHANGELOG.md
+  - specs/tasks/T1-STORE-CAS-2.md
+dod_command: npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
+dod_exit: 0
+requirements:
+  - R1. `src/state/store.ts` shall provide one primitive, `updateJson`, that hands a change function the stored record under an exclusive-create lock and writes nothing when the function returns the record unchanged or throws.
+  - R2. Every lease write (claim, takeover, heartbeat, release) and every card-run write shall go through `updateJson`.
+  - R3. WHILE a takeover holds a card's lease lock, a ship intent for that card shall be refused.
+  - R4. Lease claim statuses, generation rules and `FencedError` messages shall stay as callers see them today.
+  - R5. The candidate shall remove more src/ lines than it adds, tests excluded, and shall leave the Sessions section of `docs/OPERATIONS.md` and the README Multi-session paragraph shorter in bytes.
+  - R6. WHEN a takeover writes the card run, it shall hold the card's lease lock until the run record is on disk, and shall write the run only while the lease still names this session's acquisition (session, host, generation) and the run read under the card-run lock does not already carry that generation.
+  - R7. No code path shall remove a lock file it did not create: a lock whose owner process is gone shall be refused with `LOCKED` naming the lock file and the dead process id, never removed automatically.
+  - R8. A failure to read or remove a lock file after the change ran shall never replace the change's own result or error.
+  - R9. An exclusive create that fails with EPERM shall count as a held lock only when the lock path exists (the Windows delete-pending case), and shall propagate otherwise.
+acceptance:
+  - 1. `updateJson` on a record held by a live `<file>.lock` refuses with `StoreError` `LOCKED` and leaves the record byte-identical; a change function that throws or returns the record unchanged writes nothing; a lock whose owner process is gone is refused with `LOCKED` naming the lock file and the dead process id and saying that deleting it is safe only once that process is confirmed dead, and it stays in place (tests/infra/update-json.test.ts). [R1] [R7] [dod arm 1]
+  - 2. A test reads every src/ file and finds exclusive create (`'wx'`), `sleepSync` and `Atomics.wait` only in `src/state/store.ts` (the ship's CI poll sleep excepted by name), and no `mergeFindings` (tests/infra/update-json.test.ts). [R1] [R2] [dod arm 1]
+  - 3. With a live lease lock, claim, takeover, heartbeat and release each refuse with a `locked` message and leave the lease record byte-identical (tests/infra/lease.test.ts). [R2] [dod arm 1]
+  - 4. A ship intent attempted while a takeover holds the lease lock is refused; an intent recorded before the takeover makes the takeover refuse and name its id; a ship after the takeover is fenced and records no intent (tests/scenarios/two-windows.test.ts). [R3] [dod arm 1]
+  - 5. A stop saved between the takeover's run read and its run update survives the takeover, and an old owner's review commit after the takeover is fenced (tests/scenarios/two-windows.test.ts). [R2] [dod arm 1]
+  - 6. Two completions of one takeover generation journal exactly one `LEASE_ACQUIRED` (tests/scenarios/two-windows.test.ts). [R2] [dod arm 1]
+  - 7. Every existing lease test passes with its assertions unchanged: claim statuses, generation advance and `FencedError` messages (tests/infra/lease.test.ts). [R4] [dod arm 1]
+  - 8. The Sessions section of `docs/OPERATIONS.md` and the README Multi-session paragraph are shorter in bytes than on the base, contain neither `compare-and-set` nor `four windows`, and state in one sentence each what the lock covers and what stays unfenced (`recordAttempt`, a raw `card report` patch, goal, release and review-pool records, a crash between the lease write and the run update); a test reads each sentence and compares the byte counts with the base recorded in the test (tests/surface/prose.test.ts). [R5] [dod arm 1]
+  - 9. `git diff --numstat origin/main...HEAD -- src` sums to fewer added than deleted lines and the Sessions section of the committed `docs/OPERATIONS.md` is shorter in bytes than on `origin/main`: the second arm of the DoD prints both measures and exits 1 otherwise; the close-out states them. [R5] [dod arm 2]
+  - 10. `CHANGELOG.md` Unreleased carries the entry under this card id; `docs/ARCHITECTURE.md` keeps the phrase `written under \`<file>.lock\`` that templates.test.ts reads; a test reads the entry (tests/surface/prose.test.ts). [R1] [dod arm 1]
+  - 11. R3 decision 4 F3 of T1-STORE-CAS: a completion of the same takeover generation that lands between the takeover's first run read and its lease section makes the takeover refuse as already owned, journal nothing and write nothing (tests/scenarios/two-windows.test.ts). [R6] [dod arm 1]
+  - 12. R3 decision 4 F4 of T1-STORE-CAS: with the run write of a takeover paused at the filesystem boundary (the rename of the run record, patched in the test), a lease release and a later takeover by another session each refuse with `locked` and change nothing; after the write lands the run and the lease both carry the takeover's generation; a release that lands before the takeover's lease section leaves the run unwritten (tests/scenarios/two-windows.test.ts). [R6] [dod arm 1]
+  - 13. R3 decision 4 F5 of T1-STORE-CAS and T1-STORE-CAS-2 R3 decision 1 F1 and F3: no code path removes a lock file it did not create; a test patches the unlink at the filesystem boundary and fails when any `updateJson` path, under a live lock, a dead owner's lock or a lock replaced during the change, unlinks a lock whose text is not its own; a lock replaced between the release's ownership read and its unlink, possible only when a live lock is deleted by hand, is the window the ruling of 2026-09-27 accepted after R3 decision 2; the `docs/OPERATIONS.md` Sessions section states the recovery step (delete the named file only once the named process is confirmed dead) and that window, and a test reads both sentences (tests/infra/update-json.test.ts, tests/surface/prose.test.ts). [R7] [dod arm 1]
+  - 14. Issue 87 item 1: a lock file that cannot be read at the ownership check or the release leaves the change's return value or its thrown error as the result of `updateJson` (tests/infra/update-json.test.ts). [R8] [dod arm 1]
+  - 15. Issue 87 item 2: an exclusive create that fails with EPERM while the lock path does not exist propagates the error instead of waiting for `LOCKED` (tests/infra/update-json.test.ts). [R9] [dod arm 1]
+depends_on: [T1-PARSE-GUARD]
+budget: 2300
+tdd: true
+sweep: "Survey of main at 5983a1e. Temp file + rename store.ts:45-81; interrupted-write cleanup store.ts:105-124 and goal-store.ts:175-185; createExclusive store.ts:126-147; the card-run lock (timeout loop, sleepSync, owner check on write and release, .takeover marker, pid liveness) goal-store.ts:11-32, 84-149, 188-227, about 110 lines; revision compare-and-set goal-store.ts:63-78; mergeFindings review-policy.ts:472-485 (dead under the revision check); lease claim, takeover, heartbeat, release lease.ts:56-128 (read then blind write, wx only on first acquire 70-74), fence lease.ts:131-137; takeover workarounds card-runner.ts:154-160, 674-680, 689-737, 710-715, 728-732; fences inside the run lock card-runner.ts:1452-1461, 1885-1904, 1983-1993; ship fence outside any lock card-runner.ts:905-919; journal append journal.ts:127-145 (no lock); op records reconcile.ts:109-114. Interleaving tests that model windows the lock removes: two-windows.test.ts:587 and :731. Estimated src net about -45; T1-STORE-CAS reached -47. T1-STORE-CAS R3 decision 4 (base-sync, 56dac35): F3 card-runner.ts:669 already-owned guard reads the run before the lease lock; F4 card-runner.ts:704 nested lease lock released before updateCardRun writes; F5 store.ts:203 stale-marker reclaim by age only. Issue 87: lock release masking, EPERM scope. docs/REQUIREMENTS-TRACEABILITY.md:34 (MS2 row) says the takeover is implemented to the store's limits with no compare-and-set (found at attempt 1)."
+forbid: [git update-ref or any git object as state, SQLite, a new store or state directory, a change of the lease claim statuses or generation rules or FencedError messages seen by callers (a LOCKED or LOCK_LOST refusal under contention is the one new failure mode and acceptance 3 names it), a new Node file lock over a file whose writer a lease already fences (docs/LESSONS.md 2026-09-14 T1-LOOP-LESSONS; the lease record's own lock and the existing card-run lock are not such a lock), shipping a candidate whose src/ net is 0 or above]
+non_goals: [fencing recordAttempt or card report, locking goal, release or review-pool records, locking across hosts, deleting staleLedger (its entry naming in CARD_RUN_STALE is a feature)]
+hygiene: "Successor of T1-STORE-CAS, stopped STOP/review at candidate 56dac35 by the base-sync R3 decision (findings F3, F4, F5; ruling of 2026-09-27: successor card). The branch starts from 56dac35 and merges main; everything T1-STORE-CAS acceptance 1-10 pinned stays. Ruling of 2026-09-27 after T1-STORE-CAS-2 R3 decision 1 (answered by the monitoring session on the user's standing instruction): no automatic stale-lock reclaim, since a lock file has no atomic delete-if-still-named step and Node has no OS file lock; a dead owner's lock is refused and named for the operator. Fix F3, F4 and F5 and the issue 87 items as one restructure of the takeover and the lock, never one window per review round. Lesson 2026-09-18 T1-REVIEW-INVARIANTS: prove the lock ordering by patching the filesystem calls, not injected collaborators. Lesson 2026-09-15 T0-CARD-TAKEOVER-2: state every remaining window and its recovery in the first candidate, never one window per review round. Lock order is run, then lease; no run lock is taken inside a lease section. On Windows an exclusive create can fail with EPERM while a lock is being deleted; treat it as busy."
+doc_sync: docs/OPERATIONS.md (Sessions), README.md (Multi-session), docs/ARCHITECTURE.md (state paragraph), CHANGELOG.md
+---
+
+# T1-STORE-CAS-2
+
+## Deliverable
+Successor of T1-STORE-CAS. `updateJson` in `src/state/store.ts` is the one read-modify-write primitive, and a takeover holds the lease lock until its run write lands: an exclusive-create lock per record, the change function sees the stored record, nothing is written on refusal. Lease writes, card-run writes and the takeover's operation check go through it; the card-run store's own lock code, the takeover's double read and late-operation check and `mergeFindings` are deleted. The Sessions text loses the windows the lock closes and states in one sentence what stays unfenced.
+
+## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
+```powershell
+npm run check && node -e "const cp=require('child_process');const sec=t=>{const s=t.indexOf('\n\x23\x23 Sessions');const e=t.indexOf('\n\x23\x23 ',s+1);return Buffer.byteLength(t.slice(s,e))};const g=a=>cp.execFileSync('git',a,{encoding:'utf8'});let a=0,d=0;for(const l of g(['diff','--numstat','origin/main...HEAD','--','src']).trim().split(/\r?\n/)){const[x,y]=l.split('\t');a+=Number(x);d+=Number(y)}const b=sec(g(['show','origin/main:docs/OPERATIONS.md'])),n=sec(g(['show','HEAD:docs/OPERATIONS.md']));console.log('src added',a,'deleted',d,'net',a-d,'Sessions bytes',b,'->',n);process.exit(a<d&&n<b?0:1)"
+```
+- Expected exit code: 0
+- Assertion: the typecheck is clean and every test passes, with the pass count in the receipt; the second arm prints the src net and the Sessions byte counts and exits 0 only when both shrank.
+
+## Ruling
+2026-09-27, the user, in session: merge the candidate as it stands. R3 decision 2 on 4fc3d21 blocked on the owner-only release (it reads the lock and then unlinks it, so a lock replaced between the two is removed) and on the matching test. A lock file has no atomic delete-if-still-named step and Node has no OS file lock; with automatic reclaim removed, only a live lock deleted by hand can be replaced there. The window is stated in the `docs/OPERATIONS.md` Sessions section next to the recovery step, and acceptance 13 names it. Merged as PR #100 (27fa9df, tree 6dfea86), head 31bb0e5, which differs from 4fc3d21 by that sentence, its prose assertion and a merge of main. The goal stays STOP/review; this closure is done on main by hand.

@@ -58,6 +58,7 @@ forbid: [git update-ref or any git object as state, SQLite, a new store or state
 non_goals: [fencing recordAttempt or card report, locking goal, release or review-pool records, locking across hosts, deleting staleLedger (its entry naming in CARD_RUN_STALE is a feature)]
 hygiene: "Lesson 2026-09-15 T0-CARD-TAKEOVER-2: state every remaining window and its recovery in the first candidate, never one window per review round. Lock order is run, then lease; no run lock is taken inside a lease section. On Windows an exclusive create can fail with EPERM while a lock is being deleted; treat it as busy."
 doc_sync: docs/OPERATIONS.md (Sessions), README.md (Multi-session), docs/ARCHITECTURE.md (state paragraph), CHANGELOG.md
+superseded_by: T1-STORE-CAS-2
 ---
 
 # T1-STORE-CAS

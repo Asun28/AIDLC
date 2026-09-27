@@ -1,7 +1,7 @@
 ---
 id: T0-CI-RED-LOGS-BOUNDS
 title: The failed-step excerpt of a red Actions job closes the four boundary corners T0-CI-RED-LOGS-2 was merged with under a human ruling (an earlier composite step's run headers, a later step's exit line, absent record times, no end time with an exit line), failing closed without losing the common case
-status: todo
+status: merged
 branch: T0-CI-RED-LOGS-BOUNDS
 worktree: D:\wt\AIDLC\T0-CI-RED-LOGS-BOUNDS
 allow_paths:

@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { ZodError } from 'zod';
-import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
+import { ConfigError, FormalReviewConfig, FormalReviewFallback, loadProjectConfig, PreReviewConfig, PreReviewFallback, preReviewFallbackSettings, ProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 
 const explicit = ProjectConfig.parse({ worktreeRoot: 'D:\\wt\\AIDLC' });
 const empty = ProjectConfig.parse({});
@@ -275,16 +275,16 @@ describe('blank values of the keys that gate behaviour (T1-PARSE-GUARD acceptanc
   const issueUnder = (at: string) => (err: unknown): boolean => err instanceof ZodError && err.issues.some((i) => i.path.join('.') === at || i.path.join('.').startsWith(`${at}.`));
   /** A config that parses, with `value` at the dotted path `at`. */
   const withValue = (at: string, value: unknown): Record<string, unknown> => {
-    const config: Record<string, any> = { formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b'], reviewer: 'b' }, baseSync: { command: ['cx'], reviewer: 'cx' } } };
+    const config: Record<string, any> = { preReview: { fallback: { command: ['f'], reviewer: 'f' } }, formalReview: { command: ['p'], reviewer: 'p', fallback: { command: ['b'], reviewer: 'b' }, baseSync: { command: ['cx'], reviewer: 'cx' } } };
     const keys = at.split('.');
     let node = config;
     for (const key of keys.slice(0, -1)) node = node[key] ??= {};
     node[keys.at(-1)!] = value;
     return config;
   };
-  const SCALARS = ['base', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'repository', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'preReview.reviewer', 'formalReview.reviewer', 'formalReview.fallback.reviewer', 'formalReview.baseSync.reviewer'];
+  const SCALARS = ['base', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'repository', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'preReview.reviewer', 'formalReview.reviewer', 'formalReview.fallback.reviewer', 'formalReview.baseSync.reviewer', 'preReview.fallback.reviewer'];
   const EMPTY_ALLOWED = ['preReview.answerMarker', 'worktreeRoot'];
-  const LISTS = ['preReview.command', 'formalReview.command', 'formalReview.fallback.command', 'formalReview.baseSync.command', 'preReview.perspectives', 'github.requiredChecks', 'hooks.frozenPaths', 'hooks.testPathPatterns', 'hooks.productionPatterns', 'tierPaths.tierS', 'tierPaths.tier0', 'tierPaths.frozen'];
+  const LISTS = ['preReview.command', 'preReview.fallback.command', 'formalReview.command', 'formalReview.fallback.command', 'formalReview.baseSync.command', 'preReview.perspectives', 'github.requiredChecks', 'hooks.frozenPaths', 'hooks.testPathPatterns', 'hooks.productionPatterns', 'tierPaths.tierS', 'tierPaths.tier0', 'tierPaths.frozen'];
   test('the base config of these cases parses, so each refusal below is the blank value [R1]', () => {
     assert.doesNotThrow(() => ProjectConfig.parse(withValue('base', 'main')));
     for (const at of LISTS) assert.doesNotThrow(() => ProjectConfig.parse(withValue(at, ['ok'])), at);
@@ -426,5 +426,124 @@ describe('ConfigError and the doctor catch (T0-PARSE-GUARD-FOLLOWUPS)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const entry = '- Parse guard follow-ups, card T0-PARSE-GUARD-FOLLOWUPS (issue #79): a `retry after <n>` in a quota message reads its unit as a whole word, so `retry after 30 milliseconds` waits 30 ms instead of 30 minutes; `loadProjectConfig` throws a `ConfigError` for an `aidlc.config.json` that is not JSON or fails the schema, and `aidlc doctor` reports only that error as `config: ERROR`, while a failure to read the file ends it with its own message; the blank-refusal test covers `formalReview.baseSync.reviewer`, and the `-z` scan finds a single-quoted, double-quoted or template `-z` in code.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  });
+});
+
+describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const configOf = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8')) as { preReview: Record<string, unknown> };
+  /** This repository's fallback, as R4 of the card states it. */
+  const SONNET = {
+    command: ['claude', '-p', '--model', 'claude-sonnet-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'],
+    reviewer: 'claude-sonnet-5',
+    timeoutMs: 1_200_000,
+    maxDiffBytes: 800_000,
+    answerMarker: '',
+    effort: { default: 'high', xhigh: { minChangedLines: 500, paths: ['src/core/**', 'src/coordination/**', 'src/state/**'] } },
+  };
+  test('a fallback with only command and reviewer parses with the primary defaults, and shares the primary rounds and angles [R1]', () => {
+    const defaults = ProjectConfig.parse({}).preReview;
+    const parsed = ProjectConfig.parse({ preReview: { command: ['p'], reviewer: 'p', rounds: 3, perspectives: ['a', 'b'], fallback: { command: ['f'], reviewer: 'f' } } }).preReview;
+    assert.deepEqual(parsed.fallback, { command: ['f'], reviewer: 'f', timeoutMs: defaults.timeoutMs, maxDiffBytes: defaults.maxDiffBytes, answerMarker: defaults.answerMarker });
+    assert.equal('rounds' in parsed.fallback!, false, 'the fallback has no rounds of its own');
+    assert.equal('perspectives' in parsed.fallback!, false, 'nor angles');
+    assert.equal(ProjectConfig.parse({}).preReview.fallback, undefined, 'no fallback by default');
+  });
+  test('an empty or blank argument, a blank reviewer and a reviewer named like the primary in any spelling are refused at their paths [R1]', () => {
+    const withFallback = (fallback: Record<string, unknown>, reviewer = 'deepseek-v4-pro') => () => ProjectConfig.parse({ preReview: { command: ['p'], reviewer, fallback } });
+    assert.throws(withFallback({ command: [], reviewer: 'f' }), issueAt('preReview.fallback.command'));
+    assert.throws(withFallback({ command: ['claude', ''], reviewer: 'f' }), issueAt('preReview.fallback.command'));
+    assert.throws(withFallback({ command: ['claude', '  '], reviewer: 'f' }), issueAt('preReview.fallback.command'));
+    assert.throws(withFallback({ command: ['claude'], reviewer: '  ' }), issueAt('preReview.fallback.reviewer'));
+    assert.throws(withFallback({ command: ['claude'], reviewer: ' DeepSeek-V4-Pro ' }), issueAt('preReview.fallback.reviewer'));
+    assert.throws(withFallback({ command: ['claude'], reviewer: 'SONNET' }, 'sonnet'), issueAt('preReview.fallback.reviewer'));
+    assert.throws(withFallback({ command: ['claude'], reviewer: 'f', effort: { default: 'max', xhigh: { minChangedLines: 1 } } }), issueAt('preReview.fallback.effort.xhigh'));
+    assert.doesNotThrow(withFallback({ command: ['claude', '--effort', '{effort}'], reviewer: 'claude-sonnet-5', effort: SONNET.effort }));
+  });
+  test('this repository runs DeepSeek as the R2 primary with Claude Sonnet 5 as the fallback; the template has no fallback [R4]', () => {
+    const raw = configOf('aidlc.config.json').preReview;
+    assert.deepEqual(raw['command'], ['deepseek', '--model', 'deepseek-v4-pro']);
+    assert.equal(raw['reviewer'], 'deepseek-v4-pro');
+    assert.equal(raw['answerMarker'], '=== answer ===');
+    assert.deepEqual(raw['fallback'], SONNET);
+    const parsed = ProjectConfig.parse(configOf('aidlc.config.json')).preReview;
+    assert.deepEqual(parsed.command, ['deepseek', '--model', 'deepseek-v4-pro'], 'the parsed primary command');
+    assert.equal(parsed.reviewer, 'deepseek-v4-pro', 'the parsed primary reviewer');
+    assert.equal(parsed.answerMarker, '=== answer ===', 'the parsed primary marker');
+    assert.deepEqual(parsed.fallback, SONNET, 'the parsed fallback is the configured one, nothing added');
+    assert.equal(parsed.rounds, 3);
+    assert.deepEqual(parsed.perspectives, ['ac-coverage', 'spec-deviations', 'edge-cases']);
+    assert.equal(parsed.onExhausted, 'ship');
+    assert.equal(parsed.coverage, 'shadow');
+    assert.equal('fallback' in configOf('templates/aidlc.config.json').preReview, false);
+    const template = ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview;
+    assert.deepEqual(template.command, [], 'the installed R2 command is empty, so a fallback has nothing to fall back from');
+    assert.equal(template.fallback, undefined);
+  });
+  test('docs/OPERATIONS.md and the CHANGELOG Unreleased section state the fallback, and the temporary swap of a8293d7 is gone from both [R4] [R5]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const operations = read('docs', 'OPERATIONS.md');
+    const opsSentences = [
+      "Pre-review fallback (card T0-R2-FALLBACK-3, the third attempt after T0-R2-FALLBACK and T0-R2-FALLBACK-2; part 2 of issue #92). `preReview.fallback` (optional: `command`, non-empty with no empty or blank argument, and a `reviewer` that is not blank and differs from `preReview.reviewer` after trimming and case folding, required; `timeoutMs`, `shell`, `maxDiffBytes` and `answerMarker` defaulted as for the primary; `effort` a review effort policy) names a second pre-reviewer that shares the primary's `rounds`, `perspectives`, `coverage`, `onExhausted` and single no-verdict retry.",
+      'The pre-reviewer is resolved per dispatch as the R3 fallback is: the primary unless its latest round of the card, on any candidate, holds an unexpired quota or billing hold, then the fallback unless it holds one too; with both held, `card next` is `wait` on `pre-review-quota` until the earlier hold clears and names both reviewers.',
+      "The fallback never replaces a primary that is not held, and a block or a no-verdict never switches reviewer; `review pre` runs the resolved reviewer, expands `{effort}` in the fallback's argv from its policy over the collected diff (the primary has no effort policy, and its argv is dispatched as before), records the round, its `PRE_REVIEW_DECIDED` event and its evidence note under that reviewer's name with the level (the `effort` of the round and of the event, `(effort <level>)` in the note), and re-checks the reviewer on the record locked at reservation, at the clock of the lock (a hold recorded meanwhile, or one that expired while the diff was collected, refuses: run the command again).",
+      "With a fallback configured, the reservation records the timeout the round is dispatched with (`timeoutMs` on the round, the fallback's or the primary's), and a round in flight expires on that recorded timeout plus the reconciliation grace, its WAIT text giving those minutes, whatever the configuration says later: renaming or removing the fallback, or changing a timeout, while the round runs never shortens or lengthens it; a round with no recorded timeout expires on the primary's timeout plus the grace, as before.",
+      "A second no-verdict in the cycle stops the card naming the reviewer of the last round.",
+      "The fallback is dispatched with settings built from its own fields and the fallback schema's defaults only (`preReviewFallbackSettings`, `src/config.ts`): a `timeoutMs`, `shell`, `maxDiffBytes`, `answerMarker` or `effort` the fallback omits is the fallback default, never the primary's value, so a fallback without `shell` runs with the platform default under a primary that sets `shell`, and one without `answerMarker` reads its verdict without the primary's marker; only `rounds`, `perspectives`, `coverage` and `onExhausted` are the primary's.",
+      'Without `preReview.fallback` every gate decision, directive, round and hold is as before.',
+      'A review effort policy also takes an optional `xhigh` rule of the same shape as `high`, checked before it: a candidate whose added plus deleted lines reach its `minChangedLines` or that changes a path matching its `paths` runs at `xhigh`, an `xhigh` rule with a `max` default is refused, and a collected diff with no `diff --git ` section selects `xhigh` under such a rule.',
+      'This repository runs DeepSeek as the R2 primary with Claude Sonnet 5 as the fallback (`claude -p --model claude-sonnet-5 --effort {effort}` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5`, `answerMarker` empty since `claude -p` prints no marker line), at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`; the installed template configures no fallback, since its R2 command is empty.',
+    ];
+    for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    assert.ok(!operations.includes('Until the DeepSeek account has balance again (issue #92)'), 'the temporary sentence of a8293d7 is removed');
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = "- Pre-review fallback, card T0-R2-FALLBACK-3, the third attempt after T0-R2-FALLBACK and T0-R2-FALLBACK-2 (part 2 of issue #92): `preReview.fallback` names a second R2 reviewer that runs while the primary holds a quota or billing hold, resolved per dispatch as the R3 fallback is, dispatched with its own settings and defaults and never the primary's, and sharing the primary's rounds, angles and no-verdict retry; a round in flight keeps the timeout it was dispatched with, and every round, event and evidence note names the reviewer that ran and its effort level; a review effort policy takes an `xhigh` rule; this repository runs DeepSeek as the R2 primary again with Claude Sonnet 5 as the fallback at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`, replacing the temporary swap of a8293d7.";
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+    assert.ok(!unreleased.includes('- R2 reviewer swap, temporary (issue #92)'), 'the temporary CHANGELOG line of a8293d7 is removed');
+  });
+});
+
+describe('the fallback dispatch settings are its own (T0-R2-FALLBACK-2, part 2 of issue #92)', () => {
+  /** A primary that sets every field it shares with the fallback schema to a value that is not that schema's default. */
+  const PRIMARY = { command: ['p'], reviewer: 'p', rounds: 3, perspectives: ['a'], coverage: 'shadow', onExhausted: 'ship', timeoutMs: 999_000, maxDiffBytes: 111_111, answerMarker: '=== answer ===' };
+  const settingsOf = (primary: Record<string, unknown>, fallback: Record<string, unknown>) => preReviewFallbackSettings(ProjectConfig.parse({ preReview: { ...PRIMARY, ...primary, fallback: { command: ['f'], reviewer: 'f', ...fallback } } }).preReview)! as unknown as Record<string, unknown>;
+  const DEFAULTS = PreReviewFallback.parse({ command: ['f'], reviewer: 'f' }) as unknown as Record<string, unknown>;
+  const CASES: Array<{ field: string; primary: Record<string, unknown>; own: unknown }> = [
+    { field: 'timeoutMs', primary: {}, own: 42_000 },
+    { field: 'maxDiffBytes', primary: {}, own: 222 },
+    { field: 'answerMarker', primary: {}, own: '>>> answer' },
+    { field: 'shell', primary: { shell: true }, own: false },
+    { field: 'shell', primary: { shell: false }, own: true },
+    { field: 'effort', primary: {}, own: { default: 'high' } },
+  ];
+  test('a field the fallback omits takes the fallback schema default and one it sets takes its own value, never the primary value, field by field [R4]', () => {
+    for (const c of CASES) {
+      const label = `${c.field} (primary ${JSON.stringify({ ...PRIMARY, ...c.primary }[c.field as keyof typeof PRIMARY] ?? null)})`;
+      const omitted = settingsOf(c.primary, {});
+      assert.deepEqual(omitted[c.field], DEFAULTS[c.field], `${label}, omitted: the fallback schema default`);
+      assert.equal(c.field in omitted, c.field in DEFAULTS, `${label}, omitted: present exactly when the schema defaults it`);
+      assert.deepEqual(settingsOf(c.primary, { [c.field]: c.own })[c.field], c.own, `${label}, set: the fallback value`);
+    }
+    // Every case differs from the primary, so the default is never the primary value by coincidence.
+    for (const c of CASES.filter((x) => x.field !== 'effort')) assert.notDeepEqual(DEFAULTS[c.field], { ...PRIMARY, ...c.primary }[c.field as keyof typeof PRIMARY], c.field);
+  });
+  test('the command and reviewer are the fallback, the four shared fields are the primary, and nothing else is set [R4]', () => {
+    assert.deepEqual(settingsOf({}, {}), { command: ['f'], reviewer: 'f', timeoutMs: 600_000, maxDiffBytes: 300_000, answerMarker: '', rounds: 3, perspectives: ['a'], coverage: 'shadow', onExhausted: 'ship' });
+    assert.equal(preReviewFallbackSettings(ProjectConfig.parse({ preReview: PRIMARY }).preReview), undefined, 'no fallback configured, no settings');
+  });
+  test('an unparsed fallback (a caller that skips the parse) still takes the fallback schema defaults, never the primary values [R4]', () => {
+    const parsed = ProjectConfig.parse({ preReview: PRIMARY }).preReview;
+    const raw = preReviewFallbackSettings({ ...parsed, fallback: { command: ['f'], reviewer: 'f' } } as unknown as typeof parsed)!;
+    assert.equal(raw.timeoutMs, 600_000);
+    assert.equal(raw.maxDiffBytes, 300_000);
+    assert.equal(raw.answerMarker, '');
+    assert.equal('shell' in raw, false);
+  });
+  test('the keys of PreReviewConfig are the fallback schema keys but effort, the four shared keys and fallback: a new field must be placed on one side [R4]', () => {
+    const own = Object.keys(PreReviewFallback.shape).sort();
+    assert.deepEqual(own, ['answerMarker', 'command', 'effort', 'maxDiffBytes', 'reviewer', 'shell', 'timeoutMs']);
+    const shared = ['coverage', 'onExhausted', 'perspectives', 'rounds'];
+    assert.deepEqual(Object.keys(PreReviewConfig.shape).sort(), [...own.filter((k) => k !== 'effort'), ...shared, 'fallback'].sort());
   });
 });

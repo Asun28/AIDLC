@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -38,6 +38,7 @@ import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { FormalReviewConfig, ProjectConfig } from '../config.ts';
 import { resolveWorktreeRoot } from '../config.ts';
+import { preReviewFallbackSettings, type PreReviewer } from '../config.ts';
 
 /** One formal reviewer's settings: the primary `formalReview`, its `fallback` or its `baseSync` reviewer. */
 type FormalReviewer = Omit<FormalReviewConfig, 'fallback' | 'baseSync'>;
@@ -116,6 +117,8 @@ interface FormalResult {
   effort?: ReviewEffortLevel;
   /** A base-sync decision, as its reservation recorded it (T0-BASE-SYNC-REVIEW). */
   baseSync?: boolean;
+  /** The timeout of the reviewer the decision was dispatched to, as its reservation recorded it (T0-R3-RECONCILE-TIMEOUT). */
+  timeoutMs?: number;
   retained?: boolean;
   /** The pool request key of the envelope, for a recovery that settles it. */
   key?: string;
@@ -150,15 +153,6 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
     return new GitHubShipPath({ mainRoot, worktreeRoot: resolveWorktreeRoot(config, mainRoot), repository: config.repository ?? '', runner, requiredChecks: gh.requiredChecks, requireVerdict: gh.requireVerdict, ciTimeoutMs: gh.ciTimeoutMs, ciPollMs: gh.ciPollMs });
   }
   return new DryRunShipPath();
-}
-
-/** Thrown inside a takeover's reconciliation when the record the store hands over is already the acting session's: the interrupted takeover is completed, not advanced again. */
-class AlreadyOwned extends Error {
-  readonly lease: Lease;
-  constructor(lease: Lease) {
-    super(`lease ${lease.resourceKey} is already this session's at generation ${lease.generation}`);
-    this.lease = lease;
-  }
 }
 
 export class CardRunner {
@@ -467,7 +461,7 @@ export class CardRunner {
    * `takeover`, which persists the selected state without one. `run` is returned as this block leaves it (a merged
    * card's ownership stop reconciled, an owner's stop revalidated), `next` as the selection would save it.
    */
-  private assess(goal: Goal, card: Card, caller: CardRun, now: string): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
+  private assess(goal: Goal, card: Card, caller: CardRun, now: string, save: (run: CardRun) => CardRun = (run) => this.save(run)): { run: CardRun; next: CardRun; decision: CardDecision; lease: Lease | undefined } {
     // The stored run is the truth: a caller's snapshot (a window that kept the run it read before another session's
     // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
     // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
@@ -480,7 +474,7 @@ export class CardRunner {
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
-      run = this.save({ ...run, state: 'CLOSE', stop: undefined });
+      run = save({ ...run, state: 'CLOSE', stop: undefined });
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
@@ -505,7 +499,7 @@ export class CardRunner {
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
     const reusable = this.reusableReceipt(run);
-    if (reusable) run = this.save({ ...run, dodReceipt: reusable, blockedReceipt: undefined }); // consumed: a later check failure never resurrects it
+    if (reusable) run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined }); // consumed: a later check failure never resurrects it
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
     const reviewExhausted = run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX');
@@ -552,7 +546,7 @@ export class CardRunner {
     let next: CardRun = { ...run, state: decision.state, stop: decision.stop ?? run.stop, blocker: decision.state === 'STOP' ? decision.reason : undefined };
     // A revalidated ownership stop is persisted with the re-derived state before any action: a ship issued from this call
     // reads the record as persisted and must not find the stop it cleared.
-    if (revalidatedStop) next = this.save(next);
+    if (revalidatedStop) next = save(next);
     if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
     return { run, next, decision, lease };
   }
@@ -647,99 +641,83 @@ export class CardRunner {
 
   /**
    * Take over the card lease of another session (MS2): only once that lease has expired and no operation of the card is
-   * unresolved in any goal (the lease is one resource per repository and card). The generation advances, so a write of
-   * the old owner at its generation is fenced; the run, read again once the lease is held, records the new generation (a
-   * run interrupted between the lease claim and the PREPARE save, which has none, included) and its state is selected
-   * again through `assess`, whose renewal revalidates the ownership stop as it does for an owner's own expired lease and
-   * keeps any other stop as `card next` keeps it. The record is validated on what the store hands to the reconciliation,
-   * not on the earlier read, and the ledger is read there too, so a release, a takeover or an operation that landed
-   * meanwhile is seen. A lease this session already holds at a generation the run does not carry is an interrupted
-   * takeover (or an interrupted claim), completed here without another advance once the lease is read again and is
-   * still this session's at that generation; one the run carries refuses, since `card next` renews it. The handoff
-   * intent and the acquisition are resolved by resource and generation in every goal's journal. A missing or released
-   * lease, a live lease of another session and an unresolved operation refuse before any write. The store has no
-   * compare-and-set, and the guarantees end there (docs/OPERATIONS.md, Sessions): a renewal by the old owner landing
-   * inside the lease store's own read-write window is overwritten, a writer that passed its fence before the lease
-   * write and saves after it writes the run at the old generation (this command run again completes it), two
-   * completions of one session may both journal the acquisition, and an operation admitted after the last ledger read
-   * here is left to the assessment of `next`. The goal lease is not touched (`aidlc goal takeover`).
+   * unresolved in any goal (the lease is one resource per repository and card). One lease section (`LeaseStore.update`)
+   * checks the record and the ledger, journals the handoff intent and writes the next generation, so a ship, whose fence
+   * and intent take the same lock, is either named here or fenced afterwards. A lease this session already holds at a
+   * generation the run does not carry is an interrupted takeover (or an interrupted claim), completed without another
+   * advance; one the run carries refuses, since `card next` renews it. A missing or released lease, a live lease of another
+   * session and an unresolved operation refuse before any write. After the lease write the run takes the generation under
+   * the card-run lock and, inside it, the lease lock, both held until the run record is on disk; one acquisition per
+   * generation is journaled there, and only while the locked run does not carry the generation yet and the lease is still
+   * this session's acquisition (otherwise the takeover refuses and writes nothing more); a stop saved meanwhile stays, and
+   * the state is selected again through `assess`, whose saves and the final one revalidate and hold the lease the same way.
+   * A process that ends between the lease write and the run update leaves a takeover this command, run again, completes.
+   * The goal lease is not touched (`aidlc goal takeover`).
    */
   takeover(goal: Goal, card: Card, caller: CardRun): { run: CardRun; lease: Lease; completed: boolean; previousOwner?: ActorIdentity; previousGeneration?: number } {
     const now = this.clock();
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     const journal = this.journal(goal.id);
-    const mine = (l: Lease): boolean => !l.released && l.owner.session === me.session && l.owner.host === me.host;
-    const unresolvedNow = (): string[] => this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
     // Every hint names the goal this command runs under: the default goal of a later command may be another one.
     const scoped = (command: string) => `\`aidlc card ${command} ${card.id} --goal ${goal.id}\``;
-    const first = this.leases.read(key);
-    if (!first) throw new Error(`card ${card.id} has no lease record; run ${scoped('next')} to claim it`);
-    const seen: { previous?: { owner: ActorIdentity; generation: number } } = {};
-    let lease: Lease;
-    if (mine(first)) {
-      lease = first;
-    } else {
-      try {
-        lease = this.leases.takeover(
-          key,
-          (old) => {
-            if (old.released) throw new Error(`the lease of card ${card.id} is released (generation ${old.generation}); run ${scoped('next')} to claim it`);
-            if (mine(old)) throw new AlreadyOwned(old);
-            const unresolved = unresolvedNow();
-            if (unresolved.length) return { reconciled: false, unresolvedOperations: unresolved, note: 'reconcile with `aidlc ops reconcile` first' };
-            // The handoff intent precedes the lease write, bound to the acquisition it precedes (the acquiring session and the
-            // acquisition time the lease will carry): a process that ends between the write and the run update leaves the
-            // previous owner in the journal for the completion, and an intent whose write never landed matches no lease.
-            seen.previous = { owner: old.owner, generation: old.generation };
-            journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-intent', resource: key, previousOwner: old.owner, previousGeneration: old.generation, leaseGeneration: old.generation + 1, acquirer: { session: me.session, host: me.host }, acquiredAt: now } });
-            return { reconciled: true, unresolvedOperations: [] };
-          },
-          { operation: `card:${card.id}`, now },
-        ).lease;
-      } catch (err) {
-        if (!(err instanceof AlreadyOwned)) throw err;
-        lease = err.lease;
-        seen.previous = undefined;
+    const owns = (generation: number) => new Error(`this session owns card ${card.id} at generation ${generation}; run ${scoped('next')}`);
+    // The handoff intent and the acquisition are looked up by resource and generation in every goal's journal, since the lease
+    // is one resource per repository and card.
+    const events = (type: 'NOTE' | 'LEASE_ACQUIRED', generation: number) => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === generation));
+    const stored = this.store.getCardRun(goal.id, card.id) ?? caller;
+    let completed = false;
+    let previous: { owner: ActorIdentity; generation: number } | undefined;
+    const lease = this.leases.update(key, (existing) => {
+      if (!existing) throw new Error(`card ${card.id} has no lease record; run ${scoped('next')} to claim it`);
+      if (existing.released) throw new Error(`the lease of card ${card.id} is released (generation ${existing.generation}); run ${scoped('next')} to claim it`);
+      completed = existing.owner.session === me.session && existing.owner.host === me.host;
+      if (completed && stored.ownerGeneration === existing.generation) throw owns(existing.generation);
+      const next = completed ? existing : this.leases.successor(key, existing, { operation: `card:${card.id}`, now });
+      const unresolved = this.ops.list({ cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+      if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
+      if (completed) {
+        // The previous owner comes from the intent journaled before the lease write, when that write is the acquisition this
+        // session holds: the intent names the acquiring session and the acquisition time the lease carries.
+        const intent = events('NOTE', existing.generation).reverse().find((e) => {
+          const acquirer = e.data['acquirer'] as { session?: unknown; host?: unknown } | undefined;
+          return e.data['kind'] === 'card-takeover-intent' && acquirer?.session === me.session && acquirer?.host === me.host && e.data['acquiredAt'] === existing.acquiredAt;
+        });
+        const owner = intent ? ActorIdentity.safeParse(intent.data['previousOwner']) : undefined;
+        if (intent && owner?.success && typeof intent.data['previousGeneration'] === 'number') previous = { owner: owner.data, generation: intent.data['previousGeneration'] };
+      } else {
+        // The handoff intent precedes the lease write, bound to the acquisition it precedes: a process that ends between the
+        // write and the run update leaves the previous owner for the completion, and an intent whose write never landed matches no lease.
+        previous = { owner: existing.owner, generation: existing.generation };
+        journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: now } });
       }
-    }
-    const completed = seen.previous === undefined;
-    let previous = seen.previous;
-    // The lease is one resource per repository and card, so its handoff intent and its acquisition are looked up in every
-    // goal's journal by resource and generation, not only in the goal this command runs under.
-    const takeoverEvents = (type: 'NOTE' | 'LEASE_ACQUIRED') => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === lease.generation));
-    if (completed) {
-      // A completion reads the lease once more right before it writes: the first read is not trusted, since a release or
-      // another session's takeover may have landed since.
-      const again = this.leases.read(key);
-      if (!again) throw new Error(`card ${card.id} has no lease record any more; run ${scoped('next')} to claim it`);
-      if (again.released) throw new Error(`the lease of card ${card.id} is released (generation ${again.generation}); run ${scoped('next')} to claim it`);
-      if (!mine(again) || again.generation !== lease.generation) throw new Error(`card ${card.id} is owned by session ${again.owner.session} (generation ${again.generation}) since the command's first read; run ${scoped('status')} and start over`);
-      // The previous owner comes from the intent journaled before the lease write, when that write is the acquisition this
-      // session holds: the intent names the acquiring session and the acquisition time the lease carries.
-      const bound = (e: { data: Record<string, unknown> }) => {
-        const acquirer = e.data['acquirer'] as { session?: unknown; host?: unknown } | undefined;
-        return e.data['kind'] === 'card-takeover-intent' && acquirer?.session === lease.owner.session && acquirer?.host === lease.owner.host && e.data['acquiredAt'] === lease.acquiredAt;
-      };
-      const intent = takeoverEvents('NOTE').reverse().find(bound);
-      const owner = intent ? ActorIdentity.safeParse(intent.data['previousOwner']) : undefined;
-      if (intent && owner?.success && typeof intent.data['previousGeneration'] === 'number') previous = { owner: owner.data, generation: intent.data['previousGeneration'] };
-    }
-    const current = this.store.getCardRun(goal.id, card.id) ?? caller;
-    if (completed && current.ownerGeneration === lease.generation) throw new Error(`this session owns card ${card.id} at generation ${lease.generation}; run ${scoped('next')}`);
-    // The ledger read inside the reconciliation precedes the store's write: an operation admitted in between is found here.
-    // The lease stays taken (the writer is fenced from now on) and the run stays as it was until the operation is
-    // reconciled; the command run again then completes the takeover.
-    const late = unresolvedNow();
-    if (late.length) throw new Error(`card ${card.id} is taken at generation ${lease.generation}, but ${late.length} operation(s) of the card landed after the reconciliation (${late.join(',')}); reconcile them, then run ${scoped('takeover')} again to complete the takeover`);
-    // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
-    // generation): a completion after one journals the completion instead of a second acquisition.
-    const journaled = takeoverEvents('LEASE_ACQUIRED').length > 0;
-    if (!journaled) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...(previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {}), ...(completed ? { completed: true } : {}) } });
-    else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...(previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {}) } });
-    const owned = this.save({ ...current, ownerGeneration: lease.generation });
-    const assessed = this.assess(goal, card, owned, now);
-    const next = this.save(assessed.next);
+      return next;
+    })!;
+    // Every run write of the takeover, the assessment's saves included, runs under the card-run lock and then the lease lock
+    // (never the reverse), both held until the run record is on disk, and only while the lease is still this session's
+    // acquisition: otherwise nothing more is journaled or written.
+    const holding = (then?: () => void) => (write: () => void) => this.leases.update(key, (held) => {
+      if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
+        throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
+      }
+      then?.();
+      write();
+      return held;
+    });
+    // The run update refuses when the run read under the lock carries the generation already. One acquisition per generation
+    // across goals, whatever journaled it (PREPARE's claim journals one before it saves the generation): a completion after
+    // one journals the completion instead of a second acquisition.
+    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
+      if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
+      return { ...(current ?? caller), ownerGeneration: lease.generation };
+    }, holding(() => {
+      const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
+      if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
+      else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
+    }));
+    const saveHolding = (run: CardRun) => this.store.saveCardRun(run, holding());
+    const assessed = this.assess(goal, card, owned, now, saveHolding);
+    const next = saveHolding(assessed.next);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
@@ -913,21 +891,30 @@ export class CardRunner {
     // A ship-path decision is bound here, before any intent: the policy in force (R8) and the delta since the formal stage's
     // last reviewed candidate (R9); a delta above the cap refuses the dispatch with nothing recorded.
     const bindings = this.shipBindings(run);
-    // Fence and record intent before the external mutation.
+    // Fence and record intent before the external mutation, in one section of the card lease lock, the lock the takeover's
+    // ledger check holds: an intent recorded first refuses the takeover, a takeover first fences this ship before any intent.
+    const cardKey = resourceKeys.card(this.repo.key, card.id);
+    const candidateDigest = run.candidate?.digest ?? 'unknown';
+    const intent = { kind: 'merge' as const, goalId: goal.id, cardId: card.id, target: this.config.base, candidateDigest, ownerGeneration: run.ownerGeneration ?? 0 };
+    let duplicate: OperationRecord | undefined;
+    let op: OperationRecord | undefined;
     try {
-      if (run.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), run.ownerGeneration, currentActor(), now);
+      this.leases.update(cardKey, (lease) => {
+        if (run.ownerGeneration !== undefined) this.leases.fence(cardKey, run.ownerGeneration, currentActor(), now);
+        duplicate = this.ops.findDuplicate({ ...intent, timeoutMs: 1 });
+        if (!duplicate || !['issued', 'running', 'UNKNOWN'].includes(duplicate.status)) op = this.ops.recordIntent({ ...intent, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] });
+        return lease;
+      });
     } catch (err) {
-      const stop = makeStop('ownership', (err as FencedError).message, 'revalidate ownership; a stale generation cannot commit an admitted effect', { at: now });
+      if (!(err instanceof FencedError)) throw err;
+      const stop = makeStop('ownership', err.message, 'revalidate ownership; a stale generation cannot commit an admitted effect', { at: now });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
-    const candidateDigest = run.candidate?.digest ?? 'unknown';
-    const duplicate = this.ops.findDuplicate({ kind: 'merge', goalId: goal.id, cardId: card.id, target: this.config.base, candidateDigest, ownerGeneration: run.ownerGeneration ?? 0, timeoutMs: 1 });
-    if (duplicate && ['issued', 'running', 'UNKNOWN'].includes(duplicate.status)) {
+    if (!op) {
       const next = this.save({ ...run, state: 'WAIT' });
-      return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${duplicate.id}`, pollSeconds: 60, narration: `A ship for this candidate is already ${duplicate.status} (${duplicate.id}); reconcile it instead of launching a second one.` } };
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${duplicate!.id}`, pollSeconds: 60, narration: `A ship for this candidate is already ${duplicate!.status} (${duplicate!.id}); reconcile it instead of launching a second one.` } };
     }
-    const op = this.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: card.id, target: this.config.base, candidateDigest, ownerGeneration: run.ownerGeneration ?? 0, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] });
     this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, kind: 'merge', candidateDigest } });
     // Shared review admission (MS3): one request per candidate/base/policy/reviewer.
     const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer });
@@ -1085,10 +1072,13 @@ export class CardRunner {
       // A round whose dispatch failed before any receipt (its retained failure marker, no log) never ran: it expires at once.
       const reviewDir = path.join(this.reviewCheckout(run), '.review');
       const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
-      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + cfg.timeoutMs + RECONCILE_GRACE_MS);
+      // A round runs under the timeout its reservation recorded, whatever the configuration says now; a round with none
+      // recorded (dispatched without a fallback configured) under the primary's (card T0-R2-FALLBACK-3).
+      const timeoutOf = (r: PreReviewRound) => r.timeoutMs ?? cfg.timeoutMs;
+      const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
-        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((cfg.timeoutMs + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
+        return { run: next, directive: { kind: 'wait', cardId: card.id, on: `pre-review:${pending.reservationId ?? pending.requestedAt}`, pollSeconds: 60, narration: `A pre-review round of this candidate is in flight (requested ${pending.requestedAt}); wait for it instead of dispatching another. A round is dropped ${Math.round((timeoutOf(pending) + RECONCILE_GRACE_MS) / 60_000)} minutes after its dispatch when nothing came back.` } };
       }
       // Abandonment is decided on the locked record: only a round still pending and still expired there is dropped, and
       // only that drop is journaled; a round decided meanwhile stays and drives the gate from here on.
@@ -1147,23 +1137,28 @@ export class CardRunner {
       }
       disputedNote = ` Every finding of round ${last.round} is disputed; the round runs on the unchanged candidate with the author's notes.`;
     }
+    // The pre-reviewer of this dispatch: the primary, or its fallback while the primary holds (card T0-R2-FALLBACK).
+    const { cfg: reviewer, waitUntil } = this.preReviewerNow(run, digest, now);
     // A quota hold is WAIT, never a decision: park the card until the hold clears; no round is consumed.
-    if (last?.outcome === 'quota-hold' && last.holdUntil && Date.parse(last.holdUntil) > Date.parse(now)) {
+    if (waitUntil) {
       const next = this.save({ ...run, state: 'WAIT' });
-      const pollSeconds = Math.max(60, Math.ceil((Date.parse(last.holdUntil) - Date.parse(now)) / 1000));
-      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'pre-review-quota', pollSeconds, narration: `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit; holding until ${last.holdUntil} (no round consumed). Continue independent work within limits, then run \`aidlc card next ${card.id}\`.` } };
+      const pollSeconds = Math.max(60, Math.ceil((Date.parse(waitUntil) - Date.parse(now)) / 1000));
+      const held = cfg.fallback ? `Pre-reviewers ${cfg.reviewer} and fallback ${cfg.fallback.reviewer} both reported a quota/rate limit` : `Pre-reviewer ${cfg.reviewer} reported a quota/rate limit`;
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'pre-review-quota', pollSeconds, narration: `${held}; holding until ${waitUntil} (no round consumed). Continue independent work within limits, then run \`aidlc card next ${card.id}\`.` } };
     }
     // One no-verdict retry per cycle (initial run plus one retry), like R3.
     const noVerdicts = rounds.filter((r) => r.outcome === 'no-verdict').length;
     if (last?.outcome === 'no-verdict' && noVerdicts > 1) {
-      const stop = makeStop('tool', `pre-reviewer ${cfg.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
+      // With a fallback the two no-verdicts can come from either reviewer: the stop names the one whose round was last.
+      const stop = makeStop('tool', `pre-reviewer ${cfg.fallback ? last.reviewer : reviewer.reviewer} produced no usable verdict twice in R3 cycle ${cycle} (${last.runStatus ?? 'unknown'})`, `inspect the retained output under .review/${card.id}.pre.*.log; fix the pre-review command or clear preReview.command to skip R2`, { at: now, global: false });
       const stopped = this.save({ ...run, state: 'STOP', stop });
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
     }
     const round = decided.length + 1;
-    const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : last?.outcome === 'quota-hold' ? ' (the previous run reported a quota hold; retry once it clears)' : '';
+    const switched = reviewer.reviewer !== cfg.reviewer ? ` (the primary ${cfg.reviewer} is on a quota hold; its fallback runs)` : '';
+    const retry = last?.outcome === 'no-verdict' ? (cfg.fallback && last.reviewer !== reviewer.reviewer ? ` (retry: the previous run, by ${last.reviewer}, produced no verdict)` : ' (retry: the previous run produced no verdict)') : last?.outcome === 'quota-hold' && !switched && (!cfg.fallback || last.reviewer === reviewer.reviewer) ? ' (the previous run reported a quota hold; retry once it clears)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
-    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: cfg.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${cfg.reviewer}) before the ship${retry}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
+    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: reviewer.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${reviewer.reviewer}) before the ship${retry}${switched}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
   }
 
   /**
@@ -1518,9 +1513,9 @@ export class CardRunner {
         priorFindings = this.priorFindingsFor(current);
         advisoryNotes = this.advisoryNotesFor(current, candidateSha, candidateDigest);
         seen = this.findingsSnapshot(current);
-        const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}) };
+        const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
         // What the reviewer receives is retained next to its verdict, so a commit from the retained result binds the same snapshot.
-        writeFileSync(path.join(reviewDir, `${fileStem}.reservation.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, requestedAt: now, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths }, null, 2) + '\n', 'utf8');
+        writeFileSync(path.join(reviewDir, `${fileStem}.reservation.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, requestedAt: now, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, timeoutMs: cfg.timeoutMs }, null, 2) + '\n', 'utf8');
         return { ...current, review: { ...current.review, invocations: [...current.review.invocations, reservation] } };
       });
     } catch (err) {
@@ -1584,7 +1579,7 @@ export class CardRunner {
     const classified = this.classifyFormal(card, candidateSha, verdict, outcome, runStatus, reasons);
     // Timed from the clock after the run: a review can outlast the hold it reports.
     const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel?.retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    const result: FormalResult = { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, requestedAt: now, at: after, verdict, classified, advisory: panel?.advisory ?? [], verdictRef: panel?.verdictRef, logRef: panel?.logRef, durationMs: panel?.durationMs ?? 0, receiptSha256: panel?.receiptSha256 ?? '', holdUntil, reviewer: cfg.reviewer, effort, ...(baseSyncDecision ? { baseSync: true } : {}) };
+    const result: FormalResult = { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, requestedAt: now, at: after, verdict, classified, advisory: panel?.advisory ?? [], verdictRef: panel?.verdictRef, logRef: panel?.logRef, durationMs: panel?.durationMs ?? 0, receiptSha256: panel?.receiptSha256 ?? '', holdUntil, reviewer: cfg.reviewer, effort, ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
     // The complete result is published next to its verdict, atomically, before the pool request is settled and the decision
     // committed: a later step that does not land is redone from the envelope (`retainedFormalResult`), never from the log.
     this.publishEnvelope(result, key, admittedSeq, outcome, runStatus, reasons, panel?.retryAfterMs);
@@ -1729,10 +1724,12 @@ export class CardRunner {
       if (existsSync(path.join(reviewDir, `${fileStem}.failed.json`)) && !existsSync(logRef)) return undefined;
       const since = existsSync(logRef) ? statSync(logRef).mtimeMs : Date.parse(pending.requestedAt);
       const age = existsSync(logRef) ? Date.now() - since : Date.parse(at) - since;
-      if (age <= this.formalReviewerFor(pending.reviewer).timeoutMs + RECONCILE_GRACE_MS) return undefined;
+      // The timeout the reservation recorded, whatever the configuration says now; a reservation written before the field
+      // is reconciled against the live timeout of the reviewer it names (card T0-R3-RECONCILE-TIMEOUT).
+      if (age <= (pending.timeoutMs ?? this.formalReviewerFor(pending.reviewer).timeoutMs) + RECONCILE_GRACE_MS) return undefined;
       const classified = this.classifyFormal(card, candidateSha, undefined, 'no-verdict', 'malformed', [existsSync(logRef) ? 'the reviewer ran but no result envelope was published' : 'no result and no receipt within the reviewer timeout and the grace']);
       const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: pending.base, policyVersion: pending.policyVersion, reviewer: pending.reviewer });
-      return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, seen: {}, policyHash: pending.policyHash, requestedAt: pending.requestedAt, at, verdict: undefined, classified, advisory: [], logRef: existsSync(logRef) ? logRef : undefined, durationMs: 0, receiptSha256: '', reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, retained: true, key };
+      return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, seen: {}, policyHash: pending.policyHash, requestedAt: pending.requestedAt, at, verdict: undefined, classified, advisory: [], logRef: existsSync(logRef) ? logRef : undefined, durationMs: 0, receiptSha256: '', reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key };
     }
     // The envelope is the whole result: its outcome, status and, for a decided outcome, the verdict it was classified from.
     // The sidecar beside it is retained evidence, never read back for a decision.
@@ -1741,7 +1738,7 @@ export class CardRunner {
     const classified = this.classifyFormal(card, candidateSha, verdict, envelope.outcome, envelope.runStatus, envelope.reasons);
     // A recovered hold keeps the deadline the envelope recorded (from its completion, never from the recovery).
     const holdUntil = classified.outcome === 'quota-hold' ? (envelope.holdUntil ?? addMs(envelope.at, envelope.retryAfterMs ?? 15 * 60 * 1000)) : undefined;
-    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths: envelope.changedPaths, seen: envelope.seen, policyHash: pending.policyHash ?? envelope.policyHash, deltaPaths: envelope.deltaPaths, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory: envelope.advisory, verdictRef: existsSync(verdictFile) ? verdictFile : undefined, logRef: existsSync(logRef) ? logRef : undefined, durationMs: envelope.durationMs, receiptSha256: envelope.receiptSha256, holdUntil, reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, retained: true, key: envelope.key, seq: envelope.seq };
+    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths: envelope.changedPaths, seen: envelope.seen, policyHash: pending.policyHash ?? envelope.policyHash, deltaPaths: envelope.deltaPaths, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory: envelope.advisory, verdictRef: existsSync(verdictFile) ? verdictFile : undefined, logRef: existsSync(logRef) ? logRef : undefined, durationMs: envelope.durationMs, receiptSha256: envelope.receiptSha256, holdUntil, reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key: envelope.key, seq: envelope.seq };
   }
 
   /**
@@ -1868,7 +1865,7 @@ export class CardRunner {
         // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
         release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
-          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}) }, classified, verdict);
+          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}) }, classified, verdict);
           decision = rec.decision;
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.
@@ -1969,8 +1966,33 @@ export class CardRunner {
     return { run, found, status: outcome.status };
   }
 
-  /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering. */
-  private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number } {
+  /**
+   * The pre-reviewer to dispatch for a candidate (card T0-R2-FALLBACK), the R2 twin of `formalReviewerNow`: the primary
+   * unless it holds an unexpired quota hold, then the configured fallback unless it holds one too. With both held,
+   * `waitUntil` is the earlier hold and `cfg` the reviewer whose hold clears first. With a fallback, a reviewer's hold is its
+   * latest round of the card on any candidate, since a quota belongs to the reviewer and a repaired candidate has no round
+   * of its own yet; without one it is the latest round of the cycle on the candidate, as before the fallback existed.
+   */
+  private preReviewerNow(run: CardRun, candidateDigest: string | undefined, now: string): { cfg: PreReviewer; waitUntil?: string } {
+    const primary = this.config.preReview;
+    const holdOf = (round: PreReviewRound | undefined): string | undefined => (round?.outcome === 'quota-hold' && round.holdUntil && Date.parse(round.holdUntil) > Date.parse(now) ? round.holdUntil : undefined);
+    const recorded = [...run.preReview.rounds].reverse().filter((r) => r.outcome !== 'pending');
+    const fallback = primary.fallback;
+    if (!fallback) {
+      const hold = holdOf(recorded.find((r) => r.cycle === run.review.substantiveBlocks && r.candidateDigest === candidateDigest));
+      return hold ? { cfg: primary, waitUntil: hold } : { cfg: primary };
+    }
+    const primaryHold = holdOf(recorded.find((r) => r.reviewer === primary.reviewer));
+    if (!primaryHold) return { cfg: primary };
+    // The fallback's own settings and schema defaults, never the primary's (card T0-R2-FALLBACK-2).
+    const fallbackCfg = preReviewFallbackSettings(primary)!;
+    const fallbackHold = holdOf(recorded.find((r) => r.reviewer === fallback.reviewer));
+    if (!fallbackHold) return { cfg: fallbackCfg };
+    return Date.parse(fallbackHold) < Date.parse(primaryHold) ? { cfg: fallbackCfg, waitUntil: fallbackHold } : { cfg: primary, waitUntil: primaryHold };
+  }
+
+  /** The R2 guards over one record: stop, an in-flight round, a quota hold, exhausted rounds, the same-candidate rule. Returns the round numbering and the pre-reviewer to run. */
+  private preReviewAdmission(current: CardRun, card: Card, candidateSha: string, candidateDigest: string, now: string): { cycle: number; round: number; attemptNo: number; reviewer: PreReviewer } {
     const cfg = this.config.preReview;
     if (current.stop || current.state === 'STOP') throw new Error(`card run is stopped (${current.stop?.reason ?? 'STOP'}); no review may run: ${current.stop?.nextAction ?? 'resolve the stop first'}`);
     const cycle = current.review.substantiveBlocks; // an R3 block restarts the pre-review cycle; an R3 pass does not
@@ -1979,10 +2001,8 @@ export class CardRunner {
     if (inFlight) throw new Error(inFlight);
     const rounds = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome !== 'pending');
     const pendingInCycle = current.preReview.rounds.filter((r) => r.cycle === cycle && r.outcome === 'pending').length;
-    const lastRound = [...rounds].reverse().find((r) => r.candidateDigest === candidateDigest);
-    if (lastRound?.outcome === 'quota-hold' && lastRound.holdUntil && Date.parse(lastRound.holdUntil) > Date.parse(now)) {
-      throw new Error(`pre-reviewer ${cfg.reviewer} is on a quota hold until ${lastRound.holdUntil}; do not re-run before it clears`);
-    }
+    const { cfg: reviewer, waitUntil } = this.preReviewerNow(current, candidateDigest, now);
+    if (waitUntil) throw new Error(`pre-reviewer ${reviewer.reviewer} is on a quota hold until ${waitUntil}; do not re-run before it clears`);
     // The rounds cap holds whatever the dispositions: exhausted rounds are decided by the gate (STOP, or the hand-off to R3).
     const blocksSoFar = rounds.filter((r) => r.outcome === 'block').length;
     if (blocksSoFar >= cfg.rounds) throw new Error(`the pre-review rounds of cycle ${cycle} are exhausted (${blocksSoFar}/${cfg.rounds} blocks); run \`aidlc card next ${card.id}\`: the gate stops the card or hands the residual findings to R3, it never dispatches another round`);
@@ -1993,13 +2013,13 @@ export class CardRunner {
       const answered = this.blockAnswered(current, { stage: 'pre', cycle: lastDecided.cycle, round: lastDecided.round });
       if (!answered.answered) throw new Error(this.sameCandidateRefusal(card, candidateSha, `pre-review round ${lastDecided.round}`, answered.open));
     }
-    return { cycle, round: rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + pendingInCycle + 1, attemptNo: forCandidate.length + 1 };
+    return { cycle, round: rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').length + pendingInCycle + 1, attemptNo: forCandidate.length + 1, reviewer };
   }
 
   /** R2: run the configured pre-reviewer on the committed candidate and record the round. */
   async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
-    const cfg = this.config.preReview;
-    if (!cfg.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
+    const primary = this.config.preReview;
+    if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
@@ -2009,18 +2029,23 @@ export class CardRunner {
     const baseRef = persisted.base?.oid ?? this.config.base;
     const candidateSha = this.pinnedCandidate(persisted, cwd);
     const candidateDigest = persisted.candidate?.digest ?? candidateSha;
-    this.preReviewAdmission(persisted, card, candidateSha, candidateDigest, now);
+    // The primary, or its fallback while the primary holds (card T0-R2-FALLBACK); re-checked on the locked record below.
+    const cfg = this.preReviewAdmission(persisted, card, candidateSha, candidateDigest, now).reviewer;
+    const capName = cfg.reviewer === primary.reviewer ? 'preReview.maxDiffBytes' : 'preReview.fallback.maxDiffBytes';
     const reviewPolicy = this.reviewPolicy();
     const hash = policyHash(reviewPolicy);
     // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const lessons = reviewLessons(this.lessonsFile());
     // A diff above the cap is refused here, before the reservation: no round, receipt or event records it (R7).
-    const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', 'preReview.maxDiffBytes');
+    const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // `{effort}` in the fallback's argv expands to the level its policy selects over the collected diff, as for R3; the primary
+    // has no effort policy, and its argv is dispatched as before.
+    const effort = cfg.reviewer !== primary.reviewer && cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     const since = this.lastReviewedSha(persisted, 'pre');
-    const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, 'preReview.maxDiffBytes') : undefined;
+    const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
     const reviewDir = path.join(cwd, '.review');
     // Reserve the round under the card-run lock before dispatch: the guards are re-checked on the locked record (a dispute
     // withdrawn or a round recorded since the first read refuses here), the owner's lease is renewed and fenced in the same
@@ -2036,14 +2061,19 @@ export class CardRunner {
       const current = locked ?? persisted;
       this.refuseReplacedCandidate(current, card, 'pre', candidateSha, candidateDigest);
       this.refuseChangedCheckout(current, cwd, candidateSha);
-      numbering = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
+      const admitted = this.preReviewAdmission(current, card, candidateSha, candidateDigest, now);
+      // The reviewer is re-read on the locked record at the clock of the lock: a hold recorded, or one that expired while the
+      // diff was collected, since the first read hands the dispatch back.
+      const atLock = this.preReviewerNow(current, candidateDigest, this.clock()).cfg.reviewer;
+      if (atLock !== cfg.reviewer) throw new Error(`the pre-reviewer changed since the first read (${cfg.reviewer}, now ${atLock}: a hold was recorded or cleared meanwhile); run the command again`);
+      numbering = { cycle: admitted.cycle, round: admitted.round, attemptNo: admitted.attemptNo };
       if (this.lastReviewedSha(current, 'pre') !== since) throw new Error('a pre-review round was decided since the delta was collected; run the command again');
       if (current.ownerGeneration !== undefined) {
         this.renewOwnLease(card.id, current, now);
         this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
       }
       fileStem = `${card.id}.pre.${numbering.cycle}.${numbering.round}.${numbering.attemptNo}.${randomUUID().slice(0, 8)}`;
-      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [] };
+      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}), ...(primary.fallback ? { timeoutMs: cfg.timeoutMs } : {}) };
       priorFindings = this.priorFindingsFor(current);
       seen = this.findingsSnapshot(current);
       return { ...current, preReview: { ...current.preReview, rounds: [...current.preReview.rounds, reservation] } };
@@ -2066,7 +2096,7 @@ export class CardRunner {
       const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
       const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
@@ -2089,7 +2119,7 @@ export class CardRunner {
     const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
     const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
     const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives, coverage: result.coverage };
-    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
+    const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer}${effort ? ` (effort ${effort})` : ''} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
     // The angle that wrote each reason, from the structured result: every cited reason of the angle's own document (root
     // list and both axes), so a single-angle panel, whose reasons carry no trailing tag, keeps its angle on axis findings too.
     const perspectiveByReason: Record<string, string> = {};
@@ -2127,7 +2157,7 @@ export class CardRunner {
       after,
     );
     const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage } });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}) } });
     return { run: saved, result, round: record };
   }
 

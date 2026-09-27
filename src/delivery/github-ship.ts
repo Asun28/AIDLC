@@ -18,7 +18,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { parseVerdict } from '../core/review-policy.ts';
-import { classifyShipOutput, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
+import { classifyShipOutput, encodeUntrusted, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
 
 export interface GitHubShipOptions {
@@ -35,15 +35,6 @@ export interface GitHubShipOptions {
   sleep?: (ms: number) => void;
   /** Whether a verdict is required before merge (default true). False tolerates a missing or stale verdict only; a block verdict for the head always fails the ship. */
   requireVerdict?: boolean;
-}
-
-/**
- * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync) travels
- * with brackets and percent signs encoded, so it can never form a sentinel or a `[SAGA-RESUME]` marker; everything
- * else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
- */
-function encodeUntrusted(text: string): string {
-  return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
 }
 
 /** Git's non-empty output lines, each encoded as untrusted text, so every message keeps its own line on the ship output and none can carry a marker. */
@@ -86,6 +77,7 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
   if (!failed) return undefined;
   const start = secondOf(failed.started_at)!;
   const end = secondOf(failed.completed_at);
+  if (end === undefined) return undefined; // no end time: the end is not placed, with or without an exit line
   let time = Number.NEGATIVE_INFINITY;
   const window = log
     .replace(/^\uFEFF/, '')
@@ -95,29 +87,38 @@ export function failedStepLines(log: string, steps: JobStep[]): string[] | undef
       if (stamp) time = Date.parse(stamp[1]!);
       return { time, text: raw.slice(stamp?.[0].length ?? 0).replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ') };
     })
-    .filter((l) => l.time >= start && (end === undefined || l.time < end + 1000));
+    .filter((l) => l.time >= start && l.time < end + 1000);
   // A `run` step's header: `##[group]Run ...` whose group holds the runner's `shell: ` line.
   const runHeader = (i: number): boolean => {
     if (!window[i]!.text.startsWith('##[group]Run ')) return false;
     for (let j = i + 1; j < window.length && !/^##\[(?:end)?group\]/.test(window[j]!.text); j += 1) if (window[j]!.text.startsWith('shell: ')) return true;
     return false;
   };
-  const headers = window.flatMap((l, i) => (l.time < start + 1000 && runHeader(i) ? [i] : []));
-  const inSecond = steps.filter((s) => s.number > 1 && secondOf(s.started_at) === start);
-  const rank = inSecond.filter((s) => s.number < failed.number).length;
-  const from = failed.number === 1 ? 0 : headers.length === inSecond.length ? headers[rank] : undefined;
+  // The failed step's own header (T0-CI-RED-LOGS-BOUNDS): the one run header of its first second that reads its name, with
+  // exactly one run header before it per earlier step that started in that second (a step's header is its first line, so
+  // a named group the step's own output prints comes after that header and has one too many before it). Later steps are
+  // not counted: post steps and `Complete job` start in that second without a header.
+  // Every line of that second reading the step's name counts, a group without a `shell: ` line included: a second one
+  // leaves the start unplaced. Before it, every `##[group]Run ` line counts, a `uses:` step's header (no `shell: ` line)
+  // included, since every earlier step of the second prints one; the window opens with that second.
+  const own = window.flatMap((l, i) => (l.time < start + 1000 && l.text.trimEnd() === `##[group]${(failed.name ?? '').trimEnd()}` ? [i] : []));
+  const before = own[0] === undefined ? -1 : window.slice(0, own[0]).filter((l) => l.text.startsWith('##[group]Run ')).length;
+  const earlier = steps.filter((s) => s.number > 1 && s.number < failed.number && secondOf(s.started_at) === start).length;
+  const from = failed.number === 1 ? 0 : own.length === 1 && runHeader(own[0]!) && before === earlier ? own[0] : undefined;
   if (from === undefined) return undefined;
   const exit = window.findIndex((l, i) => i > from && /^##\[error\]Process completed with exit code \d+\.?\s*$/.test(l.text));
-  const laterInEnd = end !== undefined && steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
-  if (exit < 0 && (end === undefined || laterInEnd)) return undefined;
-  // With a later step started in the end second, an exit line after a `Run` group of that second may be the later step's.
-  if (laterInEnd && window.some((l, i) => i > from && i < exit && l.time >= end && l.text.startsWith('##[group]Run '))) return undefined;
-  return window
+  const laterInEnd = steps.some((s) => s.number > failed.number && secondOf(s.started_at) === end);
+  if (exit < 0 && laterInEnd) return undefined;
+  // With a later step started in the end second, an exit line after a later step's first line of that second (a `Run`
+  // header, or the `Post job cleanup.` that opens a post step) may be the later step's.
+  if (laterInEnd && window.some((l, i) => i > from && i < exit && l.time >= end && (l.text.startsWith('##[group]Run ') || l.text.startsWith('Post job cleanup.')))) return undefined;
+  const lines = window
     .slice(from, exit < 0 ? window.length : exit)
     .map((l) => l.text)
     .filter((l) => l.trim() !== '')
     .slice(-CI_LOG_LINES)
     .map((l) => encodeUntrusted(l.slice(0, CI_LOG_WIDTH)));
+  return lines.length ? lines : undefined;
 }
 
 /** Git's non-empty output lines trimmed and joined on one line, not encoded: `fail` encodes every detail exactly once. */

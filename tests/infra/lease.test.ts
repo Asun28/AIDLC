@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { actor, cleanup, iso, tmpDir } from './helpers.ts';
@@ -117,6 +117,63 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     store.release(key, 1, B);
     store.purgeReleased(key);
     assert.equal(existsSync(store.file(key)), false);
+  });
+
+  it('T1-STORE-CAS-2 acceptance 3: with a live lease lock, claim, takeover, heartbeat and release each refuse with a locked message and leave the record byte-identical', () => {
+    const quick = new LeaseStore(path.join(dir, 'leases'), { timeoutMs: 50 });
+    const key = resourceKeys.card('repo1', 'T1-LOCKED');
+    store.claim(key, { actor: A, now: t0, ttlMs: 1000 });
+    const file = store.file(key);
+    const before = readFileSync(file, 'utf8');
+    // Another writer of this lease, alive (this process), holds its lock.
+    writeFileSync(`${file}.lock`, `pid=${process.pid} at=${t0} nonce=held`, 'utf8');
+    const writes: Array<[string, () => unknown]> = [
+      ['claim', () => quick.claim(key, { actor: A, now: iso(500) })],
+      ['takeover', () => quick.takeover(key, () => ({ reconciled: true, unresolvedOperations: [] }), { actor: B, now: iso(5000) })],
+      ['heartbeat', () => quick.heartbeat(key, 0, { actor: A, now: iso(500) })],
+      ['release', () => quick.release(key, 0, A)],
+    ];
+    for (const [name, write] of writes) {
+      assert.throws(write, /locked/, `${name} refuses while the lock is held`);
+      assert.equal(readFileSync(file, 'utf8'), before, `${name} leaves the lease record byte-identical`);
+    }
+    unlinkSync(`${file}.lock`);
+  });
+
+  it('T1-STORE-CAS-2: releasing a lease that does not exist writes no record and leaves no lock', () => {
+    const key = resourceKeys.card('repo1', 'T1-NEVER');
+    store.release(key, 0, A);
+    assert.equal(existsSync(store.file(key)), false);
+    assert.equal(existsSync(`${store.file(key)}.lock`), false);
+  });
+
+  it("T1-STORE-CAS-2: a lease store's lock options reach its lock: a crashed writer's lock is refused at this store's deadline, naming its pid, and stays", () => {
+    const dir2 = path.join(dir, 'leases-stale');
+    const quick = new LeaseStore(dir2, { timeoutMs: 50 });
+    const key = resourceKeys.card('repo1', 'T1-CRASHED');
+    const lock = `${quick.file(key)}.lock`;
+    mkdirSync(dir2, { recursive: true });
+    writeFileSync(lock, 'pid=999999999 at=2026-09-11T10:00:00.000Z nonce=crashed', 'utf8');
+    const started = Date.now();
+    assert.throws(() => quick.claim(key, { actor: A, now: t0 }), /is locked by pid 999999999, which is no longer running/);
+    assert.ok(Date.now() - started < 1_500, 'refused at this store\'s 50 ms deadline, not the default 2 s');
+    assert.equal(existsSync(lock), true);
+    unlinkSync(lock);
+  });
+
+  it('T1-STORE-CAS-2: purging a released lease takes its lock: with the lock held it refuses and the record stays', () => {
+    const quick = new LeaseStore(path.join(dir, 'leases'), { timeoutMs: 50 });
+    const key = resourceKeys.card('repo1', 'T1-PURGE');
+    store.claim(key, { actor: A, now: t0 });
+    store.release(key, 0, A);
+    const lock = `${store.file(key)}.lock`;
+    writeFileSync(lock, `pid=${process.pid} at=${t0} nonce=claiming`, 'utf8');
+    assert.throws(() => quick.purgeReleased(key), /locked/);
+    assert.equal(existsSync(store.file(key)), true, 'the released record stays while another writer holds its lock');
+    unlinkSync(lock);
+    quick.purgeReleased(key);
+    assert.equal(existsSync(store.file(key)), false);
+    assert.equal(existsSync(lock), false);
   });
 
   it('list() returns every parseable lease; resource keys are scoped and case-insensitive', () => {

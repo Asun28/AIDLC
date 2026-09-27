@@ -61,7 +61,37 @@
       "edge-cases"
     ],
     "maxDiffBytes": 800000,
-    "answerMarker": "=== answer ==="
+    "answerMarker": "=== answer ===",
+    "fallback": {
+      "command": [
+        "claude",
+        "-p",
+        "--model",
+        "claude-sonnet-5",
+        "--effort",
+        "{effort}",
+        "--tools",
+        "Read,Grep,Glob",
+        "--setting-sources=",
+        "--strict-mcp-config",
+        "--no-session-persistence"
+      ],
+      "reviewer": "claude-sonnet-5",
+      "timeoutMs": 1200000,
+      "maxDiffBytes": 800000,
+      "answerMarker": "",
+      "effort": {
+        "default": "high",
+        "xhigh": {
+          "minChangedLines": 500,
+          "paths": [
+            "src/core/**",
+            "src/coordination/**",
+            "src/state/**"
+          ]
+        }
+      }
+    }
   },
   "gateRequired": true,
   "formalReview": {
