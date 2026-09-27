@@ -80,14 +80,21 @@ describe('delivery/ship (classification of the scaffold ship saga)', () => {
 describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
   it('acceptance 1: each alternative that read an exit 0 as merged without the contract is merge-unconfirmed; a failure sentinel on exit 0 fails closed [R1]', () => {
     const scaffoldSuccess = 'PR #7 已 squash 合并（远端分支由仓库设置自动删；已铸 T24-MERGETOKEN 合并凭据）。合并后跑：scripts\\task.ps1 -TaskId T1-FOO -Phase cleanup';
-    for (const text of ['PR #7 MERGED', scaffoldSuccess, 'merged_pr=#7', 'done', '', '[SHIP-TIME] merge 3s', '[SAGA-FAIL] leg failed']) {
+    for (const text of ['PR #7 MERGED', scaffoldSuccess, 'merged_pr=#7', 'done', '', '[SHIP-TIME] merge 3s']) {
       const r = classifyShipOutput(receipt(text, 0));
       assert.equal(r.outcome, 'merge-unconfirmed', JSON.stringify(text));
       assert.match(r.detail, /exit 0 without the adapter's merge contract/, JSON.stringify(text));
     }
     assert.equal(classifyShipOutput(receipt('PR #7 MERGED', 0)).prNumber, 7, 'the PR the ship reported travels to the reconcile');
     assert.equal(classifyShipOutput(receipt('[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', 0)).outcome, 'merge-failed', 'a failure sentinel on exit 0 fails closed');
-    assert.equal(classifyShipOutput(receipt('[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate\n[CI-GATE-RED] job ci red\n', 0)).outcome, 'ci-red', '[SAGA-FAIL] beside [SAGA-DONE] is no merge');
+    // R3 decision 1 F1: [SAGA-FAIL] with no mapped sentinel stays unclassified, as before this card.
+    assert.equal(classifyShipOutput(receipt('[SAGA-FAIL] leg failed', 0)).outcome, 'unclassified');
+    // R3 decision 1 F2, ruled by aidlc-37: [SAGA-DONE] beside a failure marker is conflicting evidence, so gh decides.
+    for (const text of ['[SAGA-DONE]\n[SHIP-MERGE-FAIL] PR #7 state OPEN after merge', '[CI-GATE-RED] job ci red\n[SAGA-DONE]', '[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate', '[SAGA-DONE] push -> pr\n[SAGA-FAIL] CI-gate\n[CI-GATE-RED] job ci red\n']) {
+      assert.equal(classifyShipOutput(receipt(text, 0)).outcome, 'merge-unconfirmed', JSON.stringify(text));
+    }
+    // A failure word of the map that is no bracketed sentinel (a green CI check named check-secrets) leaves the contract whole.
+    assert.equal(classifyShipOutput(receipt('[CI-GATE-PASS] {"name":"check-secrets","conclusion":"success"}\n[SAGA-DONE]', 0)).outcome, 'merged');
     assert.equal(classifyShipOutput(receipt(`title ${encodeUntrusted('[SAGA-DONE]')}`, 0)).outcome, 'merge-unconfirmed', 'untrusted text cannot carry the contract');
     assert.equal(classifyShipOutput(receipt('[SAGA-DONE]', 1)).outcome, 'unclassified', 'a nonzero exit is never merged');
   });

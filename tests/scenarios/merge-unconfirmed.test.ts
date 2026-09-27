@@ -52,6 +52,9 @@ const ghView = (state: 'OPEN' | 'MERGED' | 'CLOSED', head: string): SyncRunner =
     'git fetch': {},
     [`git rev-parse ${MERGE_SHA}^{tree}`]: { stdout: `${'d'.repeat(40)}\n` },
   });
+/** gh answers PR 42 with `json` as it is, whatever its shape. */
+const ghRaw = (json: unknown): SyncRunner =>
+  scriptedRunner({ 'gh pr view 42 --repo o/r --json': { stdout: JSON.stringify(json) }, 'git fetch': {}, [`git rev-parse ${MERGE_SHA}^{tree}`]: { stdout: `${'d'.repeat(40)}\n` } });
 /** gh does not answer: every call fails. */
 const ghFails: SyncRunner = scriptedRunner({ 'gh pr view': { exitCode: 1, stderr: 'HTTP 502' } });
 
@@ -129,6 +132,7 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 3: gh answering wins over the merge tok
     const s = shipped(fy, () => new ExitZero('all good', { tip: OTHER, mergedPr: 42 }), { repository: 'o/r', exec: ghView('MERGED', HEAD) });
     assert.equal(s.out.directive.kind, 'close', `the PR number comes from the token and gh decides: ${s.out.directive.narration}`);
     assert.equal(s.op.status, 'succeeded');
+    assert.deepEqual([s.stored.pr?.number, s.stored.pr?.state, s.stored.pr?.headRefOid], [42, 'MERGED', HEAD], 'the recorded head is the candidate that passed verification, never the stale tip (R3 decision 1 F5)');
   } finally {
     fy.cleanup();
   }
@@ -153,6 +157,36 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: when gh does not answer, a token at 
       } else assertUnknown(s);
     } finally {
       fx.cleanup();
+    }
+  }
+});
+
+test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: an unusable gh answer ({}, MERGED without a head, another PR, no number, an unknown state) counts as gh not answering: the token decides, else UNKNOWN (R3 decision 1 F3 and F4) [R2]', () => {
+  const unusable: Array<[string, unknown]> = [
+    ['{}', {}],
+    ['MERGED without a head', { number: 42, state: 'MERGED' }],
+    ['another PR MERGED at the candidate', { number: 99, state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+    ['no number', { state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+    ['an empty head', { number: 42, state: 'OPEN', headRefOid: '' }],
+    ['an unknown state', { number: 42, state: 'DRAFT', headRefOid: HEAD }],
+  ];
+  for (const [label, json] of unusable) {
+    const fx = makeFixture();
+    try {
+      const s = shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS), { repository: 'o/r', exec: ghRaw(json) });
+      assertUnknown(s);
+      assert.equal(s.stored.stop, undefined, `${label}: an unusable answer is no evidence of a non-merge`);
+    } finally {
+      fx.cleanup();
+    }
+    const fy = makeFixture();
+    try {
+      const s = shipped(fy, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghRaw(json) });
+      assert.equal(s.out.directive.kind, 'close', `${label}: the token at the candidate decides: ${s.out.directive.narration}`);
+      const result = fy.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+      assert.equal(result?.data['pr'], undefined, `${label}: no fact is taken from an unusable answer`);
+    } finally {
+      fy.cleanup();
     }
   }
 });
