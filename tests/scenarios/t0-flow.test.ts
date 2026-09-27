@@ -3868,6 +3868,40 @@ test('T0-SHIP-QUOTA-WAIT-3 acceptance 1: a review-no-verdict ship result that ex
   }
 });
 
+test('T0-SHIP-QUOTA-RESET (issue 54): a ship-path quota wait names the later reset the review pool already keeps, not now + 15 minutes, with pollSeconds rounded up', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
+    const later = addMs(fx.now(), 20 * 60 * 1000 + 500);
+    // Another request of the same pool is held longer while this ship runs (a pool held at admission refuses the ship).
+    ship.onShip = (req) => {
+      const pool = fx.goal(fx.store.listGoals()[0]!.id).reviewPool;
+      const other = fx.queue.enqueue({ pool, repository: 'Asun28/other', candidateDigest: `other-${req.cardId}`, base: 'main', policyVersion: 'p', reviewer: 'r', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() }).request;
+      fx.queue.hold(other.key, later, 'another card held the pool longer', fx.now());
+    };
+    const { goal, r } = shipOnce(fx, ship);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') {
+      assert.equal(r.directive.on, 'review-quota');
+      assert.equal(r.directive.pollSeconds, 20 * 60 + 1, 'the pool reset, rounded up to whole seconds');
+      assert.ok(r.directive.narration.includes(`review pool ${fx.goal(goal.id).reviewPool} is held until ${later}`), r.directive.narration);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SHIP-QUOTA-RESET: docs/OPERATIONS.md and the CHANGELOG Unreleased section state that a quota wait names the pool reset', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (file: string) => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
+  const sentence = "A quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps, which is when that pool admits a review again (card T0-SHIP-QUOTA-RESET, issue 54).";
+  assert.ok(read('docs/OPERATIONS.md').includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = "- Quota wait reset, card T0-SHIP-QUOTA-RESET (issue 54): a quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps (`ReviewQueue.heldUntil`), in its `pollSeconds` and its narration, instead of the invocation's hold or now plus 15 minutes; the pre-review wait has no pool and is unchanged.";
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+});
+
 test('T0-SHIP-QUOTA-WAIT-3 acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
   const fx = makeFixture();
   try {
