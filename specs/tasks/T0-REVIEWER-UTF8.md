@@ -7,6 +7,7 @@ worktree: D:\wt\AIDLC\T0-REVIEWER-UTF8
 allow_paths:
   - src/review/pre-review.ts
   - tests/surface/reviewer-env.test.ts
+  - tests/surface/reviewer-env.child.ts
   - tests/scenarios/r2-fallback.test.ts
   - tests/scenarios/r3-fallback.test.ts
   - tests/scenarios/base-sync-review.test.ts
@@ -24,8 +25,8 @@ requirements:
 acceptance:
   - 1. tests/surface/reviewer-env.test.ts - `reviewerEnv` adds both variables to an environment without them and keeps every other key; keeps a user value (`PYTHONUTF8=0`, `PYTHONIOENCODING=cp1252`); replaces an empty value; on Windows keeps a user value set in another letter case and replaces an empty one spelled so; on Linux adds ours next to a lower-case key; adds `PYTHONIOENCODING=utf-8` next to a user `PYTHONUTF8=0`; with its defaults reads the base as the process platform does; never mutates its input, and the tests never mutate `process.env`. [R1] [dod arm 1]
   - 2. tests/surface/reviewer-env.test.ts and the three scenario files - `runPreReview` and every angle of `runReviewPanel` spawn with an environment deepEqual to `reviewerEnv()`, and through the card runner so do the R2 primary and fallback (tests/scenarios/r2-fallback.test.ts), the R3 primary and fallback (tests/scenarios/r3-fallback.test.ts) and the R3 base-sync reviewer (tests/scenarios/base-sync-review.test.ts). [R2] [dod arm 1]
-  - 3. tests/surface/reviewer-env.test.ts - on Windows a Python probe spawned through `runReviewPanel` with the real runner reads `✖ 码 再 运` intact and reports `utf-8`; skipped elsewhere. [R3] [dod arm 1]
-  - 4. tests/surface/reviewer-env.test.ts - the receipt shape of issue 99 is a no-verdict with `tool_error`; the replaying reviewer answers it when spawned without the reviewer environment and passes with it; through the card runner an R2 round on a diff carrying `码 再 运` passes. [R4] [dod arm 1]
+  - 3. tests/surface/reviewer-env.test.ts and tests/surface/reviewer-env.child.ts - the default-environment scenarios (this item and acceptance 4) run in a child process whose environment has both variables removed in any letter case, once from the process environment and once from a user PYTHONUTF8=0 and PYTHONIOENCODING=cp1252, so the proof never depends on the developer's own values (R3 decision 1); on Windows a Python probe spawned through `runReviewPanel` with the real runner reads `✖ 码 再 运` intact and reports `utf-8`; skipped elsewhere. [R3] [dod arm 1]
+  - 4. tests/surface/reviewer-env.child.ts, run by tests/surface/reviewer-env.test.ts - the receipt shape of issue 99 is a no-verdict with `tool_error`; the replaying reviewer answers it when spawned without the reviewer environment and passes with it; through the card runner an R2 round on a diff carrying `码 再 运` passes. [R4] [dod arm 1]
   - 5. docs/OPERATIONS.md and CHANGELOG.md Unreleased carry the rule under this card id; a test reads the exact sentences this card adds and fails with any one removed. [R5] [dod arm 1]
 depends_on: []
 budget: 360
