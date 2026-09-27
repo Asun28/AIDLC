@@ -14,7 +14,7 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
-import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, startAttempt, type ShipFailureStep } from '../core/effort.ts';
+import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
 import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
@@ -499,7 +499,17 @@ export class CardRunner {
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
     const reusable = this.reusableReceipt(run);
-    if (reusable) run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined }); // consumed: a later check failure never resurrects it
+    if (reusable) {
+      // The unchanged candidate goes back to review with its kept receipt (consumed: a later check failure never resurrects
+      // it). Only when every finding of the kept block is disputed (a formal block is reused on no other ground) is the repair
+      // BUILD opened after the block settled as not counted, the candidate's success standing (card T0-DISPUTE-RUNNING-ATTEMPT);
+      // exhausted pre-review rounds reuse the receipt with the finding open, and settle nothing (R3 decision 1 F1).
+      const kept = run.blockedReceipt;
+      const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
+      const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
+      run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
+      if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
+    }
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
     const reviewExhausted = run.review.substantiveBlocks >= 2 || run.review.noVerdictRetriesUsed > 1 || (run.review.substantiveDecisions >= 2 && run.review.substantiveBlocks > 0 && run.state === 'REVIEW_FIX');
@@ -1144,9 +1154,9 @@ export class CardRunner {
         // Reaching SHIP with a blocked, unrepaired candidate: hand it back with the reasons and the open finding ids.
         // The episode reopens so the repair can be recorded; the review budget, not the ladder, paid for the block.
         const next = this.save({ ...run, state: 'BUILD', dodReceipt: undefined, effort: run.effort ? reopenAfterReviewBlock(run.effort, 'pre-review block still pending') : run.effort, blockedReceipt: this.keepReceipt(run, { stage: 'pre', cycle, round: last.round, candidateSha: run.candidate?.sha }) });
-        const admitted = run.effort ? nextEffortAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
+        const admitted = run.effort ? repairAction(run.effort, { harderProblem: true, limitsPermit: true }) : undefined;
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the round runs on the unchanged candidate once every finding of the block is disputed.` : '';
-        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.${ids}` } };
+        return { run: next, directive: { kind: 'build', cardId: card.id, worktree: run.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: run.redReceipt, dodCommand: card.dod_command, effort: admitted?.action === 'attempt' ? admitted.effort : (run.effort?.baseline ?? 'medium'), attempt: admitted?.action === 'attempt' ? admitted.n : (run.effort?.attempts.length ?? 0) + 1, skills: this.buildSkills(goal, card), narration: `Pre-review block still pending on candidate ${digest ?? 'unknown'}: ${last.reasons.join(' | ') || 'see the retained verdict'}. Fix within scope, rerun the DoD, record the attempt with the new candidate sha, then \`aidlc review pre ${card.id}\`.${ids}` } };
       }
       disputedNote = ` Every finding of round ${last.round} is disputed; the round runs on the unchanged candidate with the author's notes.`;
     }
@@ -1171,7 +1181,7 @@ export class CardRunner {
     const switched = reviewer.reviewer !== cfg.reviewer ? ` (the primary ${cfg.reviewer} is on a quota hold; its fallback runs)` : '';
     const retry = last?.outcome === 'no-verdict' ? (cfg.fallback && last.reviewer !== reviewer.reviewer ? ` (retry: the previous run, by ${last.reviewer}, produced no verdict)` : ' (retry: the previous run produced no verdict)') : last?.outcome === 'quota-hold' && !switched && (!cfg.fallback || last.reviewer === reviewer.reviewer) ? ' (the previous run reported a quota hold; retry once it clears)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
-    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: cfg.rounds, reviewer: reviewer.reviewer, narration: `Pre-review round ${round}/${cfg.rounds} (R2, ${reviewer.reviewer}) before the ship${retry}${switched}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
+    return { run: next, directive: { kind: 'pre-review', cardId: card.id, round, maxRounds: Math.max(cfg.rounds, round), reviewer: reviewer.reviewer, narration: `Pre-review round ${round}/${Math.max(cfg.rounds, round)} (R2, ${reviewer.reviewer}) before the ship${retry}${switched}: run \`aidlc review pre ${card.id}\`. A pass hands the candidate to the ship and R3; a block returns to BUILD with the reasons.${disputedNote}` } };
   }
 
   /**
@@ -2109,7 +2119,7 @@ export class CardRunner {
       // Acceptance coverage is asked of the one angle that answers it, so a panel without that angle asks for nothing and
       // records nothing: an empty record would read as a reviewer that ignored a request nobody made.
       const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
-      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: cfg.rounds });
+      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: Math.max(cfg.rounds, round) });
       try {
         result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
       } catch (err) {
@@ -2353,7 +2363,7 @@ export class CardRunner {
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
     const stopWith = (stop: StopRecord, extra: Partial<CardRun> = {}) => finish(() => ({ ...extra, state: 'STOP', stop }), (next) => ({ run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } }));
-    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
+    const buildDirective = (next: CardRun, narration: string, effort?: EffortLevel, skills?: string[], attempt?: number): CardDirective => ({ kind: 'build', cardId: card.id, worktree: next.worktree ?? this.worktreePath(card.id), tdd: card.tdd, redReceipt: next.redReceipt, dodCommand: card.dod_command, effort: effort ?? next.effort?.baseline ?? 'medium', attempt: attempt ?? next.effort?.attempts.find((a) => a.outcome === 'running')?.n ?? (next.effort?.attempts.length ?? 0) + 1, skills: skills ?? this.buildSkills(goal, card), narration });
     const buildWith = (patchOf: (latest: CardRun) => Partial<CardRun>, narration: string, effort?: EffortLevel, skills?: string[]) => finish((latest) => ({ ...patchOf(latest), state: 'BUILD' }), (next) => ({ run: next, directive: buildDirective(next, narration, effort, skills) }));
     // A ship that fails on the candidate's own code (T0-SHIP-REPAIR-ATTEMPT): the success that bound the candidate is a
     // counted failure whose cause names the outcome, the episode reopens, and the next step is the ladder's on the locked
@@ -2467,7 +2477,7 @@ export class CardRunner {
           return stopWith(makeStop('time', `RED receipt rejected (${result.detail}) after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }));
         }
         const reopened = reopenEpisode(run.effort);
-        const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
+        const inadmissible = reopened ? repairAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
         if (inadmissible && inadmissible.action !== 'attempt') {
           return stopWith(makeStop('card', `RED receipt rejected (${result.detail}) but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false }));
         }
@@ -2495,7 +2505,7 @@ export class CardRunner {
             return stopWith(makeStop('time', `merge conflict on the base sync after the card deadline (${admission.phase}); no repair attempt may start`, 'hand off with the branch and the retained ship output; extend only explicitly', { at: now, global: false }));
           }
           const reopened = reopenEpisode(run.effort);
-          const inadmissible = reopened ? nextEffortAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
+          const inadmissible = reopened ? repairAction(reopened, { harderProblem: true, limitsPermit: true }) : undefined;
           if (inadmissible && inadmissible.action !== 'attempt') {
             return stopWith(makeStop('card', `merge conflict on the base sync but the effort episode cannot admit a repair attempt: ${inadmissible.action === 'stop' ? `${inadmissible.reason}: ${inadmissible.detail}` : 'episode already terminal'}`, 'amend the goal with a replacement card to open a linked episode, or resume with a fresh generation', { at: now, global: false }));
           }

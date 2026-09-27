@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Disputed repair attempt, card T0-DISPUTE-RUNNING-ATTEMPT (issue 106): a dispute that sends the unchanged candidate back to review settles the repair attempt BUILD had opened as not counted (`review-disputed`), a ship repair takes a running attempt as the repair instead of throwing, so a committed base-sync merge always records its repair, and the pre-review round is never shown past its maximum.
+
 - Quota wait reset, card T0-SHIP-QUOTA-RESET (issue 54): a quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps (`ReviewQueue.heldUntil`), in its `pollSeconds` and its narration, instead of the invocation's hold or now plus 15 minutes; the pre-review wait has no pool and is unchanged.
 
 - Audit facts, card T1-AUDIT-FACTS-2 (the successor of T1-AUDIT-FACTS): the card runner journals the one merge `OPERATION_RESULT` of a merge it verifies through a PR with the PR head, the merge commit, its tree and the PR number when `gh pr view`, a fetch of the base and `git rev-parse` can all read them, never from the ship output, and without them otherwise; `aidlc audit verify` re-derives each fact from git and gh: a disagreement is a blocking `FACT_MISMATCH`, a fact it cannot re-derive is a `FACT_UNVERIFIED` warning, and a shipped card whose merge result carries no facts is a `FACT_MISSING` warning. `--claim-full` now also names each shipped card with no re-derived fact, so a journal written before this change reports `BLOCKED/capability` for every card it shipped; no check reads a narration or free-text field (docs/OPERATIONS.md).

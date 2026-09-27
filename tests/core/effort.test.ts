@@ -12,6 +12,8 @@ import {
   nextEffortAction,
   nextSupportedEffort,
   normaliseCause,
+  repairAction,
+  settleDisputedRepair,
   startAttempt,
 } from '../../src/core/effort.ts';
 import type { EffortEpisode, EffortLevel } from '../../src/core/types.ts';
@@ -485,5 +487,61 @@ describe('T0-SHIP-FAILURE-UNSETTLED: nothing settled to refute, and the times of
       '- Ship failure with nothing settled, card T0-SHIP-FAILURE-UNSETTLED: a ship failure on an effort episode with no settled attempt returns the episode unchanged, keeping a running attempt at its own effort, where the ladder step used to re-derive that effort.',
       'A refuted attempt keeping the `finishedAt` of its success is now documented, with the reason (docs/OPERATIONS.md).',
     ]) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+  });
+});
+
+describe('a dispute and a running repair (card T0-DISPUTE-RUNNING-ATTEMPT)', () => {
+  const at = (n: number) => addMs(T0, n * 60_000);
+  /** A success, reopened by a review block, with the repair BUILD opened running. */
+  function blockedWithRepair(effort: EffortLevel = 'medium'): EffortEpisode {
+    const succeeded = finishAttempt(startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', at(1)), { finishedAt: at(2), outcome: 'success' });
+    return startAttempt(reopenAfterReviewBlock(succeeded, 'R2 block'), effort, at(3));
+  }
+
+  test('acceptance 3: repairAction takes a running attempt as the repair, answers a terminal episode as the ladder does, and asks the ladder when nothing runs [R2]', () => {
+    const running = blockedWithRepair();
+    const frozen = structuredClone(running);
+    assert.deepEqual(repairAction(running, JUSTIFIED), { action: 'attempt', effort: 'medium', n: 2, escalated: false });
+    const escalated = blockedWithRepair('high');
+    assert.deepEqual(repairAction(escalated, JUSTIFIED), { action: 'attempt', effort: 'high', n: 2, escalated: true }, 'the running attempt keeps its own effort');
+    assert.deepEqual(running, frozen, 'the input is never mutated');
+    // A terminal episode answers as nextEffortAction does, running attempt or not.
+    for (const terminal of ['same-cause-stop', 'exhausted', 'succeeded'] as const) {
+      const ended = { ...running, terminal };
+      const settled = { ...ended, attempts: ended.attempts.filter((x) => x.outcome !== 'running') };
+      assert.deepEqual(repairAction(ended, JUSTIFIED), nextEffortAction(settled, JUSTIFIED), terminal);
+    }
+    // Nothing running: the ladder's own step.
+    const idle = { ...running, attempts: running.attempts.filter((x) => x.outcome !== 'running') };
+    assert.deepEqual(repairAction(idle, JUSTIFIED), nextEffortAction(idle, JUSTIFIED));
+  });
+
+  test('acceptance 3: settleDisputedRepair settles the running repair as not counted, review-disputed, and restores succeeded only after a success [R1]', () => {
+    const running = blockedWithRepair();
+    const frozen = structuredClone(running);
+    const settled = settleDisputedRepair(running, at(4));
+    assert.deepEqual(running, frozen, 'the input is never mutated');
+    const repair = settled.attempts.find((x) => x.n === 2)!;
+    assert.deepEqual([repair.outcome, repair.notCountedReason, repair.finishedAt], ['not-counted', 'review-disputed', at(4)]);
+    assert.equal(settled.terminal, 'succeeded', 'the success that bound the candidate stands');
+    assert.deepEqual(settled.attempts.filter((x) => x.n !== 2), running.attempts.filter((x) => x.n !== 2), 'every other attempt is kept as it was');
+    assert.equal(countedAttempts(settled).length, countedAttempts({ ...running, attempts: running.attempts.filter((x) => x.outcome !== 'running') }).length, 'nothing is counted');
+    // After a failure (a ship refuted the success) the repair is settled but the episode is not succeeded.
+    const failed = finishAttempt(startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', at(1)), { finishedAt: at(2), outcome: 'fail', cause: 'ship dod-failed: x' });
+    const afterFail = settleDisputedRepair(startAttempt(failed, 'medium', at(3)), at(4));
+    assert.equal(afterFail.attempts.find((x) => x.n === 2)?.notCountedReason, 'review-disputed');
+    assert.equal(afterFail.terminal, undefined);
+    // The last evaluated attempt decides, not the first: a success, then a failure, then the repair.
+    const firstSuccess = finishAttempt(startAttempt(createEpisode('t', 'implementer', 'medium', GPT), 'medium', at(1)), { finishedAt: at(2), outcome: 'success' });
+    const successThenFail = finishAttempt(startAttempt(reopenAfterReviewBlock(firstSuccess, 'R2 block'), 'medium', at(3)), { finishedAt: at(4), outcome: 'fail', cause: 'dod: x' });
+    const afterBoth = settleDisputedRepair(startAttempt({ ...successThenFail, terminal: undefined }, 'medium', at(5)), at(6));
+    assert.equal(afterBoth.attempts.find((x) => x.n === 3)?.notCountedReason, 'review-disputed');
+    assert.equal(afterBoth.terminal, undefined, 'the last evaluated attempt is a failure');
+    // Nothing running: unchanged.
+    const idle = { ...running, attempts: running.attempts.filter((x) => x.outcome !== 'running') };
+    assert.deepEqual(settleDisputedRepair(idle, at(4)), idle);
+    // A terminal episode keeps its terminal and its attempts.
+    const stopped = { ...running, terminal: 'exhausted' as const };
+    assert.deepEqual(settleDisputedRepair(stopped, at(4)), stopped);
   });
 });
