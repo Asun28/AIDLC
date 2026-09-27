@@ -280,19 +280,137 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
 const READ_ONLY_TOOLS = new Set(['grep', 'rg', 'egrep', 'fgrep', 'findstr', 'cat', 'head', 'tail', 'less', 'more', 'sed', 'awk', 'wc', 'ls', 'dir', 'find', 'echo', 'printf', 'type', 'diff', 'sort', 'uniq', 'cut', 'tr', 'jq', 'yq', 'stat', 'file', 'which', 'where', 'pwd', 'tree', 'select-string', 'get-content', 'get-childitem', 'test-path', 'write-output', 'write-host']);
 const READ_ONLY_GIT = new Set(['log', 'diff', 'show', 'status', 'blame', 'grep', 'ls-files', 'rev-parse', 'branch', 'remote', 'worktree']);
 
-/** Split a shell command into pipeline/sequence segments and drop read-only ones. */
-export function mutatingSegments(cmd: string): string[] {
+/**
+ * The segments of a Bash command: split at `||`, `&&`, `;`, `|`, a lone `&` and a line break (card T0-HOOK-CLASSIFIER). A
+ * lone `&` is neither preceded by `<`, `>`, `&` or `|` nor followed by `>` or `&`, so `2>&1`, `>&2`, `&>`, `&>>` and `&&`
+ * split as before. Quotes are not read: a separator inside quotes splits too, which only adds segments.
+ */
+function commandSegments(cmd: string): string[] {
   return cmd
-    .split(/\|\||&&|;|\|/)
+    .split(/\|\||&&|;|\||(?<![<>&|])&(?![>&])|\r\n|\n|\r/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .filter((s) => {
-      const tokens = s.replace(/^\s*(?:sudo|time|env(?:\s+\w+=\S+)*)\s+/i, '').split(/\s+/);
-      const first = (tokens[0] ?? '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
-      if (READ_ONLY_TOOLS.has(first)) return false;
-      if (first === 'git' && READ_ONLY_GIT.has((tokens[1] ?? '').toLowerCase())) return false;
-      return true;
-    });
+    .filter((s) => s.length > 0);
+}
+
+/** A segment's command: its first word after a `sudo`, `time` or `env` prefix, lower case, `.exe` dropped, and its arguments. */
+function commandOf(segment: string): { name: string; qualified: boolean; args: string[] } {
+  const tokens = segment.replace(/^\s*(?:sudo|time|env(?:\s+\w+=\S+)*)\s+/i, '').split(/\s+/);
+  const first = tokens[0] ?? '';
+  return { name: first.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, ''), qualified: /[\\/]/.test(first), args: tokens.slice(1) };
+}
+
+/** The flags of each `s` command a sed script carries, read with its own delimiter. */
+function sedFlags(segment: string): string {
+  const script = segment.slice(segment.search(/\s|$/));
+  let flags = '';
+  for (const m of script.matchAll(/(?<![\w-])s([^\w\s\\])(?:\\.|(?!\1).)*?\1(?:\\.|(?!\1).)*?\1([A-Za-z0-9]*)/g)) flags += m[2] ?? '';
+  return flags;
+}
+
+/** The sed forms: `e` runs a command (the `e` command or the `e` flag); `w` and `W` and the in-place options write a file. */
+function sedForms(segment: string): { executes: boolean; writes: boolean } {
+  const script = segment.slice(segment.search(/\s|$/));
+  const flags = sedFlags(segment);
+  return {
+    executes: flags.includes('e') || /(?:^|[\s;{'"])e(?=\s|$|['";}])/.test(script),
+    writes: flags.includes('w') || /(?:^|[\s;{'"])[wW]\s+\S/.test(script) || /\s(?:-[a-zA-Z]*i\S*|--in-place(?:=\S*)?)(?=\s|$)/.test(segment),
+  };
+}
+
+const BRANCH_MUTATING = new Set(['--delete', '--move', '--copy', '--force', '--set-upstream-to', '--unset-upstream', '--edit-description', '--track', '--no-track']);
+const BRANCH_VALUE_OPTIONS = new Set(['--contains', '--no-contains', '--merged', '--no-merged', '--points-at', '--format', '--sort']);
+
+/** Whether `git branch <args>` only lists: no changing option, and a name only in a listing or as a listing option's value. */
+function branchLists(args: string[]): boolean {
+  const listing = args.some((a) => a === '--list' || (/^-[a-zA-Z]+$/.test(a) && a.includes('l')));
+  for (let i = 0; i < args.length; i += 1) {
+    const a = args[i]!;
+    if (a.startsWith('--')) {
+      const key = a.split('=')[0]!;
+      if (BRANCH_MUTATING.has(key)) return false;
+      if (BRANCH_VALUE_OPTIONS.has(key) && !a.includes('=')) i += 1;
+      continue;
+    }
+    if (a.startsWith('-') && a.length > 1) {
+      if (/[dDmMcCfut]/.test(a.slice(1))) return false;
+      continue;
+    }
+    if (!listing) return false;
+  }
+  return true;
+}
+
+/** Whether a git segment only reads (`args` after `git`): the read-only subcommands without their executing or changing forms. */
+function gitReads(args: string[]): boolean {
+  const sub = (args[0] ?? '').toLowerCase();
+  if (!READ_ONLY_GIT.has(sub)) return false;
+  const rest = args.slice(1);
+  if (sub === 'grep') return !rest.some((a) => /^-O/.test(a) || /^--open-files-in-pager(?:=|$)/.test(a));
+  if (sub === 'branch') return branchLists(rest);
+  if (sub === 'remote') {
+    const r = rest.filter((a) => a !== '-v' && a !== '--verbose');
+    return r.length === 0 || r[0] === 'show' || r[0] === 'get-url';
+  }
+  if (sub === 'worktree') return rest[0] === 'list';
+  return true;
+}
+
+/** The awk forms that run a command, read on the whole command line: a `|` splits the awk text from the command it feeds. */
+const AWK_EXECUTES = /\bsystem\s*\(|\|\s*getline\b|\bprintf?\b[^|;&\n]*\|/;
+
+/** Whether a read-only command's segment carries one of its executing forms (production-gate). */
+function executes(name: string, segment: string, line: string): boolean {
+  if (name === 'awk') return AWK_EXECUTES.test(line);
+  if (name === 'find') return /\s-(?:exec|execdir|ok|okdir)(?=\s|$)/.test(segment);
+  if (name === 'sed') return sedForms(segment).executes;
+  if (name === 'rg') return /\s--pre(?=[\s=]|$)/.test(segment);
+  return false;
+}
+
+/** Whether a segment carries a file-writing form of its command (protect-paths); `print >` and the like are writes through `>`. */
+function writesFile(segment: string): boolean {
+  const { name, args } = commandOf(segment);
+  if (name === 'sed') return sedForms(segment).writes;
+  if (name === 'awk') return /\s-i\s*inplace\b/.test(segment);
+  if (name === 'find') return /\s-(?:delete|fprint|fprint0|fprintf|fls)(?=\s|$)/.test(segment);
+  if (name === 'sort') return /\s(?:-[a-zA-Z]*o\S*|--output(?:=\S*)?)(?=\s|$)/.test(segment);
+  if (name === 'uniq') {
+    const operands: string[] = [];
+    for (let i = 0; i < args.length; i += 1) {
+      const a = args[i]!;
+      if (/^-[fsw]$/.test(a)) i += 1;
+      else if (!a.startsWith('-') || a === '-') operands.push(a);
+    }
+    return operands.length >= 2;
+  }
+  if (name === 'tree') return /\s-o\S*(?=\s|$)/.test(segment);
+  if (name === 'yq') return /\s(?:-[a-zA-Z]*i\S*|--inplace(?:=\S*)?)(?=\s|$)/.test(segment);
+  if (name === 'git') {
+    const sub = (args[0] ?? '').toLowerCase();
+    if (['log', 'diff', 'show'].includes(sub)) return /\s--output(?:=\S*)?(?=\s|$)/.test(segment);
+    if (sub === 'worktree') return ['add', 'remove', 'move', 'prune'].includes(args[1] ?? '');
+  }
+  return false;
+}
+
+/** Whether a Bash command writes a file: a write verb (`WRITE_VERBS`) or a file-writing form of one of its segments. */
+function writesFiles(cmd: string): boolean {
+  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some(writesFile);
+}
+
+/**
+ * The segments of a command `production-gate` tests: all but the read-only ones. A segment is read-only only when its first
+ * word is a bare name (no path) on the read-only lists and it carries no executing form of that command; git reads only
+ * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER).
+ */
+export function mutatingSegments(cmd: string): string[] {
+  return commandSegments(cmd).filter((s) => {
+    const { name, qualified, args } = commandOf(s);
+    if (qualified) return true;
+    if (name === 'git') return !gitReads(args);
+    if (!READ_ONLY_TOOLS.has(name)) return true;
+    return executes(name, s, cmd);
+  });
 }
 
 export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string): HookResult {
@@ -344,7 +462,7 @@ export function protectPaths(event: HookEvent, config: Required<HookConfig>): Ho
   const reason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   if (typeof file === 'string' && matches(file)) return deny('PreToolUse', reason);
   if (typeof cmd === 'string' && matches(cmd)) {
-    if (WRITE_VERBS.test(cmd)) return deny('PreToolUse', reason);
+    if (writesFiles(cmd)) return deny('PreToolUse', reason);
     return defer('PreToolUse', 'Note: this command references a frozen path. Read-only use may continue; any write must go through version review.');
   }
   return { exitCode: 0 };
