@@ -692,27 +692,21 @@ export class CardRunner {
     // The run takes the generation under the card-run lock, then the lease lock (never the reverse), both held until the run
     // record is on disk, and only while the run read under the lock does not carry the generation yet and the lease is still
     // this session's acquisition: otherwise nothing is journaled or written.
-    const owned = this.store.updateCardRun(
-      goal.id,
-      card.id,
-      (current) => {
-        if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
-        return { ...(current ?? caller), ownerGeneration: lease.generation };
-      },
-      (write) =>
-        this.leases.update(key, (held) => {
-          if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
-            throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
-          }
-          // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
-          // generation): a completion after one journals the completion instead of a second acquisition.
-          const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
-          if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
-          else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
-          write();
-          return held;
-        }),
-    );
+    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
+      if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
+      return { ...(current ?? caller), ownerGeneration: lease.generation };
+    }, (write) => this.leases.update(key, (held) => {
+      if (!held || held.released || held.generation !== lease.generation || held.owner.session !== me.session || held.owner.host !== me.host) {
+        throw new Error(`card ${card.id} changed hands after this takeover acquired generation ${lease.generation}: the lease is ${held ? `${held.released ? 'released' : `held by session ${held.owner.session}`} at generation ${held.generation}` : 'gone'}; the run is left as it is, run ${scoped('status')}`);
+      }
+      // One acquisition per generation across goals, whatever journaled it (PREPARE's claim journals one before it saves the
+      // generation): a completion after one journals the completion instead of a second acquisition.
+      const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
+      if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
+      else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
+      write();
+      return held;
+    }));
     const assessed = this.assess(goal, card, owned, now);
     const next = this.save(assessed.next);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };

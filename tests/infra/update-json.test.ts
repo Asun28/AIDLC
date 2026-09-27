@@ -369,3 +369,22 @@ describe('state/store updateJson lock ownership (T1-STORE-CAS-2)', () => {
     unlinkSync(lock);
   });
 });
+
+describe('state/store updateJson: a lock being deleted (T1-STORE-CAS-2 sweep)', () => {
+  const dir = tmpDir();
+  after(() => cleanup(dir));
+
+  it('a lock whose stat fails with EPERM is fresh however it names a dead owner: never taken over, the waiter refuses with LOCKED [R9]', () => {
+    const file = path.join(dir, 'deleting.json');
+    writeFileSync(file, STORED, 'utf8');
+    const lock = `${file}.lock`;
+    const dead = 'pid=999999999 at=2020-01-01T00:00:00.000Z nonce=deleting';
+    writeFileSync(lock, dead, 'utf8');
+    utimesSync(lock, LONG_AGO, LONG_AGO);
+    const outcome = settle(() => throughFs('statSync', (real, args) => { if (String(args[0]) === lock) throw errno('EPERM'); return real(...args); }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 })));
+    assert.ok(isCode('LOCKED')(outcome.error), `LOCKED: ${String(outcome.error)}`);
+    assert.equal(textOf(lock), dead, 'the lock being deleted is not removed by the waiter');
+    assert.equal(readFileSync(file, 'utf8'), STORED);
+    unlinkSync(lock);
+  });
+});

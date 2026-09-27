@@ -12,6 +12,7 @@ import { MINUTE_MS, addMs } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { GoalStore } from '../../src/state/goal-store.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 
 /** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
@@ -1399,6 +1400,64 @@ test('T1-STORE-CAS-2 acceptance 12: the takeover holds the lease lock until its 
     assert.match(String(early.error), /released at generation 1/, `refused: ${String(early.error)}`);
     assert.deepEqual(current('T1-EARLY'), before, 'the run is left unwritten');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-EARLY' && e.data['leaseGeneration'] === 1).length, 0, 'no acquisition journaled');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS-2: the owner\'s takeover of a run that already carries its generation refuses in its lease section, without waiting for a card-run lock another writer holds', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-OWNED', title: 'card T1-OWNED' });
+    const goal = goalForCards(fx, ['T1-OWNED']);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-OWNED'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-OWNED')).directive.kind, 'prepare');
+    // Another writer of this session holds the card-run lock (a review commit in progress, say).
+    const lock = `${fx.store.cardFile(goal.id, 'T1-OWNED')}.lock`;
+    writeFileSync(lock, `pid=${process.pid} at=${fx.now()} nonce=committing`, 'utf8');
+    const quick = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 50 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+    const outcome = settle(() => quick.takeover(fx.goal(goal.id), fx.card('T1-OWNED'), fx.store.getCardRun(goal.id, 'T1-OWNED')!));
+    assert.match(String(outcome.error), /this session owns card T1-OWNED at generation 0/, `refused as owned, not locked: ${String(outcome.error)}`);
+    unlinkSync(lock);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T1-STORE-CAS-2: the acquisition is journaled before the run write, so a run write that fails leaves it for the completion the command run again performs', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    writeCard(fx, { id: 'T1-TORN', title: 'card T1-TORN' });
+    const goal = goalForCards(fx, ['T1-TORN']);
+    const current = () => fx.store.getCardRun(goal.id, 'T1-TORN')!;
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-TORN'), fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TORN')).directive.kind, 'prepare');
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    setActorForTests(actorB);
+    const runFile = fx.store.cardFile(goal.id, 'T1-TORN');
+    const acquisitions = () => fx.events(goal.id).filter((e) => e.type === 'LEASE_ACQUIRED' && e.cardId === 'T1-TORN' && e.data['leaseGeneration'] === 1);
+    let failed = false;
+    const torn = settle(() =>
+      throughFs(
+        'renameSync',
+        (real, args) => {
+          if (!failed && String(args[1]) === runFile) {
+            failed = true;
+            throw Object.assign(new Error('EIO: simulated rename failure'), { code: 'EIO' });
+          }
+          return real(...args);
+        },
+        () => fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TORN'), current()),
+      ),
+    );
+    assert.match(String(torn.error), /EIO/);
+    assert.equal(current().ownerGeneration, 0, 'the run is not written');
+    assert.equal(acquisitions().length, 1, 'the acquisition is journaled before the run write');
+    const done = fx.runner().takeover(fx.goal(goal.id), fx.card('T1-TORN'), current());
+    assert.equal(done.completed, true);
+    assert.equal(done.run.ownerGeneration, 1);
+    assert.equal(acquisitions().length, 1, 'the completion journals no second acquisition');
+    assert.ok(fx.events(goal.id).some((e) => e.type === 'NOTE' && e.cardId === 'T1-TORN' && e.data['kind'] === 'card-takeover-completed'));
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
