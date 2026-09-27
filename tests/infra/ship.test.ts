@@ -136,7 +136,7 @@ describe('delivery/ship merge contract (T0-EXIT-ZERO-NOT-MERGED)', () => {
 describe('delivery/ship merge contract rule (T0-EXIT-ZERO-NOT-MERGED-3)', () => {
   /** What main read as merged on exit 0: [SAGA-DONE], a merge word, no sentinel, or no [SAGA-FAIL] (ship.ts on main 390d43e). */
   const mainReadMerged = (text: string) => /\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || [...text.matchAll(/\[[A-Z0-9-]+\]/g)].length === 0 || !/\[SAGA-FAIL\]/.test(text);
-  const parts = ['[SAGA-DONE]', '[SAGA-FAIL] leg', '[CI-GATE-RED] ci', '[SHIP-MERGE-FAIL] x', '[SHIP-TIME] 3s', '[CI-GATE-PASS] {"name":"check-secrets"}', 'PR #7 MERGED', '合并', 'merged_pr=#7', 'DoD 未通过', 'all good'];
+  const parts = ['[SAGA-DONE]', '[SAGA-FAIL] leg', '[CI-GATE-RED] ci', '[SHIP-MERGE-FAIL] x', '[SHIP-PUSH-FAIL] push', '[SHIP-TIME] 3s', '[CI-GATE-PASS] {"name":"check-secrets"}', 'PR #7 MERGED', '合并', 'merged_pr=#7', 'DoD 未通过', 'all good'];
   const texts: string[] = [''];
   for (let a = 0; a < parts.length; a++) {
     texts.push(parts[a]!);
@@ -149,9 +149,16 @@ describe('delivery/ship merge contract rule (T0-EXIT-ZERO-NOT-MERGED-3)', () => 
     assert.ok(texts.length > 200, `${texts.length} receipts`);
     for (const text of texts) {
       const outcome = classifyShipOutput(receipt(text, 0)).outcome;
+      // The baseline: the same receipt on a nonzero exit, whose path is unchanged from main (R3 decision 1 F2).
+      const baseline = classifyShipOutput(receipt(text, 1)).outcome;
       if (mainReadMerged(text)) assert.ok(outcome === 'merged' || outcome === 'merge-unconfirmed', `main read merged, now ${outcome}: ${JSON.stringify(text)}`);
-      else assert.ok(outcome !== 'merged' && outcome !== 'merge-unconfirmed', `main read a failure, now ${outcome}: ${JSON.stringify(text)}`);
-      if (outcome === 'merged') assert.ok(text.includes('[SAGA-DONE]') && !text.includes('[SAGA-FAIL]'), `merged only on the contract: ${JSON.stringify(text)}`);
+      else assert.equal(outcome, baseline, `main read the failure ${baseline}: ${JSON.stringify(text)}`);
+      if (outcome === 'merged') {
+        assert.ok(text.includes('[SAGA-DONE]') && !text.includes('[SAGA-FAIL]'), `merged only on the contract: ${JSON.stringify(text)}`);
+        for (const [token] of text.matchAll(/\[[A-Z0-9-]+\]/g)) {
+          if (token !== '[SAGA-DONE]') assert.equal(classifyShipOutput(receipt(token, 1)).outcome, 'unclassified', `merged beside the mapped sentinel ${token}: ${JSON.stringify(text)}`);
+        }
+      }
     }
   });
 });

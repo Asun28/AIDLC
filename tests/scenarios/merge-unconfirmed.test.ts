@@ -182,6 +182,14 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: an unusable gh answer ({}, MERGED wi
     } finally {
       fx.cleanup();
     }
+    const fz = makeFixture();
+    try {
+      const s = shipped(fz, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: OTHER, mergedPr: 42 }), { repository: 'o/r', exec: ghRaw(json) });
+      assertUnknown(s);
+      assert.equal(s.stored.stop, undefined, `${label}, stale token: an unusable answer and a stale token prove nothing (R3 decision 1 F3)`);
+    } finally {
+      fz.cleanup();
+    }
     const fy = makeFixture();
     try {
       const s = shipped(fy, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghRaw(json) });
@@ -217,16 +225,59 @@ test('T0-EXIT-ZERO-NOT-MERGED-2 acceptance 4: a run with no candidate sha whose 
   }
 });
 
-test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 4: the dry-run path, which merges nothing, verifies a merge-unconfirmed ship as main verified a merged one, whatever gh answers [R2]', () => {
-  for (const options of [{ shipPath: 'dry-run' as const }, { shipPath: 'dry-run' as const, repository: 'o/r', exec: ghView('OPEN', HEAD) }, { shipPath: 'dry-run' as const, repository: 'o/r', exec: ghView('CLOSED', OTHER), candidateSha: null }]) {
+test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 4: the dry-run path, which merges nothing, verifies a merge-unconfirmed ship as main verified a merged one, whatever gh answers, and takes no facts from a view at another head (R3 decision 1 F1, F4) [R2]', () => {
+  const cases: Array<[string, 'OPEN' | 'MERGED' | 'CLOSED', string, string | null | undefined]> = [
+    ['OPEN at the candidate', 'OPEN', HEAD, undefined],
+    ['CLOSED at another head', 'CLOSED', OTHER, undefined],
+    ['CLOSED at another head, no candidate sha', 'CLOSED', OTHER, null],
+    ['OPEN, no candidate sha', 'OPEN', HEAD, null],
+    ['MERGED at another head', 'MERGED', OTHER, undefined],
+  ];
+  for (const [label, state, head, candidateSha] of cases) {
+    const calls: string[] = [];
+    const inner = ghView(state, head);
+    const exec: SyncRunner = (command, args, options) => {
+      calls.push([command, ...args].join(' '));
+      return inner(command, args, options);
+    };
     const fx = makeFixture();
     try {
-      const s = shipped(fx, () => new ExitZero('all good'), options);
-      assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
-      assert.equal(s.op.status, 'succeeded');
+      const s = shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS), { shipPath: 'dry-run', repository: 'o/r', exec, candidateSha });
+      assert.ok(calls.some((c) => c.startsWith('gh pr view 42')), `${label}: gh was asked about PR 42`);
+      assert.equal(s.out.directive.kind, 'close', `${label}: ${s.out.directive.narration}`);
+      assert.equal(s.op.status, 'succeeded', label);
+      const result = fx.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+      assert.equal(result?.data['mergeSha'], undefined, `${label}: no fact from a view that is not MERGED at the candidate`);
     } finally {
       fx.cleanup();
     }
+  }
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero('all good'), { shipPath: 'dry-run' });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-EXIT-ZERO-NOT-MERGED-3 acceptance 3: the facts of a verified merge-unconfirmed ship come only from gh MERGED at the candidate: a token at the candidate beside gh MERGED at another head closes with no facts (R3 decision 1 F4) [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghView('MERGED', OTHER) });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+    const result = fx.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+    for (const fact of ['headSha', 'mergeSha', 'tree', 'pr']) assert.equal(result?.data[fact], undefined, `no ${fact} from PR 42 at ${OTHER.slice(0, 7)}`);
+  } finally {
+    fx.cleanup();
+  }
+  const fy = makeFixture();
+  try {
+    const s = shipped(fy, () => new ExitZero(SCAFFOLD_SUCCESS, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghView('MERGED', HEAD) });
+    const result = fy.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+    assert.deepEqual([result?.data['headSha'], result?.data['mergeSha'], result?.data['pr']], [HEAD, MERGE_SHA, 42], 'gh MERGED at the candidate gives the facts');
+  } finally {
+    fy.cleanup();
   }
 });
 
