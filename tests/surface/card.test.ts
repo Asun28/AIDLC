@@ -263,6 +263,8 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
   test('a title, a nested diagnosis key and an inline flow list are reported under their key; a hash-space comment gives no finding [R2]', () => {
     const title = parseCardText(templateCard({ title: `fix the cut (issue ${H}97)` }), 'D:/x/specs/tasks/T1-FOO.md');
     assert.deepEqual(cuts(title).map((f) => f.message), [message('title', `fix the cut (issue ${H}97)`, 'fix the cut (issue')]);
+    const crlf = parseCardText(templateCard({ title: `fix the cut (issue ${H}97)` }).replace(/\n/g, '\r\n'), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.deepEqual(cuts(crlf).map((f) => f.message), [message('title', `fix the cut (issue ${H}97)`, 'fix the cut (issue')], 'a CRLF card');
     const nested = parseCardText(templateCard({}, `diagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class: see issue ${H}97 and ${H}45`), 'D:/x/specs/tasks/T1-FOO.md');
     assert.deepEqual(cuts(nested).map((f) => f.message), [message('diagnosis.same_class', `see issue ${H}97 and ${H}45`, 'see issue')]);
     const inline = parseCardText(templateCard({}, `non_goals: [the plain item ${H}5, "the quoted item ${H}6"]`), 'D:/x/specs/tasks/T1-FOO.md');
@@ -283,7 +285,7 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
 
   test('the body of a literal or a folded block scalar is text under a plain key, a quoted key, a key with an anchor or a tag, a nested key, a list item and a key inside a list item, and the lines after it are read again [R2]', () => {
     for (const header of ['|', '>-', '|2+', `| ${H} a note`]) {
-      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  - more ${H}46 text\n"quoted": ${header}\n  - see ${H}47\nanchored: &memo ${header}\n  - see ${H}48\ntagged: !!str ${header}\n  - see ${H}49\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    - see ${H}98\n  - plain ${H}99\n  - note: ${header}\n      - see ${H}100\n    other: x ${H}101\n  - "issue${H}97": ${header}\n      - see ${H}102\nsweep: see ${H}12`;
       const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
       assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('non_goals.other', `x ${H}101`, 'x'), message('sweep', `see ${H}12`, 'see')], header);
     }
@@ -295,10 +297,12 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
   });
 
   test('a quoted key is a key line, and an inline list reads a colon inside a plain item as YAML does (T0-FM-COMMENT-CUT-2) [R1] [R2]', () => {
-    const r = parseCardText(templateCard({}, `"quoted key": see ${H}103\nnon_goals: [a:"b, c", d]`), 'D:/x/specs/tasks/T1-FOO.md');
+    // An inline list left open ends at the next key, where the lexer adds a marker of no length: the offsets after it hold.
+    const r = parseCardText(templateCard({}, `forbid: [a, b\n"quoted key": see ${H}103\n'single key': see ${H}104\nhygiene: ${H}45 first\nnon_goals: [a:"b, c", d]`), 'D:/x/specs/tasks/T1-FOO.md');
     assert.ok(!('error' in r));
     assert.deepEqual(r.card.non_goals, ['a:"b', 'c"', 'd']);
-    assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}103`, 'see')]);
+    assert.equal(r.card.hygiene, `${H}45 first`, 'a hash at the value start is text, as before');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('"quoted key"', `see ${H}103`, 'see'), message("'single key'", `see ${H}104`, 'see')]);
   });
 
   test('a quoted inline item holding a comma is read whole with its hash and gives no finding [R1] [R2]', () => {

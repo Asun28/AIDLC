@@ -160,7 +160,8 @@ function parseInlineList(v: string | undefined): string[] | undefined {
   if (v === undefined) return undefined;
   const items = flowItems(v);
   if (!items) return v ? [v] : [];
-  return items.map((s) => s.replace(/^['"]|['"]$/g, '')).filter((s) => s.length > 0);
+  // A quoted item loses its pair of outer quotes (escapes stay as written); a plain item is read as written.
+  return items.map((s) => s.match(/^(["'])(.*)\1$/)?.[2] ?? s).filter((s) => s.length > 0);
 }
 
 function extractNested(fm: string, parent: string, child: string): string | undefined {

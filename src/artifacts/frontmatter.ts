@@ -1,9 +1,9 @@
 /**
  * Front matter parsing compatible with the scaffold's card parser:
  * `(?s)\A﻿?---\r?\n(.*?)\r?\n---`, scalars via `^key[ \t]*:[ \t]*(.*?)`, trailing
- * comments stripped as YAML reads them (never inside a quoted scalar), block lists only (`- item`), and a strict YAML fallback.
+ * comments stripped as the yaml lexer reads them, block lists only (`- item`), and a strict YAML fallback.
  */
-import YAML from 'yaml';
+import YAML, { CST, Lexer } from 'yaml';
 
 export interface FrontMatterDoc {
   raw: string;
@@ -33,67 +33,64 @@ export function splitFrontMatter(text: string): FrontMatterDoc | undefined {
   return { raw: text, frontMatter, body, yaml, yamlError };
 }
 
-/** A space or a tab: the only blanks YAML reads as separation. */
-function blank(ch: string | undefined): boolean {
-  return ch === ' ' || ch === '\t';
+/** A token the yaml package's lexer reads, with its offset in the lexed text; `scalar` is a plain scalar or a block-scalar body. */
+interface Token {
+  type: CST.TokenType | null;
+  source: string;
+  at: number;
 }
 
 /**
- * A one-line value as YAML reads it (card T0-FM-COMMENT-CUT): where its comment starts (-1 when none) and the offsets of the
- * commas that separate the items of a flow collection. A comment starts at the first hash sign after a space or a tab that is
- * outside a quoted scalar; any other blank, a non-breaking space included, is text, as in YAML. A quoted scalar opens only
- * where a scalar starts (the value start, or after `[`, `{`, `,` or `:` inside a flow collection) and closes at its unescaped
- * closing quote (a backslash escapes in a double-quoted scalar, a doubled quote in a single-quoted one). A hash directly after
- * any other character, or at the value start, is text. A value is a flow collection when it starts with `[` or `{`; in valid
- * YAML only a comment follows its closing bracket.
+ * The tokens the yaml package's lexer reads in `text`, each with its offset, leaving out the control tokens that carry no
+ * source text (card T0-FM-COMMENT-CUT-2). The yaml Lexer decides comment versus text, for both the readers and the report: a
+ * hash sign after a space or a tab starts a comment, except inside a quoted scalar or a block-scalar body, and a hash directly
+ * after any other character, a non-breaking space included, is text.
  */
-function scanValue(value: string): { comment: number; commas: number[] } {
-  let quote: '"' | "'" | undefined;
-  let flow = false;
-  let scalarStart = true;
-  const commas: number[] = [];
-  for (let i = 0; i < value.length; i += 1) {
-    const ch = value[i]!;
-    if (quote === '"') {
-      if (ch === '\\') i += 1;
-      else if (ch === '"') quote = undefined;
+function lex(text: string): Token[] {
+  const tokens: Token[] = [];
+  let at = 0;
+  let scalar = false;
+  for (const source of new Lexer().lex(text)) {
+    if (source === CST.SCALAR) {
+      scalar = true;
       continue;
     }
-    if (quote === "'") {
-      if (ch === "'" && value[i + 1] === "'") i += 1;
-      else if (ch === "'") quote = undefined;
-      continue;
-    }
-    if (blank(ch)) continue;
-    if (ch === '#' && blank(value[i - 1])) return { comment: i, commas };
-    if (scalarStart && (ch === '"' || ch === "'")) {
-      quote = ch;
-      scalarStart = false;
-    } else if (scalarStart && (ch === '[' || ch === '{')) {
-      flow = true;
-    } else if (flow && (ch === ',' || ch === ':')) {
-      scalarStart = true;
-      if (ch === ',') commas.push(i);
-    } else {
-      scalarStart = false;
-    }
+    if (source === CST.DOCUMENT || source === CST.FLOW_END) continue;
+    tokens.push({ type: scalar ? 'scalar' : CST.tokenType(source), source, at });
+    scalar = false;
+    at += source.length;
   }
-  return { comment: -1, commas };
+  return tokens;
 }
 
-/** Where a YAML comment starts in a one-line value, or -1 (see `scanValue`). */
+/** The tokens of a one-line value read as a mapping value, with offsets counted from the start of the value. */
+function lexValue(value: string): Token[] {
+  const key = 'k: ';
+  return lex(key + value).map((t) => ({ ...t, at: t.at - key.length }));
+}
+
+/** Where the yaml lexer starts a comment in a one-line value, or -1; a comment at the very start of the value is text, as before. */
 export function commentStart(value: string): number {
-  return scanValue(value).comment;
+  const comment = lexValue(value).find((t) => t.type === 'comment');
+  return comment && comment.at > 0 ? comment.at : -1;
 }
 
-/** The trimmed items of a one-line flow list `[a, "b, c"]`, split only at a comma outside a quoted item, or undefined when the value is not one. */
+/**
+ * The trimmed items of a one-line flow list `[a, "b, c"]`, split at the commas the yaml lexer reads at its top level, so a
+ * quoted item, a plain item holding a colon and a nested flow collection stay whole; undefined when the value is not one.
+ */
 export function flowItems(value: string): string[] | undefined {
   if (!/^\[.*\]$/.test(value)) return undefined;
   const items: string[] = [];
+  let depth = 0;
   let from = 1;
-  for (const at of scanValue(value).commas) {
-    items.push(value.slice(from, at).trim());
-    from = at + 1;
+  for (const t of lexValue(value)) {
+    if (t.type === 'flow-seq-start' || t.type === 'flow-map-start') depth += 1;
+    else if (t.type === 'flow-seq-end' || t.type === 'flow-map-end') depth -= 1;
+    else if (t.type === 'comma' && depth === 1) {
+      items.push(value.slice(from, t.at).trim());
+      from = t.at + 1;
+    }
   }
   items.push(value.slice(from, -1).trim());
   return items;
@@ -113,50 +110,54 @@ export interface ReferenceCut {
 }
 
 /**
- * A block scalar header: `|` or `>`, with an optional indentation and chomping indicator in either order, alone or after the
- * key of a mapping written in a list item (`- note: |`), which the group captures.
- */
-const BLOCK_HEADER = /^(?:([^#]*?):[ \t]+)?[|>](?:[1-9][+-]?|[+-][1-9]?)?$/;
-
-/**
- * Every value line of the front matter (a key, a nested key or a list item) that a comment cuts where the comment begins
- * with a hash directly followed by a non-blank character, which is how an issue or a PR number reads (card
- * T0-FM-COMMENT-CUT). A key is read with or without a space after its colon, as `scalar` and the nested-key reader read it. A
- * comment of a hash, a space and text is an annotation and is not listed, and the body of a block scalar (the blank lines and
- * the lines indented deeper than the key or the list item holding its header) is text, as YAML reads it.
+ * Every reference-like comment in the front matter (card T0-FM-COMMENT-CUT-2): a comment the yaml lexer reads that begins with
+ * a hash directly followed by a non-blank character, which is how an issue or a PR number reads, after value text on a key
+ * line or a list-item line, since the reader shortens that value by it. A key line holds a plain or a quoted key, with or
+ * without a space after its colon, as `scalar` and the nested-key reader read it; a block-scalar header line is one like any
+ * other. The lexer reads a block-scalar body as text, and its lines are neither keys nor items. A comment of a hash, a space
+ * and text is an annotation and is not listed.
  */
 export function referenceCuts(frontMatter: string): ReferenceCut[] {
+  const tokens = lex(frontMatter);
+  const comments = tokens.filter((t) => t.type === 'comment' && /^#\S/.test(t.source));
+  const bodies: Token[] = [];
+  let header = false;
+  for (const t of tokens) {
+    if (t.type === 'block-scalar-header') header = true;
+    else if (t.type === 'scalar') {
+      if (header) bodies.push(t);
+      header = false;
+    }
+  }
   const cuts: ReferenceCut[] = [];
   let parent = '';
   let item = 0;
-  let blockIndent: number | undefined;
-  for (const line of frontMatter.split(/\r?\n/)) {
-    const indent = line.match(/^\s*/)![0].length;
-    if (blockIndent !== undefined) {
-      if (indent === line.length || indent > blockIndent) continue;
-      blockIndent = undefined;
-    }
-    const kv = line.match(/^(\s*)([A-Za-z_][\w-]*)[ \t]*:[ \t]*(.*?)[ \t\r]*$/);
-    const listItem = kv ? undefined : line.match(/^(\s*)-(\s+)(.*?)[ \t\r]*$/);
+  let lineStart = 0;
+  for (const line of frontMatter.split('\n')) {
+    const start = lineStart;
+    lineStart += line.length + 1;
+    if (bodies.some((t) => start >= t.at && start < t.at + t.source.length)) continue;
+    const kv = line.match(/^(\s*)("(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[A-Za-z_][\w-]*)([ \t]*:[ \t]*)/);
+    const listItem = kv ? undefined : line.match(/^\s*-\s+/);
     let key: string;
-    let raw: string;
+    let valueStart: number;
     if (kv) {
       if (!kv[1]) {
         parent = kv[2]!;
         item = 0;
         key = parent;
       } else key = `${parent}.${kv[2]}`;
-      raw = kv[3] ?? '';
+      valueStart = kv[0].length;
     } else if (listItem) {
       item += 1;
       key = `${parent} item ${item}`;
-      raw = listItem[3] ?? '';
+      valueStart = listItem[0].length;
     } else continue;
-    const at = commentStart(raw);
-    const kept = (at < 0 ? raw : raw.slice(0, at)).trim();
-    const header = kept.match(BLOCK_HEADER);
-    if (header) blockIndent = listItem && header[1] !== undefined ? listItem[1]!.length + 1 + listItem[2]!.length : indent;
-    else if (at >= 0 && /^#\S/.test(raw.slice(at))) cuts.push({ key, raw, kept, comment: raw.slice(at) });
+    const comment = comments.find((c) => c.at >= start && c.at < start + line.length);
+    if (!comment) continue;
+    const raw = line.slice(valueStart).replace(/[ \t\r]+$/, '');
+    const kept = raw.slice(0, comment.at - start - valueStart).trim();
+    if (kept) cuts.push({ key, raw, kept, comment: raw.slice(comment.at - start - valueStart) });
   }
   return cuts;
 }

@@ -90,6 +90,8 @@ test('stripComment reads a comment as YAML does: a hash inside a quoted scalar i
     ['[plain #1, "q #2"]', '[plain', 'a plain item of a flow list'],
     ['a\t#tab', 'a', 'a tab before the hash'],
     ['| #97', '|', 'a comment after a block-scalar header'],
+    ['--- x #5', '--- x', 'a document marker at the value start is text of the value'],
+    ['%50 faster #45', '%50 faster', 'a percent sign at the value start is text of the value'],
   ];
   for (const [value, stripped, label] of cut) assert.equal(stripComment(value), stripped, label);
 });
@@ -101,7 +103,7 @@ test('flowItems splits a one-line flow list only at a comma outside a quoted ite
   assert.deepEqual(flowItems('[plain, text, with "quotes, inside"]'), ['plain', 'text', 'with "quotes', 'inside"'], 'a quote inside a plain item opens nothing');
   assert.deepEqual(flowItems('[note: a, b]'), ['note: a', 'b'], 'a colon separates no items');
   assert.deepEqual(flowItems('[a:"b, c", d]'), ['a:"b', 'c"', 'd'], 'a colon inside a plain item opens no quote, as YAML reads it (T0-FM-COMMENT-CUT-2)');
-  assert.deepEqual(flowItems('[[a, b], {c: d, e: f}]'), ['[a, b]', '{c: d, e: f}'], 'a nested flow collection stays whole (T0-FM-COMMENT-CUT-2)');
+  assert.deepEqual(flowItems('[[a, b], {c: d, e: f}, g]'), ['[a, b]', '{c: d, e: f}', 'g'], 'a nested flow collection stays whole (T0-FM-COMMENT-CUT-2)');
   assert.equal(flowItems('a, b'), undefined, 'not a flow list');
 });
 
