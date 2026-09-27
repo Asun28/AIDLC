@@ -59,7 +59,7 @@ const ghRaw = (json: unknown): SyncRunner =>
 const ghFails: SyncRunner = scriptedRunner({ 'gh pr view': { exitCode: 1, stderr: 'HTTP 502' } });
 
 /** Build T1-SHIP to a success on HEAD, then ship it through `shipOf(goalId)` on a runner with `options`. */
-function shipped(fx: Fixture, shipOf: (goalId: string) => ShipPath, options: { repository?: string; exec?: SyncRunner; shipPath?: 'github' | 'dry-run' } = {}) {
+function shipped(fx: Fixture, shipOf: (goalId: string) => ShipPath, options: { repository?: string; exec?: SyncRunner; shipPath?: 'github' | 'dry-run'; candidateSha?: string | null } = {}) {
   writeCard(fx, { id: 'T1-SHIP', title: 'ship' });
   const goal = goalForCards(fx, ['T1-SHIP']);
   const card = fx.card('T1-SHIP');
@@ -67,7 +67,8 @@ function shipped(fx: Fixture, shipOf: (goalId: string) => ShipPath, options: { r
   let r = dry.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-SHIP'));
   r = dry.next(fx.goal(goal.id), card, r.run);
   assert.equal(r.directive.kind, 'build', r.directive.narration);
-  const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: HEAD });
+  const sha = options.candidateSha === null ? undefined : (options.candidateSha ?? HEAD);
+  const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: sha });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: options.shipPath ?? 'github', repository: options.repository }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: shipOf(goal.id), now: fx.now, runner: options.exec ?? scriptedRunner({}) });
   const out = runner.next(fx.goal(goal.id), card, built);
   const ops = fx.ops.list({ goalId: goal.id, cardId: 'T1-SHIP', kind: 'merge' });
@@ -191,6 +192,29 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: an unusable gh answer ({}, MERGED wi
   }
 });
 
+test('T0-EXIT-ZERO-NOT-MERGED-2 acceptance 4: a run with no candidate sha whose PR gh answers MERGED waits with the operation UNKNOWN and the missing sha named; answered OPEN it still stops as tool (T0-EXIT-ZERO-NOT-MERGED base-sync R3 decision F1) [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero(SCAFFOLD_SUCCESS), { repository: 'o/r', exec: ghView('MERGED', HEAD), candidateSha: null });
+    assert.equal(s.stored.candidate?.sha, undefined, 'the run keeps no candidate sha');
+    assertUnknown(s);
+    assert.equal(s.stored.stop, undefined, 'a head gh reports cannot be refuted without a candidate sha');
+    if (s.out.directive.kind === 'wait') assert.match(s.out.directive.narration, /no candidate sha/);
+    assert.match(s.op.error ?? '', /no candidate sha/);
+  } finally {
+    fx.cleanup();
+  }
+  const fy = makeFixture();
+  try {
+    const s = shipped(fy, () => new ExitZero(SCAFFOLD_SUCCESS), { repository: 'o/r', exec: ghView('OPEN', HEAD), candidateSha: null });
+    assert.equal(s.stored.stop?.reason, 'tool', 'an open PR is a non-merge whatever the candidate');
+    assert.ok(s.stored.stop?.detail.includes('(no candidate sha)'), s.stored.stop?.detail);
+    assert.equal(s.op.status, 'failed');
+  } finally {
+    fy.cleanup();
+  }
+});
+
 test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: the dry-run path does not verify a merge-unconfirmed ship [R2]', () => {
   const fx = makeFixture();
   try {
@@ -240,6 +264,7 @@ const OPERATIONS_SENTENCES = [
   "`[SAGA-DONE]` beside a failure marker is conflicting evidence and `merge-unconfirmed` too, so gh decides whether the PR merged, while an exit 0 that reports `[SAGA-FAIL]` with no mapped sentinel stays `unclassified`.",
   'The card machine reconciles a `merge-unconfirmed` ship from the PR the ship reported or its merge token names: when gh answers, a PR MERGED at the candidate closes the card, and a PR OPEN, CLOSED or MERGED at another head stops it as `tool` with the operation failed (merge the PR by hand, then register a replacement card and resume the goal).',
   'gh answers only with a PR view whose number is the PR asked for, whose state is OPEN, MERGED or CLOSED and whose head is named; any other answer counts as none.',
+  'A run with no candidate sha can neither verify nor refute the head gh reports, so a PR gh reads as MERGED leaves the operation `UNKNOWN` and the card waiting on `merge-verify`, naming the missing sha (card T0-EXIT-ZERO-NOT-MERGED-2).',
   'Only when gh does not answer does the merge token decide: a tip at the candidate closes the card, and a stale tip or no token leaves the operation `UNKNOWN` while the card waits on `merge-verify` until the reconciliation grace ends.',
 ];
 /** The phrase this card adds to docs/ARCHITECTURE.md (the outcome to state map). */
