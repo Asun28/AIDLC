@@ -33,7 +33,7 @@ import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { atomicWriteJson } from '../state/store.ts';
+import { StoreError, atomicWriteJson } from '../state/store.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { FormalReviewConfig, ProjectConfig } from '../config.ts';
@@ -704,20 +704,33 @@ export class CardRunner {
       write();
       return held;
     });
+    // A held lock after the lease write (T0-TAKEOVER-LOCKED-HINT, issue 87) stays LOCKED and names the generation taken and the
+    // command that goes on from there: the takeover again while the run does not carry it, `card next` once it does.
+    const unlessLocked = <T>(write: () => T, refused: (refusal: string) => string): T => {
+      try {
+        return write();
+      } catch (err) {
+        if (err instanceof StoreError && err.code === 'LOCKED') throw new StoreError('LOCKED', err.file, refused(err.message));
+        throw err;
+      }
+    };
     // The run update refuses when the run read under the lock carries the generation already. One acquisition per generation
     // across goals, whatever journaled it (PREPARE's claim journals one before it saves the generation): a completion after
     // one journals the completion instead of a second acquisition.
-    const owned = this.store.updateCardRun(goal.id, card.id, (current) => {
+    const owned = unlessLocked(() => this.store.updateCardRun(goal.id, card.id, (current) => {
       if ((current ?? caller).ownerGeneration === lease.generation) throw owns(lease.generation);
       return { ...(current ?? caller), ownerGeneration: lease.generation };
     }, holding(() => {
       const from = previous ? { previousOwner: previous.owner.session, previousGeneration: previous.generation } : {};
       if (!events('LEASE_ACQUIRED', lease.generation).length) journal.append({ type: 'LEASE_ACQUIRED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, takeover: true, ...from, ...(completed ? { completed: true } : {}) } });
       else if (completed) journal.append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'card-takeover-completed', resource: key, leaseGeneration: lease.generation, ...from } });
-    }));
+    })), (refusal) => `the takeover of card ${card.id} took lease generation ${lease.generation}, but its run update was refused (${refusal}); run ${scoped('takeover')} again to complete it`);
     const saveHolding = (run: CardRun) => this.store.saveCardRun(run, holding());
-    const assessed = this.assess(goal, card, owned, now, saveHolding);
-    const next = saveHolding(assessed.next);
+    // The assessment, its lease renewal and its saves, runs once the run carries the generation.
+    const { assessed, next } = unlessLocked(() => {
+      const assessed = this.assess(goal, card, owned, now, saveHolding);
+      return { assessed, next: saveHolding(assessed.next) };
+    }, (refusal) => `the takeover of card ${card.id} is done and the run carries lease generation ${lease.generation}, but its assessment was refused (${refusal}); run ${scoped('next')} to go on`);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
 
