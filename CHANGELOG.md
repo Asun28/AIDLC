@@ -4,6 +4,8 @@
 
 - Quota wait reset, card T0-SHIP-QUOTA-RESET (issue 54): a quota wait of the formal review or of the ship path names the later of its hold and the reset the reviewer's review pool already keeps (`ReviewQueue.heldUntil`), in its `pollSeconds` and its narration, instead of the invocation's hold or now plus 15 minutes; the pre-review wait has no pool and is unchanged.
 
+- Base-sync CHANGELOG edges, card T0-BASE-SYNC-CHANGELOG-EDGES (issue 60): a CHANGELOG merge the ship path committed but cannot read back ends with `[SHIP-BASE-SYNC-COMMITTED]` and a repair that records the worktree HEAD instead of resolving hunks; a failed listing, read or diff3 checkout names its error instead of posing as a conflict; a failed write says the file may be partly written and how to write the markers again; the resolver takes only entries and third-level subsection headings.
+
 - Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code.
 
 - Reviewer UTF-8, card T0-REVIEWER-UTF8 (issue 99): every reviewer process runs with `PYTHONUTF8=1` and `PYTHONIOENCODING=utf-8` unless the environment sets them, so the DeepSeek reviewer on Windows reads its piped prompt as UTF-8; a prompt with non-ASCII text used to reach it garbled, and one whose UTF-8 bytes the code page leaves undefined got no verdict on every angle.

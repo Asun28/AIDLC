@@ -2492,10 +2492,13 @@ export class CardRunner {
           }
           const detail = `merge conflict on the base sync (${result.detail})`;
           const repairEffort = inadmissible?.action === 'attempt' ? inadmissible.effort : (run.effort?.baseline ?? 'medium');
-          // A CHANGELOG merge the ship path committed itself (T0-BASE-SYNC-CHANGELOG) is the same repair with the merge done.
+          // A CHANGELOG merge the ship path committed itself (T0-BASE-SYNC-CHANGELOG) is the same repair with the merge done; one
+          // whose commit it could not read back names no commit, so the worktree HEAD is the merge (T0-BASE-SYNC-CHANGELOG-EDGES).
           const step = result.sentinels.includes('[SHIP-BASE-SYNC-MERGED]')
             ? `the ship path merged the entries both sides added to CHANGELOG.md Unreleased and committed the merge; check it, rerun the DoD on it and record it as the attempt`
-            : `resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt`;
+            : result.sentinels.includes('[SHIP-BASE-SYNC-COMMITTED]')
+              ? `the ship path committed the CHANGELOG.md merge but could not read its commit back; check that the worktree HEAD is that merge, rerun the DoD on it and record it as the attempt`
+              : `resolve every hunk by intent with the merge-conflicts skill (merge only, never rebase), rerun the DoD and record the attempt`;
           return buildWith((latest) => ({ dodReceipt: undefined, blockedReceipt: undefined, effort: reopenEpisode(latest.effort), pendingRepair: { kind: 'merge-conflict', detail, at: now } }), `Merge conflict on the base sync (${result.detail}): ${step}. The merge commit is a new candidate: it costs an R2 round and, once R3 has decided, the second R3 decision.`, repairEffort, ['merge-conflicts', ...this.buildSkills(goal, card)]);
         }
         return stopWith(makeStop('tool', `unclassified ship outcome (exit ${result.receipt.exitCode}): ${result.detail}`, result.resumeCommand ? `inspect diagnostics, then resume with: ${result.resumeCommand}` : 'inspect the ship output and the retained receipt', { at: now, global: false }));
