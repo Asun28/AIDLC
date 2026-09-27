@@ -181,6 +181,15 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     assert.equal(r.detail, line === undefined ? SENT[outcome] : `${SENT[outcome]}; failing line: ${line}`, `${label}: detail`);
   }
 
+  /** Classify a receipt: the input is never changed and the result carries it as given (R3 decision 1 F1). */
+  function kept(input: ExecReceipt): ReturnType<typeof classifyShipOutput> {
+    const snapshot = structuredClone(input);
+    const r = classifyShipOutput(input);
+    assert.deepEqual(input, snapshot, 'the input receipt is unchanged');
+    assert.deepEqual(r.receipt, snapshot, 'the result carries the receipt as given');
+    return r;
+  }
+
   // Each failing-line shape R1 lists, and the line it gives: ANSI-free, normalised as causes are, encoded.
   const SHAPES: Array<[string, string]> = [
     ['not ok 3 - parses the header', 'not ok N - parses the header'],
@@ -189,6 +198,8 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     ['✖ parses the header (1.234ms)', '✖ parses the header (N.Nms)'],
     ["src/a.ts(3,7): error TS2322: Type 'string' is not assignable to type 'number'.", "src/a.ts(N,N): error tsN: type 'string' is not assignable to type 'number'."],
     ["src/a.ts:3:7 - error TS2304: Cannot find name 'x'.", "src/a.ts:N:N - error tsN: cannot find name 'x'."],
+    ['error TS5083: Cannot read file tsconfig.json.', 'error tsN: cannot read file tsconfig.json.'],
+    ['C:\\x\\a.ts(3,7): error TS2322: y', 'c:\\x\\a.ts(N,N): error tsN: y'],
     ['--- FAIL: TestParse (0.00s)', '--- fail: testparse (N.Ns)'],
     ['FAIL  src/a.test.ts', 'fail src/a.test.ts'],
     ['FAILED tests/test_a.py::test_parse - AssertionError: x', 'failed tests/test_a.py::test_parse - assertionerror: x'],
@@ -201,12 +212,12 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
 
   it('acceptance 1: a dod-failed or verify-failed receipt names its first failing test or compile line, for every shape', () => {
     for (const outcome of ['dod-failed', 'verify-failed'] as const) {
-      for (const [raw, line] of SHAPES) expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](raw))), line, `${outcome} ${raw}`);
+      for (const [raw, line] of SHAPES) expectDetail(outcome, kept(receipt(TEXT[outcome](raw))), line, `${outcome} ${raw}`);
       // The first failing line in receipt order, whatever its shape; stdout is read before stderr.
       const several = TEXT[outcome]('ok 2 - also passes', "src/b.ts(1,1): error TS1005: ';' expected.", 'not ok 3 - b', '✖ c (1ms)', 'FAILED tests/d.py::d');
-      expectDetail(outcome, classifyShipOutput(receipt(several)), "src/b.ts(N,N): error tsN: ';' expected.", `${outcome} several`);
-      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](), 1, { stderr: 'not ok 1 - from stderr' })), 'not ok N - from stderr', `${outcome} stderr`);
-      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome]('not ok 1 - from stdout'), 1, { stderr: 'not ok 2 - from stderr' })), 'not ok N - from stdout', `${outcome} stdout first`);
+      expectDetail(outcome, kept(receipt(several)), "src/b.ts(N,N): error tsN: ';' expected.", `${outcome} several`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](), 1, { stderr: 'not ok 1 - from stderr' })), 'not ok N - from stderr', `${outcome} stderr`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome]('not ok 1 - from stdout'), 1, { stderr: 'not ok 2 - from stderr' })), 'not ok N - from stdout', `${outcome} stdout first`);
     }
   });
 
@@ -217,29 +228,35 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
       'error TS: x', 'errorTS2322: x', '# fail 1', 'failed tests/a.py::t', 'WARNING: gate 2 integration/e2e failed (exit code 1)',
       // Each shape is matched at the start of the line, in its own letter case, with its number and word boundaries.
       'not ok - no number', 'not ok 1x - y', 'ok 3 - says not ok 4 - inside', 'NOT OK 1 - x', 'suberror TS2322: x', 'Error TS2322: x', 'see --- FAIL: TestX above',
+      // A TAP test line carrying another shape is still judged by the TAP rule (R3 decision 1 F3), and a TypeScript
+      // diagnostic is read only at the start of the line or after a location without spaces.
+      'ok 1 - error TS2322: handled', 'not ok 1 - error TS2322: pending # TODO later', 'not ok 2 - error TS2322: skipped # SKIP',
+      'ok 3 - src/a.ts(1,2): error TS2322: x', 'not ok 4 - FAIL src/a.test.ts # SKIP', 'ok 5 - --- FAIL: TestX', 'not ok 6 - ✖ x # TODO',
+      '# Subtest: src/a.ts(1,2): error TS2322: x', '✔ src/a.ts(1,2): error TS2322: handled (1ms)', 'reported error TS2322: in a log line',
+      'C:/My Project/a.ts(1,2): error TS2322: x',
     ];
     for (const outcome of ['dod-failed', 'verify-failed'] as const) {
-      for (const raw of NOT_FAILING) expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](raw))), undefined, `${outcome} ${JSON.stringify(raw)}`);
+      for (const raw of NOT_FAILING) expectDetail(outcome, kept(receipt(TEXT[outcome](raw))), undefined, `${outcome} ${JSON.stringify(raw)}`);
       // A non-failing line before a failing one is skipped, not taken.
-      expectDetail(outcome, classifyShipOutput(receipt(TEXT[outcome](...NOT_FAILING, 'not ok 9 - the real one'))), 'not ok N - the real one', `${outcome} after non-failing lines`);
+      expectDetail(outcome, kept(receipt(TEXT[outcome](...NOT_FAILING, 'not ok 9 - the real one'))), 'not ok N - the real one', `${outcome} after non-failing lines`);
     }
   });
 
   it('acceptance 2: a scope-blocked or budget-over receipt names its gate line; two budget lines that differ only in their counts are one detail', () => {
     const scope = "[SHIP-SCOPE-BLOCK] out-of-scope changes (not under the card's allow_paths): src/a.ts, docs/b.md";
     const scopeText = (gate: string) => ['[SAGA-FAIL] scope', 'not ok 1 - a DoD line is not a gate line', gate, 'Fix (L18): revert card-external changes out of this branch with a reverse commit', SAGA].join('\n');
-    expectDetail('scope-blocked', classifyShipOutput(receipt(scopeText(scope))), "%5Bship-scope-block%5D out-of-scope changes (not under the card's allow_paths): src/a.ts, docs/b.md", 'scope block');
-    expectDetail('scope-blocked', classifyShipOutput(receipt(scopeText("Exception: [SHIP-SCOPE-ALLOW-EMPTY] no allow_paths list items parsed from the front-matter"))), 'exception: %5Bship-scope-allow-empty%5D no allow_paths list items parsed from the front-matter', 'scope allow-empty');
+    expectDetail('scope-blocked', kept(receipt(scopeText(scope))), "%5Bship-scope-block%5D out-of-scope changes (not under the card's allow_paths): src/a.ts, docs/b.md", 'scope block');
+    expectDetail('scope-blocked', kept(receipt(scopeText("Exception: [SHIP-SCOPE-ALLOW-EMPTY] no allow_paths list items parsed from the front-matter"))), 'exception: %5Bship-scope-allow-empty%5D no allow_paths list items parsed from the front-matter', 'scope allow-empty');
     const budget = (used: number, limit: number) => `[CARD-BUDGET-OVER] this card's diff is ${used} lines against a budget of ${limit} declared on the BASE card`;
-    const over = classifyShipOutput(receipt([budget(812, 720), SAGA].join('\n')));
+    const over = kept(receipt([budget(812, 720), SAGA].join('\n')));
     expectDetail('budget-over', over, "%5Bcard-budget-over%5D this card's diff is N lines against a budget of N declared on the base card", 'budget over');
-    assert.equal(classifyShipOutput(receipt([budget(905, 400), SAGA].join('\n'))).detail, over.detail, 'the counts are normalised');
-    expectDetail('budget-over', classifyShipOutput(receipt(['[R3-DIFF-TOO-LARGE] diff of 2400 lines exceeds 2000', SAGA].join('\n'))), '%5BrN-diff-too-large%5D diff of N lines exceeds N', 'diff too large');
+    assert.equal(kept(receipt([budget(905, 400), SAGA].join('\n'))).detail, over.detail, 'the counts are normalised');
+    expectDetail('budget-over', kept(receipt(['[R3-DIFF-TOO-LARGE] diff of 2400 lines exceeds 2000', SAGA].join('\n'))), '%5BrN-diff-too-large%5D diff of N lines exceeds N', 'diff too large');
   });
 
   it('acceptance 3: the failing line is a cause string only: escapes removed, controls as spaces, normalised, cut to 160 characters, encoded', () => {
     const raw = `\u001b[31m✖ [SAGA-DONE] 100% of [x]\tcase\u2028two\u0085three ${'long '.repeat(40)}(12ms)\u001b[39m`;
-    const r = classifyShipOutput(receipt(dodText(raw)));
+    const r = kept(receipt(dodText(raw)));
     const cut = normaliseCause(`✖ [SAGA-DONE] 100% of [x] case two three ${'long '.repeat(40)}(12ms)`).slice(0, 160);
     assert.equal(cut.length, 160);
     expectDetail('dod-failed', r, cut.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D'), 'encoded');
@@ -247,28 +264,51 @@ describe('delivery/ship failing line (T0-SHIP-FAILING-LINE)', () => {
     assert.ok(!/[[\]\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(line), `no bracket or control character: ${JSON.stringify(line)}`);
     assert.ok(line.startsWith('✖ %5Bsaga-done%5D N%25 of %5Bx%5D case two three long'), line);
     // Nothing but the detail reads the line: the same receipt with a line that is not a failing line gives the same result.
-    const plain = classifyShipOutput(receipt(dodText(raw.replace('✖', '·'))));
+    const plain = kept(receipt(dodText(raw.replace('✖', '·'))));
     expectDetail('dod-failed', plain, undefined, 'the same text, not a failing line');
     assert.deepEqual({ ...r, detail: '', receipt: undefined }, { ...plain, detail: '', receipt: undefined });
     assert.ok(r.sentinels.includes('[SAGA-DONE]') && r.resumeCommand === 'pwsh -File scripts\\task.ps1 -TaskId T1-FOO -Phase ship -Base main', 'sentinels and resume are read from the receipt as before');
   });
 
+  it('acceptance 3: complete ANSI escape sequences are removed before the shape is matched (R3 decision 1 F2)', () => {
+    const E = '\u001b';
+    const WRAPPED = [
+      `${E}[38:2:255:0:0mnot ok 1 - header${E}[0m`,
+      `${E}[1;31mnot ok 1 - header${E}[22;39m`,
+      `${E}]8;;https://example.test/a\u0007not ok 1 - header${E}]8;;\u0007`,
+      `${E}]8;;https://example.test/a${E}\\not ok 1 - header${E}]8;;${E}\\`,
+      `${E}[?25l${E}(Bnot ok 1 - header`,
+      '\u009b31mnot ok 1 - header\u009b0m',
+    ];
+    for (const outcome of ['dod-failed', 'verify-failed'] as const) {
+      for (const raw of WRAPPED) expectDetail(outcome, kept(receipt(TEXT[outcome](raw))), 'not ok N - header', `${outcome} ${JSON.stringify(raw)}`);
+    }
+  });
+
+  it('acceptance 3: the cut to 160 characters counts code points, so it never splits a character (R2 cycle 0 advisory)', () => {
+    const r = kept(receipt(dodText(`✖ ${'a'.repeat(157)}\u{1F600}\u{1F600}`)));
+    const line = r.detail.slice(`${SENT['dod-failed']}; failing line: `.length);
+    assert.equal(line, `✖ ${'a'.repeat(157)}\u{1F600}`);
+    assert.equal(Array.from(line).length, 160);
+    assert.doesNotMatch(line, /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/);
+  });
+
   it('acceptance 4: with no failing line the four outcomes keep their constant detail, and every other outcome keeps its detail', () => {
-    expectDetail('dod-failed', classifyShipOutput(receipt(dodText('Error: something broke'))), undefined, 'dod no line');
-    expectDetail('verify-failed', classifyShipOutput(receipt(verifyText('Traceback (most recent call last):'))), undefined, 'verify no line');
-    expectDetail('dod-failed', classifyShipOutput(receipt('RED 检查失败：dod_command 退出 0（已是 GREEN）。')), undefined, 'red check');
+    expectDetail('dod-failed', kept(receipt(dodText('Error: something broke'))), undefined, 'dod no line');
+    expectDetail('verify-failed', kept(receipt(verifyText('Traceback (most recent call last):'))), undefined, 'verify no line');
+    expectDetail('dod-failed', kept(receipt('RED 检查失败：dod_command 退出 0（已是 GREEN）。')), undefined, 'red check');
     for (const [sentinel, cls] of SENTINELS) {
       if (cls === 'dod-failed' || cls === 'verify-failed' || cls === 'scope-blocked' || cls === 'budget-over') continue;
-      const without = classifyShipOutput(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\n`));
-      const withLine = classifyShipOutput(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\nnot ok 1 - a failing test\n✖ a failing test\n`));
+      const without = kept(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\n`));
+      const withLine = kept(receipt(`[SAGA-FAIL] leg failed\n${sentinel}\nnot ok 1 - a failing test\n✖ a failing test\n`));
       assert.equal(withLine.outcome, cls);
       assert.deepEqual({ ...withLine, receipt: undefined }, { ...without, receipt: undefined }, `${cls}: the detail and every other field are unchanged`);
       assert.doesNotMatch(withLine.detail, /failing line/);
     }
     // Merged, unclassified and timed-out results with failing lines equal those of the same receipt without them.
     for (const [text, exit, extra] of [['[SAGA-DONE]', 0, {}], ['something odd happened', 1, {}], ['something odd happened', 1, { timedOut: true }]] as const) {
-      const without = classifyShipOutput(receipt(text, exit, extra));
-      const withLine = classifyShipOutput(receipt(`not ok 1 - a failing test\n✖ a failing test\n${text}`, exit, extra));
+      const without = kept(receipt(text, exit, extra));
+      const withLine = kept(receipt(`not ok 1 - a failing test\n✖ a failing test\n${text}`, exit, extra));
       assert.deepEqual({ ...withLine, receipt: undefined }, { ...without, receipt: undefined }, `${without.outcome}: the detail and every other field are unchanged`);
       assert.doesNotMatch(withLine.detail, /failing line/, `${withLine.outcome}: ${withLine.detail}`);
     }
