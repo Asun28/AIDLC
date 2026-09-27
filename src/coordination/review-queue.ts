@@ -185,6 +185,10 @@ export class ReviewQueue {
     return held;
   }
 
+  heldUntil(_pool: string, hold: string, _now: string = nowIso()): string {
+    return hold;
+  }
+
   cancel(key: string, reason: string, now: string = nowIso()): ReviewRequest | undefined {
     const r = this.get(key);
     if (!r) return undefined;

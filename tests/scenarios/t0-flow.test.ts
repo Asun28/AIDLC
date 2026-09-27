@@ -3867,6 +3867,29 @@ test('T0-SHIP-QUOTA-WAIT-3 acceptance 1: a review-no-verdict ship result that ex
   }
 });
 
+test('T0-SHIP-QUOTA-RESET (issue 54): a ship-path quota wait names the later reset the review pool already keeps, not now + 15 minutes, with pollSeconds rounded up', () => {
+  const fx = makeFixture();
+  try {
+    const ship = new StderrShipPath(['review-no-verdict', 'merged'], ['429 Too Many Requests\n']);
+    const later = addMs(fx.now(), 20 * 60 * 1000 + 500);
+    // Another request of the same pool is held longer while this ship runs (a pool held at admission refuses the ship).
+    ship.onShip = (req) => {
+      const pool = fx.goal(fx.store.listGoals()[0]!.id).reviewPool;
+      const other = fx.queue.enqueue({ pool, repository: 'Asun28/other', candidateDigest: `other-${req.cardId}`, base: 'main', policyVersion: 'p', reviewer: 'r', requester: 'other', deadline: addMs(fx.now(), 3_600_000), now: fx.now() }).request;
+      fx.queue.hold(other.key, later, 'another card held the pool longer', fx.now());
+    };
+    const { goal, r } = shipOnce(fx, ship);
+    assert.equal(r.directive.kind, 'wait', r.directive.narration);
+    if (r.directive.kind === 'wait') {
+      assert.equal(r.directive.on, 'review-quota');
+      assert.equal(r.directive.pollSeconds, 20 * 60 + 1, 'the pool reset, rounded up to whole seconds');
+      assert.ok(r.directive.narration.includes(`review pool ${fx.goal(goal.id).reviewPool} is held until ${later}`), r.directive.narration);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-SHIP-QUOTA-WAIT-3 acceptance 2: once the hold has passed, card next issues the ship again for the same candidate and a merge closes the card; before that it ships nothing', () => {
   const fx = makeFixture();
   try {
