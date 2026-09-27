@@ -1,0 +1,52 @@
+---
+id: T0-HOOK-CLASSIFIER-2
+title: (replaces T0-HOOK-CLASSIFIER) The Bash guards read a command as read-only only when it is a bare read-only name without an executing or file-writing option or subcommand, split at a lone ampersand and a line break, and decide as main did wherever main denied (issue 120)
+status: todo
+branch: T0-HOOK-CLASSIFIER-2
+worktree: D:\wt\AIDLC\T0-HOOK-CLASSIFIER-2
+allow_paths:
+  - src/hooks/index.ts
+  - src/hooks/entry.ts
+  - tests/surface/hooks.test.ts
+  - docs/OPERATIONS.md
+  - CHANGELOG.md
+  - specs/tasks/T0-HOOK-CLASSIFIER-2.md
+dod_command: npm run typecheck && node --test tests/surface/hooks.test.ts
+dod_exit: 0
+requirements:
+  - R1. `mutatingSegments` shall split a command at `||`, `&&`, `;`, `|`, a lone `&` and a line break (`\n`, `\r\n`, `\r`), where a lone `&` is one neither preceded by `<`, `>`, `&` or `|` nor followed by `>` or `&`, so `2>&1`, `>&2`, `&>`, `&>>` and `&&` split as before. `production-gate` shall test first the segments main tested, in main's order and classified as main classified them (split at `||`, `&&`, `;` and `|`, a first word on the read-only lists with any path stripped read-only), and only then the segments the new classification and the new split add, so every match and every pattern error main reached is reached first and the gate decides as main did whenever main denied or threw.
+  - R2. A segment shall be read-only only when its first word, after a `sudo`, `time` or `env` prefix, is a bare name without a path separator on the read-only lists and the segment carries no executing form of that command, read from that segment's own words; a form word inside another command's arguments is no form. The executing forms (production-gate) are the find actions `-exec`, `-execdir`, `-ok` and `-okdir`; the rg option `--pre`; the git grep options `-O` and `--open-files-in-pager`; git branch with `-d`, `-D`, `--delete`, `-m`, `-M`, `--move`, `-c`, `-C`, `--copy`, `-f`, `--force`, `-u`, `--set-upstream-to`, `--unset-upstream`, `--edit-description`, `-t`, `--track` or `--no-track`, or with a branch name outside `--list` or `-l` (a name after `--contains`, `--no-contains`, `--merged`, `--no-merged`, `--points-at`, `--format` or `--sort` is that option's value); git remote with anything but nothing, `-v`, `--verbose`, `show` or `get-url`; git worktree with anything but `list`. No awk program and no sed script is read (issue 135).
+  - R3. `protect-paths` shall read as a write, beside `WRITE_VERBS`, the file-writing option and subcommand forms of a segment whose first word is the tool, and deny a command that references a frozen path and carries one; they are the sed options `-i` (also combined, as `-ni` or `-i.bak`) and `--in-place`; the awk option `-i inplace`; the find actions `-delete`, `-fprint`, `-fprint0`, `-fprintf` and `-fls`; sort `-o` and `--output`; uniq with an output file operand (a second operand after the options, `-f`, `-s`, `-w`, `--skip-fields`, `--skip-chars` and `--check-chars` taking a separate value); tree `-o`; yq `-i` and `--inplace`; git log, diff and show with `--output`; git worktree `add`, `remove`, `move` and `prune`. A file-writing form never makes a segment mutating for `production-gate`, so an in-place edit of a file whose text names a release never asks for a release authorization.
+  - R4. Each form shall add a denial and none shall remove or change one; whenever the production-gate or protect-paths of main denies or throws on a command, the decision shall be identical, exit code, decision and reason.
+  - R5. `docs/OPERATIONS.md` (Hooks) and the CHANGELOG Unreleased section, as a change to behaviour under a valid config, shall state R1 to R3 and name issue 135 for the awk and sed program forms.
+acceptance:
+  - 1. `tests/surface/hooks.test.ts` pins the split of R1 with `mutatingSegments` directly (one segment each for `make deploy 2>&1 production`, `make deploy >&2 production`, `make deploy &> log production` and `make deploy &>> log production`, two for `make a && make b`, the tail after a lone ampersand and each line break as its own segment), the release phrase `make deploy` and `echo production` joined by a lone ampersand and by a carriage return giving exit 2 and joined by `|`, `;`, `&&`, `||`, a line feed and a carriage return with a line feed passing as on main, and `git branch topic; make deploy` under the patterns `deploy` and `[` giving main's exit 2, directly and through dispatch under a config whose pattern does not compile. [R1] [R4] [dod arm 1]
+  - 2. The same file, a table with one row per form of R2, per separator and per path-qualified first word (a POSIX path and a Windows path with `.exe`), each giving exit 2 from `production-gate` with the default patterns when the segment names a release and passing without one; and read-only rows that pass although their text names a release, among them the plain read uses of find, rg, git grep, git branch, git remote and git worktree, the awk program and sed script forms left to issue 135, the two redirect inputs of the Codex pre-check of 267486f (`awk '{print $0}' >&awk 'system("deploy production")'` and `sed 'p' >&sed 'e deploy production'`), and a form word inside another command's arguments. [R2] [R4] [dod arm 1]
+  - 3. The same file, a table with one row per form of R3, each denied by `protect-paths` with the `FROZEN` text when the command references a frozen path, deferred when the same command lacks the form, and passing without a frozen path; a form word inside another command's arguments defers; `sed -i 's/production/prod/' deploy.yaml` passes `production-gate`. [R3] [R4] [dod arm 1]
+  - 4. The same file, every existing test of the valid path holds unchanged; the oracle of T0-HOOK-CONFIG-CLOSED-3 acceptance 2 and the valid-config test of T0-HOOK-CONFIG-NONSTRING acceptance 3 follow the new classifier on both sides, since both rebuild main's decision from the current guard functions. [R4] [dod arm 1]
+  - 5. The same file reads the paragraph this card adds to the Hooks section of `docs/OPERATIONS.md` and its CHANGELOG Unreleased entry. [R5] [dod arm 1]
+  - 6. The same file, an invariant over every command of the tables of acceptance 1 to 3, under the default patterns and under pattern lists holding an invalid pattern first and last, that whenever the production-gate or protect-paths of main (rebuilt in the test from main's split, main's classification, main's read-only lists and `WRITE_VERBS`) denies or throws, the decision of this card is identical (exit code, decision and reason, or the same throw). [R1] [R4] [dod arm 1]
+depends_on: []
+budget: 560
+tdd: true
+diagnosis:
+  root_cause: "mutatingSegments (src/hooks/index.ts) read a segment as read-only from its first word alone, after stripping any path from it, and split only at ||, &&, ; and |, and protectPaths read a write only from WRITE_VERBS, so commands that run other commands or change files and repository state passed both guards under every config (issue 120); a lone & or a line break hid a second command behind a read-only first word."
+  same_class: "Every decision the Bash guards take from command text goes through mutatingSegments and the segment lists production-gate tests, or through WRITE_VERBS and the file-writing forms protect-paths reads; secretsGuard reads content and file paths, not the classifier. Under a broken config the doctor list and the legacy decision of T0-HOOK-CONFIG-CLOSED-3 decide, the legacy decision through these same guard functions, so the main-first order of R1 keeps its answers where main answered. The awk program and sed script forms need a reading of program text and are issue 135; the PowerShell tool is issue 117, held for the user; quote-aware splitting stays out, and the union of R1 keeps every segment main tested."
+sweep: "grep -n 'mutatingSegments\\|mainSegments\\|WRITE_VERBS\\|READ_ONLY_TOOLS\\|READ_ONLY_GIT' src/hooks/index.ts lists every reader of the classifier; the test tables hold one row per form of R1 to R3, and the mutation sweep removes each form in turn."
+forbid: [reading an awk program or a sed script (issue 135), removing or changing any denial main makes, quote-aware splitting, reading PowerShell forms (issue 117), changing config.ts, changing the broken-config rules of T0-HOOK-CONFIG-CLOSED-3 and T0-HOOK-CONFIG-NONSTRING]
+non_goals: ["the awk program and sed script forms: issue 135", "the PowerShell tool outside the guards: issue 117, held for the user", "config discovery above cwd: issue 118", "a separator inside quotes, which still splits"]
+hygiene: "Replaces T0-HOOK-CLASSIFIER, carrying 267486f. First ruling (aidlc-37 under the user's delegation of 2026-09-27T09:20Z) - the hand-run Codex pre-check on the bound candidate 267486f failed its bar (F1 changed the decision main makes under a broken config with an invalid pattern; F2 added a denial through a redirect `>&` read as a command start), so no R3 decision was spent on a known defect and this successor was opened. Second ruling (the same session) - the narrowing; R2 rounds 1 to 3 and the pre-check of 267486f found four rounds of parser edges in the awk program and sed script reading, the signal the 2026-09-27 LESSONS line on partial grammars names, so those forms and every edge input go to issue 135, whose design must not be a hand-written shell-word parser, and this card keeps the option and subcommand forms read from a segment's own words. F2 lived in that reading and is gone with it; its two inputs are read-only rows. Before R3, the hand-run Codex pre-check answers no to Q1 (does any change remove a denial main makes) and yes to Q2 (is every added denial a listed form). A block on R3 decision 2 goes to the coordinating session. The oracle of T0-HOOK-CONFIG-CLOSED-3 and the valid-config test of T0-HOOK-CONFIG-NONSTRING follow the new classifier on both sides."
+doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+---
+
+# T0-HOOK-CLASSIFIER-2
+
+## Deliverable
+A command that runs another command, changes repository state or writes a file through a listed option or subcommand is no longer read as read-only because of its first word, a second command after a lone ampersand or a line break is read as a command, and wherever main denied, the guards decide as main did.
+
+## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
+```powershell
+npm run typecheck && node --test tests/surface/hooks.test.ts
+```
+- Expected exit code: 0
+- Assertion: every listed test passes and the typecheck is clean.

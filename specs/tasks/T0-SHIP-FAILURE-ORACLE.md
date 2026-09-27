@@ -10,10 +10,10 @@ allow_paths:
 dod_command: npm run typecheck && node --test tests/infra/ship.test.ts
 dod_exit: 0
 requirements:
-  - R1. The combination test of `classifyShipOutput` (`tests/infra/ship.test.ts`, the describe block of T0-EXIT-ZERO-NOT-MERGED-3) shall take the expected class of every receipt main read as a failure from a frozen, ordered oracle in the test, copied from main's SENTINEL_MAP (main 390d43e) for the markers of the corpus in main's precedence (`[SHIP-MERGE-FAIL]` merge-failed, `[CI-GATE-RED]` ci-red, `[SHIP-PUSH-FAIL]` push-failed, `DoD 未通过` dod-failed; the first entry that matches decides, else `unclassified`), and assert the exact class. The baseline that calls the classifier under test on a nonzero exit is removed.
+  - R1. The combination test of `classifyShipOutput` (`tests/infra/ship.test.ts`, the describe block of T0-EXIT-ZERO-NOT-MERGED-3) shall take the expected class of every receipt main read as a failure from a frozen, ordered oracle in the test, copied from main's SENTINEL_MAP (main 390d43e) for the markers of the corpus in main's precedence (`[SHIP-MERGE-FAIL]` merge-failed, `[CI-GATE-RED]` ci-red, `[SHIP-PUSH-FAIL]` push-failed, `check-secrets` secrets-blocked (the corpus carries it inside a gate line), `DoD 未通过` dod-failed; the first entry that matches decides, else `unclassified`), and assert the exact class. The baseline that calls the classifier under test on a nonzero exit is removed.
   - R2. No src file changes: SENTINEL_MAP and its order stay as they are.
 acceptance:
-  - 1. tests/infra/ship.test.ts - over the corpus, every receipt main read as a failure classifies as the frozen oracle's class; a receipt carrying two or three of the corpus's failure markers classifies by the oracle's precedence. [R1] [dod arm 1]
+  - 1. tests/infra/ship.test.ts - over the corpus, every receipt main read as a failure (every nonzero exit, and every exit 0 main did not read as merged) classifies as the frozen oracle's class; a receipt carrying two or three of the corpus's failure markers classifies by the oracle's precedence. [R1] [dod arm 1]
   - 2. The mutation sweep reorders SENTINEL_MAP (moving `[CI-GATE-RED]` above `[SHIP-MERGE-FAIL]`, and `[SHIP-PUSH-FAIL]` above `[CI-GATE-RED]`) and changes one class (`[SHIP-PUSH-FAIL]` to `pr-failed`); the test fails for each. [R1] [R2]
 depends_on: [T0-EXIT-ZERO-NOT-MERGED-3]
 budget: 60
