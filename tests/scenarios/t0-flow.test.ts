@@ -4563,14 +4563,19 @@ test('T0-SHIP-NOTHING-REFUTED acceptance 3: docs/OPERATIONS.md and the CHANGELOG
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
 
-/** A ship refused for a reason that is not a conflict, whose output carries the path's resume marker. */
+/** The output of a ship refused for a reason that is not a conflict, as a ship path prints it: the sentinel, the saga lines and the resume marker. */
+const refusedOutput = (cardId: string) => `[SHIP-MERGE-FAIL] Pull request #7 is not mergeable: the base branch policy prohibits the merge\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next ${cardId}\n`;
+
+/** A ship whose result is read from that output by classifyShipOutput, as every real ship path's is. */
 class ResumeMarkerShipPath extends DryRunShipPath {
+  last: ShipResult | undefined;
   constructor() {
     super(['merge-failed']);
   }
   override ship(req: ShipRequest): ShipResult {
     const r = super.ship(req);
-    return { ...r, resumeCommand: `aidlc card next ${req.cardId}`, detail: 'Pull request #7 is not mergeable: the base branch policy prohibits the merge' };
+    this.last = classifyShipOutput({ ...r.receipt, exitCode: 1, stdout: refusedOutput(req.cardId), stderr: '' });
+    return this.last;
   }
 }
 
@@ -4581,18 +4586,23 @@ test('T0-TOOL-STOP-TEXT (issue 85 item 2): an unclassified ship outcome stops wi
     const goal = fx.controller.createGoal({ text: 'implement T1-TOOLSHIP', source: 'card', ref: 'T1-TOOLSHIP', affectedSurfaces: [] }, { cards: ['T1-TOOLSHIP'] });
     fx.controller.next(goal.id);
     fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-TOOLSHIP'] } });
-    const runner = fx.runner(new ResumeMarkerShipPath());
+    const ship = new ResumeMarkerShipPath();
+    const runner = fx.runner(ship);
     const card = fx.card('T1-TOOLSHIP');
     let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-TOOLSHIP'));
     r = runner.next(fx.goal(goal.id), card, r.run);
     const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
     r = runner.next(fx.goal(goal.id), card, built);
+    // The ship's own output is read as every real ship path's is: a merge refusal with no conflict diagnostic, and the marker.
+    assert.equal(ship.last?.outcome, 'merge-failed');
+    assert.equal(ship.last?.resumeCommand, 'aidlc card next T1-TOOLSHIP', 'classifyShipOutput extracts the [SAGA-RESUME] command');
+    assert.equal(hasConflictDiagnostic(ship.last!.receipt), false);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     const stop = r.run.stop!;
     assert.equal(stop.reason, 'tool');
     assert.equal(stop.nextAction, `inspect the ship output and the retained receipt; this stop is final for card T1-TOOLSHIP: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"T1-TOOLSHIP":"<replacement>"}'\``);
     assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
-    assert.equal(stop.detail, "unclassified ship outcome (exit 1): Pull request #7 is not mergeable: the base branch policy prohibits the merge; the ship path's resume marker, a diagnostic that does not lift this stop: aidlc card next T1-TOOLSHIP");
+    assert.equal(stop.detail, "unclassified ship outcome (exit 1): sentinel \\[SHIP-MERGE-FAIL\\]; the ship path's resume marker, a diagnostic that does not lift this stop: aidlc card next T1-TOOLSHIP");
     if (r.directive.kind === 'stop') assert.deepEqual(r.directive.stop, stop);
     const again = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
