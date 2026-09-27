@@ -72,6 +72,10 @@ export function commentStart(value: string): number {
   return -1;
 }
 
+export function flowItems(_value: string): string[] | undefined {
+  return undefined;
+}
+
 export function stripComment(value: string): string {
   const at = commentStart(value);
   return (at < 0 ? value : value.slice(0, at)).trim();

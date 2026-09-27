@@ -273,6 +273,36 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     assert.deepEqual(cuts(parseCardText(templateCard(), 'D:/x/specs/tasks/T1-FOO.md')), [], 'the scaffold template card annotates its keys with hash-space comments');
   });
 
+  test('a key written without a space after its colon is reported, top-level and nested, as the readers read and cut it [R2]', () => {
+    const r = parseCardText(templateCard({}, `sweep:see issue ${H}12\ndiagnosis:\n  root_cause: "the reader cuts at a hash"\n  same_class:see issue ${H}97`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.equal(r.card.sweep, 'see issue', 'the reader reads the top-level key and cuts it');
+    assert.equal(r.card.diagnosis?.same_class, 'see issue', 'the reader reads the nested key and cuts it');
+    assert.deepEqual(cuts(r).map((f) => f.message), [message('sweep', `see issue ${H}12`, 'see issue'), message('diagnosis.same_class', `see issue ${H}97`, 'see issue')]);
+  });
+
+  test('the body of a literal or a folded block scalar is text under a key, a nested key and a list item, and the lines after it are read again [R2]', () => {
+    for (const header of ['|', '>-', '|2+', `| ${H} a note`, `>- ${H}3`]) {
+      const fm = `notes: ${header}\n  - issue ${H}45\n\n  more ${H}46 text\ndiagnosis:\n  root_cause: "x"\n  same_class: ${header}\n    see ${H}97\nnon_goals:\n  - ${header}\n    see ${H}98\n  - plain ${H}99\nsweep: see ${H}12`;
+      const r = parseCardText(templateCard({}, fm), 'D:/x/specs/tasks/T1-FOO.md');
+      assert.deepEqual(cuts(r).map((f) => f.message), [message('non_goals item 2', `plain ${H}99`, 'plain'), message('sweep', `see ${H}12`, 'see')], header);
+    }
+  });
+
+  test('a quoted inline item holding a comma is read whole with its hash and gives no finding [R1] [R2]', () => {
+    const r = parseCardText(templateCard({}, `non_goals: ["see issue, ${H}45", 'a, b ${H}46', plain]`), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.deepEqual(r.card.non_goals, [`see issue, ${H}45`, `a, b ${H}46`, 'plain']);
+    assert.deepEqual(cuts(r), []);
+  });
+
+  test('a hash after a non-breaking space is text: the title is read whole and gives no finding [R1] [R2]', () => {
+    const r = parseCardText(templateCard({ title: `fix the cut\u00a0${H}97` }), 'D:/x/specs/tasks/T1-FOO.md');
+    assert.ok(!('error' in r));
+    assert.equal(r.card.title, `fix the cut\u00a0${H}97`);
+    assert.deepEqual(cuts(r), []);
+  });
+
   test('this repository loads with no blocking comment cut, and T0-PASS-REASONS-WORDING keeps its issue number [R3]', () => {
     const root = path.resolve(import.meta.dirname, '..', '..');
     const registry = loadCardRegistry(path.join(root, 'specs', 'tasks'));
@@ -286,7 +316,7 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     const root = path.resolve(import.meta.dirname, '..', '..');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT (issue 97): a hash inside a quoted value or a quoted flow-list item is kept, as YAML reads it, and `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every value a comment cuts at a hash directly followed by text (an issue or a PR number), with the raw and the kept text, blocking on a card that is neither merged nor superseded; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
+    const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT (issue 97): a hash after a space or a tab starts a comment, as YAML reads it, a hash inside a quoted value or a quoted flow-list item is kept, and an inline list splits only at a comma outside a quoted item; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every value a comment cuts at a hash directly followed by text (an issue or a PR number), with the raw and the kept text, blocking on a card that is neither merged nor superseded, and reads a block-scalar body as text; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   });
 });
