@@ -1133,9 +1133,15 @@ const PASS_NOTES_LINES = [
   'Before you send the verdict line, check that it is one complete JSON document: every `{` and `[` is closed by its `}` or `]`, and the line ends with the `}` that closes the document. A line one closing brace short does not parse and returns no verdict.',
 ];
 
-/** A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added removed, for the pre-change hash pins. */
+/** The reasons line as T0-PASS-REASONS-WORDING words it, and as it read before (issue #91). */
+const REASONS_LINE = { now: '`verdict` is the worse of the two axes; `reasons` is empty on a pass that carries no notes.', before: '`verdict` is the worse of the two axes; `reasons` is empty on pass.' };
+
+/**
+ * A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added removed and the line T0-PASS-REASONS-WORDING
+ * reworded put back, for the pre-change hash pins.
+ */
 function withoutAddedSentences(prompt: string): string {
-  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '');
+  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '').replace('\n' + REASONS_LINE.now + '\n', '\n' + REASONS_LINE.before + '\n');
 }
 
 test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single pass and each perspective, carries the end-of-turn line [R7]', () => {

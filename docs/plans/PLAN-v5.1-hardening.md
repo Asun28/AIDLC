@@ -49,7 +49,7 @@ spend another wave's 12 h arc.
 | Wave | Goal | Cards, in order | Starts when |
 |---|---|---|---|
 | 1 | v5.1 wave 1 | T1-PARSE-GUARD (merged, PR #78), T1-STORE-CAS (stopped), replaced by T1-STORE-CAS-2 (merged under a ruling, PR #100) | plan approved |
-| 2 | v5.1 wave 2 | T1-AUDIT-FACTS, T1-BOUND-TELEMETRY | wave 1 DONE |
+| 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, ruling of aidlc-37), then T1-BOUND-TELEMETRY | wave 1 DONE |
 | 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
 | deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
 
@@ -320,7 +320,8 @@ a different measure; each card sets both.
 | T1-STORE-CAS | MUST | one locked update primitive for lease and run records, Sessions text shorter | T1-PARSE-GUARD | W2 | - |
 | T1-STORE-CAS-2 | MUST | successor of T1-STORE-CAS: the takeover holds the lease lock through its run write; F3, F4, F5 and issue #87 | T1-PARSE-GUARD | W2 | - |
 | T1-AUDIT-FACTS | MUST | merge facts journaled and re-derived by audit verify | T1-STORE-CAS-2 | W3 | - |
-| T1-BOUND-TELEMETRY | SHOULD | BOUND_FIRED per bound and one board line | T1-AUDIT-FACTS | W4 | - |
+| T1-AUDIT-FACTS-2 | MUST | successor of T1-AUDIT-FACTS: facts journaled when readable, a merge without facts named by audit verify and --claim-full | T1-STORE-CAS-2 | W3 | - |
+| T1-BOUND-TELEMETRY | SHOULD | BOUND_FIRED per bound and one board line | T1-AUDIT-FACTS-2 | W4 | - |
 | T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
 | T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
 | T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-README-SCOPE, T1-BOUND-TELEMETRY | W7 | - |
