@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-CLASSIFIER-3
 title: (replaces T0-HOOK-CLASSIFIER-2) The Bash guards split a command at a lone ampersand and a line break, read a path-qualified first word and a changing git remote or worktree subcommand as mutating, and the hook dispatch decides as main's did wherever it blocked (issue 120)
-status: todo
+status: merged
 branch: T0-HOOK-CLASSIFIER-3
 worktree: D:\wt\AIDLC\T0-HOOK-CLASSIFIER-3
 allow_paths:
