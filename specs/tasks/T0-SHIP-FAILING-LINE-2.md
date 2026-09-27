@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-FAILING-LINE-2
 title: (replaces T0-SHIP-FAILING-LINE) The cause of a dod-failed, verify-failed, scope-blocked or budget-over ship names the failing line of the ship output, so two ship failures on different lines are two causes and the same line twice still stops the card
-status: todo
+status: merged
 branch: T0-SHIP-FAILING-LINE-2
 worktree: D:\wt\AIDLC\T0-SHIP-FAILING-LINE-2
 allow_paths:
