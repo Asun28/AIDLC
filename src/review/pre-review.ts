@@ -826,6 +826,11 @@ export interface RunPreReviewOptions extends ReviewRetentionOptions {
   shell?: boolean;
 }
 
+/** The environment of a reviewer process (card T0-REVIEWER-UTF8): the process environment as it is. */
+export function reviewerEnv(base: NodeJS.ProcessEnv = process.env, _platform: NodeJS.Platform = process.platform): NodeJS.ProcessEnv {
+  return { ...base };
+}
+
 /** Run one reviewer process synchronously (single full pass). */
 export function runPreReview(o: RunPreReviewOptions): PreReviewResult {
   const { argv, promptInArgv } = expandCommand(o.command, { ...(o.vars ?? {}), instructions: o.vars?.['instructions'] ?? o.prompt });
