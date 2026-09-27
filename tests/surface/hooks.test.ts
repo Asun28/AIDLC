@@ -620,6 +620,8 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 2: for every config text and call, a ca
     const reading = mainReading(text ?? undefined);
     const calls: HookEvent[] = [
       ...['aidlc doctor', 'aidlc doctor 2>&1', 'npm test', gated, 'ship-it now', 'cp x contracts/api.yaml'].map((command) => ({ tool_name: 'Bash', tool_input: { command } })),
+      // commands that are not strings (T0-HOOK-CONFIG-NONSTRING): main reads String(command) in production-gate only
+      ...[null, 42, {}, ['node mutate.js'], [gated], ['aidlc doctor']].map((command) => ({ tool_name: 'Bash', tool_input: { command } })),
       ...[file, 'src/a.ts', 'contracts/api.yaml', 'tests/a.test.ts', 'src/a.check.ts'].map((target) => ({ tool_name: 'Edit', tool_input: { file_path: target, old_string: 'a', new_string: 'b' } })),
     ];
     for (const e of [env, { ...env, AIDLC_FIX_TASK: 'T1-FIX' }]) {
@@ -825,4 +827,68 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 6: docs/OPERATIONS.md (Hooks) and the C
   const entry = '- Hook config fails closed, card T0-HOOK-CONFIG-CLOSED-3 (issue 76 item 1, replacing T0-HOOK-CONFIG-CLOSED and T0-HOOK-CONFIG-CLOSED-2): an `aidlc.config.json` that is not JSON, fails the schema or cannot be read left the hook guards on their defaults, so `hooks.frozenPaths` was empty and `protect-paths` blocked nothing, and a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression threw inside its guard, which the hook entry turned into a pass. Now a broken config denies every call it denied before (each guard first decides on the `hooks` values the file still yields) and, beyond that, every Bash command but an exact list of `aidlc doctor` commands and every edit of a file other than the config; each such denial names the file JSON-quoted and says what still passes (an Edit or Write of the config, the Read, Grep and Glob tools, the doctor commands). `route-new-work` names the error on every prompt; the Stop output is unchanged. A valid config is read as before, unknown `hooks` keys included. An absent file still gives the defaults; one the lookup cannot reach, or gone between the lookup and the read, is a read failure.';
   assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
   assert.ok(!unreleased.includes('card T0-HOOK-CONFIG-CLOSED-2 ('), 'the replaced entry is gone');
+});
+
+// ---------------------------------------------------------------- T0-HOOK-CONFIG-NONSTRING (issue 129)
+
+/** A deny result with exactly this reason; a pass fails on the decision, not on reading a reason it lacks. */
+function deniedWith(r: HookResult, reason: string, message: string): void {
+  assert.equal(decision(r), 'deny', message);
+  assert.equal(denyReason(r), reason, message);
+}
+
+/** Command values that are not strings, as a hand-written hook event may carry them. */
+const NON_STRING_COMMANDS: unknown[] = [null, 42, true, {}, [], ['node mutate.js'], ['aidlc doctor']];
+
+test('T0-HOOK-CONFIG-NONSTRING acceptance 1: under a broken config, a command that is present but not a string is denied like any command outside the doctor list, alone and in dispatch', () => {
+  for (const [text, detail] of UNUSABLE_CONFIGS) {
+    const { cwd, env, file } = withConfig(text);
+    for (const guard of ['production-gate', 'protect-paths'] as const) {
+      for (const command of NON_STRING_COMMANDS) {
+        for (const target of [undefined, 'aidlc.config.json', file, 'src/a.ts']) {
+          const tool_input = target === undefined ? { command } : { command, file_path: target };
+          deniedWith(runHook(guard, { tool_input }, { cwd, env }), bashDenial(file, detail, guard), `${guard} ${JSON.stringify(tool_input)}`);
+        }
+      }
+    }
+    const run = (event: HookEvent) => dispatchHook({ hook_event_name: 'PreToolUse', ...event }, { cwd, env });
+    for (const command of NON_STRING_COMMANDS) {
+      deniedWith(run({ tool_name: 'Bash', tool_input: { command } }), bashDenial(file, detail, 'production-gate'), JSON.stringify(command));
+      deniedWith(run({ tool_name: 'Edit', tool_input: { file_path: 'aidlc.config.json', command } }), bashDenial(file, detail, 'protect-paths'), JSON.stringify(command));
+    }
+    // a doctor command still passes, and an event without a command is decided as before
+    assert.deepEqual(runHook('protect-paths', { tool_input: { command: 'aidlc doctor', file_path: 'aidlc.config.json' } }, { cwd, env }), { exitCode: 0 });
+    assert.deepEqual(runHook('production-gate', { tool_input: { file_path: 'src/a.ts' } }, { cwd, env }), { exitCode: 0 });
+    assert.deepEqual(runHook('protect-paths', { tool_input: { file_path: 'aidlc.config.json' } }, { cwd, env }), { exitCode: 0 });
+    deniedWith(runHook('protect-paths', { tool_input: { file_path: 'src/a.ts' } }, { cwd, env }), editDenial(file, detail, 'protect-paths'), '');
+    assert.deepEqual(runHook('production-gate', { tool_input: {} }, { cwd, env }), { exitCode: 0 });
+  }
+});
+
+test('T0-HOOK-CONFIG-NONSTRING acceptance 2: under a broken config, a command whose string form is a gated release keeps the denial of the guard before these cards', () => {
+  const gated = ['make deploy', 'ENV=production'].join(' ');
+  const { cwd, env } = withConfig(UNUSABLE_CONFIGS[0]![0]);
+  const r = dispatchHook({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: [gated] } }, { cwd, env });
+  assert.equal(r.exitCode, 2);
+  assert.ok(r.stderr?.includes('release authorization'), r.stderr);
+});
+
+test('T0-HOOK-CONFIG-NONSTRING acceptance 3: under a valid config, a command that is not a string gives the result it gave before', () => {
+  const text = JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } });
+  const { cwd, env } = withConfig(text);
+  const gated = ['make deploy', 'ENV=production'].join(' ');
+  for (const command of [...NON_STRING_COMMANDS, [gated]]) {
+    for (const event of [{ tool_name: 'Bash', tool_input: { command } }, { tool_name: 'Edit', tool_input: { file_path: 'src/a.ts', command } }]) {
+      const full: HookEvent = { hook_event_name: 'PreToolUse', ...event };
+      assert.deepEqual(dispatchHook(full, { cwd, env }), mainDecision(full, cwd, env, mainReading(text)), JSON.stringify(event));
+    }
+  }
+});
+
+test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section states the rule', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- Command values that are not strings, card T0-HOOK-CONFIG-NONSTRING (issue 129): while `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` compared the `command` of an event with the doctor list only when it was a string, so a hand-written hook event whose `command` was null, a number, an object or an array passed them, beside the config path too. A present `command` that is not one of the doctor commands is now denied whatever its type, after the decision the guards took before these cards on the same text; an event without a `command` is decided as before, and nothing changes under a valid config.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
