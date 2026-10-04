@@ -115,19 +115,24 @@ test('a symlinked root works and a source-link swap after resolution never redir
     mkdirSync(path.join(fx.tmp, 'plans/safe'));
     writeFileSync(path.join(fx.tmp, 'plans/safe/plan.md'), 'checked inside');
     writeFileSync(path.join(outside, 'plan.md'), 'outside secret');
-    const alias = path.join(fx.tmp, 'plans/alias');
+    const alias = path.join(fs.realpathSync.native(fx.tmp), 'plans/alias');
     symlinkSync(path.join(fx.tmp, 'plans/safe'), alias, linkType);
     const resolve = fs.realpathSync.native;
+    let swapped = false;
     const spy = mock.method(fs.realpathSync, 'native', (file: fs.PathLike) => {
       const resolved = resolve(file);
       if (String(file) === path.join(alias, 'plan.md')) {
         rmSync(alias);
         symlinkSync(outside, alias, linkType);
+        swapped = true;
       }
       return resolved;
     });
     syncBuiltinESMExports();
-    try { assert.equal(JSON.parse(loadContextPack({ ...card, plan_ref: 'plans/alias/plan.md' }, fx.tmp, [])).planSection, 'checked inside'); }
+    try {
+      assert.equal(JSON.parse(loadContextPack({ ...card, plan_ref: 'plans/alias/plan.md' }, fx.tmp, [])).planSection, 'checked inside');
+      assert.equal(swapped, true);
+    }
     finally { spy.mock.restore(); syncBuiltinESMExports(); }
   } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
 });
@@ -195,7 +200,7 @@ test('a parent-directory swap after resolution is refused before outside content
       writeCard(fx, { id: 'T1-PACK', title: 'project context' });
       const parent = path.join(fx.tmp, path.dirname(source));
       mkdirSync(parent);
-      const target = path.join(fx.tmp, source);
+      const target = path.join(fs.realpathSync.native(fx.tmp), source);
       writeFileSync(target, 'inside');
       writeFileSync(path.join(outside, path.basename(source)), 'outside secret');
       const card = { ...fx.card('T1-PACK'), plan_ref: source.startsWith('plans/') ? source : undefined };
