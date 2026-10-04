@@ -108,6 +108,14 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     assert.equal(ship(`${startup}\n[CI-GATE-RED] AssertionError: expected 1`).class, 'code-defect', 'scaffold text keeps its log classification');
   });
 
+  test('R3 F3: whitespace-only names make a legacy red gate unresolved', () => {
+    for (const text of ['[CI-GATE-RED]   =startup_failure', '[CI-GATE-RED] build=startup_failure,   =startup_failure']) {
+      const result = ship(text);
+      assert.equal(result.class, 'unknown', text);
+      assert.equal(canRerun({ reruns: [] }, '123', 1, 'candidate', result.class).allowed, false);
+    }
+  });
+
   test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
     const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
     assert.equal(ship(text).class, 'unknown');

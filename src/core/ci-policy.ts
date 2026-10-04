@@ -134,6 +134,7 @@ function readGate(text: string): GateRead {
           const at = pair.lastIndexOf('=');
           checks.push({ name: pair.slice(0, at).trim(), conclusion: pair.slice(at + 1).trim().toLowerCase() });
         }
+        if (checks.slice(start).some((c) => !c.name)) unresolvedRed = true;
         redChecks.push(...checks.slice(start));
         continue;
       }
