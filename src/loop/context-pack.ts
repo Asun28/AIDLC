@@ -30,14 +30,16 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
 
 /** Read only local repository sources; missing files/anchors are explicit in the projection. */
 export function loadContextPack(card: Card, root: string, modules: string[]): string {
+  root = realpathSync(root);
   const missingSources: string[] = [];
   const read = (ref: string): string => {
     const target = path.resolve(root, ref);
-    const inside = (file: string) => { const rel = path.relative(realpathSync(root), file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
+    const inside = (file: string) => { const rel = path.relative(root, file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
     if (!inside(target)) throw new Error('Context source outside repository');
     try {
-      if (!inside(realpathSync(target))) throw new Error('Context source outside repository');
-      return readFileSync(target, 'utf8');
+      const resolved = realpathSync(target);
+      if (!inside(resolved)) throw new Error('Context source outside repository');
+      return readFileSync(resolved, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       missingSources.push(ref);

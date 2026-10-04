@@ -1,6 +1,7 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import fs, { mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
@@ -79,4 +80,34 @@ test('controller reports missing source data and refuses an outside plan referen
       }
     } finally { fx.cleanup(); }
   }
+});
+
+test('a symlinked root works and a source-link swap after resolution never redirects the read', () => {
+  const fx = makeFixture();
+  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-pack-swap-'));
+  const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+  try {
+    writeCard(fx, { id: 'T1-PACK', title: 'project context' });
+    const card = { ...fx.card('T1-PACK'), plan_ref: 'plan.md' };
+    writeFileSync(path.join(fx.tmp, 'plan.md'), 'inside');
+    symlinkSync(fx.tmp, path.join(outside, 'root'), linkType);
+    assert.equal(JSON.parse(loadContextPack(card, path.join(outside, 'root'), [])).planSection, 'inside');
+    mkdirSync(path.join(fx.tmp, 'safe'));
+    writeFileSync(path.join(fx.tmp, 'safe/plan.md'), 'checked inside');
+    writeFileSync(path.join(outside, 'plan.md'), 'outside secret');
+    const alias = path.join(fx.tmp, 'alias');
+    symlinkSync(path.join(fx.tmp, 'safe'), alias, linkType);
+    const resolve = fs.realpathSync;
+    const spy = mock.method(fs, 'realpathSync', (file: fs.PathLike) => {
+      const resolved = resolve(file);
+      if (String(file) === path.join(alias, 'plan.md')) {
+        rmSync(alias);
+        symlinkSync(outside, alias, linkType);
+      }
+      return resolved;
+    });
+    syncBuiltinESMExports();
+    try { assert.equal(JSON.parse(loadContextPack({ ...card, plan_ref: 'alias/plan.md' }, fx.tmp, [])).planSection, 'checked inside'); }
+    finally { spy.mock.restore(); syncBuiltinESMExports(); }
+  } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
 });
