@@ -37,6 +37,7 @@ test('missing plan files, anchors and lesson files are explicit and outside refe
     const card = { ...fx.card('T1-PACK'), plan_ref: 'plans/missing.md#section' };
     assert.deepEqual(JSON.parse(loadContextPack(card, fx.tmp, [])).missingSources, ['plans/missing.md', 'docs/LESSONS.md']);
     assert.deepEqual(JSON.parse(loadContextPack({ ...card, plan_ref: undefined }, fx.tmp, [])).missingSources, ['plan_ref', 'docs/LESSONS.md']);
+    assert.deepEqual(JSON.parse(loadContextPack({ ...card, plan_ref: '#fragment' }, fx.tmp, [])).missingSources, ['plan_ref', 'docs/LESSONS.md']);
     mkdirSync(path.join(fx.tmp, 'plans'));
     writeFileSync(path.join(fx.tmp, 'plans/missing.md'), '# Other\nNot the requested section.');
     assert.deepEqual(JSON.parse(loadContextPack(card, fx.tmp, [])).missingSources, ['plans/missing.md#section', 'docs/LESSONS.md']);
@@ -60,4 +61,22 @@ test('plan section extraction ignores headings in fenced code and reports an emp
     writeFileSync(path.join(fx.tmp, 'plan.md'), '');
     assert.deepEqual(JSON.parse(loadContextPack(card, fx.tmp, [])).missingSources, ['plan.md#selected', 'docs/LESSONS.md']);
   } finally { fx.cleanup(); }
+});
+
+test('controller reports missing source data and refuses an outside plan reference', () => {
+  for (const planRef of ['missing.md#section', '../outside.md']) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-PACK', title: 'project context', planRef });
+      const goal = fx.controller.createGoal({ text: 'implement T1-PACK', source: 'card', ref: 'T1-PACK', affectedSurfaces: [] }, { cards: ['T1-PACK'] });
+      const project = () => fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected' as const, data: { cards: ['T1-PACK'] } });
+      if (planRef.startsWith('..')) assert.throws(project, /outside repository/);
+      else {
+        const { directive } = project();
+        assert.equal(directive.kind, 'run-card');
+        if (directive.kind !== 'run-card') throw new Error('expected run-card');
+        assert.deepEqual(JSON.parse(directive.context.pack as string).missingSources, ['missing.md', 'docs/LESSONS.md']);
+      }
+    } finally { fx.cleanup(); }
+  }
 });

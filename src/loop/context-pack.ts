@@ -8,7 +8,7 @@ export interface ContextSources { planSection: string; lessons: string; modules?
 export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8192): string {
   if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0) throw new Error('Context token budget must be a positive safe integer');
   const names = [...card.allow_paths, ...card.allow_paths.flatMap((p) => { const m = p.match(/^src\/([^/]+)\//); return m ? [m[1]!, `src/${m[1]}`] : []; }), ...(sources.modules ?? [])].filter(Boolean);
-  const relevant = (line: string) => names.some((name) => new RegExp(`(^|[^\\w/-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\w-])`).test(line));
+  const relevant = (line: string) => names.some((name) => new RegExp(`(^|[^\\w/.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\w.-]|\\.(?=$|\\s))`).test(line));
   const pack = { tokenBudget, planRef: card.plan_ref ?? null, planSection: sources.planSection, acceptance: card.acceptance, allow_paths: card.allow_paths, non_goals: card.non_goals ?? [], lessons: sources.lessons.split(/\r?\n/).filter((l) => l.startsWith('- ') && relevant(l)), missingSources: sources.missingSources ?? [], truncated: { lessons: 0, plan: false } };
   const fits = () => Buffer.byteLength(JSON.stringify(pack), 'utf8') <= tokenBudget;
   while (!fits() && pack.lessons.length) { pack.lessons.pop(); pack.truncated.lessons++; }
@@ -47,7 +47,7 @@ export function loadContextPack(card: Card, root: string, modules: string[]): st
   const [file, anchor] = (card.plan_ref ?? '').split('#');
   let planSection = file ? read(file) : '';
   if (!file) missingSources.push('plan_ref');
-  if (anchor && !missingSources.includes(file!)) {
+  if (file && anchor && !missingSources.includes(file)) {
     const lines = planSection.split(/\r?\n/);
     let fence = '';
     const headings = lines.map((line) => {

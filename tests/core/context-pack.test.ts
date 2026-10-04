@@ -4,7 +4,7 @@ import { contextPack } from '../../src/loop/context-pack.ts';
 import { card } from './_fixtures.ts';
 
 const input = card('T1-PACK', { plan_ref: 'plans/p.md#selected', acceptance: ['Keep every acceptance criterion.'], allow_paths: ['src/loop/x.ts'], non_goals: ['No new state.'] });
-const sources = { planSection: 'Plan text.', lessons: '- loop: first\n- router: second\n- blooper: excluded\n- loopish: excluded\n- src/looping: excluded', modules: ['router'] };
+const sources = { planSection: 'Plan text.', lessons: '- loop: first\n- router: second\n- blooper: excluded\n- loopish: excluded\n- src/looping: excluded\n- loop.d.ts: excluded\n- router.extra: excluded', modules: ['router'] };
 
 test('projection is deterministic JSON data with only literal path or module matches', () => {
   const pack = contextPack(input, sources);
