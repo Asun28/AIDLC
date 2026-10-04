@@ -252,6 +252,44 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
     assert.equal(boundsLine([journal]), 'Bounds: card-deadline 1 (DONE 0, STOP/ci 1, open 0); arc-deadline 1 (DONE 0, STOP/review 1, open 0); review-decisions 1 (DONE 1, open 0); attempts 1 (DONE 0, STOP/risk 1, open 0)');
   });
 
+  it('R3 findings 9: timed outcomes use parsed instants and the earliest eligible terminal time', () => {
+    const e = (type: 'BOUND_FIRED' | 'GOAL_DONE' | 'GOAL_STOPPED', data: Record<string, unknown>) => JournalEvent.parse({ seq: 0, ts: iso(), type, goalId: 'g-timed', generation: 0, actor: actor('win-A'), data, prevHash: '0'.repeat(64), hash: 'a'.repeat(64) });
+    const journal = [
+      e('GOAL_DONE', { at: '2026-09-11T10:00:02Z' }),
+      e('BOUND_FIRED', { bound: 'arc-deadline', key: 'g-timed/arc', stoppedAt: '2026-09-11T10:00:00.000Z' }),
+      e('GOAL_DONE', { at: '2026-09-11T10:00:03.000Z' }),
+      e('GOAL_STOPPED', { reason: 'time', at: '2026-09-11T10:00:01.000Z' }),
+      e('BOUND_FIRED', { bound: 'card-deadline', key: 'g-timed/card', stoppedAt: '2026-09-11T10:00:03Z' }),
+    ];
+    assert.equal(boundsLine([journal]), 'Bounds: card-deadline 1 (DONE 1, open 0); arc-deadline 1 (DONE 0, STOP/time 1, open 0)');
+  });
+
+  it('R3 finding 10: schema-invalid goal and card records are incomplete', () => {
+    const dir = tmpDir();
+    try {
+      const goals = path.join(dir, 'goals'), cards = path.join(dir, 'cards');
+      mkdirSync(goals);
+      mkdirSync(path.join(cards, 'g-card'), { recursive: true });
+      writeFileSync(path.join(goals, 'g-goal.json'), '{}');
+      writeFileSync(path.join(goals, 'g-card.json'), JSON.stringify(makeGoal('g-card')));
+      writeFileSync(path.join(cards, 'g-card', 'T1-A.json'), '{}');
+      assert.equal(boundsOfJournals(path.join(dir, 'journals'), { goals, cards }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-card", "g-goal"');
+    } finally { cleanup(dir); }
+  });
+
+  it('R3 finding 11: orphan card goal directories are checked for pending and unreadable runs', () => {
+    const dir = tmpDir();
+    try {
+      const goals = path.join(dir, 'goals'), cards = path.join(dir, 'cards');
+      mkdirSync(goals);
+      for (const id of ['g-pending', 'g-invalid', 'g-clean']) mkdirSync(path.join(cards, id), { recursive: true });
+      writeFileSync(path.join(cards, 'g-pending', 'T1-A.json'), JSON.stringify(makeCardRun('g-pending', 'T1-A', { pendingFiring: { bound: 'card-deadline', key: 'g-pending/T1-A/card-deadline/1' } })));
+      writeFileSync(path.join(cards, 'g-invalid', 'T1-A.json'), '{}');
+      writeFileSync(path.join(cards, 'g-clean', 'T1-A.json'), JSON.stringify(makeCardRun('g-clean', 'T1-A')));
+      assert.equal(boundsOfJournals(path.join(dir, 'journals'), { goals, cards }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-invalid", "g-pending"');
+    } finally { cleanup(dir); }
+  });
+
   it('T1-BOUND-TELEMETRY-2 acceptance 10: a journal file or directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired [R2]', (t) => {
     const dir = tmpDir();
     try {
@@ -276,7 +314,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       assert.equal(boundsOfJournals(path.join(dir, 'absent')), 'Bounds: none fired', 'an absent journal directory holds no firing');
       assert.equal(boundsOfJournals(path.join(dir, 'bad\0name')), 'Bounds: none fired; incomplete: lines that do not parse in "bad\\u0000name"', 'a path lstat refuses for another reason is named');
       mkdirSync(path.join(dir, 'cards', 'g-b'), { recursive: true });
-      for (const [f, text] of [['journals/g-a.json', '{}'], ['journals/g-b.json', '{}'], ['journals/g-a.json.lock', 'pid=1'], ['cards/g-a', '']] as const) writeFileSync(path.join(dir, f), text, 'utf8');
+      for (const [f, text] of [['journals/g-a.json', JSON.stringify(makeGoal('g-a'))], ['journals/g-b.json', JSON.stringify(makeGoal('g-b'))], ['journals/g-a.json.lock', 'pid=1'], ['cards/g-a', '']] as const) writeFileSync(path.join(dir, f), text, 'utf8');
       assert.equal(boundsOfJournals(path.join(dir, 'absent'), { goals: journals, cards: path.join(dir, 'cards') }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-a"', 'a card-run directory that cannot be listed is named; a lock file is no record');
     } finally {
       cleanup(dir);

@@ -5,7 +5,7 @@
  */
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { BoundFired, BoundName, JournalEvent, StopReason, type BoundEntry, type Card, type CardRun, type Goal } from '../core/types.ts';
+import { BoundFired, BoundName, CardRun, Goal, JournalEvent, StopReason, type BoundEntry, type Card } from '../core/types.ts';
 import { Journal } from './journal.ts';
 import { effectiveGoalDeadline } from '../core/deadlines.ts';
 import { selectArc, type CardOutcome } from '../core/arc.ts';
@@ -51,7 +51,10 @@ export function boundsLine(journals: JournalEvent[][], damaged: string[] = [], p
     const fired = e.type === 'BOUND_FIRED' ? BoundFired.safeParse(e.data).data : undefined;
     if (!fired || seen.has(fired.key)) return;
     seen.add(fired.key);
-    const end = events.find((t, j) => (t.type === 'GOAL_DONE' || (t.type === 'GOAL_STOPPED' && StopReason.safeParse(t.data['reason']).success)) && (typeof t.data['at'] === 'string' && fired.stoppedAt ? t.data['at'] >= fired.stoppedAt : j > i));
+    const terminal = events.map((event, index) => ({ event, index })).filter(({ event }) => event.type === 'GOAL_DONE' || (event.type === 'GOAL_STOPPED' && StopReason.safeParse(event.data['reason']).success));
+    const firingTime = fired.stoppedAt ? Date.parse(fired.stoppedAt) : undefined;
+    const timed = firingTime === undefined ? [] : terminal.map(({ event }) => ({ event, at: typeof event.data['at'] === 'string' ? Date.parse(event.data['at']) : NaN })).filter(({ at }) => Number.isFinite(at) && at >= firingTime);
+    const end = (timed.length ? timed.reduce((first, candidate) => candidate.at < first.at ? candidate : first).event : terminal.find(({ event, index }) => index > i && (firingTime === undefined || typeof event.data['at'] !== 'string'))?.event);
     const outcome = !end ? 'open' : end.type === 'GOAL_DONE' ? 'DONE' : `STOP/${String(end.data['reason'])}`;
     const counts = tally.get(fired.bound) ?? new Map([['DONE', 0], ['open', 0]]);
     tally.set(fired.bound, counts.set(outcome, (counts.get(outcome) ?? 0) + 1));
@@ -104,8 +107,18 @@ export function boundsOfJournals(dir: string, records?: { goals: string; cards: 
   const host = path.basename(Journal.host(dir).file);
   const list = (at: string) => orUndefined(() => (absent(at) ? [] : readdirSync(at)));
   const files = (at: string) => list(at)?.filter((f) => f.endsWith('.json')).sort().map((f) => path.join(at, f)) ?? [at];
-  const pendingOrUnread = (file: string) => orUndefined(() => JSON.parse(readFileSync(file, 'utf8')).pendingFiring === undefined) !== true;
-  const pending = records ? files(records.goals).filter((g) => pendingOrUnread(g) || files(path.join(records.cards, path.basename(g, '.json'))).some(pendingOrUnread)).map((g) => path.basename(g, '.json')) : [];
+  const pendingOrUnread = (file: string, schema: typeof Goal | typeof CardRun) => orUndefined(() => {
+    const parsed = schema.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+    return parsed.success && parsed.data.pendingFiring === undefined;
+  }) !== true;
+  const pending = records ? (() => {
+    const goalNames = files(records.goals).map((g) => path.basename(g, '.json'));
+    const cardNames = list(records.cards) ?? [path.basename(records.cards)];
+    return [...new Set([...goalNames, ...cardNames])].sort().filter((name) => {
+      const goalFile = path.join(records.goals, `${name}.json`);
+      return (goalNames.includes(name) && pendingOrUnread(goalFile, Goal)) || files(path.join(records.cards, name)).some((file) => pendingOrUnread(file, CardRun));
+    });
+  })() : [];
   const listed = list(dir);
   if (!listed) return boundsLine([], [path.basename(dir)], pending);
   const read = listed.filter((f) => f.endsWith('.jsonl') && f !== host).sort().map((f) => ({ name: f.slice(0, -'.jsonl'.length), ...readEvents(path.join(dir, f)) }));
