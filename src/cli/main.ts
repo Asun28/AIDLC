@@ -143,7 +143,8 @@ function providerFor(name: string | undefined, config: ProjectConfig): ModelProv
 
 /** Bind the worker to the resolved state root and disable native shipping commands. */
 export function runProviderFor(stateRoot: string, runner: Runner = run): ClaudeCodeProvider {
-  return new ClaudeCodeProvider({ runner: (command, args, options) => runner(command, args, { ...options, env: { ...process.env, ...options?.env, AIDLC_STATE_DIR: path.resolve(stateRoot), AIDLC_RUN_NO_SHIP: '1' } }) });
+  const session = currentActor().session;
+  return new ClaudeCodeProvider({ runner: (command, args, options) => runner(command, args, { ...options, env: { ...process.env, ...options?.env, AIDLC_STATE_DIR: path.resolve(stateRoot), AIDLC_RUN_NO_SHIP: '1', AIDLC_SESSION: session } }) });
 }
 
 /** The acceptance coverage line of a pre-review round: what the angles accounted for, and the items left over. Absent when the round asked for no coverage. */

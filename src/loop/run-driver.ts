@@ -88,6 +88,7 @@ export async function runGoal(goalId: string, maxSteps: number, deps: RunDriverD
     let result;
     try {
       result = await deps.provider.complete(request);
+      if (!result || typeof result !== 'object' || !['ok', 'refusal', 'quota', 'error', 'malformed'].includes(result.outcome)) throw new Error('malformed provider result');
     } catch (error) {
       deps.onFailure?.(`provider error: ${error instanceof Error ? error.message : String(error)}`);
       return directive;

@@ -333,6 +333,27 @@ test('a provider exception returns the pending directive and records one failure
   } finally { fx.cleanup(); }
 });
 
+test('null, undefined and malformed provider results fail once without retrying', async () => {
+  for (const value of [null, undefined, {}, { outcome: 'unexpected' }]) {
+    const fx = makeFixture();
+    try {
+      const goal = fx.controller.createGoal({ text: 'Create a useful feature', source: 'natural-language', affectedSurfaces: [] });
+      const provider = new MockProvider();
+      let calls = 0;
+      provider.complete = async () => { calls++; return value as Awaited<ReturnType<typeof provider.complete>>; };
+      const failures: string[] = [];
+      let thrown: unknown;
+      const directive = await runGoal(goal.id, 3, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now, onFailure: (reason) => failures.push(reason) }).catch((error: unknown) => { thrown = error; return undefined; });
+      assert.equal(thrown, undefined);
+      assert.equal(directive?.kind, 'plan');
+      assert.equal(calls, 1);
+      assert.equal(failures.length, 1);
+      assert.match(failures[0] ?? '', /malformed provider result/);
+      assert.equal(fx.goal(goal.id).state, 'PLAN');
+    } finally { fx.cleanup(); }
+  }
+});
+
 test('provider text without a reported transition is an unsuccessful run', async () => {
   const fx = makeFixture();
   try {
@@ -524,6 +545,31 @@ test('run worker binds the relative parent override as an absolute root in a rea
     const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: nested, env: { ...process.env, AIDLC_STATE_DIR: '../.aidlc' }, encoding: 'utf8', timeout: 30_000 });
     assert.equal(child.status, 0, child.stderr);
     assert.deepEqual(JSON.parse(child.stdout), { root: fx.paths.root, text: `${fx.paths.root}|1` });
+  } finally { fx.cleanup(); }
+});
+
+test('run worker carries the driver session into a child that replaces Claude identity', () => {
+  const fx = makeFixture();
+  try {
+    const nested = path.join(fx.tmp, 'nested');
+    mkdirSync(nested);
+    const cliUrl = pathToFileURL(path.resolve('src/cli/main.ts')).href;
+    const journalUrl = pathToFileURL(path.resolve('src/state/journal.ts')).href;
+    const execUrl = pathToFileURL(path.resolve('src/probes/exec.ts')).href;
+    const script = `const {runProviderFor}=await import(${JSON.stringify(cliUrl)}); const {resolveSessionId}=await import(${JSON.stringify(journalUrl)}); const {run}=await import(${JSON.stringify(execUrl)}); const owner=resolveSessionId().session; const provider=runProviderFor(${JSON.stringify(fx.paths.root)},(_c,_a,opts)=>run(process.execPath,['-e','process.stdout.write(JSON.stringify({result:process.env.AIDLC_SESSION+"|"+process.env.CLAUDE_CODE_SESSION_ID}))'],{...opts,env:{...opts.env,CLAUDE_CODE_SESSION_ID:'child-claude'}})); process.env.CLAUDE_CODE_SESSION_ID='mutated-parent'; const result=await provider.complete({role:'planner',prompt:'inspect',system:'',effort:'medium',cwd:${JSON.stringify(fx.tmp)}}); process.stdout.write(JSON.stringify({owner,text:result.text}));`;
+    for (const claude of ['parent-claude', undefined]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: '../.aidlc' };
+      delete env.AIDLC_SESSION;
+      delete env.CLAUDE_SESSION_ID;
+      if (claude) env.CLAUDE_CODE_SESSION_ID = claude;
+      else delete env.CLAUDE_CODE_SESSION_ID;
+      const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: nested, env, encoding: 'utf8', timeout: 30_000 });
+      assert.equal(child.status, 0, child.stderr);
+      const result = JSON.parse(child.stdout) as { owner: string; text: string };
+      if (claude) assert.equal(result.owner, claude);
+      else assert.match(result.owner, /^default-/);
+      assert.equal(result.text, `${result.owner}|child-claude`);
+    }
   } finally { fx.cleanup(); }
 });
 
