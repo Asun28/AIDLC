@@ -1696,6 +1696,48 @@ test('T1-BOUND-TELEMETRY-2 acceptance 7: two overlapping goal deadline calls on 
   }
 });
 
+test('T1-BOUND-TELEMETRY-2 acceptance 17: an extension preserves a running goal and a goal stopped for review [R7]', () => {
+  for (const stopped of [false, true]) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const before = fx.store.saveGoal({ ...fx.goal(goal.id), state: stopped ? 'STOP' : 'RUN', terminal: stopped, stop: stopped ? makeStop('review', 'review refused', 'repair', { at: fx.now() }) : undefined });
+      const after = fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 24 * 3600_000), 'more time');
+      assert.deepEqual([after.state, after.terminal, after.stop], [before.state, before.terminal, before.stop]);
+      assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STATE' && e.data['from'] === 'STOP').length, 0);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T1-BOUND-TELEMETRY-2 acceptance 17: a held later card lock refuses the entire deadline extension without partial writes [R7]', () => {
+  const fx = makeFixture();
+  try {
+    for (const id of ['T1-A', 'T1-B']) writeCard(fx, { id, title: id });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B']);
+    for (const id of goal.cards) fx.controller.ensureCardRun(fx.goal(goal.id), id);
+    fx.advance(13 * 3600_000);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    const controller = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 50 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry });
+    const file = fx.store.cardFile(goal.id, 'T1-B');
+    const files = [fx.store.goalFile(goal.id), fx.journal(goal.id).file, ...goal.cards.map((id) => fx.store.cardFile(goal.id, id))];
+    const state = () => files.map((f) => readFileSync(f, 'utf8'));
+    const before = state();
+    const until = addMs(T0, 24 * 3600_000);
+    writeFileSync(`${file}.lock`, `pid=${process.pid} nonce=held`, 'utf8');
+    assert.throws(() => controller.extendDeadline(goal.id, 'lead', until, 'more time'), (err: unknown) => err instanceof StoreError && err.code === 'LOCKED' && err.file === file);
+    assert.deepEqual(state(), before, 'neither goal, journal nor any earlier card changes on a later lock refusal');
+    unlinkSync(`${file}.lock`);
+    assert.equal(controller.extendDeadline(goal.id, 'lead', until, 'more time').state, 'CARDS');
+    for (const id of goal.cards) assert.equal(fx.store.getCardRun(goal.id, id)?.deadline, until);
+    assert.equal(fx.goal(goal.id).deadlines.extensions.length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 17: under a held goal lock goal extend refuses with LOCKED and writes nothing, the board renders as before, and the extension succeeds once the lock is released [R7]', () => {
   const fx = makeFixture();
   try {

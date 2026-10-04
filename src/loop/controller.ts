@@ -714,48 +714,43 @@ export class GoalController {
     return { goal: Goal.parse(revised), revision, mapping, text };
   }
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
-    const goal = this.mustGoal(goalId);
-    const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };
-    if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
-    // The shape check admits day and hour values no calendar has (2026-02-30, 24:00:00), which Date.parse rolls over silently;
-    // only a timestamp that round-trips is recorded.
-    const deadlineMs = Date.parse(newDeadline);
-    if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
-    if (Date.parse(newDeadline) <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
-    // The extension is the explicit authority a time stop asks for: the goal and every card of it stopped for time are
-    // re-admitted under the new deadline, and every card of it still in progress takes that deadline too (card
-    // T0-EXTEND-RUNNING-CARD); a stop for any other reason stays.
-    const readmit = goal.terminal && goal.stop?.reason === 'time';
-    // Re-entry runs through CARDS: the projection is re-validated and, for T2, its checkpoint re-checked before any dispatch. The goal
-    // is written first, so a held goal lock refuses the extension before any other write (card T1-BOUND-TELEMETRY-2).
-    const readmitted = this.store.saveGoal(readmit ? { ...extended, terminal: false, stop: undefined, state: 'CARDS' } : extended);
-    this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
-    if (readmit) this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'STOP', to: 'CARDS', reason: `deadline extension to ${newDeadline} by ${by}` } });
-    for (const run of this.store.listCardRuns(goal.id)) {
-      // Only the current projection is re-admitted: a run of a card superseded or removed by a revision keeps its stop.
-      if (!readmitted.cards.includes(run.cardId)) continue;
-      // Each run is decided on the record read under the card-run lock, so a stop or a re-admission that landed after the
-      // listing counts (R2 cycle 0 round 1). A run stopped for time is in progress again: the controller waits on it instead
-      // of re-stopping the goal, and the runner re-derives BUILD, SHIP or CLOSE from the evidence of the run on its next call.
-      // A run in progress keeps the deadline fixed at its start unless it moves here, and the next call would stop it for
-      // time right after the extension (issue 105). A DONE run and a stop for any other reason stay; no deadline moves earlier.
-      let change: 'readmitted' | 'moved' | undefined;
-      let from = run.deadline;
-      this.store.updateCardRun(goal.id, run.cardId, (current) => {
-        if (!current) return current!;
-        from = current.deadline;
-        const deadline = Date.parse(newDeadline) > Date.parse(current.deadline) ? newDeadline : current.deadline;
-        if (current.stop?.reason === 'time') {
-          change = 'readmitted';
-          return { ...current, state: 'BUILD', stop: undefined, deadline };
-        }
-        if (current.state === 'DONE' || current.state === 'STOP' || deadline === current.deadline) return current;
-        change = 'moved';
-        return { ...current, deadline };
-      });
-      if (change === 'readmitted') this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
-      if (change === 'moved') this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from, to: newDeadline, by } } });
-    }
+    this.mustGoal(goalId);
+    const notes: Parameters<Journal['append']>[0][] = [];
+    const readmitted = this.store.updateGoal(goalId, (goal) => {
+      if (!goal) throw new Error(`goal ${goalId} no longer exists`);
+      if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
+      const deadlineMs = Date.parse(newDeadline);
+      if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
+      if (deadlineMs <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
+      const readmit = goal.terminal && goal.stop?.reason === 'time';
+      const extended = Goal.parse({ ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] }, ...(readmit ? { terminal: false, stop: undefined, state: 'CARDS' } : {}) });
+      notes.push({ type: 'NOTE', goalId, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
+      if (readmit) notes.push({ type: 'GOAL_STATE', goalId, generation: goal.generation, data: { from: 'STOP', to: 'CARDS', reason: `deadline extension to ${newDeadline} by ${by}` } });
+      const runs = this.store.listCardRuns(goalId).filter((run) => goal.cards.includes(run.cardId)).sort((a, b) => a.cardId.localeCompare(b.cardId));
+      // Hold the goal and every projected run lock before the first write. A later lock refusal unwinds without writes.
+      const stage = (index: number): void => {
+        const run = runs[index];
+        if (!run) return;
+        this.store.updateCardRun(goalId, run.cardId, (current) => {
+          let next = current;
+          if (current) {
+            const deadline = deadlineMs > Date.parse(current.deadline) ? newDeadline : current.deadline;
+            if (current.stop?.reason === 'time') {
+              next = CardRun.parse({ ...current, state: 'BUILD', stop: undefined, deadline });
+              notes.push({ type: 'CARD_STATE', goalId, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
+            } else if (current.state !== 'DONE' && current.state !== 'STOP' && deadline !== current.deadline) {
+              next = CardRun.parse({ ...current, deadline });
+              notes.push({ type: 'NOTE', goalId, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from: current.deadline, to: newDeadline, by } } });
+            }
+          }
+          stage(index + 1);
+          return next!;
+        });
+      };
+      stage(0);
+      return extended;
+    });
+    for (const note of notes) this.journal(goalId).append(note);
     this.writeBoard(readmitted);
     return readmitted;
   }
