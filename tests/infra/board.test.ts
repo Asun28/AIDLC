@@ -120,7 +120,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       for (let i = 0; i < 2; i += 1) journalFiring(journal, boundFired({ id: 'g-1', generation: 0 }, 'attempts', 3, 'T1-A'));
       journalFiring(Journal.forGoal(dir, 'g-new'), boundFired({ id: 'g-new', generation: 0 }, 'attempts', 1));
       assert.equal(Journal.forGoal(dir, 'g-new').readAll().length, 1, 'a journal not written yet is absent, not damaged (T1-BOUND-TELEMETRY-2)');
-      assert.deepEqual(journal.readAll().filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'attempts', key: 'g-1@0/T1-A/attempts/3' }], 'one entry per key; an event of another type is no firing');
+      assert.deepEqual(journal.readAll().filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data), [{ bound: 'attempts', key: 'g-1@0/T1-A/attempts/3', generation: 0 }], 'one entry per key; an event of another type is no firing');
     } finally {
       cleanup(dir);
     }
@@ -287,6 +287,34 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       writeFileSync(path.join(cards, 'g-invalid', 'T1-A.json'), '{}');
       writeFileSync(path.join(cards, 'g-clean', 'T1-A.json'), JSON.stringify(makeCardRun('g-clean', 'T1-A')));
       assert.equal(boundsOfJournals(path.join(dir, 'journals'), { goals, cards }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-invalid", "g-pending"');
+    } finally { cleanup(dir); }
+  });
+
+  it('R3 recovery: pending journal events remain schema-valid and make records incomplete', () => {
+    const dir = tmpDir();
+    try {
+      const goals = path.join(dir, 'goals'), cards = path.join(dir, 'cards');
+      mkdirSync(goals);
+      mkdirSync(path.join(cards, 'g-events'), { recursive: true });
+      const pendingEvents = [{ type: 'CARD_STATE', goalId: 'g-events', cardId: 'T1-A', generation: 0, data: { eventKey: 'g-events@0/T1-A/event/1/0', to: 'STOP' } }];
+      writeFileSync(path.join(goals, 'g-events.json'), JSON.stringify(makeGoal('g-events')));
+      writeFileSync(path.join(cards, 'g-events', 'T1-A.json'), JSON.stringify({ ...makeCardRun('g-events', 'T1-A'), pendingEvents }));
+      assert.equal(boundsOfJournals(path.join(dir, 'journals'), { goals, cards }), 'Bounds: none fired; incomplete: pending firings or unreadable records in "g-events"');
+    } finally { cleanup(dir); }
+  });
+
+  it('R3 recovery: a pending event is appended once by key and a damaged journal refuses it', async () => {
+    const { journalOnce } = await import('../../src/state/board.ts') as typeof import('../../src/state/board.ts') & { journalOnce?: (journal: Journal, event: { type: 'CARD_STATE'; goalId: string; cardId: string; generation: number; data: { eventKey: string } }) => void };
+    assert.equal(typeof journalOnce, 'function');
+    const dir = tmpDir();
+    try {
+      const journal = Journal.forGoal(dir, 'g-events');
+      const event = { type: 'CARD_STATE' as const, goalId: 'g-events', cardId: 'T1-A', generation: 0, data: { eventKey: 'g-events@0/T1-A/event/1/0' } };
+      journalOnce!(journal, event);
+      journalOnce!(journal, event);
+      assert.equal(journal.readAll().length, 1);
+      appendFileSync(journal.file, '{broken\n');
+      assert.throws(() => journalOnce!(journal, { ...event, data: { eventKey: 'g-events@0/T1-A/event/1/1' } }), /cannot be read in full/);
     } finally { cleanup(dir); }
   });
 

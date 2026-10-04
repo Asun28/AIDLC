@@ -702,7 +702,58 @@ export type ShippedFacts = z.infer<typeof ShippedFacts>;
 /** A bound of the README Limits table, in the table's order (card T1-BOUND-TELEMETRY); a `BOUND_FIRED` event names one as `{ bound }`. */
 export const BoundName = z.enum(['card-deadline', 'arc-deadline', 'reconciliation-grace', 'review-decisions', 'no-verdict-retry', 'ci-rerun-allowed', 'ci-rerun-denied', 'attempts', 'planning-invocations', 'integration-repair']);
 export type BoundName = z.infer<typeof BoundName>;
-export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1), stoppedAt: IsoTimestamp.optional() });
+export const JournalEventType = z.enum([
+  'GOAL_CREATED',
+  'GOAL_ROUTED',
+  'GOAL_REVISED',
+  'GOAL_STATE',
+  'GOAL_STOPPED',
+  'GOAL_DONE',
+  'GOAL_TAKEOVER',
+  'PLAN_INVOKED',
+  'PLAN_ACCEPTED',
+  'CARDS_PROJECTED',
+  'CARD_STATE',
+  'CARD_DISPATCHED',
+  'CARD_RESULT',
+  'ATTEMPT_STARTED',
+  'ATTEMPT_FINISHED',
+  'REVIEW_REQUESTED',
+  'REVIEW_ADMITTED',
+  'REVIEW_DECIDED',
+  'REVIEW_HOLD',
+  'PRE_REVIEW_DECIDED',
+  'FINDING_DISPUTED',
+  'FINDING_ACCEPTED',
+  'CI_CLASSIFIED',
+  'CI_RERUN',
+  'OPERATION_INTENT',
+  'OPERATION_ISSUED',
+  'OPERATION_RESULT',
+  'OPERATION_RECONCILED',
+  'RELEASE_STATE',
+  'HEALTH_EVALUATED',
+  'AUTHORIZATION_GRANTED',
+  'AUTHORIZATION_CHECKED',
+  'LEASE_ACQUIRED',
+  'LEASE_RENEWED',
+  'EVIDENCE_RETAINED',
+  'MANIFEST_SEALED',
+  'INTENT_FILED',
+  'BOUND_FIRED',
+  'NOTE',
+]);
+export type JournalEventType = z.infer<typeof JournalEventType>;
+
+export const BoundFired = z.object({ bound: BoundName, key: z.string().min(1), generation: z.number().int().nonnegative().optional(), stoppedAt: IsoTimestamp.optional() });
+export const PendingJournalEvent = z.object({
+  type: JournalEventType,
+  goalId: z.string().optional(),
+  cardId: z.string().optional(),
+  generation: z.number().int().nonnegative().optional(),
+  data: z.record(z.string(), z.unknown()).refine((data) => typeof data['eventKey'] === 'string' && data['eventKey'].length > 0, 'pending journal event needs an eventKey'),
+});
+export type PendingJournalEvent = z.infer<typeof PendingJournalEvent>;
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -750,6 +801,7 @@ export const CardRun = z.object({
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
   /** The outbox of a bound firing (card T1-BOUND-TELEMETRY-2): saved with the stop or state it causes, cleared once it is journaled. */
   pendingFiring: BoundFired.optional(),
+  pendingEvents: z.array(PendingJournalEvent).optional(),
   updatedAt: IsoTimestamp,
 });
 export type CardRun = z.infer<typeof CardRun>;
@@ -860,6 +912,7 @@ export const Goal = z.object({
   terminal: z.boolean().default(false),
   linkedFrom: z.string().optional(),
   pendingFiring: BoundFired.optional(), // as on a card run
+  pendingEvents: z.array(PendingJournalEvent).optional(),
   createdAt: IsoTimestamp,
   updatedAt: IsoTimestamp,
 });
@@ -869,52 +922,11 @@ export type Goal = z.infer<typeof Goal>;
 // Journal events (hash-chained, append-only)
 // ---------------------------------------------------------------------------
 
-export const JournalEventType = z.enum([
-  'GOAL_CREATED',
-  'GOAL_ROUTED',
-  'GOAL_REVISED',
-  'GOAL_STATE',
-  'GOAL_STOPPED',
-  'GOAL_DONE',
-  'GOAL_TAKEOVER',
-  'PLAN_INVOKED',
-  'PLAN_ACCEPTED',
-  'CARDS_PROJECTED',
-  'CARD_STATE',
-  'CARD_DISPATCHED',
-  'CARD_RESULT',
-  'ATTEMPT_STARTED',
-  'ATTEMPT_FINISHED',
-  'REVIEW_REQUESTED',
-  'REVIEW_ADMITTED',
-  'REVIEW_DECIDED',
-  'REVIEW_HOLD',
-  'PRE_REVIEW_DECIDED',
-  'FINDING_DISPUTED',
-  'FINDING_ACCEPTED',
-  'CI_CLASSIFIED',
-  'CI_RERUN',
-  'OPERATION_INTENT',
-  'OPERATION_ISSUED',
-  'OPERATION_RESULT',
-  'OPERATION_RECONCILED',
-  'RELEASE_STATE',
-  'HEALTH_EVALUATED',
-  'AUTHORIZATION_GRANTED',
-  'AUTHORIZATION_CHECKED',
-  'LEASE_ACQUIRED',
-  'LEASE_RENEWED',
-  'EVIDENCE_RETAINED',
-  'MANIFEST_SEALED',
-  'INTENT_FILED',
-  'BOUND_FIRED',
-  'NOTE',
-]);
-export type JournalEventType = z.infer<typeof JournalEventType>;
+
 
 /** The `BOUND_FIRED` entry of a firing, its `data` saved as `pendingFiring` with the stop it causes; `key` names the firing (goal@generation, card, bound, the value that fired it), so a retry journals the same key and a resumed generation stopped again journals its own; `stoppedAt` is the persisted time of the stop or state it causes, which the board classifies it by (card T1-BOUND-TELEMETRY-2). */
-export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string, stoppedAt?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}`, ...(stoppedAt ? { stoppedAt } : {}) } });
-export type BoundEntry = ReturnType<typeof boundFired>;
+export const boundFired = (goal: { id: string; generation: number }, bound: BoundName, value: string | number, cardId?: string, stoppedAt?: string) => ({ type: 'BOUND_FIRED' as const, goalId: goal.id, cardId, generation: goal.generation, data: { bound, key: `${goal.id}@${goal.generation}/${cardId ?? '-'}/${bound}/${value}`, generation: goal.generation, ...(stoppedAt ? { stoppedAt } : {}) } });
+export type BoundEntry = Omit<ReturnType<typeof boundFired>, 'data'> & { data: z.infer<typeof BoundFired> };
 
 export const JournalEvent = z.object({
   seq: z.number().int().nonnegative(),

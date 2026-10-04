@@ -389,6 +389,23 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: a journal that refuses CARD_STATE cann
   }
 });
 
+test('R3 finding 12: a delayed firing keeps the generation in which it occurred', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.generation, 0);
+    repair();
+    fx.runner().next({ ...fx.goal(goal.id), generation: 1 }, fx.card('T1-A'), run);
+    const firing = fx.events(goal.id).find((event) => event.type === 'BOUND_FIRED');
+    assert.equal(firing?.generation, 0);
+  } finally { fx.cleanup(); }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pending firing before selection; while the journal refuses it, card next names it and dispatches no work [R6] [R8]', () => {
   const fx = makeFixture();
   try {

@@ -5,7 +5,7 @@
  */
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import { BoundFired, BoundName, CardRun, Goal, JournalEvent, StopReason, type BoundEntry, type Card } from '../core/types.ts';
+import { BoundFired, BoundName, CardRun, Goal, JournalEvent, StopReason, type BoundEntry, type Card, type PendingJournalEvent } from '../core/types.ts';
 import { Journal } from './journal.ts';
 import { effectiveGoalDeadline } from '../core/deadlines.ts';
 import { selectArc, type CardOutcome } from '../core/arc.ts';
@@ -102,6 +102,13 @@ export function journalFiring(journal: Journal, entry: BoundEntry): void {
   if (!events.some((e) => e.type === 'BOUND_FIRED' && e.data['key'] === entry.data.key)) journal.append(entry);
 }
 
+/** Append a persisted ancillary event once under its record lock; refuse any journal whose chain is incomplete. */
+export function journalOnce(journal: Journal, entry: PendingJournalEvent): void {
+  if (readEvents(journal.file).damaged) throw new Error(`${journal.file} cannot be read in full`);
+  if (!journal.verify().ok) throw new Error(`${journal.file} cannot be read in full`);
+  if (!journal.readAll().some((event) => event.type === entry.type && event.data['eventKey'] === entry.data['eventKey'])) journal.append(entry);
+}
+
 /** The Bounds line over every goal journal file in `dir`, whatever the goal records say; a journal with lines that do not parse, or a `dir` that cannot be listed, is named, and so is every goal of `records` whose goal record or card run holds a `pendingFiring` or cannot be read. */
 export function boundsOfJournals(dir: string, records?: { goals: string; cards: string }): string {
   const host = path.basename(Journal.host(dir).file);
@@ -109,7 +116,7 @@ export function boundsOfJournals(dir: string, records?: { goals: string; cards: 
   const files = (at: string) => list(at)?.filter((f) => f.endsWith('.json')).sort().map((f) => path.join(at, f)) ?? [at];
   const pendingOrUnread = (file: string, schema: typeof Goal | typeof CardRun) => orUndefined(() => {
     const parsed = schema.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-    return parsed.success && parsed.data.pendingFiring === undefined;
+    return parsed.success && parsed.data.pendingFiring === undefined && !parsed.data.pendingEvents?.length;
   }) !== true;
   const pending = records ? (() => {
     const goalNames = files(records.goals).map((g) => path.basename(g, '.json'));
