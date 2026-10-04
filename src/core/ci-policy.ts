@@ -187,23 +187,26 @@ export interface CiClassification {
 export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[] } = {}): CiClassification {
   const transientSteps = options.transientSteps ?? DEFAULT_TRANSIENT_STEPS;
   const failed = jobs.filter((j) => j.conclusion && !['success', 'neutral', 'skipped'].includes(j.conclusion.toLowerCase()));
-  const texts = [...failed.map((j) => j.logExcerpt ?? ''), extraLog ?? ''].filter((t) => t.length > 0);
+  const texts = [...jobs.map((j) => ({ raw: j.logExcerpt ?? '', inspectLog: failed.includes(j) })), { raw: extraLog ?? '', inspectLog: true }];
   const evidence: string[] = [];
   const securityHits: string[] = [];
   for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push(j.name);
   const logs: string[] = [];
   const gateChecked: CiJob[] = [];
+  const gateRecords: CiJob[] = [];
   const steps: GateStep[] = [];
   let gateStructured = false;
   let unresolvedRed = false;
-  for (const raw of texts) {
+  for (const { raw, inspectLog } of texts) {
     const gate = readGate(raw);
     gateChecked.push(...gate.redChecks);
+    gateRecords.push(...gate.checks);
     steps.push(...gate.steps);
     unresolvedRed ||= gate.unresolvedRed;
     gateStructured ||= gate.structured || gate.checks.length > 0;
     for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push(c.name);
     for (const line of gate.ambiguousRed) if (SECURITY_CHECK_NAME.test(line)) securityHits.push(`unparsed red gate line naming a scan: ${line.slice(0, 80)}`);
+    if (!inspectLog) continue;
     for (const p of SECURITY_PATTERNS) {
       const m = gate.log.match(p);
       if (m) securityHits.push(m[0].trim().slice(0, 80));
@@ -229,13 +232,21 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     }
   }
   void transientHits; // the transient log matches stay in the evidence and grant nothing
-  const independent = failed.filter((j) => j.aggregate !== true);
-  const red = gateStructured ? [...gateChecked, ...independent.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independent;
+  const independent = jobs.filter((j) => j.aggregate !== true);
+  const independentFailed = independent.filter((j) => isFailure(j.conclusion));
+  const conclusions = new Map<string, string | undefined>();
+  const identitiesAgree = [...independent, ...gateRecords].every((j) => {
+    const conclusion = j.conclusion?.toLowerCase();
+    if (conclusions.has(j.name) && conclusions.get(j.name) !== conclusion) return false;
+    conclusions.set(j.name, conclusion);
+    return true;
+  });
+  const red = gateStructured ? [...gateChecked, ...independentFailed.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independentFailed;
   const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
   let cls: CiFailureClass;
   if (securityHits.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first
-  else if (!unresolvedRed && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
+  else if (!unresolvedRed && identitiesAgree && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
   else cls = 'unknown';
   return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(securityHits).values()].map((s) => `security: ${s}`).concat(evidence) };
 }

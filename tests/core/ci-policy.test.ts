@@ -153,6 +153,36 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     assert.equal(classifyCiFailure([{ ...startup, conclusion: 'STARTUP_FAILURE' }], gate([startup])).class, 'transient', 'case does not create a contradictory conclusion');
   });
 
+  test('successor R3: identity validation includes non-failed independent records and gate records', () => {
+    const startup = { name: 'build', conclusion: 'startup_failure' };
+    for (const conclusion of ['success', 'neutral', 'skipped', null, undefined]) {
+      const other = { name: 'build', conclusion };
+      assert.equal(classifyCiFailure([other], gate([startup])).class, 'unknown', `gate conflict: ${conclusion}`);
+      assert.equal(classifyCiFailure([startup, other]).class, 'unknown', `independent conflict: ${conclusion}`);
+      assert.equal(classifyCiFailure([startup, { name: 'lint', conclusion }, { name: 'lint', conclusion }]).class, 'unknown', `duplicate non-failed name: ${conclusion}`);
+      assert.equal(classifyCiFailure([startup, { name: 'lint', conclusion }]).class, 'transient', `unrelated record: ${conclusion}`);
+      const timeout = `[CI-GATE-TIMEOUT] 0 pending checks: ${JSON.stringify([other])}`;
+      assert.equal(classifyCiFailure([startup], timeout).class, 'unknown', `timeout conflict: ${conclusion}`);
+      assert.equal(classifyCiFailure([], `${gate([startup])}\n${timeout}`).class, 'unknown', `gate-only conflict: ${conclusion}`);
+    }
+  });
+
+  test('successor R3: structured lines count even inside a non-failed carrier', () => {
+    const startup = { name: 'build', conclusion: 'startup_failure' };
+    for (const conclusion of ['success', 'neutral', 'skipped', null, undefined]) for (const aggregate of [true, false]) {
+      const carrier = { name: 'receipt', conclusion, aggregate };
+      assert.equal(classifyCiFailure([startup, { ...carrier, logExcerpt: gate([{ name: 'lint', conclusion: 'failure' }]) }]).class, 'unknown');
+      assert.equal(classifyCiFailure([startup, { ...carrier, logExcerpt: '[CI-GATE-RED] malformed' }]).class, 'unknown');
+      assert.equal(classifyCiFailure([startup, { ...carrier, logExcerpt: `${gate([{ name: 'lint', conclusion: 'failure' }])}\n${step('lint', 'Set up job')}` }]).class, 'transient');
+      for (const name of ['gitleaks', 'secret-scan', 'security']) {
+        const secured = classifyCiFailure([startup, { ...carrier, logExcerpt: gate([{ name, conclusion: 'startup_failure' }]) }]);
+        assert.equal(secured.class, 'security');
+        assert.deepEqual(secured.evidence, [`security: ${name}`]);
+      }
+      assert.deepEqual(classifyCiFailure([startup, { ...carrier, logExcerpt: 'AssertionError: failed tests; leaks found: 3; ECONNRESET' }]), classifyCiFailure([startup]), 'non-failed carrier text keeps its original exclusion from log evidence');
+    }
+  });
+
   test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
     const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
     assert.equal(ship(text).class, 'unknown');
@@ -225,6 +255,27 @@ test('successor R4: ci classify marks a complete log receipt as aggregate', () =
     const out = spawnSync(process.execPath, [cli, 'ci', 'classify', '--log', file, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
     assert.equal(out.status, 0, out.stderr);
     assert.equal(JSON.parse(out.stdout).class, 'transient');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('successor R4: ci classify applies disabled defaults and custom configured steps', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-config-'));
+  try {
+    const file = path.join(dir, 'ci.log');
+    const cli = path.resolve(import.meta.dirname, '../../src/cli/main.ts');
+    for (const [transientSteps, name, expected] of [
+      [[], 'Set up job', 'unknown'],
+      [['Download dependencies'], 'Download dependencies', 'transient'],
+      [['Download dependencies'], 'Set up job', 'unknown'],
+    ] as const) {
+      writeFileSync(path.join(dir, 'aidlc.config.json'), JSON.stringify({ ci: { transientSteps } }));
+      writeFileSync(file, '[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] ' + JSON.stringify({ check: 'build', job: '1', step: { number: 1, name, conclusion: 'failure' } }));
+      const out = spawnSync(process.execPath, [cli, 'ci', 'classify', '--log', file, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
+      assert.equal(out.status, 0, out.stderr);
+      assert.equal(JSON.parse(out.stdout).class, expected, JSON.stringify({ transientSteps, name }));
+    }
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
