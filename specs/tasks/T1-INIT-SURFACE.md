@@ -8,6 +8,7 @@ plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
 allow_paths:
   - src/scaffold/init.ts
   - src/cli/main.ts
+  - src/hooks/index.ts
   - tests/infra/init.test.ts
   - tests/surface/hooks.test.ts
   - tests/surface/readme.test.ts
@@ -36,6 +37,7 @@ sweep: "Survey of main at 5983a1e. init flags main.ts:155-161 ([dir], --force, -
 forbid: [removing or weakening a guard, a hook that fails open on a new path, changing the hook command init picks]
 non_goals: [quoting directive narration (issue for F3), a signed or pinned template bundle, a new hook, an uninstall command]
 doc_sync: README.md (new section), docs/OPERATIONS.md (Setup), CHANGELOG.md
+hygiene: "2026-10-04 delegated scope correction: src/hooks/index.ts is allowed solely to JSON-quote repository or environment values already emitted by guards, as required by R3. Guard decisions and hook wiring remain unchanged."
 ---
 
 # T1-INIT-SURFACE
