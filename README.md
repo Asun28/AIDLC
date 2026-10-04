@@ -43,7 +43,7 @@ aidlc audit verify
 
 When stdout is not a TTY every command prints one JSON document; pass `--json` to force it.
 
-`aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, deadlines or its step limit; it prints the pending directive on exit. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
+`aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, the shipping boundary, deadlines or its step limit; it prints the pending directive on exit. Shipping requires a separate operator invocation. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
 
 ## The loop
 

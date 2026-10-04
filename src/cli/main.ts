@@ -12,6 +12,7 @@ import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
 import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
+import { run, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
@@ -138,6 +139,11 @@ function providerFor(name: string | undefined, config: ProjectConfig): ModelProv
   if (p === 'mock') return new MockProvider();
   if (p === 'claude-code') return new ClaudeCodeProvider();
   return new ClaudeApiProvider();
+}
+
+/** Bind the worker to the resolved state root and disable native shipping commands. */
+export function runProviderFor(stateRoot: string, runner: Runner = run): ClaudeCodeProvider {
+  return new ClaudeCodeProvider({ runner: (command, args, options) => runner(command, args, { ...options, env: { ...process.env, ...options?.env, AIDLC_STATE_DIR: path.resolve(stateRoot), AIDLC_RUN_NO_SHIP: '1' } }) });
 }
 
 /** The acceptance coverage line of a pre-review round: what the angles accounted for, and the items left over. Absent when the round asked for no coverage. */
@@ -364,7 +370,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       if (c.config.provider !== 'claude-code') fail(`aidlc run needs a command-capable provider (claude-code); configured ${c.config.provider}`);
       let failure: string | undefined;
-      const directive = await runGoal(o.goal, maxSteps, { controller: c.controller, store: c.store, queue: new ReviewQueue(c.paths.reviewQueue), provider: providerFor(undefined, c.config), cwd: c.root, onFailure: (reason) => { failure = reason; } });
+      const directive = await runGoal(o.goal, maxSteps, { controller: c.controller, store: c.store, queue: new ReviewQueue(c.paths.reviewQueue), provider: runProviderFor(c.paths.root), cwd: c.root, onFailure: (reason) => { failure = reason; } });
       out(c, directive, () => `[${directive.kind}] goal=${directive.goalId} gen=${directive.generation} state=${directive.goalState} deadline=${directive.deadline}\n${directive.narration}`);
       if (failure) {
         process.stderr.write(`aidlc run: ${failure}\n`);
@@ -443,7 +449,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   // ------------------------------------------------------------------ cards
   const card = program.command('card').description('single-card execution');
-  const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store });
+  const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store, allowShip: process.env['AIDLC_RUN_NO_SHIP'] !== '1' });
   const cardCtx = (c: Ctx, cardId: string, goalId?: string) => {
     const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, goalId));
     const parsed = cardOf(c, cardId);
@@ -590,6 +596,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       .option('--local')
       .action((cardId: string, o: { base?: string; local?: boolean }) => {
         const c = ctx(g());
+        if (phase === 'ship' && process.env['AIDLC_RUN_NO_SHIP'] === '1') fail('shipping requires a separate operator invocation outside aidlc run');
         if (c.config.shipPath !== 'scaffold') fail(`ship path is ${c.config.shipPath}; task.ps1 phases apply to the scaffold path only`);
         const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(c.root, 'scripts', 'task.ps1'), '-TaskId', cardId, '-Phase', phase];
         if (o.base ?? c.config.base) args.push('-Base', o.base ?? c.config.base);

@@ -28,7 +28,7 @@ export async function runGoal(goalId: string, maxSteps: number, deps: RunDriverD
     if (directive.generation !== generation || human.has(directive.kind) || step >= maxSteps) return directive;
     const goal = deps.controller.mustGoal(goalId);
     const observed = deps.store.listCardRuns(goalId).filter((run) => goal.cards.includes(run.cardId));
-    const blocked = observed.find((run) => run.blockedReceipt && run.blockedReceipt.candidateDigest === run.candidate?.digest && (run.state === 'REVIEW_FIX' || run.state === 'BUILD'));
+    const blocked = observed.find((run) => (run.blockedReceipt && run.blockedReceipt.candidateDigest === run.candidate?.digest && (run.state === 'REVIEW_FIX' || run.state === 'BUILD')) || (run.state === 'SHIP' && run.blocker === 'driver-ship-boundary'));
     if (blocked) return directive;
     const currentReview = (run: typeof observed[number]) => {
       const digest = run.candidate?.digest;
@@ -36,15 +36,23 @@ export async function runGoal(goalId: string, maxSteps: number, deps: RunDriverD
       return [run.preReview.rounds.filter((r) => r.candidateDigest === digest).at(-1), run.review.invocations.filter((r) => r.candidateDigest === digest).at(-1)].filter((r) => r !== undefined);
     };
     const held = observed.some((run) => currentReview(run).some((r) => r.outcome === 'quota-hold' && r.holdUntil && Date.parse(r.holdUntil) > Date.parse(now())));
-    const poolHeld = observed.some((run) => run.state === 'WAIT' && !currentReview(run).some((r) => r.outcome === 'pass')) && Date.parse(deps.queue.pool(goal.reviewPool, now()).resetAt ?? '') > Date.parse(now());
+    const poolHeld = observed.some((run) => run.state === 'WAIT' && run.candidate && deps.queue.list().some((request) => request.candidateDigest === run.candidate?.digest && request.requesters.includes(`${goalId}:${run.cardId}`) && ['queued', 'running', 'retry-after', 'lost'].includes(request.state) && Date.parse(deps.queue.pool(request.pool, now()).resetAt ?? '') > Date.parse(now())));
     if (held || poolHeld || directive.kind === 'wait' && ['review-quota', 'pre-review-quota'].includes(directive.on)) return directive;
     const cardDeadline = directive.kind === 'run-card' ? Date.parse(directive.cardDeadline)
       : directive.kind === 'wait' ? Math.min(...observed.filter((run) => run.state !== 'DONE').map((run) => Date.parse(run.deadline)))
+        : directive.kind === 'close' ? Math.min(...observed.filter((run) => directive.missing.some((item) => item.startsWith(`${run.cardId}:`))).map((run) => Date.parse(run.deadline)))
         : Number.POSITIVE_INFINITY;
-    const remaining = Math.min(Date.parse(directive.deadline), cardDeadline) - Date.parse(now());
+    const goalDeadline = Date.parse(directive.deadline);
+    const currentTime = Date.parse(now());
+    const untilTime = directive.kind === 'wait' && directive.until ? Date.parse(directive.until) : Number.POSITIVE_INFINITY;
+    if (![goalDeadline, currentTime, cardDeadline, untilTime].every((value) => !Number.isNaN(value))) {
+      deps.onFailure?.('invalid directive or card timestamp');
+      return directive;
+    }
+    const remaining = Math.min(goalDeadline, cardDeadline) - currentTime;
     if (remaining <= 0) return directive;
     if (directive.kind === 'wait') {
-      const until = directive.until ? Date.parse(directive.until) - Date.parse(now()) : Number.POSITIVE_INFINITY;
+      const until = untilTime - currentTime;
       const delay = Math.min(remaining, Math.max(1, directive.pollSeconds ?? 90) * 1000, until);
       if (delay > 0) await sleep(delay);
       continue;

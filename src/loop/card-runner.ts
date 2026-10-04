@@ -57,6 +57,8 @@ export interface CardRunnerDeps {
   /** Concurrent runner for review panels; defaults to the async spawn, or wraps `runner` when a scripted one is given. */
   asyncRunner?: Runner;
   shipPath?: ShipPath;
+  /** Refuse shipping in a driver worker; ordinary card commands retain their default. */
+  allowShip?: boolean;
   now?: () => string;
 }
 
@@ -168,6 +170,7 @@ export class CardRunner {
   readonly runner: SyncRunner;
   readonly asyncRunner: Runner;
   readonly shipPath: ShipPath;
+  private readonly allowShip: boolean;
   private readonly clock: () => string;
 
   constructor(deps: CardRunnerDeps) {
@@ -185,6 +188,7 @@ export class CardRunner {
     this.gh = deps.gh ?? new GhProbe(this.runner);
     this.clock = deps.now ?? (() => new Date().toISOString());
     this.shipPath = deps.shipPath ?? shipPathFor(deps.config, deps.repo.mainRoot, this.runner);
+    this.allowShip = deps.allowShip ?? true;
   }
 
   /** The repository copy of the lessons file: read at PREPARE, appended at CLOSE. */
@@ -913,6 +917,10 @@ export class CardRunner {
     // R3 as a command: a fresh formal pass for this candidate before any ship is issued.
     const formal = this.formalReviewGate(goal, card, run);
     if (formal) return formal;
+    if (!this.allowShip) {
+      const next = this.save({ ...run, state: 'SHIP', blocker: 'driver-ship-boundary' });
+      return { run: next, directive: { kind: 'wait', cardId: card.id, on: 'driver-ship-boundary', pollSeconds: 90, narration: 'Shipping requires a separate operator invocation outside aidlc run.' } };
+    }
     // A ship-path decision is bound here, before any intent: the policy in force (R8) and the delta since the formal stage's
     // last reviewed candidate (R9); a delta above the cap refuses the dispatch with nothing recorded.
     const bindings = this.shipBindings(run);
@@ -2720,4 +2728,3 @@ export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefine
   if (!episode || episode.terminal !== 'succeeded') return episode;
   return { ...episode, terminal: undefined };
 }
-

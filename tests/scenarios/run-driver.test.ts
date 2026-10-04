@@ -5,9 +5,13 @@ import { MockProvider } from '../../src/providers/mock.ts';
 import { runGoal } from '../../src/loop/run-driver.ts';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { readdirSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { addMs, CardRun, Goal } from '../../src/core/types.ts';
 import { resourceKeys } from '../../src/coordination/lease.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { hostname } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 function cardGoal(fx: ReturnType<typeof makeFixture>) {
   writeCard(fx, { id: 'T1-ONE', title: 'One card' });
@@ -84,6 +88,45 @@ test('a current candidate quota hold stops even when the pool has no reset time'
   } finally { fx.cleanup(); }
 });
 
+test('ship-stage pool hold survives an earlier pre-review pass', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'candidate-a', sha: 'a', dirty: false }, preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'pre', candidateDigest: 'candidate-a', requestedAt: fx.now(), outcome: 'pass' }] } }));
+    const pool = `${goal.reviewPool}/formal`;
+    fx.queue.savePool({ ...fx.queue.pool(pool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.enqueue({ pool, repository: fx.repo.key, candidateDigest: 'candidate-a', base: 'main', policyVersion: 'v1', reviewer: 'formal', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
+    let polls = 0;
+    await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
+    assert.equal(polls, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('a driver-scoped card runner refuses shipping before the adapter and merge intent', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const card = fx.card('T1-ONE');
+    const shipPath = new DryRunShipPath(['merged']);
+    let ships = 0;
+    const original = shipPath.ship.bind(shipPath);
+    shipPath.ship = (...args) => { ships++; return original(...args); };
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath, now: fx.now, allowShip: false });
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const ready = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod', redReceipt: 'red', candidateSha: 'a' });
+    r = runner.next(fx.goal(goal.id), card, ready);
+    assert.equal(r.directive.kind, 'wait');
+    assert.equal(r.run.blocker, 'driver-ship-boundary');
+    assert.equal(ships, 0);
+    assert.equal(fx.ops.list({ goalId: goal.id }).length, 0);
+    const provider = new MockProvider();
+    await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
+    assert.equal(provider.calls.length, 0);
+  } finally { fx.cleanup(); }
+});
+
 test('a review block for a replaced candidate does not stop an ordinary wait', async () => {
   const fx = makeFixture();
   try {
@@ -101,8 +144,9 @@ test('a held review pool stops a waiting card but does not stop unrelated planni
   try {
     const goal = cardGoal(fx);
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
-    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT' }));
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'candidate-a', sha: 'a', dirty: false } }));
     fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.enqueue({ pool: goal.reviewPool, repository: fx.repo.key, candidateDigest: 'candidate-a', base: 'main', policyVersion: 'v1', reviewer: 'pre', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
     const provider = new MockProvider();
     const directive = await runGoal(goal.id, 3, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
     assert.equal(directive.kind, 'wait');
@@ -265,14 +309,35 @@ test('scripted provider drives plan, projection, card, verification and closure 
     const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', explicitSize: 'T1', affectedSurfaces: [] });
     const provider = new MockProvider();
     const complete = provider.complete.bind(provider);
+    let workerShips = 0;
     provider.complete = async (request) => {
       const directive = JSON.parse(request.prompt.slice(request.prompt.indexOf('{'), request.prompt.lastIndexOf('}') + 1)) as { kind: string };
       if (directive.kind === 'plan') fx.controller.report({ goalId: goal.id, generation: 0, result: 'plan-produced', data: { planRef: 'plans/feature.md' } });
       if (directive.kind === 'project-cards') fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-ONE'] } });
-      if (directive.kind === 'run-card') driveCardToDone(fx, goal.id, 'T1-ONE');
+      if (directive.kind === 'run-card') {
+        const shipPath = new DryRunShipPath(['merged']);
+        shipPath.ship = (...args) => { workerShips++; return new DryRunShipPath(['merged']).ship(...args); };
+        const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath, now: fx.now, allowShip: false });
+        const card = fx.card('T1-ONE');
+        let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+        r = runner.next(fx.goal(goal.id), card, r.run);
+        const ready = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:T1-ONE', redReceipt: 'red:T1-ONE', candidateSha: 'a' });
+        r = runner.next(fx.goal(goal.id), card, ready);
+        assert.equal(r.directive.kind, 'wait');
+      }
       if (directive.kind === 'verify-arc') fx.controller.report({ goalId: goal.id, generation: 0, result: 'arc-verified', data: { evidence: 'integrated check passed' } });
       return complete(request);
     };
+    const boundary = await runGoal(goal.id, 8, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
+    assert.equal(boundary.kind, 'wait');
+    assert.equal(workerShips, 0);
+    const operator = fx.runner();
+    const card = fx.card('T1-ONE');
+    let shipped = operator.next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, card.id)!);
+    assert.equal(shipped.directive.kind, 'close');
+    const closed = operator.markClosure(fx.goal(goal.id), card, shipped.run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true }, { skipped: 'fixture: no rule learned' });
+    shipped = operator.next(fx.goal(goal.id), card, closed);
+    assert.equal(shipped.directive.kind, 'done');
     const directive = await runGoal(goal.id, 8, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
     assert.equal(directive.kind, 'done');
     assert.deepEqual(provider.calls.map((call) => JSON.parse(call.prompt.slice(call.prompt.indexOf('{'), call.prompt.lastIndexOf('}') + 1)).kind), ['plan', 'project-cards', 'run-card', 'verify-arc']);
@@ -303,7 +368,7 @@ test('a recoverable close directive delegates missing closure work to the existi
     const lease = fx.leases.claim(resourceKeys.card(fx.repo.key, 'T1-ONE'), { operation: 'card:T1-ONE:close', now: fx.now() });
     assert.notEqual(lease.status, 'held');
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
-    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'CLOSE', mergeVerified: true, ownerGeneration: lease.lease.generation, closure: { metadata: false, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true } }));
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'CLOSE', deadline: addMs(fx.now(), 1000), mergeVerified: true, ownerGeneration: lease.lease.generation, closure: { metadata: false, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true } }));
     fx.store.saveGoal(Goal.parse({ ...fx.goal(goal.id), state: 'CLOSE', stages: { ...fx.goal(goal.id).stages, development: 'pass' } }));
     const provider = new MockProvider();
     const complete = provider.complete.bind(provider);
@@ -314,6 +379,110 @@ test('a recoverable close directive delegates missing closure work to the existi
     const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
     assert.equal(directive.kind, 'done');
     assert.equal(provider.calls.length, 1);
+    assert.equal(provider.calls[0]?.timeoutMs, 1000);
+  } finally { fx.cleanup(); }
+});
+
+test('expired CLOSE card deadline prevents provider work', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'CLOSE', deadline: fx.now(), mergeVerified: true, closure: { metadata: false, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true } }));
+    fx.store.saveGoal(Goal.parse({ ...fx.goal(goal.id), state: 'CLOSE', stages: { ...fx.goal(goal.id).stages, development: 'pass' } }));
+    const provider = new MockProvider();
+    const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
+    assert.equal(directive.kind, 'close');
+    assert.equal(provider.calls.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('invalid ISO-shaped goal deadline fails closed before provider dispatch', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', affectedSurfaces: [] });
+    const controller = Object.create(fx.controller) as typeof fx.controller;
+    controller.next = () => ({ ...fx.controller.next(goal.id), deadline: '2026-99-99T00:00:00.000Z' });
+    const failures: string[] = [];
+    const provider = new MockProvider();
+    await runGoal(goal.id, 2, { controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now, onFailure: (reason) => failures.push(reason) });
+    assert.equal(provider.calls.length, 0);
+    assert.match(failures[0] ?? '', /invalid.*timestamp/);
+  } finally { fx.cleanup(); }
+});
+
+test('invalid wait-until timestamp fails before polling', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'BUILD' }));
+    const controller = Object.create(fx.controller) as typeof fx.controller;
+    controller.next = () => ({ ...fx.controller.next(goal.id), kind: 'wait' as const, on: 'test', until: '2026-99-99T00:00:00.000Z' });
+    const failures: string[] = [];
+    let polls = 0;
+    await runGoal(goal.id, 2, { controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; }, onFailure: (reason) => failures.push(reason) });
+    assert.equal(polls, 0);
+    assert.match(failures[0] ?? '', /invalid.*timestamp/);
+  } finally { fx.cleanup(); }
+});
+
+test('invalid card deadline fails before dispatch', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, deadline: '2026-99-99T00:00:00.000Z' }));
+    const failures: string[] = [];
+    const provider = new MockProvider();
+    const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now, onFailure: (reason) => failures.push(reason) });
+    assert.equal(directive.kind, 'run-card');
+    assert.equal(provider.calls.length, 0);
+    assert.match(failures[0] ?? '', /invalid.*timestamp/);
+  } finally { fx.cleanup(); }
+});
+
+test('run worker binds the relative parent override as an absolute root in a real child', () => {
+  const fx = makeFixture();
+  try {
+    const nested = path.join(fx.tmp, 'nested');
+    mkdirSync(nested);
+    const cliUrl = pathToFileURL(path.resolve('src/cli/main.ts')).href;
+    const pathsUrl = pathToFileURL(path.resolve('src/state/paths.ts')).href;
+    const execUrl = pathToFileURL(path.resolve('src/probes/exec.ts')).href;
+    const script = `const {runProviderFor}=await import(${JSON.stringify(cliUrl)}); const {resolveStatePaths}=await import(${JSON.stringify(pathsUrl)}); const {run}=await import(${JSON.stringify(execUrl)}); const root=resolveStatePaths().root; const provider=runProviderFor(root,(_c,_a,opts)=>run(process.execPath,['-e','process.stdout.write(JSON.stringify({result:process.env.AIDLC_STATE_DIR+"|"+process.env.AIDLC_RUN_NO_SHIP}))'],opts)); const result=await provider.complete({role:'planner',prompt:'inspect',system:'',effort:'medium',cwd:${JSON.stringify(fx.tmp)}}); process.stdout.write(JSON.stringify({root,text:result.text}));`;
+    const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: nested, env: { ...process.env, AIDLC_STATE_DIR: '../.aidlc' }, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual(JSON.parse(child.stdout), { root: fx.paths.root, text: `${fx.paths.root}|1` });
+  } finally { fx.cleanup(); }
+});
+
+test('driver worker refuses explicit scaffold ship before task execution', () => {
+  const fx = makeFixture({ config: { shipPath: 'scaffold' } });
+  try {
+    writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'scaffold' }));
+    const output = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'card', 'ship', 'T1-ONE'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_RUN_NO_SHIP: '1' }, encoding: 'utf8', timeout: 30_000 });
+    assert.notEqual(output.status, 0);
+    assert.match(output.stderr, /separate operator invocation/);
+  } finally { fx.cleanup(); }
+});
+
+test('driver child card next stops at ship boundary without invoking merge', () => {
+  const fx = makeFixture({ actor: { session: 'win-A', host: hostname(), pid: 1, processStart: new Date().toISOString() } });
+  try {
+    fx.clock.now = new Date().toISOString();
+    writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks' }));
+    const goal = cardGoal(fx);
+    const card = fx.card('T1-ONE');
+    const runner = fx.runner();
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod', redReceipt: 'red', candidateSha: 'a' });
+    const output = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'card', 'next', 'T1-ONE', '--goal', goal.id, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_RUN_NO_SHIP: '1', AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 30_000 });
+    assert.equal(output.status, 0, output.stderr);
+    assert.equal(JSON.parse(output.stdout).directive.kind, 'wait');
+    assert.equal(fx.store.getCardRun(goal.id, card.id)?.blocker, 'driver-ship-boundary');
+    assert.equal(fx.ops.list({ goalId: goal.id }).length, 0);
   } finally { fx.cleanup(); }
 });
 
