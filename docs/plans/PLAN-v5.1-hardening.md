@@ -447,6 +447,10 @@ New findings from running the waves are appended here by the card that meetsthem
 ## 10. After merge
 none this version (development-only target)
 
+## Context pack split
+
+On 2026-10-04 the user continued with all decisions delegated and multiple PRs authorized. T1-RUN-CONTEXT-PACK delivers W5's deterministic context pack independently while telemetry remains in another session. T1-RUN-DRIVER depends on this card and retains the run loop, watch view and integrated acceptance. The pack uses an 8192-token conservative bound measured as UTF-8 bytes; lessons are removed from the end before trimming the plan, and acceptance is never truncated. Missing local sources are explicit data, and paths outside the repository are refused. Both PRs remain charged to the same W5 source budget and shared +650 envelope.
+
 ## 2026-10-04 delegated repair amendment
 
 The user delegated all decisions and authorized multiple PRs to finish the next card. R3 decision 1 of T1-BOUND-TELEMETRY-2 found 14 concrete concurrency, journal-failure recovery, dispatch and board defects. Keep every acceptance criterion and the review limits. Expand this card to +400 net source lines and 3200 total changed lines; expand the shared W2+W4+W5 envelope from +400 to +650 (+96 existing W2, at most +400 W4, at least +154 reserved for W5). Earlier budget figures above are historical and superseded by this amendment. The implementation must retain pending recovery in existing goal/card records; no new state-file type or config key is authorized.
