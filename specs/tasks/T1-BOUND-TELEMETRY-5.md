@@ -40,7 +40,7 @@ dod_command: npm run check
 dod_exit: 0
 requirements:
   - R1. WHEN a bound of the README Limits table fires, the loop shall journal one `BOUND_FIRED` event whose zod payload names the bound and whose key names the firing from persisted facts (goal and generation, card, bound, value).
-  - R2. The board shall render one `Bounds:` line giving, per fired bound, the firing count and the terminal outcome of the goal after each firing (`DONE`, `STOP/<reason>` or `open`), and shall name as incomplete every journal it cannot read in full and every goal whose firing is pending.
+  - R2. The board shall render one `Bounds:` line giving, per fired bound, the firing count and the terminal outcome of the goal after each firing (`DONE`, `STOP/<reason>` or `open`), or `incomplete` for a firing whose outcome is undecidable because a present terminal time is malformed; it shall name as incomplete every journal it cannot read in full and every goal whose firing is pending.
   - R3. The change shall add no config key or persistent state file under `.aidlc/`; a transient sibling journal lock is permitted and removed after each operation.
   - R4. The README Limits table shall state that the lifecycle repair bound is defined and not enforced.
   - R5. WHEN a transition fires a bound, the loop shall save the firing as `pendingFiring` in the same record write as the stop or state it causes, and shall journal it only after that write.
@@ -102,7 +102,7 @@ acceptance:
   - 51. R2 admission applies the same locked goal checks after diff collection, with no reviewer dispatched on late recovery or stale generation (tests/scenarios/review-block.test.ts). [R6] [dod arm 1]
   - 52. Formal result completion replays or refuses a newly pending card firing/event before installing another firing or stop; an issued review result remains recoverable and original evidence replays once (tests/scenarios/review-block.test.ts). [R6] [R8] [dod arm 1]
   - 53. Ship completion checks goal recovery as well as card recovery before review-ledger and result commits. A refused replay retains the issued result for retry without overwriting either outbox or issuing a duplicate unresolved external effect (tests/scenarios/t0-flow.test.ts). [R6] [R8] [dod arm 1]
-  - 54. Bounds keeps distinct firing counts and decidable legacy DONE/STOP positional outcomes when a later terminal has malformed time; genuinely undecidable timed firings are incomplete, not false open, and other journals still count (tests/infra/board.test.ts). [R2] [dod arm 1]
+  - 54. Bounds keeps distinct firing counts and decidable legacy DONE/STOP positional outcomes when a later terminal has malformed time; genuinely undecidable timed firings use an `incomplete` count, not false open, and the journal is named incomplete while other journals still count (tests/infra/board.test.ts). [R2] [dod arm 1]
   - 55. CHANGELOG Unreleased names the T1-BOUND-TELEMETRY-5 linked repair in an exact sentence asserted by tests/infra/board.test.ts; all predecessor CHANGELOG assertions remain (tests/infra/board.test.ts). [R1] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
