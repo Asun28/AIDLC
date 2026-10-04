@@ -33,7 +33,7 @@ acceptance:
   - 4. `contextPack` returns the same bytes for the same inputs, includes each named part, keeps LESSONS lines that name the card's paths or modules and no other, and cuts at the declared budget from the LESSONS end first, never cutting the acceptance list (tests/core/context-pack.test.ts). [R3] [dod arm 1]
   - 5. `git diff --numstat origin/main...HEAD -- src` plus the recorded W2, W4 and other W5 split deltas is at most +1360; the close-out states each delta and the total. [R4]
   - 6. `docs/OPERATIONS.md` documents `aidlc run`, `board --watch` and the context pack, and states how `aidlc run` relates to the `/goal` recipe of T0-UNATTENDED-RUNS; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/scenarios/run-driver.test.ts). [R1] [R2] [R3] [dod arm 1]
-depends_on: [T1-README-SCOPE, T1-BOUND-TELEMETRY-5, T1-RUN-CONTEXT-PACK-2, T1-RUN-DRIVER-CORE]
+depends_on: [T1-README-SCOPE, T1-BOUND-TELEMETRY-2, T1-RUN-CONTEXT-PACK-2, T1-RUN-DRIVER-CORE]
 budget: 900
 tdd: true
 sweep: "Survey of main at 5983a1e. No command loops next, act and report: next (main.ts:334-342) and report (344-376) are single-shot; the only loop is the CI poll in github-ship.ts:245. Providers (providers/types.ts:25-40) return CompletionResult with optional usage; claude-api.ts:90-93 and claude-code.ts:63 fill it; the loop never calls a provider (evals main.ts:933 and doctor 185 only). aidlc board has no watch mode; renderBoard board.ts:46-86. The run-card context (controller.ts:360) carries revision, generation, reviewPool, modules, dataImpact, wave, workers and arcReasons. T0-UNATTENDED-RUNS (merged, PR 61) documents /goal as the outer driver and names the directive kinds done, stop, ask, checkpoint and wait."
@@ -45,7 +45,7 @@ doc_sync: docs/OPERATIONS.md (Running a goal), README.md (Quick start), CHANGELO
 
 # T1-RUN-DRIVER
 
-2026-10-05 delegated split: T1-RUN-DRIVER-CORE delivers R1 independently while telemetry remains owned by another session. This card retains the watch view and integrated acceptance; its telemetry prerequisite follows the current linked successor. The budget decision in plans/run-driver-core.md supersedes the historical +158 W5 and +400 shared figures below. All split source lines remain charged to W5. No part of this card is marked complete until integrated verification.
+2026-10-05 delegated split: T1-RUN-DRIVER-CORE delivers R1 independently while telemetry remains owned by another session. This card retains the watch view and integrated acceptance; its telemetry prerequisite must follow the linked successor when that successor is registered on the shared base. The budget decision in plans/run-driver-core.md supersedes the historical +158 W5 and +400 shared figures below. All split source lines remain charged to W5. No part of this card is marked complete until integrated verification.
 
 2026-10-04 delegated split: R3 and its context-pack tests are delivered by T1-RUN-CONTEXT-PACK-2. This card consumes that dependency and retains integrated acceptance of all three parts; all source lines remain charged to W5.
 
