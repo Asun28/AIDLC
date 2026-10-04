@@ -439,3 +439,13 @@ New findings from running the waves are appended here by the card that meetsthem
 
 ## 10. After merge
 none this version (development-only target)
+
+## Context pack split
+
+After the reviewed feature's Windows CI failure, T1-RUN-CONTEXT-PACK-2 consolidates the unmerged feature and T0-CONTEXT-SOURCE-ERRORS into one bounded continuation under the user's continue-unblock authorization. Preserve predecessor PR 145, every review and attempt receipt, and its passing R3. Repair Windows short-name canonicalization, cold helper startup and handle-error classification; retain all behavior tests. One fresh initial-plus-repair review cycle and 900 changed-line cap apply to this successor; previous counters do not reset. All source lines remain charged to W5.
+
+T0-CONTEXT-SOURCE-ERRORS was planned as a required post-merge correction after the first formal pass, then consolidated into this successor before any implementation or merge. No separate feature or review cycle was run for that unstarted card.
+
+The context-pack successor adds +140 net source lines against remote main 86af6ce, charged to W5; its tests and metadata are excluded from that source count.
+
+On 2026-10-04 the user continued with all decisions delegated and multiple PRs authorized. T1-RUN-CONTEXT-PACK delivers W5's deterministic context pack independently while telemetry remains in another session. T1-RUN-DRIVER depends on this card and retains the run loop, watch view and integrated acceptance. The pack uses an 8192-token conservative bound measured as UTF-8 bytes; lessons are removed from the end before trimming the plan, and acceptance is never truncated. Missing local sources are explicit data, and paths outside the repository are refused. Both PRs remain charged to the same W5 source budget; the shared envelope is +650 under the locally approved telemetry repair amendment, to be published by that card's owner.

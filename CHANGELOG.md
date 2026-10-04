@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-RUN-CONTEXT-PACK-2 (supersedes T1-RUN-CONTEXT-PACK): attach deterministic, bounded JSON context to run-card directives, preserving full acceptance and exposing missing sources and truncation. Verify opened plan and lesson handles before reading; accept Windows short-name roots and distinguish unavailable verification from missing sources.
+
 - T1-README-SCOPE: clarify in the README opening paragraph that aidlc is a driver-agnostic bounded-autonomy control plane for coding agents, not an implementation of the AWS AI-DLC methodology.
 
 - T0-CI-RERUN-STRUCTURED-2: structured gate evidence no longer hides independently supplied failed jobs. Aggregate receipt wrappers are explicit; duplicate or contradictory independent jobs prevent a transient rerun.
