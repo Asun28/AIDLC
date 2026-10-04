@@ -22,6 +22,11 @@ test('only directory allow_paths match descendants; routing modules accept compl
   assert.deepEqual(pack.lessons, ['- docs/guide.md: yes', '- docs/notes/child.md: yes', '- src/router: yes']);
 });
 
+test('Unicode word characters do not split module or literal path names', () => {
+  const lessons = '- loop: keep\n- éloop: exclude\n- loopé: exclude\n- loop\u0301: exclude\n- \u0301loop: exclude\n- src/loop/x.tsé: exclude\n- ésrc/loop/x.ts: exclude';
+  assert.deepEqual(JSON.parse(contextPack(input, { planSection: '', lessons })).lessons, ['- loop: keep']);
+});
+
 test('budget removes lesson tail before plan text and preserves complete acceptance', () => {
   const full = contextPack(input, sources, 285);
   assert.ok(Buffer.byteLength(full) <= 285, full);

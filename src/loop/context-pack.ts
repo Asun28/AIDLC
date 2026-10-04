@@ -70,7 +70,7 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
   const names = [...card.allow_paths, ...modules.flatMap((m) => m.startsWith('src/') ? [m, m.slice(4)] : [m, `src/${m}`])].filter(Boolean);
   const relevant = (line: string) => names.some((name) => {
     const descendants = card.allow_paths.includes(name) && name.endsWith('/') ? '|/' : '';
-    return new RegExp(`(^|[^\\w/.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\w/.-]|\\.(?=$|\\s)${descendants})`).test(line);
+    return new RegExp(`(^|[^\\p{L}\\p{N}\\p{M}\\p{Pc}/.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\p{L}\\p{N}\\p{M}\\p{Pc}/.-]|\\.(?=$|\\s)${descendants})`, 'u').test(line);
   });
   const pack = { tokenBudget, planRef: card.plan_ref ?? null, planSection: sources.planSection, acceptance: card.acceptance, allow_paths: card.allow_paths, non_goals: card.non_goals ?? [], lessons: sources.lessons.split(/\r?\n/).filter((l) => l.startsWith('- ') && relevant(l)), missingSources: sources.missingSources ?? [], truncated: { lessons: 0, plan: false } };
   const fits = () => Buffer.byteLength(JSON.stringify(pack), 'utf8') <= tokenBudget;
