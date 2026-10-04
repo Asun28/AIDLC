@@ -1,7 +1,7 @@
 ---
 id: T0-CI-RERUN-STRUCTURED-2
 title: (successor) Independent job failures remain required beside structured gate evidence; a CI failure is transient (the one rerun) only on structured evidence for every red check, never on log text (issue 76 item 2, plan finding F5)
-status: todo
+status: merged
 branch: T0-CI-RERUN-STRUCTURED-2
 worktree: D:\wt\AIDLC\T0-CI-RERUN-STRUCTURED-2
 allow_paths:
