@@ -802,6 +802,8 @@ export const CardRun = z.object({
   /** The outbox of a bound firing (card T1-BOUND-TELEMETRY-2): saved with the stop or state it causes, cleared once it is journaled. */
   pendingFiring: BoundFired.optional(),
   pendingEvents: z.array(PendingJournalEvent).optional(),
+  /** Proof that a deadline extension changed this run, retained until its goal commits the journal notes. */
+  lastExtension: z.object({ id: z.string(), fromState: CardState, fromDeadline: IsoTimestamp, fromStopReason: StopReason.optional() }).optional(),
   updatedAt: IsoTimestamp,
 });
 export type CardRun = z.infer<typeof CardRun>;
@@ -890,6 +892,8 @@ export const Goal = z.object({
   /** Current accepted requirement revision. */
   revision: z.number().int().nonnegative(),
   revisions: z.array(GoalRevision).min(1),
+  /** Revision of this record's locked writes; independent of requirement revision. */
+  storeRevision: z.number().int().nonnegative().default(0),
   repository: z.string().min(1),
   routing: RoutingResult,
   target: DeliveryTarget,
@@ -913,6 +917,8 @@ export const Goal = z.object({
   linkedFrom: z.string().optional(),
   pendingFiring: BoundFired.optional(), // as on a card run
   pendingEvents: z.array(PendingJournalEvent).optional(),
+  /** Durable coordinator for a deadline extension spanning the goal and projected card records. */
+  pendingExtension: z.object({ id: z.string(), at: IsoTimestamp, by: z.string(), newDeadline: IsoTimestamp, reason: z.string(), cards: z.array(CardId), generation: z.number().int().nonnegative() }).optional(),
   createdAt: IsoTimestamp,
   updatedAt: IsoTimestamp,
 });

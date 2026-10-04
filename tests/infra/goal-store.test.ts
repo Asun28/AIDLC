@@ -349,19 +349,30 @@ describe('state/goal-store goal writes under the store lock (T1-BOUND-TELEMETRY-
     assert.equal(store.getGoal('goal-locked')?.maxWorkers, 1, 'the same write succeeds once the lock is released');
   });
 
-  it('acceptance 11: a plain goal write from a snapshot without pendingFiring keeps the persisted one [R6] [R7]', () => {
+  it('acceptance 11: stale goal snapshots cannot erase a pending firing or a concurrent stop [R6] [R7]', () => {
     const store = new GoalStore(paths);
     const goal = store.saveGoal(makeGoal('goal-outbox'));
     const pendingFiring = { bound: 'arc-deadline', key: 'goal-outbox@0/-/arc-deadline/2026-09-11T13:00:00.000Z' };
-    store.saveGoal({ ...goal, pendingFiring } as Goal);
+    const withFiring = store.saveGoal({ ...goal, pendingFiring } as Goal);
     assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'the firing is saved with the goal');
-    store.saveGoal({ ...goal, maxWorkers: 1 });
+    assert.throws(() => store.saveGoal({ ...goal, maxWorkers: 1 }), (err: unknown) => err instanceof StoreError && err.code === 'GOAL_STALE');
     assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'a snapshot without it keeps it');
-    assert.equal(store.getGoal('goal-outbox')?.maxWorkers, 1);
+    assert.equal(store.getGoal('goal-outbox')?.maxWorkers, goal.maxWorkers);
     const other = { bound: 'attempts', key: 'goal-outbox@0/T1-A/attempts/3' };
-    assert.deepEqual(store.saveGoal({ ...goal, pendingFiring: other } as Goal).pendingFiring, other, 'a snapshot with its own firing writes it');
+    assert.deepEqual(store.saveGoal({ ...withFiring, pendingFiring: other } as Goal).pendingFiring, pendingFiring, 'a plain snapshot cannot replace an unflushed firing');
     atomicWriteJson(store.goalFile('goal-outbox'), { ...store.getGoal('goal-outbox'), updatedAt: iso() });
     const bytes = readFileSync(store.goalFile('goal-outbox'), 'utf8');
-    for (const change of [(g: Goal | undefined) => g, () => undefined]) assert.deepEqual([store.updateGoal('goal-outbox', change).pendingFiring, readFileSync(store.goalFile('goal-outbox'), 'utf8')], [other, bytes], 'an update that returns the record, or nothing, writes nothing');
+    for (const change of [(g: Goal | undefined) => g, () => undefined]) assert.deepEqual([store.updateGoal('goal-outbox', change).pendingFiring, readFileSync(store.goalFile('goal-outbox'), 'utf8')], [pendingFiring, bytes], 'an update that returns the record, or nothing, writes nothing');
+  });
+
+  it('a stale goal snapshot cannot erase a concurrent stop or extension, and a fresh save cannot clear the event outbox', () => {
+    const store = new GoalStore(paths);
+    const original = store.saveGoal(makeGoal('goal-stop-cas'));
+    const pendingEvents = [{ type: 'GOAL_STOPPED' as const, goalId: original.id, generation: 0, data: { eventKey: 'goal-stop-cas@0/stop/1' } }];
+    const stopped = store.updateGoal(original.id, (g) => ({ ...g!, state: 'STOP', terminal: true, stop: { reason: 'time', detail: 'deadline', nextAction: 'extend', global: false, at: iso(), unresolvedOperations: [] }, pendingEvents, deadlines: { ...g!.deadlines, extensions: [...g!.deadlines.extensions, { at: iso(), by: 'lead', newDeadline: iso(100_000_000), reason: 'more time' }] } }));
+    assert.throws(() => store.saveGoal({ ...original, state: 'RUN' }), (err: unknown) => err instanceof StoreError && err.code === 'GOAL_STALE');
+    assert.deepEqual([store.getGoal(original.id)?.state, store.getGoal(original.id)?.deadlines.extensions.length], ['STOP', 1]);
+    store.saveGoal({ ...stopped, pendingEvents: [] });
+    assert.equal(store.getGoal(original.id)?.pendingEvents?.length, 1, 'only the outbox flush may clear a committed event');
   });
 });

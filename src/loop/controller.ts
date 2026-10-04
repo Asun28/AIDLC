@@ -43,7 +43,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { boundsOfJournals, journalFiring, renderBoard, outcomeOf } from '../state/board.ts';
+import { boundsOfJournals, journalFiring, journalOnce, renderBoard, outcomeOf } from '../state/board.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import { loadCardRegistry, validateRegistry, type CardRegistry } from '../artifacts/card.ts';
 import type { ProjectConfig } from '../config.ts';
@@ -152,7 +152,7 @@ export class GoalController {
       // LC6: staging actions run automatically only within the already requested staging scope.
       authorizations.push({ id: `auth-staging-${id}`, kind: 'staging', grantedBy: options.grantedBy ?? request.source, grantedAt: now, goalRevision: 0, operations: [], migrations: [], evidenceRefs: [], ref: 'explicit online-testing/staging (or production) request authorises the staging scope only; production needs its own bound approval' });
     }
-    const goal: Goal = Goal.parse({
+    let goal: Goal = Goal.parse({
       schemaVersion: 1,
       id,
       generation: 0,
@@ -179,7 +179,7 @@ export class GoalController {
     });
     const claim = this.leases.claim(resourceKeys.goal(this.repo.key, goal.id), { operation: 'coordinate', now });
     if (claim.status === 'held') throw new Error(`goal lease unexpectedly held by ${claim.lease.owner.session}`);
-    this.store.saveGoal(goal);
+    goal = this.store.saveGoal(goal);
     const j = this.journal(goal.id);
     j.append({ type: 'GOAL_CREATED', goalId: goal.id, generation: 0, data: { request: request.text.slice(0, 500), source: request.source, target, deadline: deadlines.goalDeadline, leaseGeneration: claim.lease.generation } });
     j.append({ type: 'GOAL_ROUTED', goalId: goal.id, generation: 0, data: { routing, line: formatRouting(routing) } });
@@ -195,6 +195,7 @@ export class GoalController {
     const flushed = this.flush(this.mustGoal(goalId));
     if (flushed.held) return flushed.held;
     let goal = flushed.goal;
+    if (goal.pendingExtension) return Directive.parse({ kind: 'wait', ...this.baseOf(goal), on: `extension:${goal.pendingExtension.id}`, pollSeconds: 60, narration: `deadline extension ${goal.pendingExtension.id} is unfinished; retry aidlc goal extend with the same deadline` });
     const now = this.clock();
     const base = (g: Goal) => ({ goalId: g.id, generation: g.generation, revision: g.revision, goalState: g.state, deadline: effectiveGoalDeadline(g.deadlines), skills: g.routing.skills ?? [] });
 
@@ -210,6 +211,7 @@ export class GoalController {
       const admission = checkAdmission(effectiveGoalDeadline(goal.deadlines), now, goal.deadlines.graceMs);
       if (admission.phase === 'expired') {
         goal = this.persistStop(goal, makeStop('time', 'reconciliation grace expired with unresolved operations', 'hand off the exact environment and unresolved operation ids to the named owner', { at: now, unresolvedOperations: unresolved.map((o) => o.id) }), boundFired(goal, 'reconciliation-grace', effectiveGoalDeadline(goal.deadlines)).data);
+        if (!goal.stop) return this.next(goal.id);
         return this.flush(goal).held ?? Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Reconciliation grace expired.' });
       }
       return Directive.parse({ kind: 'wait', ...base(goal), on: `reconcile:${unresolved.map((o) => o.id).join(',')}`, until: admission.graceEndsAt, pollSeconds: 60, narration: `Reconcile ${unresolved.length} operation(s) with unknown outcome before admitting any new mutation: run \`aidlc ops reconcile\`.` });
@@ -219,6 +221,7 @@ export class GoalController {
     const admission = checkAdmission(effectiveGoalDeadline(goal.deadlines), now, goal.deadlines.graceMs);
     if (admission.phase !== 'open') {
       goal = this.persistStop(goal, makeStop('time', `goal admission deadline ${effectiveGoalDeadline(goal.deadlines)} reached`, 'hand off with the existing branches/PRs and evidence; an extension must be explicit and recorded (aidlc goal extend)', { at: now, global: false }), boundFired(goal, 'arc-deadline', effectiveGoalDeadline(goal.deadlines)).data);
+      if (!goal.stop) return this.next(goal.id);
       return this.flush(goal).held ?? Directive.parse({ kind: 'stop', ...base(goal), stop: goal.stop, narration: 'Admission deadline reached; no new planned work.' });
     }
 
@@ -262,6 +265,7 @@ export class GoalController {
     const allowance = MAX_PLANNING_INVOCATIONS - goal.counters.planningInvocations;
     if (allowance <= 0 && !goal.planRef) {
       const g = this.persistStop(goal, makeStop('checkpoint', 'planning allowance (initial + one corrective invocation) exhausted without an accepted plan', 'a material new requirement or independently evidenced gap may start a linked new episode; cosmetic revisions cannot refund attempts', { at: now, global: false }), boundFired(goal, 'planning-invocations', goal.counters.planningInvocations).data);
+      if (!g.stop) return this.next(g.id);
       return this.flush(g).held ?? Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Planning allowance exhausted.' });
     }
     if (goal.planRef) {
@@ -293,8 +297,7 @@ export class GoalController {
       }
     }
     // Derived transition CARDS -> RUN.
-    const next = transitionGoal(goal, 'RUN', now, { projectionAuthorized: true });
-    this.store.saveGoal(next);
+    const next = this.store.saveGoal(transitionGoal(goal, 'RUN', now, { projectionAuthorized: true }));
     this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'CARDS', to: 'RUN', cards: goal.cards } });
     return this.nextInRun(next, now);
   }
@@ -320,13 +323,11 @@ export class GoalController {
       // A goal parked in WAIT (polled while its cards were running) resumes to RUN first: the diagram
       // derives VERIFY_ARC from RUN only, never from WAIT.
       if (goal.state === 'WAIT') {
-        const resumed = transitionGoal(goal, 'RUN', now);
-        this.store.saveGoal(resumed);
+        const resumed = this.store.saveGoal(transitionGoal(goal, 'RUN', now));
         this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: 'WAIT', to: 'RUN', reason: 'required cards closed' } });
         goal = resumed;
       }
-      const next = transitionGoal(goal, 'VERIFY_ARC', now, { requiredCardsClosed: true });
-      this.store.saveGoal(next);
+      const next = this.store.saveGoal(transitionGoal(goal, 'VERIFY_ARC', now, { requiredCardsClosed: true }));
       this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: goal.state, to: 'VERIFY_ARC' } });
       return this.nextInVerifyArc(next, now);
     }
@@ -334,20 +335,19 @@ export class GoalController {
       const stopped = runs.filter((r) => r.state === 'STOP');
       const reason: StopReason = stopped.length ? (stopped[0]!.stop?.reason ?? 'card') : 'card';
       const g = this.persistStop(goal, makeStop(reason, `no admissible work: ${arc.reasons.join('; ')}`, stopped.length ? `resolve ${stopped.map((s) => s.cardId).join(',')} (${stopped.map((s) => s.stop?.nextAction ?? '').join(' | ')})` : 'inspect the board and the dependency graph', { at: now, global: false }));
+      if (!g.stop) return this.next(g.id);
       return Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Empty ready set with required gaps is never DONE.' });
     }
     if (arc.verdict === 'wait') {
       if (goal.state !== 'WAIT') {
-        const next = transitionGoal(goal, 'WAIT', now);
-        this.store.saveGoal(next);
+        const next = this.store.saveGoal(transitionGoal(goal, 'WAIT', now));
+        goal = next;
       }
       const running = runs.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state)).map((r) => `${r.cardId}:${r.state}`);
       return Directive.parse({ kind: 'wait', ...base, goalState: 'WAIT', on: running.join(',') || 'dependencies', pollSeconds: 90, narration: `Waiting on ${running.join(', ') || 'dependency closure'}; ${arc.reasons.join('; ')}` });
     }
     if (goal.state === 'WAIT') {
-      const next = transitionGoal(goal, 'RUN', now);
-      this.store.saveGoal(next);
-      goal = next;
+      goal = this.store.saveGoal(transitionGoal(goal, 'RUN', now));
     }
     const cardId = arc.wave[0]!;
     const card = cards.find((c) => c.id === cardId)!;
@@ -388,8 +388,7 @@ export class GoalController {
     if (done) {
       const next = transitionGoal(goal, 'CLOSE', now, { deliveryVerified: true });
       next.stages = { ...next.stages, [goal.target]: 'pass' };
-      this.store.saveGoal(next);
-      return this.nextInClose(next, now);
+      return this.nextInClose(this.store.saveGoal(next), now);
     }
     if (!attempt) {
       attempt = ReleaseAttempt.parse({ id: `rel-${goal.id}-${this.store.listReleases(goal.id).length + 1}`, goalId: goal.id, generation: goal.generation, target: goal.target, state: 'PREPARE', startedAt: now, deadline: effectiveGoalDeadline(goal.deadlines), updatedAt: now });
@@ -416,12 +415,12 @@ export class GoalController {
     }
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
-    const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
-    this.store.saveGoal(next);
-    this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages, at: now } });
+    const done = transitionGoal(goal, 'DONE', now, { closureComplete: true });
+    const next = this.store.saveGoal({ ...done, pendingEvents: [...(goal.pendingEvents ?? []), { type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { eventKey: `${goal.id}@${goal.generation}/done/${goal.storeRevision + 1}`, cards: goal.cards, stages: goal.stages, at: now } }] });
+    const flushed = this.flush(next);
     this.leases.release(resourceKeys.goal(this.repo.key, goal.id), this.leases.read(resourceKeys.goal(this.repo.key, goal.id))?.generation ?? 0);
-    this.writeBoard(next);
-    return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
+    this.writeBoard(flushed.goal);
+    return flushed.held ?? Directive.parse({ kind: 'done', ...this.baseOf(flushed.goal), evidence: { stages: flushed.goal.stages, cards: flushed.goal.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
   }
 
   // ---------------------------------------------------------------------------------------
@@ -432,7 +431,11 @@ export class GoalController {
     const flushed = this.flush(this.mustGoal(input.goalId));
     if (flushed.held) return { goal: flushed.goal, directive: flushed.held };
     let goal = flushed.goal;
+    if (goal.pendingExtension) return { goal, directive: Directive.parse({ kind: 'wait', ...this.baseOf(goal), on: `extension:${goal.pendingExtension.id}`, pollSeconds: 60, narration: `deadline extension ${goal.pendingExtension.id} is unfinished; retry aidlc goal extend with the same deadline` }) };
     const now = this.clock();
+    goal = this.store.updateGoal(input.goalId, (persisted) => {
+    if (!persisted) throw new Error(`unknown goal ${input.goalId}`);
+    goal = persisted;
     if (input.generation !== goal.generation) throw new Error(`stale report: observed generation ${input.generation}, current ${goal.generation}; revalidate before further mutation`);
     if (goal.terminal && input.result === 'revision') throw new Error(`goal ${goal.id} is terminal (${goal.state}); carry the revision into the resume: aidlc goal resume ${goal.id} --text "..." --replace '{"old":"new"}'`);
     if (goal.terminal && input.result !== 'resume') throw new Error(`goal ${goal.id} is terminal (${goal.state}); a fresh user-authorised continuation must link a new generation (aidlc goal resume)`);
@@ -525,7 +528,8 @@ export class GoalController {
         if (goal.state !== 'VERIFY_ARC') throw new GoalTransitionError(goal.state, 'CARDS', 'arc-failed is only accepted in VERIFY_ARC');
         const repair = canOpenIntegrationRepair(goal.counters.integrationRepairCycles);
         if (!repair.allowed) {
-          goal = this.persistStop(goal, makeStop('arc-verify', `integrated acceptance failed again: ${String(d['detail'] ?? '')}`, 'second failure of the bounded repair cycle; hand off with evidence', { at: now, global: false }), boundFired(goal, 'integration-repair', goal.counters.integrationRepairCycles).data);
+          const stop = makeStop('arc-verify', `integrated acceptance failed again: ${String(d['detail'] ?? '')}`, 'second failure of the bounded repair cycle; hand off with evidence', { at: now, global: false });
+          goal = { ...this.persistStopValue(goal, stop), pendingFiring: boundFired(goal, 'integration-repair', goal.counters.integrationRepairCycles, undefined, stop.at).data };
           break;
         }
         const repairCards = Array.isArray(d['repairCards']) ? (d['repairCards'] as unknown[]).map(String) : [];
@@ -593,9 +597,12 @@ export class GoalController {
       default:
         throw new Error(`unknown report result ${String(input.result)}`);
     }
-    goal = this.store.saveGoal(goal);
+    return goal;
+    });
+    const recovered = this.flush(goal);
+    goal = recovered.goal;
     this.writeBoard(goal);
-    return { goal, directive: this.next(goal.id) };
+    return { goal, directive: recovered.held ?? this.next(goal.id) };
   }
 
   // ---------------------------------------------------------------------------------------
@@ -656,29 +663,40 @@ export class GoalController {
     return { goalId: goal.id, generation: goal.generation, revision: goal.revision, goalState: goal.state, deadline: effectiveGoalDeadline(goal.deadlines), skills: goal.routing.skills ?? [] };
   }
 
-  /** A goal stop written only over a record that is not terminal, with its firing pending in the same write; only the writer whose change wrote it flushes the firing and journals GOAL_STOPPED (card T1-BOUND-TELEMETRY-2). */
+  /** The winning writer saves the stop and both journal intents in one locked record write. */
   private persistStop(goal: Goal, stop: StopRecord, pendingFiring?: Goal['pendingFiring']): Goal {
     let won = false;
-    const saved = this.store.updateGoal(goal.id, (g) => (!g || g.terminal ? g : ((won = true), { ...transitionGoal(goal, 'STOP', this.clock(), {}, stop), pendingFiring: pendingFiring && { ...pendingFiring, stoppedAt: stop.at } })));
-    return won ? this.persistStopValue(this.flush(saved).goal, stop, true) : saved;
+    const saved = this.store.updateGoal(goal.id, (g) => {
+      if (!g || g.terminal || g.storeRevision !== goal.storeRevision) return g;
+      won = true;
+      return { ...this.persistStopValue(g, stop), pendingFiring: pendingFiring && { ...pendingFiring, stoppedAt: stop.at } };
+    });
+    if (!won) return saved;
+    const flushed = this.flush(saved);
+    this.writeBoard(flushed.goal);
+    return flushed.goal;
   }
 
   /** The goal's outbox flush (card T1-BOUND-TELEMETRY-2): a second write under the goal lock journals its pending firing once per key and clears it; an append that throws writes nothing, and `held` is the stop, or a wait, naming the firing. */
   private flush(goal: Goal): { goal: Goal; held?: Directive } {
     try {
-      goal = goal.pendingFiring ? this.store.updateGoal(goal.id, (g) => (g?.pendingFiring ? (journalFiring(this.journal(g.id), { type: 'BOUND_FIRED', goalId: g.id, cardId: undefined, generation: g.generation, data: g.pendingFiring }), { ...g, pendingFiring: undefined }) : g)) : goal;
+      goal = this.store.updateGoal(goal.id, (g) => {
+        if (!g?.pendingFiring && !g?.pendingEvents?.length) return g;
+        if (g.pendingFiring) journalFiring(this.journal(g.id), { type: 'BOUND_FIRED', goalId: g.id, cardId: undefined, generation: g.pendingFiring.generation ?? g.generation, data: g.pendingFiring });
+        for (const event of g.pendingEvents ?? []) journalOnce(this.journal(g.id), event);
+        return { ...g, pendingFiring: undefined, pendingEvents: undefined };
+      });
     } catch {
       goal = this.mustGoal(goal.id);
     }
-    const narration = `BOUND_FIRED ${goal.pendingFiring?.key} stays pending: the journal cannot take it yet; the ${goal.stop ? 'stop' : 'state'} is saved, and the next call journals the firing`;
-    return { goal, held: goal.pendingFiring && Directive.parse(goal.stop ? { kind: 'stop', ...this.baseOf(goal), stop: goal.stop, narration } : { kind: 'wait', ...this.baseOf(goal), on: 'journal', pollSeconds: 60, narration }) };
+    const pending = goal.pendingFiring?.key ?? goal.pendingEvents?.[0]?.data['eventKey'];
+    const narration = `${goal.pendingFiring ? 'BOUND_FIRED' : 'journal event'} ${pending} stays pending: the journal cannot take it yet; the ${goal.stop ? 'stop' : 'state'} is saved, and the next call journals it`;
+    return { goal, held: pending ? Directive.parse(goal.stop ? { kind: 'stop', ...this.baseOf(goal), stop: goal.stop, narration } : { kind: 'wait', ...this.baseOf(goal), on: 'journal', pollSeconds: 60, narration }) : undefined };
   }
 
-  private persistStopValue(goal: Goal, stop: StopRecord, saved = false): Goal {
-    const next = saved ? goal : transitionGoal({ ...goal, state: goal.state }, 'STOP', this.clock(), {}, stop);
-    this.journal(goal.id).append({ type: 'GOAL_STOPPED', goalId: goal.id, generation: goal.generation, data: { reason: stop.reason, detail: stop.detail, nextAction: stop.nextAction, global: stop.global, at: stop.at } });
-    this.writeBoard(next);
-    return next;
+  private persistStopValue(goal: Goal, stop: StopRecord): Goal {
+    const next = transitionGoal({ ...goal, state: goal.state }, 'STOP', this.clock(), {}, stop);
+    return { ...next, pendingEvents: [...(goal.pendingEvents ?? []), { type: 'GOAL_STOPPED', goalId: goal.id, generation: goal.generation, data: { eventKey: `${goal.id}@${goal.generation}/stop/${goal.storeRevision + 1}`, reason: stop.reason, detail: stop.detail, nextAction: stop.nextAction, global: stop.global, at: stop.at } }] };
   }
 
   /** The revised goal a requirement revision produces (versioned, superseded cards mapped); pure, so callers journal only after it succeeded. */
@@ -714,45 +732,70 @@ export class GoalController {
     return { goal: Goal.parse(revised), revision, mapping, text };
   }
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
-    this.mustGoal(goalId);
-    const notes: Parameters<Journal['append']>[0][] = [];
-    const readmitted = this.store.updateGoal(goalId, (goal) => {
-      if (!goal) throw new Error(`goal ${goalId} no longer exists`);
-      if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
-      const deadlineMs = Date.parse(newDeadline);
-      if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
-      if (deadlineMs <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
+    if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
+    const deadlineMs = Date.parse(newDeadline);
+    if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
+    let marker: NonNullable<Goal['pendingExtension']> | undefined;
+    let created = false;
+    const snapshot = this.mustGoal(goalId);
+    if (!snapshot.pendingExtension && snapshot.deadlines.extensions.some((e) => e.newDeadline === newDeadline && e.by === by && e.reason === reason)) return this.flush(snapshot).goal;
+    const stageCards = (intent: NonNullable<Goal['pendingExtension']>, index: number, writeGoal: () => void): void => {
+      const cardId = intent.cards[index];
+      if (!cardId) { writeGoal(); return; }
+      this.store.updateCardRun(goalId, cardId, (current) => {
+        if (!current) throw new Error(`card run ${cardId} disappeared during deadline extension`);
+        if (current.lastExtension?.id === intent.id) { stageCards(intent, index + 1, writeGoal); return current; }
+        const deadline = deadlineMs > Date.parse(current.deadline) ? newDeadline : current.deadline;
+        const readmit = current.stop?.reason === 'time';
+        const next = !readmit && (current.state === 'DONE' || current.state === 'STOP' || deadline === current.deadline) ? current : CardRun.parse({ ...current, ...(readmit ? { state: 'BUILD', stop: undefined } : {}), deadline, lastExtension: { id: intent.id, fromState: current.state, fromDeadline: current.deadline, fromStopReason: current.stop?.reason } });
+        stageCards(intent, index + 1, writeGoal);
+        return next;
+      });
+    };
+    if (!snapshot.pendingExtension) {
+      this.store.updateGoal(goalId, (goal) => {
+        if (!goal) throw new Error(`goal ${goalId} no longer exists`);
+        if (goal.pendingExtension) throw new Error(`goal ${goalId} has an unfinished deadline extension`);
+        if (deadlineMs <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
+        marker = { id: `${goal.id}@${goal.generation}/extension/${goal.storeRevision + 1}`, at: this.clock(), by, newDeadline, reason, generation: goal.generation, cards: this.store.listCardRuns(goalId).filter((run) => goal.cards.includes(run.cardId)).map((run) => run.cardId).sort() };
+        return { ...goal, pendingExtension: marker };
+      }, (writeGoal) => stageCards(marker!, 0, writeGoal));
+      created = true;
+    }
+    marker = this.mustGoal(goalId).pendingExtension;
+    if (!marker) {
+      const finished = this.mustGoal(goalId);
+      if (finished.deadlines.extensions.some((e) => e.newDeadline === newDeadline && e.by === by && e.reason === reason)) return this.flush(finished).goal;
+      throw new Error(`goal ${goalId} extension changed during recovery`);
+    }
+    if (marker.newDeadline !== newDeadline || marker.by !== by || marker.reason !== reason) throw new Error(`goal ${goalId} has a different unfinished deadline extension`);
+    // Repeat the card writes against their latest records. A failed rename leaves the marker for the same retry.
+    if (!created) this.store.updateGoal(goalId, (goal) => {
+      if (!goal?.pendingExtension || goal.pendingExtension.id !== marker!.id) {
+        if (goal?.deadlines.extensions.some((e) => e.newDeadline === newDeadline && e.by === by && e.reason === reason)) return goal;
+        throw new Error(`goal ${goalId} extension changed during recovery`);
+      }
+      return { ...goal };
+    }, (writeGoal) => stageCards(marker!, 0, writeGoal));
+    const extended = this.store.updateGoal(goalId, (goal) => {
+      if (!goal?.pendingExtension || goal.pendingExtension.id !== marker!.id) {
+        if (goal?.deadlines.extensions.some((e) => e.newDeadline === newDeadline && e.by === by && e.reason === reason)) return goal;
+        throw new Error(`goal ${goalId} extension changed during recovery`);
+      }
       const readmit = goal.terminal && goal.stop?.reason === 'time';
-      const extended = Goal.parse({ ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] }, ...(readmit ? { terminal: false, stop: undefined, state: 'CARDS' } : {}) });
-      notes.push({ type: 'NOTE', goalId, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
-      if (readmit) notes.push({ type: 'GOAL_STATE', goalId, generation: goal.generation, data: { from: 'STOP', to: 'CARDS', reason: `deadline extension to ${newDeadline} by ${by}` } });
-      const runs = this.store.listCardRuns(goalId).filter((run) => goal.cards.includes(run.cardId)).sort((a, b) => a.cardId.localeCompare(b.cardId));
-      // Hold the goal and every projected run lock before the first write. A later lock refusal unwinds without writes.
-      const stage = (index: number): void => {
-        const run = runs[index];
-        if (!run) return;
-        this.store.updateCardRun(goalId, run.cardId, (current) => {
-          let next = current;
-          if (current) {
-            const deadline = deadlineMs > Date.parse(current.deadline) ? newDeadline : current.deadline;
-            if (current.stop?.reason === 'time') {
-              next = CardRun.parse({ ...current, state: 'BUILD', stop: undefined, deadline });
-              notes.push({ type: 'CARD_STATE', goalId, cardId: run.cardId, generation: goal.generation, data: { from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } });
-            } else if (current.state !== 'DONE' && current.state !== 'STOP' && deadline !== current.deadline) {
-              next = CardRun.parse({ ...current, deadline });
-              notes.push({ type: 'NOTE', goalId, cardId: run.cardId, generation: goal.generation, data: { cardDeadline: { from: current.deadline, to: newDeadline, by } } });
-            }
-          }
-          stage(index + 1);
-          return next!;
-        });
-      };
-      stage(0);
-      return extended;
+      const events: NonNullable<Goal['pendingEvents']> = [{ type: 'NOTE', goalId, generation: marker!.generation, data: { eventKey: `${marker!.id}/goal`, extension: { by, newDeadline, reason } } }];
+      if (readmit) events.push({ type: 'GOAL_STATE', goalId, generation: marker!.generation, data: { eventKey: `${marker!.id}/readmit`, from: 'STOP', to: 'CARDS', reason: `deadline extension to ${newDeadline} by ${by}` } });
+      for (const cardId of marker!.cards) {
+        const run = this.store.getCardRun(goalId, cardId);
+        if (run?.lastExtension?.id !== marker!.id) continue;
+        const receipt = run.lastExtension;
+        events.push(receipt.fromStopReason === 'time' ? { type: 'CARD_STATE', goalId, cardId, generation: marker!.generation, data: { eventKey: `${marker!.id}/${cardId}`, from: 'STOP', to: 'readmitted', reason: `deadline extension to ${newDeadline} by ${by}` } } : { type: 'NOTE', goalId, cardId, generation: marker!.generation, data: { eventKey: `${marker!.id}/${cardId}`, cardDeadline: { from: receipt.fromDeadline, to: newDeadline, by } } });
+      }
+      return Goal.parse({ ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: marker!.at, by, newDeadline, reason }] }, ...(readmit ? { terminal: false, stop: undefined, state: 'CARDS' } : {}), pendingExtension: undefined, pendingEvents: [...(goal.pendingEvents ?? []), ...events] });
     });
-    for (const note of notes) this.journal(goalId).append(note);
-    this.writeBoard(readmitted);
-    return readmitted;
+    const flushed = this.flush(extended).goal;
+    this.writeBoard(flushed);
+    return flushed;
   }
 
   writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[], outcomes?: Record<string, CardOutcome>): string {

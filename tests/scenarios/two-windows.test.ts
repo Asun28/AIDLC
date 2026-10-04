@@ -1712,6 +1712,30 @@ test('T1-BOUND-TELEMETRY-2 acceptance 17: an extension preserves a running goal 
   }
 });
 
+test('R3: an extension winning the goal lock prevents the obsolete arc deadline from firing', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * 3600_000 + MINUTE_MS);
+    const later = addMs(T0, 12 * 3600_000);
+    let extended = false;
+    const directive = throughFs('openSync', (real, args) => {
+      if (!extended && String(args[0]) === `${fx.store.goalFile(goal.id)}.lock` && args[1] === 'wx') {
+        extended = true;
+        fx.controller.extendDeadline(goal.id, 'lead', later, 'more time');
+      }
+      return real(...args);
+    }, () => fx.controller.next(goal.id));
+    assert.equal(extended, true);
+    assert.notEqual(directive.kind, 'stop');
+    assert.equal(fx.goal(goal.id).stop, undefined);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'BOUND_FIRED' && event.data['bound'] === 'arc-deadline').length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 17: a held later card lock refuses the entire deadline extension without partial writes [R7]', () => {
   const fx = makeFixture();
   try {
@@ -1756,6 +1780,78 @@ test('T1-BOUND-TELEMETRY-2 acceptance 17: under a held goal lock goal extend ref
     assert.ok(controller.writeBoard(fx.goal(goal.id)).includes('\nBounds: arc-deadline 1 ('), 'the board renders under the held lock');
     unlinkSync(`${file}.lock`);
     assert.equal(controller.extendDeadline(goal.id, 'lead', addMs(T0, 12 * 3600_000), 'more time').state, 'CARDS', 'the same extension succeeds');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: refused report approval or cancel leaves goal, journal and board unchanged', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const controller = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, store: new GoalStore(fx.paths, { lockTimeoutMs: 50 }), leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, cards: fx.registry });
+    const file = fx.store.goalFile(goal.id);
+    const beforeGoal = readFileSync(file, 'utf8');
+    const beforeJournal = readFileSync(fx.journal(goal.id).file, 'utf8');
+    const board = path.join(fx.paths.board, `${goal.id}.md`);
+    const beforeBoard = readFileSync(board, 'utf8');
+    writeFileSync(`${file}.lock`, `pid=${process.pid} nonce=held`, 'utf8');
+    try {
+      for (const input of [{ result: 'approved' as const, data: { kind: 'development', by: 'lead' } }, { result: 'cancel' as const, data: {} }]) {
+        assert.throws(() => controller.report({ goalId: goal.id, generation: 0, ...input }), (err: unknown) => err instanceof StoreError && err.code === 'LOCKED');
+      }
+      assert.equal(readFileSync(file, 'utf8'), beforeGoal);
+      assert.equal(readFileSync(fx.journal(goal.id).file, 'utf8'), beforeJournal);
+      assert.equal(readFileSync(board, 'utf8'), beforeBoard);
+    } finally {
+      unlinkSync(`${file}.lock`);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: a failed final goal rename leaves an extension recoverable by the same deadline', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * 3600_000 + MINUTE_MS);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    const deadline = addMs(T0, 12 * 3600_000);
+    let goalRenames = 0;
+    assert.throws(() => throughFs('renameSync', (real, args) => {
+      if (String(args[1]) === fx.store.goalFile(goal.id) && ++goalRenames === 2) throw new Error('injected final goal rename failure');
+      return real(...args);
+    }, () => fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time')), /injected final goal rename failure/);
+    assert.ok((fx.goal(goal.id) as unknown as { pendingExtension?: unknown }).pendingExtension, 'a durable marker names the unfinished extension');
+    const recovered = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+    assert.equal(recovered.deadlines.extensions.filter((e) => e.newDeadline === deadline).length, 1);
+    assert.equal(recovered.state, 'CARDS');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.deadline, deadline);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'NOTE' && e.cardId === 'T1-A' && e.data['cardDeadline']).length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: a card rename failure leaves the extension intent for retry', () => {
+  const fx = makeFixture();
+  try {
+    for (const id of ['T1-A', 'T1-B']) writeCard(fx, { id, title: id });
+    const goal = goalForCards(fx, ['T1-A', 'T1-B']);
+    for (const id of goal.cards) fx.controller.ensureCardRun(fx.goal(goal.id), id);
+    const deadline = addMs(T0, 24 * 3600_000);
+    assert.throws(() => throughFs('renameSync', (real, args) => {
+      if (String(args[1]) === fx.store.cardFile(goal.id, 'T1-B')) throw new Error('injected card rename failure');
+      return real(...args);
+    }, () => fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time')), /injected card rename failure/);
+    assert.ok((fx.goal(goal.id) as unknown as { pendingExtension?: unknown }).pendingExtension);
+    assert.equal(fx.controller.next(goal.id).kind, 'wait');
+    assert.equal(fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time').deadlines.extensions.length, 1);
+    for (const id of goal.cards) assert.equal(fx.store.getCardRun(goal.id, id)?.deadline, deadline);
   } finally {
     fx.cleanup();
   }

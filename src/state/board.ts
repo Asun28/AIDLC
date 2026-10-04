@@ -92,7 +92,7 @@ function readEvents(file: string): { events: JournalEvent[]; damaged: boolean } 
   const lines = orUndefined(() => (absent(file) ? [] : readFileSync(file, 'utf8').split('\n').filter((l) => l.trim())));
   if (!lines) return { events: [], damaged: true };
   const events = lines.flatMap((line) => orUndefined(() => [JournalEvent.parse(JSON.parse(line))]) ?? []);
-  return { events, damaged: events.length < lines.length };
+  return { events, damaged: events.length < lines.length || orUndefined(() => new Journal(file).verify().ok) !== true };
 }
 
 /** Journals a firing once per key, run by the outbox flush under the lock of the record that holds it; a journal that cannot be read in full refuses it. */
@@ -116,7 +116,7 @@ export function boundsOfJournals(dir: string, records?: { goals: string; cards: 
   const files = (at: string) => list(at)?.filter((f) => f.endsWith('.json')).sort().map((f) => path.join(at, f)) ?? [at];
   const pendingOrUnread = (file: string, schema: typeof Goal | typeof CardRun) => orUndefined(() => {
     const parsed = schema.safeParse(JSON.parse(readFileSync(file, 'utf8')));
-    return parsed.success && parsed.data.pendingFiring === undefined && !parsed.data.pendingEvents?.length;
+    return parsed.success && parsed.data.pendingFiring === undefined && !parsed.data.pendingEvents?.length && !('pendingExtension' in parsed.data && parsed.data.pendingExtension);
   }) !== true;
   const pending = records ? (() => {
     const goalNames = files(records.goals).map((g) => path.basename(g, '.json'));

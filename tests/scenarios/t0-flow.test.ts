@@ -5197,6 +5197,31 @@ test('R3 finding 3: a second ship-path review block persists STOP before REVIEW_
   } finally { fx.cleanup(); }
 });
 
+test('R3: ship review decision note survives a refused result write', async () => {
+  const fx = makeFixture();
+  try {
+    const block: Verdict = { verdict: 'block', reasons: ['[spec] 6 tests missing @ src/a.ts'], axes: { spec: { verdict: 'block', reasons: ['tests missing'] }, standards: { verdict: 'pass', reasons: [] } }, run_status: 'success' };
+    writeCard(fx, { id: 'T1-R3-RETRY', title: 'second block', tier: 'S', reviewGate: 'codex {verdict:pass}' });
+    const goal = goalForCards(fx, ['T1-R3-RETRY']);
+    const runner = fx.runner(new DryRunShipPath(['review-blocked', 'review-blocked'], block)), card = fx.card('T1-R3-RETRY');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    r = runner.next(fx.goal(goal.id), card, runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' }));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const repaired = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:2', candidateSha: 'sha-2' });
+    const refused = await failOnce('renameSync', (args) => {
+      if (!renameTo(fx.store.cardFile(goal.id, card.id))(args)) return false;
+      try { return (JSON.parse(readFileSync(String(args[0]), 'utf8')) as { state?: string }).state === 'STOP'; } catch { return false; }
+    }, () => runner.next(fx.goal(goal.id), card, repaired));
+    assert.match(String(refused), /injected renameSync failure/);
+    const persisted = fx.store.getCardRun(goal.id, card.id)!;
+    assert.equal(persisted.review.substantiveDecisions, 2);
+    assert.ok(persisted.pendingEvents?.some((event) => event.type === 'REVIEW_DECIDED'));
+    runner.next(fx.goal(goal.id), card, persisted);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'REVIEW_DECIDED').length, 2);
+  } finally { fx.cleanup(); }
+});
+
 test('T1-BOUND-TELEMETRY R3 decision 1 F6: the BUILD and REVIEW_FIX ladder stops are saved with their firing pending, and the next card next journals it', async () => {
   for (const reviewFix of [false, true]) {
     const fx = makeFixture();

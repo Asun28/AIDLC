@@ -472,6 +472,125 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and
   }
 });
 
+test('R3 goal stop survives a GOAL_STOPPED append failure and journals it once on recovery', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('"type":"GOAL_STOPPED"')) throw new Error('injected GOAL_STOPPED append failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      assert.equal(fx.controller.next(goal.id).kind, 'stop');
+      assert.equal(fx.goal(goal.id).stop?.reason, 'time');
+      assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 0);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 1);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an unfinished extension holds goal and card dispatch', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.updateGoal(goal.id, (g) => ({ ...g!, pendingExtension: { id: 'tx1', at: fx.now(), by: 'lead', newDeadline: addMs(T0, 12 * HOUR_MS), reason: 'more time', cards: ['T1-A'], generation: 0 } }));
+    assert.equal(fx.controller.next(goal.id).kind, 'wait');
+    assert.equal(fx.runner().next(goal, fx.card('T1-A'), run).directive.kind, 'wait');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an extension journal failure retains notes and the same deadline retries successfully', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const deadline = addMs(T0, 12 * HOUR_MS);
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('/extension/')) throw new Error('injected extension note failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      const extended = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+      assert.equal(extended.deadlines.extensions.length, 1);
+      assert.ok(extended.pendingEvents?.length);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    const retried = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+    assert.equal(retried.deadlines.extensions.length, 1);
+    assert.equal(retried.pendingEvents, undefined);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'NOTE' && e.data['extension']).length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: GOAL_DONE append failure retains a recoverable terminal event', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.saveCardRun({ ...run, state: 'DONE', mergeVerified: true, closure: { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true } });
+    fx.store.updateGoal(goal.id, (g) => ({ ...g!, state: 'CLOSE', stages: { ...g!.stages, development: 'pass' } }));
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('"type":"GOAL_DONE"')) throw new Error('injected GOAL_DONE append failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      assert.equal(fx.controller.next(goal.id).kind, 'wait');
+      assert.equal(fx.goal(goal.id).state, 'DONE');
+      assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_DONE').length, 0);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(fx.controller.next(goal.id).kind, 'done');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_DONE').length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: direct card attempt refuses a pending firing before recording an attempt', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.updateCardRun(goal.id, 'T1-A', (r) => ({ ...r!, pendingFiring: { bound: 'attempts', key: `${goal.id}@0/T1-A/attempts/3`, generation: 0 } }));
+    const repair = damageJournal(fx, goal.id);
+    const before = fx.store.getCardRun(goal.id, 'T1-A')!;
+    assert.throws(() => fx.runner().recordAttempt(goal, fx.card('T1-A'), run, { outcome: 'fail', cause: 'test' }), /pending journal recovery/);
+    assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-A'), before);
+    repair();
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED').length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while its goal goes terminal counts as a firing of that stop once it lands [R9]', () => {
   const fx = makeFixture();
   try {
@@ -485,7 +604,9 @@ test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while
     assert.equal(fx.controller.next(goal.id).kind, 'stop', 'the goal stops on its stopped card');
     repair();
     fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
-    const [stopped, fired] = fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED' || e.type === 'BOUND_FIRED');
+    fx.controller.next(goal.id);
+    const stopped = fx.events(goal.id).find((e) => e.type === 'GOAL_STOPPED');
+    const fired = fx.events(goal.id).find((e) => e.type === 'BOUND_FIRED');
     assert.deepEqual([stopped?.type, stopped?.data['at'], fired?.type, fired?.data['stoppedAt']], ['GOAL_STOPPED', fx.goal(goal.id).stop?.at, 'BOUND_FIRED', fx.store.getCardRun(goal.id, 'T1-A')?.stop?.at], 'the firing lands after the stop; each carries the persisted time of its stop');
     assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: card-deadline 1 (DONE 0, STOP/time 1, open 0)'));
   } finally {

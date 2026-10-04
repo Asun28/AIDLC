@@ -34,17 +34,21 @@ export class GoalStore {
     return path.join(this.paths.releases, `${attemptId}.json`);
   }
 
-  /** A goal write under the goal lock (`updateGoal`); a snapshot without `pendingFiring` keeps the persisted one, which only the flush clears (card T1-BOUND-TELEMETRY-2). */
+  /** Compare-and-set a goal snapshot; only the outbox flush clears pending events. */
   saveGoal(goal: Goal): Goal {
-    return this.updateGoal(goal.id, (persisted) => ({ ...goal, pendingFiring: goal.pendingFiring ?? persisted?.pendingFiring }));
+    return this.updateGoal(goal.id, (persisted) => {
+      if (persisted && goal.storeRevision !== persisted.storeRevision) throw new StoreError('GOAL_STALE', this.goalFile(goal.id), `goal ${goal.id} changed since it was read; run the command again`);
+      if (persisted?.pendingExtension) throw new StoreError('GOAL_EXTENSION_PENDING', this.goalFile(goal.id), `goal ${goal.id} has an unfinished deadline extension; retry aidlc goal extend`);
+      return { ...goal, pendingFiring: persisted?.pendingFiring ?? goal.pendingFiring, pendingEvents: persisted?.pendingEvents?.length ? persisted.pendingEvents : goal.pendingEvents };
+    });
   }
 
   /** Read-modify-write of one goal record under `<file>.lock` (`updateJson`), refused with `LOCKED` like a card run's; a change that returns the record it received, or nothing, writes nothing. */
-  updateGoal(goalId: string, change: (current: Goal | undefined) => Goal | undefined): Goal {
+  updateGoal(goalId: string, change: (current: Goal | undefined) => Goal | undefined, within?: (write: () => void) => void): Goal {
     return updateJson(this.goalFile(goalId), Goal, (persisted) => {
       const next = change(persisted);
-      return next === persisted || !next ? next : Goal.parse({ ...next, updatedAt: nowIso() });
-    }, this.lock)!;
+      return next === persisted || !next ? next : Goal.parse({ ...next, storeRevision: persisted ? persisted.storeRevision + 1 : 0, updatedAt: nowIso() });
+    }, { ...this.lock, within })!;
   }
 
   getGoal(goalId: string): Goal | undefined {

@@ -99,6 +99,18 @@ describe('state/board (regenerated view, never the store of record)', () => {
 
 describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
+  it('a parseable journal with a broken hash refuses firing replay and is incomplete', () => {
+    const dir = tmpDir();
+    try {
+      const journal = Journal.forGoal(dir, 'g-hash');
+      journal.append({ type: 'NOTE', goalId: 'g-hash', generation: 0, data: { text: 'before' } });
+      const event = JSON.parse(readFileSync(journal.file, 'utf8')) as Record<string, unknown>;
+      event['hash'] = '0'.repeat(64);
+      writeFileSync(journal.file, `${JSON.stringify(event)}\n`);
+      assert.throws(() => journalFiring(journal, boundFired({ id: 'g-hash', generation: 0 }, 'attempts', 3)), /cannot be read in full/);
+      assert.match(boundsOfJournals(dir), /incomplete: lines that do not parse in "g-hash"/);
+    } finally { cleanup(dir); }
+  });
   const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
   const boundsLines = (board: string) => board.split('\n').filter((l) => l.includes('Bounds:'));
 
@@ -235,7 +247,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
       const seen = fx.events(goal.id).length;
       assert.equal(fx.controller.next(goal.id).kind, 'stop');
       fx.controller.next(goal.id);
-      assert.deepEqual(fx.events(goal.id).slice(seen).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]], 'journaled once, before anything else');
+      assert.deepEqual(fx.events(goal.id).slice(seen).map((e) => [e.type, e.data['key']]), [['BOUND_FIRED', `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`], ['GOAL_STOPPED', undefined]], 'the firing and its saved terminal outcome are recovered once');
       assert.equal(fx.goal(goal.id).pendingFiring, undefined, 'and cleared');
       assert.deepEqual(boundsLines(fx.controller.writeBoard(fx.goal(goal.id))), ['Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)'], 'acceptance 18: journaled after its GOAL_STOPPED, it is that stop\'s firing [R9]');
     } finally {
