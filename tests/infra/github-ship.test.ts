@@ -462,6 +462,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       ['record refused', { ...good, record: { exitCode: 1, stderr: 'HTTP 404' } }, 'log unavailable'],
       ['record timed out', { ...good, record: { timedOut: true, stdout: '{}' } }, 'log unavailable'],
       ['record malformed', { ...good, record: 'not json' }, 'log unavailable'],
+      ['record with non-array steps', { ...good, record: { steps: {} } }, 'log unavailable'],
+      ['record with a missing step number', { ...good, record: { steps: [{ name: 'Set up job', conclusion: 'failure', started_at: null, completed_at: null }] } }, 'log unavailable'],
       ['record with a null step', { ...good, record: { steps: [null, ...good.record.steps] } }, 'log unavailable'],
       ['record with a step number that is text', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, number: String(s['number']) })) } }, 'log unavailable'],
       ['record with a numeric start time', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, started_at: 5 })) } }, 'log unavailable'],
@@ -490,6 +492,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       assert.equal(r.outcome, 'ci-red', label);
       assert.equal(header, `[CI-GATE-LOG] actions/runs/123/job/456 ${note}`, label);
       assert.deepEqual(lines, [], `${label}: no log lines`);
+      if (label.startsWith('record')) assert.ok(!r.receipt.stdout.includes('[CI-GATE-STEP]'), `${label}: no transient step evidence`);
     }
 
     const one = actionsJob('ci', 5, 6);
@@ -603,6 +606,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       const { header, lines, r } = logged(f, j);
       assert.equal(header, '[CI-GATE-LOG] actions/runs/123/job/456 step unknown', label);
       assert.deepEqual(lines, [], `${label}: no log lines`);
+      if (label.startsWith('record')) assert.ok(!r.receipt.stdout.includes('[CI-GATE-STEP]'), `${label}: no transient step evidence`);
       assert.ok(!r.receipt.stdout.includes('composite says'), `${label}: the composite step's output never reaches the excerpt`);
     }
     const finishing = logged(f, job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }]));

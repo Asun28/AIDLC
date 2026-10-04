@@ -120,7 +120,8 @@ function readGate(text: string): GateRead {
         const parsed: unknown = JSON.parse(m[1]!);
         if (Array.isArray(parsed)) {
           structured = true;
-          if (line.startsWith('[CI-GATE-RED]') && (!parsed.length || parsed.some((c) => typeof c !== 'object' || c === null || typeof c.name !== 'string' || !c.name.trim() || typeof c.conclusion !== 'string'))) unresolvedRed = true;
+          const redLine = line.startsWith('[CI-GATE-RED]');
+          if ((redLine && !parsed.length) || parsed.some((c) => typeof c !== 'object' || c === null || typeof c.name !== 'string' || !c.name.trim() || (typeof c.conclusion !== 'string' && (redLine || c.conclusion !== null)))) unresolvedRed = true;
           for (const c of parsed) if (typeof c === 'object' && c !== null && 'name' in c) checks.push({ name: decodeCheckName(String((c as { name: unknown }).name)), conclusion: (c as { conclusion?: unknown }).conclusion == null ? null : String((c as { conclusion?: unknown }).conclusion) });
           redChecks.push(...checks.slice(start).filter((c) => line.startsWith('[CI-GATE-RED]') || isFailure(c.conclusion)));
           continue;
@@ -146,6 +147,7 @@ function readGate(text: string): GateRead {
         continue;
       }
     }
+    if (line.startsWith('[CI-GATE-TIMEOUT]')) unresolvedRed = true;
     log.push(line);
   }
   return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps };

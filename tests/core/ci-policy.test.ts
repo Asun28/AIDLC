@@ -183,6 +183,13 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     }
   });
 
+  test('successor R3: malformed timeout records cannot hide behind evidenced red checks', () => {
+    const ready = gate([{ name: 'build', conclusion: 'startup_failure' }]);
+    for (const payload of ['[null]', '[42]', '[{}]', '[{"name":"","conclusion":"failure"}]', '[{"name":"lint","conclusion":42}]', '[{"name":"lint"}]', '[broken', 'not json']) {
+      assert.equal(ship(`${ready}\n[CI-GATE-TIMEOUT] 1 pending checks: ${payload}`).class, 'unknown', payload);
+    }
+  });
+
   test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
     const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
     assert.equal(ship(text).class, 'unknown');
