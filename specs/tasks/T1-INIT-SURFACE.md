@@ -8,7 +8,6 @@ plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
 allow_paths:
   - src/scaffold/init.ts
   - src/cli/main.ts
-  - src/hooks/index.ts
   - tests/infra/init.test.ts
   - tests/surface/hooks.test.ts
   - tests/surface/readme.test.ts
@@ -30,14 +29,13 @@ acceptance:
   - 5. `git diff --numstat origin/main...HEAD -- src` is at most +15 net (outside the W2+W4+W5 budget); the close-out states it. [R1]
   - 6. `docs/OPERATIONS.md` Setup names `--no-hooks`; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/surface/readme.test.ts). [R1] [dod arm 1]
   - 7. Issue filed for plan finding F3 (directive narration carries intent open questions and ship output verbatim), named in the close-out. [R3]
-depends_on: []
+depends_on: [T1-BOUND-TELEMETRY-2]
 budget: 350
 tdd: true
 sweep: "Survey of main at 5983a1e. init flags main.ts:155-161 ([dir], --force, --cards-dir, --ship-path, --dry-run); writes init.ts:63-108 (.claude skills, 6 agents, merged settings.json with deny list and PreToolUse, Stop, UserPromptSubmit hooks, REVIEW.md, bands.yaml, intent, specs, plans, cards template, evals, three workflows, three docs, aidlc.config.json, aidlc.ops.example.json, CLAUDE.md section, .gitignore). Hooks: loadHookConfig hooks/index.ts:85-94 compiles config entries as regexes and emits none; productionGate echoes an env var on stderr (145); verifyBeforeDone additionalContext 274-279 (card ids unquoted but regex-constrained, types.ts:25), paths and goal ids JSON-quoted (335); routeNewWork emits routing fields only. Directive narration embeds intent open questions (controller.ts:633,637) and ship output (card-runner.ts:2248,2330): finding F3, out of scope."
 forbid: [removing or weakening a guard, a hook that fails open on a new path, changing the hook command init picks]
 non_goals: [quoting directive narration (issue for F3), a signed or pinned template bundle, a new hook, an uninstall command]
 doc_sync: README.md (new section), docs/OPERATIONS.md (Setup), CHANGELOG.md
-hygiene: "2026-10-04 delegated scope correction: src/hooks/index.ts is allowed solely to JSON-quote repository or environment values already emitted by guards, as required by R3. Guard decisions and hook wiring remain unchanged."
 ---
 
 # T1-INIT-SURFACE

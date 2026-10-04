@@ -338,13 +338,6 @@ It changes only the opening paragraph, its regression check and changelog;
 it consumes no init or telemetry behavior. This supersedes its wave and table
 ordering, with shared-file changes synchronized by merge before review.
 
-Sequencing amendment (2026-10-04, user delegated all decisions and requested a
-different worktree): T1-INIT-SURFACE may start independently of
-T1-BOUND-TELEMETRY-2 in its own worktree. Its dependency is now empty;
-the wave and task-table ordering above is superseded for this card only.
-Synchronize shared documentation by merging the current base before review.
-Acceptance, source budget and the driver's telemetry prerequisite are unchanged.
-
 ## Card close-out record
 Every card ends with, in its CLOSE evidence (`aidlc evidence retain`) and in
 the session report: the DoD command and its exit code with the pass count;
@@ -449,10 +442,4 @@ none this version (development-only target)
 
 ## Context pack split
 
-On 2026-10-04 the user continued with all decisions delegated and multiple PRs authorized. T1-RUN-CONTEXT-PACK delivers W5's deterministic context pack independently while telemetry remains in another session. T1-RUN-DRIVER depends on this card and retains the run loop, watch view and integrated acceptance. The pack uses an 8192-token conservative bound measured as UTF-8 bytes; lessons are removed from the end before trimming the plan, and acceptance is never truncated. Missing local sources are explicit data, and paths outside the repository are refused. Both PRs remain charged to the same W5 source budget and shared +650 envelope.
-
-## 2026-10-04 delegated repair amendment
-
-The user delegated all decisions and authorized multiple PRs to finish the next card. R3 decision 1 of T1-BOUND-TELEMETRY-2 found 14 concrete concurrency, journal-failure recovery, dispatch and board defects. Keep every acceptance criterion and the review limits. Expand this card to +400 net source lines and 3200 total changed lines; expand the shared W2+W4+W5 envelope from +400 to +650 (+96 existing W2, at most +400 W4, at least +154 reserved for W5). Earlier budget figures above are historical and superseded by this amendment. The implementation must retain pending recovery in existing goal/card records; no new state-file type or config key is authorized.
-
-The extension recovery receipt also requires updating tests/scenarios/extend-running-card.test.ts: every earlier field remains compared, and the exact new lastExtension receipt is asserted separately. This regression path is included in W4; the +400 source, 3200 total and +650 shared caps remain unchanged.
+On 2026-10-04 the user continued with all decisions delegated and multiple PRs authorized. T1-RUN-CONTEXT-PACK delivers W5's deterministic context pack independently while telemetry remains in another session. T1-RUN-DRIVER depends on this card and retains the run loop, watch view and integrated acceptance. The pack uses an 8192-token conservative bound measured as UTF-8 bytes; lessons are removed from the end before trimming the plan, and acceptance is never truncated. Missing local sources are explicit data, and paths outside the repository are refused. Both PRs remain charged to the same W5 source budget; the shared envelope is +650 under the locally approved telemetry repair amendment, to be published by that card's owner.

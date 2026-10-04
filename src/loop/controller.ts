@@ -47,6 +47,7 @@ import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import { loadCardRegistry, validateRegistry, type CardRegistry } from '../artifacts/card.ts';
 import type { ProjectConfig } from '../config.ts';
 import { Directive, type ReportInput } from './directive.ts';
+import { loadContextPack } from './context-pack.ts';
 
 export interface ControllerDeps {
   paths: StatePaths;
@@ -364,7 +365,7 @@ export class GoalController {
       effort,
       role: 'implementer',
       cardDeadline,
-      context: { revision: goal.cardRevisions[cardId] ?? 0, generation: goal.generation, reviewPool: goal.reviewPool, modules: goal.routing.modules, dataImpact: goal.routing.dataImpact, wave: arc.wave, workers: arc.workers, arcReasons: arc.reasons },
+      context: { revision: goal.cardRevisions[cardId] ?? 0, generation: goal.generation, reviewPool: goal.reviewPool, modules: goal.routing.modules, dataImpact: goal.routing.dataImpact, wave: arc.wave, workers: arc.workers, arcReasons: arc.reasons, pack: loadContextPack(card, this.repo.mainRoot, goal.routing.modules) },
       narration: `Run card ${cardId} (${run?.state ?? 'PREPARE'}) via \`aidlc card next ${cardId} --goal ${goal.id}\`. Wave: ${arc.wave.join(',')} (cap ${arc.workers}).`,
     });
   }
