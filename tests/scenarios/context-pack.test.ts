@@ -2,10 +2,23 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { mkdirSync, writeFileSync, symlinkSync, mkdtempSync, rmSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import childProcess, { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard } from './_harness.ts';
 import { loadContextPack } from '../../src/loop/context-pack.ts';
+
+test('a Windows short-name repository root reads the same plan as its long path', { skip: process.platform !== 'win32' }, (t) => {
+  const fx = makeFixture();
+  try {
+    mkdirSync(path.join(fx.tmp, 'plans'));
+    writeFileSync(path.join(fx.tmp, 'plans/plan.md'), 'same plan');
+    writeCard(fx, { id: 'T1-PACK', title: 'short root', planRef: 'plans/plan.md' });
+    const short = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', '[Console]::InputEncoding=[Text.Encoding]::UTF8; [Console]::OutputEncoding=[Text.Encoding]::UTF8; (New-Object -ComObject Scripting.FileSystemObject).GetFolder([Console]::In.ReadToEnd()).ShortPath'], { input: fx.tmp, encoding: 'utf8', windowsHide: true }).trim();
+    if (short.toLowerCase() === fs.realpathSync.native(short).toLowerCase()) { t.skip('8.3 names unavailable on this filesystem'); return; }
+    assert.equal(JSON.parse(loadContextPack(fx.card('T1-PACK'), short, [])).planSection, 'same plan');
+  } finally { fx.cleanup(); }
+});
 
 test('run-card carries the referenced plan section and matching lessons as JSON data', () => {
   const fx = makeFixture();
@@ -99,8 +112,8 @@ test('a symlinked root works and a source-link swap after resolution never redir
     writeFileSync(path.join(outside, 'plan.md'), 'outside secret');
     const alias = path.join(fx.tmp, 'plans/alias');
     symlinkSync(path.join(fx.tmp, 'plans/safe'), alias, linkType);
-    const resolve = fs.realpathSync;
-    const spy = mock.method(fs, 'realpathSync', (file: fs.PathLike) => {
+    const resolve = fs.realpathSync.native;
+    const spy = mock.method(fs.realpathSync, 'native', (file: fs.PathLike) => {
       const resolved = resolve(file);
       if (String(file) === path.join(alias, 'plan.md')) {
         rmSync(alias);
@@ -133,6 +146,42 @@ test('plan references and symlinks cannot serialize unrelated repository files',
   } finally { fx.cleanup(); }
 });
 
+test('an existing source refuses loading when Linux descriptor-path verification is unavailable', () => {
+  const fx = makeFixture();
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  try {
+    mkdirSync(path.join(fx.tmp, 'plans'));
+    writeFileSync(path.join(fx.tmp, 'plans/plan.md'), 'existing plan');
+    writeCard(fx, { id: 'T1-PACK', title: 'unavailable descriptor lookup', planRef: 'plans/plan.md' });
+    const card = fx.card('T1-PACK');
+    const unavailable = Object.assign(new Error('descriptor lookup unavailable'), { code: 'ENOENT' });
+    const spy = mock.method(fs, 'realpathSync', () => { throw unavailable; });
+    Object.defineProperty(process, 'platform', { ...platform, value: 'linux' });
+    syncBuiltinESMExports();
+    try { assert.throws(() => loadContextPack(card, fx.tmp, []), (error) => error === unavailable); }
+    finally { spy.mock.restore(); Object.defineProperty(process, 'platform', platform); syncBuiltinESMExports(); }
+  } finally { fx.cleanup(); }
+});
+
+test('Windows helper failures retain safe diagnostics without subprocess output', () => {
+  const fx = makeFixture();
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')!;
+  try {
+    mkdirSync(path.join(fx.tmp, 'plans'));
+    writeFileSync(path.join(fx.tmp, 'plans/plan.md'), 'existing plan');
+    writeCard(fx, { id: 'T1-PACK', title: 'helper failure', planRef: 'plans/plan.md' });
+    const card = fx.card('T1-PACK');
+    for (const [failure, diagnostic] of [[{ status: 43 }, 'exit 43'], [{ code: 'ETIMEDOUT' }, 'timeout'], [{ code: 'ENOBUFS' }, 'output limit']] as const) {
+      const spy = mock.method(childProcess, 'execFileSync', () => { throw Object.assign(new Error('private subprocess output'), failure, { stdout: 'private source', stderr: 'private diagnostic' }); });
+      Object.defineProperty(process, 'platform', { ...platform, value: 'win32' });
+      syncBuiltinESMExports();
+      try {
+        assert.throws(() => loadContextPack(card, fx.tmp, []), (error) => error instanceof Error && error.message === `Opened context source helper failed (${diagnostic})` && error.cause === undefined);
+      } finally { spy.mock.restore(); Object.defineProperty(process, 'platform', platform); syncBuiltinESMExports(); }
+    }
+  } finally { fx.cleanup(); }
+});
+
 test('a parent-directory swap after resolution is refused before outside content is read', () => {
   for (const source of ['plans/plan.md', 'docs/LESSONS.md']) {
     const fx = makeFixture();
@@ -144,9 +193,11 @@ test('a parent-directory swap after resolution is refused before outside content
       const target = path.join(fx.tmp, source);
       writeFileSync(target, 'inside');
       writeFileSync(path.join(outside, path.basename(source)), 'outside secret');
-      const resolve = fs.realpathSync;
+      const card = { ...fx.card('T1-PACK'), plan_ref: source.startsWith('plans/') ? source : undefined };
+      assert.doesNotThrow(() => loadContextPack(card, fx.tmp, []));
+      const resolve = fs.realpathSync.native;
       let swapped = false;
-      const spy = mock.method(fs, 'realpathSync', (file: fs.PathLike) => {
+      const spy = mock.method(fs.realpathSync, 'native', (file: fs.PathLike) => {
         const resolved = resolve(file);
         if (!swapped && String(file) === target) {
           swapped = true;
@@ -157,8 +208,8 @@ test('a parent-directory swap after resolution is refused before outside content
       });
       syncBuiltinESMExports();
       try {
-        const card = { ...fx.card('T1-PACK'), plan_ref: source.startsWith('plans/') ? source : undefined };
-        assert.throws(() => loadContextPack(card, fx.tmp, []), /opened context source/i);
+        assert.throws(() => loadContextPack(card, fx.tmp, []), /^Error: Opened context source path changed$/);
+        assert.equal(swapped, true);
       } finally { spy.mock.restore(); syncBuiltinESMExports(); }
     } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
   }

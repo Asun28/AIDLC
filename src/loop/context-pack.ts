@@ -35,16 +35,25 @@ public static class ContextFile {
   }
 }
 '@
-[ContextFile]::Read(([Console]::In.ReadToEnd() | ConvertFrom-Json))
+try { [ContextFile]::Read(([Console]::In.ReadToEnd() | ConvertFrom-Json)) }
+catch {
+  if ($_.Exception.GetBaseException().Message -eq 'Opened path changed') { exit 42 }
+  exit 43
+}
 `;
 
 function readOpenedSource(resolved: string): string {
   if (process.platform === 'win32') {
     try {
       const shell = path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
-      const encoded = execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', windowsRead], { input: JSON.stringify(resolved), encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+      const encoded = execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', windowsRead], { input: JSON.stringify(resolved), encoding: 'utf8', windowsHide: true, timeout: 60000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
       return Buffer.from(encoded.trim(), 'base64').toString('utf8');
-    } catch { throw new Error('Opened context source could not be verified or read'); }
+    } catch (error) {
+      const failure = error as { status?: number; code?: string };
+      if (failure.status === 42) throw new Error('Opened context source path changed');
+      const detail = failure.code === 'ETIMEDOUT' ? 'timeout' : failure.code === 'ENOBUFS' ? 'output limit' : typeof failure.status === 'number' ? `exit ${failure.status}` : 'unavailable';
+      throw new Error(`Opened context source helper failed (${detail})`);
+    }
   }
   if (process.platform !== 'linux') throw new Error('Opened context source verification requires Windows or Linux');
   const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
@@ -84,7 +93,7 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
 
 /** Read only local repository sources; missing files/anchors are explicit in the projection. */
 export function loadContextPack(card: Card, root: string, modules: string[], plansDir = 'plans'): string {
-  root = realpathSync(root);
+  root = realpathSync.native(root);
   const missingSources: string[] = [];
   const within = (file: string, dir: string) => { const rel = path.relative(dir, file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
   const isPlan = (file: string) => path.extname(file).toLowerCase() === '.md' && [plansDir, 'docs/plans'].some((dir) => within(file, path.resolve(root, dir)));
@@ -92,16 +101,16 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
     const target = path.resolve(root, ref);
     if (!within(target, root)) throw new Error('Context source outside repository');
     if (plan && !isPlan(target)) throw new Error('Context plan source must be Markdown in plansDir or docs/plans');
-    try {
-      const resolved = realpathSync(target);
-      if (!within(resolved, root)) throw new Error('Context source outside repository');
-      if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
-      return readOpenedSource(resolved);
-    } catch (error) {
+    let resolved: string;
+    try { resolved = realpathSync.native(target); }
+    catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       missingSources.push(ref);
       return '';
     }
+    if (!within(resolved, root)) throw new Error('Context source outside repository');
+    if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
+    return readOpenedSource(resolved);
   };
   const [file, anchor] = (card.plan_ref ?? '').split('#');
   let planSection = file ? read(file, true) : '';
