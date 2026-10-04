@@ -2370,29 +2370,34 @@ export class CardRunner {
     // above is never replaced by the copy captured then.
     const history = { superseded: false, stopped: false, newer: 'none' };
     let fired: [BoundName, string | number] | undefined; // set by the patch that fires a bound, which runs only on the record it is saved to
-    const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }): { run: CardRun; directive: CardDirective } => {
+    const finish = (patchOf: (latest: CardRun) => Partial<CardRun>, then: (saved: CardRun) => { run: CardRun; directive: CardDirective }, settle?: () => void, normalNote?: () => void): { run: CardRun; directive: CardDirective } => {
       const saved = this.store.updateCardRun(goal.id, card.id, (current) => {
         const latest = current ?? run;
         const evidence = [...latest.evidence, evidenceEntry];
         if ((latest.candidate?.digest ?? 'unknown') !== candidateDigest) {
           history.superseded = true;
           history.newer = latest.candidate?.digest?.slice(0, 12) ?? 'none';
+          queueNote({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed', outcome: result.outcome, superseded: true, stoppedMeanwhile: false } });
           return { ...latest, evidence, pendingEvents: [...(latest.pendingEvents ?? []), ...shipNotes] };
         }
         if (latest.stop || latest.state === 'STOP') {
           history.stopped = true;
+          queueNote({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed', outcome: result.outcome, superseded: false, stoppedMeanwhile: true } });
           return { ...latest, evidence, pendingEvents: [...(latest.pendingEvents ?? []), ...shipNotes] };
         }
+        normalNote?.();
         const patched = { ...latest, ...patchOf(latest), evidence, pendingEvents: [...(latest.pendingEvents ?? []), ...shipNotes] };
         return fired ? { ...patched, pendingFiring: boundFired(goal, ...fired, card.id, patched.stop?.at ?? now).data } : patched;
       });
+      if (history.superseded || history.stopped) {
+        const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
+        this.ops.markResult(operationId, result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed', { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
+      } else settle?.();
       const flushed = this.flush(saved, goal.generation)!;
       if ((flushed.pendingFiring || flushed.pendingEvents?.length) && !flushed.stop) return { run: flushed, directive: { kind: 'wait', cardId: card.id, on: 'journal', pollSeconds: 60, narration: `pending journal recovery for ${flushed.pendingFiring?.key ?? flushed.pendingEvents?.[0]?.data['eventKey']}` } };
       if (!history.superseded && !history.stopped) return then(flushed);
       const why = history.superseded ? `candidate ${candidateDigest.slice(0, 12)} was replaced by ${history.newer}` : `the card run was stopped (${saved.stop?.reason ?? 'STOP'})`;
       const status = result.outcome === 'merged' || result.outcome === 'merge-unconfirmed' ? 'UNKNOWN' : 'failed';
-      this.ops.markResult(operationId, status, { evidenceRef: `ship-${operationId}`, error: `ship ${result.outcome}: ${why} while the ship was in flight` });
-      this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status, outcome: result.outcome, superseded: history.superseded, stoppedMeanwhile: history.stopped } });
       const merged = status === 'UNKNOWN' ? ', and its merge is an unresolved operation to reconcile' : '';
       if (history.stopped) {
         const stop = flushed.stop ?? makeStop('card', `stopped while the ship was in flight; the ship result (${result.outcome}) is history${merged}`, 'inspect the card run record', { at: now, global: false });
@@ -2444,17 +2449,16 @@ export class CardRunner {
         const seen = answered;
         const stop = makeStop('tool', `ship exited 0 without its merge contract and gh reads PR #${pr} as ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}, not merged at the candidate ${sha ?? '(no candidate sha)'}`, `merge PR #${pr} by hand once its head is the candidate, or find why the ship path exited 0 without merging`, { at: now, global: false, finalFor: { goalId: goal.id, cardId: card.id } });
         return finish(() => ({ state: 'STOP', stop }), (next) => {
-          this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` });
-          this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } });
           return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
-        });
+        }, () => this.ops.markResult(operationId, 'failed', { evidenceRef: `ship-${operationId}`, error: `merge-unconfirmed: PR #${pr} ${seen.state} at ${seen.headRefOid ?? 'an unreported head'}` }), () => queueNote({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: 'failed', outcome: result.outcome } }));
       }
       return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
-        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
-        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
-      });
+      }, () => {
+        const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
+        this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
+      }, () => queueNote({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } }));
     }
 
     this.ops.markResult(operationId, 'failed', { error: `${result.outcome}: ${result.detail}` });

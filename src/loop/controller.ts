@@ -433,9 +433,20 @@ export class GoalController {
     let goal = flushed.goal;
     if (goal.pendingExtension) return { goal, directive: Directive.parse({ kind: 'wait', ...this.baseOf(goal), on: `extension:${goal.pendingExtension.id}`, pollSeconds: 60, narration: `deadline extension ${goal.pendingExtension.id} is unfinished; retry aidlc goal extend with the same deadline` }) };
     const now = this.clock();
+    let blocked: Directive | undefined;
     goal = this.store.updateGoal(input.goalId, (persisted) => {
     if (!persisted) throw new Error(`unknown goal ${input.goalId}`);
     goal = persisted;
+    if (goal.pendingExtension) {
+      blocked = Directive.parse({ kind: 'wait', ...this.baseOf(goal), on: `extension:${goal.pendingExtension.id}`, pollSeconds: 60, narration: `deadline extension ${goal.pendingExtension.id} is unfinished; retry aidlc goal extend with the same deadline` });
+      return persisted;
+    }
+    const pending = goal.pendingFiring?.key ?? goal.pendingEvents?.[0]?.data['eventKey'];
+    if (pending) {
+      const narration = `journal recovery for ${pending} is pending; retry the goal command before reporting a result`;
+      blocked = Directive.parse(goal.stop ? { kind: 'stop', ...this.baseOf(goal), stop: goal.stop, narration } : { kind: 'wait', ...this.baseOf(goal), on: 'journal', pollSeconds: 60, narration });
+      return persisted;
+    }
     if (input.generation !== goal.generation) throw new Error(`stale report: observed generation ${input.generation}, current ${goal.generation}; revalidate before further mutation`);
     if (goal.terminal && input.result === 'revision') throw new Error(`goal ${goal.id} is terminal (${goal.state}); carry the revision into the resume: aidlc goal resume ${goal.id} --text "..." --replace '{"old":"new"}'`);
     if (goal.terminal && input.result !== 'resume') throw new Error(`goal ${goal.id} is terminal (${goal.state}); a fresh user-authorised continuation must link a new generation (aidlc goal resume)`);
@@ -599,6 +610,7 @@ export class GoalController {
     }
     return goal;
     });
+    if (blocked) return { goal, directive: blocked };
     const recovered = this.flush(goal);
     goal = recovered.goal;
     this.writeBoard(goal);
@@ -612,22 +624,30 @@ export class GoalController {
   ensureCardRun(goal: Goal, cardId: string): CardRun {
     const existing = this.store.getCardRun(goal.id, cardId);
     if (existing) return existing;
-    const now = this.clock();
-    const run = CardRun.parse({
-      goalId: goal.id,
-      cardId,
-      cardRevision: goal.cardRevisions[cardId] ?? 0,
-      goalGeneration: goal.generation,
-      state: 'PREPARE',
-      startedAt: now,
-      deadline: computeCardDeadline(now, goal.deadlines, this.config.userLimitMs),
-      mode: this.config.mode,
-      base: { ref: this.config.base },
-      updatedAt: now,
+    let run: CardRun | undefined;
+    this.store.updateGoal(goal.id, (current) => {
+      if (!current) throw new Error(`unknown goal ${goal.id}`);
+      if (current.pendingExtension) throw new Error(`deadline extension ${current.pendingExtension.id} is unfinished; retry aidlc goal extend before dispatching ${cardId}`);
+      run = this.store.getCardRun(goal.id, cardId);
+      if (run) return current;
+      const now = this.clock();
+      run = CardRun.parse({
+        goalId: current.id,
+        cardId,
+        cardRevision: current.cardRevisions[cardId] ?? 0,
+        goalGeneration: current.generation,
+        state: 'PREPARE',
+        startedAt: now,
+        deadline: computeCardDeadline(now, current.deadlines, this.config.userLimitMs),
+        mode: this.config.mode,
+        base: { ref: this.config.base },
+        updatedAt: now,
+      });
+      this.store.saveCardRun(run);
+      this.journal(current.id).append({ type: 'CARD_DISPATCHED', goalId: current.id, cardId, generation: current.generation, data: { startedAt: run.startedAt, deadline: run.deadline, childRef: `card:${cardId}` } });
+      return current;
     });
-    this.store.saveCardRun(run);
-    this.journal(goal.id).append({ type: 'CARD_DISPATCHED', goalId: goal.id, cardId, generation: goal.generation, data: { startedAt: run.startedAt, deadline: run.deadline, childRef: `card:${cardId}` } });
-    return run;
+    return run!;
   }
 
   // ---------------------------------------------------------------------------------------

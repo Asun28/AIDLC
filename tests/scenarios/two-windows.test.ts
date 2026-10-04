@@ -1720,8 +1720,9 @@ test('R3: an extension winning the goal lock prevents the obsolete arc deadline 
     fx.advance(3 * 3600_000 + MINUTE_MS);
     const later = addMs(T0, 12 * 3600_000);
     let extended = false;
+    let goalLocks = 0;
     const directive = throughFs('openSync', (real, args) => {
-      if (!extended && String(args[0]) === `${fx.store.goalFile(goal.id)}.lock` && args[1] === 'wx') {
+      if (!extended && String(args[0]) === `${fx.store.goalFile(goal.id)}.lock` && args[1] === 'wx' && ++goalLocks === 2) {
         extended = true;
         fx.controller.extendDeadline(goal.id, 'lead', later, 'more time');
       }
@@ -1733,6 +1734,41 @@ test('R3: an extension winning the goal lock prevents the obsolete arc deadline 
     assert.equal(fx.events(goal.id).filter((event) => event.type === 'BOUND_FIRED' && event.data['bound'] === 'arc-deadline').length, 0);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('R3: report refuses recovery state that arrives after its initial flush but before the goal lock', () => {
+  for (const kind of ['extension', 'event', 'firing'] as const) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const goalFile = fx.store.goalFile(goal.id);
+      const boardFile = path.join(fx.paths.board, `${goal.id}.md`);
+      const beforeJournal = readFileSync(fx.journal(goal.id).file, 'utf8');
+      const beforeBoard = readFileSync(boardFile, 'utf8');
+      let injected = '';
+      let goalLocks = 0;
+      const result = throughFs('openSync', (real, args) => {
+        if (String(args[0]) === `${goalFile}.lock` && args[1] === 'wx' && ++goalLocks === 2) {
+          const current = JSON.parse(readFileSync(goalFile, 'utf8')) as Record<string, unknown>;
+          const pending = kind === 'extension'
+            ? { pendingExtension: { id: 'tx-race', at: fx.now(), by: 'lead', newDeadline: addMs(T0, 12 * 3600_000), reason: 'more time', cards: [], generation: 0 } }
+            : kind === 'event'
+              ? { pendingEvents: [{ type: 'GOAL_STATE', goalId: goal.id, generation: 0, data: { eventKey: 'race-event', from: 'PLAN', to: 'CARDS' } }] }
+              : { pendingFiring: { bound: 'arc-deadline', key: `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, generation: 0 } };
+          injected = JSON.stringify({ ...current, ...pending, storeRevision: Number(current['storeRevision']) + 1 });
+          writeFileSync(goalFile, injected, 'utf8');
+        }
+        return real(...args);
+      }, () => fx.controller.report({ goalId: goal.id, generation: 0, result: 'approved', data: { kind: 'development', by: 'lead' } }));
+      assert.equal(result.directive.kind, 'wait', kind);
+      assert.match(result.directive.narration, /extension|journal|BOUND_FIRED/, kind);
+      assert.equal(readFileSync(goalFile, 'utf8'), injected, `${kind}: no goal write`);
+      assert.equal(readFileSync(fx.journal(goal.id).file, 'utf8'), beforeJournal, `${kind}: no journal side effect`);
+      assert.equal(readFileSync(boardFile, 'utf8'), beforeBoard, `${kind}: no board rewrite`);
+      assert.equal(fx.goal(goal.id).authorizations.length, goal.authorizations.length, `${kind}: no approval`);
+    } finally { fx.cleanup(); }
   }
 });
 
@@ -1835,6 +1871,28 @@ test('R3: a failed final goal rename leaves an extension recoverable by the same
   } finally {
     fx.cleanup();
   }
+});
+
+test('R3: extension recovery preserves a non-time goal stop recorded after its marker', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const deadline = addMs(T0, 12 * 3600_000);
+    let goalRenames = 0;
+    assert.throws(() => throughFs('renameSync', (real, args) => {
+      if (String(args[1]) === fx.store.goalFile(goal.id) && ++goalRenames === 2) throw new Error('injected final goal rename failure');
+      return real(...args);
+    }, () => fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time')), /injected final goal rename failure/);
+    assert.ok(fx.goal(goal.id).pendingExtension);
+    const reviewStop = makeStop('review', 'review needs adjudication', 'adjudicate', { at: fx.now() });
+    fx.store.updateGoal(goal.id, (current) => ({ ...current!, state: 'STOP', terminal: true, stop: reviewStop }));
+    const recovered = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+    assert.deepEqual([recovered.state, recovered.terminal, recovered.stop], ['STOP', true, reviewStop]);
+    assert.equal(recovered.pendingExtension, undefined);
+    assert.equal(recovered.deadlines.extensions.filter((entry) => entry.newDeadline === deadline).length, 1);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'GOAL_STATE' && event.data['to'] === 'CARDS').length, 0);
+  } finally { fx.cleanup(); }
 });
 
 test('R3: a card rename failure leaves the extension intent for retry', () => {

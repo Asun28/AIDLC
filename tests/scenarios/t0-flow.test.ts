@@ -4719,7 +4719,11 @@ test('T1-AUDIT-FACTS-2 acceptance 1: a verified merge whose facts cannot all be 
     const shipped = shipOnGitHub('a'.repeat(40), { broken, calls: 2 });
     for (const [i, step] of shipped.steps.entries()) {
       assert.deepEqual([step.kind, step.state], ['close', 'CLOSE'], `${broken} call ${i + 1}: ${step.narration}`);
-      assert.deepEqual(step.results.map((e) => e.data), [{ operationId: step.results[0]?.data['operationId'], status: 'succeeded' }], `${broken} call ${i + 1}: one result, no facts`);
+      assert.equal(typeof step.results[0]?.data['eventKey'], 'string', `${broken}: the result has a stable outbox key`);
+      assert.deepEqual(step.results.map((e) => {
+        const { eventKey: _eventKey, ...data } = e.data;
+        return data;
+      }), [{ operationId: step.results[0]?.data['operationId'], status: 'succeeded' }], `${broken} call ${i + 1}: one result, no facts`);
       assert.equal(step.opStatus, 'succeeded', broken);
     }
     assert.equal(shipped.merges, 1, `${broken}: the merge ran once`);
@@ -5169,6 +5173,94 @@ test('R3 findings 4 and 5: CI-denied stop survives failed result and classificat
       assert.equal(ship.requests.length, 1);
     } finally { fx.cleanup(); }
   }
+});
+
+test('R3 ship merge result: a failed OPERATION_RESULT append leaves a settled operation and a recoverable wait', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-MERGE-NOTE', title: 'merge result recovery' });
+    const goal = goalForCards(fx, ['T1-MERGE-NOTE']);
+    const ship = new DryRunShipPath(['merged']);
+    const runner = fx.runner(ship), card = fx.card('T1-MERGE-NOTE');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-merge' });
+    const applied = await failOnce('appendFileSync', (args) => String(args[1]).includes('"type":"OPERATION_RESULT"'), () => runner.next(fx.goal(goal.id), card, built));
+    assert.equal((applied as ReturnType<CardRunner['next']>).directive.kind, 'wait');
+    assert.match((applied as ReturnType<CardRunner['next']>).directive.narration, /\/ship\/.*stays pending/);
+    const stored = fx.store.getCardRun(goal.id, card.id)!;
+    assert.equal(stored.state, 'CLOSE');
+    assert.ok(stored.pendingEvents?.some((event) => event.type === 'OPERATION_RESULT'));
+    const operation = fx.ops.list({ goalId: goal.id, cardId: card.id }).at(-1)!;
+    assert.equal(operation.status, 'succeeded', 'the operation is settled after the outcome save, before journal recovery');
+    runner.next(fx.goal(goal.id), card, stored);
+    runner.next(fx.goal(goal.id), card, stored);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'OPERATION_RESULT' && event.data['operationId'] === operation.id).length, 1);
+    assert.equal(ship.requests.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test('R3 ship history result: a failed OPERATION_RESULT append keeps the newer candidate and recovers once', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HISTORY-NOTE', title: 'ship history recovery' });
+    const goal = goalForCards(fx, ['T1-HISTORY-NOTE']);
+    const card = fx.card('T1-HISTORY-NOTE');
+    const ship = new DryRunShipPath(['merged']);
+    const runner = fx.runner(ship);
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const built = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-old' });
+    const complete = fx.queue.complete.bind(fx.queue);
+    fx.queue.complete = (...args: Parameters<typeof complete>) => {
+      const current = fx.store.getCardRun(goal.id, card.id)!;
+      fx.store.saveCardRun(CardRun.parse({ ...current, candidate: { sha: 'sha-new', dirty: false, untracked: [], digest: 'sha-new' }, dodReceipt: 'dod:new', updatedAt: fx.now() }));
+      return complete(...args);
+    };
+    let applied: unknown;
+    try {
+      applied = await failOnce('appendFileSync', (args) => String(args[1]).includes('"type":"OPERATION_RESULT"'), () => runner.next(fx.goal(goal.id), card, built));
+    } finally { fx.queue.complete = complete; }
+    assert.equal((applied as ReturnType<CardRunner['next']>).directive.kind, 'wait');
+    assert.match((applied as ReturnType<CardRunner['next']>).directive.narration, /\/ship\/.*stays pending/);
+    const stored = fx.store.getCardRun(goal.id, card.id)!;
+    assert.equal(stored.candidate?.sha, 'sha-new');
+    assert.ok(stored.pendingEvents?.some((event) => event.type === 'OPERATION_RESULT'));
+    const operation = fx.ops.list({ goalId: goal.id, cardId: card.id }).at(-1)!;
+    assert.equal(operation.status, 'UNKNOWN');
+    runner.next(fx.goal(goal.id), card, stored);
+    runner.next(fx.goal(goal.id), card, stored);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'OPERATION_RESULT' && event.data['operationId'] === operation.id).length, 1);
+    assert.equal(ship.requests.length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test('R3 unconfirmed merge: a failed operation note append returns the saved tool stop and replays once', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-OPEN-PR', title: 'unconfirmed merge recovery' });
+    const goal = goalForCards(fx, ['T1-OPEN-PR']);
+    const card = fx.card('T1-OPEN-PR');
+    const ship = new DryRunShipPath(['merge-unconfirmed']);
+    const originalShip = ship.ship.bind(ship);
+    ship.ship = (request: ShipRequest) => ({ ...originalShip(request), prNumber: 42 });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r' }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: scriptedRunner({ 'gh pr view 42 --repo o/r --json': { stdout: JSON.stringify({ number: 42, state: 'OPEN', headRefOid: 'sha-open' }) } }) });
+    const dry = fx.runner();
+    let r = dry.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
+    r = dry.next(fx.goal(goal.id), card, r.run);
+    const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-open' });
+    const applied = await failOnce('appendFileSync', (args) => String(args[1]).includes('"type":"OPERATION_RESULT"'), () => runner.next(fx.goal(goal.id), card, built));
+    assert.equal((applied as ReturnType<CardRunner['next']>).directive.kind, 'stop');
+    const stored = fx.store.getCardRun(goal.id, card.id)!;
+    assert.deepEqual([stored.state, stored.stop?.reason], ['STOP', 'tool']);
+    assert.ok(stored.pendingEvents?.some((event) => event.type === 'OPERATION_RESULT'));
+    const operation = fx.ops.list({ goalId: goal.id, cardId: card.id }).at(-1)!;
+    assert.equal(operation.status, 'failed');
+    runner.next(fx.goal(goal.id), card, stored);
+    runner.next(fx.goal(goal.id), card, stored);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'OPERATION_RESULT' && event.data['operationId'] === operation.id).length, 1);
+    assert.equal(ship.requests.length, 1);
+  } finally { fx.cleanup(); }
 });
 
 test('R3 finding 3: a second ship-path review block persists STOP before REVIEW_DECIDED can fail', async () => {

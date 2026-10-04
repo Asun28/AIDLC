@@ -604,6 +604,25 @@ test('R3: direct card attempt refuses a pending firing before recording an attem
   }
 });
 
+test('R3: a missing card run cannot be created during a pending extension and uses the new deadline after recovery', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(2 * HOUR_MS);
+    const until = addMs(T0, 12 * HOUR_MS);
+    fx.store.updateGoal(goal.id, (current) => ({ ...current!, pendingExtension: { id: 'tx-new-run', at: fx.now(), by: 'lead', newDeadline: until, reason: 'more time', cards: [], generation: 0 } }));
+    const dispatched = fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length;
+    assert.throws(() => fx.controller.ensureCardRun(goal, 'T1-A'), /deadline extension .* is unfinished/);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A'), undefined);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatched);
+    fx.controller.extendDeadline(goal.id, 'lead', until, 'more time');
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    assert.equal(run.deadline, addMs(T0, 5 * HOUR_MS), 'the newly created card receives start + 3h under the extended goal');
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatched + 1);
+  } finally { fx.cleanup(); }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while its goal goes terminal counts as a firing of that stop once it lands [R9]', () => {
   const fx = makeFixture();
   try {
