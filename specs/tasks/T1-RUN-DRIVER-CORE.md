@@ -1,7 +1,7 @@
 ---
 id: T1-RUN-DRIVER-CORE
 title: Bounded CLI driver over existing goal directives and the command-capable provider
-status: todo
+status: merged
 branch: T1-RUN-DRIVER-CORE
 worktree: D:\wt\AIDLC\T1-RUN-DRIVER-CORE
 plan_ref: plans/run-driver-core.md#design
