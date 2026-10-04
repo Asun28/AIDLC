@@ -1,7 +1,7 @@
 ---
 id: T1-README-SCOPE
 title: The README first paragraph states that aidlc is not an implementation of the AWS AI-DLC methodology and names what it is, a bounded-autonomy control plane for coding agents that is driver-agnostic
-status: todo
+status: merged
 branch: T1-README-SCOPE
 worktree: D:\wt\AIDLC\T1-README-SCOPE
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
@@ -25,6 +25,7 @@ tdd: true
 forbid: [any change under src/, removing the AWS AI-DLC credit from docs/ARCHITECTURE.md]
 non_goals: [a rewrite of the README, a naming change of the package]
 doc_sync: README.md, CHANGELOG.md
+hygiene: "2026-10-04 user-delegated sequencing: runs in an independent worktree while init and telemetry are owned by other sessions. The plan identifies this dependency as shared-file ordering only; no init behavior is required. Merge the current base before review."
 ---
 
 # T1-README-SCOPE

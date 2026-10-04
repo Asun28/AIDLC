@@ -1,6 +1,6 @@
 # aidlc
 
-AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native SDLC playbook loop, intent -> spec -> plan -> cards -> diff -> review -> release -> incident, with the bounded autonomy of the v5 plan in `docs/plans/PLAN-aidlc-loop.md`: sized routing (T0-bugfix/T0/T1/T2), one coordinator per goal, shared-session leases and review admission, hard admission deadlines, bounded review/CI/effort retries, opt-in release and migration stages, and a hash-chained evidence journal that an independent verifier can check. Every `aidlc next` call returns exactly one typed directive; the agent (Claude Code or any other driver) performs that move and reports the result.
+AI-native SDLC orchestrator in TypeScript. It implements the Anthropic AI-native SDLC playbook loop, intent -> spec -> plan -> cards -> diff -> review -> release -> incident, with the bounded autonomy of the v5 plan in `docs/plans/PLAN-aidlc-loop.md`: sized routing (T0-bugfix/T0/T1/T2), one coordinator per goal, shared-session leases and review admission, hard admission deadlines, bounded review/CI/effort retries, opt-in release and migration stages, and a hash-chained evidence journal that an independent verifier can check. Every `aidlc next` call returns exactly one typed directive; the agent (Claude Code or any other driver) performs that move and reports the result. aidlc is not an implementation of the AWS AI-DLC methodology; it is a driver-agnostic bounded-autonomy control plane for coding agents.
 
 ## Status
 
