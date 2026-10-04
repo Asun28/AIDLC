@@ -778,8 +778,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--log <file>')
     .action((o: { log: string }) => {
       const c = ctx(g());
-      const r = classifyCiFailure([{ name: 'log', conclusion: 'failure', logExcerpt: readFileSync(o.log, 'utf8') }]);
-      out(c, r, () => `${r.class}: ${r.evidence.slice(0, 5).join('; ')}`);
+      const r = classifyCiFailure([{ name: 'log', aggregate: true, conclusion: 'failure', logExcerpt: readFileSync(o.log, 'utf8') }], undefined, { transientSteps: c.config.ci.transientSteps });
+      const note = 'a log alone cannot be transient: a rerun needs structured step evidence (ci.transientSteps)';
+      out(c, { ...r, note }, () => `${r.class}: ${r.evidence.slice(0, 5).join('; ')}\n${note}`);
     });
   const ops = program.command('ops').alias('op').description('external operation ledger');
   ops
