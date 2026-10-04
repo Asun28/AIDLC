@@ -672,7 +672,7 @@ export class CardRunner {
       }
       case 'STOP':
       default: {
-        next = this.save(next, assessed.firing);
+        next = this.save(next);
         return { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop ?? makeStop('card', decision.reason, 'inspect the card run record', { at: now, global: false }), narration: decision.reason } };
       }
     }
@@ -768,7 +768,7 @@ export class CardRunner {
     // The assessment, its lease renewal and its saves, runs once the run carries the generation.
     const { assessed, next } = unlessLocked(() => {
       const assessed = this.assess(goal, card, owned, now, saveHolding);
-      return { assessed, next: saveHolding(assessed.next, assessed.firing) };
+      return { assessed, next: saveHolding(assessed.next) };
     }, (refusal) => `the takeover of card ${card.id} is done and the run carries lease generation ${lease.generation}, but its assessment was refused (${refusal}); run ${scoped('next')} to go on`);
     return { run: next, lease: assessed.lease ?? lease, completed, previousOwner: previous?.owner, previousGeneration: previous?.generation };
   }
@@ -2754,4 +2754,3 @@ export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefine
   if (!episode || episode.terminal !== 'succeeded') return episode;
   return { ...episode, terminal: undefined };
 }
-

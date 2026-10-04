@@ -6,7 +6,8 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { HOUR_MS, MINUTE_MS, RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
 import { effectiveGoalDeadline } from '../../src/core/deadlines.ts';
 import { makeStop } from '../../src/core/stop.ts';
-import { readFileSync, writeFileSync } from 'node:fs';
+import fs, { readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delivery/ship.ts';
 
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
@@ -365,7 +366,15 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: a journal that refuses CARD_STATE cann
       const before = readFileSync(file, 'utf8');
       writeFileSync(file, before + '{broken tail\n');
       let stopped!: ReturnType<CardRunner['next']>;
-      assert.doesNotThrow(() => { stopped = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run); });
+      const observed: boolean[] = [], real = fs.readFileSync;
+      fs.readFileSync = ((...args: Parameters<typeof real>) => {
+        if (String(args[0]) === file) observed.push(fx.store.getCardRun(goal.id, 'T1-A')?.stop?.reason === 'time');
+        return real(...args);
+      }) as typeof real;
+      syncBuiltinESMExports();
+      try { assert.doesNotThrow(() => { stopped = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run); }); }
+      finally { fs.readFileSync = real; syncBuiltinESMExports(); }
+      assert.ok(observed.length > 0 && observed.every(Boolean), 'the stop is on disk before every attempted journal read or append');
       assert.equal(stopped.directive.kind, 'stop');
       assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.stop?.reason, 'time');
       assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
