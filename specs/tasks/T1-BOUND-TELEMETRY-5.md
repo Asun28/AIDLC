@@ -1,10 +1,9 @@
 ---
-id: T1-BOUND-TELEMETRY-4
-title: Every bound in the Limits table journals BOUND_FIRED through an outbox, so a bound stop never waits on the journal, and the board shows each bound's firing count, the goal outcomes that followed and every goal whose firing is pending or whose journal is incomplete
+id: T1-BOUND-TELEMETRY-5
+title: Finish bound telemetry recovery and locked admissions after the final ten-finding review
 status: todo
-superseded_by: T1-BOUND-TELEMETRY-5
-branch: T1-BOUND-TELEMETRY-4
-worktree: D:\wt\AIDLC\T1-BOUND-TELEMETRY-4
+branch: T1-BOUND-TELEMETRY-5
+worktree: D:\wt\AIDLC\T1-BOUND-TELEMETRY-5
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
 allow_paths:
   - src/core/types.ts
@@ -32,6 +31,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T1-BOUND-TELEMETRY-4.md
+  - specs/tasks/T1-BOUND-TELEMETRY-5.md
   - specs/tasks/T1-BOUND-TELEMETRY-2.md
   - specs/tasks/T1-BOUND-TELEMETRY-3.md
   - tests/scenarios/audit.test.ts
@@ -61,7 +61,7 @@ acceptance:
   - 10. Findings 5 and 6: a journal file or journal directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired (tests/infra/board.test.ts). [R2] [dod arm 1]
   - 11. A stale goal snapshot is refused with `GOAL_STALE`; a fresh snapshot keeps persisted pending events and firing, and only the flush clears them (tests/infra/goal-store.test.ts). [R6] [R7] [dod arm 1]
   - 12. A goal resumed into a new generation and stopped again by the same bound on the same value journals its own firing, one per generation over repeated calls (tests/scenarios/deadline.test.ts). [R1] [dod arm 1]
-  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +800 net, with 5000 total changed lines and shared W2+W4+W5 ceiling +1100 under the user-approved linked repair; close-out states actual totals. [R1]
+  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +900 net, with 6000 total changed lines and shared W2+W4+W5 ceiling +1100 under the new user-approved linked repair; close-out states actual totals. [R1]
   - 14. `docs/OPERATIONS.md` names `BOUND_FIRED`, the outbox (`pendingFiring`) and the board line; `docs/OPERATIONS.md` also names the goal `LOCKED` refusal and the `incomplete:` of a pending firing; `CHANGELOG.md` Unreleased carries the entry under this card id and an entry starting `Changed:` that states goal writes now take the store lock; a test reads each exact sentence (tests/infra/board.test.ts). [R1] [R2] [R5] [R7] [dod arm 1]
   - 15. A held goal lock makes a goal write refuse with `StoreError` `LOCKED` naming the file and leaves the record byte-identical; after the lock is released the same write succeeds (tests/infra/goal-store.test.ts). [R7] [dod arm 1]
   - 16. At the start of `card next`, controller `next` and controller `report`, a pending firing is journaled and cleared before selection or dispatch; a flush that throws leaves the stop in place, the command reports the pending firing, and no ship or other work directive is dispatched (tests/scenarios/t0-flow.test.ts, tests/scenarios/deadline.test.ts). [R6] [R8] [dod arm 1]
@@ -93,20 +93,33 @@ acceptance:
   - 42. Finding disputes and acceptances refuse unresolved card or goal outboxes before changing findings, including a pending REVIEW_DECIDED event (tests/scenarios/review-block.test.ts, tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
   - 43. Controller card-result flushes the target card's outbox before applying a patch and checks pending recovery under the card lock, preserving the record and journal when replay refuses (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
   - 44. A ship completion replays a firing or event committed by another writer while the external ship was in flight before it changes the review ledger or applies the ship result. A refused replay retains the original outbox and leaves the result patch unapplied; a later distinct CI grant cannot replace the earlier firing (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 45. `ensureCardRun` rejects a caller from an older goal generation before creating a run or CARD_DISPATCHED; a same-generation caller persists one keyed dispatch (tests/scenarios/deadline.test.ts). [R1] [R6] [dod arm 1]
+  - 46. Controller `next` recovers a selected card's pending dispatch before returning run-card; if replay refuses, it names the pending key and dispatches no work (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 47. A REVIEW_DECIDED or goal outbox arriving after `recordAttempt`'s first read prevents attempt journal and ledger mutation under the goal-then-card locked commit; valid attempts retain their original evidence (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 48. Card takeover checks goal and card recovery before lease or journal mutation and again at its locked admission; late goal recovery retains the original lease and outboxes (tests/scenarios/two-windows.test.ts). [R6] [dod arm 1]
+  - 49. Ship admission revalidates persisted goal generation, terminal state and recovery under the goal lock after preflight and before the external ship; a late stop or pending outbox permits no new ship (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 50. Formal R3 admission under goal-then-card locks refuses a late goal stop, resume or pending outbox before reviewer dispatch (tests/scenarios/review-block.test.ts). [R6] [dod arm 1]
+  - 51. R2 admission applies the same locked goal checks after diff collection, with no reviewer dispatched on late recovery or stale generation (tests/scenarios/review-block.test.ts). [R6] [dod arm 1]
+  - 52. Formal result completion replays or refuses a newly pending card firing/event before installing another firing or stop; an issued review result remains recoverable and original evidence replays once (tests/scenarios/review-block.test.ts). [R6] [R8] [dod arm 1]
+  - 53. Ship completion checks goal recovery as well as card recovery before review-ledger and result commits. A refused replay retains the issued result for retry without overwriting either outbox or issuing a duplicate unresolved external effect (tests/scenarios/t0-flow.test.ts). [R6] [R8] [dod arm 1]
+  - 54. Bounds keeps distinct firing counts and decidable legacy DONE/STOP positional outcomes when a later terminal has malformed time; genuinely undecidable timed firings are incomplete, not false open, and other journals still count (tests/infra/board.test.ts). [R2] [dod arm 1]
+  - 55. CHANGELOG Unreleased names the T1-BOUND-TELEMETRY-5 linked repair in an exact sentence asserted by tests/infra/board.test.ts; all predecessor CHANGELOG assertions remain (tests/infra/board.test.ts). [R1] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
   same_class: "Every saveGoal caller at b4de1bc, controller.ts: 182 createGoal writes a new goal record under a fresh goal lease and cannot race a stop; 298 CARDS to RUN, 325 WAIT to RUN, 330 RUN to VERIFY_ARC, 343 to WAIT, 350 WAIT to RUN, 392 to CLOSE and 421 to DONE (all in next) and 596 (every report result) write a snapshot read at the start of the call and can race a stop written by an overlapping call on the same goal; 661 persistStop writes the stop and gains pendingFiring; 747 goal extend writes the extended deadline, readmits stopped cards and can race a stop. No hook, CLI or board path writes the goal record directly: src/hooks and src/cli/main.ts call no saveGoal, and writeBoard writes only the board file. Firing sites that move to the outbox: card-runner.ts save(run, firing) 452-458, saveHolding 745, finish() 2330, the command-path stop 1923; controller.ts 210, 220, 264, 527."
-budget: 5000
+budget: 6000
 tdd: true
 sweep: "Survey of T1-BOUND-TELEMETRY at b4de1bc, the candidate this card carries. Firings journaled inside the transition write: card-runner.ts save(run, firing) at 452-458, saveHolding 745, finish() patch 2330, the command-path stop 1923; goal firings journalFiring before persistStop at controller.ts:210, 220, 264, 527. Goal writes are blind: goal-store.ts saveGoal 37-41 (atomicWriteJson, no lock); card runs go through updateJson (store.ts:162) under <file>.lock. CI firing key is the candidate digest alone (card-runner.ts:2465); the ledger keeps cancelled reruns (types.ts:462-470, ci-policy.ts:197). journalFiring ignores readEvents.damaged (board.ts:86-88); readEvents and boundsOfJournals test existsSync before reading (board.ts:79, 93). R3 decision 2 of T1-BOUND-TELEMETRY: 6 findings at card-runner.ts:2465, controller.ts:210, board.ts:87, card-runner.ts:2329, board.ts:79, board.ts:93."
 forbid: [a new config key, a new persistent state file under .aidlc/, a counter kept outside the journal, a change to any bound's value, a bound stop that waits on the journal, a firing key read from the clock, a raw card report patch of loop-owned recovery fields]
 non_goals: [enforcing the lifecycle repair bound, counting the worker cap, a per-bound history view, tuning any default, firing the release reconciliation grace or the R2 round limits (issue 126), listJsonFiles and the rest of the existsSync sweep outside the board (issue 127)]
-hygiene: "User explicitly approved another bounded repair and review cycle after the second R3 block of T1-BOUND-TELEMETRY-3. This linked successor carries candidate 7497c5c, all prior counters, findings and evidence. Three final R3 findings define the repair boundary; use RED tests, semantic mutation sweep before a success receipt, and the normal first-plus-one-repair R3 allowance. An explicit deadline extension is recorded. PR #140 remains a retained draft until the reviewed replacement integrates."
+hygiene: "On 2026-10-04 the user explicitly approved the ten-finding linked repair and another bounded review cycle after T1-BOUND-TELEMETRY-4's second formal block. This successor carries clean candidate 4ee37748 and all prior counters, findings and evidence without reopening stopped predecessors. Use behavioral RED for each finding and semantic mutation sweep before success; normal initial-plus-one-repair R3 allowance. The explicit three-hour deadline extension is recorded separately through CLI. PR #140 stays draft until the reviewed replacement integrates."
 doc_sync: README.md (Limits), docs/OPERATIONS.md (Bound telemetry), docs/ARCHITECTURE.md (the goals/ and cards/ rows of the persisted-state table name pendingFiring and the goal lock), CHANGELOG.md
 ---
 
-# T1-BOUND-TELEMETRY-4
+# T1-BOUND-TELEMETRY-5
+
+2026-10-04 user-approved repair boundary: carry the complete preceding acceptance and history above, then close all ten final R3 findings through acceptance 45–54. Source net +900, total changed 6000 and shared W2+W4+W5 +1100 supersede the prior budget for this linked candidate. The old card and its review ledger remain stopped and immutable. The final R3 verdict is retained at `D:\wt\AIDLC\T1-BOUND-TELEMETRY-4\.review\T1-BOUND-TELEMETRY-4.r3.2.1eaf7013.json`.
 
 ## Deliverable
 Invariant the reviewers check: a bound stop is persisted whatever the journal does, and a firing is journaled at most once per key and at least once after the journal recovers. A firing journaled by this code, and a terminal event journaled by this code, carry persisted times, and the board classifies them by those times alone; entries written before this card carry no times, and only those fall back to journal position.
