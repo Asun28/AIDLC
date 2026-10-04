@@ -39,3 +39,5 @@ doc_sync: docs/OPERATIONS.md, CHANGELOG.md
 # T1-RUN-CONTEXT-PACK
 
 Deliver the context-pack portion of T1-RUN-DRIVER independently, keeping its remaining runtime and watch work gated on telemetry.
+
+2026-10-04 authorized review repair: verify the opened file's path and read the same handle on the Windows/Linux CI platforms; refuse other platforms or unavailable handle validation. Reproduce a parent-directory swap after resolution for both plans and lessons. This closes formal-review F1 without a path-read fallback.
