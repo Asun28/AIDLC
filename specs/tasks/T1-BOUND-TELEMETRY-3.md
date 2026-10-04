@@ -11,6 +11,7 @@ allow_paths:
   - src/loop/controller.ts
   - src/state/board.ts
   - src/state/journal.ts
+  - src/state/store.ts
   - src/state/goal-store.ts
   - src/cli/main.ts
   - tests/infra/board.test.ts
@@ -102,4 +103,4 @@ npm run check
 - 2026-10-04, under the user's explicit delegation of all decisions and permission for multiple PRs: R3 decision 1 identified 14 persistence, recovery, dispatch and board defects. Total diff cap 1600 -> 3200, source cap +146 -> +400, shared W2+W4+W5 envelope +400 -> +650. Add docs/plans/PLAN-v5.1-hardening.md to allow_paths for the matching plan amendment. All behavior requirements, no-new-state-file/no-config-key restrictions, tests, and retained review/attempt counters remain unchanged. Goal concurrency uses stale-write refusal or locked transitions; partial extension writes must be recoverable, and journal failure must leave durable recovery state.
 
 - 2026-10-04, under the same delegated repair authority: add tests/scenarios/extend-running-card.test.ts to allow_paths. The recoverable extension requires a lastExtension receipt on changed card records; retain the earlier full-record assertions for all existing fields and separately assert the exact new receipt. Untouched records and their revisions remain byte-identical. This is an additive existing-record contract change, not a test exemption; budgets and review/attempt counters remain unchanged.
-- 2026-10-04, user approved a bounded continuation after the second R3 block: successor T1-BOUND-TELEMETRY-3 carries the -2 candidate, seven findings F22-F28, all old acceptance, review and attempt evidence, and uses a fresh card review cycle. The shared journal needs a transient sibling lock; it is removed after each append and creates no persistent state format. Source ceiling +650, total churn 4000, shared W2+W4+W5 ceiling +900 reserve the measured repair; no config key, bound value change or counter reset.
+- 2026-10-04, user approved a bounded continuation after the second R3 block: successor T1-BOUND-TELEMETRY-3 carries the -2 candidate, seven findings F22-F28, all old acceptance, review and attempt evidence, and uses a fresh card review cycle. The shared journal needs a transient sibling lock; `src/state/store.ts` supplies the existing exclusive-lock primitive to avoid a second lock implementation. The lock is removed after each append and creates no persistent state format. Source ceiling +650, total churn 4000, shared W2+W4+W5 ceiling +900 reserve the measured repair; no config key, bound value change or counter reset.
