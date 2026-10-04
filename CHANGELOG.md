@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-CI-RERUN-STRUCTURED-2: structured gate evidence no longer hides independently supplied failed jobs. Aggregate receipt wrappers are explicit; duplicate or contradictory independent jobs prevent a transient rerun.
+
 - CI rerun on structured evidence, card T0-CI-RERUN-STRUCTURED (issue 76 item 2): a red CI failure is `transient`, the one same-origin rerun, only when every red check carries structured evidence, a `startup_failure` conclusion or a failed step listed in the new `ci.transientSteps` (default `Set up job`, `Complete job`), which the GitHub ship path prints as `[CI-GATE-STEP]` lines from the job records; log text, a cancelled check's included, no longer grants a rerun and classifies as `unknown` (STOP/ci). A network failure inside a project step is no longer rerun unless that step is listed; the scaffold path never earns a transient rerun (issue 137).
 
 - T0-CI-RERUN-STRUCTURED review repairs: duplicate red check names and unresolved red lines prevent a transient rerun; required skipped or neutral checks explicitly reported as red also need evidence.

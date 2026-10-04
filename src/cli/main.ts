@@ -778,7 +778,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--log <file>')
     .action((o: { log: string }) => {
       const c = ctx(g());
-      const r = classifyCiFailure([{ name: 'log', conclusion: 'failure', logExcerpt: readFileSync(o.log, 'utf8') }]);
+      const r = classifyCiFailure([{ name: 'log', aggregate: true, conclusion: 'failure', logExcerpt: readFileSync(o.log, 'utf8') }]);
       const note = 'a log alone cannot be transient: a rerun needs structured step evidence (ci.transientSteps)';
       out(c, { ...r, note }, () => `${r.class}: ${r.evidence.slice(0, 5).join('; ')}\n${note}`);
     });

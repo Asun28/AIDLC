@@ -49,7 +49,7 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
   const gate = (checks: Array<{ name: string; conclusion: string }>) => `[CI-GATE-RED] ${JSON.stringify(checks)}`;
   /** A step line for a check: its failed step, or null when the record places none. */
   const step = (check: string, name: string | null) => `[CI-GATE-STEP] ${JSON.stringify({ check, job: '456', step: name === null ? null : { number: 3, name, conclusion: 'failure' } })}`;
-  const ship = (text: string, transientSteps?: string[]) => classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: text }], undefined, transientSteps ? { transientSteps } : undefined);
+  const ship = (text: string, transientSteps?: string[]) => classifyCiFailure([{ name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: text }], undefined, transientSteps ? { transientSteps } : undefined);
   const build = [{ name: 'build', conclusion: 'failure' }];
 
   test('acceptance 1: a red check whose failed step is Set up job or Complete job is transient; a project step, a null step or no step line is unknown [R3]', () => {
@@ -116,6 +116,33 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     }
   });
 
+  test('successor R3: structured evidence never hides an independent failed job', () => {
+    const startup = { name: 'build', conclusion: 'startup_failure' };
+    const jobs = [startup, { name: 'lint', conclusion: 'failure' }];
+    const result = classifyCiFailure(jobs, gate([startup]));
+    assert.equal(result.class, 'unknown');
+    assert.equal(canRerun({ reruns: [] }, '123', 1, 'candidate', result.class).allowed, false);
+    assert.deepEqual(result.failedJobs, ['build', 'lint']);
+    assert.equal(classifyCiFailure([{ name: 'build', conclusion: 'failure' }, jobs[1]!], `${gate(build)}\n${step('build', 'Set up job')}`).class, 'unknown', 'same conclusion with a different name remains an independent failure');
+    assert.equal(classifyCiFailure(jobs, `${gate([startup])}\n${step('lint', 'Set up job')}`).class, 'transient', 'every independent failure carries evidence');
+  });
+
+  test('successor R3: receipt wrappers must be explicit, never inferred from a name', () => {
+    const log = gate([{ name: 'build', conclusion: 'startup_failure' }]);
+    for (const name of ['log', 'ship-ci-gate', 'custom receipt']) {
+      assert.equal(classifyCiFailure([{ name, conclusion: 'failure', logExcerpt: log }]).class, 'unknown', name);
+      assert.equal(classifyCiFailure([{ name, conclusion: 'failure', logExcerpt: log, aggregate: true }]).class, 'transient', name);
+    }
+    assert.equal(classifyCiFailure([{ name: 'receipt', conclusion: 'startup_failure', aggregate: true }]).class, 'unknown', 'a wrapper conclusion is no job evidence');
+  });
+
+  test('successor R3: duplicate or contradictory independent records cannot disappear during matching', () => {
+    const startup = { name: 'build', conclusion: 'startup_failure' };
+    assert.equal(classifyCiFailure([startup, startup], gate([startup])).class, 'unknown');
+    assert.equal(classifyCiFailure([{ name: 'build', conclusion: 'failure' }], gate([startup])).class, 'unknown');
+    assert.equal(classifyCiFailure([{ ...startup, conclusion: 'STARTUP_FAILURE' }], gate([startup])).class, 'transient', 'case does not create a contradictory conclusion');
+  });
+
   test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
     const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
     assert.equal(ship(text).class, 'unknown');
@@ -170,6 +197,20 @@ describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the C
       rmSync(dir, { recursive: true, force: true });
     }
   });
+});
+
+test('successor R4: ci classify marks a complete log receipt as aggregate', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-aggregate-'));
+  try {
+    const file = path.join(dir, 'ci.log');
+    writeFileSync(file, '[CI-GATE-RED] [{"name":"build","conclusion":"startup_failure"}]');
+    const cli = path.resolve(import.meta.dirname, '../../src/cli/main.ts');
+    const out = spawnSync(process.execPath, [cli, 'ci', 'classify', '--log', file, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(JSON.parse(out.stdout).class, 'transient');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 describe('CI rerun allowance (Q7)', () => {

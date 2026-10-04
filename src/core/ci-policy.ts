@@ -37,6 +37,8 @@ export interface CiJob {
   conclusion?: string | null;
   status?: string | null;
   logExcerpt?: string;
+  /** This record wraps a complete receipt rather than representing an independent job. */
+  aggregate?: boolean;
 }
 
 /** Check-run names that are secret or security scans: a red one is `security`, never rerun, STOP/risk. */
@@ -179,7 +181,7 @@ export interface CiClassification {
  * The class of a red CI failure. `transient`, the one same-origin rerun, needs structured evidence for every red check (card
  * T0-CI-RERUN-STRUCTURED): its conclusion is `startup_failure`, or a `[CI-GATE-STEP]` line of the check names a failed step
  * on `transientSteps`. Log text never grants a rerun: a text-only transient is `unknown` (no rerun, STOP/ci), its matches
- * kept as evidence. The red checks are those of the structured gate lines, or with none the failed jobs passed in.
+ * kept as evidence. Red checks include independent jobs and gate checks; only explicitly marked aggregate wrappers are excluded.
  * Security and code-defect evidence keep their precedence.
  */
 export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[] } = {}): CiClassification {
@@ -227,12 +229,13 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     }
   }
   void transientHits; // the transient log matches stay in the evidence and grant nothing
-  const red = gateStructured ? gateChecked : failed;
+  const independent = failed.filter((j) => j.aggregate !== true);
+  const red = gateStructured ? [...gateChecked, ...independent.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independent;
   const evidenced = (c: CiJob) => (c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name));
   let cls: CiFailureClass;
   if (securityHits.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first
-  else if (!unresolvedRed && red.length > 0 && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
+  else if (!unresolvedRed && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
   else cls = 'unknown';
   return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(securityHits).values()].map((s) => `security: ${s}`).concat(evidence) };
 }

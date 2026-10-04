@@ -2457,7 +2457,7 @@ export class CardRunner {
       case 'ci-timeout': {
         const text = `${result.receipt.stdout}\n${result.receipt.stderr}`;
         // The classifier reads the structured gate lines for names and keeps wait lines and payloads out of the log patterns.
-        const cls = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: result.outcome === 'ci-timeout' ? 'timed_out' : 'failure', logExcerpt: text }], undefined, { transientSteps: this.config.ci.transientSteps });
+        const cls = classifyCiFailure([{ name: 'ship-ci-gate', aggregate: true, conclusion: result.outcome === 'ci-timeout' ? 'timed_out' : 'failure', logExcerpt: text }], undefined, { transientSteps: this.config.ci.transientSteps });
         this.journal(goal.id).append({ type: 'CI_CLASSIFIED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { class: cls.class, evidence: cls.evidence.slice(0, 5) } });
         const runId = text.match(/runs\/(\d+)/)?.[1] ?? `ship-${operationId}`;
         if (cls.class === 'security') {
