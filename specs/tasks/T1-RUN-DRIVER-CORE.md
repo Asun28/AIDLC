@@ -10,6 +10,7 @@ allow_paths:
   - src/cli/main.ts
   - tests/scenarios/run-driver.test.ts
   - docs/OPERATIONS.md
+  - docs/ARCHITECTURE.md
   - README.md
   - CHANGELOG.md
   - specs/tasks/T1-RUN-DRIVER-CORE.md
@@ -34,7 +35,7 @@ sweep: "Inspected controller.next/report, directive schemas, providerFor, Claude
 forbid: [driver-owned state files, synthesizing reports from model prose, automatically approving checkpoints, driver calls that merge or publish, changes to review or authorization gates]
 non_goals: [board watch, telemetry, text-only provider tool execution, parallel goals, changing existing provider model defaults]
 hygiene: "The 2026-10-05 user request delegates all decisions and permits multiple PRs. Independent driver split authorized; W5 source allowance gains at most 260 lines for this card, with measured actual delta retained. Prior reviews and all other sessions' ownership remain unchanged."
-doc_sync: docs/OPERATIONS.md, README.md, CHANGELOG.md
+doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, README.md, CHANGELOG.md
 ---
 
 Deliver T1-RUN-DRIVER R1 independently. The parent retains the watch view and integrated acceptance after telemetry merges. Reviews and CI remain mandatory.
