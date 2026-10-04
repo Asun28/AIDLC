@@ -5493,3 +5493,24 @@ test('T1-BOUND-TELEMETRY R3 decision 1: an owner that revalidates its ownership 
     fx.cleanup();
   }
 });
+
+test('R2 edge: a refused nonbound LEASE_RENEWED note leaves the ownership stop for exact-once recovery', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-OWN-NOTE', title: 'recover ownership renewal note' });
+    const goal = goalForCards(fx, ['T1-OWN-NOTE']);
+    const card = fx.card('T1-OWN-NOTE');
+    const runner = fx.runner();
+    const prepared = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id)).run;
+    const stopped = fx.store.saveCardRun(CardRun.parse({ ...prepared, state: 'STOP', stop: makeStop('ownership', 'renew the owned lease', 'retry card next', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+    const refused = await failOnce('appendFileSync', (args) => String(args[1]).includes('"type":"LEASE_RENEWED"'), () => runner.next(fx.goal(goal.id), card, stopped));
+    assert.match(String(refused), /injected appendFileSync failure/);
+    assert.equal(fx.store.getCardRun(goal.id, card.id)?.stop?.reason, 'ownership', 'the refused note leaves the stop on disk');
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'LEASE_RENEWED').length, 0);
+    const recovered = runner.next(fx.goal(goal.id), card, stopped);
+    assert.notEqual(recovered.run.stop?.reason, 'ownership');
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'LEASE_RENEWED' && event.data['revalidated'] === true).length, 1);
+    runner.next(fx.goal(goal.id), card, recovered.run);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'LEASE_RENEWED' && event.data['revalidated'] === true).length, 1, 'repeated card next does not duplicate renewal evidence');
+  } finally { fx.cleanup(); }
+});

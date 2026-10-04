@@ -582,9 +582,9 @@ export class CardRunner {
     const firing = bound && boundFired(goal, ...bound, card.id);
     if (next.state !== run.state) notes.push({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
     if (firing) next = { ...next, pendingEvents: [...(next.pendingEvents ?? []), ...notes.map((note, index) => ({ ...note, data: { ...note.data, eventKey: `${goal.id}@${goal.generation}/${card.id}/assessment/${run.revision + 1}/${index}` } }))] };
-    if (revalidatedStop || firing) next = save(next, firing);
-    // A bound stop is durable before any assessment note; journal failure must not hide its directive.
+    // A bound stop saves its notes in the outbox first; a nonbound ownership stop stays in place if its renewal note is refused.
     if (!firing) for (const note of notes) this.journal(goal.id).append(note);
+    if (revalidatedStop || firing) next = save(next, firing);
     return { run, next, decision, lease, firing };
   }
 
