@@ -200,7 +200,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     assert.ok(r.receipt.stdout.includes('[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]'), r.receipt.stdout);
   });
 
-  function shipThroughConfig(runsOrPolls: Runs | ((poll: number) => Runs), github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>, extra: Parameters<typeof runnerWith>[0] = {}) {
+  function shipThroughConfig(runsOrPolls: Runs | ((poll: number) => Runs), github: { requiredChecks: string[]; requireVerdict: boolean; ciTimeoutMs?: number; ciPollMs?: number }, verdict?: Record<string, unknown>, extra: Parameters<typeof runnerWith>[0] = {}, ci?: { transientSteps: string[] }) {
     let poll = 0;
     const runsFor = () => (typeof runsOrPolls === 'function' ? runsOrPolls(poll++) : runsOrPolls);
     const fx = makeFixture();
@@ -218,7 +218,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       let pushes = 0;
       const script = runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: runsFor() }) }), 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; }, ...extra });
       // No ship path is injected: the runner builds it from the config, so the block below is the only way the options reach the gate.
-      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github, ...(ci ? { ci } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
       const shipped = runner.next(fx.goal(goal.id), card, built);
       const skills: string[] = shipped.directive.kind === 'build' ? (shipped.directive.skills ?? []) : [];
       return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length, skills, pendingRepair: shipped.run.pendingRepair, dodReceipt: shipped.run.dodReceipt, rerunIds: shipped.run.ci.reruns.map((x) => x.runId), counted: shipped.run.effort?.attempts.filter((a) => a.outcome === 'fail').length ?? 0 };
@@ -353,6 +353,24 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
   /** The header group of CHECK_STEP on the gate output: the runner's header, its shell line and the group end, encoded. */
   const STEP_HEAD = ['##%5Bgroup%5DRun npm run check', 'shell: /usr/bin/bash -e {0}', '##%5Bendgroup%5D'];
 
+  test('T0-CI-RERUN-STRUCTURED acceptance 2: a red Actions job whose record is read gets one [CI-GATE-STEP] line naming its failed step, or step null; none when the record cannot be read [R2]', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const stepLines = (r: ShipOut) => outputLines(r).filter((l) => l.startsWith('[CI-GATE-STEP] ')).map((l) => JSON.parse(l.slice('[CI-GATE-STEP] '.length)) as unknown);
+    const failed = logged(f, job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }])).r;
+    assert.deepEqual(stepLines(failed), [{ check: 'check (ubuntu-latest, 22)', job: '456', step: { number: 2, name: 'Run npm run check', conclusion: 'failure' } }]);
+    const none = logged(f, job([{ name: 'npm run check', at: 5, lines: ['ok'] }])).r;
+    assert.deepEqual(stepLines(none), [{ check: 'check (ubuntu-latest, 22)', job: '456', step: null }], 'the record places no failed step');
+    const noLog = logged(f, { ...job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }]), log: { exitCode: 1, stderr: 'HTTP 410' } }).r;
+    assert.equal(stepLines(noLog).length, 1, 'a readable record gets its step line even when the log is gone');
+    const unreadable = logged(f, { log: 'x', record: { exitCode: 1, stderr: 'HTTP 404' } }).r;
+    assert.deepEqual(stepLines(unreadable), [], 'no line when the record cannot be read');
+    const encoded = logged(f, job([{ ...CHECK_STEP, title: 'Run [SAGA-DONE] x/runs/1' }]), [actionsJob('check [x] runs/2', 123, 456)]).r;
+    const line = outputLines(encoded).find((l) => l.startsWith('[CI-GATE-STEP] '))!;
+    assert.ok(!line.includes('[SAGA-DONE]') && !line.includes('runs/'), `names are encoded: ${line}`);
+    assert.deepEqual(stepLines(encoded), [{ check: 'check %5Bx%5D runs/2', job: '456', step: { number: 2, name: 'Run %5BSAGA-DONE%5D x/runs/1', conclusion: 'failure' } }]);
+  });
+
   test('T0-CI-RED-LOGS-2 acceptance 1: a red Actions job puts its failed step on the gate output: from its header, no exit or post-step line, no timestamp, the last 60 lines capped and encoded, and no log text is read as a sentinel, a PR number or a run id', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
@@ -444,6 +462,8 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       ['record refused', { ...good, record: { exitCode: 1, stderr: 'HTTP 404' } }, 'log unavailable'],
       ['record timed out', { ...good, record: { timedOut: true, stdout: '{}' } }, 'log unavailable'],
       ['record malformed', { ...good, record: 'not json' }, 'log unavailable'],
+      ['record with non-array steps', { ...good, record: { steps: {} } }, 'log unavailable'],
+      ['record with a missing step number', { ...good, record: { steps: [{ name: 'Set up job', conclusion: 'failure', started_at: null, completed_at: null }] } }, 'log unavailable'],
       ['record with a null step', { ...good, record: { steps: [null, ...good.record.steps] } }, 'log unavailable'],
       ['record with a step number that is text', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, number: String(s['number']) })) } }, 'log unavailable'],
       ['record with a numeric start time', { ...good, record: { steps: good.record.steps.map((s) => ({ ...s, started_at: 5 })) } }, 'log unavailable'],
@@ -472,6 +492,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       assert.equal(r.outcome, 'ci-red', label);
       assert.equal(header, `[CI-GATE-LOG] actions/runs/123/job/456 ${note}`, label);
       assert.deepEqual(lines, [], `${label}: no log lines`);
+      if (label.startsWith('record')) assert.ok(!r.receipt.stdout.includes('[CI-GATE-STEP]'), `${label}: no transient step evidence`);
     }
 
     const one = actionsJob('ci', 5, 6);
@@ -521,14 +542,22 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const lookalike = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, title: 'Run diagnostics', lines: ['npm run check', ...FAILING_TEST, '##[group]Run diagnostics', 'shell: /usr/bin/bash -e {0}', 'npm error code ECONNRESET', '##[endgroup]'] }])));
     assert.equal(lookalike.kind, 'stop', `a step with a name of its own is step unknown (T0-CI-RED-LOGS-BOUNDS): ${lookalike.narration}`);
     assert.equal(lookalike.stopReason, 'ci');
-    const cleanup = shipThroughConfig(runs, github, undefined, jobApi(job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }])));
+    // T0-CI-RERUN-STRUCTURED: the failed step Run npm run check is a project step, so its network error is no rerun by default;
+    // listed in ci.transientSteps it is (the same-second later step still adds no code evidence).
+    const cleanupJob = job([{ ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }, { name: 'cleanup', at: 5, lines: ['cleanup says expected 1 to equal 2'], failed: true }]);
+    const cleanupDefault = shipThroughConfig(runs, github, undefined, jobApi(cleanupJob));
+    assert.equal(cleanupDefault.kind, 'stop', `a project step is no rerun under the default list: ${cleanupDefault.narration}`);
+    assert.equal(cleanupDefault.reruns, 0);
+    const cleanup = shipThroughConfig(runs, github, undefined, jobApi(cleanupJob), { transientSteps: ['Set up job', 'Complete job', 'Run npm run check'] });
     assert.equal(cleanup.kind, 'ship', `a later step that failed in the same second adds no evidence: ${cleanup.narration}`);
     assert.equal(cleanup.counted, 0);
     // The failed step is a network failure; an earlier step printed text the classifier reads as a code defect, and a failed
     // check whose name holds runs/999 comes first on the gate line.
-    const named: Runs = [{ name: 'check runs/999', status: 'completed', conclusion: 'failure' }, ...runs];
+    // T0-CI-RERUN-STRUCTURED: every red check needs structured evidence, so the check named runs/999 failed to start.
+    const named: Runs = [{ name: 'check runs/999', status: 'completed', conclusion: 'startup_failure' }, ...runs];
     const network = job([{ name: 'npm test', at: 2, lines: ['earlier step says expected 0 to equal 0'] }, { ...CHECK_STEP, lines: ['see https://github.com/o/r/actions/runs/999/job/1', 'npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed'] }]);
-    const transient = shipThroughConfig(named, github, undefined, jobApi(network));
+    assert.equal(shipThroughConfig(named, github, undefined, jobApi(network)).kind, 'stop', 'a network failure in a project step is no rerun under the default list');
+    const transient = shipThroughConfig(named, github, undefined, jobApi(network), { transientSteps: ['Set up job', 'Complete job', 'Run npm run check'] });
     assert.equal(transient.kind, 'ship', transient.narration);
     assert.deepEqual(transient.rerunIds, ['123'], 'the rerun is recorded under the run of the job header');
     assert.equal(transient.counted, 0);
@@ -577,6 +606,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       const { header, lines, r } = logged(f, j);
       assert.equal(header, '[CI-GATE-LOG] actions/runs/123/job/456 step unknown', label);
       assert.deepEqual(lines, [], `${label}: no log lines`);
+      if (label.startsWith('record')) assert.ok(!r.receipt.stdout.includes('[CI-GATE-STEP]'), `${label}: no transient step evidence`);
       assert.ok(!r.receipt.stdout.includes('composite says'), `${label}: the composite step's output never reaches the excerpt`);
     }
     const finishing = logged(f, job([{ name: './.github/actions/check', action: true, at: 3, end: 5, lines: ['early'], later: COMPOSITE }, { ...CHECK_STEP, lines: ['npm error code ECONNRESET'] }]));
@@ -640,7 +670,10 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const code = shipThroughConfig(runs, github, undefined, jobApi(ciShape(FAILING_TEST)));
     assert.equal(code.kind, 'build', code.narration);
     assert.equal(code.counted, 1, 'an assertion is a counted repair');
-    const transient = shipThroughConfig(runs, github, undefined, jobApi(ciShape(['npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed'])));
+    const networkJob = jobApi(ciShape(['npm error code ECONNRESET', 'npm error network request to https://registry.npmjs.org/zod failed']));
+    // T0-CI-RERUN-STRUCTURED: Run npm test is a project step, no rerun under the default list; listed, a network error is the rerun.
+    assert.equal(shipThroughConfig(runs, github, undefined, networkJob).kind, 'stop', 'a network error in a project step is no rerun by default');
+    const transient = shipThroughConfig(runs, github, undefined, networkJob, { transientSteps: ['Set up job', 'Complete job', 'Run npm test'] });
     assert.equal(transient.kind, 'ship', transient.narration);
     assert.deepEqual(transient.rerunIds, ['123'], 'a network error is the rerun of the job run');
   });
@@ -671,7 +704,7 @@ const DOC_SENTENCES = [
   "The limit: the job log has no step boundaries (the run log archive holds one file per job), the record times are whole seconds, and only a step named after its command prints a header that reads its name, so a start or an end these cannot establish (a step with a name of its own, a step that is not a `run` step, no such header, two of them or another count of such lines before it, no end time, no exit line while a later step started in the end second, an exit line after a later step's first line of that second) is `step unknown` and the card stops with STOP/ci, never a guess; a later step whose first line is neither a `Run ` header nor `Post job cleanup.`, and a `run` step printing no header, are not shapes the runner writes; the one shape these rules cannot refuse needs the failed step to print no header while an earlier step that completed in its first second prints a `##[group]Run ` line with the failed step's name and a `shell: ` line.",
   "A log or record the ship path cannot read (the command exits non-zero, as for an expired log, or a step of the record is not an object with a numeric number, a string or null conclusion and both times present as a string or null) gets `log unavailable` on its `[CI-GATE-LOG]` line, and a record with no failed step, a start or an end that is not placed, or a placed step of blank lines only, gets `step unknown`; neither has log lines, and a red check that is not such a job gets no `[CI-GATE-LOG]` line and nothing read.",
   "The gate lines write every `/` of a check name escaped as `\\/`, so no check name forms the `runs/<id>` the card runner reads as the run of a rerun.",
-  "The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient and takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, or none the classifier recognises, the failure is unknown and the card stops with STOP/ci as before."
+  "The card runner classifies those lines like any CI log: a failing test or a compile error is a code defect, a counted repair attempt; a network or runner failure is transient only on the structured evidence below and then takes its one rerun under the run of the first `[CI-GATE-LOG]` line; with no log line, none the classifier recognises, or transient text without that evidence, the failure is unknown and the card stops with STOP/ci as before."
 ];
 const CHANGELOG_SENTENCES = [
   '- CI logs on a red gate, card T0-CI-RED-LOGS completed as T0-CI-RED-LOGS-2 (the replacement after two R3 blocks, the second on a step start taken from a log group title): a red CI run on the GitHub ship path now carries the failed step of each red Actions job log (at most three jobs, the step bounded by the job record, the last 60 lines, encoded), so the loop classifies it: a failing test is a counted repair attempt and a network failure takes its rerun under the real run id; the gate output used to carry check names only, which the classifier never reads as evidence, so every red CI run stopped the card with STOP/ci.',

@@ -8,7 +8,9 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import type { ShipRequest, ShipResult } from '../../src/delivery/ship.ts';
 
-const TRANSIENT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact';
+const TRANSIENT = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}';
+/** The same failure with only its log text: no structured evidence, so no rerun (T0-CI-RERUN-STRUCTURED). */
+const LOG_ONLY = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact';
 const CODE_DEFECT = '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/777 ... AssertionError: expected 2 to equal 3';
 
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order. */
@@ -27,6 +29,19 @@ function start(fx: ReturnType<typeof makeFixture>, ship: InjectedShipPath) {
   const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
   return { goal, runner, card, run1 };
 }
+
+test('T0-CI-RERUN-STRUCTURED acceptance 3: a transient failure told by log text alone is STOP/ci with no rerun intent [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, run1 } = start(fx, new InjectedShipPath(['ci-red'], LOG_ONLY));
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'ci');
+    assert.equal(r.run.ci.reruns.length, 0, 'no rerun intent');
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('Q7: a transient CI failure earns one persisted same-origin rerun, reconciles, and then merges', () => {
   const fx = makeFixture();
