@@ -13,6 +13,19 @@ import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delive
 /** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
 const fired = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => `${String(e.data['bound'])}@${e.cardId ?? 'goal'}`);
 
+test('legacy goal firing replay keeps the generation in its persisted key', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const key = `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`;
+    fx.store.updateGoal(goal.id, (current) => ({ ...current!, generation: 1, state: 'STOP', terminal: true, stop: makeStop('time', 'old deadline', 'extend', { at: T0 }), pendingFiring: { bound: 'arc-deadline', key, stoppedAt: T0 } }));
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    fx.controller.next(goal.id);
+    assert.deepEqual(fx.events(goal.id).filter((event) => event.type === 'BOUND_FIRED').map((event) => [event.data['key'], event.generation]), [[key, 0]]);
+  } finally { fx.cleanup(); }
+});
+
 /** The keys of those firings after the goal id: @generation/card/bound/the persisted value that fired it (R3 decision 1, R2 on cc53042). */
 const keysOf = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length));
 

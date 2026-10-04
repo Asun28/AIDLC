@@ -682,7 +682,7 @@ export class GoalController {
     try {
       goal = this.store.updateGoal(goal.id, (g) => {
         if (!g?.pendingFiring && !g?.pendingEvents?.length) return g;
-        if (g.pendingFiring) journalFiring(this.journal(g.id), { type: 'BOUND_FIRED', goalId: g.id, cardId: undefined, generation: g.pendingFiring.generation ?? g.generation, data: g.pendingFiring });
+        if (g.pendingFiring) journalFiring(this.journal(g.id), { type: 'BOUND_FIRED', goalId: g.id, cardId: undefined, generation: g.pendingFiring.generation ?? Number(/@(\d+)\//.exec(g.pendingFiring.key)?.[1] ?? g.generation), data: g.pendingFiring });
         for (const event of g.pendingEvents ?? []) journalOnce(this.journal(g.id), event);
         return { ...g, pendingFiring: undefined, pendingEvents: undefined };
       });

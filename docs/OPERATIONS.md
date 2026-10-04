@@ -356,6 +356,11 @@ A merge GitHub refuses after the checks passed (card T0-SHIP-MERGE-REFUSED) is r
 - The line reads every goal journal file of the state directory, whatever the goal records say, one line at a time: a line that does not parse is left out and the Bounds line ends with `; incomplete: lines that do not parse in "<journal>"`, naming each such journal, so a damaged journal never reads as none fired and never blocks another goal or its stop. A journal file or directory that is a dangling link, or a directory that cannot be listed, is named the same way; only one that is absent reads as none fired.
 - The `incomplete:` part also names, after `pending firings or unreadable records in`, every goal whose goal record or card run holds a `pendingFiring`, or cannot be read, so a firing not yet journaled never reads as none fired.
 
+- Terminal and associated transition events use `pendingEvents` in the same record as their result. Replay verifies the journal hash chain and deduplicates persisted event keys. Card attempts and review dispatch refuse unresolved recovery; old firing records recover their original generation from the firing key.
+- Goal snapshots carry `storeRevision`; `saveGoal` refuses an obsolete snapshot with `GOAL_STALE`, preserving newer stops, deadlines and pending evidence. Keep the returned goal or reload it before another write.
+- An interrupted deadline extension leaves `pendingExtension` on the goal and `lastExtension` receipts on changed cards. Ordinary goal/card dispatch waits for recovery. Retry the same `aidlc goal extend` arguments: completed card changes are retained, the current goal stop is respected, and notes replay once. A refused lock changes no record; a later write failure leaves this explicit recovery state. Unchanged cards remain byte-identical.
+- The board also marks invalid records, orphaned card records, pending events, unfinished extensions and broken journal chains as incomplete. Timed outcomes use the earliest eligible instant, including equivalent timestamp spellings, rather than journal order.
+
 ## Companion skills
 
 Advisory skills installed next to `aidlc-loop`; the loop's gates decide, and a skill never overrides `aidlc next`. Each is read by path when the step needs it (the implementer, investigator and planner agents point at them) or called by name in a session.

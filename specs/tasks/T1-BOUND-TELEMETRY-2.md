@@ -19,6 +19,7 @@ allow_paths:
   - tests/scenarios/review-block.test.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/two-windows.test.ts
+  - tests/scenarios/extend-running-card.test.ts
   - README.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
@@ -48,9 +49,9 @@ acceptance:
   - 8. Finding 3: a goal journal that cannot be read in full refuses the append, keeps `pendingFiring`, and the board names the goal and the journal as incomplete; once the journal is readable the next call journals the firing once and clears it (tests/infra/board.test.ts). [R2] [R6] [dod arm 1]
   - 9. Finding 4: a CI-denied ship result whose firing append fails leaves the card STOPPED with `pendingFiring`; the next `card next` journals the firing and returns the stop without invoking the ship path again (tests/scenarios/ci-rerun.test.ts). [R5] [R6] [dod arm 1]
   - 10. Findings 5 and 6: a journal file or journal directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired (tests/infra/board.test.ts). [R2] [dod arm 1]
-  - 11. A plain goal write from a snapshot without `pendingFiring` keeps the persisted one; only the flush clears it (tests/infra/goal-store.test.ts). [R6] [R7] [dod arm 1]
+  - 11. A stale goal snapshot is refused with `GOAL_STALE`; a fresh snapshot keeps persisted pending events and firing, and only the flush clears them (tests/infra/goal-store.test.ts). [R6] [R7] [dod arm 1]
   - 12. A goal resumed into a new generation and stopped again by the same bound on the same value journals its own firing, one per generation over repeated calls (tests/scenarios/deadline.test.ts). [R1] [dod arm 1]
-  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +400 net (expanded under the user's 2026-10-04 delegation for R3 decision 1 recovery and concurrency repairs; the shared W2+W4+W5 envelope is +650); the close-out states it and the W2+W4 running total against +400. [R1]
+  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +400 net (expanded under the user's 2026-10-04 delegation for R3 decision 1 recovery and concurrency repairs; the shared W2+W4+W5 envelope is +650); the close-out states it and the W2+W4 running total against +650. [R1]
   - 14. `docs/OPERATIONS.md` names `BOUND_FIRED`, the outbox (`pendingFiring`) and the board line; `docs/OPERATIONS.md` also names the goal `LOCKED` refusal and the `incomplete:` of a pending firing; `CHANGELOG.md` Unreleased carries the entry under this card id and an entry starting `Changed:` that states goal writes now take the store lock; a test reads each exact sentence (tests/infra/board.test.ts). [R1] [R2] [R5] [R7] [dod arm 1]
   - 15. A held goal lock makes a goal write refuse with `StoreError` `LOCKED` naming the file and leaves the record byte-identical; after the lock is released the same write succeeds (tests/infra/goal-store.test.ts). [R7] [dod arm 1]
   - 16. At the start of `card next`, controller `next` and controller `report`, a pending firing is journaled and cleared before selection or dispatch; a flush that throws leaves the stop in place, the command reports the pending firing, and no ship or other work directive is dispatched (tests/scenarios/t0-flow.test.ts, tests/scenarios/deadline.test.ts). [R6] [R8] [dod arm 1]
@@ -90,3 +91,5 @@ npm run check
 - 2026-10-04, under the user's delegation to finish this card and make all decisions: total diff budget 1460 -> 1600 for the R2 F1 regression and repair of partial deadline extensions under a later card-run lock. Source cap remains +146; scope and acceptance are unchanged.
 
 - 2026-10-04, under the user's explicit delegation of all decisions and permission for multiple PRs: R3 decision 1 identified 14 persistence, recovery, dispatch and board defects. Total diff cap 1600 -> 3200, source cap +146 -> +400, shared W2+W4+W5 envelope +400 -> +650. Add docs/plans/PLAN-v5.1-hardening.md to allow_paths for the matching plan amendment. All behavior requirements, no-new-state-file/no-config-key restrictions, tests, and retained review/attempt counters remain unchanged. Goal concurrency uses stale-write refusal or locked transitions; partial extension writes must be recoverable, and journal failure must leave durable recovery state.
+
+- 2026-10-04, under the same delegated repair authority: add tests/scenarios/extend-running-card.test.ts to allow_paths. The recoverable extension requires a lastExtension receipt on changed card records; retain the earlier full-record assertions for all existing fields and separately assert the exact new receipt. Untouched records and their revisions remain byte-identical. This is an additive existing-record contract change, not a test exemption; budgets and review/attempt counters remain unchanged.

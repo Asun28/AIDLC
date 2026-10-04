@@ -16,8 +16,16 @@ const deadlineNotes = (events: JournalEvent[]) => events.filter((e) => e.type ==
 /** The index of the extension's own NOTE for `newDeadline`. */
 const extensionAt = (events: JournalEvent[], newDeadline: string) =>
   events.findIndex((e) => e.type === 'NOTE' && (e.data['extension'] as { newDeadline?: string } | undefined)?.newDeadline === newDeadline);
-/** A stored run with only the fields the store sets on a write taken from `before`: what must equal `before` apart from the deadline. */
-const settled = (after: CardRun, before: CardRun) => ({ ...after, revision: before.revision, updatedAt: before.updatedAt });
+/** Check the recovery receipt, then compare every pre-existing field apart from the deadline and store write fields. */
+const settled = (after: CardRun, before: CardRun, extensionId: string) => {
+  assert.deepEqual(after.lastExtension, { id: extensionId, fromState: before.state, fromDeadline: before.deadline, ...(before.stop ? { fromStopReason: before.stop.reason } : {}) });
+  const { lastExtension, ...rest } = after;
+  return { ...rest, ...(before.lastExtension ? { lastExtension: before.lastExtension } : {}), revision: before.revision, updatedAt: before.updatedAt };
+};
+const nextExtensionId = (fx: Fixture, goalId: string) => {
+  const goal = fx.goal(goalId);
+  return `${goal.id}@${goal.generation}/extension/${goal.storeRevision + 1}`;
+};
 
 /** A card at BUILD: PREPARE, then the build directive of attempt 1. */
 function toBuild(fx: Fixture, goalId: string, cardId: string): CardRun {
@@ -39,10 +47,11 @@ test('T0-EXTEND-RUNNING-CARD acceptance 1: a card in BUILD past its own deadline
     fx.advance(3 * HOUR_MS + MINUTE_MS);
     const before = fx.store.getCardRun(goal.id, 'T1-A')!;
     const until = addMs(T0, 14 * HOUR_MS);
+    const extensionId = nextExtensionId(fx, goal.id);
     const extended = fx.controller.extendDeadline(goal.id, 'lead', until, 'the reviews and the ship remain');
     assert.equal(extended.terminal, false);
     const after = fx.store.getCardRun(goal.id, 'T1-A')!;
-    assert.deepEqual(settled(after, before), { ...before, deadline: until }, 'only the deadline changes');
+    assert.deepEqual(settled(after, before, extensionId), { ...before, deadline: until }, 'only the deadline and verified recovery receipt change');
     assert.equal(after.revision, before.revision + 1, 'one write');
     const events = fx.events(goal.id);
     const notes = deadlineNotes(events);
@@ -98,10 +107,11 @@ test('T0-EXTEND-RUNNING-CARD acceptance 2: every state in progress is moved; DON
     fx.advance(HOUR_MS);
     const before = new Map(ids.map((id) => [id, fx.store.getCardRun(goal.id, id)!]));
     const until = addMs(T0, 20 * HOUR_MS);
+    const extensionId = nextExtensionId(fx, goal.id);
     fx.controller.extendDeadline(goal.id, 'lead', until, 'more time');
     for (const [id, state] of moving) {
       const after = fx.store.getCardRun(goal.id, id)!;
-      assert.deepEqual(settled(after, before.get(id)!), { ...before.get(id)!, deadline: until }, `${state}: only the deadline changes`);
+      assert.deepEqual(settled(after, before.get(id)!, extensionId), { ...before.get(id)!, deadline: until }, `${state}: only the deadline and verified recovery receipt change`);
     }
     for (const id of kept) assert.deepEqual(fx.store.getCardRun(goal.id, id), before.get(id), `${id}: the record is unchanged`);
     assert.equal(fx.store.getCardRun(goal.id, 'T1-LATER')!.deadline, addMs(T0, 30 * HOUR_MS), 'a deadline is never moved earlier');
@@ -138,9 +148,10 @@ test('T0-EXTEND-RUNNING-CARD acceptance 2: a run in BUILD of a card superseded b
     assert.equal(supersededBefore.state, 'BUILD', 'the superseded run is still in progress');
     const b = fx.store.getCardRun(goal.id, 'T1-B')!;
     const until = addMs(T0, 20 * HOUR_MS);
+    const extensionId = nextExtensionId(fx, goal.id);
     fx.controller.extendDeadline(goal.id, 'lead', until, 'more time for the replacement');
     assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-A'), supersededBefore, 'a card outside the current projection is untouched');
-    assert.deepEqual(settled(fx.store.getCardRun(goal.id, 'T1-B')!, b), { ...b, deadline: until }, 'the running card of the projection is moved');
+    assert.deepEqual(settled(fx.store.getCardRun(goal.id, 'T1-B')!, b, extensionId), { ...b, deadline: until }, 'the running card of the projection is moved');
     assert.deepEqual(deadlineNotes(fx.events(goal.id)).map((e) => e.cardId), ['T1-B']);
   } finally {
     fx.cleanup();
