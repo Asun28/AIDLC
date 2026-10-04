@@ -2,6 +2,7 @@
 id: T1-BOUND-TELEMETRY-3
 title: Every bound in the Limits table journals BOUND_FIRED through an outbox, so a bound stop never waits on the journal, and the board shows each bound's firing count, the goal outcomes that followed and every goal whose firing is pending or whose journal is incomplete
 status: todo
+superseded_by: T1-BOUND-TELEMETRY-4
 branch: T1-BOUND-TELEMETRY-3
 worktree: D:\wt\AIDLC\T1-BOUND-TELEMETRY-3
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
