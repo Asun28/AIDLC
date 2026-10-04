@@ -1306,6 +1306,14 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 1: from every cwd inside the repositor
     assert.deepEqual(loadHookConfig(cwd), new HookConfigError(file, NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG), cwd);
     assert.throws(() => loadProjectConfig(resolveRepoIdentity(cwd).mainRoot), ConfigError, cwd);
   }
+  // the root reached through another spelling (a junction or a directory link) is the root: the file is named as given,
+  // as before, and the relative doctor spellings pass there; below it the canonical root's file is read
+  const alias = path.join(path.dirname(root), 'alias');
+  symlinkSync(root, alias, 'junction');
+  assert.deepEqual(loadHookConfig(alias), new HookConfigError(path.join(alias, 'aidlc.config.json'), NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG));
+  assert.deepEqual(loadHookConfig(path.join(alias, 'src')), new HookConfigError(file, NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG));
+  const env = { PATH: process.env['PATH'] };
+  assert.deepEqual(runHook('production-gate', { tool_input: { command: 'node bin/aidlc.js doctor' } }, { cwd: alias, env }), { exitCode: 0 });
   // no config at the root: the defaults, although the subdirectory and the worktree each hold one
   rmSync(file);
   for (const cwd of cwds) assert.deepEqual(loadHookConfig(cwd), DEFAULT_HOOK_CONFIG, cwd);
