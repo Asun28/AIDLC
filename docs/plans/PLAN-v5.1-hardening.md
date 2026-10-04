@@ -332,6 +332,13 @@ The depends_on chain orders the shared files (CHANGELOG.md,
 docs/OPERATIONS.md, README.md); only T1-RUN-DRIVER carries a real
 prerequisite (the bound line W5 shows).
 
+Sequencing amendment (2026-10-04, user delegated all decisions and requested a
+different worktree): T1-INIT-SURFACE may start independently of
+T1-BOUND-TELEMETRY-2 in its own worktree. Its dependency is now empty;
+the wave and task-table ordering above is superseded for this card only.
+Synchronize shared documentation by merging the current base before review.
+Acceptance, source budget and the driver's telemetry prerequisite are unchanged.
+
 ## Card close-out record
 Every card ends with, in its CLOSE evidence (`aidlc evidence retain`) and in
 the session report: the DoD command and its exit code with the pass count;
