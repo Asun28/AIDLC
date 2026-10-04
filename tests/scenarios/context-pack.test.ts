@@ -73,6 +73,11 @@ test('plan section extraction ignores headings in fenced code and reports an emp
     const card = { ...fx.card('T1-PACK'), plan_ref: 'plans/plan.md#selected' };
     writeFileSync(path.join(fx.tmp, 'plans/plan.md'), '# Plan\n```md\n## Selected\nwrong\n```\n## Selected\nreal\n~~~md\n## Example\n~~~\n## Other\nexcluded');
     assert.equal(JSON.parse(loadContextPack(card, fx.tmp, [])).planSection, '## Selected\nreal\n~~~md\n## Example\n~~~');
+    for (const plan_ref of ['plans/plan.md#selected#extra', 'plans/plan.md#']) {
+      const pack = JSON.parse(loadContextPack({ ...card, plan_ref }, fx.tmp, []));
+      assert.equal(pack.planSection, '');
+      assert.deepEqual(pack.missingSources, [plan_ref, 'docs/LESSONS.md']);
+    }
     writeFileSync(path.join(fx.tmp, 'plans/plan.md'), '');
     assert.deepEqual(JSON.parse(loadContextPack(card, fx.tmp, [])).missingSources, ['plans/plan.md#selected', 'docs/LESSONS.md']);
   } finally { fx.cleanup(); }

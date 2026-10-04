@@ -112,10 +112,10 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
     if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
     return readOpenedSource(resolved);
   };
-  const [file, anchor] = (card.plan_ref ?? '').split('#');
+  const [, file, anchor] = (card.plan_ref ?? '').match(/^([^#]*)(?:#([\s\S]*))?$/)!;
   let planSection = file ? read(file, true) : '';
   if (!file) missingSources.push('plan_ref');
-  if (file && anchor && !missingSources.includes(file)) {
+  if (file && anchor !== undefined && !missingSources.includes(file)) {
     const lines = planSection.split(/\r?\n/);
     let fence = '';
     const headings = lines.map((line) => {
@@ -128,7 +128,7 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
       return fence ? null : line.match(/^ {0,3}(#{1,6})\s+(.+?)(?:\s+#+)?\s*$/);
     });
     const slug = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}_\s-]/gu, '').replace(/\s/g, '-');
-    const start = headings.findIndex((h) => h && slug(h[2]!) === anchor);
+    const start = anchor ? headings.findIndex((h) => h && slug(h[2]!) === anchor) : -1;
     const level = headings[start]?.[1]?.length ?? 0;
     const end = headings.findIndex((h, i) => i > start && h && h[1]!.length <= level);
     planSection = start < 0 ? '' : lines.slice(start, end < 0 ? undefined : end).join('\n').trim();
