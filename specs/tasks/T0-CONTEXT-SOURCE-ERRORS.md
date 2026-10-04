@@ -2,6 +2,7 @@
 id: T0-CONTEXT-SOURCE-ERRORS
 title: Distinguish unavailable handle validation from missing context sources
 status: todo
+superseded_by: T1-RUN-CONTEXT-PACK-2
 branch: T0-CONTEXT-SOURCE-ERRORS
 worktree: D:\wt\AIDLC\T0-CONTEXT-SOURCE-ERRORS
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#context-pack-split
