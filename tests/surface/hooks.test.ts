@@ -1331,7 +1331,12 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 2: from every cwd inside the repositor
     { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } },
   ];
   let blocked = 0;
-  for (const text of [JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }), NOT_JSON]) {
+  for (const text of [
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }),
+    NOT_JSON,
+    JSON.stringify({ mode: 'invalid', hooks: { productionPatterns: ['doctor'] } }),
+    JSON.stringify({ mode: 'invalid', hooks: { frozenPaths: ['aidlc\\.config\\.json'] } }),
+  ]) {
     writeFileSync(file, text, 'utf8');
     for (const event of events) {
       const atRoot = dispatchHook(event, { cwd: root, env });
@@ -1345,6 +1350,29 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 2: from every cwd inside the repositor
     }
   }
   assert.ok(blocked >= 8, `the root blocked ${blocked} of the events`);
+  // R2 compares resolved targets: a relative edit names a different file in each cwd.
+  // R4 keeps legacy doctor and frozen-config denials even though the repair list names exemptions.
+  const editRelative: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'aidlc.config.json' } };
+  const doctor: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'aidlc doctor' } };
+  for (const config of [
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }),
+    NOT_JSON,
+    JSON.stringify({ mode: 'invalid', hooks: { productionPatterns: ['doctor'] } }),
+    JSON.stringify({ mode: 'invalid', hooks: { frozenPaths: ['aidlc\\.config\\.json'] } }),
+  ]) {
+    writeFileSync(file, config, 'utf8');
+    for (const cwd of [root, sub, wt, wtSub]) {
+      const absolute: HookEvent = { ...editRelative, tool_input: { file_path: path.join(cwd, 'aidlc.config.json') } };
+      for (const [event, rootEvent] of [[editRelative, absolute], [doctor, doctor]] as const) {
+        const expected = dispatchHook(rootEvent, { cwd: root, env });
+        assert.deepEqual(dispatchHook(event, { cwd, env }), cwd === root ? expected : elsewhere(expected, root), `${config} ${cwd} ${JSON.stringify(event)}`);
+        for (const name of hookNamesFor(event)) {
+          const expectedGuard = runHook(name, rootEvent, { cwd: root, env });
+          assert.deepEqual(runHook(name, event, { cwd, env }), cwd === root ? expectedGuard : elsewhere(expectedGuard, root), `${name} ${config} ${cwd}`);
+        }
+      }
+    }
+  }
   // under the broken config: an Edit of main's config by its absolute path passes from the worktree, an Edit of the
   // worktree's own copy is denied, and a relative target resolves against the event cwd
   writeFileSync(file, NOT_JSON, 'utf8');
@@ -1386,6 +1414,7 @@ test('T0-HOOK-CONFIG-DISCOVERY acceptance 5: docs/OPERATIONS.md (Hooks) and the 
   const paragraph = 'Which `aidlc.config.json` the guards read (card T0-HOOK-CONFIG-DISCOVERY, issue 118): the one at the main checkout root (`resolveRepoIdentity`, the directory above git\'s common directory), the file the CLI reads, from every working directory inside the repository: the main checkout, a subdirectory of it, a linked worktree or a subdirectory of one. Outside a git checkout, and wherever git cannot answer, the file in the working directory is read, as before. A subdirectory\'s own `aidlc.config.json` and a linked worktree\'s copy are never read, so a change to `hooks.*` on a card branch takes effect for the guards only after it merges. That is deliberate: a card branch cannot change its own guards, and a broken branch copy is caught by that card\'s tests and CI, not by a lockout. While the config cannot be used, `node bin/aidlc.js doctor` and `node node_modules/aidlc/bin/aidlc.js doctor` (with the same tails) pass only when the working directory is the one that holds the config, and each denial and prompt line says so; `aidlc doctor` and `npx --no-install aidlc doctor` pass from every directory, and an Edit or Write of the config by its absolute path repairs it from every directory, a linked worktree included. Finding the root costs one `git rev-parse` per hook process (about 17 ms on Windows).';
   assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
   assert.ok(!hooks.includes('looked for in the working directory only'), 'the replaced sentence is gone');
+  assert.ok(hooks.includes('The doctor commands and config repair paths listed above are exemptions from the broken-config check only. Existing guard denials still apply, including a production pattern matching doctor or a frozen config file. Relative Edit and Write targets resolve against the event working directory, so comparisons across directories use the same resolved target and session state.'));
   const changelog = readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   const entry = '- Hook config discovery, card T0-HOOK-CONFIG-DISCOVERY (issue 118): the hook guards read `aidlc.config.json` in the working directory of the hook event, so a session in a subdirectory without the file took the defaults (`hooks.frozenPaths` empty, `protect-paths` blocking nothing), a subdirectory with its own file took that one, and a linked worktree took its branch\'s copy, while the CLI reads the file at the main checkout root. Now the guards read the file at the main checkout root, as the CLI does, from every directory inside the repository; at the main checkout root and outside a git checkout nothing changes. Changed on purpose: a subdirectory with its own file and one without follow the root\'s file, and a linked worktree follows main\'s copy, so a change to `hooks.*` on a card branch reaches the guards only after it merges. While the config cannot be used, the relative `node` doctor commands pass only from the directory that holds it.';
