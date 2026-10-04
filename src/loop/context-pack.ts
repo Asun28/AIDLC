@@ -7,8 +7,12 @@ export interface ContextSources { planSection: string; lessons: string; modules?
 /** Repository text stays JSON data; a byte is a conservative upper bound on a tokenizer token. */
 export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8192): string {
   if (!Number.isSafeInteger(tokenBudget) || tokenBudget <= 0) throw new Error('Context token budget must be a positive safe integer');
-  const names = [...card.allow_paths, ...card.allow_paths.flatMap((p) => { const m = p.match(/^src\/([^/]+)\//); return m ? [m[1]!, `src/${m[1]}`] : []; }), ...(sources.modules ?? [])].filter(Boolean);
-  const relevant = (line: string) => names.some((name) => new RegExp(`(^|[^\\w/.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\w.-]|\\.(?=$|\\s))`).test(line));
+  const modules = [...card.allow_paths.flatMap((p) => p.match(/^src\/([^/]+)\//)?.[1] ?? []), ...(sources.modules ?? [])];
+  const names = [...card.allow_paths, ...modules.flatMap((m) => m.startsWith('src/') ? [m, m.slice(4)] : [m, `src/${m}`])].filter(Boolean);
+  const relevant = (line: string) => names.some((name) => {
+    const descendants = card.allow_paths.includes(name) && name.endsWith('/') ? '|/' : '';
+    return new RegExp(`(^|[^\\w/.-])${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\/$/, '')}(?=$|[^\\w/.-]|\\.(?=$|\\s)${descendants})`).test(line);
+  });
   const pack = { tokenBudget, planRef: card.plan_ref ?? null, planSection: sources.planSection, acceptance: card.acceptance, allow_paths: card.allow_paths, non_goals: card.non_goals ?? [], lessons: sources.lessons.split(/\r?\n/).filter((l) => l.startsWith('- ') && relevant(l)), missingSources: sources.missingSources ?? [], truncated: { lessons: 0, plan: false } };
   const fits = () => Buffer.byteLength(JSON.stringify(pack), 'utf8') <= tokenBudget;
   while (!fits() && pack.lessons.length) { pack.lessons.pop(); pack.truncated.lessons++; }
@@ -29,16 +33,19 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
 }
 
 /** Read only local repository sources; missing files/anchors are explicit in the projection. */
-export function loadContextPack(card: Card, root: string, modules: string[]): string {
+export function loadContextPack(card: Card, root: string, modules: string[], plansDir = 'plans'): string {
   root = realpathSync(root);
   const missingSources: string[] = [];
-  const read = (ref: string): string => {
+  const within = (file: string, dir: string) => { const rel = path.relative(dir, file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
+  const isPlan = (file: string) => path.extname(file).toLowerCase() === '.md' && [plansDir, 'docs/plans'].some((dir) => within(file, path.resolve(root, dir)));
+  const read = (ref: string, plan = false): string => {
     const target = path.resolve(root, ref);
-    const inside = (file: string) => { const rel = path.relative(root, file); return rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel); };
-    if (!inside(target)) throw new Error('Context source outside repository');
+    if (!within(target, root)) throw new Error('Context source outside repository');
+    if (plan && !isPlan(target)) throw new Error('Context plan source must be Markdown in plansDir or docs/plans');
     try {
       const resolved = realpathSync(target);
-      if (!inside(resolved)) throw new Error('Context source outside repository');
+      if (!within(resolved, root)) throw new Error('Context source outside repository');
+      if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
       return readFileSync(resolved, 'utf8');
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
@@ -47,7 +54,7 @@ export function loadContextPack(card: Card, root: string, modules: string[]): st
     }
   };
   const [file, anchor] = (card.plan_ref ?? '').split('#');
-  let planSection = file ? read(file) : '';
+  let planSection = file ? read(file, true) : '';
   if (!file) missingSources.push('plan_ref');
   if (file && anchor && !missingSources.includes(file)) {
     const lines = planSection.split(/\r?\n/);

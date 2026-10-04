@@ -365,7 +365,7 @@ export class GoalController {
       effort,
       role: 'implementer',
       cardDeadline,
-      context: { revision: goal.cardRevisions[cardId] ?? 0, generation: goal.generation, reviewPool: goal.reviewPool, modules: goal.routing.modules, dataImpact: goal.routing.dataImpact, wave: arc.wave, workers: arc.workers, arcReasons: arc.reasons, pack: loadContextPack(card, this.repo.mainRoot, goal.routing.modules) },
+      context: { revision: goal.cardRevisions[cardId] ?? 0, generation: goal.generation, reviewPool: goal.reviewPool, modules: goal.routing.modules, dataImpact: goal.routing.dataImpact, wave: arc.wave, workers: arc.workers, arcReasons: arc.reasons, pack: loadContextPack(card, this.repo.mainRoot, goal.routing.modules, this.config.plansDir) },
       narration: `Run card ${cardId} (${run?.state ?? 'PREPARE'}) via \`aidlc card next ${cardId} --goal ${goal.id}\`. Wave: ${arc.wave.join(',')} (cap ${arc.workers}).`,
     });
   }
