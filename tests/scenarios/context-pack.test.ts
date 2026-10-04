@@ -133,6 +133,37 @@ test('plan references and symlinks cannot serialize unrelated repository files',
   } finally { fx.cleanup(); }
 });
 
+test('a parent-directory swap after resolution is refused before outside content is read', () => {
+  for (const source of ['plans/plan.md', 'docs/LESSONS.md']) {
+    const fx = makeFixture();
+    const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-pack-parent-swap-'));
+    try {
+      writeCard(fx, { id: 'T1-PACK', title: 'project context' });
+      const parent = path.join(fx.tmp, path.dirname(source));
+      mkdirSync(parent);
+      const target = path.join(fx.tmp, source);
+      writeFileSync(target, 'inside');
+      writeFileSync(path.join(outside, path.basename(source)), 'outside secret');
+      const resolve = fs.realpathSync;
+      let swapped = false;
+      const spy = mock.method(fs, 'realpathSync', (file: fs.PathLike) => {
+        const resolved = resolve(file);
+        if (!swapped && String(file) === target) {
+          swapped = true;
+          fs.renameSync(parent, `${parent}-saved`);
+          symlinkSync(outside, parent, process.platform === 'win32' ? 'junction' : 'dir');
+        }
+        return resolved;
+      });
+      syncBuiltinESMExports();
+      try {
+        const card = { ...fx.card('T1-PACK'), plan_ref: source.startsWith('plans/') ? source : undefined };
+        assert.throws(() => loadContextPack(card, fx.tmp, []), /opened context source/i);
+      } finally { spy.mock.restore(); syncBuiltinESMExports(); }
+    } finally { fx.cleanup(); rmSync(outside, { recursive: true, force: true }); }
+  }
+});
+
 test('controller honors configured plansDir and the repository docs/plans location', () => {
   const fx = makeFixture({ config: { plansDir: 'design' } });
   try {

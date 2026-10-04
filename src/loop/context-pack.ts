@@ -1,8 +1,58 @@
-import { readFileSync, realpathSync } from 'node:fs';
+import { closeSync, constants, openSync, readFileSync, realpathSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import type { Card } from '../core/types.ts';
 
 export interface ContextSources { planSection: string; lessons: string; modules?: string[]; missingSources?: string[] }
+
+// Windows exposes the opened path through a native handle, not Node's numeric fd.
+const windowsRead = String.raw`
+$ErrorActionPreference = 'Stop'
+[Console]::InputEncoding = [Text.Encoding]::UTF8
+Add-Type -TypeDefinition @'
+using System;
+using System.IO;
+using System.Text;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+public static class ContextFile {
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+  static extern uint GetFinalPathNameByHandle(SafeFileHandle handle, StringBuilder name, uint size, uint flags);
+  public static string Read(string expected) {
+    using (var file = File.Open(expected, FileMode.Open, FileAccess.Read, FileShare.Read)) {
+      const uint size = 32768;
+      var name = new StringBuilder((int)size);
+      uint length = GetFinalPathNameByHandle(file.SafeFileHandle, name, size, 0);
+      if (length == 0 || length >= size) throw new IOException("Handle path unavailable");
+      string actual = name.ToString();
+      actual = actual.StartsWith(@"\\?\UNC\") ? @"\\" + actual.Substring(8) : actual.StartsWith(@"\\?\") ? actual.Substring(4) : actual;
+      if (!String.Equals(actual, expected, StringComparison.OrdinalIgnoreCase)) throw new IOException("Opened path changed");
+      using (var bytes = new MemoryStream()) {
+        file.CopyTo(bytes);
+        return Convert.ToBase64String(bytes.ToArray());
+      }
+    }
+  }
+}
+'@
+[ContextFile]::Read(([Console]::In.ReadToEnd() | ConvertFrom-Json))
+`;
+
+function readOpenedSource(resolved: string): string {
+  if (process.platform === 'win32') {
+    try {
+      const shell = path.join(process.env['SystemRoot'] ?? 'C:\\Windows', 'System32/WindowsPowerShell/v1.0/powershell.exe');
+      const encoded = execFileSync(shell, ['-NoProfile', '-NonInteractive', '-Command', windowsRead], { input: JSON.stringify(resolved), encoding: 'utf8', windowsHide: true, timeout: 15000, maxBuffer: 16 * 1024 * 1024, stdio: ['pipe', 'pipe', 'pipe'] });
+      return Buffer.from(encoded.trim(), 'base64').toString('utf8');
+    } catch { throw new Error('Opened context source could not be verified or read'); }
+  }
+  if (process.platform !== 'linux') throw new Error('Opened context source verification requires Windows or Linux');
+  const fd = openSync(resolved, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    if (realpathSync(`/proc/self/fd/${fd}`) !== resolved) throw new Error('Opened context source path changed');
+    return readFileSync(fd, 'utf8');
+  } finally { closeSync(fd); }
+}
 
 /** Repository text stays JSON data; a byte is a conservative upper bound on a tokenizer token. */
 export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8192): string {
@@ -46,7 +96,7 @@ export function loadContextPack(card: Card, root: string, modules: string[], pla
       const resolved = realpathSync(target);
       if (!within(resolved, root)) throw new Error('Context source outside repository');
       if (plan ? !isPlan(resolved) : path.relative(resolved, path.join(root, 'docs', 'LESSONS.md')) !== '') throw new Error(`Context ${plan ? 'plan' : 'lesson'} source resolves outside its allowed location`);
-      return readFileSync(resolved, 'utf8');
+      return readOpenedSource(resolved);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       missingSources.push(ref);
