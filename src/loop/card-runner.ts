@@ -489,6 +489,7 @@ export class CardRunner {
     // when no record exists yet.
     const notes: Parameters<Journal['append']>[0][] = [];
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
+    const originalStop = run.stop;
     let reconcileSave = false;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
@@ -505,6 +506,7 @@ export class CardRunner {
     if (run.stop?.reason === 'ownership' && !run.mergeVerified && (!lease || lease.released)) {
       notes.push({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
       run = { ...run, stop: undefined, blocker: undefined };
+      reconcileSave = true;
     }
     // Heartbeat: the owner's own `card next` renews the card lease, as the controller renews the goal
     // lease. Expiry alone never proves the owner stopped; only a takeover changes the generation, and
@@ -523,6 +525,7 @@ export class CardRunner {
     }
     const ownershipCurrent = !lease || lease.released || lease.owner.session === me.session || Date.parse(lease.expiresAt) < Date.parse(now);
     const reusable = this.reusableReceipt(run);
+    const beforeReceipt = run;
     if (reusable) {
       // The unchanged candidate goes back to review with its kept receipt (consumed: a later check failure never resurrects
       // it). Only when every finding of the kept block is disputed (a formal block is reused on no other ground) is the repair
@@ -532,8 +535,11 @@ export class CardRunner {
       const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
       const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
       run = { ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort };
-      reconcileSave = true;
       if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) notes.push({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
+      // Without an earlier note, preserve the receipt hand-off before the operation read: another window may
+      // record a newer candidate during that read. A note that clears an ownership stop must land first.
+      if (!notes.length) run = save(run);
+      else reconcileSave = true;
     }
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
@@ -587,6 +593,11 @@ export class CardRunner {
     if (firing) next = { ...next, pendingEvents: [...(next.pendingEvents ?? []), ...notes.map((note, index) => ({ ...note, data: { ...note.data, eventKey: `${goal.id}@${goal.generation}/${card.id}/assessment/${run.revision + 1}/${index}` } }))] };
     // A bound stop saves its notes in the outbox first; a nonbound ownership stop stays in place if its renewal note is refused.
     if (!firing) for (const note of notes) this.journal(goal.id).append(note);
+    if (!firing && reusable && notes.length && originalStop?.reason === 'ownership' && !beforeReceipt.stop) {
+      const reconciled = save(beforeReceipt);
+      run = { ...run, revision: reconciled.revision };
+      next = { ...next, revision: reconciled.revision };
+    }
     if (reconcileSave || revalidatedStop || firing) next = save(next, firing);
     return { run, next, decision, lease, firing };
   }
