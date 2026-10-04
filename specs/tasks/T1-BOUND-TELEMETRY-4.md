@@ -91,6 +91,7 @@ acceptance:
   - 41. Closure flags and lessons refuse pending card or goal events before any side effect and recheck inside the locked card write (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
   - 42. Finding disputes and acceptances refuse unresolved card or goal outboxes before changing findings, including a pending REVIEW_DECIDED event (tests/scenarios/review-block.test.ts, tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
   - 43. Controller card-result flushes the target card's outbox before applying a patch and checks pending recovery under the card lock, preserving the record and journal when replay refuses (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 44. A ship completion replays a firing or event committed by another writer while the external ship was in flight before it changes the review ledger or applies the ship result. A refused replay retains the original outbox and leaves the result patch unapplied; a later distinct CI grant cannot replace the earlier firing (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
