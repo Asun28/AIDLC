@@ -23,6 +23,7 @@ allow_paths:
   - tests/scenarios/deadline.test.ts
   - tests/scenarios/ci-rerun.test.ts
   - tests/scenarios/review-block.test.ts
+  - tests/scenarios/r2-fallback.test.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/two-windows.test.ts
   - tests/scenarios/extend-running-card.test.ts
@@ -106,7 +107,7 @@ acceptance:
   - 53. Ship completion checks goal recovery as well as card recovery before review-ledger and result commits. A refused replay retains the issued result for retry without overwriting either outbox or issuing a duplicate unresolved external effect (tests/scenarios/t0-flow.test.ts). [R6] [R8] [dod arm 1]
   - 54. Bounds keeps distinct firing counts and decidable legacy DONE/STOP positional outcomes when a later terminal has malformed time; genuinely undecidable timed firings use an `incomplete` count, not false open, and the journal is named incomplete while other journals still count (tests/infra/board.test.ts). [R2] [dod arm 1]
   - 55. CHANGELOG Unreleased names the T1-BOUND-TELEMETRY-5 linked repair in an exact sentence asserted by tests/infra/board.test.ts; all predecessor CHANGELOG assertions remain (tests/infra/board.test.ts). [R1] [dod arm 1]
-  - 56. R2 panel results are retained against the exact pending reservation before a completion that may refuse goal or card recovery. A retry reuses that result without a second reviewer call or duplicate findings, evidence or journal event. Distinct reservations have distinct evidence identities, and review statistics still read legacy identities (tests/scenarios/t0-flow.test.ts, tests/surface/stats.test.ts). [R6] [dod arm 1]
+  - 56. R2 panel results are retained against the exact pending reservation and its issuing goal generation before a completion that may refuse goal or card recovery. A retry reuses that result without a second reviewer call or duplicate findings, evidence or journal event. Distinct reservations have distinct evidence identities, and review statistics still read legacy identities (tests/scenarios/t0-flow.test.ts, tests/scenarios/r2-fallback.test.ts, tests/surface/stats.test.ts). [R6] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
