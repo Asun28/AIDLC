@@ -359,8 +359,10 @@ test('provider text without a reported transition is an unsuccessful run', async
   try {
     const goal = fx.controller.createGoal({ text: 'Create a useful feature', source: 'natural-language', affectedSurfaces: [] });
     const failures: string[] = [];
-    const directive = await runGoal(goal.id, 4, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider({ planner: ['I finished the plan'] }), cwd: fx.tmp, now: fx.now, onFailure: (reason) => failures.push(reason) });
+    const provider = new MockProvider({ planner: ['I finished the plan'] });
+    const directive = await runGoal(goal.id, 4, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now, onFailure: (reason) => failures.push(reason) });
     assert.equal(directive.kind, 'plan');
+    assert.equal(provider.calls.length, 1);
     assert.match(failures[0] ?? '', /no state transition/);
   } finally { fx.cleanup(); }
 });
@@ -396,7 +398,8 @@ test('scripted provider drives plan, projection, card, verification and closure 
   const fx = makeFixture();
   const manual = makeFixture();
   try {
-    writeCard(fx, { id: 'T1-ONE', title: 'One card' });
+    const expectedAcceptance = ['1. Dispatch retains the unique fixture acceptance marker. [dod arm 1]'];
+    writeCard(fx, { id: 'T1-ONE', title: 'One card', acceptance: expectedAcceptance });
     const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', explicitSize: 'T1', affectedSurfaces: [] });
     const provider = new MockProvider();
     const complete = provider.complete.bind(provider);
@@ -433,8 +436,11 @@ test('scripted provider drives plan, projection, card, verification and closure 
     assert.equal(directive.kind, 'done');
     assert.deepEqual(provider.calls.map((call) => JSON.parse(call.prompt.slice(call.prompt.indexOf('{'), call.prompt.lastIndexOf('}') + 1)).kind), ['plan', 'project-cards', 'run-card', 'verify-arc']);
     const cardPrompt = provider.calls[2]!.prompt;
-    assert.match(cardPrompt, /context/);
-    assert.match(cardPrompt, /pack/);
+    const serializedCard = JSON.parse(cardPrompt.slice(cardPrompt.indexOf('{'), cardPrompt.lastIndexOf('}') + 1)) as { context?: { pack?: unknown } };
+    const packRaw = serializedCard.context?.pack;
+    assert.equal(typeof packRaw, 'string');
+    const pack = JSON.parse(packRaw as string) as { acceptance?: unknown };
+    assert.deepEqual(pack.acceptance, expectedAcceptance);
     assert.match(cardPrompt, new RegExp(goal.id));
     writeCard(manual, { id: 'T1-ONE', title: 'One card' });
     const manualGoal = manual.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', explicitSize: 'T1', affectedSurfaces: [] });
