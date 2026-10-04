@@ -9,6 +9,7 @@ allow_paths:
   - src/core/types.ts
   - src/loop/card-runner.ts
   - src/loop/controller.ts
+  - src/audit/verifier.ts
   - src/state/board.ts
   - src/state/journal.ts
   - src/state/store.ts
@@ -24,6 +25,7 @@ allow_paths:
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/two-windows.test.ts
   - tests/scenarios/extend-running-card.test.ts
+  - tests/surface/verifier.test.ts
   - README.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
@@ -69,6 +71,11 @@ acceptance:
   - 23. Card takeover refuses mutation when a pending firing or event cannot flush, including an event arriving after the first read; it never replaces a CI grant with a later deadline firing (tests/scenarios/two-windows.test.ts). [R6] [dod arm 1]
   - 24. Concurrent direct and outbox writers to one shared goal journal yield one valid hash chain and one event per key, with verification and deduplication serialized under the journal lock, including a deterministic separate-process contention test (tests/infra/journal.test.ts, tests/infra/journal-process.test.ts, tests/scenarios/two-windows.test.ts). [R1] [R8] [dod arm 1]
   - 25. An unlistable cards root is directly named as incomplete even if a fabricated child would look absent (tests/infra/board.test.ts). [R2] [dod arm 1]
+  - 26. Direct journal writes verify the full chain and keyed direct/outbox races deduplicate in either writer order; independent keys still append separately (tests/infra/journal.test.ts, tests/infra/journal-process.test.ts). [R1] [R8] [dod arm 1]
+  - 27. A pending firing or event arriving after the first read is refused by the locked ship, R2 and R3 admission before any external action (tests/scenarios/t0-flow.test.ts). [R6] [dod arm 1]
+  - 28. An exhausted R2 handoff with both formal decisions consumed persists the review stop, firing and complete note batch before a refused assessment append (tests/scenarios/t0-flow.test.ts). [R5] [R8] [dod arm 1]
+  - 29. Audit verification uses a replayed CARD_DISPATCHED's persisted startedAt against terminal/re-admission intervals, while missing or invalid times and genuine work after a stop remain blocking (tests/surface/verifier.test.ts). [R2] [R6] [dod arm 1]
+  - 30. An exact-sentence test asserts the successor's own CHANGELOG entry in Unreleased (tests/infra/board.test.ts). [R1] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
@@ -107,3 +114,4 @@ npm run check
 - 2026-10-04, under the same delegated repair authority: add tests/scenarios/extend-running-card.test.ts to allow_paths. The recoverable extension requires a lastExtension receipt on changed card records; retain the earlier full-record assertions for all existing fields and separately assert the exact new receipt. Untouched records and their revisions remain byte-identical. This is an additive existing-record contract change, not a test exemption; budgets and review/attempt counters remain unchanged.
 - 2026-10-04, user approved a bounded continuation after the second R3 block: successor T1-BOUND-TELEMETRY-3 carries the -2 candidate, seven findings F22-F28, all old acceptance, review and attempt evidence, and uses a fresh card review cycle. The shared journal needs a transient sibling lock; `src/state/store.ts` supplies the existing exclusive-lock primitive to avoid a second lock implementation. The lock is removed after each append and creates no persistent state format. Source ceiling +650, total churn 4000, shared W2+W4+W5 ceiling +900 reserve the measured repair; no config key, bound value change or counter reset.
 - 2026-10-04, behavior clarification for this repair: an assessment now commits its state, receipt and complete keyed note batch before trying the journal; a refused nonbound note leaves the transition pending rather than preserving the prior ownership stop. `card next` replays the batch before downstream work, and existing tests assert the stronger durable state and exact-once replay. An initial card-run lock now encloses takeover's first lease mutation, in card-then-lease order, so a firing arriving after the first read cannot race that mutation; post-lease fencing remains covered. The separate-process journal contention test and predecessor `superseded_by` metadata are in scope.
+- 2026-10-04, after R3 decision 1 of this successor: eight F6-F13 findings are repaired within the remaining one formal decision. Add `src/audit/verifier.ts` and `tests/surface/verifier.test.ts` solely for replayed dispatch occurrence-time classification; retain fail-closed audit of actual post-terminal work and stale generations. Acceptance 26-30 pins the newly found journal, admission, handoff, audit and docs gaps. No bound value, config key, persistent state format or counter changes; the +650 source, 4000 total and shared +900 ceilings remain until measured evidence justifies a separate explicit amendment.
