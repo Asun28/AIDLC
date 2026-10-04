@@ -332,6 +332,12 @@ The depends_on chain orders the shared files (CHANGELOG.md,
 docs/OPERATIONS.md, README.md); only T1-RUN-DRIVER carries a real
 prerequisite (the bound line W5 shows).
 
+Independent documentation amendment (2026-10-04, user delegates all decisions):
+T1-README-SCOPE may also start with no prerequisite in a separate worktree.
+It changes only the opening paragraph, its regression check and changelog;
+it consumes no init or telemetry behavior. This supersedes its wave and table
+ordering, with shared-file changes synchronized by merge before review.
+
 Sequencing amendment (2026-10-04, user delegated all decisions and requested a
 different worktree): T1-INIT-SURFACE may start independently of
 T1-BOUND-TELEMETRY-2 in its own worktree. Its dependency is now empty;

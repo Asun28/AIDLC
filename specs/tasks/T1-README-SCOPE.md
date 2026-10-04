@@ -19,7 +19,7 @@ acceptance:
   - 2. The rest of the first paragraph is unchanged apart from that sentence, and `docs/ARCHITECTURE.md` Patterns borrowed still credits the AWS AI-DLC workflows (tests/surface/readme.test.ts). [R1] [dod arm 1]
   - 3. `CHANGELOG.md` Unreleased carries the entry under this card id, and the added text carries no em dash or CJK corner bracket (tests/surface/readme.test.ts, tests/surface/prose.test.ts). [R1] [dod arm 1]
   - 4. `git diff --numstat origin/main...HEAD -- src` is empty. [R1]
-depends_on: [T1-INIT-SURFACE]
+depends_on: []
 budget: 60
 tdd: true
 forbid: [any change under src/, removing the AWS AI-DLC credit from docs/ARCHITECTURE.md]
