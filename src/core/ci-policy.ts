@@ -231,7 +231,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   void transientHits; // the transient log matches stay in the evidence and grant nothing
   const independent = failed.filter((j) => j.aggregate !== true);
   const red = gateStructured ? [...gateChecked, ...independent.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independent;
-  const evidenced = (c: CiJob) => (c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name));
+  const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
   let cls: CiFailureClass;
   if (securityHits.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first

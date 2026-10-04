@@ -64,6 +64,16 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     assert.equal(ship(`${gate(build)}\n${encoded}`, ['Run [net] fetch']).class, 'transient', 'step names are decoded before the list is read');
   });
 
+  test('successor R3: unnamed independent failures cannot earn a rerun', () => {
+    for (const name of ['', '   ']) {
+      for (const conclusion of ['failure', 'startup_failure']) {
+        const result = classifyCiFailure([{ name, conclusion, logExcerpt: step(name, 'Set up job') }]);
+        assert.equal(result.class, 'unknown', JSON.stringify({ name, conclusion }));
+        assert.equal(canRerun({ reruns: [] }, '42', 1, 'sha', result.class).allowed, false);
+      }
+    }
+  });
+
   test('acceptance 1: a startup_failure conclusion is transient; every red check needs evidence [R3]', () => {
     assert.equal(ship(gate([{ name: 'build', conclusion: 'startup_failure' }])).class, 'transient');
     assert.equal(classifyCiFailure([{ name: 'build', conclusion: 'startup_failure' }]).class, 'transient', 'a failed job passed in directly');
@@ -173,14 +183,21 @@ describe('T0-CI-RERUN-STRUCTURED acceptance 4: the docs state the rule and the C
     'A repository can list its own steps in `ci.transientSteps`; a listed step grants the rerun on any failure in it, so list only steps whose failures are usually infrastructure (a dependency download, for example).',
     'The scaffold path\'s CI gate prints no step lines, so a scaffold ship never earns a transient rerun (issue 137), and `aidlc ci classify --log` says that a log alone cannot be transient.',
   ];
+  const SUCCESSOR_SENTENCES = [
+    'Independent jobs remain required beside structured gate evidence (T0-CI-RERUN-STRUCTURED-2).',
+    'The classifier unions independent failed jobs with gate checks, matches the same name and conclusion once, and refuses duplicate or contradictory identities.',
+    'Only an explicit `aggregate: true` record is a receipt wrapper; the card runner and log CLI mark theirs, and a job name alone never excludes a failure.',
+  ];
+  const SUCCESSOR_ENTRY = '- T0-CI-RERUN-STRUCTURED-2: structured gate evidence no longer hides independently supplied failed jobs. Aggregate receipt wrappers are explicit; duplicate or contradictory independent jobs prevent a transient rerun.';
   const CHANGELOG_ENTRY = '- CI rerun on structured evidence, card T0-CI-RERUN-STRUCTURED (issue 76 item 2): a red CI failure is `transient`, the one same-origin rerun, only when every red check carries structured evidence, a `startup_failure` conclusion or a failed step listed in the new `ci.transientSteps` (default `Set up job`, `Complete job`), which the GitHub ship path prints as `[CI-GATE-STEP]` lines from the job records; log text, a cancelled check\'s included, no longer grants a rerun and classifies as `unknown` (STOP/ci). A network failure inside a project step is no longer rerun unless that step is listed; the scaffold path never earns a transient rerun (issue 137).';
 
   test('docs/OPERATIONS.md and CHANGELOG.md Unreleased carry the rule', () => {
     const operations = read('docs', 'OPERATIONS.md');
-    for (const sentence of SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
+    for (const sentence of [...SENTENCES, ...SUCCESSOR_SENTENCES]) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     const changelog = read('CHANGELOG.md');
     const start = changelog.indexOf('## Unreleased');
     assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(CHANGELOG_ENTRY), 'CHANGELOG.md Unreleased carries the entry');
+    assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).split('\n').includes(SUCCESSOR_ENTRY), 'CHANGELOG.md Unreleased carries the successor entry');
   });
 
   test('aidlc ci classify --log on a log-only transient prints unknown and the note', () => {
