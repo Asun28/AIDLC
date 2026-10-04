@@ -132,6 +132,48 @@ test('provider timeout uses the earlier card deadline', async () => {
   } finally { fx.cleanup(); }
 });
 
+test('an expired goal deadline prevents dispatch even when the controller clock is still open', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', affectedSurfaces: [] });
+    const provider = new MockProvider();
+    const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: () => addMs(goal.deadlines.goalDeadline, 1) });
+    assert.equal(directive.kind, 'plan');
+    assert.equal(provider.calls.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('an expired goal returns STOP without provider dispatch', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', affectedSurfaces: [] });
+    fx.clock.now = addMs(goal.deadlines.goalDeadline, 1);
+    const provider = new MockProvider();
+    const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
+    assert.equal(directive.kind, 'stop');
+    assert.equal(provider.calls.length, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('max-steps stops after two advancing provider dispatches', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-ONE', title: 'One card' });
+    const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', explicitSize: 'T1', affectedSurfaces: [] });
+    const provider = new MockProvider();
+    const complete = provider.complete.bind(provider);
+    provider.complete = async (request) => {
+      const kind = JSON.parse(request.prompt.slice(request.prompt.indexOf('{'), request.prompt.lastIndexOf('}') + 1)).kind as string;
+      if (kind === 'plan') fx.controller.report({ goalId: goal.id, generation: 0, result: 'plan-produced', data: { planRef: 'plans/feature.md' } });
+      if (kind === 'project-cards') fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-ONE'] } });
+      return complete(request);
+    };
+    const directive = await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
+    assert.equal(directive.kind, 'run-card');
+    assert.equal(provider.calls.length, 2);
+  } finally { fx.cleanup(); }
+});
+
 test('an expired card deadline prevents dispatch while the goal waits', async () => {
   const fx = makeFixture();
   try {
@@ -253,6 +295,7 @@ test('scripted provider drives plan, projection, card, verification and closure 
   } finally { fx.cleanup(); manual.cleanup(); }
 });
 
+// AC1: healthy closure is derived; this recovery case exercises the explicit close directive separately.
 test('a recoverable close directive delegates missing closure work to the existing card command', async () => {
   const fx = makeFixture();
   try {
