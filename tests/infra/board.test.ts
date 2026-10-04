@@ -362,7 +362,7 @@ describe('T1-BOUND-TELEMETRY: BOUND_FIRED and the Bounds line of the board', () 
   });
 
   it('acceptance 4: no config key is added and the board writes no path under .aidlc/ beyond its own board file [R3]', () => {
-    assert.deepEqual(Object.keys(ProjectConfig.shape), ['schemaVersion', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'worktreeRoot', 'base', 'mode', 'shipPath', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'gateRequired', 'cardPolicy', 'maxWorkers', 'family', 'provider', 'repository', 'userLimitMs', 'hooks', 'tierPaths', 'preReview', 'formalReview', 'github']);
+    assert.deepEqual(Object.keys(ProjectConfig.shape), ['schemaVersion', 'cardsDir', 'archiveDir', 'intentDir', 'specsDir', 'plansDir', 'evalsDir', 'worktreeRoot', 'base', 'mode', 'shipPath', 'reviewPool', 'reviewPolicyVersion', 'reviewer', 'gateRequired', 'cardPolicy', 'maxWorkers', 'family', 'provider', 'repository', 'userLimitMs', 'hooks', 'tierPaths', 'preReview', 'formalReview', 'github', 'ci']);
     const fx = makeFixture();
     try {
       writeCard(fx, { id: 'T1-A', title: 'a' });

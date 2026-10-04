@@ -489,6 +489,7 @@ export class CardRunner {
     // when no record exists yet.
     const notes: Parameters<Journal['append']>[0][] = [];
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
+    let reconcileSave = false;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
     let lease = this.leases.read(key);
@@ -496,7 +497,8 @@ export class CardRunner {
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
       notes.push({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
-      run = save({ ...run, state: 'CLOSE', stop: undefined });
+      run = { ...run, state: 'CLOSE', stop: undefined };
+      reconcileSave = true;
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
@@ -529,7 +531,8 @@ export class CardRunner {
       const kept = run.blockedReceipt;
       const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
       const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
-      run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
+      run = { ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort };
+      reconcileSave = true;
       if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) notes.push({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
@@ -584,7 +587,7 @@ export class CardRunner {
     if (firing) next = { ...next, pendingEvents: [...(next.pendingEvents ?? []), ...notes.map((note, index) => ({ ...note, data: { ...note.data, eventKey: `${goal.id}@${goal.generation}/${card.id}/assessment/${run.revision + 1}/${index}` } }))] };
     // A bound stop saves its notes in the outbox first; a nonbound ownership stop stays in place if its renewal note is refused.
     if (!firing) for (const note of notes) this.journal(goal.id).append(note);
-    if (revalidatedStop || firing) next = save(next, firing);
+    if (reconcileSave || revalidatedStop || firing) next = save(next, firing);
     return { run, next, decision, lease, firing };
   }
 

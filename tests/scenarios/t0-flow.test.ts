@@ -5138,7 +5138,7 @@ test('T1-BOUND-TELEMETRY R3 decision 1 F6: a ship-path CI rerun denial is saved 
   try {
     writeCard(fx, { id: 'T1-CIF', title: 'the rerun allowance is spent' });
     const goal = goalForCards(fx, ['T1-CIF']);
-    const ship = new InjectedShipPath(['ci-red'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact');
+    const ship = new InjectedShipPath(['ci-red'], '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}');
     const runner = fx.runner(ship);
     const card = fx.card('T1-CIF');
     const r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CIF'));
@@ -5157,7 +5157,7 @@ test('R3 findings 4 and 5: CI-denied stop survives failed result and classificat
     try {
       writeCard(fx, { id: 'T1-CIF', title: 'the rerun allowance is spent' });
       const goal = goalForCards(fx, ['T1-CIF']);
-      const ship = new InjectedShipPath(['ci-red'], '[CI-GATE-RED] job failed: https://github.com/o/r/actions/runs/12345 ... Error: read ECONNRESET while fetching artifact');
+      const ship = new InjectedShipPath(['ci-red'], '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}');
       const runner = fx.runner(ship), card = fx.card('T1-CIF');
       const prepared = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id));
       runner.recordAttempt(fx.goal(goal.id), card, runner.next(fx.goal(goal.id), card, prepared.run).run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-cif' });
@@ -5512,5 +5512,45 @@ test('R2 edge: a refused nonbound LEASE_RENEWED note leaves the ownership stop f
     assert.equal(fx.events(goal.id).filter((event) => event.type === 'LEASE_RENEWED' && event.data['revalidated'] === true).length, 1);
     runner.next(fx.goal(goal.id), card, recovered.run);
     assert.equal(fx.events(goal.id).filter((event) => event.type === 'LEASE_RENEWED' && event.data['revalidated'] === true).length, 1, 'repeated card next does not duplicate renewal evidence');
+  } finally { fx.cleanup(); }
+});
+
+test('R2 edge: a refused merged ownership reconciliation note leaves the stop for exact-once recovery', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-MERGED-NOTE', title: 'recover merged ownership note' });
+    const goal = goalForCards(fx, ['T1-MERGED-NOTE']);
+    const card = fx.card('T1-MERGED-NOTE');
+    const runner = fx.runner();
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), card.id);
+    const stopped = fx.store.saveCardRun(CardRun.parse({ ...run, state: 'STOP', mergeVerified: true, stop: makeStop('ownership', 'blocking lease is gone', 'retry card next', { at: fx.now(), global: false }), updatedAt: fx.now() }));
+    const refused = await failOnce('appendFileSync', (args) => String(args[1]).includes('"type":"CARD_STATE"') && String(args[1]).includes('ownership stop reconciled'), () => runner.next(fx.goal(goal.id), card, stopped));
+    assert.match(String(refused), /injected appendFileSync failure/);
+    assert.equal(fx.store.getCardRun(goal.id, card.id)?.stop?.reason, 'ownership');
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_STATE' && event.data['reason'] === 'ownership stop reconciled: the blocking lease is gone').length, 0);
+    const recovered = runner.next(fx.goal(goal.id), card, stopped);
+    assert.notEqual(recovered.run.stop?.reason, 'ownership');
+    runner.next(fx.goal(goal.id), card, recovered.run);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_STATE' && event.data['reason'] === 'ownership stop reconciled: the blocking lease is gone').length, 1);
+  } finally { fx.cleanup(); }
+});
+
+test('R2 edge: a retained receipt cannot clear an unmerged ownership stop before its note', async () => {
+  const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 1, timeoutMs: 1000, onExhausted: 'stop', shell: false } } });
+  try {
+    writeCard(fx, { id: 'T1-RECEIPT-NOTE', title: 'recover ownership and receipt' });
+    const goal = goalForCards(fx, ['T1-RECEIPT-NOTE']);
+    const card = fx.card('T1-RECEIPT-NOTE');
+    const initial = fx.controller.ensureCardRun(fx.goal(goal.id), card.id);
+    const stopped = fx.store.saveCardRun(CardRun.parse({ ...initial, state: 'STOP', stop: makeStop('ownership', 'blocking lease is gone', 'retry card next', { at: fx.now(), global: false }), candidate: { sha: 'sha-kept', dirty: false, untracked: [], digest: 'd-kept' }, blockedReceipt: { dodReceipt: 'dod:kept', candidateDigest: 'd-kept', stage: 'pre', cycle: 0 }, preReview: { ...initial.preReview, rounds: [{ round: 1, cycle: 0, reviewer: 'fake-r2', candidateDigest: 'd-kept', requestedAt: fx.now(), durationMs: 0, outcome: 'block', reasons: ['[spec] 6 test gap @ src/x.ts'] }] }, updatedAt: fx.now() }));
+    const runner = fx.runner();
+    const refused = await failOnce('appendFileSync', (args) => String(args[1]).includes('"kind":"ownership-stop-reconciled"'), () => runner.next(fx.goal(goal.id), card, stopped));
+    assert.match(String(refused), /injected appendFileSync failure/);
+    assert.equal(fx.store.getCardRun(goal.id, card.id)?.stop?.reason, 'ownership');
+    assert.equal(fx.store.getCardRun(goal.id, card.id)?.blockedReceipt?.dodReceipt, 'dod:kept');
+    const recovered = runner.next(fx.goal(goal.id), card, stopped);
+    assert.notEqual(recovered.run.stop?.reason, 'ownership');
+    runner.next(fx.goal(goal.id), card, recovered.run);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'NOTE' && event.data['kind'] === 'ownership-stop-reconciled').length, 1);
   } finally { fx.cleanup(); }
 });
