@@ -245,8 +245,8 @@ function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean)
  */
 function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, legacy: Required<HookConfig>): HookResult {
   try {
-    if (guard === 'production-gate') return productionGate(event, env, legacy, cwd);
-    if (guard === 'protect-paths') return protectPaths(event, legacy);
+    if (guard === 'production-gate') return productionGate(event, env, legacy, cwd, true);
+    if (guard === 'protect-paths') return protectPaths(event, legacy, true);
     return protectTests(event, cwd, env, legacy);
   } catch {
     return { exitCode: 0 };
@@ -280,25 +280,98 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
 const READ_ONLY_TOOLS = new Set(['grep', 'rg', 'egrep', 'fgrep', 'findstr', 'cat', 'head', 'tail', 'less', 'more', 'sed', 'awk', 'wc', 'ls', 'dir', 'find', 'echo', 'printf', 'type', 'diff', 'sort', 'uniq', 'cut', 'tr', 'jq', 'yq', 'stat', 'file', 'which', 'where', 'pwd', 'tree', 'select-string', 'get-content', 'get-childitem', 'test-path', 'write-output', 'write-host']);
 const READ_ONLY_GIT = new Set(['log', 'diff', 'show', 'status', 'blame', 'grep', 'ls-files', 'rev-parse', 'branch', 'remote', 'worktree']);
 
-/** Split a shell command into pipeline/sequence segments and drop read-only ones. */
+/**
+ * The segments of a Bash command: split at `||`, `&&`, `;`, `|`, a lone `&` and a line break (card T0-HOOK-CLASSIFIER-3). A
+ * lone `&` is neither preceded by `<`, `>`, `&` or `|` nor followed by `>` or `&`, so `2>&1`, `>&2`, `&>`, `&>>` and `&&`
+ * split as before. Quotes are not read: a separator inside quotes splits too, which only adds segments.
+ */
+function commandSegments(cmd: string): string[] {
+  return cmd
+    .split(/\|\||&&|;|\||(?<![<>&|])&(?![>&])|\r\n|\n|\r/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+/** A segment's command: its first word after a `sudo`, `time` or `env` prefix, lower case, `.exe` dropped, and its arguments. */
+function commandOf(segment: string): { name: string; qualified: boolean; args: string[] } {
+  const tokens = segment.replace(/^\s*(?:sudo|time|env(?:\s+\w+=\S+)*)\s+/i, '').split(/\s+/);
+  const first = tokens[0] ?? '';
+  return { name: first.toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, ''), qualified: /[\\/]/.test(first), args: tokens.slice(1) };
+}
+
+/** The git remote and worktree subcommands that change the repository, read as the third word only (no flag is read). */
+const GIT_REMOTE_CHANGES = new Set(['add', 'remove', 'rm', 'rename', 'set-url', 'set-head', 'set-branches', 'prune', 'update']);
+const GIT_WORKTREE_CHANGES = new Set(['add', 'remove', 'move', 'prune', 'lock', 'unlock', 'repair']);
+/** The git worktree subcommands that also write files (protect-paths). */
+const GIT_WORKTREE_WRITES = new Set(['add', 'remove', 'move', 'prune']);
+
+/**
+ * Whether a git segment only reads (`args` after `git`): a read-only subcommand, except `git remote <sub>` and
+ * `git worktree <sub>` whose third word is a listed changing subcommand. No other word is read (issue 135 reads options).
+ */
+function gitReads(args: string[]): boolean {
+  const sub = (args[0] ?? '').toLowerCase();
+  if (!READ_ONLY_GIT.has(sub)) return false;
+  if (sub === 'remote') return !GIT_REMOTE_CHANGES.has(args[1] ?? '');
+  if (sub === 'worktree') return !GIT_WORKTREE_CHANGES.has(args[1] ?? '');
+  return true;
+}
+
+/**
+ * Whether a segment writes files through a subcommand of its own command (protect-paths): `git worktree <sub>` with a listed
+ * writing subcommand as the third word. No option of any command is read (issue 135).
+ */
+function writesFile(segment: string): boolean {
+  const { name, args } = commandOf(segment);
+  return name === 'git' && (args[0] ?? '').toLowerCase() === 'worktree' && GIT_WORKTREE_WRITES.has(args[1] ?? '');
+}
+
+/** Whether a Bash command writes a file: a write verb (`WRITE_VERBS`) or a file-writing form of one of its segments. */
+function writesFiles(cmd: string): boolean {
+  return WRITE_VERBS.test(cmd) || commandSegments(cmd).some(writesFile);
+}
+
+/**
+ * The segments of a command `production-gate` tests: all but the read-only ones. A segment is read-only only when its first
+ * word is a bare name (no path) on the read-only lists and it carries no executing form of that command; git reads only
+ * through `gitReads`. A file-writing form never makes a segment mutating here (card T0-HOOK-CLASSIFIER-3).
+ */
 export function mutatingSegments(cmd: string): string[] {
+  return commandSegments(cmd).filter(isMutating);
+}
+
+function isMutating(segment: string): boolean {
+  const { name, qualified, args } = commandOf(segment);
+  if (qualified) return true;
+  if (name === 'git') return !gitReads(args);
+  return !READ_ONLY_TOOLS.has(name);
+}
+
+/** The classification before card T0-HOOK-CLASSIFIER-3: a first word on the read-only lists, any path stripped, reads. */
+function mainMutating(segment: string): boolean {
+  const { name, args } = commandOf(segment);
+  if (READ_ONLY_TOOLS.has(name)) return false;
+  if (name === 'git' && READ_ONLY_GIT.has((args[0] ?? '').toLowerCase())) return false;
+  return true;
+}
+
+/** The split before card T0-HOOK-CLASSIFIER-3, at `||`, `&&`, `;` and `|` only. */
+function mainSegments(cmd: string): string[] {
   return cmd
     .split(/\|\||&&|;|\|/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 0)
-    .filter((s) => {
-      const tokens = s.replace(/^\s*(?:sudo|time|env(?:\s+\w+=\S+)*)\s+/i, '').split(/\s+/);
-      const first = (tokens[0] ?? '').toLowerCase().replace(/^.*[\\/]/, '').replace(/\.exe$/, '');
-      if (READ_ONLY_TOOLS.has(first)) return false;
-      if (first === 'git' && READ_ONLY_GIT.has((tokens[1] ?? '').toLowerCase())) return false;
-      return true;
-    });
+    .filter((s) => s.length > 0);
 }
 
-export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string): HookResult {
+export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config: Required<HookConfig>, cwd: string, classic = false): HookResult {
   const cmd = String(event.tool_input?.['command'] ?? '');
   if (!cmd) return { exitCode: 0 };
-  const segments = mutatingSegments(cmd);
+  // The segments main tested come first, in main's order and classified as main classified them, so every match and every
+  // pattern error main reached is reached first and the gate decides as main did wherever main denied or threw; then the
+  // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used
+  // and the first pass of `dispatchHook`, tests main's segments alone, so it decides exactly as main did.
+  const main = mainSegments(cmd).filter(mainMutating);
+  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd)])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).
@@ -330,7 +403,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   return { exitCode: 2, stderr: reason };
 }
 
-export function protectPaths(event: HookEvent, config: Required<HookConfig>): HookResult {
+export function protectPaths(event: HookEvent, config: Required<HookConfig>, classic = false): HookResult {
   if (!config.frozenPaths.length) return { exitCode: 0 };
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
@@ -344,7 +417,7 @@ export function protectPaths(event: HookEvent, config: Required<HookConfig>): Ho
   const reason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   if (typeof file === 'string' && matches(file)) return deny('PreToolUse', reason);
   if (typeof cmd === 'string' && matches(cmd)) {
-    if (WRITE_VERBS.test(cmd)) return deny('PreToolUse', reason);
+    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd)) return deny('PreToolUse', reason);
     return defer('PreToolUse', 'Note: this command references a frozen path. Read-only use may continue; any write must go through version review.');
   }
   return { exitCode: 0 };
@@ -550,7 +623,8 @@ export function readStdinJson(text: string): HookEvent {
 
 export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | 'secrets-guard' | 'verify-before-done' | 'route-new-work';
 
-export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig } = {}): HookResult {
+/** `classic` decides `production-gate` and `protect-paths` with the Bash classification before card T0-HOOK-CLASSIFIER-3 (the first pass of `dispatchHook`). */
+export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig; classic?: boolean } = {}): HookResult {
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const config = options.config ?? loadHookConfig(cwd);
@@ -559,9 +633,9 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
   const error = isHookConfigError(config) ? config : undefined;
   switch (name) {
     case 'production-gate':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : productionGate(event, env, config, cwd, options.classic);
     case 'protect-paths':
-      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config);
+      return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectPaths(event, config, options.classic);
     case 'protect-tests':
       return isHookConfigError(config) ? unusableConfig(name, event, cwd, env, config) : protectTests(event, cwd, env, config);
     case 'secrets-guard':
