@@ -78,7 +78,7 @@ export function contextPack(card: Card, sources: ContextSources, tokenBudget = 8
   if (!fits()) {
     const points = Array.from(pack.planSection);
     pack.planSection = '';
-    pack.truncated.plan = true;
+    pack.truncated.plan = points.length > 0;
     if (!fits()) throw new Error('Context mandatory fields exceed token budget; acceptance was not truncated');
     let low = 0, high = points.length;
     while (low < high) {

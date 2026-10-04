@@ -42,4 +42,5 @@ test('budget removes lesson tail before plan text and preserves complete accepta
   assert.deepEqual(long.acceptance, input.acceptance);
   for (const budget of [0, -1, 1.5, NaN, Infinity]) assert.throws(() => contextPack(input, sources, budget), /budget/i);
   assert.throws(() => contextPack(input, sources, 20), /mandatory/i);
+  assert.throws(() => contextPack(input, { planSection: '', lessons: '' }, 251), /mandatory/i);
 });
