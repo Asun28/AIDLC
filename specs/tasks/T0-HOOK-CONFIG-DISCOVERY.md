@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-CONFIG-DISCOVERY
 title: The hook guards read aidlc.config.json at the main checkout root the CLI reads, from every cwd inside the repository, and the relative doctor spellings pass only from that root (issue 118)
-status: todo
+status: merged
 branch: T0-HOOK-CONFIG-DISCOVERY
 worktree: D:\wt\AIDLC\T0-HOOK-CONFIG-DISCOVERY
 allow_paths:
