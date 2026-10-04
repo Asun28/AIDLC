@@ -1,7 +1,7 @@
 ---
 id: T1-RUN-CONTEXT-PACK-2
 title: Deterministic bounded context pack on run-card directives
-status: todo
+status: merged
 branch: T1-RUN-CONTEXT-PACK-2
 worktree: D:\wt\AIDLC\T1-RUN-CONTEXT-PACK-2
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#context-pack-split
