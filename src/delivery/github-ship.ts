@@ -201,6 +201,16 @@ export function unionUnreleasedInsertions(text: string): string | undefined {
   return hunks > 0 ? out.join('\n') : undefined;
 }
 
+/**
+ * The `[CI-GATE-STEP]` line of a red Actions job (card T0-CI-RERUN-STRUCTURED): its check, its job and the failed step of its
+ * record, or null when the record places none; names encoded like the gate's check names, one line whatever they hold.
+ */
+function gateStepLine(check: string, job: string, steps: JobStep[]): string {
+  const failed = steps.find((s) => s.conclusion === 'failure');
+  const payload = { check: encodeUntrusted(check), job, step: failed ? { number: failed.number, name: encodeUntrusted(failed.name ?? ''), conclusion: failed.conclusion } : null };
+  return `[CI-GATE-STEP] ${JSON.stringify(payload).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029').replace(/\//g, '\\/')}`;
+}
+
 function checksJson(runs: Array<{ name: string; status?: string; conclusion: string | null }>): string {
   return JSON.stringify(runs.map((r) => ({ name: encodeUntrusted(r.name), conclusion: r.conclusion ?? null, ...(r.status && r.status !== 'completed' ? { status: r.status } : {}) })))
     .replace(/\u2028/g, '\\u2028')
@@ -240,8 +250,8 @@ export class GitHubShipPath implements ShipPath {
     // encoded exactly once here, so no detail can form a sentinel, a resume marker or a merge diagnostic; the CI gate
     // lines are the one verbatim detail (their JSON already carries encoded names and is decoded by the runner). The
     // resume command and the PR identity come from this path's own state, never from the output text.
-    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean; lines?: string[] } = {}): ShipResult => {
-      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, ...(opts.lines ?? []), '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`);
+    const fail = (sentinel: string, detail: string, prNumber?: number, opts: { verbatim?: boolean; lines?: string[]; after?: string[] } = {}): ShipResult => {
+      log.push(`${sentinel} ${opts.verbatim ? detail : encodeUntrusted(flat(detail))}`, ...(opts.lines ?? []), '[SAGA-FAIL]', `[SAGA-RESUME] ${resume}`, ...(opts.after ?? []));
       return { ...classifyShipOutput(this.receipt(log, 1, started)), resumeCommand: resume, prNumber };
     };
     if (!existsSync(wt)) return fail('[SHIP-SCOPE-CARD-ABSENT]', `worktree ${wt} missing`);
@@ -331,7 +341,10 @@ export class GitHubShipPath implements ShipPath {
         return required.includes(r.name) ? c === 'success' : ['success', 'neutral', 'skipped'].includes(c);
       };
       const failed = runs.filter((r) => r.status === 'completed' && !green(r));
-      if (failed.length) return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true, lines: this.ciLogLines(failed, wt) });
+      if (failed.length) {
+        const ci = this.ciLogLines(failed, wt);
+        return fail('[CI-GATE-RED]', checksJson(failed), prNumber, { verbatim: true, lines: ci.lines, after: ci.steps });
+      }
       if (!pending.length && runs.length > 0) break;
       if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', `${pending.length} pending checks: ${checksJson(pending)}`, prNumber, { verbatim: true });
       log.push(`[CI-GATE-WAIT] ${pending.length} pending: ${checksJson(pending)}`);
@@ -523,21 +536,26 @@ export class GitHubShipPath implements ShipPath {
    * unavailable` when the record or the log cannot be read, `step unknown` when the record places no failed step. Neither
    * note holds a word the CI classifier reads as evidence. Any other red check run gets no line and nothing read.
    */
-  private ciLogLines(failed: CheckRun[], wt: string): string[] {
+  private ciLogLines(failed: CheckRun[], wt: string): { lines: string[]; steps: string[] } {
     const repository = this.options.repository.toLowerCase();
     const jobs = failed.flatMap((r) => {
       const m = (r.details_url ?? '').match(ACTIONS_JOB);
       if (!m || r.app?.slug !== 'github-actions' || m[1]!.toLowerCase() !== repository || String(r.id) !== m[3]) return [];
-      return [{ run: m[2]!, job: m[3]! }];
+      return [{ run: m[2]!, job: m[3]!, check: r.name }];
     });
-    return jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job }) => {
+    // The structured evidence of a transient failure (card T0-CI-RERUN-STRUCTURED) goes after the saga's resume line, so the
+    // gate line, the job headers and their excerpts keep their layout.
+    const steps: string[] = [];
+    const lines = jobs.slice(0, CI_LOG_JOBS).flatMap(({ run, job, check }) => {
       const header = `[CI-GATE-LOG] actions/runs/${run}/job/${job}`;
       const record = this.gh.jobRecord(this.options.repository, job, wt);
       const text = this.gh.jobLog(this.options.repository, job, wt);
+      if (record) steps.push(gateStepLine(check, job, record.steps));
       if (!record || text === undefined) return [`${header} log unavailable`];
       const step = failedStepLines(text, record.steps);
       return step ? [header, ...step] : [`${header} step unknown`];
     });
+    return { lines, steps };
   }
 
   private tokenFile(cardId: string): string {

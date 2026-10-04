@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { ReviewEffortPolicy } from './core/types.ts';
+import { DEFAULT_TRANSIENT_STEPS } from './core/ci-policy.ts';
 
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
@@ -141,6 +142,8 @@ export const ProjectConfig = z.object({
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
+  /** CI failure classes (card T0-CI-RERUN-STRUCTURED): the job steps whose failure is infrastructure, the structured evidence for the one rerun. */
+  ci: z.object({ transientSteps: z.array(nonBlank).default([...DEFAULT_TRANSIENT_STEPS]) }).prefault({}),
 })
   .superRefine((config, ctx) => {
     // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.

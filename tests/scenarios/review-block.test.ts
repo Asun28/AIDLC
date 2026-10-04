@@ -675,7 +675,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the transient-CI branch decides the re
     const card = fx.card('T1-HELLO');
     const g = () => fx.goal(goal.id);
     // (1) Another window persists a rerun for this candidate while the ship result is applied: the allowance is consumed, no second rerun is granted and the other window's rerun is kept.
-    const runner = fx.runner(new InjectedShipPath(['ci-red', 'ci-red'], '[CI-GATE-RED] job=build conclusion=failure runs/111\nnpm ERR! network ECONNRESET'));
+    const runner = fx.runner(new InjectedShipPath(['ci-red', 'ci-red'], '[CI-GATE-LOG] actions/runs/111/job/456\nnpm ERR! network ECONNRESET\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}'));
     let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
     r = runner.next(g(), card, r.run);
     const run = runner.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
@@ -764,7 +764,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 16): the transient-CI denial i
     const goal = goalForCards(fx, ['T1-HELLO']);
     const card = fx.card('T1-HELLO');
     const g = () => fx.goal(goal.id);
-    const runner = fx.runner(new InjectedShipPath(['ci-red'], '[CI-GATE-RED] job=build conclusion=failure runs/222\nnpm ERR! network ECONNRESET'));
+    const runner = fx.runner(new InjectedShipPath(['ci-red'], '[CI-GATE-LOG] actions/runs/222/job/456\nnpm ERR! network ECONNRESET\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}'));
     let r = runner.next(g(), card, fx.controller.ensureCardRun(g(), 'T1-HELLO'));
     r = runner.next(g(), card, r.run);
     const sha = candidateShaFor('T1-HELLO');

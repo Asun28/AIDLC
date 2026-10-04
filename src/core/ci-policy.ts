@@ -37,6 +37,8 @@ export interface CiJob {
   conclusion?: string | null;
   status?: string | null;
   logExcerpt?: string;
+  /** This record wraps a complete receipt rather than representing an independent job. */
+  aggregate?: boolean;
 }
 
 /** Check-run names that are secret or security scans: a red one is `security`, never rerun, STOP/risk. */
@@ -56,17 +58,31 @@ const CONCLUSION = 'success|failure|neutral|cancelled|skipped|timed_out|action_r
 /** The only legacy form parsed: plain name=conclusion pairs whose names carry neither commas nor equals signs. */
 const LEGACY_LINE = new RegExp('^\\[CI-GATE-RED\\]\\s+([^,=]+=(?:' + CONCLUSION + ')(?:,[^,=]+=(?:' + CONCLUSION + '))*)\\s*$', 'i');
 const RED_CONCLUSION = /=(?:failure|timed_out|cancelled|action_required|stale|startup_failure)(?:,|\s*$)/i;
-const GATE_LINE = /^\[CI-GATE-(?:RED|TIMEOUT|WAIT)\]/;
+const GATE_LINE = /^\[CI-GATE-(?:RED|TIMEOUT|WAIT|STEP)\]/;
+
+/** The job steps GitHub runs itself: the default of `ci.transientSteps` (card T0-CI-RERUN-STRUCTURED). */
+export const DEFAULT_TRANSIENT_STEPS: readonly string[] = ['Set up job', 'Complete job'];
+
+/** The failed step a `[CI-GATE-STEP]` line names for a check, or null when the job record places none. */
+interface GateStep {
+  check: string;
+  step: { name: string; conclusion: string } | null;
+}
 const JSON_PAYLOAD = /^\[CI-GATE-(?:RED|TIMEOUT)\][^\[]*(\[[\s\S]*\])\s*$/;
 
 interface GateRead {
   /** Checks from every structured gate line (JSON, or plain legacy pairs), decoded. */
   checks: CiJob[];
+  /** Every explicit red check, including required skipped/neutral checks, and failed timeout checks. */
+  redChecks: CiJob[];
   structured: boolean;
   /** Red gate lines in a pair-like form that cannot be parsed safely: never a name, never a rerun. */
   ambiguousRed: string[];
+  unresolvedRed: boolean;
   /** The text left for the log patterns: wait lines and gate payloads removed, scaffold text kept. */
   log: string;
+  /** The `[CI-GATE-STEP]` lines, decoded: the structured evidence of a transient failure. */
+  steps: GateStep[];
 }
 
 /**
@@ -79,22 +95,35 @@ interface GateRead {
  */
 function readGate(text: string): GateRead {
   const checks: CiJob[] = [];
+  const redChecks: CiJob[] = [];
   const ambiguousRed: string[] = [];
   const log: string[] = [];
+  const steps: GateStep[] = [];
   let structured = false;
+  let unresolvedRed = false;
   for (const line of text.split(/\r?\n/)) {
+    const start = checks.length;
     if (!GATE_LINE.test(line)) {
       log.push(line);
       continue;
     }
     if (line.startsWith('[CI-GATE-WAIT]')) continue;
+    // A step line is structured evidence and never log text; one that does not parse is no evidence at all.
+    if (line.startsWith('[CI-GATE-STEP]')) {
+      const step = readStep(line.slice('[CI-GATE-STEP]'.length));
+      if (step) steps.push(step);
+      continue;
+    }
     const m = line.match(JSON_PAYLOAD);
     if (m) {
       try {
         const parsed: unknown = JSON.parse(m[1]!);
         if (Array.isArray(parsed)) {
           structured = true;
+          const redLine = line.startsWith('[CI-GATE-RED]');
+          if ((redLine && !parsed.length) || parsed.some((c) => typeof c !== 'object' || c === null || typeof c.name !== 'string' || !c.name.trim() || (typeof c.conclusion !== 'string' && (redLine || c.conclusion !== null)))) unresolvedRed = true;
           for (const c of parsed) if (typeof c === 'object' && c !== null && 'name' in c) checks.push({ name: decodeCheckName(String((c as { name: unknown }).name)), conclusion: (c as { conclusion?: unknown }).conclusion == null ? null : String((c as { conclusion?: unknown }).conclusion) });
+          redChecks.push(...checks.slice(start).filter((c) => line.startsWith('[CI-GATE-RED]') || isFailure(c.conclusion)));
           continue;
         }
       } catch {
@@ -108,16 +137,34 @@ function readGate(text: string): GateRead {
           const at = pair.lastIndexOf('=');
           checks.push({ name: pair.slice(0, at).trim(), conclusion: pair.slice(at + 1).trim().toLowerCase() });
         }
+        if (checks.slice(start).some((c) => !c.name)) unresolvedRed = true;
+        redChecks.push(...checks.slice(start));
         continue;
       }
+      unresolvedRed = true;
       if (RED_CONCLUSION.test(line)) {
         ambiguousRed.push(line);
         continue;
       }
     }
+    if (line.startsWith('[CI-GATE-TIMEOUT]')) unresolvedRed = true;
     log.push(line);
   }
-  return { checks, structured, ambiguousRed, log: log.join('\n') };
+  return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps };
+}
+
+/** A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed. */
+function readStep(payload: string): GateStep | undefined {
+  try {
+    const v: unknown = JSON.parse(payload.trim());
+    if (typeof v !== 'object' || v === null || typeof (v as { check?: unknown }).check !== 'string') return undefined;
+    const s = (v as { step?: unknown }).step;
+    if (s === null) return { check: decodeCheckName((v as { check: string }).check), step: null };
+    if (typeof s !== 'object' || s === undefined || typeof (s as { name?: unknown }).name !== 'string' || typeof (s as { conclusion?: unknown }).conclusion !== 'string') return undefined;
+    return { check: decodeCheckName((v as { check: string }).check), step: { name: decodeCheckName((s as { name: string }).name), conclusion: (s as { conclusion: string }).conclusion.toLowerCase() } };
+  } catch {
+    return undefined;
+  }
 }
 
 /** The checks every structured gate line reports, or undefined when the text has none. */
@@ -132,17 +179,36 @@ export interface CiClassification {
   evidence: string[];
 }
 
-export function classifyCiFailure(jobs: CiJob[], extraLog?: string): CiClassification {
+/**
+ * The class of a red CI failure. `transient`, the one same-origin rerun, needs structured evidence for every red check (card
+ * T0-CI-RERUN-STRUCTURED): its conclusion is `startup_failure`, or a `[CI-GATE-STEP]` line of the check names a failed step
+ * on `transientSteps`. Log text never grants a rerun: a text-only transient is `unknown` (no rerun, STOP/ci), its matches
+ * kept as evidence. Red checks include independent jobs and gate checks; only explicitly marked aggregate wrappers are excluded.
+ * Security and code-defect evidence keep their precedence.
+ */
+export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[] } = {}): CiClassification {
+  const transientSteps = options.transientSteps ?? DEFAULT_TRANSIENT_STEPS;
   const failed = jobs.filter((j) => j.conclusion && !['success', 'neutral', 'skipped'].includes(j.conclusion.toLowerCase()));
-  const texts = [...failed.map((j) => j.logExcerpt ?? ''), extraLog ?? ''].filter((t) => t.length > 0);
+  const texts = [...jobs.map((j) => ({ raw: j.logExcerpt ?? '', inspectLog: failed.includes(j) })), { raw: extraLog ?? '', inspectLog: true }];
   const evidence: string[] = [];
   const securityHits: string[] = [];
   for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push(j.name);
   const logs: string[] = [];
-  for (const raw of texts) {
+  const gateChecked: CiJob[] = [];
+  const gateRecords: CiJob[] = [];
+  const steps: GateStep[] = [];
+  let gateStructured = false;
+  let unresolvedRed = false;
+  for (const { raw, inspectLog } of texts) {
     const gate = readGate(raw);
+    gateChecked.push(...gate.redChecks);
+    gateRecords.push(...gate.checks);
+    steps.push(...gate.steps);
+    unresolvedRed ||= gate.unresolvedRed;
+    gateStructured ||= gate.structured || gate.checks.length > 0;
     for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push(c.name);
     for (const line of gate.ambiguousRed) if (SECURITY_CHECK_NAME.test(line)) securityHits.push(`unparsed red gate line naming a scan: ${line.slice(0, 80)}`);
+    if (!inspectLog) continue;
     for (const p of SECURITY_PATTERNS) {
       const m = gate.log.match(p);
       if (m) securityHits.push(m[0].trim().slice(0, 80));
@@ -167,14 +233,23 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string): CiClassific
       }
     }
   }
+  void transientHits; // the transient log matches stay in the evidence and grant nothing
+  const independent = jobs.filter((j) => j.aggregate !== true);
+  const independentFailed = independent.filter((j) => isFailure(j.conclusion));
+  const conclusions = new Map<string, string | undefined>();
+  const identitiesAgree = [...independent, ...gateRecords].every((j) => {
+    const conclusion = j.conclusion?.toLowerCase();
+    if (conclusions.has(j.name) && conclusions.get(j.name) !== conclusion) return false;
+    conclusions.set(j.name, conclusion);
+    return true;
+  });
+  const red = gateStructured ? [...gateChecked, ...independentFailed.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independentFailed;
+  const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
   let cls: CiFailureClass;
   if (securityHits.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first
-  else if (transientHits > 0) cls = 'transient';
+  else if (!unresolvedRed && identitiesAgree && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
   else cls = 'unknown';
-  if (failed.some((j) => (j.conclusion ?? '').toLowerCase() === 'cancelled') && codeHits === 0 && securityHits.length === 0) {
-    cls = transientHits > 0 ? 'transient' : 'unknown';
-  }
   return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(securityHits).values()].map((s) => `security: ${s}`).concat(evidence) };
 }
 
