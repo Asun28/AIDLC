@@ -628,6 +628,9 @@ export class GoalController {
     this.store.updateGoal(goal.id, (current) => {
       if (!current) throw new Error(`unknown goal ${goal.id}`);
       if (current.pendingExtension) throw new Error(`deadline extension ${current.pendingExtension.id} is unfinished; retry aidlc goal extend before dispatching ${cardId}`);
+      const pending = current.pendingFiring?.key ?? current.pendingEvents?.[0]?.data['eventKey'];
+      if (pending) throw new Error(`pending journal recovery for ${pending} on goal ${goal.id}; no card run may be dispatched`);
+      if (current.terminal) throw new Error(`goal ${goal.id} is terminal (${current.state}); no card run may be dispatched`);
       run = this.store.getCardRun(goal.id, cardId);
       if (run) return current;
       const now = this.clock();

@@ -591,13 +591,40 @@ export class CardRunner {
   /** The card's move between two outbox flushes (card T1-BOUND-TELEMETRY-2): a firing left pending is journaled before anything is selected, and while one stays pending the answer is its stop, or a wait, naming it, never a ship or a build. */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const stored = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation);
-    const extension = this.store.getGoal(goal.id)?.pendingExtension;
-    if (extension) return { run: stored ?? caller, directive: { kind: 'wait', cardId: card.id, on: `extension:${extension.id}`, pollSeconds: 60, narration: `deadline extension ${extension.id} is unfinished; retry aidlc goal extend with the same deadline` } };
-    const r = stored?.pendingFiring || stored?.pendingEvents?.length ? { run: stored } : this.step(goal, card, caller, options);
+    if (stored?.pendingFiring || stored?.pendingEvents?.length) {
+      const pending = stored.pendingFiring?.key ?? stored.pendingEvents?.[0]?.data['eventKey'];
+      const narration = `${pending} stays pending: the journal cannot take it yet; the ${stored.stop ? 'stop' : 'state'} is saved, and the next call journals it`;
+      return { run: stored, directive: stored.stop ? { kind: 'stop', cardId: card.id, stop: stored.stop, narration } : { kind: 'wait', cardId: card.id, on: 'journal', pollSeconds: 60, narration } };
+    }
+    const hold = this.goalWorkHold(goal.id, card.id);
+    if (hold) return { run: stored ?? caller, directive: hold };
+    const r = this.step(goal, card, caller, options);
     if (!r.run.pendingFiring && !r.run.pendingEvents?.length && 'directive' in r) return r;
     const pending = r.run.pendingFiring?.key ?? r.run.pendingEvents?.[0]?.data['eventKey'];
     const narration = `${pending} stays pending: the journal cannot take it yet; the ${r.run.stop ? 'stop' : 'state'} is saved, and the next call journals it`;
     return { run: r.run, directive: r.run.stop ? { kind: 'stop', cardId: card.id, stop: r.run.stop, narration } : { kind: 'wait', cardId: card.id, on: 'journal', pollSeconds: 60, narration } };
+  }
+
+  /** Admission reads the persisted goal: a caller's older goal snapshot cannot dispatch card work through goal recovery or termination. */
+  private goalWorkHold(goalId: string, cardId: string): CardDirective | undefined {
+    const goal = this.store.getGoal(goalId);
+    if (!goal) throw new Error(`unknown goal ${goalId}`);
+    if (goal.pendingExtension) return { kind: 'wait', cardId, on: `extension:${goal.pendingExtension.id}`, pollSeconds: 60, narration: `deadline extension ${goal.pendingExtension.id} is unfinished; retry aidlc goal extend with the same deadline` };
+    const pending = goal.pendingFiring?.key ?? goal.pendingEvents?.[0]?.data['eventKey'];
+    if (pending) {
+      const narration = `pending journal recovery for ${pending} on goal ${goalId}; retry aidlc next --goal ${goalId} before card work`;
+      return goal.stop ? { kind: 'stop', cardId, stop: goal.stop, narration } : { kind: 'wait', cardId, on: 'journal', pollSeconds: 60, narration };
+    }
+    if (goal.terminal) {
+      const narration = `goal ${goalId} is terminal (${goal.state})${goal.stop ? `: ${goal.stop.detail}` : ''}; no card work may run`;
+      return goal.stop ? { kind: 'stop', cardId, stop: goal.stop, narration } : { kind: 'wait', cardId, on: 'goal-terminal', pollSeconds: 60, narration };
+    }
+    return undefined;
+  }
+
+  private refuseGoalWork(goalId: string, cardId: string, action: string): void {
+    const hold = this.goalWorkHold(goalId, cardId);
+    if (hold) throw new Error(`${hold.narration}; no ${action} may run`);
   }
 
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
@@ -889,8 +916,7 @@ export class CardRunner {
   recordAttempt(goal: Goal, card: Card, run: CardRun, input: { outcome: 'success' | 'fail' | 'not-counted'; cause?: string; notCountedReason?: 'expected-red' | 'quota' | 'admission-hold' | 'tool-outage' | 'env-setup'; progress?: boolean; evidence?: string; dodReceipt?: string; redReceipt?: string; candidateSha?: string; checksGained?: string[]; checksLost?: string[] }): CardRun {
     run = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation) ?? run;
     if (run.pendingFiring || run.pendingEvents?.length) throw new Error(`pending journal recovery for ${run.pendingFiring?.key ?? run.pendingEvents?.[0]?.data['eventKey']}; no attempt may be recorded`);
-    const extension = this.store.getGoal(goal.id)?.pendingExtension;
-    if (extension) throw new Error(`deadline extension ${extension.id} is unfinished; no attempt may be recorded`);
+    this.refuseGoalWork(goal.id, card.id, 'attempt');
     const now = this.clock();
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
     if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
@@ -1476,8 +1502,6 @@ export class CardRunner {
     if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
     // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
     let persisted = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation) ?? run;
-    const extension = this.store.getGoal(goal.id)?.pendingExtension;
-    if (extension) throw new Error(`deadline extension ${extension.id} is unfinished; no formal review may run`);
     if (persisted.pendingFiring || persisted.pendingEvents?.length) throw new Error(`pending journal recovery for ${persisted.pendingFiring?.key ?? persisted.pendingEvents?.[0]?.data['eventKey']}; no formal review may run`);
     const reviewDir = path.join(this.reviewCheckout(persisted), '.review');
     // A result retained for a reservation of this card whose commit did not land (the card-run lock was held by another
@@ -1497,6 +1521,7 @@ export class CardRunner {
       if (!stoppedBefore) return committed;
       persisted = this.store.getCardRun(goal.id, card.id) ?? committed.run;
     }
+    this.refuseGoalWork(goal.id, card.id, 'formal review');
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
@@ -2107,8 +2132,7 @@ export class CardRunner {
     if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.flush(this.store.getCardRun(goal.id, card.id), goal.generation) ?? run;
-    const extension = this.store.getGoal(goal.id)?.pendingExtension;
-    if (extension) throw new Error(`deadline extension ${extension.id} is unfinished; no pre-review may run`);
+    this.refuseGoalWork(goal.id, card.id, 'pre-review');
     if (persisted.pendingFiring || persisted.pendingEvents?.length) throw new Error(`pending journal recovery for ${persisted.pendingFiring?.key ?? persisted.pendingEvents?.[0]?.data['eventKey']}; no pre-review may run`);
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
     const now = this.clock();

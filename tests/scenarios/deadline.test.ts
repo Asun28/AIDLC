@@ -443,10 +443,14 @@ test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pendin
     assert.match(held.directive.narration, /card-deadline\/.* stays pending/);
     repair();
     const seen = fx.events(goal.id).length;
-    const resumed = next();
-    assert.notEqual(resumed.directive.kind, 'wait', resumed.directive.narration);
+    const awaitingGoal = next();
+    assert.equal(awaitingGoal.directive.kind, 'wait', 'card work stays held until the goal extension note recovers');
+    assert.match(awaitingGoal.directive.narration, /pending journal recovery.*extension/);
     assert.deepEqual(fx.events(goal.id).slice(seen, seen + 1).map((e) => [e.type, e.data['key'], e.generation]), [['BOUND_FIRED', `${goal.id}@1/T1-A/card-deadline/${run.deadline}`, 1]], 'journaled before selection');
     assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
+    fx.controller.next(goal.id);
+    const resumed = next();
+    assert.notEqual(resumed.directive.kind, 'wait', resumed.directive.narration);
   } finally {
     fx.cleanup();
   }
@@ -621,6 +625,54 @@ test('R3: a missing card run cannot be created during a pending extension and us
     assert.equal(run.deadline, addMs(T0, 5 * HOUR_MS), 'the newly created card receives start + 3h under the extended goal');
     assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatched + 1);
   } finally { fx.cleanup(); }
+});
+
+test('R3: a missing card run is not dispatched while its goal has pending recovery or a terminal stop', () => {
+  for (const state of ['firing', 'event', 'terminal'] as const) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      fx.store.updateGoal(goal.id, (current) => ({
+        ...current!,
+        ...(state === 'firing' ? { pendingFiring: { bound: 'arc-deadline' as const, key: `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, generation: 0 } } : {}),
+        ...(state === 'event' ? { pendingEvents: [{ type: 'GOAL_STOPPED' as const, goalId: goal.id, generation: 0, data: { eventKey: 'pending-goal-stop', reason: 'review' } }] } : {}),
+        ...(state === 'terminal' ? { state: 'STOP' as const, terminal: true, stop: makeStop('review', 'adjudication needed', 'adjudicate', { at: fx.now() }) } : {}),
+      }));
+      const dispatches = fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length;
+      assert.throws(() => fx.controller.ensureCardRun(goal, 'T1-A'), /pending journal recovery|terminal/, state);
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A'), undefined, state);
+      assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatches, state);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('R3: existing card entry points refuse new work while goal recovery or a terminal stop is pending', async () => {
+  for (const state of ['firing', 'event', 'terminal'] as const) {
+    const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const ship = new InjectedShipPath(['merged'], '');
+      const runner = fx.runner(ship), card = fx.card('T1-A');
+      let run = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id)).run;
+      run = runner.next(fx.goal(goal.id), card, run).run;
+      run = runner.recordAttempt(fx.goal(goal.id), card, run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-a' });
+      fx.store.updateGoal(goal.id, (current) => ({
+        ...current!,
+        ...(state === 'firing' ? { pendingFiring: { bound: 'arc-deadline' as const, key: `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, generation: 0 } } : {}),
+        ...(state === 'event' ? { pendingEvents: [{ type: 'GOAL_STOPPED' as const, goalId: goal.id, generation: 0, data: { eventKey: 'pending-goal-stop', reason: 'review' } }] } : {}),
+        ...(state === 'terminal' ? { state: 'STOP' as const, terminal: true, stop: makeStop('review', 'adjudication needed', 'adjudicate', { at: fx.now() }) } : {}),
+      }));
+      const held = runner.next(goal, card, run);
+      assert.equal(held.directive.kind, state === 'terminal' ? 'stop' : 'wait', state);
+      assert.equal(ship.requests.length, 0, state);
+      assert.throws(() => runner.recordAttempt(goal, card, run, { outcome: 'fail', cause: 'test' }), /pending journal recovery|terminal/, state);
+      await assert.rejects(() => runner.preReview(goal, card, run), /pending journal recovery|terminal/, state);
+      await assert.rejects(() => runner.formalReview(goal, card, run), /pending journal recovery|terminal/, state);
+      assert.equal(fx.store.getCardRun(goal.id, card.id)?.revision, run.revision, `${state}: no card mutation`);
+    } finally { fx.cleanup(); }
+  }
 });
 
 test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while its goal goes terminal counts as a firing of that stop once it lands [R9]', () => {
