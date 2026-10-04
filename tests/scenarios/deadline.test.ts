@@ -352,6 +352,34 @@ function damageJournal(fx: Fixture, goalId: string): () => void {
   return () => writeFileSync(file, readFileSync(file, 'utf8').replace('not a journal line\n', ''), 'utf8');
 }
 
+test('T1-BOUND-TELEMETRY-2 acceptance 16: a journal that refuses CARD_STATE cannot prevent persisting a card bound stop [R8]', () => {
+  for (const prepared of [false, true]) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+      if (prepared) fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+      fx.advance(3 * HOUR_MS + MINUTE_MS);
+      const file = fx.journal(goal.id).file;
+      const before = readFileSync(file, 'utf8');
+      writeFileSync(file, before + '{broken tail\n');
+      let stopped!: ReturnType<CardRunner['next']>;
+      assert.doesNotThrow(() => { stopped = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run); });
+      assert.equal(stopped.directive.kind, 'stop');
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.stop?.reason, 'time');
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
+      assert.match(stopped.directive.narration, /stays pending/);
+      writeFileSync(file, before);
+      for (let i = 0; i < 2; i++) assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run).directive.kind, 'stop');
+      assert.equal(fired(fx, goal.id).filter((bound) => bound === 'card-deadline@T1-A').length, 1);
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
 test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pending firing before selection; while the journal refuses it, card next names it and dispatches no work [R6] [R8]', () => {
   const fx = makeFixture();
   try {

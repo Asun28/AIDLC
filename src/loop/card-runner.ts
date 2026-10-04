@@ -479,6 +479,7 @@ export class CardRunner {
     // takeover, a blocking stop or a review decision landed) writes nothing back; a stale dispatch records its own
     // ownership stop on the stored run, and a stop already persisted there stays. The caller's copy stands in only
     // when no record exists yet.
+    const notes: Parameters<Journal['append']>[0][] = [];
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
     const key = resourceKeys.card(this.repo.key, card.id);
     const me = currentActor();
@@ -486,13 +487,13 @@ export class CardRunner {
     // A merged card stopped for ownership is reconciled once the blocking lease is gone (released, expired or ours):
     // the replacement session may then reclaim the card in CLOSE instead of reading the old stop forever.
     if (run.stop?.reason === 'ownership' && run.mergeVerified && (!lease || lease.released || Date.parse(lease.expiresAt) < Date.parse(now) || (lease.owner.session === me.session && lease.owner.host === me.host))) {
-      this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
+      notes.push({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'STOP', to: 'CLOSE', reason: 'ownership stop reconciled: the blocking lease is gone' } });
       run = save({ ...run, state: 'CLOSE', stop: undefined });
     }
     // An unmerged run stopped for ownership whose blocking lease is gone (absent or released; never merely expired, which
     // proves nothing) is reconciled the same way: the stop is lifted and the selection proceeds, so the claim is reachable.
     if (run.stop?.reason === 'ownership' && !run.mergeVerified && (!lease || lease.released)) {
-      this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
+      notes.push({ type: 'NOTE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { kind: 'ownership-stop-reconciled', reason: 'the blocking lease is gone', released: Boolean(lease?.released) } });
       run = { ...run, stop: undefined, blocker: undefined };
     }
     // Heartbeat: the owner's own `card next` renews the card lease, as the controller renews the goal
@@ -506,7 +507,7 @@ export class CardRunner {
       if (renewal.status === 'renewed') {
         lease = renewal.lease;
         revalidatedStop = run.stop?.reason === 'ownership';
-        if (wasExpired || revalidatedStop) this.journal(goal.id).append({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
+        if (wasExpired || revalidatedStop) notes.push({ type: 'LEASE_RENEWED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { resource: key, leaseGeneration: lease.generation, wasExpired, revalidated: revalidatedStop } });
         if (revalidatedStop) run = { ...run, stop: undefined, blocker: undefined };
       }
     }
@@ -521,7 +522,7 @@ export class CardRunner {
       const disputed = kept?.stage === 'formal' || (kept?.round !== undefined && this.blockAnswered(run, { stage: 'pre', cycle: kept.cycle, round: kept.round }).answered);
       const repair = disputed ? run.effort?.attempts.find((a) => a.outcome === 'running') : undefined;
       run = save({ ...run, dodReceipt: reusable, blockedReceipt: undefined, effort: repair && run.effort ? settleDisputedRepair(run.effort, now) : run.effort });
-      if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
+      if (repair && !run.effort?.attempts.some((a) => a.outcome === 'running')) notes.push({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: repair.n, outcome: 'not-counted', reason: 'review-disputed' } });
     }
     const unknownOps = this.ops.unresolved(goal.id, card.id).filter((o) => o.status === 'UNKNOWN' || o.status === 'issued' || o.status === 'running');
     const runningOp = this.ops.unresolved(goal.id, card.id).find((o) => o.status === 'running' || o.status === 'issued');
@@ -571,8 +572,12 @@ export class CardRunner {
     // reads the record as persisted and must not find the stop it cleared.
     const bound: [BoundName, string | number] | undefined = !decision.stop || decision.stop === run.stop ? undefined : decision.reason === 'card admission deadline reached' ? ['card-deadline', run.deadline] : decision.reason === 'reconciliation grace expired with unresolved operations' ? ['reconciliation-grace', run.deadline] : decision.reason === 'review allowance exhausted' ? [run.review.noVerdictRetriesUsed > MAX_NO_VERDICT_RETRIES ? 'no-verdict-retry' : 'review-decisions', run.candidate?.digest ?? 'none'] : decision.reason === repairExhausted ? ['attempts', run.effort?.attempts.length ?? 0] : undefined;
     const firing = bound && boundFired(goal, ...bound, card.id);
-    if (revalidatedStop) next = save(next, firing);
-    if (next.state !== run.state) this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
+    if (revalidatedStop || firing) next = save(next, firing);
+    if (next.state !== run.state) notes.push({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: next.state, reason: decision.reason } });
+    // A bound stop is durable before any assessment note; journal failure must not hide its directive.
+    for (const note of notes) {
+      try { this.journal(goal.id).append(note); } catch (err) { if (!firing) throw err; }
+    }
     return { run, next, decision, lease, firing };
   }
 
