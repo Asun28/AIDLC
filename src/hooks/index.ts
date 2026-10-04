@@ -28,7 +28,7 @@ import path from 'node:path';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
-import { hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
+import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
@@ -163,9 +163,31 @@ function legacyHookConfig(text: string | undefined): Required<HookConfig> {
   }
 }
 
+/** Whether two directories are one, compared as canonical paths (drive-letter case, short names and links resolved). */
+function sameDir(a: string, b: string): boolean {
+  return path.relative(canonical(path.resolve(a)), canonical(path.resolve(b))) === '';
+}
+
 /**
- * The hook settings of the `aidlc.config.json` in `cwd`. The file is looked up (`configAccess`) and read once; its text is
- * checked with the schema the CLI uses (`ProjectConfig`), so the hooks and the CLI refuse the same file. A valid config is
+ * The directory whose `aidlc.config.json` the guards read (card T0-HOOK-CONFIG-DISCOVERY, issue 118): the main checkout root,
+ * where the CLI reads it (`loadProjectConfig(repo.mainRoot)`), from every cwd inside a repository, a subdirectory and a
+ * linked worktree included, so a card branch cannot change its own guards. At that root itself, outside a git checkout and
+ * wherever git cannot answer (`resolveRepoIdentity` then gives cwd), it is cwd as given, so the file is named as before.
+ */
+function configDir(cwd: string): string {
+  const repo = resolveRepoIdentity(cwd);
+  return repo.isGit && !sameDir(repo.mainRoot, cwd) ? repo.mainRoot : cwd;
+}
+
+/** Whether `cwd` is the directory whose config the guards read, where a relative path names this checkout's CLI. */
+function atConfigDir(cwd: string): boolean {
+  return sameDir(configDir(cwd), cwd);
+}
+
+/**
+ * The hook settings of the `aidlc.config.json` in the directory `configDir` gives for `cwd`. The file is looked up
+ * (`configAccess`) and read once; its text is checked with the schema the CLI uses (`ProjectConfig`), so the hooks and the
+ * CLI refuse the same file. A valid config is
  * the reading of `legacyHookConfig`, unknown `hooks` keys included. An absent file gives the defaults, as it does for the
  * CLI; a lookup that fails, a read that fails, and a file the lookup found that the read no longer finds are read failures.
  * A pattern of `productionPatterns` or `testPathPatterns` that does not compile is an error too: the guard would throw on
@@ -173,7 +195,7 @@ function legacyHookConfig(text: string | undefined): Required<HookConfig> {
  * so it is no error.
  */
 export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): LoadedHookConfig {
-  const file = path.join(cwd, CONFIG_FILE);
+  const file = path.join(configDir(cwd), CONFIG_FILE);
   const access = configAccess(file, probe);
   if (access === 'absent') return DEFAULT_HOOK_CONFIG;
   if (access !== 'present') return new HookConfigError(file, `cannot be read: ${access.code}`);
@@ -212,18 +234,28 @@ export function loadHookConfig(cwd: string, probe: ConfigProbe = FS_PROBE): Load
 const CONFIG_KEYS = { 'production-gate': 'productionPatterns', 'protect-paths': 'frozenPaths', 'protect-tests': 'testPathPatterns' } as const;
 type ConfigGuard = keyof typeof CONFIG_KEYS;
 
+function doctorSpellings(clis: string[]): Set<string> {
+  return new Set(clis.flatMap((cli) => ['', ' --json', ' 2>&1', ' --json 2>&1'].map((tail) => `${cli} doctor${tail}`)));
+}
+
 /**
- * The Bash commands a config that cannot be used lets through, compared as exact strings once trimmed (card
+ * The Bash commands a config that cannot be used lets through from every cwd, compared as exact strings once trimmed (card
  * T0-HOOK-CONFIG-CLOSED-2): no shell reading decides them. `npx` without `--no-install` may download a registry package
- * and `npm run dev --` runs whatever the repository's dev script is, so neither is listed. The relative `node` scripts are
- * this checkout's CLI: the config error is reached only when the event cwd itself holds the file (`loadHookConfig` does
- * not look upward, issue 118), and the Bash call runs in that cwd.
+ * and `npm run dev --` runs whatever the repository's dev script is, so neither is listed.
  */
-const DOCTOR_COMMANDS = new Set(
-  ['aidlc', 'npx --no-install aidlc', 'node bin/aidlc.js', 'node node_modules/aidlc/bin/aidlc.js'].flatMap((cli) =>
-    ['', ' --json', ' 2>&1', ' --json 2>&1'].map((tail) => `${cli} doctor${tail}`),
-  ),
-);
+const DOCTOR_COMMANDS = doctorSpellings(['aidlc', 'npx --no-install aidlc']);
+
+/**
+ * The relative `node` spellings: this checkout's CLI only when the Bash call runs in the directory that holds the config,
+ * so they pass only there (card T0-HOOK-CONFIG-DISCOVERY); no absolute spelling is listed, since quoting a path is shell
+ * grammar.
+ */
+const DOCTOR_AT_CONFIG = doctorSpellings(['node bin/aidlc.js', 'node node_modules/aidlc/bin/aidlc.js']);
+
+function isDoctorCommand(cmd: string, cwd: string): boolean {
+  const trimmed = cmd.trim();
+  return DOCTOR_COMMANDS.has(trimmed) || (DOCTOR_AT_CONFIG.has(trimmed) && atConfigDir(cwd));
+}
 
 const CONFIG_REPAIR = 'Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`.';
 
@@ -232,11 +264,18 @@ function isConfigFile(target: string, cwd: string, error: HookConfigError): bool
   return path.relative(error.file, path.resolve(cwd, target)) === '';
 }
 
-/** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes. */
-function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean): HookResult {
+/** What still passes in `cwd` while the config cannot be used: the relative `node` spellings only from the config's directory. */
+function configRepair(cwd: string): string {
+  if (atConfigDir(cwd)) return CONFIG_REPAIR;
+  const dir = configDir(cwd);
+  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${quotePath(dir)}.`;
+}
+
+/** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes in `cwd`. */
+function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean, cwd: string): HookResult {
   const file = quotePath(error.file);
   const opening = bash ? `Bash is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
-  return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${CONFIG_REPAIR}`);
+  return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${configRepair(cwd)}`);
 }
 
 /**
@@ -266,13 +305,13 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
   if (guard === 'protect-tests') {
-    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
+    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
   }
   // A command is compared with the doctor list whatever else the event carries, so a file path beside it (the config's
   // own included) never lets it through, and whatever its type: a present value that is not one of the doctor strings is
   // denied (card T0-HOOK-CONFIG-NONSTRING); only an absent command is left to the file rule.
-  if (cmd !== undefined && !(typeof cmd === 'string' && DOCTOR_COMMANDS.has(cmd.trim()))) return configDenial(guard, error, true);
-  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false);
+  if (cmd !== undefined && !(typeof cmd === 'string' && isDoctorCommand(cmd, cwd))) return configDenial(guard, error, true, cwd);
+  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
   return { exitCode: 0 };
 }
 
@@ -593,10 +632,13 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   return contexts;
 }
 
-/** The routing line for a new request, followed by the config error while the config cannot be used. */
-export function routeNewWork(event: HookEvent, configError?: HookConfigError): HookResult {
+/**
+ * The routing line for a new request, followed by the config error while the config cannot be used, with what still passes
+ * in `cwd` (as in the config's directory when not given).
+ */
+export function routeNewWork(event: HookEvent, configError?: HookConfigError, cwd?: string): HookResult {
   const routed = routeLine(event);
-  const note = configError && `[aidlc] ${quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${CONFIG_REPAIR}`;
+  const note = configError && `[aidlc] ${quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${cwd === undefined ? CONFIG_REPAIR : configRepair(cwd)}`;
   const text = [routed, note].filter(Boolean).join('\n');
   return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
 }
@@ -643,7 +685,7 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
     case 'verify-before-done':
       return verifyBeforeDone(cwd, env, hookSession(event, env));
     case 'route-new-work':
-      return routeNewWork(event, error);
+      return routeNewWork(event, error, cwd);
     default:
       return { exitCode: 0 };
   }
