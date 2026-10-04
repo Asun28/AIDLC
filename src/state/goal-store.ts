@@ -9,7 +9,7 @@ import { StoreError, atomicWriteJson, findInterruptedWrites, listJsonFiles, read
 import type { StatePaths } from './paths.ts';
 
 export interface GoalStoreOptions {
-  /** How long `updateCardRun` waits for the card-run lock before it refuses (default 2 s). */
+  /** How long `updateCardRun` and `updateGoal` wait for the record's lock before they refuse (default 2 s). */
   lockTimeoutMs?: number;
 }
 
@@ -34,10 +34,21 @@ export class GoalStore {
     return path.join(this.paths.releases, `${attemptId}.json`);
   }
 
+  /** Compare-and-set a goal snapshot; only the outbox flush clears pending events. */
   saveGoal(goal: Goal): Goal {
-    const next = Goal.parse({ ...goal, updatedAt: nowIso() });
-    atomicWriteJson(this.goalFile(goal.id), next);
-    return next;
+    return this.updateGoal(goal.id, (persisted) => {
+      if (persisted && goal.storeRevision !== persisted.storeRevision) throw new StoreError('GOAL_STALE', this.goalFile(goal.id), `goal ${goal.id} changed since it was read; run the command again`);
+      if (persisted?.pendingExtension) throw new StoreError('GOAL_EXTENSION_PENDING', this.goalFile(goal.id), `goal ${goal.id} has an unfinished deadline extension; retry aidlc goal extend`);
+      return { ...goal, pendingFiring: persisted?.pendingFiring ?? goal.pendingFiring, pendingEvents: persisted?.pendingEvents?.length ? persisted.pendingEvents : goal.pendingEvents };
+    });
+  }
+
+  /** Read-modify-write of one goal record under `<file>.lock` (`updateJson`), refused with `LOCKED` like a card run's; a change that returns the record it received, or nothing, writes nothing. */
+  updateGoal(goalId: string, change: (current: Goal | undefined) => Goal | undefined, within?: (write: () => void) => void): Goal {
+    return updateJson(this.goalFile(goalId), Goal, (persisted) => {
+      const next = change(persisted);
+      return next === persisted || !next ? next : Goal.parse({ ...next, storeRevision: persisted ? persisted.storeRevision + 1 : 0, updatedAt: nowIso() });
+    }, { ...this.lock, within })!;
   }
 
   getGoal(goalId: string): Goal | undefined {

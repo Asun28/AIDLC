@@ -4,9 +4,9 @@ import fs, { existsSync, readFileSync, unlinkSync, utimesSync, writeFileSync } f
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
-import { atomicWriteJson } from '../../src/state/store.ts';
+import { StoreError, atomicWriteJson } from '../../src/state/store.ts';
 import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
-import { ReleaseAttempt } from '../../src/core/types.ts';
+import { ReleaseAttempt, type Goal } from '../../src/core/types.ts';
 import { cleanup, iso, makeCardRun, makeGoal, tmpDir } from './helpers.ts';
 
 describe('state/goal-store', () => {
@@ -328,5 +328,51 @@ describe('state/goal-store run revision (T1-REVIEW-FINDINGS-3 acceptance 10)', (
     assert.equal(same.revision, v0.revision, 'no write, no revision');
     assert.equal(readFileSync(store.cardFile('goal-n', 'T1-N'), 'utf8'), bytes, 'the record is not rewritten');
     assert.equal(store.saveCardRun({ ...v0, blocker: 'still current' }).revision, v0.revision + 1, 'the snapshot read before the no-op update is still current');
+  });
+});
+
+describe('state/goal-store goal writes under the store lock (T1-BOUND-TELEMETRY-2)', () => {
+  const dir = tmpDir();
+  const paths = ensureStatePaths(statePathsFromRoot(path.join(dir, '.aidlc')));
+  after(() => cleanup(dir));
+
+  it('acceptance 15: a held goal lock refuses a goal write with LOCKED naming the file and leaves the record byte-identical; after the release the same write succeeds [R7]', () => {
+    const store = new GoalStore(paths, { lockTimeoutMs: 50 });
+    const goal = store.saveGoal(makeGoal('goal-locked'));
+    const file = store.goalFile('goal-locked');
+    const bytes = readFileSync(file);
+    writeFileSync(`${file}.lock`, `pid=${process.pid} at=${iso()} nonce=held`, 'utf8');
+    assert.throws(() => store.saveGoal({ ...goal, maxWorkers: 1 }), (err: unknown) => err instanceof StoreError && err.code === 'LOCKED' && err.file === file);
+    assert.deepEqual(readFileSync(file), bytes, 'nothing is written');
+    unlinkSync(`${file}.lock`);
+    assert.equal(store.saveGoal({ ...goal, maxWorkers: 1 }).maxWorkers, 1);
+    assert.equal(store.getGoal('goal-locked')?.maxWorkers, 1, 'the same write succeeds once the lock is released');
+  });
+
+  it('acceptance 11: stale goal snapshots cannot erase a pending firing or a concurrent stop [R6] [R7]', () => {
+    const store = new GoalStore(paths);
+    const goal = store.saveGoal(makeGoal('goal-outbox'));
+    const pendingFiring = { bound: 'arc-deadline', key: 'goal-outbox@0/-/arc-deadline/2026-09-11T13:00:00.000Z' };
+    const withFiring = store.saveGoal({ ...goal, pendingFiring } as Goal);
+    assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'the firing is saved with the goal');
+    assert.throws(() => store.saveGoal({ ...goal, maxWorkers: 1 }), (err: unknown) => err instanceof StoreError && err.code === 'GOAL_STALE');
+    assert.deepEqual(store.getGoal('goal-outbox')?.pendingFiring, pendingFiring, 'a snapshot without it keeps it');
+    assert.equal(store.getGoal('goal-outbox')?.maxWorkers, goal.maxWorkers);
+    const other = { bound: 'attempts', key: 'goal-outbox@0/T1-A/attempts/3' };
+    assert.deepEqual(store.saveGoal({ ...withFiring, pendingFiring: other } as Goal).pendingFiring, pendingFiring, 'a plain snapshot cannot replace an unflushed firing');
+    atomicWriteJson(store.goalFile('goal-outbox'), { ...store.getGoal('goal-outbox'), updatedAt: iso() });
+    const bytes = readFileSync(store.goalFile('goal-outbox'), 'utf8');
+    for (const change of [(g: Goal | undefined) => g, () => undefined]) assert.deepEqual([store.updateGoal('goal-outbox', change).pendingFiring, readFileSync(store.goalFile('goal-outbox'), 'utf8')], [pendingFiring, bytes], 'an update that returns the record, or nothing, writes nothing');
+  });
+
+  it('a stale goal snapshot cannot erase a concurrent stop or extension, and a fresh save cannot clear the event outbox', () => {
+    const store = new GoalStore(paths);
+    const original = store.saveGoal(makeGoal('goal-stop-cas'));
+    const pendingEvents = [{ type: 'GOAL_STOPPED' as const, goalId: original.id, generation: 0, data: { eventKey: 'goal-stop-cas@0/stop/1' } }];
+    const stopped = store.updateGoal(original.id, (g) => ({ ...g!, state: 'STOP', terminal: true, stop: { reason: 'time', detail: 'deadline', nextAction: 'extend', global: false, at: iso(), unresolvedOperations: [] }, pendingEvents, deadlines: { ...g!.deadlines, extensions: [...g!.deadlines.extensions, { at: iso(), by: 'lead', newDeadline: iso(100_000_000), reason: 'more time' }] } }));
+    assert.throws(() => store.saveGoal({ ...original, state: 'RUN' }), (err: unknown) => err instanceof StoreError && err.code === 'GOAL_STALE');
+    assert.deepEqual([store.getGoal(original.id)?.state, store.getGoal(original.id)?.deadlines.extensions.length], ['STOP', 1]);
+    store.saveGoal({ ...stopped, pendingEvents: [] });
+    assert.equal(store.getGoal(original.id)?.pendingEvents?.length, 1, 'only the outbox flush may clear a committed event');
   });
 });

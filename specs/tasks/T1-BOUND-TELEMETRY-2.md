@@ -19,11 +19,13 @@ allow_paths:
   - tests/scenarios/review-block.test.ts
   - tests/scenarios/t0-flow.test.ts
   - tests/scenarios/two-windows.test.ts
+  - tests/scenarios/extend-running-card.test.ts
   - README.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T1-BOUND-TELEMETRY-2.md
+  - docs/plans/PLAN-v5.1-hardening.md
 dod_command: npm run check
 dod_exit: 0
 requirements:
@@ -47,9 +49,9 @@ acceptance:
   - 8. Finding 3: a goal journal that cannot be read in full refuses the append, keeps `pendingFiring`, and the board names the goal and the journal as incomplete; once the journal is readable the next call journals the firing once and clears it (tests/infra/board.test.ts). [R2] [R6] [dod arm 1]
   - 9. Finding 4: a CI-denied ship result whose firing append fails leaves the card STOPPED with `pendingFiring`; the next `card next` journals the firing and returns the stop without invoking the ship path again (tests/scenarios/ci-rerun.test.ts). [R5] [R6] [dod arm 1]
   - 10. Findings 5 and 6: a journal file or journal directory that is a dangling link, or a directory that cannot be listed, is named as incomplete, while an absent one reads as none fired (tests/infra/board.test.ts). [R2] [dod arm 1]
-  - 11. A plain goal write from a snapshot without `pendingFiring` keeps the persisted one; only the flush clears it (tests/infra/goal-store.test.ts). [R6] [R7] [dod arm 1]
+  - 11. A stale goal snapshot is refused with `GOAL_STALE`; a fresh snapshot keeps persisted pending events and firing, and only the flush clears them (tests/infra/goal-store.test.ts). [R6] [R7] [dod arm 1]
   - 12. A goal resumed into a new generation and stopped again by the same bound on the same value journals its own firing, one per generation over repeated calls (tests/scenarios/deadline.test.ts). [R1] [dod arm 1]
-  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +146 net (set by aidlc-37 under the user's delegation for this successor; W5 goes to +158); the close-out states it and the W2+W4 running total against +400. [R1]
+  - 13. `git diff --numstat origin/main...HEAD -- src` is at most +400 net (expanded under the user's 2026-10-04 delegation for R3 decision 1 recovery and concurrency repairs; the shared W2+W4+W5 envelope is +650); the close-out states it and the W2+W4 running total against +650. [R1]
   - 14. `docs/OPERATIONS.md` names `BOUND_FIRED`, the outbox (`pendingFiring`) and the board line; `docs/OPERATIONS.md` also names the goal `LOCKED` refusal and the `incomplete:` of a pending firing; `CHANGELOG.md` Unreleased carries the entry under this card id and an entry starting `Changed:` that states goal writes now take the store lock; a test reads each exact sentence (tests/infra/board.test.ts). [R1] [R2] [R5] [R7] [dod arm 1]
   - 15. A held goal lock makes a goal write refuse with `StoreError` `LOCKED` naming the file and leaves the record byte-identical; after the lock is released the same write succeeds (tests/infra/goal-store.test.ts). [R7] [dod arm 1]
   - 16. At the start of `card next`, controller `next` and controller `report`, a pending firing is journaled and cleared before selection or dispatch; a flush that throws leaves the stop in place, the command reports the pending firing, and no ship or other work directive is dispatched (tests/scenarios/t0-flow.test.ts, tests/scenarios/deadline.test.ts). [R6] [R8] [dod arm 1]
@@ -59,7 +61,7 @@ depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
   same_class: "Every saveGoal caller at b4de1bc, controller.ts: 182 createGoal writes a new goal record under a fresh goal lease and cannot race a stop; 298 CARDS to RUN, 325 WAIT to RUN, 330 RUN to VERIFY_ARC, 343 to WAIT, 350 WAIT to RUN, 392 to CLOSE and 421 to DONE (all in next) and 596 (every report result) write a snapshot read at the start of the call and can race a stop written by an overlapping call on the same goal; 661 persistStop writes the stop and gains pendingFiring; 747 goal extend writes the extended deadline, readmits stopped cards and can race a stop. No hook, CLI or board path writes the goal record directly: src/hooks and src/cli/main.ts call no saveGoal, and writeBoard writes only the board file. Firing sites that move to the outbox: card-runner.ts save(run, firing) 452-458, saveHolding 745, finish() 2330, the command-path stop 1923; controller.ts 210, 220, 264, 527."
-budget: 1600
+budget: 3200
 tdd: true
 sweep: "Survey of T1-BOUND-TELEMETRY at b4de1bc, the candidate this card carries. Firings journaled inside the transition write: card-runner.ts save(run, firing) at 452-458, saveHolding 745, finish() patch 2330, the command-path stop 1923; goal firings journalFiring before persistStop at controller.ts:210, 220, 264, 527. Goal writes are blind: goal-store.ts saveGoal 37-41 (atomicWriteJson, no lock); card runs go through updateJson (store.ts:162) under <file>.lock. CI firing key is the candidate digest alone (card-runner.ts:2465); the ledger keeps cancelled reruns (types.ts:462-470, ci-policy.ts:197). journalFiring ignores readEvents.damaged (board.ts:86-88); readEvents and boundsOfJournals test existsSync before reading (board.ts:79, 93). R3 decision 2 of T1-BOUND-TELEMETRY: 6 findings at card-runner.ts:2465, controller.ts:210, board.ts:87, card-runner.ts:2329, board.ts:79, board.ts:93."
 forbid: [a new config key, a new file under .aidlc/, a counter kept outside the journal, a change to any bound's value, a bound stop that waits on the journal, a firing key read from the clock, a raw card report patch]
@@ -87,3 +89,7 @@ npm run check
 - 2026-09-28, by aidlc-37 under the same delegation: the positional fallback is scoped to entries that carry no time; acceptance 18 pins a mixed journal, an old-shape line and the clock sources.
 
 - 2026-10-04, under the user's delegation to finish this card and make all decisions: total diff budget 1460 -> 1600 for the R2 F1 regression and repair of partial deadline extensions under a later card-run lock. Source cap remains +146; scope and acceptance are unchanged.
+
+- 2026-10-04, under the user's explicit delegation of all decisions and permission for multiple PRs: R3 decision 1 identified 14 persistence, recovery, dispatch and board defects. Total diff cap 1600 -> 3200, source cap +146 -> +400, shared W2+W4+W5 envelope +400 -> +650. Add docs/plans/PLAN-v5.1-hardening.md to allow_paths for the matching plan amendment. All behavior requirements, no-new-state-file/no-config-key restrictions, tests, and retained review/attempt counters remain unchanged. Goal concurrency uses stale-write refusal or locked transitions; partial extension writes must be recoverable, and journal failure must leave durable recovery state.
+
+- 2026-10-04, under the same delegated repair authority: add tests/scenarios/extend-running-card.test.ts to allow_paths. The recoverable extension requires a lastExtension receipt on changed card records; retain the earlier full-record assertions for all existing fields and separately assert the exact new receipt. Untouched records and their revisions remain byte-identical. This is an additive existing-record contract change, not a test exemption; budgets and review/attempt counters remain unchanged.

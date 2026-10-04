@@ -14,6 +14,12 @@ const BLOCK: Verdict = {
   run_status: 'success',
 };
 
+/** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order. */
+const fired = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.data['bound']);
+
+/** The keys of those firings: goal/card/bound/the persisted value that fired it (R3 decision 1). */
+const keysOf = (fx: ReturnType<typeof makeFixture>, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length));
+
 function tierSCard(fx: ReturnType<typeof makeFixture>) {
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello', tier: 'S', reviewGate: 'codex {verdict:pass}', acceptance: ['1. hello() returns hello. [dod arm 1]'] });
 }
@@ -89,6 +95,10 @@ test('Q6: after REVIEW_FIX a repaired candidate ships once more; a second substa
     assert.equal(r.run.review.substantiveDecisions, 2);
     assert.equal(r.run.review.substantiveBlocks, 2);
     assert.equal(ship.requests.length, 2, 'no third ship request');
+    assert.deepEqual(fired(fx, goal.id), ['review-decisions'], 'T1-BOUND-TELEMETRY acceptance 1: the second block journals one review-decisions firing');
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/review-decisions/sha-repaired']);
+    assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['review-decisions'], 'the stopped card fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -161,6 +171,7 @@ test('Q6: a missing verdict never passes; one retry is offered, then a second no
     assert.equal(r.run.review.noVerdictRetriesUsed, 2);
     assert.equal(ship.requests.length, 2);
     assert.equal(fx.queue.pool(goal.reviewPool).active.length, 0);
+    assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry'], 'T1-BOUND-TELEMETRY acceptance 1: the second no-verdict journals one no-verdict-retry firing');
   } finally {
     fx.cleanup();
   }
@@ -689,6 +700,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 1: the transient-CI branch decides the re
     assert.ok(persisted.ci.reruns.some((x) => x.runId === '999'), 'the rerun another window persisted survives');
     assert.equal(persisted.ci.reruns.length, 1, 'no second rerun is granted once the allowance is consumed');
     assert.notEqual(after!.directive.kind, 'ship', after!.directive.narration);
+    assert.deepEqual(fired(fx, goal.id), [], 'T1-BOUND-TELEMETRY: the WAIT on a rerun taken meanwhile fires no denial');
     // (2) The pre-dispatch cleanup: a failing operation store never masks the lock error nor skips the pool cancellation.
     const fresh = fx.store.updateCardRun(goal.id, 'T1-HELLO', (current) => ({ ...current!, state: 'SHIP', stop: undefined, dodReceipt: 'dod:1', ci: { reruns: [] } }));
     const lock = `${fx.store.cardFile(goal.id, 'T1-HELLO')}.lock`;
@@ -783,6 +795,95 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 16): the transient-CI denial i
     assert.ok(persisted.ci.reruns.some((x) => x.runId === '222' && x.outcome === 'requested'), 'the rerun intent is persisted before the request');
     assert.notEqual(persisted.state, 'STOP');
     assert.ok(fx.events(goal.id).some((e) => e.type === 'CI_RERUN' && e.data['runId'] === '222'), 'the grant is journaled');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY acceptance 1: a review-blocked ship with no readable verdict after the single retry stops the card and journals one no-verdict-retry firing, not a review-decisions one [R1]', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const ship = new DryRunShipPath(['review-blocked', 'review-blocked']);
+    const runner = fx.runner(ship);
+    const card = fx.card('T1-HELLO');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.run.review.noVerdictRetriesUsed, 1, r.directive.narration);
+    assert.notEqual(r.directive.kind, 'stop', 'the first no-verdict is the retry');
+    assert.deepEqual(fired(fx, goal.id), []);
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const run2 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-second' });
+    r = runner.next(fx.goal(goal.id), card, run2);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'review');
+    assert.match(r.run.stop?.detail ?? '', /no verdict after initial dispatch plus one retry/);
+    assert.deepEqual(fired(fx, goal.id), ['no-verdict-retry']);
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/no-verdict-retry/sha-second']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+for (const [label, ledger, bound] of [
+  ['two substantive blocks', { substantiveDecisions: 2, substantiveBlocks: 2 }, 'review-decisions'],
+  ['two substantive blocks after the one retry', { substantiveDecisions: 2, substantiveBlocks: 2, noVerdictRetriesUsed: 1 }, 'review-decisions'],
+  ['a second no-verdict retry', { noVerdictRetriesUsed: 2 }, 'no-verdict-retry'],
+] as const) {
+  test(`T1-BOUND-TELEMETRY acceptance 1: a run whose ledger holds ${label} without a stop is stopped by the card selection, which journals one ${bound} firing [R1]`, () => {
+    const fx = makeFixture();
+    try {
+      tierSCard(fx);
+      const goal = goalForCards(fx, ['T1-HELLO']);
+      const run0 = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO');
+      const saved = fx.store.saveCardRun(CardRun.parse({ ...run0, review: { ...run0.review, ...ledger }, updatedAt: fx.now() }));
+      const runner = fx.runner();
+      const r = runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), saved);
+      assert.equal(r.directive.kind, 'stop', r.directive.narration);
+      assert.equal(r.run.stop?.reason, 'review');
+      assert.deepEqual(fired(fx, goal.id), [bound]);
+      assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-HELLO'), r.run).directive.kind, 'stop');
+      assert.deepEqual(fired(fx, goal.id), [bound], 'the stopped card fires nothing more');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T1-BOUND-TELEMETRY acceptance 1: a review fix whose repair attempts exhaust the baseline ladder without progress stops the card in REVIEW_FIX and journals one attempts firing [R1]', () => {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const runner = fx.runner(new DryRunShipPath(['review-blocked'], BLOCK));
+    const card = fx.card('T1-HELLO');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'review-fix', r.directive.narration);
+    for (const cause of ['type error in hello.ts', 'assertion in hello.test.ts', 'timeout in hello.test.ts']) {
+      r = runner.next(fx.goal(goal.id), card, run);
+      assert.equal(r.directive.kind, 'build', r.directive.narration);
+      assert.equal(r.run.state, 'REVIEW_FIX');
+      run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'fail', cause, progress: false });
+    }
+    assert.equal(run.effort?.terminal, undefined, 'the ladder is spent but not yet terminal: an escalation level exists');
+    assert.deepEqual(fired(fx, goal.id), []);
+    r = runner.next(fx.goal(goal.id), card, run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'card');
+      assert.match(r.directive.stop.detail, /^exhausted: /);
+    }
+    assert.deepEqual(fired(fx, goal.id), ['attempts']);
+    assert.deepEqual(keysOf(fx, goal.id), ['@0/T1-HELLO/attempts/4'], 'the success and three failed repairs');
+    assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['attempts'], 'the stopped card fires nothing more');
   } finally {
     fx.cleanup();
   }

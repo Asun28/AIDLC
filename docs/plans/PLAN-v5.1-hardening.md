@@ -433,3 +433,9 @@ New findings from running the waves are appended here by the card that meetsthem
 
 ## 10. After merge
 none this version (development-only target)
+
+## 2026-10-04 delegated repair amendment
+
+The user delegated all decisions and authorized multiple PRs to finish the next card. R3 decision 1 of T1-BOUND-TELEMETRY-2 found 14 concrete concurrency, journal-failure recovery, dispatch and board defects. Keep every acceptance criterion and the review limits. Expand this card to +400 net source lines and 3200 total changed lines; expand the shared W2+W4+W5 envelope from +400 to +650 (+96 existing W2, at most +400 W4, at least +154 reserved for W5). Earlier budget figures above are historical and superseded by this amendment. The implementation must retain pending recovery in existing goal/card records; no new state-file type or config key is authorized.
+
+The extension recovery receipt also requires updating tests/scenarios/extend-running-card.test.ts: every earlier field remains compared, and the exact new lastExtension receipt is asserted separately. This regression path is included in W4; the +400 source, 3200 total and +650 shared caps remain unchanged.

@@ -1,11 +1,33 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath, T0, type Fixture } from './_harness.ts';
 import { GoalController } from '../../src/loop/controller.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
-import { HOUR_MS, MINUTE_MS, addMs } from '../../src/core/types.ts';
+import { HOUR_MS, MINUTE_MS, RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
 import { effectiveGoalDeadline } from '../../src/core/deadlines.ts';
 import { makeStop } from '../../src/core/stop.ts';
+import fs, { readFileSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import type { ShipOutcomeClass, ShipRequest, ShipResult } from '../../src/delivery/ship.ts';
+
+/** The bounds journaled for the goal (card T1-BOUND-TELEMETRY), in journal order, each with the card it names. */
+const fired = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => `${String(e.data['bound'])}@${e.cardId ?? 'goal'}`);
+
+test('legacy goal firing replay keeps the generation in its persisted key', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const key = `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`;
+    fx.store.updateGoal(goal.id, (current) => ({ ...current!, generation: 1, state: 'STOP', terminal: true, stop: makeStop('time', 'old deadline', 'extend', { at: T0 }), pendingFiring: { bound: 'arc-deadline', key, stoppedAt: T0 } }));
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    fx.controller.next(goal.id);
+    assert.deepEqual(fx.events(goal.id).filter((event) => event.type === 'BOUND_FIRED').map((event) => [event.data['key'], event.generation]), [[key, 0]]);
+  } finally { fx.cleanup(); }
+});
+
+/** The keys of those firings after the goal id: @generation/card/bound/the persisted value that fired it (R3 decision 1, R2 on cc53042). */
+const keysOf = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'BOUND_FIRED').map((e) => String(e.data['key']).slice(goalId.length));
 
 test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP survives a fresh controller', () => {
   const fx = makeFixture();
@@ -20,6 +42,8 @@ test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP su
     const g = fx.goal(goal.id);
     assert.equal(g.terminal, true);
     assert.equal(g.state, 'STOP');
+    assert.deepEqual(fired(fx, goal.id), ['arc-deadline@goal'], 'T1-BOUND-TELEMETRY acceptance 1: the goal deadline journals one arc-deadline firing');
+    assert.ok(fx.controller.writeBoard(g).split('\n').includes('Bounds: arc-deadline 1 (DONE 0, STOP/time 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
 
     // A new controller over the same persisted state does not invent a clean start.
     const fresh = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, now: fx.now, cards: fx.registry });
@@ -27,6 +51,7 @@ test('Q8/Q25: a one-card goal stops at the 3h admission deadline and the STOP su
     assert.equal(again.kind, 'stop');
     assert.equal(fresh.mustGoal(goal.id).stop?.reason, 'time');
     assert.throws(() => fresh.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-HELLO'] } }), /terminal/);
+    assert.deepEqual(fired(fx, goal.id), ['arc-deadline@goal'], 'a late call on the stopped goal fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -47,10 +72,13 @@ test('Q8/Q25: a card deadline is min(start + 3h, goal deadline) and expiry stops
     const r = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
     assert.equal(r.directive.kind, 'stop');
     assert.equal(r.run.stop?.reason, 'time');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-A'], 'T1-BOUND-TELEMETRY acceptance 1: the card deadline journals one card-deadline firing');
     assert.equal(fx.goal(goal.id).terminal, false, 'the arc itself is still within its 12h limit');
     const d = fx.controller.next(goal.id);
     assert.equal(d.kind, 'run-card', 'independent ready work continues');
     if (d.kind === 'run-card') assert.equal(d.cardId, 'T1-B');
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-A'], 'the stopped card fires nothing more');
   } finally {
     fx.cleanup();
   }
@@ -222,6 +250,449 @@ test('R1: a T2 goal extended after a time stop passes the plan checkpoint again 
     const after = fx.controller.next(goal.id);
     assert.equal(runner.next(fx.goal(goal.id), fx.card('T1-A'), fx.store.getCardRun(goal.id, 'T1-A')!).directive.kind, 'build', 'after the approval the worker continues');
     assert.ok(after.kind === 'wait' || after.kind === 'run-card', `after the approval the re-admitted card continues: ${after.kind}`);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A ship that returns after the card deadline: the fixture clock moves while it runs. */
+class LateShip extends InjectedShipPath {
+  private readonly fx: Fixture;
+  constructor(fx: Fixture, outcomes: ShipOutcomeClass[], stdoutText: string) {
+    super(outcomes, stdoutText);
+    this.fx = fx;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    this.fx.advance(4 * HOUR_MS);
+    return super.ship(req);
+  }
+}
+
+for (const [outcome, text, detail] of [
+  ['red-missing', '', /^RED receipt rejected .* after the card deadline/],
+  ['merge-failed', 'CONFLICT (content): Merge conflict in src/a.ts', /^merge conflict on the base sync after the card deadline/],
+] as const) {
+  test(`T1-BOUND-TELEMETRY acceptance 1: a ${outcome} ship result that returns after the card deadline stops the card for time and journals one card-deadline firing [R1]`, () => {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-LATE', title: 'the ship returns late' });
+      const goal = goalForCards(fx, ['T1-LATE'], { size: 'T1' });
+      const runner = fx.runner(new LateShip(fx, [outcome], text));
+      const card = fx.card('T1-LATE');
+      let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-LATE'));
+      r = runner.next(fx.goal(goal.id), card, r.run);
+      const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-LATE') });
+      r = runner.next(fx.goal(goal.id), card, run1);
+      assert.equal(r.directive.kind, 'stop', r.directive.narration);
+      assert.equal(r.run.stop?.reason, 'time');
+      assert.match(r.run.stop?.detail ?? '', detail);
+      assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE']);
+      assert.deepEqual(keysOf(fx, goal.id), [`@0/T1-LATE/card-deadline/${addMs(T0, 3 * HOUR_MS)}`]);
+      assert.equal(runner.next(fx.goal(goal.id), card, r.run).directive.kind, 'stop');
+      assert.deepEqual(fired(fx, goal.id), ['card-deadline@T1-LATE'], 'the stopped card fires nothing more');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T1-BOUND-TELEMETRY acceptance 1: an UNKNOWN operation past the card deadline and its grace stops the card and journals one reconciliation-grace firing for the card [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(goal, 'T1-A');
+    const op = fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-A', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    fx.ops.markResult(op.id, 'UNKNOWN', { error: 'lookup failed' }, fx.now());
+    fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS);
+    const r = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'time');
+    assert.match(r.run.stop?.detail ?? '', /reconciliation grace expired/);
+    assert.equal(fx.goal(goal.id).terminal, false, 'the goal is within its 12 h limit');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A']);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/T1-A/reconciliation-grace/${run.deadline}`]);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), r.run).directive.kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@T1-A'], 'the stopped card fires nothing more');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY acceptance 1: an unresolved operation past the goal deadline and its grace stops the goal and journals one reconciliation-grace firing for the goal, not an arc-deadline one [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    fx.ops.recordIntent({ kind: 'merge', goalId: goal.id, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+    fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    if (d.kind === 'stop') assert.equal(d.stop.detail, 'reconciliation grace expired with unresolved operations');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal']);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/reconciliation-grace/${effectiveGoalDeadline(goal.deadlines)}`]);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: reconciliation-grace 1 (DONE 0, STOP/time 1, open 0)'), 'the firing is journaled ahead of the stop it causes');
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.deepEqual(fired(fx, goal.id), ['reconciliation-grace@goal'], 'the stopped goal fires nothing more');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY R2 on cc53042: a resumed generation that the arc deadline stops again journals its own firing, one per generation however often it is called [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    for (let i = 0; i < 2; i += 1) assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    // A resume keeps the deadline, so generation 1 is stopped by the same bound on the same persisted value.
+    assert.equal(fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'user asked to continue' } }).directive.kind, 'stop');
+    for (let i = 0; i < 2; i += 1) assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.goal(goal.id).generation, 1);
+    const deadline = effectiveGoalDeadline(goal.deadlines);
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${deadline}`, `@1/-/arc-deadline/${deadline}`]);
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: arc-deadline 2 (DONE 0, STOP/time 2, open 0)'));
+    assert.deepEqual(fx.events(goal.id).filter((e) => e.type === 'BOUND_FIRED').map((e) => e.generation), [0, 1], 'each entry carries the generation of its firing (T1-BOUND-TELEMETRY-2)');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A line that does not parse inserted after the first one, so the journal cannot be read in full while its tail still appends; returns the repair. */
+function damageJournal(fx: Fixture, goalId: string): () => void {
+  const file = fx.journal(goalId).file;
+  writeFileSync(file, readFileSync(file, 'utf8').replace('\n', '\nnot a journal line\n'), 'utf8');
+  return () => writeFileSync(file, readFileSync(file, 'utf8').replace('not a journal line\n', ''), 'utf8');
+}
+
+test('T1-BOUND-TELEMETRY-2 acceptance 16: a journal that refuses CARD_STATE cannot prevent persisting a card bound stop [R8]', () => {
+  for (const prepared of [false, true]) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+      if (prepared) fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+      fx.advance(3 * HOUR_MS + MINUTE_MS);
+      const file = fx.journal(goal.id).file;
+      const before = readFileSync(file, 'utf8');
+      writeFileSync(file, before + '{broken tail\n');
+      let stopped!: ReturnType<CardRunner['next']>;
+      const observed: boolean[] = [], real = fs.readFileSync;
+      fs.readFileSync = ((...args: Parameters<typeof real>) => {
+        if (String(args[0]) === file) observed.push(fx.store.getCardRun(goal.id, 'T1-A')?.stop?.reason === 'time');
+        return real(...args);
+      }) as typeof real;
+      syncBuiltinESMExports();
+      try { assert.doesNotThrow(() => { stopped = fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run); }); }
+      finally { fs.readFileSync = real; syncBuiltinESMExports(); }
+      assert.ok(observed.length > 0 && observed.every(Boolean), 'the stop is on disk before every attempted journal read or append');
+      assert.equal(stopped.directive.kind, 'stop');
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.stop?.reason, 'time');
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
+      assert.match(stopped.directive.narration, /stays pending/);
+      writeFileSync(file, before);
+      for (let i = 0; i < 2; i++) assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run).directive.kind, 'stop');
+      assert.equal(fired(fx, goal.id).filter((bound) => bound === 'card-deadline@T1-A').length, 1);
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('R3 finding 12: a delayed firing keeps the generation in which it occurred', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.generation, 0);
+    repair();
+    fx.runner().next({ ...fx.goal(goal.id), generation: 1 }, fx.card('T1-A'), run);
+    const firing = fx.events(goal.id).find((event) => event.type === 'BOUND_FIRED');
+    assert.equal(firing?.generation, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('T1-BOUND-TELEMETRY-2 acceptance 16: card next journals and clears a pending firing before selection; while the journal refuses it, card next names it and dispatches no work [R6] [R8]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: {} });
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } }); // the card fires in generation 1
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    const next = () => fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    const stopped = next();
+    assert.deepEqual([stopped.directive.kind, stopped.run.stop?.reason, fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound], ['stop', 'time', 'card-deadline'], 'the stop is saved with its firing pending');
+    assert.match(stopped.directive.narration, /card-deadline\/.* stays pending/);
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 13 * HOUR_MS), 'more time'); // re-admits the run; the firing stays pending
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring?.bound, 'card-deadline');
+    const records = () => [fx.store.cardFile(goal.id, 'T1-A'), fx.journal(goal.id).file].map((f) => readFileSync(f, 'utf8'));
+    const before = records();
+    const held = next();
+    assert.deepEqual([held.directive.kind, held.run.state], ['wait', 'BUILD'], `no work is dispatched: ${held.directive.narration}`);
+    assert.deepEqual(records(), before, 'nothing is selected or written');
+    assert.match(held.directive.narration, /card-deadline\/.* stays pending/);
+    repair();
+    const seen = fx.events(goal.id).length;
+    const awaitingGoal = next();
+    assert.equal(awaitingGoal.directive.kind, 'wait', 'card work stays held until the goal extension note recovers');
+    assert.match(awaitingGoal.directive.narration, /pending journal recovery.*extension/);
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 1).map((e) => [e.type, e.data['key'], e.generation]), [['BOUND_FIRED', `${goal.id}@1/T1-A/card-deadline/${run.deadline}`, 1]], 'journaled before selection');
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A')?.pendingFiring, undefined);
+    fx.controller.next(goal.id);
+    const resumed = next();
+    assert.notEqual(resumed.directive.kind, 'wait', resumed.directive.narration);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BOUND-TELEMETRY-2 acceptance 16: controller next and report journal and clear a pending goal firing before anything else; while the journal refuses it they name it and a resume is not applied [R6] [R8]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    for (let i = 0; i < 2; i += 1) {
+      const d = fx.controller.next(goal.id);
+      assert.equal(d.kind, 'stop');
+      assert.match(d.narration, /arc-deadline\/.* stays pending/, 'next names the pending firing');
+    }
+    const refused = fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'continue' } });
+    assert.deepEqual([refused.directive.kind, fx.goal(goal.id).generation], ['stop', 0], 'the resume is not applied');
+    assert.match(refused.directive.narration, /arc-deadline\/.* stays pending/, 'report names the pending firing');
+    fx.controller.extendDeadline(goal.id, 'lead', addMs(T0, 12 * HOUR_MS), 'more time'); // re-admits the goal; its firing stays pending
+    assert.equal(fx.controller.next(goal.id).kind, 'wait', 'a re-admitted goal whose firing stays pending waits on the journal');
+    repair();
+    const seen = fx.events(goal.id).length;
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: {} });
+    assert.deepEqual(fx.events(goal.id).slice(seen, seen + 2).map((e) => e.type), ['BOUND_FIRED', 'GOAL_STOPPED'], 'the firing is journaled before the report');
+    assert.deepEqual(keysOf(fx, goal.id), [`@0/-/arc-deadline/${goal.deadlines.goalDeadline}`]);
+    writeCard(fx, { id: 'T1-B', title: 'b' }); // the goal grace and the planning allowance name a refused firing too (mutants M65, M66)
+    const [grace, plan] = [goalForCards(fx, ['T1-B']), fx.controller.createGoal({ text: 'build the hello feature', source: 'natural-language', affectedSurfaces: [], explicitSize: 'T1' })];
+    for (const g of [grace, plan]) damageJournal(fx, g.id);
+    fx.ops.recordIntent({ kind: 'merge', goalId: grace.id, cardId: 'T1-B', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.advance(3 * HOUR_MS + RECONCILE_GRACE_MS + MINUTE_MS));
+    assert.match(fx.controller.next(grace.id).narration, /reconciliation-grace\/.* stays pending/);
+    assert.match([0, 1].map(() => fx.controller.report({ goalId: plan.id, generation: 0, result: 'plan-failed', data: {} }).directive.narration)[1]!, /planning-invocations\/.* stays pending/);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3 goal stop survives a GOAL_STOPPED append failure and journals it once on recovery', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('"type":"GOAL_STOPPED"')) throw new Error('injected GOAL_STOPPED append failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      assert.equal(fx.controller.next(goal.id).kind, 'stop');
+      assert.equal(fx.goal(goal.id).stop?.reason, 'time');
+      assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 0);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 1);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_STOPPED').length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an unfinished extension holds goal and card dispatch', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.updateGoal(goal.id, (g) => ({ ...g!, pendingExtension: { id: 'tx1', at: fx.now(), by: 'lead', newDeadline: addMs(T0, 12 * HOUR_MS), reason: 'more time', cards: ['T1-A'], generation: 0 } }));
+    assert.equal(fx.controller.next(goal.id).kind, 'wait');
+    assert.equal(fx.runner().next(goal, fx.card('T1-A'), run).directive.kind, 'wait');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: an extension journal failure retains notes and the same deadline retries successfully', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const deadline = addMs(T0, 12 * HOUR_MS);
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('/extension/')) throw new Error('injected extension note failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      const extended = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+      assert.equal(extended.deadlines.extensions.length, 1);
+      assert.ok(extended.pendingEvents?.length);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    const retried = fx.controller.extendDeadline(goal.id, 'lead', deadline, 'more time');
+    assert.equal(retried.deadlines.extensions.length, 1);
+    assert.equal(retried.pendingEvents, undefined);
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'NOTE' && e.data['extension']).length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: GOAL_DONE append failure retains a recoverable terminal event', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.saveCardRun({ ...run, state: 'DONE', mergeVerified: true, closure: { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: true } });
+    fx.store.updateGoal(goal.id, (g) => ({ ...g!, state: 'CLOSE', stages: { ...g!.stages, development: 'pass' } }));
+    const append = fs.appendFileSync;
+    (fs as { appendFileSync: typeof append }).appendFileSync = ((...args: Parameters<typeof append>) => {
+      if (String(args[1]).includes('"type":"GOAL_DONE"')) throw new Error('injected GOAL_DONE append failure');
+      return append(...args);
+    }) as typeof append;
+    syncBuiltinESMExports();
+    try {
+      assert.equal(fx.controller.next(goal.id).kind, 'wait');
+      assert.equal(fx.goal(goal.id).state, 'DONE');
+      assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_DONE').length, 0);
+    } finally {
+      (fs as { appendFileSync: typeof append }).appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(fx.controller.next(goal.id).kind, 'done');
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'GOAL_DONE').length, 1);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: direct card attempt refuses a pending firing before recording an attempt', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.store.updateCardRun(goal.id, 'T1-A', (r) => ({ ...r!, pendingFiring: { bound: 'attempts', key: `${goal.id}@0/T1-A/attempts/3`, generation: 0 } }));
+    const repair = damageJournal(fx, goal.id);
+    const before = fx.store.getCardRun(goal.id, 'T1-A')!;
+    assert.throws(() => fx.runner().recordAttempt(goal, fx.card('T1-A'), run, { outcome: 'fail', cause: 'test' }), /pending journal recovery/);
+    assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-A'), before);
+    repair();
+    assert.equal(fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED').length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('R3: a missing card run cannot be created during a pending extension and uses the new deadline after recovery', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A']);
+    fx.advance(2 * HOUR_MS);
+    const until = addMs(T0, 12 * HOUR_MS);
+    fx.store.updateGoal(goal.id, (current) => ({ ...current!, pendingExtension: { id: 'tx-new-run', at: fx.now(), by: 'lead', newDeadline: until, reason: 'more time', cards: [], generation: 0 } }));
+    const dispatched = fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length;
+    assert.throws(() => fx.controller.ensureCardRun(goal, 'T1-A'), /deadline extension .* is unfinished/);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-A'), undefined);
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatched);
+    fx.controller.extendDeadline(goal.id, 'lead', until, 'more time');
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    assert.equal(run.deadline, addMs(T0, 5 * HOUR_MS), 'the newly created card receives start + 3h under the extended goal');
+    assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatched + 1);
+  } finally { fx.cleanup(); }
+});
+
+test('R3: a missing card run is not dispatched while its goal has pending recovery or a terminal stop', () => {
+  for (const state of ['firing', 'event', 'terminal'] as const) {
+    const fx = makeFixture();
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      fx.store.updateGoal(goal.id, (current) => ({
+        ...current!,
+        ...(state === 'firing' ? { pendingFiring: { bound: 'arc-deadline' as const, key: `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, generation: 0 } } : {}),
+        ...(state === 'event' ? { pendingEvents: [{ type: 'GOAL_STOPPED' as const, goalId: goal.id, generation: 0, data: { eventKey: 'pending-goal-stop', reason: 'review' } }] } : {}),
+        ...(state === 'terminal' ? { state: 'STOP' as const, terminal: true, stop: makeStop('review', 'adjudication needed', 'adjudicate', { at: fx.now() }) } : {}),
+      }));
+      const dispatches = fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length;
+      assert.throws(() => fx.controller.ensureCardRun(goal, 'T1-A'), /pending journal recovery|terminal/, state);
+      assert.equal(fx.store.getCardRun(goal.id, 'T1-A'), undefined, state);
+      assert.equal(fx.events(goal.id).filter((event) => event.type === 'CARD_DISPATCHED').length, dispatches, state);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('R3: existing card entry points refuse new work while goal recovery or a terminal stop is pending', async () => {
+  for (const state of ['firing', 'event', 'terminal'] as const) {
+    const fx = makeFixture({ config: { preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 2, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+    try {
+      writeCard(fx, { id: 'T1-A', title: 'a' });
+      const goal = goalForCards(fx, ['T1-A']);
+      const ship = new InjectedShipPath(['merged'], '');
+      const runner = fx.runner(ship), card = fx.card('T1-A');
+      let run = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), card.id)).run;
+      run = runner.next(fx.goal(goal.id), card, run).run;
+      run = runner.recordAttempt(fx.goal(goal.id), card, run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-a' });
+      fx.store.updateGoal(goal.id, (current) => ({
+        ...current!,
+        ...(state === 'firing' ? { pendingFiring: { bound: 'arc-deadline' as const, key: `${goal.id}@0/-/arc-deadline/${goal.deadlines.goalDeadline}`, generation: 0 } } : {}),
+        ...(state === 'event' ? { pendingEvents: [{ type: 'GOAL_STOPPED' as const, goalId: goal.id, generation: 0, data: { eventKey: 'pending-goal-stop', reason: 'review' } }] } : {}),
+        ...(state === 'terminal' ? { state: 'STOP' as const, terminal: true, stop: makeStop('review', 'adjudication needed', 'adjudicate', { at: fx.now() }) } : {}),
+      }));
+      const held = runner.next(goal, card, run);
+      assert.equal(held.directive.kind, state === 'terminal' ? 'stop' : 'wait', state);
+      assert.equal(ship.requests.length, 0, state);
+      assert.throws(() => runner.recordAttempt(goal, card, run, { outcome: 'fail', cause: 'test' }), /pending journal recovery|terminal/, state);
+      await assert.rejects(() => runner.preReview(goal, card, run), /pending journal recovery|terminal/, state);
+      await assert.rejects(() => runner.formalReview(goal, card, run), /pending journal recovery|terminal/, state);
+      assert.equal(fx.store.getCardRun(goal.id, card.id)?.revision, run.revision, `${state}: no card mutation`);
+    } finally { fx.cleanup(); }
+  }
+});
+
+test('T1-BOUND-TELEMETRY-2 acceptance 18: a card firing that stays pending while its goal goes terminal counts as a firing of that stop once it lands [R9]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: 'T1-A', title: 'a' });
+    const goal = goalForCards(fx, ['T1-A'], { size: 'T1' });
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-A');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    const repair = damageJournal(fx, goal.id);
+    assert.equal(fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run).run.pendingFiring?.bound, 'card-deadline');
+    fx.advance(MINUTE_MS);
+    assert.equal(fx.controller.next(goal.id).kind, 'stop', 'the goal stops on its stopped card');
+    repair();
+    fx.runner().next(fx.goal(goal.id), fx.card('T1-A'), run);
+    fx.controller.next(goal.id);
+    const stopped = fx.events(goal.id).find((e) => e.type === 'GOAL_STOPPED');
+    const fired = fx.events(goal.id).find((e) => e.type === 'BOUND_FIRED');
+    assert.deepEqual([stopped?.type, stopped?.data['at'], fired?.type, fired?.data['stoppedAt']], ['GOAL_STOPPED', fx.goal(goal.id).stop?.at, 'BOUND_FIRED', fx.store.getCardRun(goal.id, 'T1-A')?.stop?.at], 'the firing lands after the stop; each carries the persisted time of its stop');
+    assert.ok(fx.controller.writeBoard(fx.goal(goal.id)).split('\n').includes('Bounds: card-deadline 1 (DONE 0, STOP/time 1, open 0)'));
   } finally {
     fx.cleanup();
   }
