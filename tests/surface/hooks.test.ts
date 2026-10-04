@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { stagesForTarget } from '../../src/core/goal-machine.ts';
 import { computeGoalDeadlines } from '../../src/core/deadlines.ts';
 import { hostName, resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import { ConfigError, loadProjectConfig } from '../../src/config.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 
 function envWithState(): { cwd: string; env: NodeJS.ProcessEnv; stateDir: string } {
@@ -542,7 +543,9 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 1: the loader gives a config error with
     const bash = run({ tool_name: 'Bash', tool_input: { command: 'npm test' } });
     assert.equal(denyReason(bash), bashDenial(file, detail, 'production-gate'));
     assert.ok(!edit.stdout!.includes('QUOTE-ME-NOT') && !bash.stdout!.includes('QUOTE-ME-NOT'), 'no denial quotes the file');
-    // the file is looked for in the cwd only (issue 118): a directory below it takes the defaults, and no denial applies
+    // outside a git checkout the file is looked for in the cwd only (T0-HOOK-CONFIG-DISCOVERY): a directory below it takes
+    // the defaults, and no denial applies; inside a checkout the file at the main checkout root is read from every cwd
+    assert.equal(resolveRepoIdentity(cwd).isGit, false, 'the temporary directory is outside any checkout');
     const sub = path.join(cwd, 'sub');
     mkdirSync(sub);
     assert.deepEqual(loadHookConfig(sub), DEFAULT_HOOK_CONFIG);
@@ -819,7 +822,7 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 6: docs/OPERATIONS.md (Hooks) and the C
   const root = path.resolve(import.meta.dirname, '..', '..');
   const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
   const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
-  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED-3, issue 76): when the file in the working directory of the hook is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, each guard that reads it first decides as it did before these cards on the `hooks` values the file still yields (the defaults when it yields none), so a broken config denies at least what it denied before, a frozen config file included. Beyond that, `production-gate` and `protect-paths` deny every Bash command except exactly `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`, and `protect-paths`, like `protect-tests` while a fix task is active, denies every edit of a file other than the config. Each such denial names the file JSON-quoted and the error without quoting the file text, and says what still passes: an Edit or Write of the config, the Read, Grep and Glob tools, and those commands. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A valid config is read exactly as before, unknown `hooks` keys included. An absent file still gives the defaults, as it does for the CLI, while a file the lookup cannot reach (a directory without search permission, a link to nothing, a file gone between the lookup and the read) is a read failure; the file is looked for in the working directory only (issue 118), and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
+  const sentence = 'An `aidlc.config.json` that cannot be used turns no guard off (card T0-HOOK-CONFIG-CLOSED-3, issue 76): when the file the guards read is not JSON, fails the schema, cannot be read, or holds a `hooks.productionPatterns` or `hooks.testPathPatterns` entry that is not a regular expression, each guard that reads it first decides as it did before these cards on the `hooks` values the file still yields (the defaults when it yields none), so a broken config denies at least what it denied before, a frozen config file included. Beyond that, `production-gate` and `protect-paths` deny every Bash command except exactly `aidlc doctor`, `npx --no-install aidlc doctor`, `node bin/aidlc.js doctor` or `node node_modules/aidlc/bin/aidlc.js doctor`, each alone or followed by ` --json`, ` 2>&1` or ` --json 2>&1`, and `protect-paths`, like `protect-tests` while a fix task is active, denies every edit of a file other than the config. Each such denial names the file JSON-quoted and the error without quoting the file text, and says what still passes: an Edit or Write of the config, the Read, Grep and Glob tools, and those commands. `secrets-guard` runs as before and `route-new-work` names the error on every prompt; the Stop output does not, since Stop context starts another model turn at every turn end. A valid config is read exactly as before, unknown `hooks` keys included. An absent file still gives the defaults, as it does for the CLI, while a file the lookup cannot reach (a directory without search permission, a link to nothing, a file gone between the lookup and the read) is a read failure, and a `hooks.frozenPaths` entry that is not a regular expression is still matched as literal text.';
   assert.ok(hooks.includes(sentence), `docs/OPERATIONS.md (Hooks) states: ${sentence}`);
   assert.ok(!hooks.includes('card T0-HOOK-CONFIG-CLOSED-2,') && !hooks.includes('card T0-HOOK-CONFIG-CLOSED,'), 'the replaced paragraphs are gone');
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
@@ -1241,4 +1244,179 @@ test('T0-HOOK-CLASSIFIER-3 acceptance 7: wherever main\'s dispatch blocked, disp
   assert.deepEqual(dispatchHook(edit('src/a.ts', 'git worktree add contracts/wt'), { cwd, env }), denied(FROZEN_REASON));
   // where nothing blocks, main's advisory is returned: the frozen-path note of the first pass
   assert.equal(decision(dispatchHook(bash('git worktree list contracts/wt'), { cwd, env })), 'defer');
+});
+
+// ---------------------------------------------------------------- T0-HOOK-CONFIG-DISCOVERY (issue 118)
+
+const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
+
+/**
+ * A real repository under a canonical temporary directory: a commit holding `aidlc.config.json` (freezing `branch-copy/`),
+ * the subdirectory `src` holding its own `aidlc.config.json` (freezing `nested/`), and a linked worktree with its `src`. The
+ * main checkout's working copy of the config is what each test writes; the other two files are never read.
+ */
+function repoWithWorktree(): { root: string; sub: string; wt: string; wtSub: string; env: NodeJS.ProcessEnv; file: string } {
+  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-discovery-')));
+  const root = path.join(base, 'repo');
+  mkdirSync(path.join(root, 'src'), { recursive: true });
+  const git = (args: string[]) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: root, encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git(['init', '-q', '-b', 'main']);
+  writeFileSync(path.join(root, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['branch-copy/'] } }), 'utf8');
+  writeFileSync(path.join(root, 'src', 'app.ts'), 'export {};\n', 'utf8');
+  git(['add', '-A']);
+  git(['commit', '-q', '-m', 'init']);
+  const wt = path.join(base, 'wt');
+  git(['worktree', 'add', '-q', wt, '-b', 'feature']);
+  writeFileSync(path.join(root, 'src', 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['nested/'] } }), 'utf8');
+  const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], AIDLC_STATE_DIR: path.join(base, 'state') };
+  return { root, sub: path.join(root, 'src'), wt, wtSub: path.join(wt, 'src'), env, file: path.join(root, 'aidlc.config.json') };
+}
+
+/** The repair sentence of a denial outside the directory that holds the config: the node spellings only from there. */
+function repairElsewhere(dir: string): string {
+  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${JSON.stringify(dir)}.`;
+}
+
+/** A result with the repair sentence of the config's directory replaced by the one of another directory. */
+function elsewhere(r: HookResult, dir: string): HookResult {
+  if (!r.stdout || decision(r) !== 'deny') return r;
+  const out = JSON.parse(r.stdout) as { hookSpecificOutput: { permissionDecisionReason: string } };
+  out.hookSpecificOutput.permissionDecisionReason = out.hookSpecificOutput.permissionDecisionReason.replace(REPAIR, repairElsewhere(dir));
+  return { ...r, stdout: JSON.stringify(out) };
+}
+
+const NOT_JSON = '{ "hooks": { "frozenPaths": [ QUOTE-ME-NOT-7Q';
+const NOT_JSON_DETAIL = 'not valid JSON; `aidlc doctor` prints where';
+
+test('T0-HOOK-CONFIG-DISCOVERY acceptance 1: from every cwd inside the repository the hooks read the config at the main checkout root, the file the CLI reads', { skip: !GIT_OK && 'git is not available' }, () => {
+  const { root, sub, wt, wtSub, file } = repoWithWorktree();
+  const cwds = [root, sub, wt, wtSub];
+  // a valid config at the root: the subdirectory's own file and the worktree's committed copy are never read
+  writeFileSync(file, JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }), 'utf8');
+  for (const cwd of cwds) {
+    assert.deepEqual(loadHookConfig(cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] }, cwd);
+    assert.equal(loadProjectConfig(resolveRepoIdentity(cwd).mainRoot).file, file, `the CLI reads the same file from ${cwd}`);
+  }
+  // a config that cannot be used: the same error, naming the root's file, from every cwd, and the CLI refuses that file
+  writeFileSync(file, NOT_JSON, 'utf8');
+  for (const cwd of cwds) {
+    assert.deepEqual(loadHookConfig(cwd), new HookConfigError(file, NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG), cwd);
+    assert.throws(() => loadProjectConfig(resolveRepoIdentity(cwd).mainRoot), ConfigError, cwd);
+  }
+  // the root reached through another spelling (a junction or a directory link) is the root: the file is named as given,
+  // as before, and the relative doctor spellings pass there; below it the canonical root's file is read
+  const alias = path.join(path.dirname(root), 'alias');
+  symlinkSync(root, alias, 'junction');
+  assert.deepEqual(loadHookConfig(alias), new HookConfigError(path.join(alias, 'aidlc.config.json'), NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG));
+  assert.deepEqual(loadHookConfig(path.join(alias, 'src')), new HookConfigError(file, NOT_JSON_DETAIL, DEFAULT_HOOK_CONFIG));
+  const env = { PATH: process.env['PATH'] };
+  assert.deepEqual(runHook('production-gate', { tool_input: { command: 'node bin/aidlc.js doctor' } }, { cwd: alias, env }), { exitCode: 0 });
+  // no config at the root: the defaults, although the subdirectory and the worktree each hold one
+  rmSync(file);
+  for (const cwd of cwds) assert.deepEqual(loadHookConfig(cwd), DEFAULT_HOOK_CONFIG, cwd);
+  assert.ok(existsSync(path.join(wt, 'aidlc.config.json')) && existsSync(path.join(sub, 'aidlc.config.json')));
+});
+
+test('T0-HOOK-CONFIG-DISCOVERY acceptance 2: from every cwd inside the repository every guard decides as at the root, and a worktree session repairs main\'s broken config', { skip: !GIT_OK && 'git is not available' }, () => {
+  const { root, sub, wt, wtSub, env, file } = repoWithWorktree();
+  const events: HookEvent[] = [
+    { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'echo x > contracts/a.txt' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: `make ${RELEASE}` } },
+    { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm test' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'contracts', 'api.yaml'), old_string: 'a', new_string: 'b' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(root, 'src', 'app.ts'), old_string: 'a', new_string: 'b' } },
+    { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: file, old_string: 'a', new_string: 'b' } },
+  ];
+  let blocked = 0;
+  for (const text of [
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }),
+    NOT_JSON,
+    JSON.stringify({ mode: 'invalid', hooks: { productionPatterns: ['doctor'] } }),
+    JSON.stringify({ mode: 'invalid', hooks: { frozenPaths: ['aidlc\\.config\\.json'] } }),
+  ]) {
+    writeFileSync(file, text, 'utf8');
+    for (const event of events) {
+      const atRoot = dispatchHook(event, { cwd: root, env });
+      if (isBlock(atRoot)) blocked += 1;
+      for (const cwd of [sub, wt, wtSub]) {
+        assert.deepEqual(dispatchHook(event, { cwd, env }), elsewhere(atRoot, root), `${text} ${cwd} ${JSON.stringify(event.tool_input)}`);
+        for (const name of hookNamesFor(event)) {
+          assert.deepEqual(runHook(name, event, { cwd, env }), elsewhere(runHook(name, event, { cwd: root, env }), root), `${name} ${text} ${cwd}`);
+        }
+      }
+    }
+  }
+  assert.ok(blocked >= 8, `the root blocked ${blocked} of the events`);
+  // R2 compares resolved targets: a relative edit names a different file in each cwd.
+  // R4 keeps legacy doctor and frozen-config denials even though the repair list names exemptions.
+  const editRelative: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'aidlc.config.json' } };
+  const doctor: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'aidlc doctor' } };
+  for (const config of [
+    JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }),
+    NOT_JSON,
+    JSON.stringify({ mode: 'invalid', hooks: { productionPatterns: ['doctor'] } }),
+    JSON.stringify({ mode: 'invalid', hooks: { frozenPaths: ['aidlc\\.config\\.json'] } }),
+  ]) {
+    writeFileSync(file, config, 'utf8');
+    for (const cwd of [root, sub, wt, wtSub]) {
+      const absolute: HookEvent = { ...editRelative, tool_input: { file_path: path.join(cwd, 'aidlc.config.json') } };
+      for (const [event, rootEvent] of [[editRelative, absolute], [doctor, doctor]] as const) {
+        const expected = dispatchHook(rootEvent, { cwd: root, env });
+        assert.deepEqual(dispatchHook(event, { cwd, env }), cwd === root ? expected : elsewhere(expected, root), `${config} ${cwd} ${JSON.stringify(event)}`);
+        for (const name of hookNamesFor(event)) {
+          const expectedGuard = runHook(name, rootEvent, { cwd: root, env });
+          assert.deepEqual(runHook(name, event, { cwd, env }), cwd === root ? expectedGuard : elsewhere(expectedGuard, root), `${name} ${config} ${cwd}`);
+        }
+      }
+    }
+  }
+  // under the broken config: an Edit of main's config by its absolute path passes from the worktree, an Edit of the
+  // worktree's own copy is denied, and a relative target resolves against the event cwd
+  writeFileSync(file, NOT_JSON, 'utf8');
+  const edit = (file_path: string): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path, old_string: 'a', new_string: 'b' } });
+  assert.deepEqual(dispatchHook(edit(file), { cwd: wt, env }), { exitCode: 0 });
+  assert.equal(denyReason(dispatchHook(edit(path.join(wt, 'aidlc.config.json')), { cwd: wt, env })), editDenial(file, NOT_JSON_DETAIL, 'protect-paths').replace(REPAIR, repairElsewhere(root)));
+  assert.deepEqual(dispatchHook(edit('aidlc.config.json'), { cwd: root, env }), { exitCode: 0 });
+  assert.equal(decision(dispatchHook(edit('aidlc.config.json'), { cwd: wt, env })), 'deny');
+});
+
+test('T0-HOOK-CONFIG-DISCOVERY acceptance 3: the relative doctor spellings pass only from the directory that holds the config, and every denial and prompt says so', { skip: !GIT_OK && 'git is not available' }, () => {
+  const { root, sub, wt, env, file } = repoWithWorktree();
+  writeFileSync(file, NOT_JSON, 'utf8');
+  const bash = (command: string): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command } });
+  for (const command of DOCTOR_COMMANDS) {
+    assert.deepEqual(dispatchHook(bash(command), { cwd: root, env }), { exitCode: 0 }, command);
+    for (const cwd of [sub, wt]) {
+      const relative = command.startsWith('node ');
+      const r = dispatchHook(bash(command), { cwd, env });
+      if (relative) assert.equal(denyReason(r), bashDenial(file, NOT_JSON_DETAIL, 'production-gate').replace(REPAIR, repairElsewhere(root)), `${cwd} ${command}`);
+      else assert.deepEqual(r, { exitCode: 0 }, `${cwd} ${command}`);
+      for (const guard of ['production-gate', 'protect-paths'] as const) {
+        const one = runHook(guard, bash(command), { cwd, env });
+        if (relative) assert.equal(denyReason(one), bashDenial(file, NOT_JSON_DETAIL, guard).replace(REPAIR, repairElsewhere(root)), `${guard} ${cwd} ${command}`);
+        else assert.deepEqual(one, { exitCode: 0 }, `${guard} ${cwd} ${command}`);
+      }
+    }
+  }
+  // the prompt line lists what passes in the cwd of the prompt
+  const prompt = (cwd: string) => dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'hi' }, { cwd, env });
+  assert.deepEqual(prompt(root), { exitCode: 0, stdout: promptLine(file, NOT_JSON_DETAIL) });
+  for (const cwd of [sub, wt]) assert.deepEqual(prompt(cwd), { exitCode: 0, stdout: promptLine(file, NOT_JSON_DETAIL).replace(REPAIR, repairElsewhere(root)) }, cwd);
+});
+
+test('T0-HOOK-CONFIG-DISCOVERY acceptance 5: docs/OPERATIONS.md (Hooks) and the CHANGELOG Unreleased section state the discovery', () => {
+  const repo = path.resolve(import.meta.dirname, '..', '..');
+  const operations = readFileSync(path.join(repo, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+  const hooks = operations.slice(operations.indexOf('## Hooks'), operations.indexOf('\n## ', operations.indexOf('## Hooks') + 1));
+  const paragraph = 'Which `aidlc.config.json` the guards read (card T0-HOOK-CONFIG-DISCOVERY, issue 118): the one at the main checkout root (`resolveRepoIdentity`, the directory above git\'s common directory), the file the CLI reads, from every working directory inside the repository: the main checkout, a subdirectory of it, a linked worktree or a subdirectory of one. Outside a git checkout, and wherever git cannot answer, the file in the working directory is read, as before. A subdirectory\'s own `aidlc.config.json` and a linked worktree\'s copy are never read, so a change to `hooks.*` on a card branch takes effect for the guards only after it merges. That is deliberate: a card branch cannot change its own guards, and a broken branch copy is caught by that card\'s tests and CI, not by a lockout. While the config cannot be used, `node bin/aidlc.js doctor` and `node node_modules/aidlc/bin/aidlc.js doctor` (with the same tails) pass only when the working directory is the one that holds the config, and each denial and prompt line says so; `aidlc doctor` and `npx --no-install aidlc doctor` pass from every directory, and an Edit or Write of the config by its absolute path repairs it from every directory, a linked worktree included. Finding the root costs one `git rev-parse` per hook process (about 17 ms on Windows).';
+  assert.ok(hooks.includes(paragraph), `docs/OPERATIONS.md (Hooks) states: ${paragraph}`);
+  assert.ok(!hooks.includes('looked for in the working directory only'), 'the replaced sentence is gone');
+  assert.ok(hooks.includes('The doctor commands and config repair paths listed above are exemptions from the broken-config check only. Existing guard denials still apply, including a production pattern matching doctor or a frozen config file. Relative config repair targets resolve against the event working directory; existing guards still match frozen-path patterns against the supplied path spelling and use the event session state.'));
+  const changelog = readFileSync(path.join(repo, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const entry = '- Hook config discovery, card T0-HOOK-CONFIG-DISCOVERY (issue 118): the hook guards read `aidlc.config.json` in the working directory of the hook event, so a session in a subdirectory without the file took the defaults (`hooks.frozenPaths` empty, `protect-paths` blocking nothing), a subdirectory with its own file took that one, and a linked worktree took its branch\'s copy, while the CLI reads the file at the main checkout root. Now the guards read the file at the main checkout root, as the CLI does, from every directory inside the repository; at the main checkout root and outside a git checkout nothing changes. Changed on purpose: a subdirectory with its own file and one without follow the root\'s file, and a linked worktree follows main\'s copy, so a change to `hooks.*` on a card branch reaches the guards only after it merges. While the config cannot be used, the relative `node` doctor commands pass only from the directory that holds it.';
+  assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
 });
