@@ -73,6 +73,41 @@ describe('structured transient evidence (T0-CI-RERUN-STRUCTURED)', () => {
     assert.equal(ship(gate([{ name: 'build', conclusion: 'cancelled' }])).class, 'unknown', 'a cancelled check without evidence');
   });
 
+  test('R3 F1: duplicate red names cannot borrow one job’s infrastructure evidence', () => {
+    for (const other of ['', step('build', 'Run tests').replace('456', '789'), step('build', null).replace('456', '789')]) {
+      const result = ship(`${gate([...build, ...build])}\n${step('build', 'Set up job')}\n${other}`);
+      assert.equal(result.class, 'unknown', other || 'second job record missing');
+      assert.equal(canRerun({ reruns: [] }, '123', 1, 'candidate', result.class).allowed, false);
+    }
+  });
+
+  test('R3 F2: required skipped and neutral checks remain red beside an evidenced failure', () => {
+    assert.equal(ship('[CI-GATE-RED] build=startup_failure').class, 'transient', 'a fully evidenced legacy gate still earns a rerun');
+    assert.equal(ship('[CI-GATE-TIMEOUT] [{"name":"build","conclusion":"startup_failure"},{"name":"pending","conclusion":null}]').class, 'transient', 'pending timeout checks are not labelled red');
+    for (const conclusion of ['skipped', 'neutral']) {
+      for (const other of [{ name: 'build', conclusion: 'startup_failure' }, ...build]) {
+        for (const red of [gate([{ name: 'required', conclusion }, other]), `[CI-GATE-RED] required=${conclusion},build=${other.conclusion}`]) {
+          const result = ship(`${red}\n${step('build', 'Set up job')}`);
+          assert.equal(result.class, 'unknown', `${conclusion} beside ${other.conclusion}`);
+          assert.equal(canRerun({ reruns: [] }, '123', 1, 'candidate', result.class).allowed, false);
+        }
+      }
+    }
+  });
+
+  test('R3 F3: unresolved red lines block transient eligibility without losing stronger evidence', () => {
+    const startup = gate([{ name: 'build', conclusion: 'startup_failure' }]);
+    for (const unresolved of ['[CI-GATE-RED] build,linux=failure', '[CI-GATE-RED] unreadable', '[CI-GATE-RED] [{"name":"lint"}', '[CI-GATE-RED] []', '[CI-GATE-RED] [null]', '[CI-GATE-RED] [7]', '[CI-GATE-RED] [{"name":7,"conclusion":"startup_failure"}]', '[CI-GATE-RED] [{"name":" ","conclusion":"startup_failure"}]', '[CI-GATE-RED] [{"name":"lint"}]', '[CI-GATE-RED] [{"name":"lint","conclusion":"startup_failure"},null]']) {
+      const text = `${startup}\n${unresolved}\n${step('lint', 'Set up job')}`;
+      const result = ship(text);
+      assert.equal(result.class, 'unknown', unresolved);
+      assert.equal(canRerun({ reruns: [] }, '123', 1, 'candidate', result.class).allowed, false);
+      assert.equal(ship(`${text}\nAssertionError: expected 1`).class, 'code-defect');
+      assert.equal(ship(`${text}\nleaks found: 1`).class, 'security');
+    }
+    assert.equal(ship(`${startup}\n[CI-GATE-RED] AssertionError: expected 1`).class, 'code-defect', 'scaffold text keeps its log classification');
+  });
+
   test('acceptance 1: ci.transientSteps declares which failed steps are infrastructure; the default does not list project steps [R1] [R3]', () => {
     const text = `${gate(build)}\n${step('build', 'Run npm ci')}\nnpm ERR! network ECONNRESET`;
     assert.equal(ship(text).class, 'unknown');
