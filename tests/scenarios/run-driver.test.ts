@@ -88,6 +88,76 @@ test('a current candidate quota hold stops even when the pool has no reset time'
   } finally { fx.cleanup(); }
 });
 
+test('invalid current-candidate review hold time fails closed before polling', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'candidate-a', sha: 'a', dirty: false }, preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'pre', candidateDigest: 'candidate-a', requestedAt: fx.now(), outcome: 'quota-hold', holdUntil: '2026-99-99T00:00:00.000Z' }] } }));
+    const failures: string[] = [];
+    let polls = 0;
+    await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; }, onFailure: (reason) => failures.push(reason) });
+    assert.equal(polls, 0);
+    assert.match(failures[0] ?? '', /invalid.*holdUntil/);
+  } finally { fx.cleanup(); }
+});
+
+test('goal review pool reset holds a waiting card without any queue request', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT' }));
+    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    let polls = 0;
+    await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
+    assert.equal(fx.queue.list().length, 0);
+    assert.equal(polls, 0);
+  } finally { fx.cleanup(); }
+});
+
+test('invalid saved review pool reset fails closed before polling', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT' }));
+    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: '2026-99-99T00:00:00.000Z' });
+    const failures: string[] = [];
+    let polls = 0;
+    await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; }, onFailure: (reason) => failures.push(reason) });
+    assert.equal(polls, 0);
+    assert.match(failures[0] ?? '', /invalid.*resetAt/);
+  } finally { fx.cleanup(); }
+});
+
+test('an old candidate request in another pool does not block the current card', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = cardGoal(fx);
+    const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
+    fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'new-candidate', sha: 'b', dirty: false } }));
+    const pool = `${goal.reviewPool}/formal`;
+    fx.queue.savePool({ ...fx.queue.pool(pool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.enqueue({ pool, repository: fx.repo.key, candidateDigest: 'old-candidate', base: 'main', policyVersion: 'v1', reviewer: 'formal', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
+    let polls = 0;
+    await runGoal(goal.id, 1, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
+    assert.equal(polls, 1);
+  } finally { fx.cleanup(); }
+});
+
+test('invalid current clock fails before dispatch', async () => {
+  const fx = makeFixture();
+  try {
+    const goal = fx.controller.createGoal({ text: 'Add a useful feature', source: 'natural-language', affectedSurfaces: [] });
+    const failures: string[] = [];
+    const provider = new MockProvider();
+    await runGoal(goal.id, 1, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: () => '2026-99-99T00:00:00.000Z', onFailure: (reason) => failures.push(reason) });
+    assert.equal(provider.calls.length, 0);
+    assert.match(failures[0] ?? '', /invalid current timestamp/);
+  } finally { fx.cleanup(); }
+});
+
 test('ship-stage pool hold survives an earlier pre-review pass', async () => {
   const fx = makeFixture();
   try {

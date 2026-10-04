@@ -35,15 +35,33 @@ export async function runGoal(goalId: string, maxSteps: number, deps: RunDriverD
       if (!digest) return [];
       return [run.preReview.rounds.filter((r) => r.candidateDigest === digest).at(-1), run.review.invocations.filter((r) => r.candidateDigest === digest).at(-1)].filter((r) => r !== undefined);
     };
-    const held = observed.some((run) => currentReview(run).some((r) => r.outcome === 'quota-hold' && r.holdUntil && Date.parse(r.holdUntil) > Date.parse(now())));
-    const poolHeld = observed.some((run) => run.state === 'WAIT' && run.candidate && deps.queue.list().some((request) => request.candidateDigest === run.candidate?.digest && request.requesters.includes(`${goalId}:${run.cardId}`) && ['queued', 'running', 'retry-after', 'lost'].includes(request.state) && Date.parse(deps.queue.pool(request.pool, now()).resetAt ?? '') > Date.parse(now())));
+    const currentIso = now();
+    const currentTime = Date.parse(currentIso);
+    if (!Number.isFinite(currentTime)) {
+      deps.onFailure?.('invalid current timestamp');
+      return directive;
+    }
+    const quotaHolds = observed.flatMap((run) => currentReview(run)).filter((r) => r.outcome === 'quota-hold' && r.holdUntil);
+    if (quotaHolds.some((r) => !Number.isFinite(Date.parse(r.holdUntil!)))) {
+      deps.onFailure?.('invalid review holdUntil timestamp');
+      return directive;
+    }
+    const held = quotaHolds.some((r) => Date.parse(r.holdUntil!) > currentTime);
+    const waiting = observed.filter((run) => run.state === 'WAIT');
+    const pools = new Set<string>(waiting.length ? [goal.reviewPool] : []);
+    for (const request of waiting.flatMap((run) => deps.queue.list().filter((entry) => entry.candidateDigest === run.candidate?.digest && entry.requesters.includes(`${goalId}:${run.cardId}`) && ['queued', 'running', 'retry-after', 'lost'].includes(entry.state)))) pools.add(request.pool);
+    const resets = [...pools].map((pool) => deps.queue.pool(pool, currentIso).resetAt).filter((value): value is string => value !== undefined);
+    if (resets.some((value) => !Number.isFinite(Date.parse(value)))) {
+      deps.onFailure?.('invalid review pool resetAt timestamp');
+      return directive;
+    }
+    const poolHeld = resets.some((value) => Date.parse(value) > currentTime);
     if (held || poolHeld || directive.kind === 'wait' && ['review-quota', 'pre-review-quota'].includes(directive.on)) return directive;
     const cardDeadline = directive.kind === 'run-card' ? Date.parse(directive.cardDeadline)
       : directive.kind === 'wait' ? Math.min(...observed.filter((run) => run.state !== 'DONE').map((run) => Date.parse(run.deadline)))
         : directive.kind === 'close' ? Math.min(...observed.filter((run) => directive.missing.some((item) => item.startsWith(`${run.cardId}:`))).map((run) => Date.parse(run.deadline)))
         : Number.POSITIVE_INFINITY;
     const goalDeadline = Date.parse(directive.deadline);
-    const currentTime = Date.parse(now());
     const untilTime = directive.kind === 'wait' && directive.until ? Date.parse(directive.until) : Number.POSITIVE_INFINITY;
     if (![goalDeadline, currentTime, cardDeadline, untilTime].every((value) => !Number.isNaN(value))) {
       deps.onFailure?.('invalid directive or card timestamp');
