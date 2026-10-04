@@ -20,7 +20,7 @@ dod_exit: 0
 requirements:
   - R1. Each run-card directive shall carry context.pack with deterministic JSON text containing plan reference and section, complete acceptance, allow_paths, non_goals and relevant lessons.
   - R2. A declared 8192 token budget shall use UTF-8 byte length as a conservative token upper bound, remove whole lessons from the end first, then trim plan text; mandatory fields and acceptance shall never be cut and an oversized mandatory core shall be refused explicitly.
-  - R3. Lessons shall match literal allowed paths or their src module names or supplied routing modules at word/path boundaries. Input order shall be retained. Repository text shall remain JSON data. Missing plan or lesson sources shall be named explicitly, with no read outside the repository.
+  - R3. Lessons shall match literal allowed paths or their src module names or supplied routing modules at word/path boundaries; only explicit directory allow_paths may match descendants. Input order shall be retained. Repository text shall remain JSON data. Missing sources shall be explicit. Plan files and resolved plan targets shall be Markdown under configured plansDir or docs/plans; LESSONS shall resolve to docs/LESSONS.md itself; no read outside the repository.
 acceptance:
   - 1. Pure projection tests verify byte-identical repeat output, each named field, complete acceptance and only matching lessons, including boundary false positives and instruction-shaped text. [R1] [R3]
   - 2. Budget tests verify lesson tail removal before plan trimming, UTF-8 byte accounting, complete acceptance, rejection of an invalid budget or oversized mandatory core, and output no larger than the declared budget. [R2]
