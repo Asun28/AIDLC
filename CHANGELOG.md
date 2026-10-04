@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-RUN-DRIVER-CORE: add `aidlc run --goal <id> [--max-steps n]` for the command-capable Claude Code provider. It follows controller directives through existing commands, bounds dispatch and waits by deadlines, and returns human gates, review blocks and quota holds without inventing reports. The board watch view remains on T1-RUN-DRIVER.
+
 - T1-RUN-CONTEXT-PACK-2 (supersedes T1-RUN-CONTEXT-PACK): attach deterministic, bounded JSON context to run-card directives, preserving full acceptance and exposing missing sources and truncation. Verify opened plan and lesson handles before reading; accept Windows short-name roots and distinguish unavailable verification from missing sources.
 
 - T1-README-SCOPE: clarify in the README opening paragraph that aidlc is a driver-agnostic bounded-autonomy control plane for coding agents, not an implementation of the AWS AI-DLC methodology.

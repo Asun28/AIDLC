@@ -26,6 +26,7 @@ node bin/aidlc.js init             # lays intent/, specs/, plans/, .claude/, REV
 node bin/aidlc.js doctor           # toolchain, config, state dir, card registry, provider
 node bin/aidlc.js goal new "fix the null pointer when a claim has no adjuster" --bug-evidence
 node bin/aidlc.js next             # one directive: plan | project-cards | checkpoint | run-card | verify-arc | release | wait | close | done | stop
+node bin/aidlc.js run --goal <id> --max-steps 40  # drive a goal with the claude-code provider until attention is needed
 ```
 
 The loop is `next` -> act -> `report` -> `next`:
@@ -41,6 +42,8 @@ aidlc audit verify
 ```
 
 When stdout is not a TTY every command prints one JSON document; pass `--json` to force it.
+
+`aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, deadlines or its step limit; it prints the pending directive on exit. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
 
 ## The loop
 

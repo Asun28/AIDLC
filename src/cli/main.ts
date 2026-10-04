@@ -15,6 +15,7 @@ import { GhProbe } from '../probes/gh.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
+import { runGoal } from '../loop/run-driver.ts';
 import { CardRunner } from '../loop/card-runner.ts';
 import { ReleaseRunner } from '../loop/release-runner.ts';
 import { ReportInput } from '../loop/directive.ts';
@@ -350,6 +351,25 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       const d = c.controller.next(latestActiveGoalId(c, goalId ?? o.goal));
       out(c, d, () => `[${d.kind}] goal=${d.goalId} gen=${d.generation} state=${d.goalState} deadline=${d.deadline}\n${d.narration}`);
+    });
+
+  program
+    .command('run')
+    .description('drive one goal through existing commands until a directive needs attention')
+    .requiredOption('--goal <id>', 'goal id')
+    .option('--max-steps <n>', 'maximum dispatch and poll steps', '40')
+    .action(async (o: { goal: string; maxSteps: string }) => {
+      const maxSteps = Number(o.maxSteps);
+      if (!Number.isSafeInteger(maxSteps) || maxSteps < 1) fail('--max-steps must be a positive integer');
+      const c = ctx(g());
+      if (c.config.provider !== 'claude-code') fail(`aidlc run needs a command-capable provider (claude-code); configured ${c.config.provider}`);
+      let failure: string | undefined;
+      const directive = await runGoal(o.goal, maxSteps, { controller: c.controller, store: c.store, queue: new ReviewQueue(c.paths.reviewQueue), provider: providerFor(undefined, c.config), cwd: c.root, onFailure: (reason) => { failure = reason; } });
+      out(c, directive, () => `[${directive.kind}] goal=${directive.goalId} gen=${directive.generation} state=${directive.goalState} deadline=${directive.deadline}\n${directive.narration}`);
+      if (failure) {
+        process.stderr.write(`aidlc run: ${failure}\n`);
+        process.exitCode = 1;
+      }
     });
 
   program
