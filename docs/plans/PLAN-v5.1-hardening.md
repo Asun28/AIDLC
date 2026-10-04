@@ -332,6 +332,12 @@ The depends_on chain orders the shared files (CHANGELOG.md,
 docs/OPERATIONS.md, README.md); only T1-RUN-DRIVER carries a real
 prerequisite (the bound line W5 shows).
 
+Independent documentation amendment (2026-10-04, user delegates all decisions):
+T1-README-SCOPE may also start with no prerequisite in a separate worktree.
+It changes only the opening paragraph, its regression check and changelog;
+it consumes no init or telemetry behavior. This supersedes its wave and table
+ordering, with shared-file changes synchronized by merge before review.
+
 ## Card close-out record
 Every card ends with, in its CLOSE evidence (`aidlc evidence retain`) and in
 the session report: the DoD command and its exit code with the pass count;

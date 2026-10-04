@@ -1,7 +1,7 @@
 ---
 id: T1-README-SCOPE
 title: The README first paragraph states that aidlc is not an implementation of the AWS AI-DLC methodology and names what it is, a bounded-autonomy control plane for coding agents that is driver-agnostic
-status: todo
+status: merged
 branch: T1-README-SCOPE
 worktree: D:\wt\AIDLC\T1-README-SCOPE
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
