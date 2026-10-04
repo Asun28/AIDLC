@@ -449,6 +449,8 @@ none this version (development-only target)
 
 ## Context pack split
 
+The context-pack successor adds +140 net source lines against remote main 86af6ce, charged to W5; its tests and metadata are excluded from that source count.
+
 After the reviewed feature's Windows CI failure, T1-RUN-CONTEXT-PACK-2 consolidates the unmerged feature and T0-CONTEXT-SOURCE-ERRORS into one bounded continuation under the user's continue-unblock authorization. Preserve predecessor PR 145, every review and attempt receipt, and its passing R3. Repair Windows short-name canonicalization, cold helper startup and handle-error classification; retain all behavior tests. One fresh initial-plus-repair review cycle and 900 changed-line cap apply to this successor; previous counters do not reset. All source lines remain charged to W5.
 
 The authorized unblock continuation also requires T0-CONTEXT-SOURCE-ERRORS after the reviewed context-pack feature merges: distinguish unavailable handle verification from a missing source, and make Windows path-mismatch diagnostics specific. This correction remains mandatory before the goal closes; it does not reset or replace the first card's review history. Its source delta remains charged to W5.
