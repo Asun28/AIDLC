@@ -33,7 +33,7 @@ dod_exit: 0
 requirements:
   - R1. WHEN a bound of the README Limits table fires, the loop shall journal one `BOUND_FIRED` event whose zod payload names the bound and whose key names the firing from persisted facts (goal and generation, card, bound, value).
   - R2. The board shall render one `Bounds:` line giving, per fired bound, the firing count and the terminal outcome of the goal after each firing (`DONE`, `STOP/<reason>` or `open`), and shall name as incomplete every journal it cannot read in full and every goal whose firing is pending.
-  - R3. The change shall add no config key and no file under `.aidlc/`.
+  - R3. The change shall add no config key or persistent state file under `.aidlc/`; a transient sibling journal lock is permitted and removed after each operation.
   - R4. The README Limits table shall state that the lifecycle repair bound is defined and not enforced.
   - R5. WHEN a transition fires a bound, the loop shall save the firing as `pendingFiring` in the same record write as the stop or state it causes, and shall journal it only after that write.
   - R6. WHILE a card run or goal holds a `pendingFiring`, every later call shall journal it, once per key, and clear it before any other action; a firing that cannot be journaled shall stay pending and shall never hold back the stop.
