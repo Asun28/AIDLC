@@ -16,6 +16,7 @@ allow_paths:
   - src/cli/main.ts
   - tests/infra/board.test.ts
   - tests/infra/journal.test.ts
+  - tests/infra/journal-process.test.ts
   - tests/infra/goal-store.test.ts
   - tests/scenarios/deadline.test.ts
   - tests/scenarios/ci-rerun.test.ts
@@ -28,6 +29,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T1-BOUND-TELEMETRY-3.md
+  - specs/tasks/T1-BOUND-TELEMETRY-2.md
   - docs/plans/PLAN-v5.1-hardening.md
 dod_command: npm run check
 dod_exit: 0
@@ -65,7 +67,7 @@ acceptance:
   - 21. Assessment derives every downstream bound stop before appending notes; a refused journal retains the whole keyed note batch and stop, and recovery emits every note exactly once (tests/scenarios/t0-flow.test.ts). [R5] [R8] [dod arm 1]
   - 22. A refused CARD_DISPATCHED append leaves the creating card run with a pending dispatch event; existing-run retry replays it once without a second dispatch (tests/scenarios/deadline.test.ts). [R6] [dod arm 1]
   - 23. Card takeover refuses mutation when a pending firing or event cannot flush, including an event arriving after the first read; it never replaces a CI grant with a later deadline firing (tests/scenarios/two-windows.test.ts). [R6] [dod arm 1]
-  - 24. Concurrent direct and outbox writers to one shared goal journal yield one valid hash chain and one event per key, with verification and deduplication serialized under the journal lock (tests/infra/journal.test.ts, tests/scenarios/two-windows.test.ts). [R1] [R8] [dod arm 1]
+  - 24. Concurrent direct and outbox writers to one shared goal journal yield one valid hash chain and one event per key, with verification and deduplication serialized under the journal lock, including a deterministic separate-process contention test (tests/infra/journal.test.ts, tests/infra/journal-process.test.ts, tests/scenarios/two-windows.test.ts). [R1] [R8] [dod arm 1]
   - 25. An unlistable cards root is directly named as incomplete even if a fabricated child would look absent (tests/infra/board.test.ts). [R2] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
@@ -104,3 +106,4 @@ npm run check
 
 - 2026-10-04, under the same delegated repair authority: add tests/scenarios/extend-running-card.test.ts to allow_paths. The recoverable extension requires a lastExtension receipt on changed card records; retain the earlier full-record assertions for all existing fields and separately assert the exact new receipt. Untouched records and their revisions remain byte-identical. This is an additive existing-record contract change, not a test exemption; budgets and review/attempt counters remain unchanged.
 - 2026-10-04, user approved a bounded continuation after the second R3 block: successor T1-BOUND-TELEMETRY-3 carries the -2 candidate, seven findings F22-F28, all old acceptance, review and attempt evidence, and uses a fresh card review cycle. The shared journal needs a transient sibling lock; `src/state/store.ts` supplies the existing exclusive-lock primitive to avoid a second lock implementation. The lock is removed after each append and creates no persistent state format. Source ceiling +650, total churn 4000, shared W2+W4+W5 ceiling +900 reserve the measured repair; no config key, bound value change or counter reset.
+- 2026-10-04, behavior clarification for this repair: an assessment now commits its state, receipt and complete keyed note batch before trying the journal; a refused nonbound note leaves the transition pending rather than preserving the prior ownership stop. `card next` replays the batch before downstream work, and existing tests assert the stronger durable state and exact-once replay. An initial card-run lock now encloses takeover's first lease mutation, in card-then-lease order, so a firing arriving after the first read cannot race that mutation; post-lease fencing remains covered. The separate-process journal contention test and predecessor `superseded_by` metadata are in scope.
