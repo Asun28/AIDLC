@@ -1,10 +1,9 @@
 ---
-id: T1-BOUND-TELEMETRY-5
-title: Finish bound telemetry recovery and locked admissions after the final ten-finding review
+id: T1-BOUND-TELEMETRY-6
+title: Validate and integrate the retained bound telemetry repair after the exhausted effort episode
 status: todo
-superseded_by: T1-BOUND-TELEMETRY-6
-branch: T1-BOUND-TELEMETRY-5
-worktree: D:\wt\AIDLC\T1-BOUND-TELEMETRY-5
+branch: T1-BOUND-TELEMETRY-6
+worktree: D:\wt\AIDLC\T1-BOUND-TELEMETRY-6
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
 allow_paths:
   - src/core/types.ts
@@ -36,6 +35,7 @@ allow_paths:
   - CHANGELOG.md
   - specs/tasks/T1-BOUND-TELEMETRY-4.md
   - specs/tasks/T1-BOUND-TELEMETRY-5.md
+  - specs/tasks/T1-BOUND-TELEMETRY-6.md
   - specs/tasks/T1-BOUND-TELEMETRY-2.md
   - specs/tasks/T1-BOUND-TELEMETRY-3.md
   - tests/scenarios/audit.test.ts
@@ -117,6 +117,7 @@ acceptance:
   - 62. Retried ship completion after its own STOP and operation-store refusal settles the original failed status, never relabels that stop as concurrent UNKNOWN or repeats the external ship (tests/scenarios/t0-flow.test.ts). [R6]
   - 63. A ship result binds its admitted queue sequence; replay cannot complete or hold a newer request requeued under the same key (tests/scenarios/t0-flow.test.ts). [R6]
   - 64. Review statistics select exact reservation evidence before older positional evidence for one R2 round (tests/surface/stats.test.ts). [R6]
+  - 65. The retained repair is integrated with verified remote main, passes the full DoD and build on its exact SHA, and keeps the original successful concurrent R3 completion assertion while recording the previous failed full-check receipts separately (tests/scenarios/t0-flow.test.ts). [R1] [R8]
 depends_on: [T1-AUDIT-FACTS-2]
 diagnosis:
   root_cause: "T1-BOUND-TELEMETRY journaled a firing before persisting the stop it causes, so a bound stop depended on the journal: a failed append left a CI-denied card in SHIP without its stop and free to ship again (R3 decision 2 finding 4), goal firings had no lock to serialize check and append (finding 2), and every read failure had to be refused or ignored (findings 3, 5, 6). The CI key named the candidate alone (finding 1)."
@@ -126,11 +127,13 @@ tdd: true
 sweep: "Survey of T1-BOUND-TELEMETRY at b4de1bc, the candidate this card carries. Firings journaled inside the transition write: card-runner.ts save(run, firing) at 452-458, saveHolding 745, finish() patch 2330, the command-path stop 1923; goal firings journalFiring before persistStop at controller.ts:210, 220, 264, 527. Goal writes are blind: goal-store.ts saveGoal 37-41 (atomicWriteJson, no lock); card runs go through updateJson (store.ts:162) under <file>.lock. CI firing key is the candidate digest alone (card-runner.ts:2465); the ledger keeps cancelled reruns (types.ts:462-470, ci-policy.ts:197). journalFiring ignores readEvents.damaged (board.ts:86-88); readEvents and boundsOfJournals test existsSync before reading (board.ts:79, 93). R3 decision 2 of T1-BOUND-TELEMETRY: 6 findings at card-runner.ts:2465, controller.ts:210, board.ts:87, card-runner.ts:2329, board.ts:79, board.ts:93."
 forbid: [a new config key, a new persistent state file under .aidlc/, a counter kept outside the journal, a change to any bound's value, a bound stop that waits on the journal, a firing key read from the clock, a raw card report patch of loop-owned recovery fields]
 non_goals: [enforcing the lifecycle repair bound, counting the worker cap, a per-bound history view, tuning any default, firing the release reconciliation grace or the R2 round limits (issue 126), listJsonFiles and the rest of the existsSync sweep outside the board (issue 127)]
-hygiene: "On 2026-10-04 the user explicitly approved the ten-finding linked repair and another bounded review cycle after T1-BOUND-TELEMETRY-4's second formal block. This successor carries clean candidate 4ee37748 and all prior counters, findings and evidence without reopening stopped predecessors. Use behavioral RED for each finding and semantic mutation sweep before success; normal initial-plus-one-repair R3 allowance. The explicit three-hour deadline extension is recorded separately through CLI. PR #140 stays draft until the reviewed replacement integrates."
+hygiene: "On 2026-10-05 the user approved this linked successor after -5 exhausted its effort episode. Carry unverified clean commit 3f426fe and every prior STOP, attempt, R2 and R3 receipt without reset. One new counted full-validation attempt and the single remaining formal R3 decision are authorized; no additional review cycle. Merge-only integrate verified origin/main 5f88056 (or its newer verified successor) before candidate validation. The exact three-hour deadline from 2026-10-05T08:28:01Z is recorded through the supported goal CLI. Caps remain 6500 total changed lines, +1100 net source and shared W2+W4+W5 +1350, measured against the new verified base. R2 and R3 gates, CI and verified merge precede separate evidence-generation repair and metadata closure. PR #140 remains draft until the reviewed replacement integrates."
 doc_sync: README.md (Limits), docs/OPERATIONS.md (Bound telemetry), docs/ARCHITECTURE.md (the goals/ and cards/ rows of the persisted-state table name pendingFiring and the goal lock), CHANGELOG.md
 ---
 
-# T1-BOUND-TELEMETRY-5
+# T1-BOUND-TELEMETRY-6
+
+2026-10-05 user-approved bounded continuation: predecessor -5 stopped with `escalation-failed` after four counted DoD failures, including three separately recorded post-review full-check failures. Carry its unverified repair commit `3f426fe08d8833d81a3c7dc443c0a6d828305d3b`, the corrected acceptance-15 concurrency fixture and every old ledger. This successor permits exactly one new full-validation attempt and one final R3 decision, with no counter reset. First merge the latest verified remote main into an isolated -6 worktree and resolve the nine-line card-runner integration narrowly; retain run-driver code from base. On the exact resulting SHA require full `npm run check`, build, semantic mutation/scope checks and normal R2, then the one R3. Only a passing candidate may be pushed/merged. The shared cap includes the now-integrated run-driver W5 source; budget is still 6500 total/+1100 source/+1350 shared. Separate generation-aware evidence retention and closure follow a verified feature merge.
 
 2026-10-04 user-approved repair boundary: carry the complete preceding acceptance and history above, then close all ten final R3 findings through acceptance 45–54. Source net +900, total changed 6000 and shared W2+W4+W5 +1100 supersede the prior budget for this linked candidate. The old card and its review ledger remain stopped and immutable. The final R3 verdict is retained at `D:\wt\AIDLC\T1-BOUND-TELEMETRY-4\.review\T1-BOUND-TELEMETRY-4.r3.2.1eaf7013.json`.
 
