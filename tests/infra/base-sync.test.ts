@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { baseSyncReport } from '../../src/probes/base-sync.ts';
@@ -154,6 +154,13 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
     ['rev-parse exits 128', { 'git rev-parse': { exitCode: 128, stderr: SECRET, stdout: SECRET } }, 'UNREADABLE: git rev-parse failed (exit 128)'],
     ['rev-list has no exit code', { 'git rev-parse': { stdout: `${OID}\n` }, 'git rev-list': { exitCode: null, timedOut: true, stderr: SECRET } }, 'UNREADABLE: git rev-list failed (UNREADABLE)'],
   ];
+  test('a runner that throws instead of answering: the value is unreadable without an exit code, and nothing throws [R1]', () => {
+    const runner: SyncRunner = () => { throw new Error(SECRET); };
+    let value = '';
+    assert.doesNotThrow(() => { value = baseSyncReport({ isGit: true, cwd: root, base: 'main', git: new GitProbe(runner) }); });
+    assert.equal(value, 'UNREADABLE: git rev-parse failed (UNREADABLE)');
+  });
+
   for (const [name, script, expected] of cases) {
     test(`${name}: the value names the command and its exit, never git's text, and nothing throws [R1]`, () => {
       let value = '';
@@ -165,14 +172,22 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
 });
 
 describe('aidlc doctor prints baseSync (T0-DOCTOR-BASE-SYNC acceptance 3)', { skip: !GIT_OK && 'git is not available' }, () => {
-  test('in a clone one commit ahead of its origin, doctor --json prints the ahead line and exits 0 [R1]', () => {
+  const doctor = (fx: { dir: string; clone: string }): Record<string, unknown> => {
+    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd: fx.clone, env: { ...process.env, AIDLC_STATE_DIR: path.join(fx.dir, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout) as Record<string, unknown>;
+  };
+
+  test('in a clone one commit ahead of its origin, doctor --json prints the ahead line and exits 0, and follows the configured base [R1]', () => {
     const fx = cloneOfOrigin();
     try {
       commit(fx.clone, 'local a');
-      const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd: fx.clone, env: { ...process.env, AIDLC_STATE_DIR: path.join(fx.dir, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
-      assert.equal(r.status, 0, r.stderr);
-      const checks = JSON.parse(r.stdout) as Record<string, unknown>;
-      assert.equal(checks['baseSync'], 'ahead 1 of origin/main: unpublished commits on main; push them (git push origin main)');
+      assert.equal(doctor(fx)['baseSync'], 'ahead 1 of origin/main: unpublished commits on main; push them (git push origin main)');
+      git(fx.seed, ['push', '-q', fx.origin, 'main:trunk']);
+      git(fx.clone, ['fetch', '-q', 'origin']);
+      git(fx.clone, ['branch', '-q', 'trunk', 'origin/trunk']);
+      writeFileSync(path.join(fx.clone, 'aidlc.config.json'), JSON.stringify({ base: 'trunk' }), 'utf8');
+      assert.equal(doctor(fx)['baseSync'], 'in sync with origin/trunk');
     } finally { fx.cleanup(); }
   });
 });

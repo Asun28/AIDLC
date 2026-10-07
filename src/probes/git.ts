@@ -127,9 +127,18 @@ export class GitProbe {
     return this.git(cwd, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${name}:refs/remotes/origin/${name}`]);
   }
 
-  /** `git rev-list --left-right --count <base>...HEAD` -> [behind, ahead]. */
-  divergence(cwd: string, baseRef: string): { behind: number; ahead: number } {
-    const out = this.must(cwd, ['rev-list', '--left-right', '--count', `${baseRef}...HEAD`]);
+  /** The commit a fully-qualified ref names: its oid, undefined when the ref is absent (exit 1), a GitProbeError for any other answer. */
+  commitOf(cwd: string, ref: string): string | undefined {
+    const args = ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`];
+    const r = this.git(cwd, args);
+    if (r.exitCode === 0) return r.stdout.trim();
+    if (r.exitCode === 1) return undefined;
+    throw new GitProbeError(args, r);
+  }
+
+  /** `git rev-list --left-right --count <base>...<head>` -> [behind, ahead]; head defaults to HEAD. */
+  divergence(cwd: string, baseRef: string, head = 'HEAD'): { behind: number; ahead: number } {
+    const out = this.must(cwd, ['rev-list', '--left-right', '--count', `${baseRef}...${head}`]);
     const [behind, ahead] = out.split(/\s+/).map((n) => Number(n));
     return { behind: behind ?? 0, ahead: ahead ?? 0 };
   }

@@ -15,7 +15,7 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 `src/coordination/` is package S of the plan. `lease.ts` provides atomic claims with generations, heartbeat, release, takeover-after-reconciliation (exposed as `aidlc goal takeover` and `aidlc card takeover`) and fencing. `review-queue.ts` is the shared provider/account admission queue. `reconcile.ts` is the operation ledger: intent before issue, reconciliation by provider lookup, explicit UNKNOWN.
 
-`src/probes/` gathers evidence. `exec.ts` runs commands and returns receipts (exit, output digest, timing) with a scripted runner for tests. `git.ts` reads worktrees, HEAD, status, base resolution, divergence and containment. `gh.ts` resolves PR identity, run views and check runs with pagination.
+`src/probes/` gathers evidence. `exec.ts` runs commands and returns receipts (exit, output digest, timing) with a scripted runner for tests. `git.ts` reads worktrees, HEAD, status, base resolution, divergence and containment. `base-sync.ts` compares the local base branch with `origin/<base>` for `aidlc doctor`, reading refs only and never fetching. `gh.ts` resolves PR identity, run views and check runs with pagination.
 
 `src/delivery/` touches the project. `worktree.ts` decides start vs attach vs stop from branch, path, common directory and owner record. `ship.ts` defines the ship path interface, classifies `task.ps1` sentinels for the scaffold adapter and provides a dry-run path. `ops.ts` loads `aidlc.ops.json` (operation roles, bindings, environments, health signals) and executes or looks up bound operations.
 
