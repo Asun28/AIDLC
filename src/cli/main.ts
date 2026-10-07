@@ -11,6 +11,7 @@ import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePa
 import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
 import { GitProbe } from '../probes/git.ts';
+import { baseSyncReport } from '../probes/base-sync.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
@@ -222,6 +223,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
           : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
         workingTree: doctorWorkingTree(c),
+        baseSync: baseSyncReport({ isGit: c.repo.isGit, cwd: c.repo.mainRoot, base: c.config.base }),
       };
       out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
     });

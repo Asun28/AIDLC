@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-DOCTOR-BASE-SYNC-2 (supersedes T0-DOCTOR-BASE-SYNC): `aidlc doctor` prints `baseSync`, the local base branch against `origin/<base>` as of the last fetch: in sync, ahead, behind or diverged, each with the git command that brings them together. Entry check 1 of `aidlc-loop` now says to push main after committing planning artifacts: planning commits kept only on local main conflicted with card PRs that edited the same plan text.
+
 - T1-RUN-DRIVER-CORE: add `aidlc run --goal <id> [--max-steps n]` for the command-capable Claude Code provider. It follows controller directives through existing commands, bounds dispatch and waits by deadlines, and returns human gates, review blocks, quota holds and the shipping boundary without inventing reports. The worker binds the resolved state root and refuses native shipping commands; a separate operator invocation ships. The board watch view remains on T1-RUN-DRIVER.
 
 - T1-RUN-CONTEXT-PACK-2 (supersedes T1-RUN-CONTEXT-PACK): attach deterministic, bounded JSON context to run-card directives, preserving full acceptance and exposing missing sources and truncation. Verify opened plan and lesson handles before reading; accept Windows short-name roots and distinguish unavailable verification from missing sources.

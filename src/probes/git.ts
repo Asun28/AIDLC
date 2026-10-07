@@ -127,11 +127,22 @@ export class GitProbe {
     return this.git(cwd, ['fetch', '--quiet', '--no-tags', 'origin', `+refs/heads/${name}:refs/remotes/origin/${name}`]);
   }
 
-  /** `git rev-list --left-right --count <base>...HEAD` -> [behind, ahead]. */
-  divergence(cwd: string, baseRef: string): { behind: number; ahead: number } {
-    const out = this.must(cwd, ['rev-list', '--left-right', '--count', `${baseRef}...HEAD`]);
-    const [behind, ahead] = out.split(/\s+/).map((n) => Number(n));
-    return { behind: behind ?? 0, ahead: ahead ?? 0 };
+  /** The commit a fully-qualified ref names: its oid, undefined when the ref is absent (exit 1), a GitProbeError for any other answer. */
+  commitOf(cwd: string, ref: string): string | undefined {
+    const args = ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`];
+    const r = this.git(cwd, args);
+    if (r.exitCode === 0) return r.stdout.trim();
+    if (r.exitCode === 1) return undefined;
+    throw new GitProbeError(args, r);
+  }
+
+  /** `git rev-list --left-right --count <base>...<head>` -> [behind, ahead]; head defaults to HEAD. Output other than two counts is a GitProbeError, never zero. */
+  divergence(cwd: string, baseRef: string, head = 'HEAD'): { behind: number; ahead: number } {
+    const args = ['rev-list', '--left-right', '--count', `${baseRef}...${head}`];
+    const r = this.git(cwd, args);
+    const counts = r.exitCode === 0 ? /^(\d+)\s+(\d+)$/.exec(r.stdout.trim()) : null;
+    if (!counts) throw new GitProbeError(args, r);
+    return { behind: Number(counts[1]), ahead: Number(counts[2]) };
   }
 
   /** Whether `base` contains `sha` (merge verification on the intended base); undefined when git cannot answer (an exit other than 0 or 1). */

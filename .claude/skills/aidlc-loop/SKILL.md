@@ -20,7 +20,8 @@ step.
 1. `aidlc doctor`: git/gh/pwsh present, state dir resolved, no interrupted
    writes; it names the goal claiming each uncommitted planning file. Leave
    another goal's file alone; commit your own goal's planning artifacts on
-   main as soon as they validate and before you stop. Red => STOP/tool.
+   main as soon as they validate and before you stop, then push main.
+   A `baseSync` that names a git command => run it. Red => STOP/tool.
 2. Identity: canonical repository, base, goal generation, card revision. A
    window path or session id is not ownership; `aidlc goal status` shows the
    lease. Stale generation => `aidlc goal reconcile` before any mutation.
@@ -31,7 +32,6 @@ step.
 5. Terminal guard: DONE/STOP goals accept no work; late wakeups exit.
 
 ## Route: `aidlc goal new "<request>" [--size] [--target] [--card] [--issue]`
-Prints size, kind, target, card count (or unknown), modules, next module.
 | Size | Scope | Modules |
 |---|---|---|
 | T0-bugfix | one reproducible defect | diagnosis + one card; card-loop |
