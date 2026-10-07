@@ -246,7 +246,7 @@ describe('templates (Q14 packaging)', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     for (const sentence of [
       "Doctor reads the refs as they are and never fetches, so the counts are as of the last fetch; the line never changes doctor's exit code.",
-      'Every git call of the check runs as `git --no-lazy-fetch <command>`, so a partial clone never fetches a missing object from its promisor remote; git older than 2.44 refuses the option and the value is then `UNREADABLE: git rev-parse failed (exit 129)`.',
+      'Every git call of the check runs as `git --no-lazy-fetch <command>`, so a partial clone never fetches a missing object from its promisor remote; git older than 2.45 refuses the option and the value is then `UNREADABLE: git rev-parse failed (exit 129)`.',
       'Card branches start from `origin/<base>`, so a planning commit left only on local main is invisible to them, and a card PR that edits the same text conflicts with it when main is next synced',
       'Entry check 1 of `aidlc-loop` says to push main after committing planning artifacts, and to run the git command a `baseSync` value names; the `n/a` and `UNREADABLE` values name none.',
       'A failed lookup or count, or a count whose output is not two non-negative integers, is `UNREADABLE: git rev-parse failed (exit <n>)` or `UNREADABLE: git rev-list failed (exit <n>)`, with `(UNREADABLE)` when there is no exit code, never git\x27s text.',
@@ -255,7 +255,7 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(architecture.includes('`base-sync.ts` compares the local base branch with `origin/<base>` for `aidlc doctor`, reading refs only and never fetching.'), 'ARCHITECTURE.md names the module');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
-    assert.ok(unreleased.includes('- T0-DOCTOR-BASE-SYNC: `aidlc doctor` prints `baseSync`, the local base branch against `origin/<base>` as of the last fetch: in sync, ahead, behind or diverged, each with the git command that brings them together.'), 'CHANGELOG Unreleased carries the entry');
+    assert.ok(unreleased.includes('- T0-DOCTOR-BASE-SYNC-2 (supersedes T0-DOCTOR-BASE-SYNC): `aidlc doctor` prints `baseSync`, the local base branch against `origin/<base>` as of the last fetch: in sync, ahead, behind or diverged, each with the git command that brings them together.'), 'CHANGELOG Unreleased carries the entry');
   });
 
   test('T1-REVIEW-COVERAGE acceptance 6: the operating guide documents the coverage setting, its contract line, the round field and the summary line; the architecture names the join and the schemas; the changelog carries the entry', () => {

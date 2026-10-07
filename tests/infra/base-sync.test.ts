@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { baseSyncReport } from '../../src/probes/base-sync.ts';
@@ -9,6 +9,9 @@ import { pathToFileURL } from 'node:url';
 import { runSync, scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
 
 const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
+// Whether this git knows --no-lazy-fetch (git 2.45 or newer), decided by running it, never from a version number.
+const NO_LAZY_OK = GIT_OK && spawnSync('git', ['--no-lazy-fetch', '--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
+const NO_LAZY_SKIP = 'git is missing or refuses --no-lazy-fetch (git older than 2.45)';
 const root = path.resolve(import.meta.dirname, '..', '..');
 
 // The R1 lines, written out from the card rather than built by the code under test.
@@ -56,7 +59,7 @@ function recordingRunner(): { runner: SyncRunner; calls: string[][] } {
   return { calls, runner: (command, args, options) => { calls.push([command, ...args]); return answer(command, args, options); } };
 }
 
-describe('baseSyncReport over real repositories (T0-DOCTOR-BASE-SYNC acceptance 1)', { skip: !GIT_OK && 'git is not available' }, () => {
+describe('baseSyncReport over real repositories (T0-DOCTOR-BASE-SYNC acceptance 1)', { skip: !NO_LAZY_OK && NO_LAZY_SKIP }, () => {
   test('a clone that matches origin is in sync [R1]', () => {
     const fx = cloneOfOrigin();
     try {
@@ -151,7 +154,7 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
   const OID = '1111111111111111111111111111111111111111';
   const cases: Array<[string, Record<string, Partial<ExecReceipt>>, string]> = [
     ['rev-list exits 128', { 'git --no-lazy-fetch rev-parse': { stdout: `${OID}\n` }, 'git --no-lazy-fetch rev-list': { exitCode: 128, stderr: SECRET, stdout: '2\t3\n' } }, 'UNREADABLE: git rev-list failed (exit 128)'],
-    ['rev-parse exits 129, as a git older than 2.44 does on --no-lazy-fetch', { 'git --no-lazy-fetch rev-parse': { exitCode: 129, stderr: 'unknown option: --no-lazy-fetch' } }, 'UNREADABLE: git rev-parse failed (exit 129)'],
+    ['rev-parse exits 129, as a git older than 2.45 does on --no-lazy-fetch', { 'git --no-lazy-fetch rev-parse': { exitCode: 129, stderr: 'unknown option: --no-lazy-fetch' } }, 'UNREADABLE: git rev-parse failed (exit 129)'],
     ['rev-parse exits 128', { 'git --no-lazy-fetch rev-parse': { exitCode: 128, stderr: SECRET, stdout: SECRET } }, 'UNREADABLE: git rev-parse failed (exit 128)'],
     ['rev-list exits 0 with empty output', { 'git --no-lazy-fetch rev-parse': { stdout: `${OID}\n` }, 'git --no-lazy-fetch rev-list': { stdout: '' } }, 'UNREADABLE: git rev-list failed (exit 0)'],
     ['rev-list has no exit code', { 'git --no-lazy-fetch rev-parse': { stdout: `${OID}\n` }, 'git --no-lazy-fetch rev-list': { exitCode: null, timedOut: true, stderr: SECRET } }, 'UNREADABLE: git rev-list failed (UNREADABLE)'],
@@ -173,7 +176,7 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
   }
 });
 
-describe('aidlc doctor prints baseSync (T0-DOCTOR-BASE-SYNC acceptance 3)', { skip: !GIT_OK && 'git is not available' }, () => {
+describe('aidlc doctor prints baseSync (T0-DOCTOR-BASE-SYNC acceptance 3)', { skip: !NO_LAZY_OK && NO_LAZY_SKIP }, () => {
   const doctor = (fx: { dir: string; clone: string }): Record<string, unknown> => {
     const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd: fx.clone, env: { ...process.env, AIDLC_STATE_DIR: path.join(fx.dir, 'state') }, encoding: 'utf8', timeout: 120_000, windowsHide: true });
     assert.equal(r.status, 0, r.stderr);
@@ -193,10 +196,6 @@ describe('aidlc doctor prints baseSync (T0-DOCTOR-BASE-SYNC acceptance 3)', { sk
     } finally { fx.cleanup(); }
   });
 });
-
-// git 2.44 is the first to know --no-lazy-fetch; an older git refuses it (exit 129), which acceptance 2 covers.
-const GIT_VERSION = /(\d+)\.(\d+)/.exec(spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).stdout ?? '');
-const GIT_244 = GIT_OK && GIT_VERSION !== null && (Number(GIT_VERSION[1]) > 2 || (Number(GIT_VERSION[1]) === 2 && Number(GIT_VERSION[2]) >= 44));
 
 /** The test environment without GIT_NO_LAZY_FETCH in any letter case, so only the flag can keep git from fetching. */
 function lazyFetchEnv(): NodeJS.ProcessEnv {
@@ -232,7 +231,7 @@ function promisorClone(): { clone: string; missing: string; cleanup: () => void 
 }
 
 describe('baseSyncReport never fetches from a promisor remote (T0-DOCTOR-BASE-SYNC acceptance 6)', () => {
-  test('origin/main naming a commit the clone does not hold is n/a and the commit stays absent, while a plain read of the ref fetches it [R1]', { skip: !GIT_244 && 'git 2.44 or newer is not available' }, () => {
+  test('origin/main naming a commit the clone does not hold is n/a and the commit stays absent, while a plain read of the ref fetches it [R1]', { skip: !NO_LAZY_OK && NO_LAZY_SKIP }, () => {
     const fx = promisorClone();
     try {
       assert.equal(holds(fx.clone, fx.missing), false, 'the fixture starts without the commit');
@@ -251,5 +250,23 @@ describe('baseSyncReport never fetches from a promisor remote (T0-DOCTOR-BASE-SY
     const runner: SyncRunner = (command, args, options) => { calls.push([command, ...args]); return answer(command, args, options); };
     assert.equal(baseSyncReport({ isGit: true, cwd: root, base: 'main', runner }), 'ahead 1 of origin/main: unpublished commits on main; push them (git push origin main)');
     assert.deepEqual(calls.map((call) => call.slice(0, 3)), [['git', '--no-lazy-fetch', 'rev-parse'], ['git', '--no-lazy-fetch', 'rev-parse'], ['git', '--no-lazy-fetch', 'rev-list']]);
+  });
+});
+
+describe('the no-lazy-fetch fallback on an older git (T0-DOCTOR-BASE-SYNC-2 acceptance 7)', () => {
+  test('on a git that refuses --no-lazy-fetch, a real clone reads UNREADABLE (exit 129) [R1]', { skip: (!GIT_OK || NO_LAZY_OK) && 'git is missing or knows --no-lazy-fetch' }, () => {
+    const fx = cloneOfOrigin();
+    try {
+      assert.equal(report(fx.clone), 'UNREADABLE: git rev-parse failed (exit 129)');
+    } finally { fx.cleanup(); }
+  });
+
+  test('the docs, the code and these tests name 2.45 as the first git with --no-lazy-fetch, and never the earlier release [R1]', () => {
+    const earlier = ['2', '44'].join('.');
+    for (const file of ['docs/OPERATIONS.md', 'src/probes/base-sync.ts', 'tests/infra/base-sync.test.ts']) {
+      const text = readFileSync(path.join(root, file), 'utf8');
+      assert.ok(!text.includes(earlier), `${file} names ${earlier}`);
+      assert.ok(text.includes('2.45'), `${file} names 2.45`);
+    }
   });
 });
