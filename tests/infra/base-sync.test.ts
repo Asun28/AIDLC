@@ -150,8 +150,9 @@ describe('baseSyncReport when git cannot answer (T0-DOCTOR-BASE-SYNC acceptance 
   const SECRET = 'fatal: private repository text';
   const OID = '1111111111111111111111111111111111111111';
   const cases: Array<[string, Record<string, Partial<ExecReceipt>>, string]> = [
-    ['rev-list exits 128', { 'git rev-parse': { stdout: `${OID}\n` }, 'git rev-list': { exitCode: 128, stderr: SECRET, stdout: SECRET } }, 'UNREADABLE: git rev-list failed (exit 128)'],
+    ['rev-list exits 128', { 'git rev-parse': { stdout: `${OID}\n` }, 'git rev-list': { exitCode: 128, stderr: SECRET, stdout: '2\t3\n' } }, 'UNREADABLE: git rev-list failed (exit 128)'],
     ['rev-parse exits 128', { 'git rev-parse': { exitCode: 128, stderr: SECRET, stdout: SECRET } }, 'UNREADABLE: git rev-parse failed (exit 128)'],
+    ['rev-list exits 0 with empty output', { 'git rev-parse': { stdout: `${OID}\n` }, 'git rev-list': { stdout: '' } }, 'UNREADABLE: git rev-list failed (exit 0)'],
     ['rev-list has no exit code', { 'git rev-parse': { stdout: `${OID}\n` }, 'git rev-list': { exitCode: null, timedOut: true, stderr: SECRET } }, 'UNREADABLE: git rev-list failed (UNREADABLE)'],
   ];
   test('a runner that throws instead of answering: the value is unreadable without an exit code, and nothing throws [R1]', () => {

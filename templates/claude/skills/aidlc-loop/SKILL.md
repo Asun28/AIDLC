@@ -21,7 +21,7 @@ step.
    writes; it names the goal claiming each uncommitted planning file. Leave
    another goal's file alone; commit your own goal's planning artifacts on
    main as soon as they validate and before you stop, then push main.
-   `baseSync` not in sync => run the command it names. Red => STOP/tool.
+   A `baseSync` that names a git command => run it. Red => STOP/tool.
 2. Identity: canonical repository, base, goal generation, card revision. A
    window path or session id is not ownership; `aidlc goal status` shows the
    lease. Stale generation => `aidlc goal reconcile` before any mutation.

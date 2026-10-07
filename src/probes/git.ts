@@ -136,11 +136,13 @@ export class GitProbe {
     throw new GitProbeError(args, r);
   }
 
-  /** `git rev-list --left-right --count <base>...<head>` -> [behind, ahead]; head defaults to HEAD. */
+  /** `git rev-list --left-right --count <base>...<head>` -> [behind, ahead]; head defaults to HEAD. Output other than two counts is a GitProbeError, never zero. */
   divergence(cwd: string, baseRef: string, head = 'HEAD'): { behind: number; ahead: number } {
-    const out = this.must(cwd, ['rev-list', '--left-right', '--count', `${baseRef}...${head}`]);
-    const [behind, ahead] = out.split(/\s+/).map((n) => Number(n));
-    return { behind: behind ?? 0, ahead: ahead ?? 0 };
+    const args = ['rev-list', '--left-right', '--count', `${baseRef}...${head}`];
+    const r = this.git(cwd, args);
+    const counts = r.exitCode === 0 ? /^(\d+)\s+(\d+)$/.exec(r.stdout.trim()) : null;
+    if (!counts) throw new GitProbeError(args, r);
+    return { behind: Number(counts[1]), ahead: Number(counts[2]) };
   }
 
   /** Whether `base` contains `sha` (merge verification on the intended base); undefined when git cannot answer (an exit other than 0 or 1). */

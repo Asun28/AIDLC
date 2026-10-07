@@ -241,12 +241,14 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(Buffer.byteLength(template, 'utf8') <= CAPS['SKILL.md']!, `SKILL.md is ${Buffer.byteLength(template, 'utf8')} bytes > cap ${CAPS['SKILL.md']}`);
     const entry1 = template.slice(template.indexOf('\n1. `aidlc doctor`'), template.indexOf('\n2. ')).replace(/\s+/g, ' ');
     assert.ok(entry1.includes("commit your own goal's planning artifacts on main as soon as they validate and before you stop, then push main."), 'entry check 1 says to push main after the commit');
-    assert.ok(entry1.includes('`baseSync` not in sync => run the command it names.'), 'entry check 1 names baseSync and its repair');
+    assert.ok(entry1.includes('A `baseSync` that names a git command => run it.'), 'entry check 1 names baseSync and its repair');
+    for (const copy of [live, template]) assert.ok(!copy.includes('Prints size, kind, target, card count (or unknown), modules, next module.'), 'the Route line is removed to stay under the cap');
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     for (const sentence of [
       "Doctor reads the refs as they are and never fetches, so the counts are as of the last fetch; the line never changes doctor's exit code.",
       'Card branches start from `origin/<base>`, so a planning commit left only on local main is invisible to them, and a card PR that edits the same text conflicts with it when main is next synced',
-      'Entry check 1 of `aidlc-loop` says to push main after committing planning artifacts, and to run the command a `baseSync` other than in sync names.',
+      'Entry check 1 of `aidlc-loop` says to push main after committing planning artifacts, and to run the git command a `baseSync` value names; the `n/a` and `UNREADABLE` values name none.',
+      'A failed lookup or count, or a count whose output is not two non-negative integers, is `UNREADABLE: git rev-parse failed (exit <n>)` or `UNREADABLE: git rev-list failed (exit <n>)`, with `(UNREADABLE)` when there is no exit code, never git\x27s text.',
     ]) assert.ok(operations.includes(sentence), `OPERATIONS.md states: ${sentence}`);
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
     assert.ok(architecture.includes('`base-sync.ts` compares the local base branch with `origin/<base>` for `aidlc doctor`, reading refs only and never fetching.'), 'ARCHITECTURE.md names the module');
