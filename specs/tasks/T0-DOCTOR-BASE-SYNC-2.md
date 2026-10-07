@@ -1,7 +1,7 @@
 ---
 id: T0-DOCTOR-BASE-SYNC-2
 title: (successor) aidlc doctor reports whether the local base branch matches origin and names the git command that brings them together; entry check 1 says to push main after committing planning artifacts
-status: todo
+status: merged
 branch: T0-DOCTOR-BASE-SYNC-2
 worktree: D:\wt\AIDLC\T0-DOCTOR-BASE-SYNC-2
 allow_paths:
