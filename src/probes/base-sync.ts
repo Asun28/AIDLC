@@ -4,7 +4,8 @@
  * Planning commits left only on local main are invisible to card branches cut from origin, so a card PR that
  * edits the same text conflicts with them at the next sync; this line makes that drift visible at every entry.
  * Every git call runs as `git --no-lazy-fetch <command>`, so a partial clone never fetches a missing object from
- * its promisor remote (R3 decision 1); a git older than 2.44 refuses the option and the value is UNREADABLE.
+ * its promisor remote (T0-DOCTOR-BASE-SYNC R3 decision 1); a git older than 2.45, the first release with the option,
+ * refuses it (exit 129) and the value is UNREADABLE (T0-DOCTOR-BASE-SYNC-2).
  */
 import { runSync, type SyncRunner } from './exec.ts';
 import { GitProbe, GitProbeError } from './git.ts';
