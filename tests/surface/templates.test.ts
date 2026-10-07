@@ -234,6 +234,27 @@ describe('templates (Q14 packaging)', () => {
     assert.match(unreleased, /T0-PLANNING-CLAIMS/, 'CHANGELOG Unreleased carries the entry');
   });
 
+  test('T0-DOCTOR-BASE-SYNC acceptance 4 and 5: entry check 1 says to push main and names baseSync in both identical copies under the cap; the docs and the changelog state the check', () => {
+    const live = readFileSync(path.join(root, '.claude', 'skills', 'aidlc-loop', 'SKILL.md'), 'utf8');
+    const template = readFileSync(path.join(tpl, 'claude', 'skills', 'aidlc-loop', 'SKILL.md'), 'utf8');
+    assert.equal(live, template, 'both SKILL.md copies are identical');
+    assert.ok(Buffer.byteLength(template, 'utf8') <= CAPS['SKILL.md']!, `SKILL.md is ${Buffer.byteLength(template, 'utf8')} bytes > cap ${CAPS['SKILL.md']}`);
+    const entry1 = template.slice(template.indexOf('\n1. `aidlc doctor`'), template.indexOf('\n2. ')).replace(/\s+/g, ' ');
+    assert.ok(entry1.includes("commit your own goal's planning artifacts on main as soon as they validate and before you stop, then push main."), 'entry check 1 says to push main after the commit');
+    assert.ok(entry1.includes('`baseSync` not in sync => run the command it names.'), 'entry check 1 names baseSync and its repair');
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
+    for (const sentence of [
+      "Doctor reads the refs as they are and never fetches, so the counts are as of the last fetch; the line never changes doctor's exit code.",
+      'Card branches start from `origin/<base>`, so a planning commit left only on local main is invisible to them, and a card PR that edits the same text conflicts with it when main is next synced',
+      'Entry check 1 of `aidlc-loop` says to push main after committing planning artifacts, and to run the command a `baseSync` other than in sync names.',
+    ]) assert.ok(operations.includes(sentence), `OPERATIONS.md states: ${sentence}`);
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8');
+    assert.ok(architecture.includes('`base-sync.ts` compares the local base branch with `origin/<base>` for `aidlc doctor`, reading refs only and never fetching.'), 'ARCHITECTURE.md names the module');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('## 0.1.0'));
+    assert.ok(unreleased.includes('- T0-DOCTOR-BASE-SYNC: `aidlc doctor` prints `baseSync`, the local base branch against `origin/<base>` as of the last fetch: in sync, ahead, behind or diverged, each with the git command that brings them together.'), 'CHANGELOG Unreleased carries the entry');
+  });
+
   test('T1-REVIEW-COVERAGE acceptance 6: the operating guide documents the coverage setting, its contract line, the round field and the summary line; the architecture names the join and the schemas; the changelog carries the entry', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /preReview\.coverage/, 'OPERATIONS.md names the setting');
