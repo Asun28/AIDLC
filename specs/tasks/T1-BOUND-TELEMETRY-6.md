@@ -69,4 +69,6 @@ doc_sync: README.md (Limits), docs/OPERATIONS.md (Bound telemetry), docs/ARCHITE
 
 # T1-BOUND-TELEMETRY-6
 
+2026-10-09 user ruling: stopped after the final R3 decision blocked on candidate f65fdf3 (five findings, verdict retained in the -6 worktree under .review/T1-BOUND-TELEMETRY-6.r3.1.e56fe334.json). No successor of this design; bound telemetry returns as a smaller redesign on a new card. PR 140 stays a draft. The DoD and R2 receipts of f65fdf3 and every earlier counter stay as recorded.
+
 This compact card inherits the full, unmodified predecessor [T1-BOUND-TELEMETRY-5](T1-BOUND-TELEMETRY-5.md) contract and its test mappings. The previous card exceeded the context-pack mandatory byte limit; copying it here would prevent the supported goal from dispatching the successor. The old card, verdicts and attempt ledger remain intact. The sole permitted new attempt validates the retained repair against the now-integrated remote base. One final R3 decision remains, with no counter reset or extra review cycle. Evidence-generation retention and closure use separate reviewed cards only after a verified feature merge.
