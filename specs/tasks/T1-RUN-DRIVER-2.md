@@ -1,10 +1,9 @@
 ---
-id: T1-RUN-DRIVER
-title: aidlc run drives a goal through next, provider dispatch and report until a directive needs a human, aidlc board --watch shows goal, cards, leases and the next directive on one screen, and run-card carries a deterministic per-card context pack
+id: T1-RUN-DRIVER-2
+title: (successor) aidlc run drives a goal through next, provider dispatch and report until a directive needs a human, aidlc board --watch shows goal, cards, leases and the next directive on one screen, and run-card carries a deterministic per-card context pack
 status: todo
-superseded_by: T1-RUN-DRIVER-2
-branch: T1-RUN-DRIVER
-worktree: D:\wt\AIDLC\T1-RUN-DRIVER
+branch: T1-RUN-DRIVER-2
+worktree: D:\wt\AIDLC\T1-RUN-DRIVER-2
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
 allow_paths:
   - src/loop/run-driver.ts
@@ -19,7 +18,7 @@ allow_paths:
   - docs/OPERATIONS.md
   - README.md
   - CHANGELOG.md
-  - specs/tasks/T1-RUN-DRIVER.md
+  - specs/tasks/T1-RUN-DRIVER-2.md
 dod_command: npm run check
 dod_exit: 0
 requirements:
@@ -27,6 +26,7 @@ requirements:
   - R2. `aidlc board --watch` shall re-render one screen with the goal state, the card states, the live leases with owner and generation and the next directive until interrupted, persisting no transition.
   - R3. The `run-card` directive shall carry a context pack projected deterministically from the card's plan section, acceptance list, allow_paths, non_goals and the LESSONS lines that name its paths or modules, capped at a declared token budget.
   - R4. The src/ net of W2, W4 and every W5 split shall be at most +1360 lines, tests excluded, under the delegated budget decision in plans/run-driver-core.md.
+  - R5. The watch shall stay inside its temporary copy, print no record contents and run without a readable session token: a goal id that is not a plain identifier (an ASCII letter or digit, then letters, digits, `.`, `_` or `-`, and no `..`) is refused before anything is copied, and every copy destination is checked to lie inside the temporary root; a state-read or preview failure shows only an error code such as `MALFORMED_JSON` or `EISDIR` (else `UNREADABLE`), never the exception message; an unreadable or absent `session-default` token is treated as absent. (R3 decision 2 of T1-RUN-DRIVER, findings 1 to 3.)
 acceptance:
   - 1. With a scripted provider, `aidlc run` performs `plan`, `project-cards`, `run-card` and `close` directives in sequence and exits on each of `checkpoint`, `stop`, `ask`, `release`, `done`, a review block and a review-quota `wait`, printing that directive; a `wait` on any other signal is not an exit; the driver writes no file itself (a test compares the state directory with what the CLI commands alone write) (tests/scenarios/run-driver.test.ts). [R1] [dod arm 1]
   - 2. `aidlc run` stops at `--max-steps` and at the goal deadline, whichever comes first (tests/scenarios/run-driver.test.ts). [R1] [dod arm 1]
@@ -34,17 +34,20 @@ acceptance:
   - 4. `contextPack` returns the same bytes for the same inputs, includes each named part, keeps LESSONS lines that name the card's paths or modules and no other, and cuts at the declared budget from the LESSONS end first, never cutting the acceptance list (tests/core/context-pack.test.ts). [R3] [dod arm 1]
   - 5. `git diff --numstat origin/main...HEAD -- src` plus the recorded W2, W4 and other W5 split deltas is at most +1360; the close-out states each delta and the total. [R4]
   - 6. `docs/OPERATIONS.md` documents `aidlc run`, `board --watch` and the context pack, and states how `aidlc run` relates to the `/goal` recipe of T0-UNATTENDED-RUNS; `CHANGELOG.md` Unreleased carries the entry under this card id; a test reads each exact sentence (tests/scenarios/run-driver.test.ts). [R1] [R2] [R3] [dod arm 1]
+  - 7. `tests/infra/board.test.ts`: `previewNext` and `watchScreen` refuse the goal ids `../../escape`, `a/b` and `..` with code `INVALID_GOAL_ID` and create nothing outside the temporary root; a malformed goal record and a malformed card-run record whose bytes hold a canary string give a `state unreadable: MALFORMED_JSON` line that does not contain the canary, and a preview failure gives a `Next: unavailable:` line holding only a code. `tests/scenarios/run-driver.test.ts`: `board --watch` with no session variable and `session-default` a directory renders its first screen and writes nothing. [R5] [dod arm 1]
 depends_on: [T1-README-SCOPE, T1-RUN-CONTEXT-PACK-2, T1-RUN-DRIVER-CORE]
 budget: 900
 tdd: true
 sweep: "Survey of main at 5983a1e. No command loops next, act and report: next (main.ts:334-342) and report (344-376) are single-shot; the only loop is the CI poll in github-ship.ts:245. Providers (providers/types.ts:25-40) return CompletionResult with optional usage; claude-api.ts:90-93 and claude-code.ts:63 fill it; the loop never calls a provider (evals main.ts:933 and doctor 185 only). aidlc board has no watch mode; renderBoard board.ts:46-86. The run-card context (controller.ts:360) carries revision, generation, reviewPool, modules, dataImpact, wave, workers and arcReasons. T0-UNATTENDED-RUNS (merged, PR 61) documents /goal as the outer driver and names the directive kinds done, stop, ask, checkpoint and wait."
 forbid: [state owned by the driver, a model deciding which card runs next, approving a checkpoint, merging, or reporting a done, stop, ask, checkpoint or wait directive from the driver, a web view, a new top-level src/ directory]
 non_goals: [measuring tokens per card against a baseline (deferred W0), cloud or remote execution, running several goals at once, a TUI library, changing the directive contract beyond carrying the context pack]
-hygiene: "The W0 gate and the token measurement against the baseline were lifted on 2026-09-26 (no eval now; the measurement waits for the deferred W0). If the three parts do not fit the remaining budget, stop and ask which part to drop. On 2026-09-28 the W5 cap fell from +214 to +158 (W4 +146 for T1-BOUND-TELEMETRY-2), so this rule may trigger; that question goes to the user, not to the monitoring session."
+hygiene: "Successor approved by the user on 2026-10-09 after the second R3 block of T1-RUN-DRIVER (decision 2 on 72a442f: goal-id path containment, error text that can quote record contents, an unreadable session token). Carries candidate 72a442f of branch T1-RUN-DRIVER and every attempt, review and STOP record of the predecessor; no counter resets. One fresh review cycle: R2 rounds, one initial and one repaired R3 decision. Budget stays 900 total changed lines (the predecessor candidate is 363 against main). Earlier: The W0 gate and the token measurement against the baseline were lifted on 2026-09-26 (no eval now; the measurement waits for the deferred W0). If the three parts do not fit the remaining budget, stop and ask which part to drop. On 2026-09-28 the W5 cap fell from +214 to +158 (W4 +146 for T1-BOUND-TELEMETRY-2), so this rule may trigger; that question goes to the user, not to the monitoring session."
 doc_sync: docs/OPERATIONS.md (Running a goal), README.md (Quick start), CHANGELOG.md
 ---
 
-# T1-RUN-DRIVER
+# T1-RUN-DRIVER-2
+
+2026-10-09 user ruling: successor of T1-RUN-DRIVER after its second blocking R3 decision. It keeps every requirement, acceptance item and gate of the predecessor and adds R5 and acceptance 7 for the three findings of that decision.
 
 2026-10-09 user ruling: the bound-telemetry line stopped after its eighth consecutive blocking R3 decision (T1-BOUND-TELEMETRY-6 on f65fdf3). The watch view no longer shows a `Bounds:` line and this card no longer depends on T1-BOUND-TELEMETRY-2; bound telemetry returns later as a smaller redesign on its own card, which adds the line to the watch view. W4 adds 0 to the R4 total while telemetry is unmerged. Every other requirement, acceptance item and gate is unchanged.
 
