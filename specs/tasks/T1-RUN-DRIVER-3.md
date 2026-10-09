@@ -51,6 +51,8 @@ doc_sync: docs/OPERATIONS.md (Running a goal), README.md (Quick start), CHANGELO
 
 # T1-RUN-DRIVER-3
 
+2026-10-09 user ruling: the watch view is deferred. R3 blocked it six times in a row across T1-RUN-DRIVER, -2 and -3 (6, 3, 2, 1, 2 and 3 findings); the last decision, on 7e3c56d, asked for a terminal-output safety policy (identifier-only rows, escaped strings) and a coded intake error on the plan directive, a directive-contract change this card lists as a non-goal. R2 (`aidlc board --watch`) moves to a new planned card with an explicit output contract; branch T1-RUN-DRIVER-3 (7e3c56d, local, not pushed) is its starting point. R1 (`aidlc run`) and R3 (the context pack) are delivered by T1-RUN-DRIVER-CORE (PR 148) and T1-RUN-CONTEXT-PACK-2 (PR 146); integrated acceptance of the three parts waits for the watch card. Every attempt, review and STOP record of the three cards stays as recorded.
+
 2026-10-09 user ruling: successor of T1-RUN-DRIVER-2 after its second blocking R3 decision; it adds R6 and acceptance 8 and `src/state/journal.ts` to scope.
 
 2026-10-09 user ruling: T1-RUN-DRIVER-2 was the successor of T1-RUN-DRIVER after its second blocking R3 decision. It keeps every requirement, acceptance item and gate of the predecessor and adds R5 and acceptance 7 for the three findings of that decision.
