@@ -85,7 +85,8 @@ Several windows may work on one repository. State is shared through `<main check
 | Transient CI rerun | 1 per run/attempt/candidate, persisted before the request | `src/core/ci-policy.ts` |
 | Implementation attempts | 3 at baseline effort, plus 1 escalated attempt only with evidenced progress and an available level; same cause twice stops early | `src/core/effort.ts` |
 | Planning invocations | 2 (initial + one corrective) | `src/loop/controller.ts` |
-| Integration / lifecycle repair cycles | 1 each | `src/core/arc.ts`, `src/loop/controller.ts` |
+| Integration repair cycles | 1 | `src/core/arc.ts`, `src/loop/controller.ts` |
+| Lifecycle repair cycles | 1, stated in the release-health stop directive; not enforced in code | `src/loop/controller.ts` |
 | Card workers | 2, only with disjoint paths and resources; 1 with a single reviewer slot | `src/core/arc.ts` |
 
 ## Layout

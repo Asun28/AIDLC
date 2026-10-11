@@ -40,7 +40,8 @@ describe('state/board (regenerated view, never the store of record)', () => {
     assert.match(out, /^- \*\*Route\*\*: size=T1 kind=feature target=development modules=router\+arc\+card-loop/m);
     assert.match(out, /^- \*\*Deadline\*\*: 2026-09-11T22:00:00\.000Z \(created 2026-09-11T10:00:00\.000Z\)/m);
     assert.match(out, /^- \*\*Stages\*\*: development=pending package=not_requested/m);
-    assert.match(out, /^- \*\*Counters\*\*: planning=0\/2 integration-repair=0\/1 lifecycle-repair=0\/1/m);
+    assert.match(out, /^- \*\*Counters\*\*: planning=0\/2 integration-repair=0\/1$/m);
+    assert.ok(!out.includes('lifecycle-repair'), 'the board shows no lifecycle repair bound (T1-SWEEP-DEAD-CODE)');
     assert.match(out, /^- \*\*Arc\*\*: verdict=\w+ workers=\d+ wave=/m);
     assert.match(out, /view only; clocks, approvals and history live in \.aidlc\//);
   });

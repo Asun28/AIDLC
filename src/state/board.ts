@@ -57,7 +57,7 @@ export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: str
   lines.push(`- **Route**: size=${goal.routing.size} kind=${goal.routing.kind} target=${goal.target} modules=${goal.routing.modules.join('+')}`);
   lines.push(`- **Deadline**: ${effectiveGoalDeadline(goal.deadlines)} (created ${goal.deadlines.createdAt})`);
   lines.push(`- **Stages**: ${Object.entries(goal.stages).map(([k, v]) => `${k}=${v}`).join(' ')}`);
-  lines.push(`- **Counters**: planning=${goal.counters.planningInvocations}/2 integration-repair=${goal.counters.integrationRepairCycles}/1 lifecycle-repair=${goal.counters.lifecycleRepairCycles}/1`);
+  lines.push(`- **Counters**: planning=${goal.counters.planningInvocations}/2 integration-repair=${goal.counters.integrationRepairCycles}/1`);
   lines.push(`- **Arc**: verdict=${arc.verdict} workers=${arc.workers} wave=${arc.wave.join(',') || '-'} ready=${arc.ready.join(',') || '-'}`);
   if (goal.stop) lines.push(`- **STOP**: ${formatStop(goal.stop)}`);
   lines.push(`- **Rendered**: ${now} (view only; clocks, approvals and history live in .aidlc/)`);

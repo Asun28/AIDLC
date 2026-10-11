@@ -22,8 +22,8 @@ export const OperationBinding = z.object({
   /** argv array, never a shell string. */
   command: z.array(z.string()).min(1),
   cwd: z.string().optional(),
-  /** How the target environment is selected (arg template, env var, config file). */
-  targetSelection: z.enum(['arg', 'env', 'config', 'none']).default('none'),
+  /** How the target environment reaches the command: an argument (`targetArg`), the `AIDLC_TARGET_ENV` variable, or not at all. */
+  targetSelection: z.enum(['arg', 'env', 'none']).default('none'),
   targetArg: z.string().optional(),
   credentialScope: z.string().optional(),
   effects: z.array(z.string()).default([]),
