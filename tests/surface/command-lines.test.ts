@@ -44,7 +44,7 @@ test('T1-SWEEP-FLAGS acceptance 2: no shipped command line names an option its c
   assert.ok(read('CLAUDE.md').includes("- `aidlc release start --goal <id>`     release attempt for the target set by `aidlc goal new --target`\n"));
   assert.ok(read('templates/CLAUDE.aidlc.md').includes("- `aidlc release start --goal <id>`     release attempt for the target set by `aidlc goal new --target`\n"));
   assert.ok(read('.claude/agents/release-specialist.md').includes('1. `aidlc release start --goal <id>` (the target is the one `aidlc goal new --target` set); read the directive.'));
-  assert.ok(flat('.claude/skills/aidlc-loop/release.md').includes('Loads only for an explicit target (`aidlc goal new --target <package|staging|production>`). `aidlc release start --goal <id>`, then `aidlc release next` / `aidlc release report`.'));
+  assert.ok(flat('.claude/skills/aidlc-loop/release.md').includes('Explicit target only (`aidlc goal new --target <package|staging|production>`). `aidlc release start --goal <id>`, then `aidlc release next` / `aidlc release report`.'));
   assert.ok(flat('.claude/skills/aidlc-loop/card-loop.md').includes('`aidlc card next <id>` returns one directive from the precedence below; do that move, then `aidlc card next <id>` again.'));
 });
 

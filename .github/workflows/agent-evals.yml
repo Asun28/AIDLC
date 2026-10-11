@@ -27,8 +27,7 @@ jobs:
       - name: Run eval suite
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AIDLC_PROVIDER: claude-code
-        run: npx aidlc evals run --threshold 0.9 --json > evals-result.json
+        run: npx aidlc evals run --provider claude-code --threshold 0.9 --json > evals-result.json
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

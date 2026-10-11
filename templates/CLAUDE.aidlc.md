@@ -14,7 +14,7 @@ Skill: `.claude/skills/aidlc-loop/SKILL.md`. Review policy: `REVIEW.md`.
 - `aidlc cards validate`               card registry checks (`check-cards` compatible)
 - `aidlc evals run --threshold 0.9`    continuous evals over `evals/*.json`
 - `aidlc audit verify --goal <id>`     journal chain, operations, manifest, level
-- `aidlc release start --goal <id> --target staging|production|package`
+- `aidlc release start --goal <id>`     release attempt for the target set by `aidlc goal new --target`
 - `aidlc monitor check --bands bands.yaml --data <file>`  control bands -> intent
 
 ### Artifact chain (each stage commits what the next consumes)
