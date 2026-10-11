@@ -5,7 +5,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { reviewerEnv, runPreReview, runReviewPanel } from '../../src/review/pre-review.ts';
+import { reviewerEnv, runReviewPanel } from '../../src/review/pre-review.ts';
+import { runPreReview } from './_review-once.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 
 const OURS = { PYTHONUTF8: '1', PYTHONIOENCODING: 'utf-8' };
