@@ -669,10 +669,11 @@ export type HookName = (typeof HOOK_NAMES)[number];
 
 /**
  * A name no guard answers to fails closed (card T1-SWEEP-HOOK-NAME): exit 0 would let a mistyped hook command allow every
- * action. The name is repository text, so it is printed as a JSON string with everything outside printable ASCII escaped.
+ * action. The name is repository text, so it is printed as a JSON string in which every UTF-16 unit outside printable
+ * ASCII is a four-digit escape (never JSON's short forms such as \n), and only `"` and `\` keep their two-character escapes.
  */
 function unknownHookName(name: string): HookResult {
-  const quoted = JSON.stringify(name).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+  const quoted = `"${name.replace(/["\\]|[^\x20-\x7e]/g, (c) => (c === '"' || c === '\\' ? `\\${c}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`))}"`;
   return { exitCode: 2, stderr: `aidlc hook: unknown hook name ${quoted}; known names: auto, ${HOOK_NAMES.join(', ')}` };
 }
 
