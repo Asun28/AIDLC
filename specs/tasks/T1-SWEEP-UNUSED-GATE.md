@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP-UNUSED-GATE
 title: The typecheck and the build refuse unused locals, imports and parameters (noUnusedLocals, noUnusedParameters); markLost drops its unread now; the unused test locals go
-status: todo
+status: merged
 branch: T1-SWEEP-UNUSED-GATE
 worktree: D:\wt\AIDLC\T1-SWEEP-UNUSED-GATE
 plan_ref: plans/dead-code-sweep.md#order-of-work
