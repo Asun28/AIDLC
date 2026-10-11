@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP-REVIEW-WRAPPERS
 title: The three review wrappers only tests call (runPreReview, buildPreReviewPrompt, extractVerdict) move from src/review/pre-review.ts into a test helper
-status: todo
+status: merged
 branch: T1-SWEEP-REVIEW-WRAPPERS
 worktree: D:\wt\AIDLC\T1-SWEEP-REVIEW-WRAPPERS
 plan_ref: plans/dead-code-sweep.md#order-of-work

@@ -36,8 +36,8 @@ acceptance:
 depends_on: [T1-SWEEP-DEAD-CODE, T1-SWEEP-REVIEW-WRAPPERS]
 budget: 120
 tdd: true
-sweep: "npx tsc -p tsconfig.test.json --noEmit --noUnusedLocals --noUnusedParameters on main at df9acd7: src/coordination/review-queue.ts:159 (now) plus 14 in tests: github-ship-merge-refused.test.ts:1 (after), github-ship.test.ts:296 (JOB_API), goal-store.test.ts:248 (base), lease.test.ts:3 (statSync, utimesSync), r2-fallback.test.ts:443 (IN_FLIGHT_15), pre-review.test.ts:209,914,934,949,992,995,1020,1023. Callers of markLost: src/loop/card-runner.ts:2301 and tests/infra/review-queue.test.ts:136,150. The list is re-run on this card's base after its two dependencies merge."
-forbid: [an underscore rename or a void expression to silence an unused name, changing an existing assertion, a persisted schema change]
+sweep: "npx tsc -p tsconfig.test.json --noEmit --noUnusedLocals --noUnusedParameters on main at df9acd7: src/coordination/review-queue.ts:159 (now) plus 14 in tests: github-ship-merge-refused.test.ts:1 (after), github-ship.test.ts:296 (JOB_API), goal-store.test.ts:248 (base), lease.test.ts:3 (statSync, utimesSync), r2-fallback.test.ts:443 (IN_FLIGHT_15), pre-review.test.ts:209,914,934,949,992,995,1020,1023 (each one line lower after T1-SWEEP-REVIEW-WRAPPERS; four are the unused first parameter `c` of a reviewer runner whose second parameter is read). Callers of markLost: src/loop/card-runner.ts:2301 and tests/infra/review-queue.test.ts:136,150. The list is re-run on this card's base after its two dependencies merge."
+forbid: [a void expression, a ts-ignore or an underscore rename of a local, an import or a last parameter to silence an unused name (an underscore prefix is used only for a positional parameter that precedes a used one, the form noUnusedParameters exempts), changing an existing assertion, a persisted schema change]
 non_goals: ["a linter"]
 doc_sync: CLAUDE.md, CHANGELOG.md
 ---
