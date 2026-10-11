@@ -2,6 +2,7 @@
 id: T1-SWEEP-FLAGS
 title: The eval workflow runs on the claude-code provider, shipped command lines name only declared options, and the env var docs match the code
 status: todo
+superseded_by: T1-SWEEP-FLAGS-2
 branch: T1-SWEEP-FLAGS
 worktree: D:\wt\AIDLC\T1-SWEEP-FLAGS
 plan_ref: plans/dead-code-sweep.md#order-of-work

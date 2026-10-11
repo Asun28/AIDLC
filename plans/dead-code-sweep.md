@@ -85,7 +85,7 @@ and `resetRepoIdentityCache` removed; `cardPolicy` dropped;
 
 ## Order of work
 1. T1-SWEEP-HOOK-NAME: an unknown hook name fails closed.
-2. T1-SWEEP-FLAGS: eval workflow provider, shipped command lines, env var docs.
+2. T1-SWEEP-FLAGS-2 (successor of T1-SWEEP-FLAGS, stopped for ci on PR #153): eval workflow provider, run only when ANTHROPIC_API_KEY is set; shipped command lines; env var docs.
 3. T1-SWEEP-DEAD-CODE: lifecycle constant and board fragment, `cardPolicy`, `targetSelection: 'config'`, `resetRepoIdentityCache`, the obsolete script and plan copies.
 4. T1-SWEEP-REVIEW-WRAPPERS: the test-only review wrappers move to the tests.
 5. T1-SWEEP-UNUSED-GATE: `noUnusedLocals` and `noUnusedParameters`, `markLost`, the unused test locals.
@@ -95,7 +95,7 @@ and `resetRepoIdentityCache` removed; `cardPolicy` dropped;
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-SWEEP-HOOK-NAME | MUST | `aidlc hook <unknown>` exits 2 naming the known names | - | W1 | - |
-| T1-SWEEP-FLAGS | MUST | eval job on claude-code; no undeclared option in shipped command lines; env docs match | - | W2 | - |
+| T1-SWEEP-FLAGS-2 | MUST | eval job on claude-code when the key is set, a skip warning otherwise; no undeclared option in shipped command lines; env docs match | - | W2 | - |
 | T1-SWEEP-DEAD-CODE | SHOULD | dead constant, field, enum value, function, script and plan copies removed; lifecycle bound stated | - | W3 | - |
 | T1-SWEEP-REVIEW-WRAPPERS | SHOULD | test-only review wrappers live in the tests | - | W4 | - |
 | T1-SWEEP-UNUSED-GATE | SHOULD | typecheck and build refuse unused locals and parameters | T1-SWEEP-DEAD-CODE, T1-SWEEP-REVIEW-WRAPPERS | W5 | - |
