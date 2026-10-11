@@ -28,10 +28,10 @@ test('T1-SWEEP-HOOK-NAME acceptance 1: an unknown name returns exit 2 and the un
 
 test('T1-SWEEP-HOOK-NAME acceptance 1: the name is one line of printable ASCII that JSON.parse turns back into the name [R1]', () => {
   const cwd = tempDir();
-  const name = 'a"b\nc\u001bd\u009beé';
+  const name = 'a"b\nc\u001bd\u009beéf\u007f~ ';
   const r = runHook(name as HookName, editEvent(cwd), { cwd, env: {} });
   assert.equal(r.exitCode, 2);
-  assert.equal(r.stderr, line('"a\\"b\\nc\\u001bd\\u009be\\u00e9"'));
+  assert.equal(r.stderr, line('"a\\"b\\nc\\u001bd\\u009be\\u00e9f\\u007f~ "'));
   assert.match(r.stderr!, /^[\x20-\x7e]+$/);
   const quoted = r.stderr!.slice('aidlc hook: unknown hook name '.length, r.stderr!.length - `; ${KNOWN}`.length);
   assert.equal(JSON.parse(quoted), name);
