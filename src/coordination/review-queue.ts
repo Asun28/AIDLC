@@ -156,7 +156,7 @@ export class ReviewQueue {
   }
 
   /** Mark a lost response; the slot stays occupied until `resolveLost` records the looked-up outcome. */
-  markLost(key: string, detail: string, now: string = nowIso()): ReviewRequest {
+  markLost(key: string, detail: string): ReviewRequest {
     const r = this.mustGet(key);
     const lost: ReviewRequest = { ...r, state: 'lost', lastError: detail };
     atomicWriteJson(this.requestFile(key), lost);

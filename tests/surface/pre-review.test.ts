@@ -207,7 +207,7 @@ test('formal review (R3) command: placeholders expand, the prompt is passed in a
 
   // argv mode: the scripted reviewer sees the instructions as an argument and an empty stdin
   const seen: Array<{ args: string[]; input?: string }> = [];
-  const argvRunner: typeof scriptedRunner extends (s: infer S) => infer R ? R : never = (command, args, options = {}) => {
+  const argvRunner: typeof scriptedRunner extends (s: never) => infer R ? R : never = (command, args, options = {}) => {
     seen.push({ args, input: options.input });
     const base = scriptedRunner({ [command]: { stdout: '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n' } });
     return base(command, args, options);
@@ -912,7 +912,7 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F3, F6): a supported entry without both 
 });
 
 test('T1-REVIEW-COVERAGE R3 decision 1 (F1, F5, F7, F8): coverage is kept only for the angle that was asked, a single-angle shadow round retains the join in its own document, the parser counts the entries it rejects, and R7 reads the reported verdict', async () => {
-  const { dir, card } = fixtureCard();
+  const { dir } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
   const withCoverage = (verdict: 'pass' | 'block', coverage: unknown[], reasons: string[] = []) => JSON.stringify({ verdict, reasons, coverage });
 
@@ -932,7 +932,7 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F1, F5, F7, F8): coverage is kept only f
   assert.deepEqual(asked.verdict?.coverage, [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }], 'the angle that was asked keeps it');
 
   // F1 in a panel: only the ac-coverage angle may carry a list, whatever the others report.
-  const panelRunner = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: a[0] === 'ac-coverage' ? `${withCoverage('pass', [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }])}\n` : `${withCoverage('pass', [{ item: 1, status: 'violated' }])}\n` } })('reviewer', a, {});
+  const panelRunner = async (_c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: a[0] === 'ac-coverage' ? `${withCoverage('pass', [{ item: 1, status: 'supported', impl: 'a:1', test: 'b:2' }])}\n` : `${withCoverage('pass', [{ item: 1, status: 'violated' }])}\n` } })('reviewer', a, {});
   const panel = await runReviewPanel({ runner: panelRunner, command: ['reviewer', '{perspective}'], perspectives: ['ac-coverage', 'edge-cases'], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'panel', head: 'h', reviewer: 'r', coverage: { expected: 2 } });
   assert.deepEqual(panel.coverage, { expected: 2, accounted: 1, unaccounted: [2], conflicted: [], inconsistent: [], malformed: 0, angles: ['ac-coverage'] }, 'the other angle is absent from the join');
   const edgeDoc = JSON.parse(readFileSync(panel.perspectives.find((p) => p.perspective === 'edge-cases')!.verdictRef!, 'utf8')) as Record<string, unknown>;
@@ -947,7 +947,7 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F1, F5, F7, F8): coverage is kept only f
 
   // F8: the citation rule turns a block carried only by uncited reasons into a pass. The measurement reads the verdict the
   // reviewer reported, so that angle's violated item is not called inconsistent.
-  const uncited = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${withCoverage('block', [{ item: 1, status: 'violated' }], ['the coverage is thin'])}\n` } })('reviewer', a, {});
+  const uncited = async (_c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${withCoverage('block', [{ item: 1, status: 'violated' }], ['the coverage is thin'])}\n` } })('reviewer', a, {});
   const rewritten = await runReviewPanel({ runner: uncited, command: ['reviewer', '{perspective}'], perspectives: ['ac-coverage'], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'uncited', head: 'h', reviewer: 'r', changedPaths: ['src/gate.ts'], coverage: { expected: 1 } });
   assert.equal(rewritten.outcome, 'pass', 'an uncited block is a pass with the note');
   assert.deepEqual(rewritten.coverage?.inconsistent, [], 'the angle reported a block, so its violated item is consistent');
@@ -990,10 +990,10 @@ test('T1-REVIEW-COVERAGE-2 acceptance 4 (R3 decision 2, re:F3): a supported entr
 });
 
 test('T1-REVIEW-COVERAGE-2 acceptance 8-10 (R3 decision 2): from the reviewer output to the retained round, entries are read as reported, a repeat behind a rejected twin joins nothing, and rejected entries reach the round as malformed', async () => {
-  const { dir, card } = fixtureCard();
+  const { dir } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
   const panelOf = async (document: string, expected: number, stem: string) => {
-    const runner = async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${document}\n` } })('reviewer', a, {});
+    const runner = async (_c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${document}\n` } })('reviewer', a, {});
     return runReviewPanel({ runner, command: ['reviewer', '{perspective}'], perspectives: [COVERAGE_ANGLE], promptFor: () => 'p', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: stem, head: 'h', reviewer: 'r', changedPaths: ['src/gate.ts'], coverage: { expected } });
   };
   const retained = (ref: string) => (JSON.parse(readFileSync(ref, 'utf8')) as { coverage?: unknown }).coverage;
@@ -1018,10 +1018,10 @@ test('T1-REVIEW-COVERAGE-2 acceptance 8-10 (R3 decision 2): from the reviewer ou
 });
 
 test('T1-REVIEW-COVERAGE-2 acceptance 7 and 9 (R2 cycle 0 round 1): the formal stage drops an unsolicited coverage list, and a repeat is not hidden behind a twin written as a string item', async () => {
-  const { dir, card } = fixtureCard();
+  const { dir } = fixtureCard();
   const reviewDir = path.join(dir, '.review');
   const document = (coverage: unknown[]) => JSON.stringify({ verdict: 'pass', reasons: [], coverage });
-  const runnerFor = (stdout: string) => async (c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${stdout}\n` } })('reviewer', a, {});
+  const runnerFor = (stdout: string) => async (_c: string, a: string[]) => scriptedRunner({ reviewer: { stdout: `${stdout}\n` } })('reviewer', a, {});
   const retained = (ref: string) => JSON.parse(readFileSync(ref, 'utf8')) as Record<string, unknown>;
 
   // Acceptance 7, the formal stage: R3 runs the panel with no perspectives and asks for no coverage, exactly as it did

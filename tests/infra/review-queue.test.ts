@@ -133,7 +133,7 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     const r = q.enqueue(input({ candidateDigest: 'lost', now: iso(0) })).request;
     const other = q.enqueue(input({ candidateDigest: 'other', now: iso(1) })).request;
     assert.equal(q.admit('codex:acct', A, iso(2)).status, 'admitted');
-    const lost = q.markLost(r.key, 'reviewer process exited without output', iso(3));
+    const lost = q.markLost(r.key, 'reviewer process exited without output');
     assert.equal(lost.state, 'lost');
     // still occupying the slot: another review must not launch
     assert.deepEqual(q.admit('codex:acct', B, iso(4)), { status: 'busy', active: [r.key] });
@@ -147,7 +147,7 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     assert.equal(next.status, 'admitted');
     if (next.status === 'admitted') assert.equal(next.request.key, r.key); // seq 0 still first
     // lookup found a verdict: completed directly
-    q.markLost(r.key, 'lost again', iso(7));
+    q.markLost(r.key, 'lost again');
     const done = q.resolveLost(r.key, { found: true, verdictRef: 'verdict:lost' }, iso(8));
     assert.equal(done.state, 'completed');
     assert.equal(done.verdictRef, 'verdict:lost');

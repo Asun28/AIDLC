@@ -293,7 +293,6 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
 
   // T0-CI-RED-LOGS-2: the failed step of each red Actions job on the gate output, bounded by the job record.
   const JOB_URL = 'https://github.com/o/r/actions/runs/123/job/456';
-  const JOB_API = 'gh api repos/o/r/actions/jobs/456';
   /** A runner timestamp (seven fraction digits) at second `s` of the job, `ms` milliseconds into it. */
   const at = (s: number, ms = 0) => `2026-09-26T04:12:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}4830Z`;
   const second = (s: number) => `2026-09-26T04:12:${String(s).padStart(2, '0')}Z`;

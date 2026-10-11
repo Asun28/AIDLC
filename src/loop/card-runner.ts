@@ -2298,7 +2298,7 @@ export class CardRunner {
       holdUntil = this.queue.heldUntil(goal.reviewPool, holdUntil, now);
       this.journal(goal.id).append({ type: 'REVIEW_HOLD', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key: reviewKey } });
     } else if (result.outcome === 'unclassified' && result.receipt.timedOut) {
-      this.queue.markLost(reviewKey, 'ship timed out; look up the review before releasing the slot', now);
+      this.queue.markLost(reviewKey, 'ship timed out; look up the review before releasing the slot');
     } else {
       this.queue.complete(reviewKey, verdictInfo.file ?? 'no-verdict', now);
     }
