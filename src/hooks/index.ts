@@ -663,10 +663,23 @@ export function readStdinJson(text: string): HookEvent {
   }
 }
 
-export type HookName = 'production-gate' | 'protect-paths' | 'protect-tests' | 'secrets-guard' | 'verify-before-done' | 'route-new-work';
+/** The guards `aidlc hook <name>` runs by name; `auto` is the CLI's own name for `dispatchHook`. */
+export const HOOK_NAMES = ['production-gate', 'protect-paths', 'protect-tests', 'secrets-guard', 'verify-before-done', 'route-new-work'] as const;
+export type HookName = (typeof HOOK_NAMES)[number];
+
+/**
+ * A name no guard answers to fails closed (card T1-SWEEP-HOOK-NAME): exit 0 would let a mistyped hook command allow every
+ * action. The name is repository text, so it is printed as a JSON string in which every UTF-16 unit outside printable
+ * ASCII is a four-digit escape (never JSON's short forms such as \n), and only `"` and `\` keep their two-character escapes.
+ */
+function unknownHookName(name: string): HookResult {
+  const quoted = `"${name.replace(/["\\]|[^\x20-\x7e]/g, (c) => (c === '"' || c === '\\' ? `\\${c}` : `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`))}"`;
+  return { exitCode: 2, stderr: `aidlc hook: unknown hook name ${quoted}; known names: auto, ${HOOK_NAMES.join(', ')}` };
+}
 
 /** `classic` decides `production-gate` and `protect-paths` with the Bash classification before card T0-HOOK-CLASSIFIER-3 (the first pass of `dispatchHook`). */
 export function runHook(name: HookName, event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; config?: LoadedHookConfig; classic?: boolean } = {}): HookResult {
+  if (!(HOOK_NAMES as readonly string[]).includes(name)) return unknownHookName(name);
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   const config = options.config ?? loadHookConfig(cwd);
@@ -686,7 +699,5 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
       return verifyBeforeDone(cwd, env, hookSession(event, env));
     case 'route-new-work':
       return routeNewWork(event, error, cwd);
-    default:
-      return { exitCode: 0 };
   }
 }
