@@ -245,7 +245,7 @@ describe('state/goal-store lock hardening (T1-REVIEW-FINDINGS-2 R3 decision 1)',
 
   it('saveCardRun refuses a snapshot that still holds a reservation the persisted record released: a phantom pending entry is never written back', () => {
     const store = new GoalStore(paths);
-    const base = store.saveCardRun(makeCardRun('goal-r', 'T1-R'));
+    store.saveCardRun(makeCardRun('goal-r', 'T1-R'));
     const reservation = { invocationId: 'r3:res', candidateDigest: 'd', base: 'main', policyVersion: 'v1', reviewer: 'r3', requestedAt: iso(0), outcome: 'pending' as const };
     const reserved = store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations, reservation] } }));
     store.updateCardRun('goal-r', 'T1-R', (current) => ({ ...current!, review: { ...current!.review, invocations: current!.review.invocations.filter((i) => i.invocationId !== 'r3:res') } }));

@@ -440,7 +440,6 @@ function injectPending(s: Setup, reviewer: string, timeoutMs: number | undefined
   });
   return reservationId;
 }
-const IN_FLIGHT_15 = 'A round is dropped 15 minutes after its dispatch when nothing came back.';
 
 /** The recorded timeout of the pending round, read inside each reviewer call while the round is in flight. */
 function watchReservations(s: Setup): Array<{ command: string; recorded: boolean; timeoutMs?: number }> {

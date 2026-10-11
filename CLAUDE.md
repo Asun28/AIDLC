@@ -26,7 +26,7 @@ node bin/aidlc.js <cmd>        # the CLI (dist/ when it is at least as new as sr
 npm run dev -- <cmd>           # the CLI from src/cli/main.ts, always current
 ```
 
-There is no linter; strict `tsc` is the only static gate.
+There is no linter; strict `tsc` with `noUnusedLocals` and `noUnusedParameters` is the only static gate.
 
 Note: `bin/aidlc.js` and `bin/aidlc-hook.js` load `dist/` only when the
 compiled entry is at least as new as every file under `src/`
