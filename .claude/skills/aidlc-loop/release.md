@@ -1,8 +1,9 @@
 # release: package, staging, production, recovery
 
-Loads only for an explicit target. `aidlc release start --goal <id> --target
-<package|staging|production>`, then `aidlc release next` / `aidlc release
-report`. Deploy commands or infra files never activate deployment.
+Explicit target only (`aidlc goal new --target
+<package|staging|production>`). `aidlc release start --goal <id>`, then
+`aidlc release next` / `aidlc release report`. Deploy commands or infra
+files never activate deployment.
 
 ## Targets (LC1)
 | Target | Finish state | DONE evidence |

@@ -107,9 +107,11 @@ calls `Date.now()`.
   `templates/aidlc.config.json` is the copy `aidlc init` installs; add new
   fields to both.
 - `AIDLC_STATE_DIR` overrides the state directory. `AIDLC_SESSION` (else
-  `CLAUDE_SESSION_ID`) identifies the session for leases and the journal.
-  `AIDLC_FIX_TASK`, `AIDLC_RELEASE_APPROVAL` and `AIDLC_TARGET_ENV` are read
-  by the hooks and ops bindings.
+  `CLAUDE_CODE_SESSION_ID`, else the older `CLAUDE_SESSION_ID`) identifies
+  the session for leases and the journal. The hooks read `AIDLC_FIX_TASK`
+  and `AIDLC_RELEASE_APPROVAL`; aidlc sets `AIDLC_TARGET_ENV` for an ops
+  command whose binding has `targetSelection: env`, and `aidlc run` sets
+  `AIDLC_RUN_NO_SHIP=1` for its provider.
 - `.aidlc/`, `.review/`, `_local/` and the planning scratch files
   (`task_plan.md`, `findings.md`, `progress.md`) are gitignored working state.
 
@@ -150,7 +152,7 @@ Skill: `.claude/skills/aidlc-loop/SKILL.md`. Review policy: `REVIEW.md`.
 - `aidlc cards validate`               card registry checks (`check-cards` compatible)
 - `aidlc evals run --threshold 0.9`    continuous evals over `evals/*.json`
 - `aidlc audit verify --goal <id>`     journal chain, operations, manifest, level
-- `aidlc release start --goal <id> --target staging|production|package`
+- `aidlc release start --goal <id>`     release attempt for the target set by `aidlc goal new --target`
 - `aidlc monitor check --bands bands.yaml --data <file>`  control bands -> intent
 
 ### Artifact chain (each stage commits what the next consumes)

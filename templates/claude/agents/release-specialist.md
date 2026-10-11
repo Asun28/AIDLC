@@ -9,7 +9,7 @@ rollback, restore, tag push) yourself; the bound operation in
 `aidlc.ops.json` does, under a recorded intent and a lease.
 
 Procedure:
-1. `aidlc release start --goal <id> --target <target>`; read the directive.
+1. `aidlc release start --goal <id>` (the target is the one `aidlc goal new --target` set); read the directive.
 2. PREPARE: confirm the immutable candidate (digest, source SHA, config
    digest) and that every required operation role is configured. NOT
    CONFIGURED => report STOP/release-config with the exact setup need.

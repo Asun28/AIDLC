@@ -17,18 +17,25 @@ jobs:
   evals:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    env:
+      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - run: npm ci
-      - run: npm install -g @anthropic-ai/claude-code
+      - name: Install Claude Code
+        if: env.HAS_ANTHROPIC_KEY == 'true'
+        run: npm install -g @anthropic-ai/claude-code
       - name: Run eval suite
+        if: env.HAS_ANTHROPIC_KEY == 'true'
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-          AIDLC_PROVIDER: claude-code
-        run: npx aidlc evals run --threshold 0.9 --json > evals-result.json
+        run: npx aidlc evals run --provider claude-code --threshold 0.9 --json > evals-result.json
+      - name: Evals skipped
+        if: env.HAS_ANTHROPIC_KEY != 'true'
+        run: echo "::warning title=Evals skipped::ANTHROPIC_API_KEY is not set, so the eval suite did not run"
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

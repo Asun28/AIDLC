@@ -1,7 +1,7 @@
 # card-loop: one card to verified closure
 
 `aidlc card next <id>` returns one directive from the precedence below; do
-that move, then `aidlc card report <id> --result <...>`. Read the card, its
+that move, then `aidlc card next <id>` again. Read the card, its
 plan section and the code once per revision; reload only when authority
 changes. PREPARE never reruns the planning funnel or a survey.
 
