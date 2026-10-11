@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP-HOOK-NAME
 title: An unknown `aidlc hook <name>` fails closed with exit 2 and names the known guards
-status: todo
+status: merged
 branch: T1-SWEEP-HOOK-NAME
 worktree: D:\wt\AIDLC\T1-SWEEP-HOOK-NAME
 plan_ref: plans/dead-code-sweep.md#order-of-work
