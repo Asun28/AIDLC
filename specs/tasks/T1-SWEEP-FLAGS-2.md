@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP-FLAGS-2
 title: (successor) The eval workflow runs on the claude-code provider when ANTHROPIC_API_KEY is set and says it skipped otherwise, shipped command lines name only declared options, and the env var docs match the code
-status: todo
+status: merged
 branch: T1-SWEEP-FLAGS-2
 worktree: D:\wt\AIDLC\T1-SWEEP-FLAGS-2
 plan_ref: plans/dead-code-sweep.md#order-of-work
