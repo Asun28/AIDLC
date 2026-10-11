@@ -197,11 +197,11 @@ test('route-new-work prints a routing line for real requests only', () => {
   assert.ok(t2.stdout?.includes('T2:'));
 });
 
-test('runHook dispatches by name and tolerates unknown names', () => {
+test('runHook dispatches by name and refuses unknown names', () => {
   const { cwd, env } = envWithState();
   assert.equal(decision(runHook('secrets-guard', { tool_input: { file_path: '.env' } }, { cwd, env })), 'deny');
   assert.deepEqual(runHook('protect-tests', { tool_input: { file_path: 'tests/a.test.ts' } }, { cwd, env }), { exitCode: 0 });
-  assert.deepEqual(runHook('nope' as never, {}, { cwd, env }), { exitCode: 0 });
+  assert.deepEqual(runHook('nope' as never, {}, { cwd, env }), { exitCode: 2, stderr: 'aidlc hook: unknown hook name "nope"; known names: auto, production-gate, protect-paths, protect-tests, secrets-guard, verify-before-done, route-new-work' });
 });
 
 test('dispatchHook runs every guard for the event in one process: first block wins, advisory output passes through', () => {
