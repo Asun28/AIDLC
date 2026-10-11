@@ -316,19 +316,6 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   return lines.join('\n') + '\n';
 }
 
-export function buildPreReviewPrompt(i: PreReviewPromptInput): string {
-  return buildReviewPrompt({ ...i, stage: 'pre', includeDiff: true });
-}
-
-/**
- * The verdict document: the last JSON-looking line of the output (prose after it is ignored). That line decides
- * alone: one that does not parse as a verdict is a malformed document, never replaced by an earlier draft in
- * the reasoning.
- */
-export function extractVerdict(output: string): Verdict | undefined {
-  return readVerdict(output).verdict;
-}
-
 const NO_REJECTS: RejectedEntries = { count: 0, items: [] };
 
 /**
@@ -813,19 +800,6 @@ function withoutCoverage(verdict: Verdict | undefined): Verdict | undefined {
   return rest;
 }
 
-export interface RunPreReviewOptions extends ReviewRetentionOptions {
-  runner: SyncRunner;
-  /** argv, with optional `{name}` placeholders; the prompt goes to stdin unless `{instructions}` is present. */
-  command: string[];
-  /** Placeholder values; `instructions` defaults to the prompt. */
-  vars?: Record<string, string>;
-  cwd: string;
-  prompt: string;
-  timeoutMs: number;
-  /** Run through a shell (script wrappers on Windows); default: win32 only. */
-  shell?: boolean;
-}
-
 /**
  * The variables that make a Python reviewer read the prompt piped to it as UTF-8 (card T0-REVIEWER-UTF8, issue 99):
  * without them Python on Windows decodes a piped stdin with the ANSI code page.
@@ -850,16 +824,6 @@ export function reviewerEnv(base: NodeJS.ProcessEnv = process.env, platform: Nod
     env[name] = value;
   }
   return env;
-}
-
-/** Run one reviewer process synchronously (single full pass). */
-export function runPreReview(o: RunPreReviewOptions): PreReviewResult {
-  const { argv, promptInArgv } = expandCommand(o.command, { ...(o.vars ?? {}), instructions: o.vars?.['instructions'] ?? o.prompt });
-  const [cmd, ...args] = argv;
-  if (!cmd) throw new Error('review command is empty');
-  // Dynamic text never goes through a shell: argv instructions force a direct spawn.
-  const receipt = o.runner(cmd, args, { cwd: o.cwd, env: reviewerEnv(), input: promptInArgv ? '' : o.prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
-  return finalizeReview(receipt, o);
 }
 
 const PERSPECTIVE_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;

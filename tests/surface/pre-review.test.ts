@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildPreReviewPrompt, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, extractVerdict, materialiseVerdictSchema, runPreReview, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
+import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, materialiseVerdictSchema, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
+import { buildPreReviewPrompt, extractVerdict, runPreReview } from './_review-once.ts';
 // Namespace import for the T1-REVIEW-INPUTS helpers: absent on the baseline, so each test fails at its first call rather than at link time.
 import * as inputs from '../../src/review/pre-review.ts';
 import { COVERAGE_ANGLE, PERSPECTIVES } from '../../src/review/pre-review.ts';
@@ -1381,4 +1382,20 @@ test('T0-R2-ANSWER-MARKER acceptance 5: docs/OPERATIONS.md and the CHANGELOG Unr
     'The formal review (R3) reader is unchanged.',
   ];
   for (const sentence of changelogSentences) assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
+});
+
+test('T1-SWEEP-REVIEW-WRAPPERS acceptance 1: src/review/pre-review.ts exports none of the single-pass wrappers only tests call [R1] [R3]', async () => {
+  const mod: Record<string, unknown> = await import('../../src/review/pre-review.ts');
+  for (const name of ['runPreReview', 'buildPreReviewPrompt', 'extractVerdict']) assert.equal(name in mod, false, name);
+  for (const name of ['runReviewPanel', 'buildReviewPrompt', 'readVerdict', 'finalizeReview', 'expandCommand', 'reviewerEnv']) assert.equal(typeof mod[name], 'function', name);
+});
+
+test('T1-SWEEP-REVIEW-WRAPPERS acceptance 4: the CHANGELOG Unreleased section names the card and the moved wrappers [R4]', () => {
+  const changelog = readFileSync(path.join(path.resolve(import.meta.dirname, '..', '..'), 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+  const start = changelog.indexOf('## Unreleased');
+  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  assert.ok(
+    unreleased.includes('\n- T1-SWEEP-REVIEW-WRAPPERS: `runPreReview`, `buildPreReviewPrompt` and `extractVerdict` move from `src/review/pre-review.ts` to the test helper `tests/surface/_review-once.ts`, unchanged in signature and composition:'),
+    'CHANGELOG.md Unreleased names the moved wrappers',
+  );
 });
