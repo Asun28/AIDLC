@@ -69,10 +69,6 @@ export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
   return identity;
 }
 
-export function resetRepoIdentityCache(): void {
-  identityCache.clear();
-}
-
 /** Canonical filesystem path (resolves 8.3 short names, symlinks and drive-letter case) when it exists. */
 export function canonical(p: string): string {
   try {

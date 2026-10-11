@@ -124,8 +124,6 @@ export const ProjectConfig = z.object({
   reviewPolicyVersion: nonBlank.default('review-v1'),
   reviewer: nonBlank.default('codex-review'),
   gateRequired: z.boolean().default(false),
-  /** 'strict' = upstream scaffold rules (acceptance and sweep block); 'advisory' = downstream contract (they warn). */
-  cardPolicy: z.enum(['strict', 'advisory']).default('strict'),
   maxWorkers: z.number().int().min(1).max(2).default(2),
   family: z.enum(['claude', 'gpt']).default('claude'),
   provider: z.enum(['claude-api', 'claude-code', 'mock']).default('claude-api'),
