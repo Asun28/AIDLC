@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP-DEAD-CODE
 title: Remove the unread lifecycle constant, the unread cardPolicy field, the target-less targetSelection config value, the uncalled resetRepoIdentityCache, the obsolete code-unchanged script and the two duplicate plan copies
-status: todo
+status: merged
 branch: T1-SWEEP-DEAD-CODE
 worktree: D:\wt\AIDLC\T1-SWEEP-DEAD-CODE
 plan_ref: plans/dead-code-sweep.md#order-of-work
