@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-LESSONS-FILE-CONST: `src/artifacts/lessons.ts` no longer exports `LESSONS_FILE`, which nothing read; `lessonsPath` is unchanged. The module is not re-exported by the library entry, so no public export changes.
+
 - T1-EVALS-NO-KEY: the agent-evals workflow and its `aidlc init` template run `aidlc evals run --skip-model --threshold 0.9`, the deterministic eval checks with no model, and no longer read an `ANTHROPIC_API_KEY` secret, install Claude Code or print a skip warning; T1-SWEEP-FLAGS-2 had run the claude-code provider only when that secret was set. The model-backed run is local: `aidlc evals run --provider claude-code --threshold 0.9` uses the Claude Code CLI login. `evals/README.md`, its template and `docs/OPERATIONS.md` say both.
 
 - T1-SWEEP-UNUSED-GATE: `tsconfig.json` turns on `noUnusedLocals` and `noUnusedParameters`, so `npm run typecheck` (sources and tests) and `npm run build` refuse an unused local, import or parameter. `ReviewQueue.markLost` takes `(key, detail)`: its `now` was never read and a lost request records no time. The 14 unused locals and imports in the tests are removed with no assertion changed; four reviewer runners whose first parameter is unused name it `_c`, the prefix the option exempts for a parameter before a used one.

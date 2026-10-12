@@ -8,7 +8,6 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const LESSONS_FILE = 'docs/LESSONS.md';
 /** The repository copy PREPARE reads and CLOSE appends to. */
 export function lessonsPath(mainRoot: string): string {
   return path.join(mainRoot, 'docs', 'LESSONS.md');
