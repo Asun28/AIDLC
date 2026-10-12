@@ -208,3 +208,21 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
     assert.equal(cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive']['kind'], 'done');
   });
 });
+
+describe('the lessons module carries no unread path constant (T0-LESSONS-FILE-CONST)', () => {
+  const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  test('acceptance 1: the module exports no LESSONS_FILE, and lessonsPath names <root>/docs/LESSONS.md [R1]', async () => {
+    const mod: Record<string, unknown> = await import('../../src/artifacts/lessons.ts');
+    assert.equal(Object.hasOwn(mod, 'LESSONS_FILE'), false);
+    const lessonsPath = mod['lessonsPath'] as (mainRoot: string) => string;
+    assert.equal(lessonsPath(root), path.join(root, 'docs', 'LESSONS.md'));
+  });
+
+  test('acceptance 4: the CHANGELOG Unreleased section names the card [R2]', () => {
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
+    const start = changelog.indexOf('## Unreleased');
+    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    assert.match(unreleased, /^- T0-LESSONS-FILE-CONST: .*`LESSONS_FILE`/m);
+  });
+});
