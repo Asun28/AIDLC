@@ -9,8 +9,14 @@ checks that exit 0/1. No model-graded opinions.
   `effort`, `checks[]`, `origin`.
 - Checks: `command` (argv + expected exit), `contains` / `not-contains`
   (file text), `output-matches` (regex on the model output), `json-field`.
-- Run: `aidlc evals run --threshold 0.9` (CI runs it on changes to CLAUDE.md,
-  `.claude/**`, `evals/**` and nightly). The pass rate gates the change.
+- CI runs `aidlc evals run --skip-model --threshold 0.9` on changes to
+  CLAUDE.md, `.claude/**`, `evals/**` and REVIEW.md, and nightly: the
+  deterministic checks only, with no model and no credentials. The pass
+  rate gates the change. Under `--skip-model` the `output-matches` and
+  `json-field` checks see no model output and fail.
+- Run the model-backed suite locally:
+  `aidlc evals run --provider claude-code --threshold 0.9` calls the
+  `claude` CLI, which uses your Claude Code CLI login; no API key is needed.
 - Every production incident becomes a permanent eval (`dimension:
   regression`, `origin: <incident or intent>`).
 

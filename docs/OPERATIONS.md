@@ -313,7 +313,7 @@ Eval cases live in `evals/*.json` (`EvalCase` in `src/evals/runner.ts`: `id`, `d
 aidlc evals run [--dir evals] [--threshold 0.9] [--provider mock|claude-code|claude-api] [--skip-model]
 ```
 
-The gate fails (exit 1) below the threshold. `templates/github/workflows/agent-evals.yml` runs the suite on changes to `CLAUDE.md`, `.claude/**` and `evals/**` and nightly. Every incident that ships a fix should add a `regression` eval.
+The gate fails (exit 1) below the threshold. `templates/github/workflows/agent-evals.yml` runs `aidlc evals run --skip-model --threshold 0.9` on changes to `CLAUDE.md`, `.claude/**`, `evals/**` and `REVIEW.md` and nightly: the deterministic checks only, with no model and no credentials, so the workflow needs no repository secret; under `--skip-model` the `output-matches` and `json-field` checks see no model output and fail. The model-backed run is local: `aidlc evals run --provider claude-code --threshold 0.9` calls the `claude` CLI, which uses the Claude Code CLI login of whoever runs it (card T1-EVALS-NO-KEY). Every incident that ships a fix should add a `regression` eval.
 
 ## Audit
 
