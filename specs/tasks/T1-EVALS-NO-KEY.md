@@ -1,7 +1,7 @@
 ---
 id: T1-EVALS-NO-KEY
 title: The agent-evals job runs the deterministic eval checks with no ANTHROPIC_API_KEY, and the docs name the local Claude Code run
-status: todo
+status: merged
 branch: T1-EVALS-NO-KEY
 worktree: D:\wt\AIDLC\T1-EVALS-NO-KEY
 plan_ref: plans/evals-no-key.md#order-of-work
