@@ -1,4 +1,4 @@
-// Card T1-SWEEP-FLAGS-2 (successor of T1-SWEEP-FLAGS): the eval workflow, the shipped command lines and the env var docs match what the CLI declares and reads.
+// Cards T1-SWEEP-FLAGS-2 (successor of T1-SWEEP-FLAGS) and T1-EVALS-NO-KEY: the eval workflow, the shipped command lines and the env var docs match what the CLI declares and reads.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -36,25 +36,30 @@ function step(workflow: string, opening: string): string[] {
   return out;
 }
 
-test('T1-SWEEP-FLAGS-2 acceptance 1: the eval job runs on claude-code only with the key and warns that it skipped otherwise [R1]', () => {
+// T1-EVALS-NO-KEY replaced the T1-SWEEP-FLAGS-2 acceptance 1 test here: the key-gated claude-code steps it pinned are gone (user ruling 2026-10-12).
+test('T1-EVALS-NO-KEY acceptance 1: the eval job runs the deterministic checks with no key, no Claude Code install and no skip step [R1]', () => {
   const live = read('.github/workflows/agent-evals.yml');
   assert.equal(read('templates/github/workflows/agent-evals.yml'), live);
-  assert.ok(live.includes("\n    env:\n      HAS_ANTHROPIC_KEY: ${{ secrets.ANTHROPIC_API_KEY != '' }}\n    steps:\n"), 'the evals job sets HAS_ANTHROPIC_KEY');
-  assert.deepEqual(step(live, 'name: Install Claude Code'), ['- name: Install Claude Code', "if: env.HAS_ANTHROPIC_KEY == 'true'", 'run: npm install -g @anthropic-ai/claude-code']);
-  assert.deepEqual(step(live, 'name: Run eval suite'), [
-    '- name: Run eval suite',
-    "if: env.HAS_ANTHROPIC_KEY == 'true'",
-    'env:',
-    'ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}',
-    'run: npx aidlc evals run --provider claude-code --threshold 0.9 --json > evals-result.json',
-  ]);
-  assert.deepEqual(step(live, 'name: Evals skipped'), [
-    '- name: Evals skipped',
-    "if: env.HAS_ANTHROPIC_KEY != 'true'",
-    'run: echo "::warning title=Evals skipped::ANTHROPIC_API_KEY is not set, so the eval suite did not run"',
-  ]);
-  assert.equal(live.split(/\r?\n/).filter((l) => /npm install -g @anthropic-ai\/claude-code|npx aidlc evals run/.test(l)).length, 2, 'no ungated install or eval run');
-  assert.ok(!live.includes('AIDLC_PROVIDER'), 'nothing reads AIDLC_PROVIDER');
+  assert.deepEqual(step(live, 'name: Run eval checks'), ['- name: Run eval checks', 'run: npx aidlc evals run --skip-model --threshold 0.9 --json > evals-result.json']);
+  assert.ok(!/^ {4}env:$/m.test(live), 'the evals job sets no env');
+  for (const gone of ['ANTHROPIC_API_KEY', 'HAS_ANTHROPIC_KEY', 'claude-code', 'AIDLC_PROVIDER', 'Install Claude Code', 'Evals skipped']) assert.ok(!live.includes(gone), `the workflow names ${gone}`);
+  assert.equal(live.split(/\r?\n/).filter((l) => l.includes('npx aidlc evals run')).length, 1, 'one eval run');
+});
+
+test('T1-EVALS-NO-KEY acceptance 2: the evals READMEs and the OPERATIONS Evals section name the CI run with no model and the local run on the Claude Code CLI login [R2]', () => {
+  assert.equal(read('templates/evals/README.md'), read('evals/README.md'));
+  const ops = flat('docs/OPERATIONS.md');
+  const section = ops.slice(ops.indexOf('## Evals '), ops.indexOf('## Audit '));
+  for (const [name, text] of [['evals/README.md', flat('evals/README.md')], ['the OPERATIONS Evals section', section]] as const) {
+    for (const needle of ['aidlc evals run --skip-model --threshold 0.9', 'aidlc evals run --provider claude-code --threshold 0.9', 'Claude Code CLI login']) assert.ok(text.includes(needle), `${name} names ${needle}`);
+  }
+});
+
+test('T1-EVALS-NO-KEY acceptance 3: the CHANGELOG Unreleased section names the card and T1-SWEEP-FLAGS-2 [R3]', () => {
+  const changelog = read('CHANGELOG.md');
+  const start = changelog.indexOf('## Unreleased');
+  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  assert.match(unreleased, /^- T1-EVALS-NO-KEY: .*T1-SWEEP-FLAGS-2/m);
 });
 
 test('T1-SWEEP-FLAGS-2 acceptance 2: no shipped command line names an option its command does not declare [R2]', () => {
