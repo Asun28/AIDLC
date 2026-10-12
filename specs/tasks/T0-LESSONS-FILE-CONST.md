@@ -1,7 +1,7 @@
 ---
 id: T0-LESSONS-FILE-CONST
 title: Remove the unread LESSONS_FILE constant from src/artifacts/lessons.ts
-status: todo
+status: merged
 branch: T0-LESSONS-FILE-CONST
 worktree: D:\wt\AIDLC\T0-LESSONS-FILE-CONST
 allow_paths:
