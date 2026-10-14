@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { canRerun, classifyCiFailure, gateChecks, hasUnreconciledRerun, reconcileRerun, recordRerunIntent } from '../../src/core/ci-policy.ts';
+import { canRerun, classifyCiFailure, hasUnreconciledRerun, reconcileRerun, recordRerunIntent, type CiJob } from '../../src/core/ci-policy.ts';
 import { classifyShipOutput } from '../../src/delivery/ship.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
@@ -329,6 +329,23 @@ describe('CI rerun allowance (Q7)', () => {
 });
 
 describe('security class (T1-LOOP-GATES R7)', () => {
+  /** The gate record the card runner hands classifyCiFailure: the ship receipt text as the log of an aggregate job. */
+  const shipGate = (text: string): CiJob => ({ name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: text });
+  /** The decoded names classifyCiFailure gives as security evidence for a gate text: its failed scan checks, in order. */
+  const redScans = (text: string): string[] => classifyCiFailure([shipGate(text)]).evidence.filter((e) => e.startsWith('security: ')).map((e) => e.slice('security: '.length));
+  /**
+   * Whether classifyCiFailure reads these checks (decoded name and conclusion) from a gate text with no red scan. Each
+   * check gets a failed `Set up job` step line and a direct job of the same name: with the same conclusion the failure is
+   * transient only when every red gate check is one of them and agrees; with another conclusion it is not, which shows
+   * the gate text reported that name.
+   */
+  const readsChecks = (text: string, checks: CiJob[]): boolean => {
+    const steps = checks.map((c) => `[CI-GATE-STEP] ${JSON.stringify({ check: c.name, job: '1', step: { number: 1, name: 'Set up job', conclusion: 'failure' } })}`);
+    const classify = (direct: CiJob[]) => classifyCiFailure([...direct, shipGate([text, ...steps].join('\n'))]).class;
+    const other = (c: CiJob): CiJob => ({ ...c, conclusion: c.conclusion === 'neutral' ? 'skipped' : 'neutral' });
+    return classify(checks) === 'transient' && checks.every((_, i) => classify(checks.map((c, j) => (j === i ? other(c) : c))) !== 'transient');
+  };
+
   test('a failed check run named for a secret scan classifies as security from the JSON gate line', () => {
     const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-A' }]);
     assert.equal(c.class, 'security');
@@ -361,7 +378,7 @@ describe('security class (T1-LOOP-GATES R7)', () => {
 
   test('names with =value fragments, recognised conclusion words inside them and underscore spellings survive; transient noise never earns the scan a rerun', () => {
     const line = '[CI-GATE-RED] [{"name":"scan (tool=gitleaks, os=linux)","conclusion":"failure"},{"name":"secret scan (tool=success, os=linux)","conclusion":"failure"},{"name":"secret_scan","conclusion":"failure"}]';
-    assert.deepEqual(gateChecks(line)?.map((c) => c.name), ['scan (tool=gitleaks, os=linux)', 'secret scan (tool=success, os=linux)', 'secret_scan']);
+    assert.deepEqual(redScans(line), ['scan (tool=gitleaks, os=linux)', 'secret scan (tool=success, os=linux)', 'secret_scan']);
     const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: line + '\nread ECONNRESET while fetching artifact' }]);
     assert.equal(c.class, 'security', c.evidence.join(' | '));
     assert.ok(c.evidence.includes('security: secret scan (tool=success, os=linux)'), 'a conclusion word inside a name never truncates it');
@@ -370,11 +387,15 @@ describe('security class (T1-LOOP-GATES R7)', () => {
 
   test('the JSON gate line keeps names with newlines and sentinel-like text; brackets and percent signs decode; a non-JSON gate line is opaque', () => {
     const jsonLine = '[CI-GATE-RED] [{"name":"scan (tool=gitleaks,\\nos=linux)","conclusion":"failure"},{"name":"%5BSHIP-MERGE-FAIL%5D 100%25 diagnostics","conclusion":"success"}]';
-    assert.deepEqual(gateChecks(jsonLine), [{ name: 'scan (tool=gitleaks,\nos=linux)', conclusion: 'failure' }, { name: '[SHIP-MERGE-FAIL] 100% diagnostics', conclusion: 'success' }]);
+    // A red scan is security before any other name counts, so the second entry is read on a red line of its own.
+    assert.deepEqual(redScans(jsonLine), ['scan (tool=gitleaks,\nos=linux)']);
+    assert.ok(readsChecks('[CI-GATE-RED] [{"name":"%5BSHIP-MERGE-FAIL%5D 100%25 diagnostics","conclusion":"success"}]', [{ name: '[SHIP-MERGE-FAIL] 100% diagnostics', conclusion: 'success' }]));
     const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: jsonLine + '\nread ECONNRESET while fetching artifact' }]);
     assert.equal(c.class, 'security', c.evidence.join(' | '));
-    assert.equal(gateChecks('[CI-GATE-TIMEOUT] 2 pending checks: [{"name":"ci","conclusion":null,"status":"in_progress"},{"name":"x","conclusion":null,"status":"absent"}]')?.length, 2, 'the timeout line is structured too');
-    assert.equal(gateChecks('[CI-GATE-RED] secret scan (tool=success, os=linux)=failure'), undefined, 'text after the sentinel is never parsed into names');
+    const timeout = '[CI-GATE-TIMEOUT] 2 pending checks: [{"name":"ci","conclusion":null,"status":"in_progress"},{"name":"x","conclusion":null,"status":"absent"}]';
+    assert.ok(readsChecks(`${timeout}\n[CI-GATE-RED] [{"name":"build","conclusion":"startup_failure"}]`, [{ name: 'ci', conclusion: null }, { name: 'x', conclusion: null }, { name: 'build', conclusion: 'startup_failure' }]), 'the timeout line is structured too');
+    const opaque = '[CI-GATE-RED] secret scan (tool=success, os=linux)=failure';
+    assert.deepEqual(redScans(opaque), [`unparsed red gate line naming a scan: ${opaque}`], 'text after the sentinel is never parsed into names');
   });
 
   test('a green scan next to a red build is a code defect: conclusions decide which scans count', () => {
@@ -386,7 +407,8 @@ describe('security class (T1-LOOP-GATES R7)', () => {
   test('a name with a Unicode line separator survives the JSON gate line, in the text and through the parser', () => {
     for (const sep of ['\u2028', '\u2029']) {
       const line = '[CI-GATE-RED] ' + JSON.stringify([{ name: `scan (tool=gitleaks,${sep}os=linux)`, conclusion: 'failure' }, { name: 'flaky-tests', conclusion: 'failure' }]);
-      assert.deepEqual(gateChecks(line)?.map((c) => c.name), [`scan (tool=gitleaks,${sep}os=linux)`, 'flaky-tests']);
+      assert.deepEqual(redScans(line), [`scan (tool=gitleaks,${sep}os=linux)`]);
+      assert.ok(readsChecks('[CI-GATE-RED] ' + JSON.stringify([{ name: 'flaky-tests', conclusion: 'failure' }]), [{ name: 'flaky-tests', conclusion: 'failure' }]), 'the second entry, on a red line of its own');
       const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: line + '\nread ECONNRESET while fetching artifact' }]);
       assert.equal(c.class, 'security', c.evidence.join(' | '));
     }
@@ -395,7 +417,7 @@ describe('security class (T1-LOOP-GATES R7)', () => {
   test('the safe legacy form still counts: plain name=conclusion pairs parse, an ambiguous red line with a scan name fails closed, the scaffold text stays free text', () => {
     const legacy = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret_scan=failure\nread ECONNRESET while fetching artifact' }]);
     assert.equal(legacy.class, 'security', legacy.evidence.join(' | '));
-    assert.deepEqual(gateChecks('[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure'), [{ name: 'Gitleaks (committed history)', conclusion: 'success' }, { name: 'build-test', conclusion: 'failure' }]);
+    assert.ok(readsChecks('[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure', [{ name: 'Gitleaks (committed history)', conclusion: 'success' }, { name: 'build-test', conclusion: 'failure' }]));
     const green = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] Gitleaks (committed history)=success,build-test=failure\nAssertionError: expected 1 to equal 2' }]);
     assert.equal(green.class, 'code-defect', green.evidence.join(' | '));
     const ambiguous = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: '[CI-GATE-RED] secret scan (tool=success, os=linux)=failure\nread ECONNRESET while fetching artifact' }]);
@@ -405,7 +427,8 @@ describe('security class (T1-LOOP-GATES R7)', () => {
 
   test('every red gate line counts: a scan failure on a later line wins over an earlier build failure and transient text', () => {
     const text = '[CI-GATE-RED] [{"name":"build-test","conclusion":"failure"}]\n[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\nread ECONNRESET while fetching artifact';
-    assert.deepEqual(gateChecks(text)?.map((c) => c.name), ['build-test', 'Gitleaks (committed history)']);
+    assert.deepEqual(redScans(text), ['Gitleaks (committed history)']);
+    assert.ok(readsChecks(text.split('\n')[0]!, [{ name: 'build-test', conclusion: 'failure' }]), 'the first line, read without the red scan of the second');
     const c = classifyCiFailure([{ name: 'ship-ci-gate', conclusion: 'failure', logExcerpt: text }]);
     assert.equal(c.class, 'security', c.evidence.join(' | '));
   });
