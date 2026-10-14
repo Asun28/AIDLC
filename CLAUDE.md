@@ -107,9 +107,9 @@ calls `Date.now()`.
   `templates/aidlc.config.json` is the copy `aidlc init` installs; add new
   fields to both.
 - `AIDLC_STATE_DIR` overrides the state directory. `AIDLC_SESSION` (else
-  `CLAUDE_CODE_SESSION_ID`, else the older `CLAUDE_SESSION_ID`) identifies
-  the session for leases and the journal. The hooks read `AIDLC_FIX_TASK`
-  and `AIDLC_RELEASE_APPROVAL`; aidlc sets `AIDLC_TARGET_ENV` for an ops
+  `CLAUDE_CODE_SESSION_ID`) identifies the session for leases and the
+  journal. The hooks read `AIDLC_FIX_TASK` and `RELEASE_APPROVAL` (else
+  `AIDLC_RELEASE_APPROVAL`); aidlc sets `AIDLC_TARGET_ENV` for an ops
   command whose binding has `targetSelection: env`, and `aidlc run` sets
   `AIDLC_RUN_NO_SHIP=1` for its provider.
 - `.aidlc/`, `.review/`, `_local/` and the planning scratch files

@@ -219,7 +219,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
-        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID'] || process.env['CLAUDE_SESSION_ID']
+        session: existsSync(c.paths.root) || process.env['AIDLC_SESSION'] || process.env['CLAUDE_CODE_SESSION_ID']
           ? `${currentActor().session} (${describeSessionSource(resolveSessionId().source)})`
           : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
         workingTree: doctorWorkingTree(c),
@@ -1075,7 +1075,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('check')
     .action(() => {
       const c = ctx(g());
-      out(c, { status: 'NOT CONFIGURED', detail: 'bind the project security scanner (e.g. scripts/check-secrets.ps1 -Strict, /security-review-local) in aidlc.config.json or CI; a missing scanner is never a pass' }, () => 'security: NOT CONFIGURED (bind the project scanner; never a pass)');
+      out(c, { status: 'NOT CONFIGURED', detail: "aidlc binds no security scanner; run the project's own scanner or a CI security job; a missing scanner is never a pass" }, () => "security: NOT CONFIGURED (aidlc binds no scanner; run the project's own or a CI security job; never a pass)");
       process.exitCode = 2;
     });
 
