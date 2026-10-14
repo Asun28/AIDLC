@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP2-DUPLICATES
 title: Remove the test-only copies of rules production enforces another way (card transition table, tag authority, counted-attempt constant, goal DONE evidence, default bands text, two uncalled CardRunner statics) and test the production paths instead
-status: todo
+status: merged
 branch: T1-SWEEP2-DUPLICATES
 worktree: D:\wt\AIDLC\T1-SWEEP2-DUPLICATES
 plan_ref: plans/dead-code-sweep-2.md#order-of-work
