@@ -82,8 +82,9 @@ test('T1-SWEEP-FLAGS-2 acceptance 2: no shipped command line names an option its
 
 test('T1-SWEEP-FLAGS-2 acceptance 4: CLAUDE.md and OPERATIONS name the env vars the code reads and sets; the CHANGELOG names the card [R3] [R4]', () => {
   const claude = flat('CLAUDE.md');
-  assert.ok(claude.includes('`AIDLC_SESSION` (else `CLAUDE_CODE_SESSION_ID`, else the older `CLAUDE_SESSION_ID`) identifies the session for leases and the journal.'));
-  assert.ok(claude.includes('The hooks read `AIDLC_FIX_TASK` and `AIDLC_RELEASE_APPROVAL`; aidlc sets `AIDLC_TARGET_ENV` for an ops command whose binding has `targetSelection: env`, and `aidlc run` sets `AIDLC_RUN_NO_SHIP=1` for its provider.'));
+  // T1-SWEEP2-FLAGS acceptance 5 updated both sentences: no CLAUDE_SESSION_ID, and both release approval variables.
+  assert.ok(claude.includes('`AIDLC_SESSION` (else `CLAUDE_CODE_SESSION_ID`) identifies the session for leases and the journal.'));
+  assert.ok(claude.includes('The hooks read `AIDLC_FIX_TASK` and `RELEASE_APPROVAL` (else `AIDLC_RELEASE_APPROVAL`); aidlc sets `AIDLC_TARGET_ENV` for an ops command whose binding has `targetSelection: env`, and `aidlc run` sets `AIDLC_RUN_NO_SHIP=1` for its provider.'));
   assert.ok(!claude.includes('`AIDLC_TARGET_ENV` are read by the hooks'), 'aidlc never reads AIDLC_TARGET_ENV');
   assert.ok(
     flat('docs/OPERATIONS.md').includes('The driver runs the provider with `AIDLC_RUN_NO_SHIP=1`, under which the CLI does not ship: `aidlc card next` returns a `wait` on `driver-ship-boundary` where it would ship, and `aidlc card ship` fails (`tests/scenarios/run-driver.test.ts` runs both).'),
@@ -92,4 +93,24 @@ test('T1-SWEEP-FLAGS-2 acceptance 4: CLAUDE.md and OPERATIONS name the env vars 
   const start = changelog.indexOf('## Unreleased');
   const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
   assert.match(unreleased, /^- T1-SWEEP-FLAGS-2 \(supersedes T1-SWEEP-FLAGS\): the agent-evals workflow passes `--provider claude-code` /m);
+});
+
+test('T1-SWEEP2-FLAGS acceptance 5: no doc says CLAUDE_SESSION_ID is read, OPERATIONS states the approval precedence and the no-goal-records admission, and the CHANGELOG names the card [R1] [R4] [R5]', () => {
+  for (const file of ['CLAUDE.md', 'docs/ARCHITECTURE.md', 'docs/OPERATIONS.md']) assert.ok(!read(file).includes('CLAUDE_SESSION_ID'), `${file} names CLAUDE_SESSION_ID`);
+  assert.ok(flat('docs/ARCHITECTURE.md').includes("the session id comes from `AIDLC_SESSION`, then the Claude Code session (`CLAUDE_CODE_SESSION_ID`, exported to Claude Code's subprocesses), then a per-repository default token in `.aidlc/session-default`"));
+  assert.ok(flat('docs/OPERATIONS.md').includes('else the Claude Code session, which Claude Code exports to its Bash and PowerShell subprocesses as `CLAUDE_CODE_SESSION_ID`, else the default token in `.aidlc/session-default`'));
+  const row = read('docs/OPERATIONS.md').split(/\r?\n/).find((l) => l.startsWith('| `production-gate` |'));
+  assert.equal(
+    row,
+    '| `production-gate` | PreToolUse Bash | the command matches a deploy/release verb together with `prod|production|live` and `RELEASE_APPROVAL` (or `AIDLC_RELEASE_APPROVAL`) is unset or does not name a recorded production authorization; exit 2 with the reason. `RELEASE_APPROVAL` wins when both are set, and a repository with no goal records (no `goals/` directory in the state directory) admits any non-empty value |',
+  );
+  const changelog = read('CHANGELOG.md');
+  const start = changelog.indexOf('## Unreleased');
+  const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+  assert.ok(
+    unreleased.includes(
+      "- T1-SWEEP2-FLAGS: the session resolution (`resolveSessionId` and the `aidlc doctor` session line) no longer reads `CLAUDE_SESSION_ID`, which Claude Code never exported; it reads `AIDLC_SESSION`, then `CLAUDE_CODE_SESSION_ID`, then the default token. A process that set only `CLAUDE_SESSION_ID` by hand now resolves to `CLAUDE_CODE_SESSION_ID` or the default token; set `AIDLC_SESSION` instead. `GoalCounters` drops `lifecycleRepairCycles`, `providerWaitMs` and `planningMs`, which nothing read: a goal record that carries them still parses and loses them on its next save. `aidlc security check` still exits 2 with `NOT CONFIGURED`; its detail now reads `aidlc binds no security scanner; run the project's own scanner or a CI security job; a missing scanner is never a pass` and no longer names an `aidlc.config.json` binding that does not exist. The production gate's deny text for an unset approval names both `RELEASE_APPROVAL` and `AIDLC_RELEASE_APPROVAL`; the gate admits and blocks the same commands, and `docs/OPERATIONS.md` states that `RELEASE_APPROVAL` wins when both are set and that a repository with no goal records admits any non-empty value.",
+    ),
+    'the CHANGELOG Unreleased section names the card, the dropped fallback with AIDLC_SESSION as the override, the three counters, the security check detail and the deny text',
+  );
 });

@@ -566,7 +566,6 @@ test('run worker carries the driver session into a child that replaces Claude id
     for (const claude of ['parent-claude', undefined]) {
       const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: '../.aidlc' };
       delete env.AIDLC_SESSION;
-      delete env.CLAUDE_SESSION_ID;
       if (claude) env.CLAUDE_CODE_SESSION_ID = claude;
       else delete env.CLAUDE_CODE_SESSION_ID;
       const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: nested, env, encoding: 'utf8', timeout: 30_000 });

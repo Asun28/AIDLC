@@ -438,7 +438,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   if (matched) return { exitCode: 0 };
   const reason = approvalRef
     ? `Production deploys need a release authorization that matches this candidate/environment; "${approvalRef}" does not match any recorded production authorization. Record it with \`aidlc authorize production ...\` first.`
-    : 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
+    : 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>, or AIDLC_RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
   return { exitCode: 2, stderr: reason };
 }
 

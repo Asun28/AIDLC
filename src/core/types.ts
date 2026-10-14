@@ -818,9 +818,6 @@ export type GoalRevision = z.infer<typeof GoalRevision>;
 export const GoalCounters = z.object({
   planningInvocations: z.number().int().nonnegative().default(0),
   integrationRepairCycles: z.number().int().nonnegative().default(0),
-  lifecycleRepairCycles: z.number().int().nonnegative().default(0),
-  providerWaitMs: z.number().int().nonnegative().default(0),
-  planningMs: z.number().int().nonnegative().default(0),
 });
 export type GoalCounters = z.infer<typeof GoalCounters>;
 

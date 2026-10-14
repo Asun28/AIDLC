@@ -145,6 +145,11 @@ describe('types: schema round-trips', () => {
     assert.deepEqual(Goal.parse(JSON.parse(JSON.stringify(g))), g);
   });
 
+  test('T1-SWEEP2-FLAGS acceptance 2: a goal record with the dropped counters parses, and its counters keep only planningInvocations and integrationRepairCycles [R2]', () => {
+    const record = { ...JSON.parse(JSON.stringify(goal())), counters: { planningInvocations: 2, integrationRepairCycles: 3, lifecycleRepairCycles: 1, providerWaitMs: 5, planningMs: 7 } };
+    assert.deepEqual(Goal.parse(record).counters, { planningInvocations: 2, integrationRepairCycles: 3 });
+  });
+
   test('Goal refuses a maxWorkers above the cap of two and an empty revision list', () => {
     assert.equal(Goal.safeParse({ ...goal(), maxWorkers: 3 }).success, false);
     assert.equal(Goal.safeParse({ ...goal(), revisions: [] }).success, false);

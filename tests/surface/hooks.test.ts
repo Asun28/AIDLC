@@ -273,7 +273,8 @@ test('verify-before-done acts as the hook event session: the event session_id, u
   // an event without session_id keeps the environment order
   assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-hook' }), ['T1-FOO']);
   assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_CODE_SESSION_ID: 'sess-other' }), []);
-  assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_SESSION_ID: 'sess-hook' }), ['T1-FOO']);
+  // T1-SWEEP2-FLAGS acceptance 1: the older CLAUDE_SESSION_ID is not read, so the hook acts as the default token, which owns no card
+  assert.deepEqual(stop({ hook_event_name: 'Stop' }, { ...env, CLAUDE_SESSION_ID: 'sess-hook' }), []);
   // the dispatcher resolves the same way
   assert.deepEqual(stopCards(dispatchHook({ hook_event_name: 'Stop', session_id: 'sess-hook' }, { cwd, env })), ['T1-FOO']);
   assert.deepEqual(dispatchHook({ hook_event_name: 'Stop', session_id: 'sess-other' }, { cwd, env }), { exitCode: 0 });
@@ -898,7 +899,8 @@ test('T0-HOOK-CONFIG-NONSTRING acceptance 4: the CHANGELOG Unreleased section st
 
 // ---------------------------------------------------------------- T0-HOOK-CLASSIFIER-3 (issue 120)
 
-const GATE_TEXT = 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
+/** The deny text for an unset approval; T1-SWEEP2-FLAGS acceptance 4: it names both variables the gate reads. */
+const GATE_TEXT = 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>, or AIDLC_RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
 
 /** The split pins of acceptance 1, reused by the invariant of acceptance 6. */
 const SPLIT_PINS = ['make deploy 2>&1 production', 'make deploy >&2 production', 'make deploy &> log production', 'make deploy &>> log production', 'make a && make b', 'make a || make b ; make c | make d', 'cat notes & make y', 'cat notes\nmake y', 'cat notes\r\nmake y', 'cat notes\rmake y', 'make a & make b'];
