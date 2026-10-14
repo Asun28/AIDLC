@@ -22,7 +22,7 @@ acceptance:
   - 1. `tests/surface/fix-task-clear.test.ts` spawns `node bin/aidlc.js card fix-task T1-X` in a temp repository with `AIDLC_STATE_DIR` set, then `node bin/aidlc.js card fix-task --clear`: both exit 0, the `fix-task` file no longer exists, and `fixTaskMarker(<cwd>, <env>)` returns undefined (before the clear it returns `T1-X`); `protectTests` admits an Edit of a test file after the clear and blocks it before. [R1] [dod arm 2]
   - 2. The same file: `--clear` with no marker present exits 0 and creates no file; an empty `fix-task` file written by hand still makes `fixTaskMarker` return `fix-task`. [R1] [dod arm 2]
   - 3. The same file: `CardRunner.prototype` has no `setFixTaskMarker`; `docs/ARCHITECTURE.md`'s `fix-task` row names `card fix-task` and not `loop/card-runner.ts`; the CHANGELOG Unreleased section has a T1-SWEEP2-FIX-TASK entry. [R2] [R3] [dod arm 2]
-  - 4. `tests/surface/hooks.test.ts` passes unchanged. [R1] [dod arm 3]
+  - 4. `tests/surface/hooks.test.ts` passes (dod arm 3); that none of its assertions changed is reviewer-verified against the diff. [R1] [dod arm 3]
 depends_on: []
 budget: 140
 tdd: true

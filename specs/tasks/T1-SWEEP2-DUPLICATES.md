@@ -37,7 +37,7 @@ acceptance:
   - 2. `tests/scenarios/release-publication.test.ts`: a staging release whose `deploy` binding has `triggersPublication: true` stops `release-auth` with no operation issued when the goal has no production authorization for the environment, and issues the deploy when it has one. [R3] [dod arm 3]
   - 3. `tests/scenarios/goal-close-stages.test.ts`: a goal in CLOSE whose cards are closed and whose `staging` stage is `pending` gets a `close` directive whose `missing` holds `stage staging=pending` and no `not_requested` stage; with the stage `pass` it reaches DONE. [R3] [dod arm 4]
   - 4. `tests/core/effort.test.ts` asserts that the ladder admits four counted attempts and refuses a fifth through `nextEffortAction`, with no import of a removed name; `tests/surface/bands.test.ts` and `tests/surface/templates.test.ts` parse `templates/bands.yaml` in place of `DEFAULT_BANDS_YAML`. [R4] [dod arms 7, 9, 10]
-  - 5. `tests/core/card-machine.test.ts`, `tests/core/release-machine.test.ts` and `tests/core/goal-machine.test.ts` pass with only the tests of the removed names taken out. [R4] [dod arms 5, 6, 8]
+  - 5. `tests/core/card-machine.test.ts`, `tests/core/release-machine.test.ts` and `tests/core/goal-machine.test.ts` pass (dod arms 5, 6, 8); that only the tests of the removed names were taken out is reviewer-verified against the diff. [R4] [dod arms 5, 6, 8]
   - 6. The same removed-surface file reads no `goalDoneEvidence` or `tagActionRequiresAuthority` in `docs/REQUIREMENTS-TRACEABILITY.md` and a T1-SWEEP2-DUPLICATES entry in the CHANGELOG Unreleased section. [R5] [dod arm 2]
 depends_on: [T1-SWEEP2-FIX-TASK]
 budget: 300

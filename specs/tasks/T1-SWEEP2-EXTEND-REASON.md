@@ -20,7 +20,7 @@ requirements:
 acceptance:
   - 1. `tests/scenarios/extend-reason.test.ts`: with the scenario harness, `controller.extendDeadline(goal, 'lead', <later ISO>, '   ')` and with `''` throw `extension requires a recorded reason`; afterwards the goal record, every card run and the journal are byte-identical to before the call. [R1] [dod arm 2]
   - 2. The same file: an earlier deadline still throws `extension must move the deadline later`, and a valid call records exactly one extension whose `reason` is the given text. [R2] [dod arm 2]
-  - 3. `tests/scenarios/extend-running-card.test.ts`, `tests/scenarios/deadline.test.ts` and `tests/core/deadlines.test.ts` pass unchanged. [R2] [dod arms 3, 4, 5]
+  - 3. `tests/scenarios/extend-running-card.test.ts`, `tests/scenarios/deadline.test.ts` and `tests/core/deadlines.test.ts` pass (dod arms 3, 4, 5); that none of their assertions changed is reviewer-verified against the diff. [R2] [dod arms 3, 4, 5]
   - 4. The same new file reads the blank-reason sentence in `docs/OPERATIONS.md` and a T1-SWEEP2-EXTEND-REASON entry in the CHANGELOG Unreleased section. [R3] [dod arm 2]
 depends_on: []
 budget: 120

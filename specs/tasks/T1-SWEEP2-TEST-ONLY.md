@@ -45,10 +45,10 @@ requirements:
   - R5. The comment at `src/delivery/ship.ts:98` shall name the function that decodes the check names after `gateChecks` goes, and the CHANGELOG Unreleased section shall carry an entry naming this card, the eight removed exports and the removed option.
 acceptance:
   - 1. `tests/surface/removed-surface.test.ts`: `src/index.ts` exports none of the eight R1 names and still exports `effectiveGoalDeadline`, `formatStop`, `classifyCiFailure`, `parseSpec` and `parsePlan`; the source of `src/providers/claude-api.ts` holds no `showThinking` and requests `display: 'omitted'`. [R1] [dod arm 2]
-  - 2. `tests/scenarios/ci-rerun.test.ts`, `tests/scenarios/review-block.test.ts`, `tests/scenarios/ship-failing-line.test.ts`, `tests/scenarios/t0-flow.test.ts`, `tests/infra/goal-store.test.ts`, `tests/infra/paths.test.ts`, `tests/surface/spec.test.ts` and `tests/surface/plan.test.ts` pass with only their imports changed. [R2] [dod arms 6-14]
-  - 3. `tests/core/ci-policy.test.ts`: every former `gateChecks` assertion holds through `classifyCiFailure` on the same gate text; `tests/core/deadlines.test.ts`, `tests/core/stop.test.ts` and `tests/surface/evals.test.ts` pass with only the tests of removed names taken out. [R3] [dod arms 3, 4, 5, 13]
+  - 2. `tests/scenarios/ci-rerun.test.ts`, `tests/scenarios/review-block.test.ts`, `tests/scenarios/ship-failing-line.test.ts`, `tests/scenarios/t0-flow.test.ts`, `tests/infra/goal-store.test.ts`, `tests/infra/paths.test.ts`, `tests/surface/spec.test.ts` and `tests/surface/plan.test.ts` pass (dod arms 6-14); that only their imports changed is reviewer-verified against the diff. [R2] [dod arms 6-14]
+  - 3. `tests/core/ci-policy.test.ts`: every former `gateChecks` assertion holds through `classifyCiFailure` on the same gate text; `tests/core/deadlines.test.ts`, `tests/core/stop.test.ts` and `tests/surface/evals.test.ts` pass (dod arms 3, 4, 5, 13); that only the tests of removed names were taken out is reviewer-verified against the diff. [R3] [dod arms 3, 4, 5, 13]
   - 4. The same removed-surface file reads the rows MA3, LC9, R25-R27, Q5 and LC4 of `docs/REQUIREMENTS-TRACEABILITY.md`: each names its uncalled check and says the loop does not call it; `src/delivery/ship.ts` does not name `gateChecks`; the CHANGELOG Unreleased section has a T1-SWEEP2-TEST-ONLY entry. [R4] [R5] [dod arm 2]
-  - 5. `tests/surface/providers.test.ts` passes unchanged. [R1] [dod arm 15]
+  - 5. `tests/surface/providers.test.ts` passes (dod arm 15); that it is unchanged is reviewer-verified against the diff. [R1] [dod arm 15]
 depends_on: [T1-SWEEP2-DUPLICATES]
 budget: 450
 tdd: true
