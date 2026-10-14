@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP2-FIX-TASK
 title: "`aidlc card fix-task --clear` deletes the fix-task marker so test files unlock, and the uncalled `CardRunner.setFixTaskMarker` goes"
-status: todo
+status: merged
 branch: T1-SWEEP2-FIX-TASK
 worktree: D:\wt\AIDLC\T1-SWEEP2-FIX-TASK
 plan_ref: plans/dead-code-sweep-2.md#order-of-work
