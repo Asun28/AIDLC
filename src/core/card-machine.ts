@@ -8,7 +8,7 @@
  */
 import { checkAdmission } from './deadlines.ts';
 import { makeStop } from './stop.ts';
-import type { CardRun, CardState, StopRecord } from './types.ts';
+import type { CardState, StopRecord } from './types.ts';
 
 export interface CardEvidence {
   now: string;
@@ -124,24 +124,4 @@ export function selectCardState(ev: CardEvidence): CardDecision {
   if (ev.candidateReady) return { state: 'SHIP', reason: 'dispatch/resume the existing ship path with preserved base and mode', admitMutations: true };
 
   return { state: 'BUILD', reason: 'no ready candidate; continue acceptance work', admitMutations: true };
-}
-
-/** Apply a decision to a durable card run record. */
-export function applyCardDecision(run: CardRun, decision: CardDecision, now: string): CardRun {
-  return { ...run, state: decision.state, stop: decision.stop ?? run.stop, updatedAt: now };
-}
-
-export const CARD_TRANSITIONS: Record<CardState, CardState[]> = {
-  PREPARE: ['BUILD', 'WAIT', 'STOP', 'CLOSE', 'DONE'],
-  BUILD: ['SHIP', 'WAIT', 'STOP', 'BUILD'],
-  SHIP: ['WAIT', 'REVIEW_FIX', 'BUILD', 'CLOSE', 'STOP'],
-  REVIEW_FIX: ['SHIP', 'BUILD', 'STOP', 'WAIT'],
-  WAIT: ['BUILD', 'SHIP', 'REVIEW_FIX', 'CLOSE', 'STOP', 'DONE', 'PREPARE'],
-  CLOSE: ['DONE', 'STOP', 'WAIT'],
-  DONE: [],
-  STOP: [],
-};
-
-export function isCardTransitionAllowed(from: CardState, to: CardState): boolean {
-  return from === to || CARD_TRANSITIONS[from].includes(to);
 }

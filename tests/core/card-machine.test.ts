@@ -1,9 +1,9 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CARD_TRANSITIONS, applyCardDecision, isCardTransitionAllowed, selectCardState, type CardEvidence } from '../../src/core/card-machine.ts';
+import { selectCardState, type CardEvidence } from '../../src/core/card-machine.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
-import { T0, T_CARD_DEADLINE, cardRun } from './_fixtures.ts';
+import { T0, T_CARD_DEADLINE } from './_fixtures.ts';
 
 function ev(overrides: Partial<CardEvidence> = {}): CardEvidence {
   return {
@@ -100,24 +100,5 @@ describe('card state precedence (Q8 / Q18)', () => {
     assert.equal(selectCardState(ev({ buildIncomplete: true, candidateReady: true })).state, 'BUILD');
     assert.equal(selectCardState(ev({ candidateReady: true })).state, 'SHIP');
     assert.equal(selectCardState(ev()).state, 'BUILD');
-  });
-
-  test('applyCardDecision persists state and stop', () => {
-    const run = cardRun();
-    const d = selectCardState(ev({ ownershipCurrent: false }));
-    const next = applyCardDecision(run, d, addMs(T0, 1000));
-    assert.equal(next.state, 'STOP');
-    assert.equal(next.stop?.reason, 'ownership');
-    assert.equal(next.updatedAt, addMs(T0, 1000));
-    assert.equal(run.state, 'BUILD', 'input is not mutated');
-  });
-
-  test('transition table: terminal states have no exits; self-transition is allowed', () => {
-    assert.deepEqual(CARD_TRANSITIONS.DONE, []);
-    assert.deepEqual(CARD_TRANSITIONS.STOP, []);
-    assert.equal(isCardTransitionAllowed('DONE', 'BUILD'), false);
-    assert.equal(isCardTransitionAllowed('BUILD', 'BUILD'), true);
-    assert.equal(isCardTransitionAllowed('SHIP', 'REVIEW_FIX'), true);
-    assert.equal(isCardTransitionAllowed('PREPARE', 'SHIP'), false);
   });
 });

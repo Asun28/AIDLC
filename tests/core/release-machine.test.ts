@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RELEASE_TRANSITIONS, ReleaseTransitionError, assertReleaseTransition, finalStateForTarget, nextAfterObserve, tagActionRequiresAuthority, transitionRelease } from '../../src/core/release-machine.ts';
+import { RELEASE_TRANSITIONS, ReleaseTransitionError, assertReleaseTransition, finalStateForTarget, nextAfterObserve, transitionRelease } from '../../src/core/release-machine.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { T0, auth, release } from './_fixtures.ts';
 
@@ -129,12 +129,5 @@ describe('release state machine (LC5 / Q16-Q22)', () => {
     const s = transitionRelease(stg, 'STOP', T0, {}, makeStop('release-health', 'no telemetry', 'wire probes', { at: T0 }));
     assert.equal(s.disposition, 'failed');
     assert.equal(s.stop?.reason, 'release-health');
-  });
-
-  test('Q17: tag/publish actions that trigger external publication need authority', () => {
-    assert.equal(tagActionRequiresAuthority({ pushesTag: true }), true);
-    assert.equal(tagActionRequiresAuthority({ workflowTriggeredByTag: true }), true);
-    assert.equal(tagActionRequiresAuthority({ createsRelease: true }), true);
-    assert.equal(tagActionRequiresAuthority({}), false);
   });
 });

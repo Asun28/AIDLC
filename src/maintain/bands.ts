@@ -129,17 +129,3 @@ export function evaluateBands(config: BandsConfig, baselineSamples: number[], re
 export function breachIdentity(b: BandBreach): string {
   return `${b.metric}:${b.rule}:${b.side}:${b.tier}`;
 }
-
-export const DEFAULT_BANDS_YAML = `# Control-band monitoring (Stage 6). Detection is deterministic; Claude is invoked only when a band breaches.
-metric: ci_test_failure_rate
-baseline: rolling_30d
-rules: western_electric
-min_samples: 8
-direction: above
-tiers:
-  1sigma: { action: log }
-  2sigma: { action: diagnose, tools: "Read,Grep,Bash(gh run view *)" }
-  3sigma: { action: propose, routes: [pull_request, runbook:rollback-deploy] }
-owner: service-owner
-dedupe_window_ms: 21600000
-`;

@@ -150,8 +150,3 @@ export function nextAfterObserve(health: HealthResult, windowElapsed: boolean, w
   if (health === 'INSUFFICIENT_DATA' && !withinMaxWait) return 'STOP';
   return 'WAIT';
 }
-
-/** Whether a tag/release action publishes externally and therefore belongs behind authorization. */
-export function tagActionRequiresAuthority(action: { pushesTag?: boolean; createsRelease?: boolean; workflowTriggeredByTag?: boolean }): boolean {
-  return Boolean(action.pushesTag || action.createsRelease || action.workflowTriggeredByTag);
-}
