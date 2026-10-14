@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP2-TEST-ONLY
 title: Remove the exports only tests call, move the four test fixtures into the tests, and make the traceability rows of uncalled pure checks say so
-status: todo
+status: merged
 branch: T1-SWEEP2-TEST-ONLY
 worktree: D:\wt\AIDLC\T1-SWEEP2-TEST-ONLY
 plan_ref: plans/dead-code-sweep-2.md#order-of-work
