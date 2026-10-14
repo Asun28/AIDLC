@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP2-EXTEND-REASON
 title: "`GoalController.extendDeadline` builds the extension with the core `extendDeadline` rule, so a blank reason is refused before anything is written"
-status: todo
+status: merged
 branch: T1-SWEEP2-EXTEND-REASON
 worktree: D:\wt\AIDLC\T1-SWEEP2-EXTEND-REASON
 plan_ref: plans/dead-code-sweep-2.md#order-of-work
