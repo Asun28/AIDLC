@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-SWEEP2-EXTEND-REASON (bugfix): `aidlc goal extend` refuses a blank `--reason` (empty or only whitespace) with `extension requires a recorded reason` before writing anything. `GoalController.extendDeadline` now builds the extension with the core `extendDeadline` (`src/core/deadlines.ts`), whose reason check the controller's own copy of the rule lacked.
+
 - T1-SWEEP2-FIX-TASK (bugfix): `aidlc card fix-task --clear` deletes the `fix-task` marker instead of writing an empty one, which the protect-tests hook read as an active fix task, so test files now unlock after a clear. The uncalled `CardRunner.setFixTaskMarker`, which cleared the same way, is removed. A stale empty marker left by an earlier `--clear` still locks: run `aidlc card fix-task --clear` once more to remove it.
 
 - T0-LESSONS-FILE-CONST: `src/artifacts/lessons.ts` no longer exports `LESSONS_FILE`, which nothing read; `lessonsPath` is unchanged. The module is not re-exported by the library entry, so no public export changes.

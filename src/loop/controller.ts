@@ -12,7 +12,7 @@ import path from 'node:path';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { selectArc, canOpenIntegrationRepair, prerequisitesClosedElsewhere, type CardOutcome } from '../core/arc.ts';
-import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline } from '../core/deadlines.ts';
+import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline, extendDeadline } from '../core/deadlines.ts';
 import { GoalTransitionError, stagesForTarget, transitionGoal } from '../core/goal-machine.ts';
 import { classifyRequest, formatRouting } from '../core/router.ts';
 import { parseIntent } from '../artifacts/intent.ts';
@@ -698,13 +698,13 @@ export class GoalController {
   }
   extendDeadline(goalId: string, by: string, newDeadline: string, reason: string): Goal {
     const goal = this.mustGoal(goalId);
-    const extended = { ...goal, deadlines: { ...goal.deadlines, extensions: [...goal.deadlines.extensions, { at: this.clock(), by, newDeadline, reason }] } };
     if (!IsoTimestamp.safeParse(newDeadline).success) throw new Error(`extension deadline must be an ISO-8601 UTC timestamp (YYYY-MM-DDTHH:MM:SS.sssZ), got "${newDeadline}"`);
     // The shape check admits day and hour values no calendar has (2026-02-30, 24:00:00), which Date.parse rolls over silently;
     // only a timestamp that round-trips is recorded.
     const deadlineMs = Date.parse(newDeadline);
     if (Number.isNaN(deadlineMs) || new Date(deadlineMs).toISOString().slice(0, 19) !== newDeadline.slice(0, 19)) throw new Error(`extension deadline ${newDeadline} is not a calendar date and time`);
-    if (Date.parse(newDeadline) <= Date.parse(effectiveGoalDeadline(goal.deadlines))) throw new Error('extension must move the deadline later');
+    // The core rule refuses an earlier deadline and a blank reason before anything is written (card T1-SWEEP2-EXTEND-REASON).
+    const extended = { ...goal, deadlines: extendDeadline(goal.deadlines, by, newDeadline, reason, this.clock()) };
     this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { extension: { by, newDeadline, reason } } });
     // The extension is the explicit authority a time stop asks for: the goal and every card of it stopped for time are
     // re-admitted under the new deadline, and every card of it still in progress takes that deadline too (card
