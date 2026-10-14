@@ -41,10 +41,6 @@ export function reopenAfterReviewBlock(episode: EffortEpisode, reason: string): 
   return { ...episode, attempts, terminal: undefined };
 }
 
-export function countedFailures(episode: EffortEpisode): Attempt[] {
-  return episode.attempts.filter((a) => a.outcome === 'fail');
-}
-
 export type NextEffortAction =
   | { action: 'attempt'; effort: EffortLevel; n: number; escalated: boolean }
   | { action: 'done' }

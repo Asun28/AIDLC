@@ -1,7 +1,8 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Card, CardRun, Goal, type ActorIdentity, type DeliveryTarget, type StageStatus } from '../../src/core/types.ts';
+import type { StatePaths } from '../../src/state/paths.ts';
 
 export function tmpDir(): string {
   return mkdtempSync(path.join(os.tmpdir(), 'aidlc-'));
@@ -13,6 +14,12 @@ export function cleanup(dir: string): void {
   } catch {
     /* best effort */
   }
+}
+
+/** Create every state subdirectory; moved from src/state/paths.ts with the same body (card T1-SWEEP2-TEST-ONLY). */
+export function ensureStatePaths(paths: StatePaths): StatePaths {
+  for (const dir of Object.values(paths)) mkdirSync(dir, { recursive: true });
+  return paths;
 }
 
 export function actor(session: string, pid = 1000): ActorIdentity {

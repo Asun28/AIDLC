@@ -8,7 +8,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, realpathSync } from 'node:fs';
+import { realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
 import path from 'node:path';
 
@@ -103,11 +103,6 @@ export function statePathsFromRoot(root: string): StatePaths {
     releases: path.join(root, 'releases'),
     incidents: path.join(root, 'incidents'),
   };
-}
-
-export function ensureStatePaths(paths: StatePaths): StatePaths {
-  for (const dir of Object.values(paths)) mkdirSync(dir, { recursive: true });
-  return paths;
 }
 
 export function hostName(): string {

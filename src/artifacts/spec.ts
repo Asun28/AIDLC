@@ -3,7 +3,7 @@
  * skills applied (brand, security, UX, compliance). Requirements use the scaffold's EARS
  * five patterns and are cited by acceptance items with `[R<n>]`.
  */
-import { renderFrontMatter, splitFrontMatter } from './frontmatter.ts';
+import { splitFrontMatter } from './frontmatter.ts';
 import { sectionMap } from './intent.ts';
 
 export interface Spec {
@@ -43,44 +43,6 @@ export function classifyEars(line: string): { pattern?: string; problems: string
     problems.push('numeric limit without [SOURCE:…] evidence or [TBD: closed question]');
   }
   return { pattern, problems };
-}
-
-export function renderSpec(spec: Spec): string {
-  const fm: Record<string, unknown> = {
-    slug: spec.slug,
-    title: spec.title,
-    intent: spec.intentRef,
-    status: spec.status,
-    created: spec.createdAt,
-    skills_applied: spec.skillsApplied,
-  };
-  const body = [
-    `# Spec: ${spec.title}`,
-    `From intent: ${spec.intentRef}. Status: ${spec.status}. Skills applied: ${spec.skillsApplied.join(', ') || '(none)'}.`,
-    '',
-    '## Requirements (EARS)',
-    ...(spec.requirements.length ? spec.requirements.map((r) => `- ${r}`) : ['- R1. The <system> shall <observable response>.']),
-    '',
-    '## Design',
-    spec.design.trim() || '(architecture, module boundaries, sequence of the main flow)',
-    '',
-    '## Interfaces and contracts',
-    spec.interfaces.trim() || '(APIs, events, schemas; mark frozen contracts)',
-    '',
-    '## Data model and migration impact',
-    spec.dataModel.trim() || '(entities, storage contracts, expand/contract needs; "none" if no data impact)',
-    '',
-    '## Flagged concerns (route to policy owners)',
-    ...(spec.flaggedConcerns.length ? spec.flaggedConcerns.map((c) => `- **${c.policy}**: ${c.concern}${c.owner ? ` (owner: ${c.owner})` : ''}`) : ['- (none)']),
-    '',
-    '## Non-goals',
-    ...(spec.nonGoals.length ? spec.nonGoals.map((n) => `- ${n}`) : ['- (none)']),
-    '',
-    '## Acceptance',
-    ...(spec.acceptance.length ? spec.acceptance.map((a, i) => `- ${i + 1}. ${a}`) : ['- 1. <fact that means done>. [R1]']),
-    '',
-  ].join('\n');
-  return renderFrontMatter(fm, body);
 }
 
 export interface SpecValidation {

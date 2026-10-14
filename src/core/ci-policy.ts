@@ -167,12 +167,6 @@ function readStep(payload: string): GateStep | undefined {
   }
 }
 
-/** The checks every structured gate line reports, or undefined when the text has none. */
-export function gateChecks(text: string): CiJob[] | undefined {
-  const gate = readGate(text);
-  return gate.structured || gate.checks.length ? gate.checks : undefined;
-}
-
 export interface CiClassification {
   class: CiFailureClass;
   failedJobs: string[];

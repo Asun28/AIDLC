@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { classifyShipOutput, DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
-import { countedFailures } from '../../src/core/effort.ts';
-import { goalForCards, makeFixture, writeCard } from './_harness.ts';
+import { countedFailures, goalForCards, makeFixture, writeCard } from './_harness.ts';
 
 /**
  * A ship path that classifies one scaffold-style receipt per ship, as ScaffoldShipPath does with the output of

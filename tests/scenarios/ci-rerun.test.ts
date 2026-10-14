@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, countedFailures, InjectedShipPath, T0 } from './_harness.ts';
 import { canRerun } from '../../src/core/ci-policy.ts';
-import { countedFailures } from '../../src/core/effort.ts';
 
 const TRANSIENT = '[CI-GATE-LOG] actions/runs/12345/job/456\nError: read ECONNRESET while fetching artifact\n[CI-GATE-RED] [{"name":"build","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"build","job":"456","step":{"number":1,"name":"Set up job","conclusion":"failure"}}';
 /** The same failure with only its log text: no structured evidence, so no rerun (T0-CI-RERUN-STRUCTURED). */

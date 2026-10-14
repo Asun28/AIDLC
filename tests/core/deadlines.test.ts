@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline, extendDeadline, fitsBeforeDeadline } from '../../src/core/deadlines.ts';
+import { checkAdmission, computeCardDeadline, computeGoalDeadlines, effectiveGoalDeadline, extendDeadline } from '../../src/core/deadlines.ts';
 import { ARC_LIMIT_MS, CARD_LIMIT_MS, HOUR_MS, MINUTE_MS, RECONCILE_GRACE_MS, addMs } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
@@ -56,11 +56,5 @@ describe('deadlines (Q8 / Q25)', () => {
     assert.equal(effectiveGoalDeadline(d), d.goalDeadline);
     assert.throws(() => extendDeadline(d, 'owner', addMs(d.goalDeadline, -1), 'earlier', T0), /later/);
     assert.throws(() => extendDeadline(d, 'owner', later, '   ', T0), /reason/);
-  });
-
-  test('fitsBeforeDeadline bounds provider timeouts by the remaining time', () => {
-    const deadline = addMs(T0, HOUR_MS);
-    assert.equal(fitsBeforeDeadline(deadline, T0, HOUR_MS), true);
-    assert.equal(fitsBeforeDeadline(deadline, T0, HOUR_MS + 1), false);
   });
 });

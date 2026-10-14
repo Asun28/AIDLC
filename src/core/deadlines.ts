@@ -78,8 +78,3 @@ export function extendDeadline(deadlines: Deadlines, by: string, newDeadline: Is
   if (!reason.trim()) throw new Error('extension requires a recorded reason');
   return { ...deadlines, extensions: [...deadlines.extensions, { at, by, newDeadline, reason }] };
 }
-
-/** True when an operation with the given timeout can still finish before the deadline. */
-export function fitsBeforeDeadline(deadline: IsoTimestamp, now: IsoTimestamp, timeoutMs: number): boolean {
-  return Date.parse(now) + timeoutMs <= Date.parse(deadline);
-}

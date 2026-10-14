@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluatePlanReadiness, parsePlanCards, renderPlan, type Plan } from '../../src/artifacts/plan.ts';
+import { evaluatePlanReadiness, parsePlanCards, type Plan } from '../../src/artifacts/plan.ts';
+import { renderPlan } from './_artifacts.ts';
 
 const base: Plan = {
   slug: 'claims-status',

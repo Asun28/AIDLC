@@ -7,7 +7,8 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ProjectConfig } from '../../src/config.ts';
-import { ensureStatePaths, shortKey, statePathsFromRoot, type RepoIdentity, type StatePaths } from '../../src/state/paths.ts';
+import { shortKey, statePathsFromRoot, type RepoIdentity, type StatePaths } from '../../src/state/paths.ts';
+import { ensureStatePaths } from '../infra/helpers.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { Journal, setActorForTests } from '../../src/state/journal.ts';
 import { LeaseStore } from '../../src/coordination/lease.ts';
@@ -19,7 +20,7 @@ import { loadCardRegistry, renderCard, type CardRegistry, type NewCardInput } fr
 import { DryRunShipPath, type ShipPath, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { DeliveryOpsConfig, type OpsLoad } from '../../src/delivery/ops.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
-import { addMs, type ActorIdentity, type Card, type CardRun, type Goal, type JournalEvent, type Verdict } from '../../src/core/types.ts';
+import { addMs, type ActorIdentity, type Attempt, type Card, type CardRun, type EffortEpisode, type Goal, type JournalEvent, type Verdict } from '../../src/core/types.ts';
 
 export const T0 = '2026-09-11T00:00:00.000Z';
 export const actorA: ActorIdentity = { session: 'win-A', pid: 1, processStart: T0, host: 'h' };
@@ -131,6 +132,11 @@ export function writeCard(fx: Fixture, spec: CardSpec): string {
 
 export function candidateShaFor(cardId: string): string {
   return `sha-${cardId.toLowerCase()}`;
+}
+
+/** The failed attempts of an effort episode; moved from src/core/effort.ts with the same body (card T1-SWEEP2-TEST-ONLY). */
+export function countedFailures(episode: EffortEpisode): Attempt[] {
+  return episode.attempts.filter((a) => a.outcome === 'fail');
 }
 
 /** Drive one card PREPARE -> BUILD -> SHIP (dry-run merged) -> CLOSE -> DONE. */

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
-import { ensureStatePaths, resolveRepoIdentity, resolveStatePaths, shortKey, statePathsFromRoot } from '../../src/state/paths.ts';
-import { cleanup, tmpDir } from './helpers.ts';
+import { resolveRepoIdentity, resolveStatePaths, shortKey, statePathsFromRoot } from '../../src/state/paths.ts';
+import { cleanup, ensureStatePaths, tmpDir } from './helpers.ts';
 
 function git(args: string[], cwd: string): { status: number | null; out: string } {
   const r = spawnSync('git', args, { cwd, encoding: 'utf8', windowsHide: true });

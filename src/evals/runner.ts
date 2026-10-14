@@ -122,8 +122,3 @@ export async function runSuite(cases: EvalCase[], provider: ModelProvider, optio
   const threshold = options.threshold ?? 0.9;
   return { total, passed, passRate, threshold, gate: total > 0 && passRate >= threshold ? 'pass' : 'fail', results };
 }
-
-/** Render an eval JSON skeleton from an incident/finding (playbook: every incident becomes an eval). */
-export function evalFromIncident(id: string, prompt: string, regressionCommand: string[], origin: string): EvalCase {
-  return EvalCase.parse({ id, dimension: 'regression', prompt, checks: [{ type: 'command', command: regressionCommand, expectExit: 0 }], origin });
-}

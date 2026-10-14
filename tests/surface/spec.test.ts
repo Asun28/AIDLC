@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyEars, parseSpec, renderSpec, type Spec } from '../../src/artifacts/spec.ts';
+import { classifyEars, parseSpec, type Spec } from '../../src/artifacts/spec.ts';
+import { renderSpec } from './_artifacts.ts';
 
 test('classifyEars accepts each of the five patterns', () => {
   const cases: Array<[string, string]> = [

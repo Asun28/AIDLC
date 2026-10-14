@@ -7,7 +7,7 @@
  * dependencies and parallel windows, acceptance, risks, after-merge). Definition-of-Ready
  * gates (borrowed from ai-sdlc DoR) decide `admit` vs `needs-clarification`.
  */
-import { renderFrontMatter, splitFrontMatter } from './frontmatter.ts';
+import { splitFrontMatter } from './frontmatter.ts';
 import { sectionMap } from './intent.ts';
 
 export interface PlanCardRow {
@@ -41,34 +41,6 @@ export interface Plan {
   contracts?: string;
   cards?: PlanCardRow[];
   afterMerge?: string;
-}
-
-export function renderPlan(plan: Plan): string {
-  const fm: Record<string, unknown> = { slug: plan.slug, title: plan.title, spec: plan.specRef, size: plan.size, status: plan.status, created: plan.createdAt };
-  if (plan.approvedBy) fm['approved_by'] = plan.approvedBy;
-  const light = plan.size === 'T0' || plan.size === 'T0-bugfix';
-  const lines: string[] = [`# Plan: ${plan.title} (from ${plan.specRef})`, ''];
-  if (!light) {
-    lines.push('## 1. Goal and boundaries', plan.goalAndBoundaries?.trim() || 'none this version', '');
-    lines.push('## 2. Minimal acceptable loop', plan.minimalLoop?.trim() || 'none this version', '');
-    lines.push('## 3. Tech stack', plan.stack?.trim() || 'none this version', '');
-    lines.push('## 4. Directory structure', plan.structure?.trim() || 'none this version', '');
-    lines.push('## 4.5 Module design', plan.moduleDesign?.trim() || 'none this version', '');
-    lines.push('## 5. Data model and state machine', plan.dataModel?.trim() || 'none this version', '');
-    lines.push('## 6. Contracts and core interfaces', plan.contracts?.trim() || 'none this version', '');
-  }
-  lines.push('## Files that change', ...(plan.filesThatChange.length ? plan.filesThatChange.map((f) => `- ${f}`) : ['- (list the files; new files marked (new))']), '');
-  lines.push('## Order of work', ...(plan.orderOfWork.length ? plan.orderOfWork.map((s, i) => `${i + 1}. ${s}`) : ['1. (first bounded step)']), '');
-  if (!light) {
-    lines.push('## 7. Task split (dependencies and parallel windows)', '', '| Card | Priority | Output | depends_on | Parallel window | Freeze point |', '|---|---|---|---|---|---|');
-    for (const c of plan.cards ?? []) lines.push(`| ${c.id} | ${c.priority} | ${c.output} | ${c.dependsOn.join(', ') || '-'} | ${c.parallelWindow ?? '-'} | ${c.freezePoint ? 'yes' : '-'} |`);
-    if (!plan.cards?.length) lines.push('| (none yet) | | | | | |');
-    lines.push('');
-  }
-  lines.push('## Risks', ...(plan.risks.length ? plan.risks.map((r) => `- ${r}`) : ['- (what could break; rate limits, shared resources, data)']), '');
-  lines.push('## Proof', ...(plan.proof.length ? plan.proof.map((p) => `- ${p}`) : ['- (tests / screenshots / measurements that prove it)']), '');
-  if (!light) lines.push('## 10. After merge', plan.afterMerge?.trim() || 'none this version (development-only target)', '');
-  return renderFrontMatter(fm, lines.join('\n'));
 }
 
 export interface DorGate {

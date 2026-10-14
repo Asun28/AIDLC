@@ -1,8 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards, candidateShaFor, InjectedShipPath } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, candidateShaFor, countedFailures, InjectedShipPath } from './_harness.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
-import { countedFailures } from '../../src/core/effort.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
 import { rmSync, writeFileSync } from 'node:fs';
 

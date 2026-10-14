@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { formatStop, isGlobalStop, makeStop, toolStopNextAction } from '../../src/core/stop.ts';
+import { formatStop, makeStop, toolStopNextAction } from '../../src/core/stop.ts';
 import { T0 } from './_fixtures.ts';
 
 describe('stop records', () => {
@@ -18,8 +18,6 @@ describe('stop records', () => {
     assert.equal(s.global, true);
     assert.deepEqual(s.unresolvedOperations, ['op-1']);
     assert.equal(s.at, T0);
-    assert.equal(isGlobalStop(s), true);
-    assert.equal(isGlobalStop(undefined), false);
   });
 
   test('formatStop renders reason, scope, detail, next action and unresolved ops', () => {
