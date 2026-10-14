@@ -5,9 +5,9 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
-import { ensureStatePaths, statePathsFromRoot } from '../../src/state/paths.ts';
+import { statePathsFromRoot } from '../../src/state/paths.ts';
 import { ReleaseAttempt } from '../../src/core/types.ts';
-import { cleanup, iso, makeCardRun, makeGoal, tmpDir } from './helpers.ts';
+import { cleanup, ensureStatePaths, iso, makeCardRun, makeGoal, tmpDir } from './helpers.ts';
 
 describe('state/goal-store', () => {
   const dir = tmpDir();

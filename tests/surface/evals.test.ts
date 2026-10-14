@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { EvalCase, evalFromIncident, loadEvals, runEval, runSuite } from '../../src/evals/runner.ts';
+import { EvalCase, loadEvals, runEval, runSuite } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 
@@ -82,12 +82,4 @@ test('skipModel runs checks without calling the provider; model failures fail th
   assert.ok(quota.checks[0]?.detail.includes('quota'));
   assert.equal(provider.calls.length, 1);
   assert.equal(provider.calls[0]?.role, 'implementer');
-});
-
-test('evalFromIncident produces a regression eval with a command check', () => {
-  const e = evalFromIncident('inc-42', 'reproduce the 500 on /claims', ['npm', 'test', '--', 'claims'], 'incident:2026-09-11');
-  assert.equal(e.dimension, 'regression');
-  assert.equal(e.origin, 'incident:2026-09-11');
-  assert.equal(e.checks[0]?.type, 'command');
-  assert.equal(e.checks[0]?.type === 'command' ? e.checks[0].expectExit : -1, 0);
 });

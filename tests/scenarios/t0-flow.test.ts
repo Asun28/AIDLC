@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, driveCardToDone, candidateShaFor, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
+import { makeFixture, writeCard, driveCardToDone, candidateShaFor, countedFailures, goalForCards, InjectedShipPath, T0 } from './_harness.ts';
 import { DryRunShipPath, ScaffoldShipPath, classifyShipOutput, type ShipOutcomeClass, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, resourceKeys } from '../../src/coordination/lease.ts';
 import { CardRun, ShippedFacts, addMs, type JournalEvent, type Verdict } from '../../src/core/types.ts';
@@ -16,7 +16,7 @@ import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import * as cli from '../../src/cli/main.ts';
-import { countedFailures, reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
+import { reopenAfterReviewBlock, startAttempt } from '../../src/core/effort.ts';
 import { atomicWriteJson } from '../../src/state/store.ts';
 import { detectQuotaHold } from '../../src/core/parse-guard.ts';
 import { acceptFinding, reviewRequestKey } from '../../src/core/review-policy.ts';

@@ -35,10 +35,6 @@ export function makeStop(
   };
 }
 
-export function isGlobalStop(stop: StopRecord | undefined): boolean {
-  return Boolean(stop && stop.global);
-}
-
 /** Human-readable one-line rendering used by the CLI and the board. */
 export function formatStop(stop: StopRecord): string {
   const scope = stop.global ? 'global' : 'branch';

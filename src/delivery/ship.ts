@@ -95,7 +95,7 @@ const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
 /**
  * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync, the
  * failing line of a ship failure) travels with brackets and percent signs encoded, so it can never form a sentinel or a
- * `[SAGA-RESUME]` marker; everything else stays verbatim. `gateChecks` in core/ci-policy decodes the check names.
+ * `[SAGA-RESUME]` marker; everything else stays verbatim. `classifyCiFailure` in core/ci-policy decodes the check names when it reads the gate lines.
  */
 export function encodeUntrusted(text: string): string {
   return text.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');

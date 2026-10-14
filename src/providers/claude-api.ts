@@ -21,8 +21,6 @@ export interface ClaudeApiOptions {
   defaultModel?: string;
   maxRetries?: number;
   timeoutMs?: number;
-  /** Return summarized thinking in the result text (debug only). */
-  showThinking?: boolean;
   /** Test-only: a messages client to use instead of one built from the SDK, so tests inject a fake with no network. It bypasses `maxRetries` and `timeoutMs`, which configure only the SDK client. */
   client?: ClaudeMessagesClient;
 }
@@ -79,7 +77,7 @@ export class ClaudeApiProvider implements ModelProvider {
         model,
         max_tokens: request.maxTokens ?? 64000,
         system,
-        thinking: { type: 'adaptive', display: this.opts.showThinking ? 'summarized' : 'omitted' },
+        thinking: { type: 'adaptive', display: 'omitted' },
         output_config: { effort: request.effort },
         messages: [{ role: 'user', content: request.prompt }],
       });
