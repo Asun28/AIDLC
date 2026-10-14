@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { GOAL_TRANSITIONS, GoalTransitionError, assertGoalTransition, goalDoneEvidence, stagesForTarget, transitionGoal } from '../../src/core/goal-machine.ts';
+import { GOAL_TRANSITIONS, GoalTransitionError, assertGoalTransition, stagesForTarget, transitionGoal } from '../../src/core/goal-machine.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { T0, goal } from './_fixtures.ts';
 
@@ -85,14 +85,5 @@ describe('goal state machine (Q10 / Q15 / Q16)', () => {
     assert.equal(stagesForTarget('package').package, 'pending');
     assert.equal(stagesForTarget('migration').migration, 'pending');
     assert.equal(stagesForTarget('operations').operations, 'pending');
-  });
-
-  test('Q11/Q15: goalDoneEvidence ignores not_requested stages and lists the missing ones', () => {
-    const done = goal({ state: 'DONE', terminal: true, stages: { ...stagesForTarget('development'), development: 'pass' } });
-    assert.deepEqual(goalDoneEvidence(done), { done: true, missing: [] });
-    const pending = goal({ state: 'DONE', stages: { ...stagesForTarget('staging'), development: 'pass' } }, 'staging');
-    assert.deepEqual(goalDoneEvidence(pending), { done: false, missing: ['staging=pending'] });
-    const notDone = goal({ state: 'CLOSE', stages: { ...stagesForTarget('development'), development: 'pass' } });
-    assert.equal(goalDoneEvidence(notDone).done, false);
   });
 });

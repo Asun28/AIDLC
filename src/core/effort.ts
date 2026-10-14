@@ -10,7 +10,6 @@
  */
 import type { Attempt, EffortEpisode, EffortLevel, NotCountedReason, Role } from './types.ts';
 
-export const MAX_COUNTED_ATTEMPTS = 4;
 export const MAX_BASELINE_ATTEMPTS = 3;
 
 export function createEpisode(taskId: string, role: Role, baseline: EffortLevel, ladder: EffortLevel[]): EffortEpisode {

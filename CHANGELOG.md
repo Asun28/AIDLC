@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-SWEEP2-DUPLICATES: removed the test-only copies of rules that production enforces another way. The library no longer exports `CARD_TRANSITIONS`, `isCardTransitionAllowed` or `applyCardDecision` (card state is selected by `selectCardState`, never stepped through a table), `tagActionRequiresAuthority` (the release runner checks the ops binding's `triggersPublication`), `MAX_COUNTED_ATTEMPTS` (the effort ladder enforces `MAX_BASELINE_ATTEMPTS` and one escalation), `goalDoneEvidence` (`aidlc next` in CLOSE checks the stages) or `DEFAULT_BANDS_YAML` (a copy of `templates/bands.yaml`), and `CardRunner` drops the static `classify` and `newId`, which nothing called. Two scenario tests run the production rules those copies stood for: a deploy whose binding has `triggersPublication: true` stops with `release-auth` until a production authorization names its environment, and a goal in CLOSE lists `stage <name>=<status>` for each requested stage that has not passed.
+
 - T1-SWEEP2-EXTEND-REASON (bugfix): `aidlc goal extend` refuses a blank `--reason` (empty or only whitespace) with `extension requires a recorded reason` before writing anything. `GoalController.extendDeadline` now builds the extension with the core `extendDeadline` (`src/core/deadlines.ts`), whose reason check the controller's own copy of the rule lacked.
 
 - T1-SWEEP2-FIX-TASK (bugfix): `aidlc card fix-task --clear` deletes the `fix-task` marker instead of writing an empty one, which the protect-tests hook read as an active fix task, so test files now unlock after a clear. The uncalled `CardRunner.setFixTaskMarker`, which cleared the same way, is removed. A stale empty marker left by an earlier `--clear` still locks: run `aidlc card fix-task --clear` once more to remove it.

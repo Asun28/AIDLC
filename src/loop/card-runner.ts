@@ -28,7 +28,7 @@ import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
-import { classifyShipOutput, DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
+import { DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -2679,11 +2679,6 @@ export class CardRunner {
     assertLiveGoal();
     this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
     return this.save({ ...current, closure });
-  }
-
-  static classify = classifyShipOutput;
-  static newId(): string {
-    return randomUUID();
   }
 }
 

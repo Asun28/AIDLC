@@ -124,13 +124,3 @@ export function stagesForTarget(target: DeliveryTarget): Record<DeliveryTarget, 
   }
   return stages;
 }
-
-/** LC11: DONE respects the selected target; disabled stages report not_requested. */
-export function goalDoneEvidence(goal: Goal): { done: boolean; missing: string[] } {
-  const missing: string[] = [];
-  for (const [stage, status] of Object.entries(goal.stages) as Array<[DeliveryTarget, StageStatus]>) {
-    if (status === 'not_requested') continue;
-    if (status !== 'pass') missing.push(`${stage}=${status}`);
-  }
-  return { done: missing.length === 0 && goal.state === 'DONE', missing };
-}
