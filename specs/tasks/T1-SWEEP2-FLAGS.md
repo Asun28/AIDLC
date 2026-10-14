@@ -1,7 +1,7 @@
 ---
 id: T1-SWEEP2-FLAGS
 title: Drop the CLAUDE_SESSION_ID fallback and the three unread goal counters, make the security check stub name no config binding, and name both release approval variables in the gate text and the docs
-status: todo
+status: merged
 branch: T1-SWEEP2-FLAGS
 worktree: D:\wt\AIDLC\T1-SWEEP2-FLAGS
 plan_ref: plans/dead-code-sweep-2.md#order-of-work
