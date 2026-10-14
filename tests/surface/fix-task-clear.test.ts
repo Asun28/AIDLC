@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,12 +9,18 @@ import { DEFAULT_HOOK_CONFIG, fixTaskMarker, protectTests } from '../../src/hook
 import { CardRunner } from '../../src/loop/card-runner.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-/** The CLI from the sources (what `npm run dev` runs), never a compiled build that may be stale. */
-const MAIN = path.join(root, 'src', 'cli', 'main.ts');
+/** The package entry the card names; it runs the sources when no build is at least as new as them (`bin/resolve-entry.js`). */
+const BIN = path.join(root, 'bin', 'aidlc.js');
+
+const temps: string[] = [];
+after(() => {
+  for (const dir of temps) rmSync(dir, { recursive: true, force: true });
+});
 
 /** A temp git repository with its own state directory; the environment is built here, so no AIDLC_FIX_TASK of the caller leaks in. */
 function repo(): { cwd: string; stateDir: string; env: NodeJS.ProcessEnv; marker: string } {
   const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-fix-task-'));
+  temps.push(cwd);
   const init = spawnSync('git', ['init', '-q'], { cwd, encoding: 'utf8' });
   assert.equal(init.status, 0, init.stderr);
   const stateDir = path.join(cwd, 'state');
@@ -23,10 +29,10 @@ function repo(): { cwd: string; stateDir: string; env: NodeJS.ProcessEnv; marker
 }
 
 function cli(r: { cwd: string; env: NodeJS.ProcessEnv }, ...args: string[]) {
-  return spawnSync(process.execPath, [MAIN, ...args, '--json'], { cwd: r.cwd, env: r.env, encoding: 'utf8', timeout: 60_000 });
+  return spawnSync(process.execPath, [BIN, ...args, '--json'], { cwd: r.cwd, env: r.env, encoding: 'utf8', timeout: 60_000 });
 }
 
-const editTest = { tool_input: { file_path: 'tests/foo.test.ts' } };
+const editTest = { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: 'tests/foo.test.ts' } };
 
 test('T1-SWEEP2-FIX-TASK acceptance 1: `card fix-task --clear` deletes the marker, so fixTaskMarker returns undefined and protect-tests admits a test edit again [R1]', () => {
   const r = repo();
