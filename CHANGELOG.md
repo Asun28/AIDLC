@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-SWEEP2-FIX-TASK (bugfix): `aidlc card fix-task --clear` deletes the `fix-task` marker instead of writing an empty one, which the protect-tests hook read as an active fix task, so test files now unlock after a clear. The uncalled `CardRunner.setFixTaskMarker`, which cleared the same way, is removed. A stale empty marker left by an earlier `--clear` still locks: run `aidlc card fix-task --clear` once more to remove it.
+
 - T0-LESSONS-FILE-CONST: `src/artifacts/lessons.ts` no longer exports `LESSONS_FILE`, which nothing read; `lessonsPath` is unchanged. The module is not re-exported by the library entry, so no public export changes.
 
 - T1-EVALS-NO-KEY: the agent-evals workflow and its `aidlc init` template run `aidlc evals run --skip-model --threshold 0.9`, the deterministic eval checks with no model, and no longer read an `ANTHROPIC_API_KEY` secret, install Claude Code or print a skip warning; T1-SWEEP-FLAGS-2 had run the claude-code provider only when that secret was set. The model-backed run is local: `aidlc evals run --provider claude-code --threshold 0.9` uses the Claude Code CLI login. `evals/README.md`, its template and `docs/OPERATIONS.md` say both.

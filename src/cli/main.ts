@@ -3,7 +3,7 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
@@ -587,8 +587,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action((cardId: string | undefined, o: { clear?: boolean }) => {
       const c = ctx(g());
       const file = path.join(c.paths.root, 'fix-task');
-      mkdirSync(c.paths.root, { recursive: true });
-      writeFileSync(file, o.clear ? '' : (cardId ?? 'fix-task'), 'utf8');
+      // A marker file that exists is active, empty or not (fixTaskMarker), so a clear deletes it.
+      if (o.clear) rmSync(file, { force: true });
+      else {
+        mkdirSync(c.paths.root, { recursive: true });
+        writeFileSync(file, cardId ?? 'fix-task', 'utf8');
+      }
       out(c, { marker: o.clear ? null : cardId ?? 'fix-task' }, () => (o.clear ? 'fix-task marker cleared' : `fix-task marker set: ${cardId ?? 'fix-task'} (test files are locked for the agent)`));
     });
   for (const phase of ['start', 'red', 'ship', 'cleanup'] as const) {
