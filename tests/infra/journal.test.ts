@@ -125,13 +125,13 @@ describe('state/journal session identity (T0-SESSION-IDENTITY)', () => {
     assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1' }, state), { session: 'cc-1', source: 'claude' });
     // the explicit override wins over both Claude variables
     assert.deepEqual(resolveSessionId({ ...base, AIDLC_SESSION: 'win-A', CLAUDE_CODE_SESSION_ID: 'cc-1', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'win-A', source: 'env' });
-    // the older name is still honoured, after the exported one; an empty value is unset
     assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'cc-1', source: 'claude' });
-    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'legacy-1', source: 'claude' });
-    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'legacy-1', source: 'claude' });
     // none set: the persisted default token, unchanged
     writeFileSync(path.join(state, 'session-default'), 'default-abcd1234\n', 'utf8');
     assert.deepEqual(resolveSessionId(base, state), { session: 'default-abcd1234', source: 'default' });
+    // T1-SWEEP2-FLAGS acceptance 1: the older CLAUDE_SESSION_ID, which Claude Code never exported, is not read; an empty CLAUDE_CODE_SESSION_ID is unset
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'default-abcd1234', source: 'default' });
+    assert.deepEqual(resolveSessionId({ ...base, CLAUDE_CODE_SESSION_ID: '', CLAUDE_SESSION_ID: 'legacy-1' }, state), { session: 'default-abcd1234', source: 'default' });
     // currentActor carries the resolved value
     setActorForTests(undefined);
     assert.equal(currentActor({ ...base, CLAUDE_CODE_SESSION_ID: 'cc-1' }).session, 'cc-1');
