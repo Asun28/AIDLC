@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { BandsConfig, DEFAULT_BANDS_YAML, breachIdentity, computeBaseline, evaluateBands, parseBandsYaml, type Sample } from '../../src/maintain/bands.ts';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { BandsConfig, breachIdentity, computeBaseline, evaluateBands, parseBandsYaml, type Sample } from '../../src/maintain/bands.ts';
 
 const baseline = [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11]; // mean 10, std ~0.853
 const cfg = BandsConfig.parse({
@@ -20,8 +23,8 @@ test('computeBaseline uses the sample standard deviation', () => {
   assert.equal(computeBaseline([7]).std, 0);
 });
 
-test('parseBandsYaml parses the default bands file', () => {
-  const c = parseBandsYaml(DEFAULT_BANDS_YAML);
+test('parseBandsYaml parses the default bands file templates/bands.yaml', () => {
+  const c = parseBandsYaml(readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'templates', 'bands.yaml'), 'utf8'));
   assert.equal(c.metric, 'ci_test_failure_rate');
   assert.equal(c.rules, 'western_electric');
   assert.equal(c.direction, 'above');

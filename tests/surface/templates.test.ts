@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { EvalCase } from '../../src/evals/runner.ts';
 import { DeliveryOpsConfig } from '../../src/delivery/ops.ts';
 import { ProjectConfig } from '../../src/config.ts';
-import { parseBandsYaml, DEFAULT_BANDS_YAML } from '../../src/maintain/bands.ts';
+import { parseBandsYaml } from '../../src/maintain/bands.ts';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { parseIntent } from '../../src/artifacts/intent.ts';
 import { templatesDir } from '../../src/scaffold/init.ts';
@@ -104,7 +104,7 @@ describe('templates (Q14 packaging)', () => {
     DeliveryOpsConfig.parse(JSON.parse(readFileSync(path.join(tpl, 'aidlc.ops.example.json'), 'utf8')));
     ProjectConfig.parse(JSON.parse(readFileSync(path.join(tpl, 'aidlc.config.json'), 'utf8')));
     const bands = parseBandsYaml(readFileSync(path.join(tpl, 'bands.yaml'), 'utf8'));
-    assert.equal(bands.metric, parseBandsYaml(DEFAULT_BANDS_YAML).metric);
+    assert.equal(bands.metric, 'ci_test_failure_rate');
   });
 
   test('card template keeps the placeholder id (skipped by validators) and the intent template validates once filled', () => {

@@ -5,7 +5,6 @@ import {
   reopenAfterReviewBlock,
   EFFORT_LADDERS,
   MAX_BASELINE_ATTEMPTS,
-  MAX_COUNTED_ATTEMPTS,
   countedAttempts,
   createEpisode,
   finishAttempt,
@@ -31,9 +30,17 @@ function fail(ep: EffortEpisode, n: number, cause: string, progress: boolean, ef
 }
 
 describe('effort episodes (MA2 / Q25)', () => {
-  test('constants match the plan: four counted attempts, three at baseline', () => {
-    assert.equal(MAX_COUNTED_ATTEMPTS, 4);
+  test('the ladder admits four counted attempts, three at baseline and one escalation, and refuses a fifth', () => {
     assert.equal(MAX_BASELINE_ATTEMPTS, 3);
+    let ep = createEpisode('t', 'implementer', 'medium', GPT);
+    for (const [n, cause] of [[1, 'a'], [2, 'b'], [3, 'c']] as Array<[number, string]>) {
+      assert.deepEqual(nextEffortAction(ep, JUSTIFIED), { action: 'attempt', effort: 'medium', n, escalated: false });
+      ep = fail(ep, n, cause, true);
+    }
+    assert.deepEqual(nextEffortAction(ep, JUSTIFIED), { action: 'attempt', effort: 'high', n: 4, escalated: true });
+    ep = fail(ep, 4, 'd', true, 'high');
+    assert.equal(countedAttempts(ep).length, 4);
+    assert.equal(nextEffortAction(ep, JUSTIFIED).action, 'stop', 'a fifth counted attempt is refused even when justified');
   });
 
   test('baseline must be in the ladder; next supported effort is the next rung', () => {
@@ -158,7 +165,7 @@ describe('effort episodes (MA2 / Q25)', () => {
     assert.deepEqual(nextEffortAction(ep, JUSTIFIED), { action: 'attempt', effort: 'high', n: 8, escalated: true });
     ep = startAttempt(ep, 'high', T0);
     ep = finishAttempt(ep, { finishedAt: T0, outcome: 'fail', cause: 'd', progress: true });
-    assert.equal(countedAttempts(ep).length, MAX_COUNTED_ATTEMPTS);
+    assert.equal(countedAttempts(ep).length, 4);
     assert.equal(ep.terminal, 'escalation-failed', 'four DoD failures end the episode; the review blocks never counted');
     assert.equal(nextEffortAction(ep, JUSTIFIED).action, 'stop');
     let failing = createEpisode('u', 'implementer', 'medium', GPT);
