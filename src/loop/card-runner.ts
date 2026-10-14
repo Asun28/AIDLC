@@ -2681,14 +2681,6 @@ export class CardRunner {
     return this.save({ ...current, closure });
   }
 
-  /** Write a fix-task marker so the protect-tests hook locks test files during a fix (Q1). */
-  setFixTaskMarker(cardId: string | undefined): void {
-    const file = path.join(this.paths.root, 'fix-task');
-    mkdirSync(this.paths.root, { recursive: true });
-    if (cardId) writeFileSync(file, cardId, 'utf8');
-    else if (existsSync(file)) writeFileSync(file, '', 'utf8');
-  }
-
   static classify = classifyShipOutput;
   static newId(): string {
     return randomUUID();

@@ -170,7 +170,7 @@ Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all link
 | `board/<goalId>.md` (mirrored to `_local/aidlc-board.md`) | regenerated view | `state/board.ts` |
 | `releases/<attemptId>.json` | ReleaseAttempt: target, environment, candidate, steps, operations, health window/result, disposition | `loop/release-runner.ts` |
 | `incidents/incidents.json` | breach identity ledger with disposition | `maintain/incident.ts` |
-| `fix-task` | active fix-task marker read by the protect-tests hook | `loop/card-runner.ts`, CLI `card fix-task` |
+| `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |
 | `session-default` | default session token shared by processes that set no `AIDLC_SESSION` and run outside Claude Code (no `CLAUDE_CODE_SESSION_ID`) | `state/journal.ts` |
 
 ## Evidence and audit chain
