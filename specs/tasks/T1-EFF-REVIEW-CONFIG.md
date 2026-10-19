@@ -1,7 +1,7 @@
 ---
 id: T1-EFF-REVIEW-CONFIG
 title: Run one R2 round per R3 cycle with coverage off, move the R2 fallback and the investigator default to Claude Sonnet 5.5, and say so in the docs
-status: todo
+status: merged
 branch: T1-EFF-REVIEW-CONFIG
 worktree: D:\wt\AIDLC\T1-EFF-REVIEW-CONFIG
 plan_ref: plans/loop-efficiency.md#order-of-work
