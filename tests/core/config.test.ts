@@ -58,9 +58,9 @@ describe('project config: pre-review coverage (T1-REVIEW-COVERAGE R9, R10)', () 
     assert.equal(ProjectConfig.parse({ preReview: { coverage: 'shadow', command: ['deepseek', '--model', 'deepseek-v4-pro'] } }).preReview.coverage, 'shadow', 'shadow without the placeholder parses');
   });
 
-  test('this repository asks its pre-review panel for coverage; the installed template leaves it off', () => {
+  test('this repository and the installed template leave pre-review coverage off (T1-EFF-REVIEW-CONFIG R1)', () => {
     const repo = ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, 'aidlc.config.json'), 'utf8')));
-    assert.equal(repo.preReview.coverage, 'shadow');
+    assert.equal(repo.preReview.coverage, 'off');
     const tpl = ProjectConfig.parse(JSON.parse(readFileSync(path.join(root, 'templates', 'aidlc.config.json'), 'utf8')));
     assert.equal(tpl.preReview.coverage, 'off');
   });

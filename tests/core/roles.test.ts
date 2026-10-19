@@ -7,14 +7,14 @@ import { EFFORT_LADDERS } from '../../src/core/effort.ts';
 import type { EffortLevel } from '../../src/core/types.ts';
 
 describe('role profiles (MA1 / MA3)', () => {
-  test('defaults: Claude roles resolve to Opus 5.5 (investigator Sonnet 5); GPT roles to the configured seat [T1-OPUS55-MODELS R5]', () => {
+  test('defaults: Claude roles resolve to Opus 5.5 (investigator Sonnet 5.5); GPT roles to the configured seat [T1-OPUS55-MODELS R5] [T1-EFF-REVIEW-CONFIG R3]', () => {
     const impl = resolveRoleProfile({ role: 'implementer', family: 'claude' });
     assert.equal(impl.model, 'claude-opus-5-5');
     assert.equal(impl.provider, 'anthropic');
     assert.deepEqual(impl.supportedEfforts, EFFORT_LADDERS['claude']);
     assert.equal(impl.readOnly, false);
     assert.equal(impl.roleCheck, 'not-run');
-    assert.equal(resolveRoleProfile({ role: 'investigator', family: 'claude' }).model, 'claude-sonnet-5');
+    assert.equal(resolveRoleProfile({ role: 'investigator', family: 'claude' }).model, 'claude-sonnet-5-5');
     assert.equal(resolveRoleProfile({ role: 'planner', family: 'gpt' }).model, DEFAULT_MODELS.gpt.planner.model);
     assert.deepEqual(resolveRoleProfile({ role: 'planner', family: 'gpt' }).supportedEfforts, EFFORT_LADDERS['gpt']);
   });
@@ -69,9 +69,9 @@ describe('role profiles (MA1 / MA3)', () => {
 });
 
 describe('Claude defaults on Opus 5.5 (T1-OPUS55-MODELS acceptance 1 and 2)', () => {
-  test('DEFAULT_MODELS.claude names claude-opus-5-5 for four roles and keeps claude-sonnet-5 for the investigator [R5]', () => {
+  test('DEFAULT_MODELS.claude names claude-opus-5-5 for four roles and claude-sonnet-5-5 for the investigator [R5] [T1-EFF-REVIEW-CONFIG R3]', () => {
     const models = Object.fromEntries(Object.entries(DEFAULT_MODELS.claude).map(([role, seat]) => [role, seat.model]));
-    assert.deepEqual(models, { planner: 'claude-opus-5-5', implementer: 'claude-opus-5-5', investigator: 'claude-sonnet-5', reviewer: 'claude-opus-5-5', 'release-specialist': 'claude-opus-5-5' });
+    assert.deepEqual(models, { planner: 'claude-opus-5-5', implementer: 'claude-opus-5-5', investigator: 'claude-sonnet-5-5', reviewer: 'claude-opus-5-5', 'release-specialist': 'claude-opus-5-5' });
   });
 
   test('the comment above DEFAULT_MODELS.claude names Opus 5.5 [R5]', () => {

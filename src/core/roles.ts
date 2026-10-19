@@ -25,7 +25,7 @@ export const DEFAULT_MODELS: Record<'gpt' | 'claude', Record<Role, { provider: s
     // planner/reviewer seats once its availability and retention requirements are verified (MA1).
     planner: { provider: 'anthropic', model: 'claude-opus-5-5' },
     implementer: { provider: 'anthropic', model: 'claude-opus-5-5' },
-    investigator: { provider: 'anthropic', model: 'claude-sonnet-5' },
+    investigator: { provider: 'anthropic', model: 'claude-sonnet-5-5' },
     reviewer: { provider: 'anthropic', model: 'claude-opus-5-5' },
     'release-specialist': { provider: 'anthropic', model: 'claude-opus-5-5' },
   },
