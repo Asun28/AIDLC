@@ -40,6 +40,7 @@ forbid: ["changing any PreToolUse guard decision (production-gate, protect-paths
 non_goals: ["hook latency work", "PreToolUse `if` narrowing in settings.json", "the production-gate false positives", "the CLAUDE.md Verifying your work section (T1-EFF-AGENTS-DOD)", "session_crons and scheduled-task prompts", "pruning the reminder records of ended sessions", "reminding again after a compaction that keeps the session id"]
 hygiene: "Amended after R3 decision 1 (F1, F2): R3 states the reconciliation and the failure guarantee, acceptance 3 names the two repair tests, and the budget rises from 200 to 240 for them (219 net lines at the repair). Amended after R2 on the repaired candidate: R2 says a suppressed Stop prunes the record, acceptance 2 names its test, budget 280 (253 net lines). Two existing tests repeat a Stop for one session while T1-FOO stays in BUILD: tests/surface/hooks.test.ts:262 (its stop helper at :266 and the dispatch at :279) and :720 (the valid-config Stop at :733 after the broken-config Stop at :731). Under the dedupe those repeats add nothing, so a forgetReminders(env) helper next to stopCards clears the record before each such Stop; no expected value changes, and every other Stop in the file asserts a DoD reminder only for the first Stop of its session and state. No test pins the reminder's `(and lint/build)` (git grep lint/build tests: none)."
 doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md
+superseded_by: T1-EFF-HOOK-QUIET-2
 ---
 
 # T1-EFF-HOOK-QUIET

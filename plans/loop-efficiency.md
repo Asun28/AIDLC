@@ -102,7 +102,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 
 ## Order of work
 1. T1-EFF-REVIEW-CONFIG: one R2 round per R3 cycle, coverage off, Sonnet 5.5 for the R2 fallback and the investigator default.
-2. T1-EFF-HOOK-QUIET: the Stop guard reminds once per card state and stays quiet while background work runs; the routing guard skips machine prompts.
+2. T1-EFF-HOOK-QUIET: the Stop guard reminds once per card state and stays quiet while background work runs; the routing guard skips machine prompts (stopped after two R3 decisions on its reminder record; superseded by T1-EFF-HOOK-QUIET-2 by the engineer's ruling of 2026-10-20).
+2a. T1-EFF-HOOK-QUIET-2: the Stop guard adds nothing under stop_hook_active and no DoD reminder while background tasks run, with no reminder state; the routing guard skips machine prompts.
 3. T1-EFF-R3-PROGRESS: R3 stops for a ruling on a repeated unresolved finding or at its fourth decision; a block of only new findings gets another repair round.
 4. T1-EFF-R2-ANGLE-FALLBACK: a failed R2 angle is rerun alone on the fallback; the angles with verdicts are kept.
 5. T1-EFF-AGENTS-DOD: agent model and effort defaults, the implementer started at the directive's effort, targeted DoDs with the full suite in CI.
@@ -112,7 +113,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-EFF-REVIEW-CONFIG | MUST | R2 one round, coverage off, Sonnet 5.5 fallback and investigator | - | W1 | - |
-| T1-EFF-HOOK-QUIET | MUST | Stop reminder once per card state; no routing of machine prompts | - | W2 | - |
+| T1-EFF-HOOK-QUIET | MUST | Stop reminder once per card state; no routing of machine prompts (stopped after two R3 decisions; superseded by T1-EFF-HOOK-QUIET-2) | - | W2 | - |
+| T1-EFF-HOOK-QUIET-2 | MUST | Stop guard silent under stop_hook_active and background tasks, no saved state; no routing of machine prompts | - | W2 | - |
 | T1-EFF-R3-PROGRESS | MUST | R3 stops on a repeated unresolved finding or the fourth decision | - | W3 | - |
 | T1-EFF-R2-ANGLE-FALLBACK | SHOULD | a failed R2 angle reruns alone on the fallback | T1-EFF-REVIEW-CONFIG | W4 | - |
 | T1-EFF-AGENTS-DOD | SHOULD | agent model/effort, implementer effort rule, targeted DoD | - | W5 | - |
