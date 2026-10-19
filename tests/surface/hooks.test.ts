@@ -195,6 +195,26 @@ test('route-new-work prints a routing line for real requests only', () => {
   assert.deepEqual(routeNewWork({ prompt: 'what does this function do exactly, in plain words?' }), { exitCode: 0 });
   const t2 = routeNewWork({ prompt: 'Build a fully AI native SDLC system from scratch with a new architecture' });
   assert.ok(t2.stdout?.includes('T2:'));
+  // card T1-EFF-HOOK-QUIET-2 acceptance 4: Claude Code also submits task notifications, cross-session messages,
+  // compaction summaries and skill bodies; each holds a routing verb and passes the length rule, and none is routed
+  const notification = `
+  <task-notification>
+<task-id>a1</task-id>
+<summary>Fix the release gate</summary>
+</task-notification>`;
+  const machine = [
+    notification,
+    `Another Claude session sent a message:
+<cross-session-message from="win-B">Implement the next card</cross-session-message>`,
+    'This session is being continued from a previous conversation that ran out of context. Fix the hook tests.',
+    `Base directory for this skill: .claude/skills/tdd
+
+Build a failing test for the parser first.`,
+  ];
+  for (const prompt of machine) assert.deepEqual(routeNewWork({ prompt }), { exitCode: 0 }, prompt);
+  assert.ok(routeNewWork({ prompt: 'Fix routeLine so a quoted <task-notification> still routes' }).stdout?.startsWith('[route]'), 'a typed prompt quoting a marker still routes');
+  const broken = new HookConfigError(path.join(tmpdir(), 'aidlc.config.json'), 'is not valid JSON');
+  assert.deepEqual(routeNewWork({ prompt: notification }, broken), routeNewWork({ prompt: 'hi' }, broken), 'the config note alone, as for a prompt that routes nothing');
 });
 
 test('runHook dispatches by name and refuses unknown names', () => {
@@ -330,6 +350,19 @@ test('verify-before-done keeps listing runs when a card lease record cannot be r
   assert.deepEqual(stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-B' }, { cwd, env })).sort(), ['T1-BROKEN', 'T1-FREE', 'T1-SHAPE']);
 });
 
+test('T1-EFF-HOOK-QUIET-2 acceptance 1 and 2: nothing under stop_hook_active, no DoD reminder while background tasks run, and no state kept, so a later Stop still reminds', () => {
+  const { cwd, env } = envWithState();
+  buildRuns(cwd, env, ['T1-FOO']);
+  const stop = (extra: Partial<HookEvent> = {}) => dispatchHook({ hook_event_name: 'Stop', session_id: 'win-A', ...extra }, { cwd, env });
+  assert.deepEqual(stop({ stop_hook_active: true }), { exitCode: 0 });
+  assert.deepEqual(stop({ background_tasks: [{ id: 'task-1', type: 'subagent', status: 'running' }] }), { exitCode: 0 });
+  const first = stop({ background_tasks: [] });
+  assert.deepEqual(stopCards(first), ['T1-FOO'], 'an empty background list is no background work');
+  // acceptance 3: the reminder asks for the DoD output only
+  assert.ok(first.stdout!.includes("Run the card's dod_command and paste the output") && !first.stdout!.includes('lint/build'), 'the reminder asks for the DoD output only');
+  assert.deepEqual(stopCards(stop()), ['T1-FOO'], 'nothing was recorded: a plain Stop reminds as before');
+});
+
 /** A git repository at `cwd` (the main checkout) whose planning file is untracked, plus its state and goal lease. */
 /** A git repository at `cwd` (a main checkout) with one untracked planning file and no aidlc state. */
 function gitRepoWithIntent(intent: string): { cwd: string; env: NodeJS.ProcessEnv; git: (args: string[]) => void } {
@@ -370,6 +403,11 @@ test('T0-PLANNING-CLAIMS acceptance 4: on Stop, a goal whose lease this session 
   leases.claim(key, { actor: windowActor('win-A'), ...live });
   const stop = (session: string) => runHook('verify-before-done', { hook_event_name: 'Stop', session_id: session }, { cwd, env });
   assert.equal(planningContext(stop('win-A')), '[aidlc] Planning artifacts of goal g-plan are uncommitted on main: "intent/review-coverage.md". Commit them before the session ends; another session sees only files it does not own.');
+  // card T1-EFF-HOOK-QUIET-2 acceptance 2: while Claude Code continues for a stop hook nothing is added; running
+  // background work keeps the planning reminder
+  assert.deepEqual(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A', stop_hook_active: true }, { cwd, env }), { exitCode: 0 });
+  const waiting = runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A', background_tasks: [{ id: 'task-1', type: 'subagent', status: 'running' }] }, { cwd, env });
+  assert.ok(planningContext(waiting), 'background work keeps the planning reminder');
   // the lease held by another session: that session's reminder, not this one's
   assert.equal(planningContext(stop('win-B')), undefined);
   assert.deepEqual(stop('win-B'), { exitCode: 0 });
