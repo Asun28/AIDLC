@@ -1,7 +1,7 @@
 ---
 id: T1-EFF-HOOK-QUIET-2
 title: Make the Stop guard add nothing under stop_hook_active and no DoD reminder while background tasks run, shorten its reminder text, and stop route-new-work routing prompts a person did not type, keeping no reminder state
-status: todo
+status: merged
 branch: T1-EFF-HOOK-QUIET-2
 worktree: D:\wt\AIDLC\T1-EFF-HOOK-QUIET-2
 plan_ref: plans/loop-efficiency.md#order-of-work
