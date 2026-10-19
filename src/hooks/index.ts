@@ -12,9 +12,12 @@
  *  - protect-paths     (PreToolUse Edit|Write|Bash): frozen paths cannot be edited in place.
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
  *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
- *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done,
- *                      and a goal whose lease this session holds commits its planning artifacts first.
- *  - route-new-work    (UserPromptSubmit): print the routing result for a new request.
+ *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done (not said
+ *                      while Claude Code reports running background work), and a goal whose lease this session
+ *                      holds commits its planning artifacts first; nothing is said while Claude Code is already
+ *                      continuing for a stop hook, so a turn end gives at most one reminder.
+ *  - route-new-work    (UserPromptSubmit): print the routing result for a new request a person typed; task
+ *                      notifications, cross-session messages, compaction summaries and skill bodies are not routed.
  *
  * Session: a hook process acts as the session of the event it handles. `hookSession` resolves it as
  * `AIDLC_SESSION` (the explicit per-window override), else the event's `session_id` (the Claude Code
@@ -44,6 +47,10 @@ export interface HookEvent {
   tool_name?: string;
   tool_input?: Record<string, unknown>;
   prompt?: string;
+  /** Stop: true while Claude Code is already continuing the turn as a result of a stop hook. */
+  stop_hook_active?: boolean;
+  /** Stop: the background work Claude Code reports as still running; empty when there is none. */
+  background_tasks?: unknown[];
   [key: string]: unknown;
 }
 
@@ -530,7 +537,12 @@ function leaseReadCode(err: unknown): string {
   return err instanceof StoreError && LEASE_READ_CODES.has(err.code) ? err.code : 'UNREADABLE';
 }
 
-export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: string): HookResult {
+export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: string, event: HookEvent = {}): HookResult {
+  // Claude Code is already continuing the turn for a stop hook: another reminder adds a model turn and no information,
+  // so a turn end gives at most one (card T1-EFF-HOOK-QUIET-2). Nothing is kept between Stops.
+  if (event.stop_hook_active === true) return { exitCode: 0 };
+  // Running background work means the session is waiting, not reporting done: no DoD reminder.
+  const waiting = Array.isArray(event.background_tasks) && event.background_tasks.length > 0;
   try {
     const paths = resolveStatePaths(cwd, env);
     const store = new GoalStore(paths);
@@ -569,9 +581,9 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
           if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
         }
       }
-      if (pending.length) {
+      if (pending.length && !waiting) {
         const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
-        contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command (and lint/build) and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
+        contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
       }
     } catch {
       /* the DoD check is advisory */
@@ -643,8 +655,19 @@ export function routeNewWork(event: HookEvent, configError?: HookConfigError, cw
   return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
 }
 
+/**
+ * Prompts Claude Code submits on its own or for another session: a background task's notification, a cross-session
+ * message, a compaction summary and a skill body (card T1-EFF-HOOK-QUIET-2). UserPromptSubmit carries no source
+ * field, so the text is the only signal.
+ */
+function machinePrompt(prompt: string): boolean {
+  const text = prompt.trimStart();
+  return text.startsWith('<task-notification>') || text.startsWith('This session is being continued from a previous conversation') || text.startsWith('Base directory for this skill:') || prompt.includes('<cross-session-message');
+}
+
 function routeLine(event: HookEvent): string | undefined {
   const prompt = String(event.prompt ?? '');
+  if (machinePrompt(prompt)) return undefined;
   if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return undefined;
   const routing = classifyRequest({ text: prompt });
   const guidance = routing.size === 'T2'
@@ -696,7 +719,7 @@ export function runHook(name: HookName, event: HookEvent, options: { cwd?: strin
     case 'secrets-guard':
       return secretsGuard(event);
     case 'verify-before-done':
-      return verifyBeforeDone(cwd, env, hookSession(event, env));
+      return verifyBeforeDone(cwd, env, hookSession(event, env), event);
     case 'route-new-work':
       return routeNewWork(event, error, cwd);
   }
