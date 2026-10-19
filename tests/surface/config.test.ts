@@ -432,10 +432,10 @@ describe('ConfigError and the doctor catch (T0-PARSE-GUARD-FOLLOWUPS)', () => {
 describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
   const root = path.resolve(import.meta.dirname, '..', '..');
   const configOf = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8')) as { preReview: Record<string, unknown> };
-  /** This repository's fallback, as R4 of the card states it. */
+  /** This repository's fallback, as R4 of the card states it, on Claude Sonnet 5.5 since T1-EFF-REVIEW-CONFIG (R2). */
   const SONNET = {
-    command: ['claude', '-p', '--model', 'claude-sonnet-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'],
-    reviewer: 'claude-sonnet-5',
+    command: ['claude', '-p', '--model', 'claude-sonnet-5-5', '--effort', '{effort}', '--tools', 'Read,Grep,Glob', '--setting-sources=', '--strict-mcp-config', '--no-session-persistence'],
+    reviewer: 'claude-sonnet-5-5',
     timeoutMs: 1_200_000,
     maxDiffBytes: 800_000,
     answerMarker: '',
@@ -458,23 +458,25 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     assert.throws(withFallback({ command: ['claude'], reviewer: ' DeepSeek-V4-Pro ' }), issueAt('preReview.fallback.reviewer'));
     assert.throws(withFallback({ command: ['claude'], reviewer: 'SONNET' }, 'sonnet'), issueAt('preReview.fallback.reviewer'));
     assert.throws(withFallback({ command: ['claude'], reviewer: 'f', effort: { default: 'max', xhigh: { minChangedLines: 1 } } }), issueAt('preReview.fallback.effort.xhigh'));
-    assert.doesNotThrow(withFallback({ command: ['claude', '--effort', '{effort}'], reviewer: 'claude-sonnet-5', effort: SONNET.effort }));
+    assert.doesNotThrow(withFallback({ command: ['claude', '--effort', '{effort}'], reviewer: 'claude-sonnet-5-5', effort: SONNET.effort }));
   });
-  test('this repository runs DeepSeek as the R2 primary with Claude Sonnet 5 as the fallback; the template has no fallback [R4]', () => {
+  test('this repository runs DeepSeek as the R2 primary, one round per R3 cycle with coverage off, with Claude Sonnet 5.5 as the fallback; the template has no fallback [R4] [T1-EFF-REVIEW-CONFIG R1 R2]', () => {
     const raw = configOf('aidlc.config.json').preReview;
     assert.deepEqual(raw['command'], ['deepseek', '--model', 'deepseek-v4-pro']);
     assert.equal(raw['reviewer'], 'deepseek-v4-pro');
     assert.equal(raw['answerMarker'], '=== answer ===');
     assert.deepEqual(raw['fallback'], SONNET);
+    assert.equal(raw['rounds'], 1, 'one R2 round per R3 cycle');
+    assert.equal('coverage' in raw, false, 'no coverage key, so the schema default off applies');
     const parsed = ProjectConfig.parse(configOf('aidlc.config.json')).preReview;
     assert.deepEqual(parsed.command, ['deepseek', '--model', 'deepseek-v4-pro'], 'the parsed primary command');
     assert.equal(parsed.reviewer, 'deepseek-v4-pro', 'the parsed primary reviewer');
     assert.equal(parsed.answerMarker, '=== answer ===', 'the parsed primary marker');
     assert.deepEqual(parsed.fallback, SONNET, 'the parsed fallback is the configured one, nothing added');
-    assert.equal(parsed.rounds, 3);
+    assert.equal(parsed.rounds, 1);
     assert.deepEqual(parsed.perspectives, ['ac-coverage', 'spec-deviations', 'edge-cases']);
     assert.equal(parsed.onExhausted, 'ship');
-    assert.equal(parsed.coverage, 'shadow');
+    assert.equal(parsed.coverage, 'off');
     assert.equal('fallback' in configOf('templates/aidlc.config.json').preReview, false);
     const template = ProjectConfig.parse(configOf('templates/aidlc.config.json')).preReview;
     assert.deepEqual(template.command, [], 'the installed R2 command is empty, so a fallback has nothing to fall back from');
@@ -492,7 +494,7 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
       "The fallback is dispatched with settings built from its own fields and the fallback schema's defaults only (`preReviewFallbackSettings`, `src/config.ts`): a `timeoutMs`, `shell`, `maxDiffBytes`, `answerMarker` or `effort` the fallback omits is the fallback default, never the primary's value, so a fallback without `shell` runs with the platform default under a primary that sets `shell`, and one without `answerMarker` reads its verdict without the primary's marker; only `rounds`, `perspectives`, `coverage` and `onExhausted` are the primary's.",
       'Without `preReview.fallback` every gate decision, directive, round and hold is as before.',
       'A review effort policy also takes an optional `xhigh` rule of the same shape as `high`, checked before it: a candidate whose added plus deleted lines reach its `minChangedLines` or that changes a path matching its `paths` runs at `xhigh`, an `xhigh` rule with a `max` default is refused, and a collected diff with no `diff --git ` section selects `xhigh` under such a rule.',
-      'This repository runs DeepSeek as the R2 primary with Claude Sonnet 5 as the fallback (`claude -p --model claude-sonnet-5 --effort {effort}` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5`, `answerMarker` empty since `claude -p` prints no marker line), at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`; the installed template configures no fallback, since its R2 command is empty.',
+      'This repository runs DeepSeek as the R2 primary, one round per R3 cycle (`rounds: 1`) with coverage off (card T1-EFF-REVIEW-CONFIG), with Claude Sonnet 5.5 as the fallback (`claude -p --model claude-sonnet-5-5 --effort {effort}` with the read-only tools of the R3 fallback, reviewer `claude-sonnet-5-5`, `answerMarker` empty since `claude -p` prints no marker line), at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`; the installed template configures no fallback, since its R2 command is empty.',
     ];
     for (const sentence of opsSentences) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     assert.ok(!operations.includes('Until the DeepSeek account has balance again (issue #92)'), 'the temporary sentence of a8293d7 is removed');
@@ -501,6 +503,16 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     const entry = "- Pre-review fallback, card T0-R2-FALLBACK-3, the third attempt after T0-R2-FALLBACK and T0-R2-FALLBACK-2 (part 2 of issue #92): `preReview.fallback` names a second R2 reviewer that runs while the primary holds a quota or billing hold, resolved per dispatch as the R3 fallback is, dispatched with its own settings and defaults and never the primary's, and sharing the primary's rounds, angles and no-verdict retry; a round in flight keeps the timeout it was dispatched with, and every round, event and evidence note names the reviewer that ran and its effort level; a review effort policy takes an `xhigh` rule; this repository runs DeepSeek as the R2 primary again with Claude Sonnet 5 as the fallback at `high`, or `xhigh` from 500 changed lines or a change under `src/core/**`, `src/coordination/**` or `src/state/**`, replacing the temporary swap of a8293d7.";
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
     assert.ok(!unreleased.includes('- R2 reviewer swap, temporary (issue #92)'), 'the temporary CHANGELOG line of a8293d7 is removed');
+  });
+  test('T1-EFF-REVIEW-CONFIG acceptance 4: OPERATIONS says this repository runs coverage off and names claude-sonnet-5-5 for the investigator, and the CHANGELOG Unreleased section names the card [R4] [R5]', () => {
+    const read = (...parts: string[]) => readFileSync(path.join(root, ...parts), 'utf8').replace(/\r\n/g, '\n');
+    const operations = read('docs', 'OPERATIONS.md');
+    assert.ok(operations.includes('`preReview.coverage` is `off` (the default, and what `aidlc init` installs) or `shadow`; this repository runs `off`'), 'the coverage paragraph says this repository runs off');
+    assert.ok(operations.includes('with `claude-sonnet-5-5` for the investigator'), 'the family line names the Sonnet 5.5 investigator default');
+    assert.ok(!/claude-sonnet-5(?!-5)/.test(operations), 'no claude-sonnet-5 without the .5 is left in OPERATIONS');
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    assert.match(unreleased, /^- .*T1-EFF-REVIEW-CONFIG.*$/m, 'CHANGELOG.md Unreleased has a T1-EFF-REVIEW-CONFIG entry');
   });
 });
 
