@@ -80,7 +80,7 @@ Several windows may work on one repository. State is shared through `<main check
 | Card admission | 3 h from first PREPARE (or the goal deadline, whichever is earlier) | `src/core/deadlines.ts` |
 | Arc admission | 12 h for multi-card goals; 3 h for one-card and standalone release goals | `src/core/deadlines.ts` |
 | Reconciliation grace | 5 min after a deadline; unresolved outcomes stay UNKNOWN | `src/core/deadlines.ts`, `src/core/card-machine.ts` |
-| Substantive review decisions | 2 (initial + one for a repaired candidate); with a command reviewer up to 4 while each block raises new findings, and a block re-raising a disputed or held finding stops (a ship-path reviewer: second block stops) | `src/core/review-policy.ts` |
+| Substantive review decisions | 2 (initial + one for a repaired candidate); with a command reviewer up to 4 while each block raises new findings; from decision 2 a block re-raising a disputed or held finding, or a block on decision 4, stops (a ship-path reviewer: second block stops) | `src/core/review-policy.ts` |
 | No-verdict retry | 1 total across script and driver | `src/core/review-policy.ts` |
 | Transient CI rerun | 1 per run/attempt/candidate, persisted before the request | `src/core/ci-policy.ts` |
 | Implementation attempts | 3 at baseline effort, plus 1 escalated attempt only with evidenced progress and an available level; same cause twice stops early | `src/core/effort.ts` |

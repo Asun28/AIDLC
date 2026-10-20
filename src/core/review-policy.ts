@@ -149,7 +149,11 @@ export function recordReviewOutcome(
     if (classified.outcome === 'block-defect') next.substantiveBlocks = ledger.substantiveBlocks + 1;
   }
   if (classified.outcome === 'no-verdict') next.noVerdictRetriesUsed = ledger.noVerdictRetriesUsed + 1;
-  return { ledger: next, decision: decideFromLedger(next, classified, repeated) };
+  const decision = decideFromLedger(next, classified, repeated);
+  // A stopping decision is marked on its record, so a commit that only lands as history (a newer candidate superseded it)
+  // still stops the card at the next assessment (card T1-EFF-R3-PROGRESS).
+  if (decision.action === 'stop-review') next.invocations = next.invocations.map((i) => (i === record ? { ...record, stopReview: true } : i));
+  return { ledger: next, decision };
 }
 
 const ORDINALS = ['first', 'second', 'third', 'fourth'];
