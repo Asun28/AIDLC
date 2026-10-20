@@ -181,16 +181,21 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
   const finding = (id: string, stage: 'pre' | 'formal', extra: Record<string, unknown> = {}) =>
     ReviewFinding.parse({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 6 tests @ src/gate.ts:1: finding ${id} -> fix`, raisedAt: T0, ...extra });
 
-  test('acceptance 1: repeatedFindings names the re-raised findings that were unresolved and either disputed or raised by an earlier R3 decision', () => {
+  test('acceptance 1: repeatedFindings names the re-raised findings that are disputed and unresolved, or held by the previous R3 decision', () => {
+    // Decision 3: F1 was raised by decision 1 and re-raised by decision 2 (held); F2 is an R2 residual nobody disputed;
+    // F3 was raised by decision 1 and left out by decision 2 (accepted, resolved); F4 is an R2 finding the author disputes.
+    const reraisedBy2 = [{ stage: 'formal', round: 2, at: T0, reason: '[spec] 6 tests @ src/gate.ts:1: still missing (re:F1) -> fix' }];
     const findings = [
-      finding('F1', 'formal'),
+      finding('F1', 'formal', { reraised: reraisedBy2 }),
       finding('F2', 'pre'),
       finding('F3', 'formal', { resolvedAt: T0 }),
       finding('F4', 'pre', { disposition: 'disputed', disputes: [{ at: T0, note: 'the helper is asked for by acceptance 2' }] }),
     ];
     const seen = policy.snapshotFindings(findings);
     const reasons = ['F1', 'F2', 'F3', 'F4', 'F9'].map((id) => `[spec] 6 tests @ src/gate.ts:2: still missing (re:${id}) -> fix`);
-    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen), ['F1', 'F4']);
+    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen, 3), ['F1', 'F4']);
+    // decision 2: F3, raised by decision 1, is still held by R3 when decision 2 re-raises it
+    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen, 2), ['F1', 'F3', 'F4']);
   });
 
   test('acceptance 2: a later block of new findings returns to REVIEW_FIX; a re-raised unresolved finding from decision 2 on, or the fourth decision, stops', () => {
