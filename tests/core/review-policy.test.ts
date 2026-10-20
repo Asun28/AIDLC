@@ -5,7 +5,7 @@ import { classifyVerdict, findingMarker, parseVerdict, recordReviewOutcome, revi
 // Namespace import for the finding bookkeeping (T1-REVIEW-FINDINGS): on the baseline the functions are absent and each
 // test fails at its first call, so the RED is the behaviour, not a link error that aborts the file.
 import * as policy from '../../src/core/review-policy.ts';
-import { ReviewLedger, type ReviewFinding, type Verdict } from '../../src/core/types.ts';
+import { ReviewFinding, ReviewLedger, type Verdict } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 
 const SHA = 'a'.repeat(40);
@@ -177,6 +177,39 @@ describe('classifyVerdict (Q6)', () => {
   });
 });
 
+describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
+  const finding = (id: string, stage: 'pre' | 'formal', extra: Record<string, unknown> = {}) =>
+    ReviewFinding.parse({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 6 tests @ src/gate.ts:1: finding ${id} -> fix`, raisedAt: T0, ...extra });
+
+  test('acceptance 1: repeatedFindings names the re-raised findings that were unresolved and either disputed or raised by an earlier R3 decision', () => {
+    const findings = [
+      finding('F1', 'formal'),
+      finding('F2', 'pre'),
+      finding('F3', 'formal', { resolvedAt: T0 }),
+      finding('F4', 'pre', { disposition: 'disputed', disputes: [{ at: T0, note: 'the helper is asked for by acceptance 2' }] }),
+    ];
+    const seen = policy.snapshotFindings(findings);
+    const reasons = ['F1', 'F2', 'F3', 'F4', 'F9'].map((id) => `[spec] 6 tests @ src/gate.ts:2: still missing (re:${id}) -> fix`);
+    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen), ['F1', 'F4']);
+  });
+
+  test('acceptance 2: a later block of new findings returns to REVIEW_FIX; a re-raised unresolved finding from decision 2 on, or the fourth decision, stops', () => {
+    const c = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
+    const first = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), c, specBlock, 0, ['F1']);
+    assert.deepEqual(first.decision, { action: 'review-fix', remainingDecisions: 3 }, 'decision 1 never stops on a re-raise');
+    const fresh = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, []);
+    assert.deepEqual(fresh.decision, { action: 'review-fix', remainingDecisions: 2 }, 'new findings on decision 2 get another repair round');
+    const repeat = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, ['F1']);
+    assert.equal(repeat.decision.action, 'stop-review');
+    assert.match(repeat.decision.action === 'stop-review' ? repeat.decision.detail : '', /second substantive block re-raised unresolved finding\(s\) F1/);
+    const third = recordReviewOutcome(fresh.ledger, inv('i3'), c, specBlock, 0, []);
+    assert.deepEqual(third.decision, { action: 'review-fix', remainingDecisions: 1 });
+    const fourth = recordReviewOutcome(third.ledger, inv('i4'), c, specBlock, 0, []);
+    assert.equal(fourth.decision.action, 'stop-review', 'the fourth decision stops whatever its findings');
+    assert.equal(fourth.ledger.substantiveDecisions, 4);
+  });
+});
+
 describe('recordReviewOutcome ledger (Q6 / Q24)', () => {
   test('Q6: pass proceeds to merge and counts one substantive decision', () => {
     const { ledger, decision } = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), classifyVerdict(pass, { candidateSha: SHA, tier: 'S' }), pass, 1);
@@ -186,7 +219,7 @@ describe('recordReviewOutcome ledger (Q6 / Q24)', () => {
     assert.equal(ledger.invocations[0]?.outcome, 'pass');
   });
 
-  test('Q6: a defect block enters REVIEW-FIX with one decision remaining; a second block stops', () => {
+  test('Q6, ship-path reviewer (no re-raise list): a defect block enters REVIEW-FIX with one decision remaining; a second block stops', () => {
     const c = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
     const first = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), c, specBlock);
     assert.deepEqual(first.decision, { action: 'review-fix', remainingDecisions: 1 });
@@ -197,7 +230,7 @@ describe('recordReviewOutcome ledger (Q6 / Q24)', () => {
     assert.equal(second.ledger.substantiveDecisions, 2);
   });
 
-  test('Q6: a required review beyond two decisions stops even without a second block', () => {
+  test('Q6, ship-path reviewer (no re-raise list): a required review beyond two decisions stops even without a second block', () => {
     const passC = classifyVerdict(pass, { candidateSha: SHA, tier: 'S' });
     const blockC = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
     let l = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), blockC, specBlock).ledger;

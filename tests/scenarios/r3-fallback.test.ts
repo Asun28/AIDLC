@@ -187,7 +187,7 @@ test('the primary runs again once its hold expires; without a fallback a primary
   }
 });
 
-test('the two-decision allowance is shared across reviewers: a fallback block and a primary block stop the card [R5]', async () => {
+test('the R3 ledger is shared across reviewers: the primary re-raising the fallback block\'s unresolved finding stops the card [R5] [T1-EFF-R3-PROGRESS]', async () => {
   const { fx, runner, card, g, primary, backup, calls, run } = await atReview();
   try {
     primary.push(HOLD_60);
@@ -206,7 +206,7 @@ test('the two-decision allowance is shared across reviewers: a fallback block an
     fx.advance(61_000);
     r = runner.next(g(), card, repaired);
     assert.equal(reviewerOf(r.directive), 'primary');
-    primary.push(BLOCK.replace('src/t0-fb.ts:1', 'src/t0-fb.ts:2'));
+    primary.push(BLOCK.replace('src/t0-fb.ts:1: no RED', 'src/t0-fb.ts:2: still no RED (re:F1)'));
     f = await runner.formalReview(g(), card, r.run);
     assert.equal(f.run.review.substantiveDecisions, 2);
     assert.deepEqual(calls, ['primary', 'backup', 'primary']);
