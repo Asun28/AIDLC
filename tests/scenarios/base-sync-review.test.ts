@@ -391,3 +391,22 @@ test('T0-BASE-SYNC-HOLD-NARRATION acceptance 3: the CHANGELOG Unreleased section
   const sentence = '- Base-sync hold narration, card T0-BASE-SYNC-HOLD-NARRATION: a quota hold of the base-sync reviewer now makes `aidlc card next` wait with a narration that names the base-sync reviewer as held; with a fallback configured it used to say that the primary and the fallback both reported a quota, which was false.';
   assert.ok(unreleased.includes(sentence), `CHANGELOG.md Unreleased states: ${sentence}`);
 });
+
+test('T1-EFF-R3-PROGRESS, R3 decision 1 F1: a base-sync block whose commit a newer candidate supersedes still stops the card', async () => {
+  const h = await atBaseSync();
+  try {
+    await h.reviewed('sha-3');
+    // While the base-sync reviewer runs, another window records a newer candidate: the block is committed as history only.
+    h.hooks.onCx = () => {
+      h.fx.store.updateCardRun(h.goal.id, 'T0-BSR', (current) => ({ ...current!, candidate: { sha: 'sha-4', dirty: false, untracked: [], digest: 'sha-4' }, dodReceipt: 'dod:sha-4' }));
+    };
+    h.cx.push(BLOCK);
+    const { f, r } = await h.decide();
+    assert.equal(f.classified.outcome, 'block-defect');
+    assert.equal(h.fx.store.getCardRun(h.goal.id, 'T0-BSR')?.candidate?.digest, 'sha-4', 'the newer candidate stands');
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'review');
+  } finally {
+    h.fx.cleanup();
+  }
+});

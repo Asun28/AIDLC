@@ -206,6 +206,8 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
     assert.deepEqual(fresh.decision, { action: 'review-fix', remainingDecisions: 2 }, 'new findings on decision 2 get another repair round');
     const repeat = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, ['F1']);
     assert.equal(repeat.decision.action, 'stop-review');
+    assert.equal(repeat.ledger.invocations.at(-1)?.stopReview, true, 'a stopping decision is recorded as a stop, so a superseded commit keeps it (R3 decision 1 F1)');
+    assert.equal(fresh.ledger.invocations.at(-1)?.stopReview, undefined, 'a repair round is not a stop');
     assert.match(repeat.decision.action === 'stop-review' ? repeat.decision.detail : '', /second substantive block re-raised unresolved finding\(s\) F1/);
     const third = recordReviewOutcome(fresh.ledger, inv('i3'), c, specBlock, 0, []);
     assert.deepEqual(third.decision, { action: 'review-fix', remainingDecisions: 1 });
