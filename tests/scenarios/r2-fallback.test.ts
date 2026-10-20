@@ -189,6 +189,8 @@ for (const fallback of [false, true]) {
 
 test('T0-R2-FALLBACK acceptance 4: the no-verdict retry is shared: a primary no-verdict, a primary hold and a fallback no-verdict stop the card, with no further dispatch [R3]', withCard(async (s) => {
   s.primary.push({ stdout: 'I cannot decide.\n' });
+  // The in-round rerun of the primary's angle on the fallback ends without a verdict too (card T1-EFF-R2-ANGLE-FALLBACK).
+  s.secondary.push({ stdout: 'The fallback cannot decide.\n' });
   let d = preReviewDirective(s, s.run);
   const first = await review(s, d.run);
   assert.equal(first.result.outcome, 'no-verdict');
@@ -205,7 +207,7 @@ test('T0-R2-FALLBACK acceptance 4: the no-verdict retry is shared: a primary no-
   assert.equal(stopped.directive.kind, 'stop', stopped.directive.narration);
   assert.equal(stopped.run.stop?.reason, 'tool');
   assert.ok(stopped.run.stop?.detail.startsWith('pre-reviewer sonnet produced no usable verdict twice in R3 cycle 0'), stopped.run.stop?.detail);
-  assert.deepEqual(s.calls, [['primary-reviewer'], ['primary-reviewer'], ['fallback-reviewer', '--effort', 'high']], 'one no-verdict each, one hold, and nothing after the stop');
+  assert.deepEqual(s.calls, [['primary-reviewer'], ['fallback-reviewer', '--effort', 'high'], ['primary-reviewer'], ['fallback-reviewer', '--effort', 'high']], 'one no-verdict each (the first with its in-round rerun), one hold, and nothing after the stop');
 }));
 
 test('T0-R2-FALLBACK acceptance 4: a fallback no-verdict is retried on the fallback while the primary holds, and a second one stops the card [R3]', withCard(async (s) => {
@@ -512,6 +514,8 @@ test('T0-R2-FALLBACK-3: without a fallback a no-verdict recorded under an earlie
 
 test('T0-TOOL-STOP-TEXT (issue 85 item 2): the stop for a second no-verdict in a cycle names the replacement path and never card next, and card next returns the same stop [R1] [R2] [R3]', withCard(async (s) => {
   s.primary.push({ stdout: 'I cannot decide.\n' }, { stdout: 'I still cannot decide.\n' });
+  // Each round's in-round rerun on the fallback ends without a verdict too (card T1-EFF-R2-ANGLE-FALLBACK).
+  s.secondary.push({ stdout: 'The fallback cannot decide.\n' }, { stdout: 'The fallback still cannot decide.\n' });
   let d = preReviewDirective(s, s.run);
   const first = await review(s, d.run);
   assert.equal(first.result.outcome, 'no-verdict');
@@ -529,3 +533,39 @@ test('T0-TOOL-STOP-TEXT (issue 85 item 2): the stop for a second no-verdict in a
   assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
   assert.deepEqual(again.run.stop, stop, 'the same stop');
 }));
+
+test('T1-EFF-R2-ANGLE-FALLBACK acceptance 5: a primary round without a verdict reruns on the fallback at high within the round; the pass is the primary round, with the fallback on its perspective and its event, spends no retry and ships [R6] [R2] [R8]', withCard(async (s) => {
+  s.primary.push({ stdout: 'I cannot decide.\n' });
+  const d = preReviewDirective(s, s.run);
+  assert.equal(d.reviewer, 'deepseek');
+  const passed = await review(s, d.run);
+  assert.equal(passed.result.outcome, 'pass');
+  assert.deepEqual(s.calls, [['primary-reviewer'], ['fallback-reviewer', '--effort', 'high']]);
+  assert.equal(s.spawned.find((x) => x.command === 'fallback-reviewer')?.timeoutMs, 600_000);
+  assert.equal(passed.round.reviewer, 'deepseek');
+  assert.equal(passed.round.fallbackTimeoutMs, 600_000);
+  const { primaryReceiptSha256, ...fallback } = passed.round.perspectives![0]!.fallback!;
+  assert.deepEqual(fallback, { reviewer: 'sonnet', effort: 'high', primaryRunStatus: 'malformed' });
+  assert.match(primaryReceiptSha256, /^[0-9a-f]{64}$/);
+  assert.ok(passed.round.verdictRef?.endsWith('+fallback.json'), passed.round.verdictRef);
+  assert.deepEqual(decidedEvents(s.fx, s.goalId).at(-1)?.['fallbackAngles'], [{ name: 'review', outcome: 'pass', reviewer: 'sonnet', effort: 'high', primaryRunStatus: 'malformed' }]);
+  assertShips(s, passed.run);
+}, { fallbackTimeoutMs: 600_000 }));
+
+test('T1-EFF-R2-ANGLE-FALLBACK acceptance 5: a diff above the fallback cap gives the round no fallback: no fallback call, no fallbackTimeoutMs, a no-verdict round [R6]', withCard(async (s) => {
+  s.primary.push({ stdout: 'I cannot decide.\n' });
+  const noVerdict = await review(s, preReviewDirective(s, s.run).run);
+  assert.equal(noVerdict.result.outcome, 'no-verdict');
+  assert.deepEqual(s.calls, [['primary-reviewer']]);
+  assert.equal('fallbackTimeoutMs' in noVerdict.round, false);
+  assert.equal('fallbackAngles' in decidedEvents(s.fx, s.goalId).at(-1)!, false);
+}, { fallbackCap: 10, fallbackTimeoutMs: 600_000 }));
+
+test('T1-EFF-R2-ANGLE-FALLBACK acceptance 6: a pending primary round that may rerun angles on the fallback is in flight until both timeouts and the grace, its WAIT text giving 15 minutes, and is dropped at that instant [R7]', withCard(async (s) => {
+  s.fx.store.updateCardRun(s.goalId, s.card.id, (current) => {
+    const latest = current!;
+    const pending: PreReviewRound = { round: 1, cycle: 0, reviewer: 'deepseek', candidateDigest: latest.candidate?.digest ?? 'sha-1', candidateSha: 'sha-1', requestedAt: s.fx.now(), durationMs: 0, outcome: 'pending', reasons: [], reservationId: 'T1-GATE.pre.0.1.1.12121212', advisory: [], timeoutMs: 1_000, fallbackTimeoutMs: 600_000 };
+    return { ...latest, preReview: { ...latest.preReview, rounds: [...latest.preReview.rounds, pending] } };
+  });
+  assertExpiry(s, s.runner, 1_000 + 600_000, 15);
+}, { fallbackTimeoutMs: 600_000 }));

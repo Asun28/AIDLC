@@ -1399,3 +1399,65 @@ test('T1-SWEEP-REVIEW-WRAPPERS acceptance 4: the CHANGELOG Unreleased section na
     'CHANGELOG.md Unreleased names the moved wrappers',
   );
 });
+
+test('T1-EFF-R2-ANGLE-FALLBACK acceptance 1-4: an angle without a verdict reruns once, alone, on the fallback and the kept angles decide with it; a failed rerun stays no-verdict; a quota hold reruns nothing [R1] [R2] [R3] [R4] [R5]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  const FINDING = '[spec] 6 tests @ src/gate.ts:1: no RED test -> add one';
+  const BLOCK = `{"verdict":"block","reasons":["${FINDING}"],"axes":{"spec":{"verdict":"block","reasons":["${FINDING}"]},"standards":{"verdict":"pass","reasons":[]}}}\n`;
+  const HELD = { stdout: '429 Too Many Requests, retry after 30 seconds\n', exitCode: 1 };
+  type Out = { stdout?: string; stderr?: string; exitCode?: number };
+  const durations: Record<string, number> = { bugs: 30, security: 50, compliance: 40 };
+  /** The bugs, security and compliance panel: each primary angle answers from `angles` (a pass by default), the fallback `fb` from `fallback`. */
+  const panel = async (fileStem: string, angles: Record<string, Out>, fallback: Out | undefined) => {
+    const calls: Array<{ argv: string[]; timeoutMs?: number }> = [];
+    const runner = async (c: string, a: string[], o: { timeoutMs?: number } = {}) => {
+      calls.push({ argv: [c, ...a], timeoutMs: o.timeoutMs });
+      const out = c === 'fb' ? fallback! : (angles[a[1]!] ?? { stdout: PASS });
+      return scriptedRunner({ [c]: { ...out, durationMs: c === 'fb' ? 25 : durations[a[1]!] } })(c, a, o);
+    };
+    const result = await runReviewPanel({ runner, command: ['primary', '--focus', '{perspective}'], perspectives: ['bugs', 'security', 'compliance'], promptFor: (p) => `PRIMARY ${p}`, vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem, head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], ...(fallback ? { fallback: { command: ['fb', '--focus', '{perspective}'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: (p?: string) => `FALLBACK ${p}` } } : {}) });
+    return { result, calls };
+  };
+  // Acceptance 1: the rerun's block decides with the kept passes; a rerun pass passes, also after an empty primary run.
+  const { result: blocked, calls } = await panel('T1-AF.pre.0.1', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: BLOCK });
+  assert.equal(blocked.outcome, 'block');
+  assert.deepEqual(blocked.reasons, [`${FINDING} (compliance)`]);
+  assert.equal((await panel('T1-AF.pre.0.2', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS })).result.outcome, 'pass');
+  assert.equal((await panel('T1-AF.pre.0.3', { compliance: { stdout: '' } }, { stdout: PASS })).result.outcome, 'pass', 'a no_output angle reruns too');
+  // Acceptance 2: three primary calls, then the fallback once, for compliance, with its own timeout.
+  assert.deepEqual(calls.map((c) => c.argv[0]), ['primary', 'primary', 'primary', 'fb']);
+  assert.deepEqual(calls[3], { argv: ['fb', '--focus', 'compliance'], timeoutMs: 600_000 });
+  const compliance = blocked.perspectives.find((p) => p.perspective === 'compliance')!;
+  assert.equal(compliance.fallback?.reviewer, 'fb');
+  assert.equal(compliance.fallback?.primaryRunStatus, 'malformed');
+  assert.equal(compliance.durationMs, 65, 'the primary run plus the fallback run');
+  assert.equal(blocked.durationMs, 75, 'the slowest primary angle plus the slowest rerun');
+  assert.ok(readFileSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance.log'), 'utf8').includes('The diff looks fine to me.'), 'the primary log is kept');
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance+fallback.log')));
+  const sidecar = JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance+fallback.json'), 'utf8')) as { reviewer: string };
+  assert.equal(sidecar.reviewer, 'fb');
+  const round = JSON.parse(readFileSync(blocked.verdictRef!, 'utf8')) as { perspectives: Array<{ name: string; fallback?: { reviewer: string } }> };
+  assert.equal(round.perspectives.find((p) => p.name === 'compliance')?.fallback?.reviewer, 'fb');
+  assert.equal(round.perspectives.find((p) => p.name === 'bugs')?.fallback, undefined);
+  const [bugs, security] = blocked.perspectives;
+  const lines = [`bugs:${bugs!.receiptSha256}`, `security:${security!.receiptSha256}`, `compliance:${compliance.fallback!.primaryReceiptSha256}`, `compliance+fallback:${compliance.receiptSha256}`];
+  assert.notEqual(compliance.fallback!.primaryReceiptSha256, compliance.receiptSha256);
+  assert.equal(blocked.receiptSha256, createHash('sha256').update(lines.join('\n')).digest('hex'), 'the four receipt lines in panel order');
+  // Acceptance 3: a rerun without a verdict leaves the round no-verdict naming both runs; a hold on the rerun is no hold.
+  const failed = await panel('T1-AF.pre.0.4', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: 'Still thinking.\n' });
+  assert.equal(failed.result.outcome, 'no-verdict');
+  assert.deepEqual(failed.result.reasons, ['no verdict from compliance (malformed; fallback fb: malformed)']);
+  const limited = await panel('T1-AF.pre.0.5', { compliance: { stdout: 'The diff looks fine to me.\n' } }, HELD);
+  assert.equal(limited.result.outcome, 'no-verdict', 'a limit the fallback hit is never a hold under the primary');
+  assert.equal(limited.result.retryAfterMs, undefined);
+  assert.equal(limited.result.perspectives.find((p) => p.perspective === 'compliance')?.runStatus, 'tool_error');
+  const alone = await panel('T1-AF.pre.0.6', { compliance: { stdout: 'The diff looks fine to me.\n' } }, undefined);
+  assert.equal(alone.result.outcome, 'no-verdict');
+  assert.equal(alone.calls.length, 3, 'no fallback, no rerun');
+  // Acceptance 4: a quota hold on any primary angle reruns nothing.
+  const held = await panel('T1-AF.pre.0.7', { security: HELD, compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS });
+  assert.equal(held.result.outcome, 'quota-hold');
+  assert.equal(held.calls.some((c) => c.argv[0] === 'fb'), false);
+});
