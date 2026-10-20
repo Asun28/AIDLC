@@ -13,6 +13,11 @@
  * no-verdict > pass, so a round passes only when every angle passes. Native reviewers that cap
  * findings per pass (Codex `/review` reports 1-3) are compensated by breadth per decision, not
  * by more decisions.
+ *
+ * Given a fallback (R2's `preReview.fallback`), an angle whose run ended without a verdict (malformed, no output, a tool
+ * error or a timeout) runs once more, alone, on the fallback once every angle has returned, unless an angle reported a
+ * quota hold; the angles that returned a verdict are kept and the round aggregates them with the rerun angle, whose files
+ * carry the `+fallback` stem (card T1-EFF-R2-ANGLE-FALLBACK).
  */
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -838,8 +843,18 @@ export function validatePerspectives(perspectives: string[]): void {
   }
 }
 
+/** The primary run of an angle that reran on the fallback, and the fallback's name (card T1-EFF-R2-ANGLE-FALLBACK). */
+export interface AngleFallback {
+  reviewer: string;
+  primaryRunStatus: RunStatus;
+  primaryLogRef: string;
+  primaryReceiptSha256: string;
+}
+
 export interface PerspectiveResult extends PreReviewClassification {
   perspective: string;
+  /** The angle reran on the fallback after its primary run ended without a verdict; every other field is the rerun's. */
+  fallback?: AngleFallback;
   verdict?: Verdict;
   /** The verdict as this angle reported it, before the citation rule rewrote it (R7 reads the reported one). */
   reported?: Verdict;
@@ -909,6 +924,9 @@ export function joinCoverage(results: readonly PerspectiveResult[], expected: nu
 
 const dedupe = (xs: string[]): string[] => [...new Set(xs)];
 
+/** The reason an angle without a verdict gives its round; an angle that reran names both runs (card T1-EFF-R2-ANGLE-FALLBACK). */
+const noVerdictFrom = (r: PerspectiveResult): string => `no verdict from ${r.perspective} (${r.fallback ? `${r.fallback.primaryRunStatus}; fallback ${r.fallback.reviewer}: ${r.runStatus}` : r.runStatus})`;
+
 /**
  * One round verdict from several concurrent angles: quota-hold > block > no-verdict > pass. Block
  * reasons are unioned and tagged with their perspective; axes take the worse verdict. Angles that
@@ -919,7 +937,7 @@ export function aggregateVerdicts(results: PerspectiveResult[]): AggregatedVerdi
   if (results.length === 1) {
     const only = results[0]!;
     const decided = only.outcome === 'pass' || only.outcome === 'block';
-    return { outcome: only.outcome, runStatus: only.runStatus, reasons: only.reasons, verdict: decided ? only.verdict : undefined, retryAfterMs: only.retryAfterMs, advisory: only.advisory ?? [] };
+    return { outcome: only.outcome, runStatus: only.runStatus, reasons: only.outcome === 'no-verdict' && only.fallback ? [noVerdictFrom(only)] : only.reasons, verdict: decided ? only.verdict : undefined, retryAfterMs: only.retryAfterMs, advisory: only.advisory ?? [] };
   }
   const tag = (r: PerspectiveResult, s: string) => `${s} (${r.perspective})`;
   const advisory = dedupe(results.flatMap((r) => (r.advisory ?? []).map((s) => tag(r, s))));
@@ -943,7 +961,7 @@ export function aggregateVerdicts(results: PerspectiveResult[]): AggregatedVerdi
     return { outcome: 'block', runStatus: 'success', reasons, verdict: { verdict: 'block', reasons, axes, sha: shas[0], branch: branches[0], run_status: 'success' }, advisory };
   }
   const missing = results.filter((r) => r.outcome === 'no-verdict');
-  if (missing.length) return { outcome: 'no-verdict', runStatus: missing[0]!.runStatus, reasons: missing.map((r) => `no verdict from ${r.perspective} (${r.runStatus})`), advisory };
+  if (missing.length) return { outcome: 'no-verdict', runStatus: missing[0]!.runStatus, reasons: missing.map(noVerdictFrom), advisory };
   return { outcome: 'pass', runStatus: 'success', reasons: [], verdict: { verdict: 'pass', reasons: [], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'pass', reasons: [] } }, sha: shas[0], branch: branches[0], run_status: 'success' }, advisory };
 }
 
@@ -962,10 +980,21 @@ export interface PanelResult extends AggregatedVerdict {
   /** The round verdict file: the single verdict, or the aggregated document for a panel. */
   verdictRef?: string;
   logRef?: string;
-  /** Wall time of the round (the slowest angle). */
+  /** Wall time of the round (the slowest angle, plus the slowest rerun on the fallback). */
   durationMs: number;
-  /** Digest over every angle's receipt digest. */
+  /** Digest over every angle's receipt digest, a rerun angle's primary receipt and then its fallback receipt. */
   receiptSha256: string;
+}
+
+/** The reviewer a failed angle reruns on: its own command, name, timeout, shell, answer marker, `{effort}` vars and prompt. */
+export interface PanelFallback {
+  command: string[];
+  reviewer: string;
+  timeoutMs: number;
+  shell?: boolean;
+  answerMarker?: string;
+  vars: Record<string, string>;
+  promptFor: (perspective?: string) => string;
 }
 
 export interface RunReviewPanelOptions extends Omit<ReviewRetentionOptions, 'coverage'> {
@@ -980,40 +1009,65 @@ export interface RunReviewPanelOptions extends Omit<ReviewRetentionOptions, 'cov
   shell?: boolean;
   /** Join the angles' acceptance coverage over this many items and retain it (`preReview.coverage: shadow`); absent asks for none. */
   coverage?: { expected: number };
+  /** The R2 fallback an angle without a verdict reruns on once (card T1-EFF-R2-ANGLE-FALLBACK); absent reruns nothing. */
+  fallback?: PanelFallback;
+}
+
+/** The run statuses of an angle without a verdict that rerun on the fallback (card T1-EFF-R2-ANGLE-FALLBACK). */
+const RERUN_STATUSES: ReadonlySet<RunStatus> = new Set<RunStatus>(['malformed', 'no_output', 'tool_error', 'timeout']);
+
+/**
+ * An angle decided by its rerun on the fallback: the rerun's result with the primary run under `fallback` and both
+ * durations. A hold the fallback hit is never the primary's: the angle stays without a verdict, `tool_error`, with no delay.
+ */
+function withFallback(first: PerspectiveRun, rerun: PerspectiveRun, reviewer: string): PerspectiveRun {
+  const { retryAfterMs: _limit, ...run } = rerun;
+  const decided: PerspectiveRun = rerun.outcome === 'quota-hold' ? { ...run, outcome: 'no-verdict', runStatus: 'tool_error', reasons: [] } : rerun;
+  return { ...decided, durationMs: first.durationMs + rerun.durationMs, fallback: { reviewer, primaryRunStatus: first.runStatus, primaryLogRef: first.logRef, primaryReceiptSha256: first.receiptSha256 } };
 }
 
 /**
  * Run one reviewer process per perspective concurrently and aggregate them into one round verdict. An angle that fails
  * outside its receipt (a prompt that cannot be built, a retention failure) fails the round, but only once every other
- * angle has returned: the caller then releases its reservation with no reviewer of the round still running.
+ * angle has returned: the caller then releases its reservation with no reviewer of the round still running. Given a
+ * `fallback`, the angles that ended without a verdict then rerun on it concurrently, once each, unless an angle held.
  */
 export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelResult> {
   validatePerspectives(o.perspectives);
   const names: Array<string | undefined> = o.perspectives.length ? o.perspectives : [undefined];
-  const settled = await Promise.allSettled(
-    names.map(async (p): Promise<PerspectiveRun> => {
-      const prompt = o.promptFor(p);
-      const { argv, promptInArgv } = expandCommand(o.command, { ...o.vars, instructions: prompt, perspective: p ?? 'review' });
-      const [cmd, ...args] = argv;
-      if (!cmd) throw new Error('review command is empty');
-      // Dynamic text never goes through a shell: argv instructions force a direct spawn. A runner that throws
-      // (spawn failure, stdin closed early) is a failed receipt for this angle, not an aborted round.
-      let receipt: ExecReceipt;
-      const startedAt = new Date().toISOString();
-      try {
-        receipt = await o.runner(cmd, args, { cwd: o.cwd, env: reviewerEnv(), input: promptInArgv ? '' : prompt, timeoutMs: o.timeoutMs, shell: promptInArgv ? false : (o.shell ?? process.platform === 'win32') });
-      } catch (err) {
-        const finishedAt = new Date().toISOString();
-        const stderr = `[spawn error] ${(err as Error).message}`;
-        receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
-      }
-      const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem: p ? `${o.fileStem}.${p}` : o.fileStem, head: o.head, reviewer: o.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE, answerMarker: o.answerMarker });
-      return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, reported: fin.reported, coverageRejected: fin.coverageRejected, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
-    }),
-  );
-  const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
-  if (failed) throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
-  const runs: PerspectiveRun[] = settled.map((s) => (s as PromiseFulfilledResult<PerspectiveRun>).value);
+  const stemOf = (p: string | undefined) => (p ? `${o.fileStem}.${p}` : o.fileStem);
+  const runAngle = async (p: string | undefined, r: PanelFallback, fileStem: string): Promise<PerspectiveRun> => {
+    const prompt = r.promptFor(p);
+    const { argv, promptInArgv } = expandCommand(r.command, { ...r.vars, instructions: prompt, perspective: p ?? 'review' });
+    const [cmd, ...args] = argv;
+    if (!cmd) throw new Error('review command is empty');
+    // Dynamic text never goes through a shell: argv instructions force a direct spawn. A runner that throws
+    // (spawn failure, stdin closed early) is a failed receipt for this angle, not an aborted round.
+    let receipt: ExecReceipt;
+    const startedAt = new Date().toISOString();
+    try {
+      receipt = await o.runner(cmd, args, { cwd: o.cwd, env: reviewerEnv(), input: promptInArgv ? '' : prompt, timeoutMs: r.timeoutMs, shell: promptInArgv ? false : (r.shell ?? process.platform === 'win32') });
+    } catch (err) {
+      const finishedAt = new Date().toISOString();
+      const stderr = `[spawn error] ${(err as Error).message}`;
+      receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
+    }
+    const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem, head: o.head, reviewer: r.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE, answerMarker: r.answerMarker });
+    return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, reported: fin.reported, coverageRejected: fin.coverageRejected, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
+  };
+  const settle = async (jobs: Array<Promise<PerspectiveRun>>): Promise<PerspectiveRun[]> => {
+    const settled = await Promise.allSettled(jobs);
+    const failed = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected');
+    if (failed) throw failed.reason instanceof Error ? failed.reason : new Error(String(failed.reason));
+    return settled.map((s) => (s as PromiseFulfilledResult<PerspectiveRun>).value);
+  };
+  const primary: PanelFallback = { command: o.command, reviewer: o.reviewer, timeoutMs: o.timeoutMs, shell: o.shell, answerMarker: o.answerMarker, vars: o.vars, promptFor: o.promptFor };
+  const firsts = await settle(names.map((p) => runAngle(p, primary, stemOf(p))));
+  // A hold anywhere keeps the round the hold it is, and a rerun is never rerun (card T1-EFF-R2-ANGLE-FALLBACK).
+  const fallback = o.fallback;
+  const rerun = fallback && !firsts.some((r) => r.outcome === 'quota-hold') ? firsts.flatMap((r, i) => (r.outcome === 'no-verdict' && RERUN_STATUSES.has(r.runStatus) ? [i] : [])) : [];
+  const reruns = fallback && rerun.length ? await settle(rerun.map((i) => runAngle(names[i], fallback, `${stemOf(names[i])}+fallback`))) : [];
+  const runs = firsts.map((first, i) => (rerun.includes(i) ? withFallback(first, reruns[rerun.indexOf(i)]!, fallback!.reviewer) : first));
   const agg = aggregateVerdicts(runs);
   // Retained evidence, joined after the outcome and never an input to it.
   // A panel the coverage angle did not run asks for nothing and records nothing, so the round document stays the one it
@@ -1023,9 +1077,12 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
   let verdictRef = runs.length === 1 && !coverage ? runs[0]!.verdictRef : undefined;
   if (runs.length > 1 || !verdictRef || coverage) {
     verdictRef = path.join(o.reviewDir, `${o.fileStem}.json`);
-    const doc = { ...(agg.verdict ?? {}), sha: agg.verdict?.sha ?? o.head, reviewer: o.reviewer, stage: runs.length > 1 ? 'panel' : 'review', policy_hash: o.policyHash, outcome: agg.outcome, run_status: agg.runStatus, reasons: agg.reasons, advisory: agg.advisory ?? [], coverage, perspectives: runs.map((r) => ({ name: r.perspective, outcome: r.outcome, runStatus: r.runStatus, reasons: r.reasons, advisory: r.advisory ?? [], durationMs: r.durationMs, verdictRef: r.verdictRef, logRef: r.logRef, receiptSha256: r.receiptSha256 })) };
+    const doc = { ...(agg.verdict ?? {}), sha: agg.verdict?.sha ?? o.head, reviewer: o.reviewer, stage: runs.length > 1 ? 'panel' : 'review', policy_hash: o.policyHash, outcome: agg.outcome, run_status: agg.runStatus, reasons: agg.reasons, advisory: agg.advisory ?? [], coverage, perspectives: runs.map((r) => ({ name: r.perspective, outcome: r.outcome, runStatus: r.runStatus, reasons: r.reasons, advisory: r.advisory ?? [], durationMs: r.durationMs, verdictRef: r.verdictRef, logRef: r.logRef, receiptSha256: r.receiptSha256, ...(r.fallback ? { fallback: r.fallback } : {}) })) };
     writeFileSync(verdictRef, JSON.stringify(doc, null, 2) + '\n', 'utf8');
   }
-  const receiptSha256 = runs.length === 1 ? runs[0]!.receiptSha256 : createHash('sha256').update(runs.map((r) => `${r.perspective}:${r.receiptSha256}`).join('\n')).digest('hex');
-  return { ...agg, perspectives: runs, coverage, verdictRef, logRef: runs.length === 1 ? runs[0]!.logRef : undefined, durationMs: Math.max(0, ...runs.map((r) => r.durationMs)), receiptSha256 };
+  // A rerun angle adds its fallback receipt after its primary one; a round with no rerun keeps the digest it had.
+  const receiptLines = runs.flatMap((r) => (r.fallback ? [`${r.perspective}:${r.fallback.primaryReceiptSha256}`, `${r.perspective}+fallback:${r.receiptSha256}`] : [`${r.perspective}:${r.receiptSha256}`]));
+  const receiptSha256 = runs.length === 1 && !runs[0]!.fallback ? runs[0]!.receiptSha256 : createHash('sha256').update(receiptLines.join('\n')).digest('hex');
+  const slowest = (xs: PerspectiveRun[]) => Math.max(0, ...xs.map((r) => r.durationMs));
+  return { ...agg, perspectives: runs, coverage, verdictRef, logRef: runs.length === 1 ? runs[0]!.logRef : undefined, durationMs: slowest(firsts) + slowest(reruns), receiptSha256 };
 }
