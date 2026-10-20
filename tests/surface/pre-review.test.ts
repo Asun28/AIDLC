@@ -1407,7 +1407,7 @@ test('T1-EFF-R2-ANGLE-FALLBACK acceptance 1-4: an angle without a verdict reruns
   const FINDING = '[spec] 6 tests @ src/gate.ts:1: no RED test -> add one';
   const BLOCK = `{"verdict":"block","reasons":["${FINDING}"],"axes":{"spec":{"verdict":"block","reasons":["${FINDING}"]},"standards":{"verdict":"pass","reasons":[]}}}\n`;
   const HELD = { stdout: '429 Too Many Requests, retry after 30 seconds\n', exitCode: 1 };
-  type Out = { stdout?: string; stderr?: string; exitCode?: number };
+  type Out = { stdout?: string; stderr?: string; exitCode?: number; timedOut?: boolean };
   const durations: Record<string, number> = { bugs: 30, security: 50, compliance: 40 };
   /** The bugs, security and compliance panel: each primary angle answers from `angles` (a pass by default), the fallback `fb` from `fallback`. */
   const panel = async (fileStem: string, angles: Record<string, Out>, fallback: Out | undefined) => {
@@ -1426,6 +1426,12 @@ test('T1-EFF-R2-ANGLE-FALLBACK acceptance 1-4: an angle without a verdict reruns
   assert.deepEqual(blocked.reasons, [`${FINDING} (compliance)`]);
   assert.equal((await panel('T1-AF.pre.0.2', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS })).result.outcome, 'pass');
   assert.equal((await panel('T1-AF.pre.0.3', { compliance: { stdout: '' } }, { stdout: PASS })).result.outcome, 'pass', 'a no_output angle reruns too');
+  // The other two statuses that rerun: a run that exits non-zero without a quota message, and one that timed out.
+  for (const [stem, out, status] of [['T1-AF.pre.0.8', { stdout: 'boom\n', exitCode: 2 }, 'tool_error'], ['T1-AF.pre.0.9', { stdout: '', timedOut: true }, 'timeout']] as const) {
+    const rerun = await panel(stem, { compliance: out }, { stdout: PASS });
+    assert.equal(rerun.result.outcome, 'pass', `a ${status} angle reruns`);
+    assert.equal(rerun.result.perspectives.find((p) => p.perspective === 'compliance')?.fallback?.primaryRunStatus, status);
+  }
   // Acceptance 2: three primary calls, then the fallback once, for compliance, with its own timeout.
   assert.deepEqual(calls.map((c) => c.argv[0]), ['primary', 'primary', 'primary', 'fb']);
   assert.deepEqual(calls[3], { argv: ['fb', '--focus', 'compliance'], timeoutMs: 600_000 });
@@ -1460,4 +1466,26 @@ test('T1-EFF-R2-ANGLE-FALLBACK acceptance 1-4: an angle without a verdict reruns
   const held = await panel('T1-AF.pre.0.7', { security: HELD, compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS });
   assert.equal(held.result.outcome, 'quota-hold');
   assert.equal(held.calls.some((c) => c.argv[0] === 'fb'), false);
+});
+
+test('T1-EFF-R2-ANGLE-FALLBACK R3 decision 1 (F1): a single pass whose primary run left its own document keeps it when the rerun fails; the round document is <stem>+round.json [R3]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  // The primary prints a verdict and exits 1: a tool_error angle whose document is retained at <stem>.json; its rerun prints none.
+  const runner = async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: PASS, exitCode: 1 }, fb: { stdout: 'Still thinking.\n' } })(c, a, o);
+  const single = await runReviewPanel({ runner, command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-AF.pre.1.1', head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback: { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' } });
+  assert.equal(single.outcome, 'no-verdict');
+  assert.deepEqual(single.reasons, ['no verdict from review (tool_error; fallback fb: malformed)']);
+  const primaryDoc = JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.1.1.json'), 'utf8')) as { reviewer: string; run_status: string };
+  assert.deepEqual([primaryDoc.reviewer, primaryDoc.run_status], ['deepseek', 'tool_error'], 'the primary document survives');
+  assert.equal(single.verdictRef, path.join(reviewDir, 'T1-AF.pre.1.1+round.json'));
+  const roundDoc = JSON.parse(readFileSync(single.verdictRef!, 'utf8')) as { outcome: string; perspectives: Array<{ fallback?: { reviewer: string } }> };
+  assert.equal(roundDoc.outcome, 'no-verdict');
+  assert.equal(roundDoc.perspectives[0]?.fallback?.reviewer, 'fb', 'the round document lists the rerun');
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.1.1+fallback.log')), 'the rerun log survives too');
+  // Without a primary document the round document keeps its place at <stem>.json.
+  const malformed = async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: 'No verdict.\n' }, fb: { stdout: 'Still thinking.\n' } })(c, a, o);
+  const plain = await runReviewPanel({ runner: malformed, command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-AF.pre.1.2', head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback: { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' } });
+  assert.equal(plain.verdictRef, path.join(reviewDir, 'T1-AF.pre.1.2.json'));
 });
