@@ -1073,10 +1073,12 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
   // A panel the coverage angle did not run asks for nothing and records nothing, so the round document stays the one it
   // was and no join of entirely unaccounted items is retained.
   const coverage = o.coverage && names.includes(COVERAGE_ANGLE) ? joinCoverage(runs, o.coverage.expected) : undefined;
-  // The round document is always retained, also on a hold, a missing verdict or an inconsistent binding.
+  // The round document is always retained, also on a hold, a missing verdict or an inconsistent binding. A single pass whose
+  // primary run left its own document at `<stem>.json` before a rerun keeps it: the round document is then `<stem>+round.json`.
   let verdictRef = runs.length === 1 && !coverage ? runs[0]!.verdictRef : undefined;
   if (runs.length > 1 || !verdictRef || coverage) {
-    verdictRef = path.join(o.reviewDir, `${o.fileStem}.json`);
+    const primaryKept = runs.length === 1 && runs[0]!.fallback !== undefined && firsts[0]!.verdictRef !== undefined;
+    verdictRef = path.join(o.reviewDir, `${o.fileStem}${primaryKept ? '+round' : ''}.json`);
     const doc = { ...(agg.verdict ?? {}), sha: agg.verdict?.sha ?? o.head, reviewer: o.reviewer, stage: runs.length > 1 ? 'panel' : 'review', policy_hash: o.policyHash, outcome: agg.outcome, run_status: agg.runStatus, reasons: agg.reasons, advisory: agg.advisory ?? [], coverage, perspectives: runs.map((r) => ({ name: r.perspective, outcome: r.outcome, runStatus: r.runStatus, reasons: r.reasons, advisory: r.advisory ?? [], durationMs: r.durationMs, verdictRef: r.verdictRef, logRef: r.logRef, receiptSha256: r.receiptSha256, ...(r.fallback ? { fallback: r.fallback } : {}) })) };
     writeFileSync(verdictRef, JSON.stringify(doc, null, 2) + '\n', 'utf8');
   }
