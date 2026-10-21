@@ -1961,16 +1961,16 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: the R3 counters and the action are com
 
 
 /** A card at R3 decision 2 on sha-2 whose decision 1 blocked on F1 (card T1-EFF-R3-PROGRESS, R3 decision 1 F1 F2). */
-async function atDecisionTwo(id: string) {
-  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+async function atDecisionTwo(id: string, opts: { gateRequired?: boolean; first?: (file: string) => string } = {}) {
+  const fx = makeFixture({ config: { gateRequired: opts.gateRequired ?? true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   const file = `src/${id.toLowerCase()}.ts`;
-  const hooks: { onDispatch?: () => void } = {};
-  const r3: string[] = [r3Block(file)];
+  const hooks: { onDispatch?: (args: string[]) => void } = {};
+  const r3: string[] = [(opts.first ?? r3Block)(file)];
   const script = scriptedRunner({
     'git diff --name-only': { stdout: `${file}\u0000` },
     'git diff': { stdout: `diff --git a/${file} b/${file}\n+export const x = 1;\n` },
     'fake-r2': () => ({ stdout: R2_PASS }),
-    'fake-r3': () => { hooks.onDispatch?.(); return { stdout: r3.shift() ?? R2_PASS }; },
+    'fake-r3': (args) => { hooks.onDispatch?.(args); return { stdout: r3.shift() ?? R2_PASS }; },
   });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, runner: script });
   const s = cardAtShip(fx, runner, id, 'sha-1', [file]);
@@ -1978,7 +1978,7 @@ async function atDecisionTwo(id: string) {
   assert.equal(r.directive.kind, 'review', r.directive.narration);
   const f = await runner.formalReview(s.g(), s.card, r.run);
   assert.equal(f.run.state, 'REVIEW_FIX', 'decision 1 blocks on F1');
-  assert.deepEqual(f.run.findings.map((x) => x.id), ['F1']);
+  assert.deepEqual(f.run.findings.map((x) => x.id), opts.first ? ['F1', 'F2'] : ['F1']);
   r = runner.next(s.g(), s.card, f.run);
   const run = runner.recordAttempt(s.g(), s.card, r.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
   r = runner.next(s.g(), s.card, run);
@@ -2025,6 +2025,39 @@ test('T1-EFF-R3-PROGRESS-2 (R3 decision 2 of T1-EFF-R3-PROGRESS, F3): the findin
     assert.equal(f.run.state, 'STOP', 'decision 2 re-raised F1, held at dispatch');
     assert.match(f.run.stop?.detail ?? '', /re-raised unresolved finding\(s\) F1/);
     assert.deepEqual(f.run.review.invocations.at(-1)?.held, ['F1'], 'the decision record keeps the set fixed at dispatch');
+  } finally {
+    a.fx.cleanup();
+  }
+});
+
+test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F1): a finding R3 still holds reaches the next decision even after an R2 pass resolved it, so its re-raise is a repeat', async () => {
+  const a = await atDecisionTwo('T1-HP');
+  try {
+    // An R2 pass on the repaired candidate resolved F1, which R3 decision 1 raised and so still holds.
+    a.fx.store.updateCardRun(a.s.goal.id, 'T1-HP', (current) => ({ ...current!, findings: current!.findings.map((x) => (x.id === 'F1' ? { ...x, resolvedAt: a.fx.now() } : x)) }));
+    let prompt = '';
+    a.hooks.onDispatch = (args) => {
+      prompt = args.join(' ');
+    };
+    a.r3.push(a.reraise);
+    const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
+    assert.match(prompt, /- F1 \(open; R3 decision 1\)/, 'the held finding is in the prompt, so the reviewer can cite it');
+    assert.equal(f.run.state, 'STOP', 'its re-raise is a repeat');
+  } finally {
+    a.fx.cleanup();
+  }
+});
+
+test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F2): without gateRequired a re-raised standards-only finding never stops the card; a new spec finding gets its repair round', async () => {
+  const mixed = (file: string) => `{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:1: no RED -> add one","[standards] 3 naming @ ${file}:1: unclear name -> rename"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:1: no RED -> add one"]},"standards":{"verdict":"block","reasons":["[standards] 3 naming @ ${file}:1: unclear name -> rename"]}}}\n`;
+  const a = await atDecisionTwo('T1-MX', { gateRequired: false, first: mixed });
+  try {
+    const spec = `[spec] 7 edge @ ${a.file}:2: a new defect -> fix`;
+    const standards = `[standards] 3 naming @ ${a.file}:1: still unclear (re:F2) -> rename`;
+    a.r3.push(`{"verdict":"block","reasons":["${spec}","${standards}"],"axes":{"spec":{"verdict":"block","reasons":["${spec}"]},"standards":{"verdict":"block","reasons":["${standards}"]}}}\n`);
+    const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
+    assert.equal(f.classified.outcome, 'block-defect', 'the new spec finding blocks the merge');
+    assert.equal(f.run.state, 'REVIEW_FIX', 'the standards-only re-raise of F2 is a second opinion, not a repeat');
   } finally {
     a.fx.cleanup();
   }
