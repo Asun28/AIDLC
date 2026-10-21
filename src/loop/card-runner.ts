@@ -286,9 +286,10 @@ export class CardRunner {
   }
 
   /** The run's unresolved findings as the prompt renders them: open ones to verify, disputed ones with the author's note. */
-  private priorFindingsFor(run: CardRun): PriorFinding[] {
+  private priorFindingsFor(run: CardRun, held: string[] = []): PriorFinding[] {
+    // A finding R3 still holds is sent even after an R2 pass resolved it, so a re-raise can cite it (card T1-EFF-R3-PROGRESS-2).
     return run.findings
-      .filter((f) => !f.resolvedAt)
+      .filter((f) => !f.resolvedAt || held.includes(f.id))
       .map((f) => ({
         id: f.id,
         reason: f.reason,
@@ -1579,10 +1580,10 @@ export class CardRunner {
         invocationId = `r3:${fileStem}`;
         decisionNo = current.review.substantiveDecisions + 1;
         maxDecisionsNo = this.formalAllowance(current, card);
-        priorFindings = this.priorFindingsFor(current);
         advisoryNotes = this.advisoryNotesFor(current, candidateSha, candidateDigest);
         seen = this.findingsSnapshot(current);
         held = heldFindings(current.findings, seen, decisionNo);
+        priorFindings = this.priorFindingsFor(current, held);
         const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', decision: decisionNo, held, policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
         // What the reviewer receives is retained next to its verdict, so a commit from the retained result binds the same snapshot.
         writeFileSync(path.join(reviewDir, `${fileStem}.reservation.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, requestedAt: now, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, timeoutMs: cfg.timeoutMs }, null, 2) + '\n', 'utf8');
@@ -1922,7 +1923,10 @@ export class CardRunner {
     const dropReservation = (x: CardRun): ReviewLedger => ({ ...x.review, invocations: x.review.invocations.filter((i) => i.invocationId !== invocationId) });
     // The held findings this decision re-raises, from the set fixed at dispatch (card T1-EFF-R3-PROGRESS-2; a reservation
     // written before the field is judged on the record at completion); a base-sync decision keeps the second-block stop.
-    const repeated = (latest: CardRun): string[] | undefined => (r.baseSync ? undefined : verdict ? repeatedFindings(citedReasonsOf(verdict, r.changedPaths), r.held ?? heldFindings(latest.findings, seen, r.decision ?? latest.review.substantiveDecisions + 1)) : []);
+    // Only a finding that blocks under the active gate can repeat: without gateRequired a standards-only re-raise is a second
+    // opinion and never stops the card for a ruling.
+    const blocking = (reasons: string[]) => (this.config.gateRequired ? reasons : reasons.filter((x) => /^\s*\[spec\]/i.test(x)));
+    const repeated = (latest: CardRun): string[] | undefined => (r.baseSync ? undefined : verdict ? repeatedFindings(blocking(citedReasonsOf(verdict, r.changedPaths)), r.held ?? heldFindings(latest.findings, seen, r.decision ?? latest.review.substantiveDecisions + 1)) : []);
     const result = { classified, verdict, advisory, verdictRef: r.verdictRef, logRef: r.logRef, durationMs: r.durationMs, receiptSha256: r.receiptSha256 };
     // The decision (counters and action), the finding round and the resulting state are computed from the ledger
     // locked at completion, so a decision another completion recorded meanwhile is counted, never overwritten.
