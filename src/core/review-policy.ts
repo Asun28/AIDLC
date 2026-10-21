@@ -119,9 +119,10 @@ export function recordReviewOutcome(
   scriptCounterDelta = 0,
   repeated?: string[],
 ): { ledger: ReviewLedger; decision: LedgerDecision } {
-  if (ledger.invocations.some((i) => i.invocationId === invocation.invocationId)) {
-    // Duplicate by invocation identity: idempotent replay; return the existing decision.
-    return { ledger, decision: decideFromLedger(ledger, classified, repeated) };
+  const existing = ledger.invocations.find((i) => i.invocationId === invocation.invocationId);
+  if (existing) {
+    // Duplicate by invocation identity: idempotent replay; a recorded stop is returned as it was recorded.
+    return { ledger, decision: existing.stopReview ? { action: 'stop-review', detail: existing.stopReview } : decideFromLedger(ledger, classified, repeated, invocation.decision) };
   }
   const record: ReviewInvocation = {
     ...invocation,
@@ -149,17 +150,20 @@ export function recordReviewOutcome(
     if (classified.outcome === 'block-defect') next.substantiveBlocks = ledger.substantiveBlocks + 1;
   }
   if (classified.outcome === 'no-verdict') next.noVerdictRetriesUsed = ledger.noVerdictRetriesUsed + 1;
-  const decision = decideFromLedger(next, classified, repeated);
-  // A stopping decision is marked on its record, so a commit that only lands as history (a newer candidate superseded it)
-  // still stops the card at the next assessment (card T1-EFF-R3-PROGRESS).
-  if (decision.action === 'stop-review') next.invocations = next.invocations.map((i) => (i === record ? { ...record, stopReview: true } : i));
+  const decision = decideFromLedger(next, classified, repeated, record.decision);
+  // A stopping decision records its detail, so a commit that only lands as history (a newer candidate superseded it) still
+  // stops the card with that detail at the next assessment, and admission refuses another decision (card T1-EFF-R3-PROGRESS-2).
+  if (decision.action === 'stop-review') {
+    const stopReview = decision.detail;
+    next.invocations = next.invocations.map((i) => (i === record ? { ...record, stopReview } : i));
+  }
   return { ledger: next, decision };
 }
 
 const ORDINALS = ['first', 'second', 'third', 'fourth'];
 const ordinal = (n: number): string => ORDINALS[n - 1] ?? `${n}th`;
 
-function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, repeated?: string[]): LedgerDecision {
+function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, repeated?: string[], dispatched?: number): LedgerDecision {
   switch (classified.outcome) {
     case 'pass':
     case 'routed-skip':
@@ -177,8 +181,9 @@ function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, r
       if (repeated) {
         // A command reviewer (card T1-EFF-R3-PROGRESS): from decision 2 on, a re-raised unresolved finding is the
         // maker/checker deadlock and stops for a ruling; a block of only new findings is progress and gets another repair
-        // round, up to the fourth decision.
-        if (ledger.substantiveDecisions >= 2 && repeated.length) {
+        // round, up to the fourth decision. The repeat is judged at the decision number the reviewer was dispatched with and
+        // the cap at the decisions recorded (card T1-EFF-R3-PROGRESS-2).
+        if ((dispatched ?? ledger.substantiveDecisions) >= 2 && repeated.length) {
           return { action: 'stop-review', detail: `${ordinal(ledger.substantiveBlocks)} substantive block re-raised unresolved finding(s) ${repeated.join(', ')}` };
         }
         if (ledger.substantiveDecisions >= MAX_R3_DECISIONS) {
@@ -359,24 +364,32 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
 }
 
 /**
- * The findings R3 `decision` re-raises (`re:F<n>`, resolved as `recordFindings` resolves it) that its reviewer received
- * and that are either disputed and unresolved in that snapshot, or held by R3: raised or re-raised by the previous R3
- * decision. That is the repeat that stops R3 for a ruling, the maker/checker deadlock (card T1-EFF-R3-PROGRESS). A finding
- * an earlier R3 decision left out was accepted by R3, so its return is a regression with a repair round, not a repeat; an R2
- * finding the author never disputed and R3 never raised is not a repeat either, since with one R2 round per cycle R2's
- * findings reach R3 unrepaired. An R2 pass resolving a finding R3 holds does not end R3's hold. Ids are returned once each,
- * in reason order.
+ * The findings a re-raise by R3 `decision` repeats, fixed at dispatch from the record locked at reservation (cards
+ * T1-EFF-R3-PROGRESS, T1-EFF-R3-PROGRESS-2): the findings its reviewer received that are disputed and unresolved in that
+ * snapshot, or held by R3, raised or re-raised by the previous R3 decision. Re-raising one is the repeat that stops R3 for a
+ * ruling, the maker/checker deadlock. A finding an earlier R3 decision left out was accepted by R3, so its return is a
+ * regression with a repair round, not a repeat; an R2 finding the author never disputed and R3 never raised is not a repeat
+ * either, since with one R2 round per cycle R2's findings reach R3 unrepaired. An R2 pass resolving a finding R3 holds does
+ * not end R3's hold. Nothing recorded after the dispatch changes the set.
  */
-export function repeatedFindings(findings: ReviewFinding[], reasons: string[], seen: Record<string, FindingSnapshot>, decision: number): string[] {
+export function heldFindings(findings: ReviewFinding[], seen: Record<string, FindingSnapshot>, decision: number): string[] {
+  return findings
+    .filter((f) => {
+      const received = seen[f.id];
+      if (!received) return false;
+      const disputed = received.disposition === 'disputed' && !received.resolved;
+      const lastByR3 = Math.max(f.stage === 'formal' ? f.round : 0, ...f.reraised.filter((r) => r.stage === 'formal').map((r) => r.round));
+      return disputed || (lastByR3 > 0 && lastByR3 >= decision - 1);
+    })
+    .map((f) => f.id);
+}
+
+/** The held findings a decision's cited reasons re-raise (`re:F<n>`, resolved as `recordFindings` resolves it), once each, in reason order. */
+export function repeatedFindings(reasons: string[], held: string[]): string[] {
   const out: string[] = [];
   for (const reason of reasons) {
     const ref = findingReference(reason);
-    const received = ref ? seen[ref] : undefined;
-    const f = ref ? findings.find((x) => x.id === ref) : undefined;
-    if (!ref || !received || !f || out.includes(ref)) continue;
-    const disputed = received.disposition === 'disputed' && !received.resolved;
-    const lastByR3 = Math.max(f.stage === 'formal' ? f.round : 0, ...f.reraised.filter((r) => r.stage === 'formal').map((r) => r.round));
-    if (disputed || (lastByR3 > 0 && lastByR3 >= decision - 1)) out.push(ref);
+    if (ref && held.includes(ref) && !out.includes(ref)) out.push(ref);
   }
   return out;
 }

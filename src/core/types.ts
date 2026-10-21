@@ -330,8 +330,10 @@ export const ReviewInvocation = z.object({
   timeoutMs: z.number().int().positive().optional(),
   /** The R3 decision number the reviewer was dispatched with; repeat detection reads it, never the count at completion (card T1-EFF-R3-PROGRESS). */
   decision: z.number().int().positive().optional(),
-  /** This decision stopped the card for a ruling: kept on the record, so a commit superseded by a newer candidate still stops it (card T1-EFF-R3-PROGRESS). */
-  stopReview: z.boolean().optional(),
+  /** The findings this decision's re-raise repeats, fixed at dispatch from the locked record: disputed and unresolved, or raised or re-raised by the previous R3 decision (card T1-EFF-R3-PROGRESS-2). */
+  held: z.array(z.string()).optional(),
+  /** The detail of a decision that stopped the card for a ruling, kept on its record: a commit superseded by a newer candidate still stops the card with it, and no further decision is admitted (card T1-EFF-R3-PROGRESS-2). */
+  stopReview: z.string().min(1).optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 

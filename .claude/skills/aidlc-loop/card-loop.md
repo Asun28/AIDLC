@@ -77,7 +77,7 @@ stale approval.
 ## Review (R3)
 R3 command when `formalReview.command` is set: `aidlc review r3 <id>`.
 Allowance: 2 or 4 for repairs; from decision 2 a block re-raising a
-disputed/held finding, or a 4th block => STOP/review. Missing, malformed or stale verdict never
+disputed/held finding, or a block on decision 4 => STOP/review. Missing, malformed or stale verdict never
 passes; dispatch + one retry TOTAL across script and driver (a script
 retry counts); one retry owner. Verified quota or admission
 hold => WAIT within the deadline through the shared queue (`aidlc review
