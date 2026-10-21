@@ -1999,10 +1999,32 @@ test('T1-EFF-R3-PROGRESS, R3 decision 1 F1: a decision that re-raises a held fin
     await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
     const persisted = a.fx.store.getCardRun(a.s.goal.id, 'T1-SR')!;
     assert.equal(persisted.candidate?.digest, 'sha-3', 'the newer candidate stands');
-    assert.equal(persisted.review.invocations.at(-1)?.stopReview, true, 'the decision that re-raised F1 is recorded as a stop');
+    assert.match(persisted.review.invocations.at(-1)?.stopReview ?? '', /re-raised unresolved finding\(s\) F1/, 'the decision that re-raised F1 records its stop detail');
+    // R3 decision 2 of T1-EFF-R3-PROGRESS (re:F1): review r3 admits no further decision after a recorded stop.
+    await assert.rejects(a.runner.formalReview(a.s.g(), a.s.card, persisted), /recorded a stop for a ruling/);
     const r = a.runner.next(a.s.g(), a.s.card, persisted);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
-    if (r.directive.kind === 'stop') assert.equal(r.directive.stop.reason, 'review');
+    if (r.directive.kind === 'stop') {
+      assert.equal(r.directive.stop.reason, 'review');
+      assert.match(r.directive.stop.detail, /re-raised unresolved finding\(s\) F1/, 'the STOP names the recorded detail, not the generic one');
+    }
+  } finally {
+    a.fx.cleanup();
+  }
+});
+
+test('T1-EFF-R3-PROGRESS-2 (R3 decision 2 of T1-EFF-R3-PROGRESS, F3): the findings a re-raise repeats are fixed at dispatch, so a change to the live finding history while the decision runs does not change the outcome', async () => {
+  const a = await atDecisionTwo('T1-HD');
+  try {
+    // While decision 2 runs, the live record loses R3's hold on F1 (its history now reads as an R2 finding): the reviewer received it held.
+    a.hooks.onDispatch = () => {
+      a.fx.store.updateCardRun(a.s.goal.id, 'T1-HD', (current) => ({ ...current!, findings: current!.findings.map((x) => (x.id === 'F1' ? { ...x, stage: 'pre' as const, cycle: 0, reraised: [] } : x)) }));
+    };
+    a.r3.push(a.reraise);
+    const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
+    assert.equal(f.run.state, 'STOP', 'decision 2 re-raised F1, held at dispatch');
+    assert.match(f.run.stop?.detail ?? '', /re-raised unresolved finding\(s\) F1/);
+    assert.deepEqual(f.run.review.invocations.at(-1)?.held, ['F1'], 'the decision record keeps the set fixed at dispatch');
   } finally {
     a.fx.cleanup();
   }

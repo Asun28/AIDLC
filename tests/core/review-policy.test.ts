@@ -181,7 +181,7 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
   const finding = (id: string, stage: 'pre' | 'formal', extra: Record<string, unknown> = {}) =>
     ReviewFinding.parse({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 6 tests @ src/gate.ts:1: finding ${id} -> fix`, raisedAt: T0, ...extra });
 
-  test('acceptance 1: repeatedFindings names the re-raised findings that are disputed and unresolved, or held by the previous R3 decision', () => {
+  test('acceptance 1: heldFindings fixes at dispatch the findings a re-raise repeats, disputed and unresolved or held by the previous R3 decision, and repeatedFindings keeps the re-raised ones', () => {
     // Decision 3: F1 was raised by decision 1 and re-raised by decision 2 (held); F2 is an R2 residual nobody disputed;
     // F3 was raised by decision 1 and left out by decision 2 (accepted, resolved); F4 is an R2 finding the author disputes.
     const reraisedBy2 = [{ stage: 'formal', round: 2, at: T0, reason: '[spec] 6 tests @ src/gate.ts:1: still missing (re:F1) -> fix' }];
@@ -193,9 +193,11 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
     ];
     const seen = policy.snapshotFindings(findings);
     const reasons = ['F1', 'F2', 'F3', 'F4', 'F9'].map((id) => `[spec] 6 tests @ src/gate.ts:2: still missing (re:${id}) -> fix`);
-    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen, 3), ['F1', 'F4']);
-    // decision 2: F3, raised by decision 1, is still held by R3 when decision 2 re-raises it
-    assert.deepEqual(policy.repeatedFindings(findings, reasons, seen, 2), ['F1', 'F3', 'F4']);
+    assert.deepEqual(policy.heldFindings(findings, seen, 3), ['F1', 'F4']);
+    // decision 2: F3, raised by decision 1, is still held by R3 when decision 2 is dispatched
+    assert.deepEqual(policy.heldFindings(findings, seen, 2), ['F1', 'F3', 'F4']);
+    assert.deepEqual(policy.repeatedFindings(reasons, ['F1', 'F4']), ['F1', 'F4'], 're:F2, re:F3 and re:F9 repeat nothing held');
+    assert.deepEqual(policy.repeatedFindings(reasons.slice(1), ['F1']), [], 'a decision that does not re-raise F1 repeats nothing');
   });
 
   test('acceptance 2: a later block of new findings returns to REVIEW_FIX; a re-raised unresolved finding from decision 2 on, or the fourth decision, stops', () => {
@@ -206,7 +208,9 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
     assert.deepEqual(fresh.decision, { action: 'review-fix', remainingDecisions: 2 }, 'new findings on decision 2 get another repair round');
     const repeat = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, ['F1']);
     assert.equal(repeat.decision.action, 'stop-review');
-    assert.equal(repeat.ledger.invocations.at(-1)?.stopReview, true, 'a stopping decision is recorded as a stop, so a superseded commit keeps it (R3 decision 1 F1)');
+    assert.match(repeat.ledger.invocations.at(-1)?.stopReview ?? '', /second substantive block re-raised unresolved finding\(s\) F1/, 'a stopping decision records its detail, so a superseded commit stops with it (R3 decisions 1 and 2, F1)');
+    const replay = recordReviewOutcome(repeat.ledger, inv('i2'), c, specBlock, 0, []);
+    assert.equal(replay.decision.action, 'stop-review', 'a replay of a recorded stop returns the stop it recorded');
     assert.equal(fresh.ledger.invocations.at(-1)?.stopReview, undefined, 'a repair round is not a stop');
     assert.match(repeat.decision.action === 'stop-review' ? repeat.decision.detail : '', /second substantive block re-raised unresolved finding\(s\) F1/);
     const third = recordReviewOutcome(fresh.ledger, inv('i3'), c, specBlock, 0, []);
@@ -214,6 +218,15 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
     const fourth = recordReviewOutcome(third.ledger, inv('i4'), c, specBlock, 0, []);
     assert.equal(fourth.decision.action, 'stop-review', 'the fourth decision stops whatever its findings');
     assert.equal(fourth.ledger.substantiveDecisions, 4);
+  });
+
+  test('T1-EFF-R3-PROGRESS-2 (R3 decision 2, re:F2): the repeat stop is judged at the dispatched decision number, and the four-decision cap at the decisions recorded', () => {
+    const c = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
+    const other = recordReviewOutcome(ReviewLedger.parse({}), inv('other'), c, specBlock, 0, []);
+    const late = recordReviewOutcome(other.ledger, { ...inv('i1'), decision: 1 }, c, specBlock, 0, ['F4']);
+    assert.deepEqual(late.decision, { action: 'review-fix', remainingDecisions: 2 }, 'dispatched as decision 1, it gets its repair round although another decision completed first');
+    const seeded = ReviewLedger.parse({ substantiveDecisions: 3, substantiveBlocks: 3 });
+    assert.equal(recordReviewOutcome(seeded, { ...inv('i4'), decision: 2 }, c, specBlock, 0, []).decision.action, 'stop-review', 'the fourth decision recorded stops whatever number it was dispatched with');
   });
 });
 

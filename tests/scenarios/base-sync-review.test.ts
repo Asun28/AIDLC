@@ -401,9 +401,13 @@ test('T1-EFF-R3-PROGRESS, R3 decision 1 F1: a base-sync block whose commit a new
       h.fx.store.updateCardRun(h.goal.id, 'T0-BSR', (current) => ({ ...current!, candidate: { sha: 'sha-4', dirty: false, untracked: [], digest: 'sha-4' }, dodReceipt: 'dod:sha-4' }));
     };
     h.cx.push(BLOCK);
-    const { f, r } = await h.decide();
+    const f = await h.runner.formalReview(h.g(), h.card, h.state.r.run);
     assert.equal(f.classified.outcome, 'block-defect');
-    assert.equal(h.fx.store.getCardRun(h.goal.id, 'T0-BSR')?.candidate?.digest, 'sha-4', 'the newer candidate stands');
+    const persisted = h.fx.store.getCardRun(h.goal.id, 'T0-BSR')!;
+    assert.equal(persisted.candidate?.digest, 'sha-4', 'the newer candidate stands');
+    // R3 decision 2 of T1-EFF-R3-PROGRESS (re:F1): review r3 admits no further decision after the recorded stop.
+    await assert.rejects(h.runner.formalReview(h.g(), h.card, persisted), /recorded a stop for a ruling/);
+    const r = h.runner.next(h.g(), h.card, persisted);
     assert.equal(r.directive.kind, 'stop', r.directive.narration);
     assert.equal(r.run.stop?.reason, 'review');
   } finally {
