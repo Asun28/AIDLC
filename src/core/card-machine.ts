@@ -29,7 +29,7 @@ export interface CardEvidence {
   closureComplete: boolean;
   /** Fresh substantive review block on the current candidate that still has allowance. */
   reviewBlockPending: boolean;
-  /** Review allowance exhausted / second block / no-verdict retries exhausted. */
+  /** Review allowance exhausted: a block with no decision left (a ship-path reviewer: a second block), or no verdict after the retry. */
   reviewExhausted: boolean;
   /** Acceptance work incomplete: RED not established, DoD failing, code-caused CI failure or base moved. */
   buildIncomplete: boolean;
@@ -105,7 +105,7 @@ export function selectCardState(ev: CardEvidence): CardDecision {
 
   // 7. Exhausted repair / review allowances.
   if (ev.reviewExhausted) {
-    return { state: 'STOP', reason: 'review allowance exhausted', stop: makeStop('review', 'second substantive block or no verdict after the single retry', 'return the PR and retained verdict evidence for human adjudication', { at: ev.now, global: false }), admitMutations: false };
+    return { state: 'STOP', reason: 'review allowance exhausted', stop: makeStop('review', 'a review block with no decision left (a second block for a ship-path reviewer) or no verdict after the single retry', 'return the PR and retained verdict evidence for human adjudication', { at: ev.now, global: false }), admitMutations: false };
   }
   if (ev.repairExhausted) {
     return { state: 'STOP', reason: ev.repairExhausted, stop: makeStop('card', ev.repairExhausted, 'record cause, evidence and the next needed action; do not attempt again from another session', { at: ev.now, global: false }), admitMutations: false };
