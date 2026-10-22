@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { makeFixture, writeCard, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -547,7 +548,8 @@ test('T1-EFF-R2-ANGLE-FALLBACK acceptance 5: a primary round without a verdict r
   const { primaryReceiptSha256, ...fallback } = passed.round.perspectives![0]!.fallback!;
   assert.deepEqual(fallback, { reviewer: 'sonnet', effort: 'high', primaryRunStatus: 'malformed' });
   assert.match(primaryReceiptSha256, /^[0-9a-f]{64}$/);
-  assert.ok(passed.round.verdictRef?.endsWith('+fallback.json'), passed.round.verdictRef);
+  assert.ok(passed.round.verdictRef?.endsWith(`${passed.round.reservationId}.json`), `the round document, not the rerun's: ${passed.round.verdictRef}`);
+  assert.equal((JSON.parse(readFileSync(passed.round.verdictRef!, 'utf8')) as { perspectives: Array<{ fallback?: { reviewer: string } }> }).perspectives[0]?.fallback?.reviewer, 'sonnet');
   assert.deepEqual(decidedEvents(s.fx, s.goalId).at(-1)?.['fallbackAngles'], [{ name: 'review', outcome: 'pass', reviewer: 'sonnet', effort: 'high', primaryRunStatus: 'malformed' }]);
   assertShips(s, passed.run);
 }, { fallbackTimeoutMs: 600_000 }));

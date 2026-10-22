@@ -1494,3 +1494,25 @@ test('T1-EFF-R2-ANGLE-FALLBACK R3 decision 1 (F1): a single pass whose primary r
   const plain = await runReviewPanel({ runner: malformed, command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-AF.pre.1.2', head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback: { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' } });
   assert.equal(plain.verdictRef, path.join(reviewDir, 'T1-AF.pre.1.2.json'));
 });
+
+test('T1-EFF-R2-ANGLE-FALLBACK-2 (R3 decision 2 of T1-EFF-R2-ANGLE-FALLBACK): every single pass that reran writes a round document that records the rerun, also when the rerun returned a verdict [R3]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  const fallback = { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' };
+  const panelOf = (fileStem: string, rerun: { stdout: string; exitCode?: number }) => runReviewPanel({ runner: async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: 'No verdict.\n' }, fb: rerun })(c, a, o), command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem, head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback });
+  type RoundDoc = { reviewer: string; outcome: string; reasons: string[]; perspectives: Array<{ fallback?: { reviewer: string; primaryRunStatus: string } }> };
+  // The rerun passes: the round document records it beside the rerun's own document.
+  const passed = await panelOf('T1-AF.pre.2.1', { stdout: PASS });
+  assert.equal(passed.outcome, 'pass');
+  assert.equal(passed.verdictRef, path.join(reviewDir, 'T1-AF.pre.2.1.json'));
+  const passedDoc = JSON.parse(readFileSync(passed.verdictRef!, 'utf8')) as RoundDoc;
+  assert.deepEqual([passedDoc.reviewer, passedDoc.outcome, passedDoc.perspectives[0]?.fallback?.reviewer, passedDoc.perspectives[0]?.fallback?.primaryRunStatus], ['deepseek', 'pass', 'fb', 'malformed']);
+  assert.equal((JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.2.1+fallback.json'), 'utf8')) as { reviewer: string }).reviewer, 'fb', 'the rerun document is kept');
+  // The rerun prints a verdict and exits 1: the round document names both failed runs.
+  const failed = await panelOf('T1-AF.pre.2.2', { stdout: PASS, exitCode: 1 });
+  assert.equal(failed.outcome, 'no-verdict');
+  assert.equal(failed.verdictRef, path.join(reviewDir, 'T1-AF.pre.2.2.json'));
+  assert.deepEqual((JSON.parse(readFileSync(failed.verdictRef!, 'utf8')) as RoundDoc).reasons, ['no verdict from review (malformed; fallback fb: tool_error)']);
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.2.2+fallback.json')), 'the rerun document is kept');
+});
