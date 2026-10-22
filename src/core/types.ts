@@ -328,11 +328,17 @@ export const ReviewInvocation = z.object({
   baseSync: z.boolean().optional(),
   /** The timeout of the reviewer the decision was dispatched to; a pending decision is reconciled against it. Absent on records written before the field (card T0-R3-RECONCILE-TIMEOUT). */
   timeoutMs: z.number().int().positive().optional(),
+  /** The R3 decision number the reviewer was dispatched with; repeat detection reads it, never the count at completion (card T1-EFF-R3-PROGRESS). */
+  decision: z.number().int().positive().optional(),
+  /** The findings this decision's re-raise repeats, fixed at dispatch from the locked record: disputed and unresolved, or raised or re-raised by the previous R3 decision (card T1-EFF-R3-PROGRESS-2). */
+  held: z.array(z.string()).optional(),
+  /** The detail of a decision that stopped the card for a ruling, kept on its record: a commit superseded by a newer candidate still stops the card with it, and no further decision is admitted (card T1-EFF-R3-PROGRESS-2). */
+  stopReview: z.string().min(1).optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
 export const ReviewLedger = z.object({
-  /** Valid substantive decisions (initial + one for a repaired candidate). */
+  /** Valid substantive decisions (initial + one for a repaired candidate; up to MAX_R3_DECISIONS for a command reviewer's repairs). */
   substantiveDecisions: z.number().int().nonnegative().default(0),
   substantiveBlocks: z.number().int().nonnegative().default(0),
   /** The installed script's own enforced counter, tracked separately and never rewritten. */
@@ -1014,6 +1020,8 @@ export const ARC_LIMIT_MS = 12 * HOUR_MS;
 export const RECONCILE_GRACE_MS = 5 * MINUTE_MS;
 export const MAX_WORKERS_DEFAULT = 2;
 export const MAX_SUBSTANTIVE_REVIEW_DECISIONS = 2;
+/** R3 decisions of a command reviewer on one card run while its blocks raise new findings (card T1-EFF-R3-PROGRESS). */
+export const MAX_R3_DECISIONS = 4;
 export const MAX_NO_VERDICT_RETRIES = 1;
 export const MAX_CI_TRANSIENT_RERUNS = 1;
 export const MAX_INTEGRATION_REPAIR_CYCLES = 1;

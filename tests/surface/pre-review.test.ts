@@ -876,8 +876,10 @@ test('T1-REVIEW-COVERAGE R3 decision 1 (F2): the off prompts are byte-equal to t
     for (const perspective of [undefined, 'ac-coverage', 'bugs']) {
       const key = `${stage}/${perspective ?? 'single'}`;
       // T1-OPUS55-PROMPTS adds two sentences on purpose (the end-of-turn line, and for R2 the every-finding sentence), and
-      // T0-R2-PASS-NOTES two lines (a pass lists its notes once, the verdict line is checked for balance); with exactly those
-      // removed each prompt is still the pre-change prompt, byte for byte.
+      // T0-R2-PASS-NOTES two lines (a pass lists its notes once, the verdict line is checked for balance), and T1-EFF-R3-PROGRESS-2
+      // rewords one R3 clause (up to four decisions); with exactly those removed or put back each prompt is still the
+      // pre-change prompt, byte for byte.
+      if (stage === 'formal') assert.ok(buildReviewPrompt({ ...input, stage, perspective }).includes('; ' + DECISIONS_CLAUSE.now + ' '), `${key} carries the decisions clause T1-EFF-R3-PROGRESS-2 words`);
       const off = withoutAddedSentences(buildReviewPrompt({ ...input, stage, perspective }));
       assert.equal(sha(off), PRE_CHANGE[key], `${key} with coverage off is the pre-change prompt`);
       const on = withoutAddedSentences(buildReviewPrompt({ ...input, stage, perspective, coverage: true }));
@@ -1137,12 +1139,15 @@ const PASS_NOTES_LINES = [
 /** The reasons line as T0-PASS-REASONS-WORDING words it, and as it read before (issue #91). */
 const REASONS_LINE = { now: '`verdict` is the worse of the two axes; `reasons` is empty on a pass that carries no notes.', before: '`verdict` is the worse of the two axes; `reasons` is empty on pass.' };
 
+/** The R3 clause as T1-EFF-R3-PROGRESS-2 words it (up to four decisions), and as it read before. */
+const DECISIONS_CLAUSE = { now: 'a finding left out costs a repair round and a decision.', before: 'a partial list wastes one of only two decisions.' };
+
 /**
- * A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added removed and the line T0-PASS-REASONS-WORDING
- * reworded put back, for the pre-change hash pins.
+ * A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added removed, and the line T0-PASS-REASONS-WORDING
+ * and the R3 clause T1-EFF-R3-PROGRESS-2 reworded put back, for the pre-change hash pins.
  */
 function withoutAddedSentences(prompt: string): string {
-  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '').replace('\n' + REASONS_LINE.now + '\n', '\n' + REASONS_LINE.before + '\n');
+  return prompt.replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '').replace('\n' + REASONS_LINE.now + '\n', '\n' + REASONS_LINE.before + '\n').replace('; ' + DECISIONS_CLAUSE.now + ' ', '; ' + DECISIONS_CLAUSE.before + ' ');
 }
 
 test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single pass and each perspective, carries the end-of-turn line [R7]', () => {
