@@ -267,6 +267,12 @@ export type PreReviewOutcome = z.infer<typeof PreReviewOutcome>;
 export const PreReviewRoundOutcome = z.enum(['pass', 'block', 'no-verdict', 'quota-hold', 'pending']);
 export type PreReviewRoundOutcome = z.infer<typeof PreReviewRoundOutcome>;
 
+export const EffortLevel = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export type EffortLevel = z.infer<typeof EffortLevel>;
+/** The effort a formal reviewer runs at; `low` is not offered for R3. */
+export const ReviewEffortLevel = EffortLevel.exclude(['low']);
+export type ReviewEffortLevel = z.infer<typeof ReviewEffortLevel>;
+
 /** One angle of a concurrent review panel (bugs, security, compliance, or a custom focus). */
 export const PerspectiveRecord = z.object({
   name: z.string().min(1),
@@ -276,14 +282,10 @@ export const PerspectiveRecord = z.object({
   durationMs: z.number().int().nonnegative().default(0),
   verdictRef: z.string().optional(),
   receiptSha256: z.string().optional(),
+  /** The angle reran on `preReview.fallback` after its primary run ended without a verdict: the fallback, the level `{effort}` expanded to, and the primary run's status and receipt (card T1-EFF-R2-ANGLE-FALLBACK). */
+  fallback: z.object({ reviewer: z.string().min(1), effort: ReviewEffortLevel.optional(), primaryRunStatus: RunStatus, primaryReceiptSha256: z.string().min(1) }).optional(),
 });
 export type PerspectiveRecord = z.infer<typeof PerspectiveRecord>;
-
-export const EffortLevel = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
-export type EffortLevel = z.infer<typeof EffortLevel>;
-/** The effort a formal reviewer runs at; `low` is not offered for R3. */
-export const ReviewEffortLevel = EffortLevel.exclude(['low']);
-export type ReviewEffortLevel = z.infer<typeof ReviewEffortLevel>;
 /** How a formal reviewer's `{effort}` placeholder is chosen per candidate (src/core/review-effort.ts). */
 export const ReviewEffortPolicy = z.object({
   default: ReviewEffortLevel.default('medium'),
@@ -371,6 +373,8 @@ export const PreReviewRound = z.object({
   effort: ReviewEffortLevel.optional(),
   /** The timeout the round was dispatched with, recorded when a fallback is configured; a round in flight expires on it (card T0-R2-FALLBACK-3). */
   timeoutMs: z.number().int().positive().optional(),
+  /** The fallback's timeout, recorded when the round's angles without a verdict may rerun on it; a round in flight expires on both (card T1-EFF-R2-ANGLE-FALLBACK). */
+  fallbackTimeoutMs: z.number().int().positive().optional(),
   /** Concurrent angles of a panel round. */
   perspectives: z.array(PerspectiveRecord).optional(),
   /** The reservation id of the dispatch (the retention file stem); a pending record is replaced by the decided one under it. */

@@ -1119,8 +1119,9 @@ export class CardRunner {
       const reviewDir = path.join(this.reviewCheckout(run), '.review');
       const failedBeforeDispatch = (r: PreReviewRound) => r.reservationId !== undefined && existsSync(path.join(reviewDir, `${r.reservationId}.failed.json`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.log`)) && !existsSync(path.join(reviewDir, `${r.reservationId}.json`));
       // A round runs under the timeout its reservation recorded, whatever the configuration says now; a round with none
-      // recorded (dispatched without a fallback configured) under the primary's (card T0-R2-FALLBACK-3).
-      const timeoutOf = (r: PreReviewRound) => r.timeoutMs ?? cfg.timeoutMs;
+      // recorded (dispatched without a fallback configured) under the primary's (card T0-R2-FALLBACK-3). A round whose angles
+      // may rerun on the fallback runs under both timeouts (card T1-EFF-R2-ANGLE-FALLBACK).
+      const timeoutOf = (r: PreReviewRound) => (r.timeoutMs ?? cfg.timeoutMs) + (r.fallbackTimeoutMs ?? 0);
       const expiry = (r: PreReviewRound) => (failedBeforeDispatch(r) ? Date.parse(r.requestedAt) : Date.parse(r.requestedAt) + timeoutOf(r) + RECONCILE_GRACE_MS);
       if (Date.parse(now) < expiry(pending)) {
         const next = this.save({ ...run, state: 'WAIT' });
@@ -2123,6 +2124,12 @@ export class CardRunner {
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     const since = this.lastReviewedSha(persisted, 'pre');
     const delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
+    // The in-round fallback (card T1-EFF-R2-ANGLE-FALLBACK): a round on the primary hands the panel preReview.fallback when one
+    // is configured and the diff and the delta fit its cap, so an angle without a verdict reruns on it; otherwise the round runs
+    // as before and nothing is refused.
+    const fallbackCfg = cfg.reviewer === primary.reviewer ? preReviewFallbackSettings(primary) : undefined;
+    const angleFallback = fallbackCfg && [diff, delta?.diff ?? ''].every((text) => Buffer.byteLength(text, 'utf8') <= fallbackCfg.maxDiffBytes) ? fallbackCfg : undefined;
+    const fallbackEffort = angleFallback?.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(angleFallback.effort, diff, changedPaths, pathAllowed) : undefined;
     const reviewDir = path.join(cwd, '.review');
     // Reserve the round under the card-run lock before dispatch: the guards are re-checked on the locked record (a dispute
     // withdrawn or a round recorded since the first read refuses here), the owner's lease is renewed and fenced in the same
@@ -2150,7 +2157,7 @@ export class CardRunner {
         this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
       }
       fileStem = `${card.id}.pre.${numbering.cycle}.${numbering.round}.${numbering.attemptNo}.${randomUUID().slice(0, 8)}`;
-      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}), ...(primary.fallback ? { timeoutMs: cfg.timeoutMs } : {}) };
+      reservation = { round: numbering.round, cycle: numbering.cycle, reviewer: cfg.reviewer, candidateDigest, candidateSha, requestedAt: now, durationMs: 0, outcome: 'pending', reasons: [], reservationId: fileStem, policyHash: hash, advisory: [], ...(effort ? { effort } : {}), ...(primary.fallback ? { timeoutMs: cfg.timeoutMs } : {}), ...(angleFallback ? { fallbackTimeoutMs: angleFallback.timeoutMs } : {}) };
       priorFindings = this.priorFindingsFor(current);
       seen = this.findingsSnapshot(current);
       return { ...current, preReview: { ...current.preReview, rounds: [...current.preReview.rounds, reservation] } };
@@ -2167,13 +2174,15 @@ export class CardRunner {
       const verdict: Verdict = { verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } }, sha: candidateSha, branch: card.id, run_status: 'success' };
       result = { outcome: 'block', runStatus: 'success', reasons, verdict, perspectives: [{ perspective: 'scope-gate', outcome: 'block', runStatus: 'success', reasons, verdict, durationMs: 0, logRef: '', receiptSha256: '', exitCode: 0 }], durationMs: 0, receiptSha256: '' };
     } else {
-      const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
       // Acceptance coverage is asked of the one angle that answers it, so a panel without that angle asks for nothing and
       // records nothing: an empty record would read as a reviewer that ignored a request nobody made.
       const coverage = cfg.coverage === 'shadow' && cfg.perspectives.includes(COVERAGE_ANGLE);
-      const promptFor = (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !promptInArgv, perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: Math.max(cfg.rounds, round) });
+      // Each reviewer's prompt follows its own argv: a prompt passed in argv carries no diff.
+      const promptsFor = (command: string[]) => (perspective?: string) => buildReviewPrompt({ stage: 'pre', includeDiff: !command.some((a) => a.includes('{instructions}')), perspective, reviewPolicy, lessons, coverage, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, round, maxRounds: Math.max(cfg.rounds, round) });
+      const vars = { cwd, base: baseRef, head: candidateSha, card: card.id };
+      const fallback = angleFallback ? { command: angleFallback.command, reviewer: angleFallback.reviewer, timeoutMs: angleFallback.timeoutMs, shell: angleFallback.shell, answerMarker: angleFallback.answerMarker, vars: { ...vars, ...(fallbackEffort ? { effort: fallbackEffort } : {}) }, promptFor: promptsFor(angleFallback.command) } : undefined;
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor, vars: { cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor: promptsFor(cfg.command), vars: { ...vars, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker, fallback });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
@@ -2194,7 +2203,9 @@ export class CardRunner {
     const after = this.clock();
     // Timed from the clock after the run: a review can outlast the hold it reports.
     const holdUntil = result.outcome === 'quota-hold' ? addMs(after, result.retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256 }));
+    // A rerun angle records the fallback that decided it and its primary run (card T1-EFF-R2-ANGLE-FALLBACK).
+    const perspectives = result.perspectives.map((p) => ({ name: p.perspective, outcome: p.outcome, runStatus: p.runStatus, reasons: p.reasons, durationMs: p.durationMs, verdictRef: p.verdictRef, receiptSha256: p.receiptSha256, ...(p.fallback ? { fallback: { reviewer: p.fallback.reviewer, ...(fallbackEffort ? { effort: fallbackEffort } : {}), primaryRunStatus: p.fallback.primaryRunStatus, primaryReceiptSha256: p.fallback.primaryReceiptSha256 } } : {}) }));
+    const fallbackAngles = perspectives.flatMap((p) => (p.fallback ? [{ name: p.name, outcome: p.outcome, reviewer: p.fallback.reviewer, ...(p.fallback.effort ? { effort: p.fallback.effort } : {}), primaryRunStatus: p.fallback.primaryRunStatus }] : []));
     const record: PreReviewRound = { ...reserved, durationMs: result.durationMs, outcome: result.outcome, runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, holdUntil, perspectives, coverage: result.coverage };
     const evidenceEntry = { id: `pre-review-${cycle}-${round}-${attemptNo}`, kind: 'artifact' as const, createdAt: after, candidateDigest, note: `pre-review ${cfg.reviewer}${effort ? ` (effort ${effort})` : ''} ${result.outcome}: ${result.reasons.join(' | ')}`.slice(0, 500) };
     // The angle that wrote each reason, from the structured result: every cited reason of the angle's own document (root
@@ -2234,7 +2245,7 @@ export class CardRunner {
       after,
     );
     const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}) } });
+    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}), ...(fallbackAngles.length ? { fallbackAngles } : {}) } });
     return { run: saved, result, round: record };
   }
 
