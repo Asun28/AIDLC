@@ -105,7 +105,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 2. T1-EFF-HOOK-QUIET: the Stop guard reminds once per card state and stays quiet while background work runs; the routing guard skips machine prompts (stopped after two R3 decisions on its reminder record; superseded by T1-EFF-HOOK-QUIET-2 by the engineer's ruling of 2026-10-20).
 2a. T1-EFF-HOOK-QUIET-2: the Stop guard adds nothing under stop_hook_active and no DoD reminder while background tasks run, with no reminder state; the routing guard skips machine prompts.
 3. T1-EFF-R3-PROGRESS: R3 stops for a ruling on a repeated unresolved finding or at its fourth decision; a block of only new findings gets another repair round (stopped after two R3 decisions on timing findings; superseded by T1-EFF-R3-PROGRESS-2 by the engineer's ruling of 2026-10-20).
-3a. T1-EFF-R3-PROGRESS-2: the same rule, judged on the decision number and the held findings fixed at dispatch; a stopping decision records its detail, so a superseded commit still stops the card and no further decision is admitted.
+3a. T1-EFF-R3-PROGRESS-2: the same rule, judged on the decision number and the held findings fixed at dispatch; a stopping decision records its detail, so a superseded commit still stops the card and no further decision is admitted (passed R3 decision 2, then CI failed on a prompt pin test outside its DoD; the test-only repair needed a third decision; superseded by T1-EFF-R3-PROGRESS-3 by the engineer's ruling of 2026-10-22).
+3b. T1-EFF-R3-PROGRESS-3: carries the T1-EFF-R3-PROGRESS-2 branch with its CI repair (a163b8e) by merge and gets a fresh R2 and R3.
 4. T1-EFF-R2-ANGLE-FALLBACK: a failed R2 angle is rerun alone on the fallback; the angles with verdicts are kept.
 5. T1-EFF-AGENTS-DOD: agent model and effort defaults, the implementer started at the directive's effort, targeted DoDs with the full suite in CI.
 
@@ -117,7 +118,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 | T1-EFF-HOOK-QUIET | MUST | Stop reminder once per card state; no routing of machine prompts (stopped after two R3 decisions; superseded by T1-EFF-HOOK-QUIET-2) | - | W2 | - |
 | T1-EFF-HOOK-QUIET-2 | MUST | Stop guard silent under stop_hook_active and background tasks, no saved state; no routing of machine prompts | - | W2 | - |
 | T1-EFF-R3-PROGRESS | MUST | R3 stops on a repeated unresolved finding or the fourth decision (stopped after two R3 decisions; superseded by T1-EFF-R3-PROGRESS-2) | - | W3 | - |
-| T1-EFF-R3-PROGRESS-2 | MUST | R3 stops on a repeated unresolved finding or the fourth decision, fixed at dispatch; the stop is recorded | - | W6 | - |
+| T1-EFF-R3-PROGRESS-2 | MUST | R3 stops on a repeated unresolved finding or the fourth decision, fixed at dispatch; the stop is recorded (CI repair needed a third decision; superseded by T1-EFF-R3-PROGRESS-3) | - | W6 | - |
+| T1-EFF-R3-PROGRESS-3 | MUST | T1-EFF-R3-PROGRESS-2 with its CI repair, fresh R2 and R3 | - | W7 | - |
 | T1-EFF-R2-ANGLE-FALLBACK | SHOULD | a failed R2 angle reruns alone on the fallback | T1-EFF-REVIEW-CONFIG | W4 | - |
 | T1-EFF-AGENTS-DOD | SHOULD | agent model/effort, implementer effort rule, targeted DoD | - | W5 | - |
 
