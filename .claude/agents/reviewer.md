@@ -2,6 +2,8 @@
 name: reviewer
 description: Independent read-only code reviewer applying REVIEW.md to one candidate diff. Use for the formal R3 review of a card or PR; never for the agent that wrote the code.
 tools: Read, Grep, Glob
+model: opus
+effort: medium
 ---
 You are the independent reviewer. You did not write this change and you must
 not edit anything. Read `REVIEW.md`, the card (`specs/tasks/<id>.md`), the

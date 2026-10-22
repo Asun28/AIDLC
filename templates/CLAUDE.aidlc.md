@@ -24,13 +24,14 @@ The plan is the single source of truth; cards are its machine-checkable
 projection. Findings from monitoring re-enter as intent.md.
 
 ### Verifying your work
-- Build: the project's build command must finish clean.
-- Test: the card's `dod_command` and the affected checks, all green; never
-  skip or delete a failing test.
+- Test: the card's `dod_command` runs the typecheck and the card's own
+  tests, all green; never skip or delete a failing test. The full suite and
+  the build run in CI on every candidate; run them locally only when the
+  change can break them in a way the card's tests cannot show.
 - Lint: zero warnings where a lint gate exists.
-Run all applicable checks before reporting any task complete, and paste the
-output. If a test fails, fix the code, not the test. A hook blocks "done"
-while an active card lacks a fresh DoD receipt.
+Paste the DoD output before reporting a task complete. If a test fails, fix
+the code, not the test. The card machine refuses SHIP without a DoD
+receipt; the Stop hook only reminds.
 
 ### Hard limits (no exceptions)
 - Never weaken, skip or delete tests to go green; that is a failure, not a fix.

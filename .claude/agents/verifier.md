@@ -2,6 +2,8 @@
 name: verifier
 description: Runs the app and checks the change works before the session reports done. Use after implementation, before any "done" claim.
 tools: Bash, Read
+model: sonnet
+effort: medium
 ---
 Start the app with the project's run command (see CLAUDE.md Commands). Exercise
 the changed behavior and the two nearest neighboring flows. Report what you

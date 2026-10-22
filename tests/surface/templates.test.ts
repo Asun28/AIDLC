@@ -288,3 +288,54 @@ describe('templates (Q14 packaging)', () => {
     assert.match(unreleased, /T1-REVIEW-COVERAGE-STATS/, 'CHANGELOG Unreleased carries the entry');
   });
 });
+
+
+describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule, targeted DoD', () => {
+  const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const flat = (rel: string) => read(rel).replace(/\s+/g, ' ');
+  const front = (text: string) => text.slice(0, text.indexOf('\n---', 4));
+
+  test('acceptance 1: each agent file names exactly one model and one effort [R1]', () => {
+    const want: Record<string, [string, string]> = { planner: ['opus', 'high'], reviewer: ['opus', 'medium'], 'release-specialist': ['opus', 'medium'], investigator: ['sonnet', 'medium'], verifier: ['sonnet', 'medium'], implementer: ['inherit', 'medium'] };
+    for (const [name, [model, effort]] of Object.entries(want)) {
+      const fm = front(read(`templates/claude/agents/${name}.md`));
+      assert.deepEqual(fm.match(/^model: .*$/gm), [`model: ${model}`], name);
+      assert.deepEqual(fm.match(/^effort: .*$/gm), [`effort: ${effort}`], name);
+    }
+  });
+
+  test('acceptance 2: both arc.md copies start an implementer subagent at the directive effort, identical and under the cap [R2]', () => {
+    const live = read('.claude/skills/aidlc-loop/arc.md');
+    const template = read('templates/claude/skills/aidlc-loop/arc.md');
+    assert.equal(live, template);
+    assert.ok(Buffer.byteLength(template, 'utf8') <= CAPS['arc.md']!, `arc.md is ${Buffer.byteLength(template, 'utf8')} bytes`);
+    assert.ok(flat('templates/claude/skills/aidlc-loop/arc.md').includes("Start an implementer subagent with the `run-card` directive's `effort` as its effort"));
+  });
+
+  test('acceptance 3: Verifying your work names the card DoD, CI for the full suite and the SHIP refusal, and no hook that blocks done [R3]', () => {
+    const text = read('templates/CLAUDE.aidlc.md');
+    const section = text.slice(text.indexOf('### Verifying your work'), text.indexOf('### Hard limits')).replace(/\s+/g, ' ');
+    assert.ok(section.includes("the card's `dod_command` runs the typecheck and the card's own tests"), section);
+    assert.ok(section.includes('The full suite and the build run in CI on every candidate'), section);
+    assert.ok(section.includes('The card machine refuses SHIP without a DoD receipt'), section);
+    assert.ok(!section.includes('A hook blocks'), section);
+  });
+
+  test('acceptance 4: the planner, the implementer and both card templates state the targeted DoD [R4]', () => {
+    assert.ok(flat('templates/claude/agents/planner.md').includes("Each card's `dod_command` runs only that card's tests and fast static checks (typecheck), never the full suite"));
+    assert.ok(!read('templates/claude/agents/implementer.md').includes('the affected checks'));
+    for (const file of ['templates/cards/_TEMPLATE.md', 'specs/tasks/_TEMPLATE.md']) {
+      assert.ok(read(file).includes("# the card's own tests and fast static checks; the full suite runs in CI"), file);
+    }
+  });
+
+  test('acceptance 5: OPERATIONS names the six agent defaults and the implementer effort rule; the CHANGELOG Unreleased section names the card [R5]', () => {
+    const ops = flat('docs/OPERATIONS.md');
+    for (const phrase of ['the planner on `opus` at `high`', 'the reviewer and the release-specialist on `opus` at `medium`', 'the investigator and the verifier on `sonnet` at `medium`', "the implementer on the session's model (`inherit`) at `medium`", "starts an implementer subagent with the `run-card` directive's `effort`"]) {
+      assert.ok(ops.includes(phrase), phrase);
+    }
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    assert.match(unreleased, /^- T1-EFF-AGENTS-DOD: /m);
+  });
+});
