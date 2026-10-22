@@ -76,10 +76,10 @@ stale approval.
 
 ## Review (R3)
 R3 command when `formalReview.command` is set: `aidlc review r3 <id>`.
-Allowance: one initial decision + one for a repaired candidate. A second
-substantive block => STOP/review. Missing, malformed or stale verdict never
+Allowance: 2 or 4 for repairs; from decision 2 a block re-raising a
+disputed/held finding, or a block on decision 4 => STOP/review. Missing, malformed or stale verdict never
 passes; dispatch + one retry TOTAL across script and driver (a script
-internal retry consumes it); one retry owner. Verified quota or admission
+retry counts); one retry owner. Verified quota or admission
 hold => WAIT within the deadline through the shared queue (`aidlc review
 status`); unknown output alone is not quota. Dedupe by invocation id, not
 file count; script counters stay separate. Introduced defect: fix in scope
