@@ -107,7 +107,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 3. T1-EFF-R3-PROGRESS: R3 stops for a ruling on a repeated unresolved finding or at its fourth decision; a block of only new findings gets another repair round (stopped after two R3 decisions on timing findings; superseded by T1-EFF-R3-PROGRESS-2 by the engineer's ruling of 2026-10-20).
 3a. T1-EFF-R3-PROGRESS-2: the same rule, judged on the decision number and the held findings fixed at dispatch; a stopping decision records its detail, so a superseded commit still stops the card and no further decision is admitted (passed R3 decision 2, then CI failed on a prompt pin test outside its DoD; the test-only repair needed a third decision; superseded by T1-EFF-R3-PROGRESS-3 by the engineer's ruling of 2026-10-22).
 3b. T1-EFF-R3-PROGRESS-3: carries the T1-EFF-R3-PROGRESS-2 branch with its CI repair (a163b8e) by merge and gets a fresh R2 and R3.
-4. T1-EFF-R2-ANGLE-FALLBACK: a failed R2 angle is rerun alone on the fallback; the angles with verdicts are kept.
+4. T1-EFF-R2-ANGLE-FALLBACK: a failed R2 angle is rerun alone on the fallback; the angles with verdicts are kept (stopped after R3 decision 2: a single pass whose rerun returned a verdict wrote no round document; superseded by T1-EFF-R2-ANGLE-FALLBACK-2 by the engineer's ruling of 2026-10-20).
+4a. T1-EFF-R2-ANGLE-FALLBACK-2: carries the T1-EFF-R2-ANGLE-FALLBACK branch (587312e) by merge and writes the round document for every round with a rerun.
 5. T1-EFF-AGENTS-DOD: agent model and effort defaults, the implementer started at the directive's effort, targeted DoDs with the full suite in CI.
 
 ## 7. Task split (dependencies and parallel windows)
@@ -120,7 +121,8 @@ reviewer of each angle; agent front matter `model`/`effort`.
 | T1-EFF-R3-PROGRESS | MUST | R3 stops on a repeated unresolved finding or the fourth decision (stopped after two R3 decisions; superseded by T1-EFF-R3-PROGRESS-2) | - | W3 | - |
 | T1-EFF-R3-PROGRESS-2 | MUST | R3 stops on a repeated unresolved finding or the fourth decision, fixed at dispatch; the stop is recorded (CI repair needed a third decision; superseded by T1-EFF-R3-PROGRESS-3) | - | W6 | - |
 | T1-EFF-R3-PROGRESS-3 | MUST | T1-EFF-R3-PROGRESS-2 with its CI repair, fresh R2 and R3 | - | W7 | - |
-| T1-EFF-R2-ANGLE-FALLBACK | SHOULD | a failed R2 angle reruns alone on the fallback | T1-EFF-REVIEW-CONFIG | W4 | - |
+| T1-EFF-R2-ANGLE-FALLBACK | SHOULD | a failed R2 angle reruns alone on the fallback (stopped after R3 decision 2; superseded by T1-EFF-R2-ANGLE-FALLBACK-2) | T1-EFF-REVIEW-CONFIG | W4 | - |
+| T1-EFF-R2-ANGLE-FALLBACK-2 | SHOULD | a failed R2 angle reruns alone on the fallback; every round with a rerun writes its round document | T1-EFF-REVIEW-CONFIG | W8 | - |
 | T1-EFF-AGENTS-DOD | SHOULD | agent model/effort, implementer effort rule, targeted DoD | - | W5 | - |
 
 The cards share `CHANGELOG.md`, so they run one at a time in the order above.
