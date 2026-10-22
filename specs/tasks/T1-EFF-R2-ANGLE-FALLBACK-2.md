@@ -1,7 +1,7 @@
 ---
 id: T1-EFF-R2-ANGLE-FALLBACK-2
 title: Rerun an R2 angle that ended malformed, empty, with a tool error or on a timeout once, alone, on preReview.fallback within the same round, keep the angles that returned a verdict, and record which reviewer produced each angle
-status: todo
+status: merged
 branch: T1-EFF-R2-ANGLE-FALLBACK-2
 worktree: D:\wt\AIDLC\T1-EFF-R2-ANGLE-FALLBACK-2
 plan_ref: plans/loop-efficiency.md#order-of-work
