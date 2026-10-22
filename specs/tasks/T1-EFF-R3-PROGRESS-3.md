@@ -1,7 +1,7 @@
 ---
 id: T1-EFF-R3-PROGRESS-3
 title: Stop R3 for a ruling only when a later block re-raises an unresolved R3 or disputed finding or is the fourth decision, judged on the decision number and the held findings fixed at dispatch, give a block of new findings another repair round, record the stop so no further decision is admitted, and state the rule wherever the second-block stop is stated
-status: todo
+status: merged
 branch: T1-EFF-R3-PROGRESS-3
 worktree: D:\wt\AIDLC\T1-EFF-R3-PROGRESS-3
 plan_ref: plans/loop-efficiency.md#order-of-work
