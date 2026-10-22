@@ -1,7 +1,7 @@
 ---
 id: T1-EFF-AGENTS-DOD
 title: Give every agent file a model and an effort, start the implementer at the directive's effort, and make card DoDs run the card's own checks while the full suite runs in CI
-status: todo
+status: merged
 branch: T1-EFF-AGENTS-DOD
 worktree: D:\wt\AIDLC\T1-EFF-AGENTS-DOD
 plan_ref: plans/loop-efficiency.md#order-of-work
