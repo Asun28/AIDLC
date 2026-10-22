@@ -10,7 +10,7 @@ branch: T?-EXAMPLE
 worktree: C:\wt\<repository>\T?-EXAMPLE   # = <WorktreeRoot>\<id>; empty worktreeRoot = <platform root>\<main checkout name>, see aidlc.config.json
 allow_paths:            # the paths this card may change; the ship scope gate blocks anything outside them
   - path/to/...
-dod_command: npm test -- --run <tests>   # only tools CI already has, or that the card installs
+dod_command: npm test -- --run <tests>   # the card's own tests and fast static checks; the full suite runs in CI; only tools CI already has, or that the card installs
 dod_exit: 0
 review_gate: codex {verdict:pass}   # optional; declaring it invokes the independent reviewer
 acceptance:            # CLOSED numbered list the reviewer judges against; required once review_gate is set
