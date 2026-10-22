@@ -1404,3 +1404,115 @@ test('T1-SWEEP-REVIEW-WRAPPERS acceptance 4: the CHANGELOG Unreleased section na
     'CHANGELOG.md Unreleased names the moved wrappers',
   );
 });
+
+test('T1-EFF-R2-ANGLE-FALLBACK acceptance 1-4: an angle without a verdict reruns once, alone, on the fallback and the kept angles decide with it; a failed rerun stays no-verdict; a quota hold reruns nothing [R1] [R2] [R3] [R4] [R5]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  const FINDING = '[spec] 6 tests @ src/gate.ts:1: no RED test -> add one';
+  const BLOCK = `{"verdict":"block","reasons":["${FINDING}"],"axes":{"spec":{"verdict":"block","reasons":["${FINDING}"]},"standards":{"verdict":"pass","reasons":[]}}}\n`;
+  const HELD = { stdout: '429 Too Many Requests, retry after 30 seconds\n', exitCode: 1 };
+  type Out = { stdout?: string; stderr?: string; exitCode?: number; timedOut?: boolean };
+  const durations: Record<string, number> = { bugs: 30, security: 50, compliance: 40 };
+  /** The bugs, security and compliance panel: each primary angle answers from `angles` (a pass by default), the fallback `fb` from `fallback`. */
+  const panel = async (fileStem: string, angles: Record<string, Out>, fallback: Out | undefined) => {
+    const calls: Array<{ argv: string[]; timeoutMs?: number }> = [];
+    const runner = async (c: string, a: string[], o: { timeoutMs?: number } = {}) => {
+      calls.push({ argv: [c, ...a], timeoutMs: o.timeoutMs });
+      const out = c === 'fb' ? fallback! : (angles[a[1]!] ?? { stdout: PASS });
+      return scriptedRunner({ [c]: { ...out, durationMs: c === 'fb' ? 25 : durations[a[1]!] } })(c, a, o);
+    };
+    const result = await runReviewPanel({ runner, command: ['primary', '--focus', '{perspective}'], perspectives: ['bugs', 'security', 'compliance'], promptFor: (p) => `PRIMARY ${p}`, vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem, head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], ...(fallback ? { fallback: { command: ['fb', '--focus', '{perspective}'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: (p?: string) => `FALLBACK ${p}` } } : {}) });
+    return { result, calls };
+  };
+  // Acceptance 1: the rerun's block decides with the kept passes; a rerun pass passes, also after an empty primary run.
+  const { result: blocked, calls } = await panel('T1-AF.pre.0.1', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: BLOCK });
+  assert.equal(blocked.outcome, 'block');
+  assert.deepEqual(blocked.reasons, [`${FINDING} (compliance)`]);
+  assert.equal((await panel('T1-AF.pre.0.2', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS })).result.outcome, 'pass');
+  assert.equal((await panel('T1-AF.pre.0.3', { compliance: { stdout: '' } }, { stdout: PASS })).result.outcome, 'pass', 'a no_output angle reruns too');
+  // The other two statuses that rerun: a run that exits non-zero without a quota message, and one that timed out.
+  for (const [stem, out, status] of [['T1-AF.pre.0.8', { stdout: 'boom\n', exitCode: 2 }, 'tool_error'], ['T1-AF.pre.0.9', { stdout: '', timedOut: true }, 'timeout']] as const) {
+    const rerun = await panel(stem, { compliance: out }, { stdout: PASS });
+    assert.equal(rerun.result.outcome, 'pass', `a ${status} angle reruns`);
+    assert.equal(rerun.result.perspectives.find((p) => p.perspective === 'compliance')?.fallback?.primaryRunStatus, status);
+  }
+  // Acceptance 2: three primary calls, then the fallback once, for compliance, with its own timeout.
+  assert.deepEqual(calls.map((c) => c.argv[0]), ['primary', 'primary', 'primary', 'fb']);
+  assert.deepEqual(calls[3], { argv: ['fb', '--focus', 'compliance'], timeoutMs: 600_000 });
+  const compliance = blocked.perspectives.find((p) => p.perspective === 'compliance')!;
+  assert.equal(compliance.fallback?.reviewer, 'fb');
+  assert.equal(compliance.fallback?.primaryRunStatus, 'malformed');
+  assert.equal(compliance.durationMs, 65, 'the primary run plus the fallback run');
+  assert.equal(blocked.durationMs, 75, 'the slowest primary angle plus the slowest rerun');
+  assert.ok(readFileSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance.log'), 'utf8').includes('The diff looks fine to me.'), 'the primary log is kept');
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance+fallback.log')));
+  const sidecar = JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.0.1.compliance+fallback.json'), 'utf8')) as { reviewer: string };
+  assert.equal(sidecar.reviewer, 'fb');
+  const round = JSON.parse(readFileSync(blocked.verdictRef!, 'utf8')) as { perspectives: Array<{ name: string; fallback?: { reviewer: string } }> };
+  assert.equal(round.perspectives.find((p) => p.name === 'compliance')?.fallback?.reviewer, 'fb');
+  assert.equal(round.perspectives.find((p) => p.name === 'bugs')?.fallback, undefined);
+  const [bugs, security] = blocked.perspectives;
+  const lines = [`bugs:${bugs!.receiptSha256}`, `security:${security!.receiptSha256}`, `compliance:${compliance.fallback!.primaryReceiptSha256}`, `compliance+fallback:${compliance.receiptSha256}`];
+  assert.notEqual(compliance.fallback!.primaryReceiptSha256, compliance.receiptSha256);
+  assert.equal(blocked.receiptSha256, createHash('sha256').update(lines.join('\n')).digest('hex'), 'the four receipt lines in panel order');
+  // Acceptance 3: a rerun without a verdict leaves the round no-verdict naming both runs; a hold on the rerun is no hold.
+  const failed = await panel('T1-AF.pre.0.4', { compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: 'Still thinking.\n' });
+  assert.equal(failed.result.outcome, 'no-verdict');
+  assert.deepEqual(failed.result.reasons, ['no verdict from compliance (malformed; fallback fb: malformed)']);
+  const limited = await panel('T1-AF.pre.0.5', { compliance: { stdout: 'The diff looks fine to me.\n' } }, HELD);
+  assert.equal(limited.result.outcome, 'no-verdict', 'a limit the fallback hit is never a hold under the primary');
+  assert.equal(limited.result.retryAfterMs, undefined);
+  assert.equal(limited.result.perspectives.find((p) => p.perspective === 'compliance')?.runStatus, 'tool_error');
+  const alone = await panel('T1-AF.pre.0.6', { compliance: { stdout: 'The diff looks fine to me.\n' } }, undefined);
+  assert.equal(alone.result.outcome, 'no-verdict');
+  assert.equal(alone.calls.length, 3, 'no fallback, no rerun');
+  // Acceptance 4: a quota hold on any primary angle reruns nothing.
+  const held = await panel('T1-AF.pre.0.7', { security: HELD, compliance: { stdout: 'The diff looks fine to me.\n' } }, { stdout: PASS });
+  assert.equal(held.result.outcome, 'quota-hold');
+  assert.equal(held.calls.some((c) => c.argv[0] === 'fb'), false);
+});
+
+test('T1-EFF-R2-ANGLE-FALLBACK R3 decision 1 (F1): a single pass whose primary run left its own document keeps it when the rerun fails; the round document is <stem>+round.json [R3]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  // The primary prints a verdict and exits 1: a tool_error angle whose document is retained at <stem>.json; its rerun prints none.
+  const runner = async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: PASS, exitCode: 1 }, fb: { stdout: 'Still thinking.\n' } })(c, a, o);
+  const single = await runReviewPanel({ runner, command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-AF.pre.1.1', head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback: { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' } });
+  assert.equal(single.outcome, 'no-verdict');
+  assert.deepEqual(single.reasons, ['no verdict from review (tool_error; fallback fb: malformed)']);
+  const primaryDoc = JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.1.1.json'), 'utf8')) as { reviewer: string; run_status: string };
+  assert.deepEqual([primaryDoc.reviewer, primaryDoc.run_status], ['deepseek', 'tool_error'], 'the primary document survives');
+  assert.equal(single.verdictRef, path.join(reviewDir, 'T1-AF.pre.1.1+round.json'));
+  const roundDoc = JSON.parse(readFileSync(single.verdictRef!, 'utf8')) as { outcome: string; perspectives: Array<{ fallback?: { reviewer: string } }> };
+  assert.equal(roundDoc.outcome, 'no-verdict');
+  assert.equal(roundDoc.perspectives[0]?.fallback?.reviewer, 'fb', 'the round document lists the rerun');
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.1.1+fallback.log')), 'the rerun log survives too');
+  // Without a primary document the round document keeps its place at <stem>.json.
+  const malformed = async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: 'No verdict.\n' }, fb: { stdout: 'Still thinking.\n' } })(c, a, o);
+  const plain = await runReviewPanel({ runner: malformed, command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem: 'T1-AF.pre.1.2', head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback: { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' } });
+  assert.equal(plain.verdictRef, path.join(reviewDir, 'T1-AF.pre.1.2.json'));
+});
+
+test('T1-EFF-R2-ANGLE-FALLBACK-2 (R3 decision 2 of T1-EFF-R2-ANGLE-FALLBACK): every single pass that reran writes a round document that records the rerun, also when the rerun returned a verdict [R3]', async () => {
+  const { dir } = fixtureCard();
+  const reviewDir = path.join(dir, '.review');
+  const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+  const fallback = { command: ['fb'], reviewer: 'fb', timeoutMs: 600_000, shell: false, vars: {}, promptFor: () => 'FB' };
+  const panelOf = (fileStem: string, rerun: { stdout: string; exitCode?: number }) => runReviewPanel({ runner: async (c: string, a: string[], o?: { timeoutMs?: number }) => scriptedRunner({ primary: { stdout: 'No verdict.\n' }, fb: rerun })(c, a, o), command: ['primary'], perspectives: [], promptFor: () => 'P', vars: {}, cwd: dir, timeoutMs: 1000, shell: false, reviewDir, fileStem, head: 'def456', reviewer: 'deepseek', changedPaths: ['src/gate.ts'], fallback });
+  type RoundDoc = { reviewer: string; outcome: string; reasons: string[]; perspectives: Array<{ fallback?: { reviewer: string; primaryRunStatus: string } }> };
+  // The rerun passes: the round document records it beside the rerun's own document.
+  const passed = await panelOf('T1-AF.pre.2.1', { stdout: PASS });
+  assert.equal(passed.outcome, 'pass');
+  assert.equal(passed.verdictRef, path.join(reviewDir, 'T1-AF.pre.2.1.json'));
+  const passedDoc = JSON.parse(readFileSync(passed.verdictRef!, 'utf8')) as RoundDoc;
+  assert.deepEqual([passedDoc.reviewer, passedDoc.outcome, passedDoc.perspectives[0]?.fallback?.reviewer, passedDoc.perspectives[0]?.fallback?.primaryRunStatus], ['deepseek', 'pass', 'fb', 'malformed']);
+  assert.equal((JSON.parse(readFileSync(path.join(reviewDir, 'T1-AF.pre.2.1+fallback.json'), 'utf8')) as { reviewer: string }).reviewer, 'fb', 'the rerun document is kept');
+  // The rerun prints a verdict and exits 1: the round document names both failed runs.
+  const failed = await panelOf('T1-AF.pre.2.2', { stdout: PASS, exitCode: 1 });
+  assert.equal(failed.outcome, 'no-verdict');
+  assert.equal(failed.verdictRef, path.join(reviewDir, 'T1-AF.pre.2.2.json'));
+  assert.deepEqual((JSON.parse(readFileSync(failed.verdictRef!, 'utf8')) as RoundDoc).reasons, ['no verdict from review (malformed; fallback fb: tool_error)']);
+  assert.ok(existsSync(path.join(reviewDir, 'T1-AF.pre.2.2+fallback.json')), 'the rerun document is kept');
+});

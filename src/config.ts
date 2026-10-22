@@ -11,9 +11,10 @@ import { DEFAULT_TRANSIENT_STEPS } from './core/ci-policy.ts';
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
 /**
- * The reviewer R2 dispatches while the primary holds an unexpired quota or billing hold (card T0-R2-FALLBACK); it shares the
- * primary's rounds, angles, coverage and no-verdict retry. No argument may be empty: a reviewer runs through a shell on
- * Windows, which drops an empty argument (write `--flag=`).
+ * The reviewer R2 dispatches while the primary holds an unexpired quota or billing hold (card T0-R2-FALLBACK), and the one an
+ * angle of a primary round reruns on, once and alone, when its run ended malformed, empty, with a tool error or on a timeout
+ * and no angle held (card T1-EFF-R2-ANGLE-FALLBACK); it shares the primary's rounds, angles, coverage and no-verdict retry. No
+ * argument may be empty: a reviewer runs through a shell on Windows, which drops an empty argument (write `--flag=`).
  */
 export const PreReviewFallback = z.object({
   command: z.array(z.string()).min(1).refine((argv) => argv.every((a) => /\S/.test(a)), 'preReview.fallback.command must not carry an empty or blank argument: the Windows shell drops it (write --flag= instead)'),
