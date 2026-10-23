@@ -54,3 +54,37 @@ npm run typecheck && node --test tests/infra/exec.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+BUILD attempt 1 (Windows 11, node 22.23.1, worktree D:\wt\AIDLC\T0-EXEC-TREE-KILL).
+
+Reproduction before the fix (scratch harness importing `run` from src/probes/exec.ts at c9df773, the fixture `tests/infra/exec-tree.child.ts`, `timeoutMs` 1500, raced against a 15 s bound):
+- stay mode: no receipt at 15000 ms, sleeper alive at 15011 ms.
+- exit mode: no receipt at 15000 ms, sleeper alive at 15019 ms.
+
+Seam commit c2fb747 exports `createRun`, `killProcessTree` and `TIMEOUT_GRACE_MS` with today's behaviour, so the RED fails on assertions.
+
+RED at 22f00cc: `npm run typecheck && node --test tests/infra/exec.test.ts`, exit 1, 29379 ms, tests 23, pass 11, fail 12. First failing line: `not ok 1 - acceptance 1: runs %SystemRoot%\System32\taskkill.exe /pid 4242 /T /F once, with a 10 000 ms timeout and no shell, and kills nothing when it exits 0` (`Expected values to be strictly deep-equal`). Real-process failures: acceptance 3 and both acceptance 4 cases `no receipt within 6000 ms of the call` (6010, 6022, 6011 ms), acceptance 5 `no receipt within 4500 ms of the call (4506 ms)`; acceptance 7 `the doc texts this card adds are present whole`.
+
+GREEN at a961b1a: the same command, exit 0, tests 24, pass 24, fail 0, three runs of 20207, 19877 and 20011 ms. Real-process durations of run 3: acceptance 3 1661 ms, acceptance 4 stay 1676 ms, exit 1532 ms, acceptance 5 3531 ms, the slow tree kill case 5045 ms. `npm test` with `CLAUDE_CODE_SESSION_ID` unset: tests 1502, pass 1496, fail 0, skipped 6 (before the slow-kill and exit-mode assertions were added). `npm run build && npm run bench -- --check`: exit 0, every count within its ceiling (6 journeys, spawns 1/1). The POSIX branch of acceptance 2 to 5 runs on the ubuntu CI job only; WSL here has no node.
+
+Mutation sweep (each mutant applied alone to src/probes/exec.ts, `node --test tests/infra/exec.test.ts`, restored):
+
+| Mutant | Result | First failing test |
+|---|---|---|
+| remove the tree kill | killed | acceptance 3 |
+| drop `/T` | killed | acceptance 1 (exit 0) |
+| drop the win32 fallback kill (a failed taskkill looks successful) | killed | acceptance 1 (exits 128) |
+| a failed ps read looks successful | killed | acceptance 2 (ps exits 1) |
+| kill after an observed exit | killed | acceptance 4 (exit mode) |
+| skip the stdio destroy | killed | acceptance 4 (exit mode, resolves before the bound) |
+| drop the grace timer | killed | acceptance 5 |
+| arm the bound before the tree kill returns | killed | acceptance 5 [R3] (slow tree kill) |
+| walk direct children only | killed | acceptance 2 |
+| kill a pid outside the chain | killed | acceptance 2 |
+| stop at the first ESRCH | killed | acceptance 2 (ESRCH for 11) |
+| root not first | killed | acceptance 2 |
+| the bound reports an exit code for an unobserved exit | killed | acceptance 5 |
+
+The skip-the-destroy and arm-early mutants survived the first GREEN; commit a961b1a adds the exit-mode bound and exit code to the acceptance 4 exit case and the slow tree kill case under acceptance 5. That the child is unref'd at the bound is reviewer-verified against the diff.
