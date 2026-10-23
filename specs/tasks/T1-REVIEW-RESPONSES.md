@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-RESPONSES
 title: Record a response kind on each dispute (wrong, intentional, not-worth-fixing) and report every finding by response in aidlc review stats
-status: todo
+status: merged
 branch: T1-REVIEW-RESPONSES
 worktree: D:\wt\AIDLC\T1-REVIEW-RESPONSES
 plan_ref: plans/review-verification.md#order-of-work
