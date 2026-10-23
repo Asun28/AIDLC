@@ -640,3 +640,82 @@ describe('T0-EXEC-SYNC-TREE-KILL the helper start and its receipt [R1] [R2] [R3]
     });
   }
 });
+
+/**
+ * A root that starts the fixture's sleeper through a shell, with no pipe to it, waits for its pid file and
+ * then writes to stdout without end: `node -e OVERFLOW_ROOT <fixture> <pidFile>`.
+ */
+const OVERFLOW_ROOT = [
+  "const { spawn } = require('node:child_process');",
+  "const { existsSync } = require('node:fs');",
+  'const [fixture, pidFile] = process.argv.slice(1);',
+  'const q = (s) => `"${s}"`;',
+  "spawn(`${q(process.execPath)} ${q(fixture)} sleeper ${q(pidFile)}`, { shell: true, stdio: 'ignore' });",
+  'const poll = setInterval(() => {',
+  '  if (!existsSync(pidFile)) return;',
+  '  clearInterval(poll);',
+  '  const chunk = Buffer.alloc(1 << 20, 120);',
+  "  const flood = () => { while (process.stdout.write(chunk)) {} process.stdout.once('drain', flood); };",
+  '  flood();',
+  '}, 20);',
+].join('\n');
+
+describe('T0-EXEC-SYNC-TREE-KILL the 64 MiB output limit through the helper (R3 decision 2 N2) [R2]', () => {
+  it('a command whose output passes 64 MiB is ended with its tree before its timeout and reported as the direct runner reports ENOBUFS', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const [directPid, helperPid] = [join(dir, 'direct.pid'), join(dir, 'helper.pid')];
+    try {
+      const direct = runSync(process.execPath, ['-e', OVERFLOW_ROOT, FIXTURE, directPid], { cwd: tmpdir(), timeoutMs: 20_000 });
+      const started = Date.now();
+      const r = runSync(process.execPath, ['-e', OVERFLOW_ROOT, FIXTURE, helperPid], { cwd: tmpdir(), timeoutMs: 20_000, killTree: true });
+      const elapsedMs = Date.now() - started;
+      const enobufs = /\n\[spawn error\] spawn(Sync)? .+ ENOBUFS$/;
+      assert.deepEqual([direct.exitCode, direct.signal, direct.timedOut], [null, 'SIGTERM', false]);
+      assert.match(direct.stderr, enobufs);
+      assert.deepEqual([r.exitCode, r.signal, r.timedOut], [null, 'SIGTERM', false], `stderr: ${r.stderr.slice(-300)}`);
+      assert.match(r.stderr, enobufs);
+      assert.equal(ok(r), false);
+      assert.ok(elapsedMs < 15_000, `runSync returned after ${elapsedMs} ms, not before the 20 000 ms timeout`);
+      assert.ok(r.stdout.length > 64 * 1024 * 1024 - (1 << 20) && r.stdout.length <= 65 * 1024 * 1024, `stdout of ${r.stdout.length} chars, not the 64 MiB limit and at most one more MiB`);
+      const sleeper = readPid(helperPid);
+      assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the flood');
+      await assertGoneWithin(sleeper, 3000);
+    } finally {
+      end(readPid(directPid));
+      end(readPid(helperPid));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Prints the parent pid after 300 ms: the test's own pid on the direct path, the helper's under the helper. */
+const PPID_AFTER_300MS = ['-e', 'setTimeout(() => process.stdout.write(String(process.ppid)), 300)'];
+
+describe('T0-EXEC-SYNC-TREE-KILL timeouts past the largest timer delay (R3 decision 2 N3) [R3]', () => {
+  it('timeoutMs 2 147 483 647, the largest timer delay, runs under the helper and the command ends on its own', () => {
+    const r = runSync(process.execPath, PPID_AFTER_300MS, { timeoutMs: 2_147_483_647, killTree: true });
+    assert.deepEqual([r.exitCode, r.timedOut], [0, false], r.stderr.slice(0, 300));
+    assert.match(r.stdout, /^\d+$/);
+    assert.notEqual(Number(r.stdout), process.pid);
+  });
+
+  it('timeoutMs 2 147 483 648 runs on the direct path as before this card and the command is not ended early', () => {
+    const r = runSync(process.execPath, PPID_AFTER_300MS, { timeoutMs: 2_147_483_648, killTree: true });
+    assert.deepEqual([r.exitCode, r.timedOut], [0, false], r.stderr.slice(0, 300));
+    assert.equal(Number(r.stdout), process.pid);
+  });
+
+  for (const timeoutMs of [2_147_483_648, Number.MAX_SAFE_INTEGER + 2, 1500.5, Infinity]) {
+    it(`timeoutMs ${timeoutMs} with killTree spawns the command itself, never the helper`, () => {
+      const { spawner, calls } = recordingSpawner({ stdout: 'direct' });
+      createRunSync(spawner)('git', ['status'], { timeoutMs, killTree: true });
+      assert.deepEqual(calls.map((c) => [c.command, c.options.timeout]), [['git', timeoutMs]]);
+    });
+  }
+
+  it('timeoutMs 2 147 483 647 with killTree spawns the helper', () => {
+    const { spawner, calls } = recordingSpawner({ stdout: HELPER_OUTPUT });
+    createRunSync(spawner)('git', ['status'], { timeoutMs: 2_147_483_647, killTree: true });
+    assert.deepEqual(calls.map((c) => [c.command, c.args]), [[process.execPath, [HELPER_TS]]]);
+  });
+});

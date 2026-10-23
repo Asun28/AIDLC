@@ -20,6 +20,12 @@ export interface ExecOptions {
    * command's whole process tree at the timeout (card T0-EXEC-SYNC-TREE-KILL).
    */
   killTree?: boolean;
+  /**
+   * Async runner only: once stdout and stderr together pass this many bytes the command's tree is ended
+   * as at the timeout, and the receipt reports exit code null, signal SIGTERM and a `[spawn error] ...
+   * ENOBUFS` line, as runSync's spawnSync reports its 64 MiB limit. The tree helper sets it to that limit.
+   */
+  maxBuffer?: number;
 }
 
 export interface ExecReceipt {
@@ -64,8 +70,14 @@ export function treeHelperPath(moduleUrl: string): string {
 /** How long past the command's `timeoutMs` and TIMEOUT_GRACE_MS `runSync` lets the tree helper run before it ends the helper. */
 export const TREE_HELPER_BACKSTOP_MS = 15_000;
 
+/**
+ * The largest delay a Node timer keeps (2^31 - 1 ms, about 24.8 days); a larger one fires after 1 ms. A
+ * `killTree` call with a longer, or not a whole positive, `timeoutMs` runs on the direct path.
+ */
+const MAX_TIMER_MS = 2_147_483_647;
+
 /** The direct runner's spawnSync `maxBuffer`: at most 64 MiB of stdout and stderr together. */
-const SYNC_MAX_BUFFER = 64 * 1024 * 1024;
+export const SYNC_MAX_BUFFER = 64 * 1024 * 1024;
 
 /**
  * The tree helper's transport limit. The helper prints a one-line JSON header and then the command's stdout
@@ -156,10 +168,13 @@ function runInTreeHelper(spawner: SpawnSyncFn, command: string, args: string[], 
 /**
  * Builds the synchronous runner around a process starter; `runSync` is `createRunSync(spawnSync)`, and tests
  * use it as a seam with a recording starter. With `killTree` and `timeoutMs` the command runs under the tree
- * helper; otherwise it is one spawn of the command, whose timeout ends the root alone.
+ * helper when `timeoutMs` is a whole number from 1 to 2 147 483 647; otherwise it is one spawn of the
+ * command, whose timeout ends the root alone.
  */
 export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, args, options = {}) => {
-  if (options.killTree && options.timeoutMs) return runInTreeHelper(spawner, command, args, options, options.timeoutMs);
+  if (options.killTree && options.timeoutMs !== undefined && Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= MAX_TIMER_MS) {
+    return runInTreeHelper(spawner, command, args, options, options.timeoutMs);
+  }
   const startedAt = new Date();
   const shell = needsShell(command, options.shell);
   const res = spawner(command, shell ? args.map(quoteForShell) : args, {
@@ -254,10 +269,11 @@ export function killProcessTree(pid: number, platform: NodeJS.Platform, runner: 
 }
 
 /**
- * Builds the async runner around a tree kill. At `timeoutMs` a root still running is ended with its
- * tree (a root whose exit was observed is never killed: its pid may belong to another process now),
- * stdout and stderr are destroyed, and the receipt resolves on the close event or, at the latest,
- * TIMEOUT_GRACE_MS after the tree kill returns, with the exit the system reported by then.
+ * Builds the async runner around a tree kill. At `timeoutMs`, or once stdout and stderr together pass
+ * `maxBuffer` bytes, a root still running is ended with its tree (a root whose exit was observed is
+ * never killed: its pid may belong to another process now), stdout and stderr are destroyed, and the
+ * receipt resolves on the close event or, at the latest, TIMEOUT_GRACE_MS after the tree kill returns,
+ * with the exit the system reported by then; an overflow reports exit code null, SIGTERM and ENOBUFS.
  */
 export const createRun = (treeKill: TreeKill): Runner => (command, args, options = {}) =>
   new Promise<ExecReceipt>((resolve) => {
@@ -270,8 +286,12 @@ export const createRun = (treeKill: TreeKill): Runner => (command, args, options
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-    let stdout = '';
-    let stderr = '';
+    const out: Buffer[] = [];
+    const err: Buffer[] = [];
+    let notes = '';
+    let bytes = 0;
+    let overflowed = false;
+    let stopping = false;
     let timedOut = false;
     let settled = false;
     let exited = false;
@@ -285,12 +305,15 @@ export const createRun = (treeKill: TreeKill): Runner => (command, args, options
       if (timer) clearTimeout(timer);
       if (grace) clearTimeout(grace);
       const finishedAt = new Date();
+      // Decoded whole, as spawnSync decodes its output; an overflow is reported as spawnSync reports ENOBUFS.
+      const stdout = Buffer.concat(out).toString('utf8');
+      const stderr = Buffer.concat(err).toString('utf8') + notes + (overflowed ? `\n[spawn error] spawn ${command} ENOBUFS` : '');
       resolve({
         command,
         args,
         cwd: options.cwd ?? process.cwd(),
-        exitCode: code,
-        signal,
+        exitCode: overflowed ? null : code,
+        signal: overflowed ? 'SIGTERM' : signal,
         timedOut,
         stdout,
         stderr,
@@ -300,34 +323,46 @@ export const createRun = (treeKill: TreeKill): Runner => (command, args, options
         outputSha256: digest(stdout, stderr),
       });
     };
+    const stop = (): void => {
+      if (stopping) return;
+      stopping = true;
+      if (!exited && child.pid !== undefined) {
+        try {
+          treeKill(child.pid);
+        } catch {
+          /* a failed tree kill still ends at the bound below */
+        }
+      }
+      child.stdout.destroy();
+      child.stderr.destroy();
+      grace = setTimeout(() => {
+        // Release every handle on the child: stdout and stderr went at the stop, a pending write
+        // of an input the surviving root never reads holds stdin, child.unref() the process handle,
+        // and finish clears both timers.
+        child.stdin.destroy();
+        child.unref();
+        finish(exitCode, exitSignal);
+      }, TIMEOUT_GRACE_MS);
+    };
     if (options.timeoutMs) {
       timer = setTimeout(() => {
+        if (stopping) return;
         timedOut = true;
-        if (!exited && child.pid !== undefined) {
-          try {
-            treeKill(child.pid);
-          } catch {
-            /* a failed tree kill still ends at the bound below */
-          }
-        }
-        child.stdout.destroy();
-        child.stderr.destroy();
-        grace = setTimeout(() => {
-          // Release every handle on the child: stdout and stderr went at the timeout, a pending write
-          // of an input the surviving root never reads holds stdin, child.unref() the process handle,
-          // and finish clears both timers.
-          child.stdin.destroy();
-          child.unref();
-          finish(exitCode, exitSignal);
-        }, TIMEOUT_GRACE_MS);
+        stop();
       }, options.timeoutMs);
     }
-    child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
-    child.stdout.on('data', (d: string) => (stdout += d));
-    child.stderr.on('data', (d: string) => (stderr += d));
-    child.on('error', (err) => {
-      stderr += `\n[spawn error] ${err.message}`;
+    const collect = (into: Buffer[]) => (d: Buffer): void => {
+      into.push(d);
+      bytes += d.length;
+      if (options.maxBuffer !== undefined && bytes > options.maxBuffer && !stopping) {
+        overflowed = true;
+        stop();
+      }
+    };
+    child.stdout.on('data', collect(out));
+    child.stderr.on('data', collect(err));
+    child.on('error', (e) => {
+      notes += `\n[spawn error] ${e.message}`;
     });
     child.on('exit', (code, signal) => {
       exited = true;
