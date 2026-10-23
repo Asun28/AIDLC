@@ -49,7 +49,8 @@ test('acceptance 4: the CLI refuses an unknown --kind before it writes anything,
   const fx = makeFixture();
   try {
     writeCard(fx, { id: 'T1-DK', title: 'dispute kinds' });
-    const goal = goalForCards(fx, ['T1-DK']);
+    writeCard(fx, { id: 'T1-DK-NEW', title: 'a card with no run yet' });
+    const goal = goalForCards(fx, ['T1-DK', 'T1-DK-NEW']);
     const now = fx.now();
     fx.store.saveCardRun(
       CardRun.parse({
@@ -81,6 +82,12 @@ test('acceptance 4: the CLI refuses an unknown --kind before it writes anything,
     assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-DK'), seed, 'the stored run is unchanged');
     assert.deepEqual(fx.events(goal.id), eventsBefore, 'nothing is journaled');
     assert.equal(fx.events(goal.id).filter((e) => e.type === 'FINDING_DISPUTED').length, 0);
+    // The refusal comes before the card run is read or created: a card with no run gets none.
+    const unrun = cli('review', 'dispute', 'T1-DK-NEW', 'F1', '--note', 'why', '--kind', 'maybe', '--goal', goal.id);
+    assert.notEqual(unrun.status, 0);
+    assert.ok(unrun.stderr.includes('not-worth-fixing'), unrun.stderr);
+    assert.equal(fx.store.getCardRun(goal.id, 'T1-DK-NEW'), undefined, 'no card run is created');
+    assert.deepEqual(fx.events(goal.id), eventsBefore, 'no CARD_DISPATCHED or other event is journaled');
 
     const recorded = cli('review', 'dispute', 'T1-DK', 'F1', '--note', 'the test is tests/t1-dk.test.ts', '--kind', 'intentional', '--goal', goal.id);
     assert.equal(recorded.status, 0, recorded.stderr);
