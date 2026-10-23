@@ -36,6 +36,8 @@ interface Ctx {
   g: () => Goal;
   run: () => CardRun;
   cardFile: string;
+  /** Reviewer runs so far, counted at the scripted runner. */
+  spawned: { r2: number; r3: number };
 }
 
 /** The fixture of tests/scenarios/fault-points.test.ts, left after PREPARE (the next `card next` opens attempt 1). */
@@ -47,12 +49,13 @@ function prepared(r3 = PASS): Ctx {
       formalReview: { command: ['fake-p', '--schema', '{schema}', '{instructions}'], reviewer: 'primary', timeoutMs: 1000, shell: false },
     },
   });
+  const spawned = { r2: 0, r3: 0 };
   const runner = scriptedRunner({
     'git diff --numstat': { stdout: '0\t0\tsrc/t1-jo.ts\n' },
     'git diff --name-only': { stdout: 'src/t1-jo.ts\u0000' },
     'git diff': { stdout: 'diff --git a/src/t1-jo.ts b/src/t1-jo.ts\n+export const jo = 1;\n' },
-    'fake-r2': () => ({ stdout: PASS }),
-    'fake-p': () => ({ stdout: r3 }),
+    'fake-r2': () => (spawned.r2++, { stdout: PASS }),
+    'fake-p': () => (spawned.r3++, { stdout: r3 }),
   });
   writeCard(fx, { id: CARD, title: 'journal owed', allowPaths: ['src/t1-jo.ts'] });
   const goalId = goalForCards(fx, [CARD]).id;
@@ -61,7 +64,7 @@ function prepared(r3 = PASS): Ctx {
   const g = () => fx.goal(goalId);
   const r = cardRunner.next(g(), card, fx.controller.ensureCardRun(g(), CARD));
   assert.equal(r.directive.kind, 'prepare', r.directive.narration);
-  return { fx, runner: cardRunner, goalId, card, g, run: () => fx.store.getCardRun(goalId, CARD)!, cardFile: path.resolve(fx.paths.cards, goalId, `${CARD}.json`) };
+  return { fx, runner: cardRunner, goalId, card, g, run: () => fx.store.getCardRun(goalId, CARD)!, cardFile: path.resolve(fx.paths.cards, goalId, `${CARD}.json`), spawned };
 }
 
 const next = (c: Ctx) => c.runner.next(c.g(), c.card, c.run());
@@ -263,16 +266,27 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
     assert.equal(ofType(c, 'OPERATION_RESULT').length, 0);
   });
 
-  it('a card next whose owed append throws rejects with that error and leaves the card run unchanged [acceptance 5]', async () => {
-    const c = atBuild();
-    await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => attempt(c));
-    const before = c.run();
-    const count = events(c).length;
-    const { error, injected } = await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => next(c));
-    assert.equal(error, injected);
-    assert.deepEqual(c.run(), before);
-    assert.equal(events(c).length, count);
-  });
+  /** Each of the four commands on a run holding an owed event the journal lacks, left by a lost append of `event`. */
+  const owing: Array<{ command: string; event: string; setup: () => Promise<Ctx>; run: (c: Ctx) => unknown }> = [
+    { command: 'card next', event: 'ATTEMPT_FINISHED', setup: async () => { const c = atBuild(); await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => attempt(c)); return c; }, run: next },
+    { command: 'card attempt', event: 'ATTEMPT_STARTED', setup: async () => { const c = prepared(); await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, () => next(c)); return c; }, run: attempt },
+    { command: 'review pre', event: 'ATTEMPT_FINISHED', setup: async () => { const c = atBuild(); await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => attempt(c)); return c; }, run: preReview },
+    { command: 'review r3', event: 'PRE_REVIEW_DECIDED', setup: async () => { const c = atBuild(); attempt(c); next(c); await faulted(c, { call: 'appendFileSync', event: 'PRE_REVIEW_DECIDED' }, () => preReview(c)); return c; }, run: formalReview },
+  ];
+  for (const o of owing) {
+    it(`a ${o.command} whose owed ${o.event} append throws rejects with that error, runs no reviewer and leaves the card run and the journal unchanged [acceptance 5] [R4]`, async () => {
+      const c = await o.setup();
+      assert.equal(owedOf(c.run()).filter((e) => e.type === o.event).length, 1);
+      const before = c.run();
+      const count = events(c).length;
+      const spawned = { ...c.spawned };
+      const { error, injected } = await faulted(c, { call: 'appendFileSync', event: o.event }, () => o.run(c));
+      assert.equal(error, injected);
+      assert.deepEqual(c.run(), before);
+      assert.equal(events(c).length, count);
+      assert.deepEqual(c.spawned, spawned);
+    });
+  }
 
   it('a card run without journalOwed parses unchanged, and card next on it appends only the events of its step [acceptance 6]', () => {
     const c = prepared();
