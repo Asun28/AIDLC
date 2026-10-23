@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-ADMIT-STRAND
 title: A REVIEW_ADMITTED append that fails after the review pool admitted the request cancels that request in review r3 and in the ship, so the slot is freed and the card is reviewed and shipped again instead of waiting for good on a request nobody runs
-status: todo
+status: merged
 branch: T0-REVIEW-ADMIT-STRAND
 worktree: D:\wt\AIDLC\T0-REVIEW-ADMIT-STRAND
 allow_paths:
