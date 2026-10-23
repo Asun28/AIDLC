@@ -312,12 +312,23 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
       const expected = new Map([...requestsOnly(files(keyless.dir))].map(([f, text]): [string, string] => [f, JSON.parse(text).key === admittedKey ? before.get(f)! : text]));
       const after = files(keyed.dir);
       assert.deepEqual(requestsOnly(after), expected);
-      // The pool: the keyless call's active slots without the one it admitted; untouched when no slot needed cleaning.
-      assert.deepEqual(keyed.pool('codex:acct').active, keyless.pool('codex:acct').active.filter((k) => k !== admittedKey));
-      if (!stale) assert.equal(after.get(poolFile), before.get(poolFile));
-      else assert.deepEqual(keyed.pool('codex:acct'), { ...pre.pool('codex:acct'), active: [], updatedAt: iso(200) });
+      // The pool file is not written on `behind`, a stale slot included; the next admitting call cleans that slot.
+      assert.equal(after.get(poolFile), before.get(poolFile), 'the pool file is byte-identical to the file before the call');
+      if (stale) {
+        const next = keyed.admit('codex:acct', A, iso(201), keyOf(pre, first));
+        assert.equal(next.status === 'admitted' && next.request.key, keyOf(pre, first));
+        assert.deepEqual(keyed.pool('codex:acct').active, [keyOf(pre, first)], 'the stale slot is gone after the next admission');
+      }
     });
   }
+
+  it('T0-REVIEW-ADMIT-FOREIGN: a stale active slot does not count against the free slots of a keyed call [R1]', () => {
+    const q = build(path.join(dir, 'stale-free'), 2, ['Y', 'Z'], true);
+    const admitted = q.admit('codex:acct', A, iso(200), keyOf(q, 'Z'));
+    assert.equal(admitted.status === 'admitted' && admitted.request.key, keyOf(q, 'Z'));
+    assert.deepEqual(q.pool('codex:acct').active, [keyOf(q, 'Z')]);
+    assert.equal(q.get(keyOf(q, 'Y'))?.state, 'queued');
+  });
 
   it('T0-REVIEW-ADMIT-FOREIGN R3 decision 1 F1: an expired request met behind an eligible one is cancelled when the caller is admitted [R1]', () => {
     const q = build(path.join(dir, 'f1-admitted'), 2, ['Y', 'X1', 'Z'], false);

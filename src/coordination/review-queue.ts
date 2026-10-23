@@ -122,7 +122,8 @@ export class ReviewQueue {
    * T0-REVIEW-ADMIT-FOREIGN) only that request is admitted, and only while fewer eligible requests stand ahead of it
    * than the pool has free slots; otherwise `behind` names the first request ahead. A request past its deadline met
    * after the first eligible request is cancelled only once the caller's request is admitted, so `behind` writes no
-   * more than the keyless call writes on its way to the request it admits (R3 decision 1 F1), plus the slot cleanup.
+   * more than the keyless call writes on its way to the request it admits (R3 decision 1 F1) and leaves the pool file
+   * unwritten, a stale slot included (the next admitting call cleans it).
    */
   admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), key?: string): AdmitResult {
     const p = this.pool(pool, now);
@@ -155,7 +156,7 @@ export class ReviewQueue {
         // Another eligible request ahead of the caller's takes a free slot first; once they fill them all, the caller waits.
         ahead.push(r);
         if (ahead.length < p.maxConcurrent - active.length) continue;
-        if (active.length !== p.active.length) this.savePool({ ...p, active, updatedAt: now });
+        // No pool write here: the cleaned slots count only in memory, and the next admitting call writes them.
         return { status: 'behind', ahead: { key: ahead[0]!.key, requesters: ahead[0]!.requesters } };
       }
       expired.forEach(cancelExpired);
