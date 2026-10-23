@@ -99,3 +99,10 @@ The skip-the-destroy and arm-early mutants survived the first GREEN; commit a961
 DoD at fc6e5f0, Windows, three runs: exit 0 each, `# tests 26 # pass 26 # fail 0`, 23964, 23730 and 23626 ms. Linux (WSL clone of the branch, node 22.23.1, CLAUDE_CODE_SESSION_ID and AIDLC_SESSION unset), three runs of `node --test tests/infra/exec.test.ts`: exit 0 each, `# tests 26 # pass 26 # fail 0`. `npm test` with CLAUDE_CODE_SESSION_ID unset: tests 1505, pass 1499, fail 0, skipped 6.
 
 The mutation sweep at fc6e5f0 adds `skip the stdin destroy at the bound` and `drop child.unref at the bound`, both killed by the runner-mode test; the 13 earlier mutants are still killed.
+
+### Repair attempt 3 (R3 decision 2: process-death-check-weakened)
+
+- Commit fed819f replaces the `/proc` zombie check of repair attempt 2 (the R2 zombie note is dropped by ruling: acceptance 3 requires `process.kill(pid, 0)` to throw). Every liveness check in tests/infra/exec.test.ts and the runner fixture now reads `process.kill(pid, 0)` alone, through `probe` (`alive`, or the code of the error thrown): `assertGoneWithin` polls up to 3000 ms until it throws and asserts the code equals `ESRCH`; acceptance 5 asserts `alive` for the root and the sleeper; the runner fixture writes `root=<alive|code>` and the test expects `root=alive`. No helper reads the filesystem or treats an unexpected error as gone.
+- New tests `the death check of acceptance 3`: with a stubbed kill, ESRCH passes; EPERM, an error with no code and a kill that keeps succeeding (a zombie) fail. Against the `/proc` variant (the repair 2 helpers with the kill made injectable, uncommitted), Windows: `not ok 2 - fails when process.kill(pid, 0) throws EPERM` and `not ok 3 - fails when process.kill(pid, 0) throws an error with no code (as a failed read does)`, both `Missing expected rejection.`; pass 2, fail 2.
+
+DoD at fed819f, Windows, three runs: exit 0 each, `# tests 30 # pass 30 # fail 0`, 24273, 24010 and 23903 ms. Linux (WSL clone at fed819f), three runs: exit 0 each, `# tests 30 # pass 30 # fail 0`. `npm test` with CLAUDE_CODE_SESSION_ID unset: tests 1509, pass 1503, fail 0, skipped 6.
