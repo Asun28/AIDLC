@@ -1,10 +1,11 @@
 // npm run bench (card T0-LOOP-BENCH): runs every journey once under the counter and compares the counts with
 // bench/baseline.json. --check exits 1 on a count above its ceiling plus slack, --ratchet lowers ceilings,
 // --time <n> adds the median wall time of n uncounted runs (reported, never compared), --json prints the report.
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { atomicWriteText } from '../src/state/store.ts';
 import { JOURNEYS, runJourney, timeJourney } from './journeys.ts';
 import { Baseline, compare, median, ratchet, type JourneyReport, type MetricResult } from './ratchet.ts';
 
@@ -50,7 +51,8 @@ function main(): number {
   const reports = compare(measured, baseline);
   const ok = reports.every((r) => r.ok);
   const lowerable = reports.flatMap((r) => r.metrics.filter((m) => m.status === 'pass' && m.ceiling !== undefined && m.count < m.ceiling).map((m) => `${r.id} ${m.metric}`));
-  if (values.ratchet) writeFileSync(baselineFile, JSON.stringify(ratchet(measured, baseline), null, 2) + '\n');
+  // A temporary file renamed over the baseline: an interrupted write never leaves a baseline --check cannot parse.
+  if (values.ratchet) atomicWriteText(baselineFile, JSON.stringify(ratchet(measured, baseline), null, 2) + '\n');
 
   if (values.json) {
     process.stdout.write(JSON.stringify({ ok, baseline: path.relative(root, baselineFile), journeys: reports, lowerable }, null, 2) + '\n');

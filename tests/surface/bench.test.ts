@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -14,12 +14,12 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
 const read = (rel: string): string => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
 
-/** The child environment, built at each call without any variable the loop or the bench reads, in every letter case. */
+/** The child environment, built at each call without any variable the loop reads or that changes what Node loads, in every letter case. */
 function childEnv(extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [k, v] of Object.entries(process.env)) {
     const upper = k.toUpperCase();
-    if (upper.startsWith('AIDLC_') || ['CLAUDE_CODE_SESSION_ID', 'RELEASE_APPROVAL'].includes(upper)) continue;
+    if (upper.startsWith('AIDLC_') || ['CLAUDE_CODE_SESSION_ID', 'RELEASE_APPROVAL', 'NODE_OPTIONS', 'NODE_COMPILE_CACHE'].includes(upper)) continue;
     env[k] = v;
   }
   return { ...env, ...extra };
@@ -34,13 +34,15 @@ function withTemp<T>(fn: (dir: string) => T): T {
   }
 }
 
-/** Runs `code` as an ES module under the counter, in the repository root, and returns the counts it wrote. */
-function countChild(dir: string, name: string, code: string): Record<string, unknown> {
+/** Runs `code` as an ES module under the counter, in the repository root: the counts it wrote and its stdout. */
+function runCounted(dir: string, name: string, code: string): { counts: Record<string, unknown>; stdout: string } {
   const out = path.join(dir, `${name}.json`);
   const r = spawnSync(process.execPath, ['--import', counterUrl, '--input-type=module', '-e', code], { cwd: root, env: childEnv({ AIDLC_BENCH_OUT: out }), encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
-  return JSON.parse(readFileSync(out, 'utf8')) as Record<string, unknown>;
+  return { counts: JSON.parse(readFileSync(out, 'utf8')) as Record<string, unknown>, stdout: r.stdout };
 }
+
+const countChild = (dir: string, name: string, code: string): Record<string, unknown> => runCounted(dir, name, code).counts;
 
 test('T0-LOOP-BENCH acceptance 1: the counter counts modules, dependency bytes, fs calls, bytes read and spawns, the same on every run [R1]', () => {
   withTemp((dir) => {
@@ -67,8 +69,9 @@ test('T0-LOOP-BENCH acceptance 1: the counter counts modules, dependency bytes, 
     assert.deepEqual(countChild(dir, 'second', code), first);
     const scoped = countChild(dir, 'scoped', "await import('@anthropic-ai/sdk');");
     assert.ok(Object.keys(scoped['deps'] as object).includes('@anthropic-ai/sdk'), JSON.stringify(scoped['deps']));
-    const native = "import fs from 'node:fs';\nif (typeof fs.realpathSync.native !== 'function') process.exit(3);\nif (!fs.realpathSync.native('.')) process.exit(4);";
-    assert.equal(countChild(dir, 'native', native)['fsCalls'], 1);
+    const native = runCounted(dir, 'native', "import fs from 'node:fs';\nprocess.stdout.write(JSON.stringify(fs.realpathSync.native('.')));");
+    assert.equal(native.counts['fsCalls'], 1);
+    assert.equal(JSON.parse(native.stdout), realpathSync.native(root), 'the counted realpathSync.native returns the canonical path the uncounted one returns');
   });
 });
 
@@ -232,41 +235,50 @@ test('T0-LOOP-BENCH acceptance 5: a bench CI job builds then checks; nothing und
   assert.equal(scripts['bench'], 'node bench/run.ts');
 });
 
-/** The text of the `## <heading>` section up to the next `## ` heading. */
-function section(text: string, heading: string): string {
-  const start = text.indexOf(`\n## ${heading}\n`);
-  assert.ok(start >= 0, `## ${heading}`);
-  const end = text.indexOf('\n## ', start + 1);
-  return text.slice(start, end < 0 ? undefined : end);
-}
+/** The `## Loop benchmark` section of docs/OPERATIONS.md, paragraph by paragraph, as this card writes it. */
+const LOOP_BENCHMARK = [
+  '`npm run bench` measures the loop\'s hot paths with counts that are the same on every run of the same code. It runs six journeys once each under a counting preload (`bench/counter.ts`): `hook.pre-bash`, `hook.pre-edit`, `hook.prompt` and `hook.stop` send one event each to `bin/aidlc-hook.js`, `hook.stop.200-goals` sends the Stop event over a state directory holding 200 finished goals, and `cli.start` runs `aidlc goal list` over an empty state directory. Each run gets its own temporary state directory and an environment without the loop\'s variables, so the live `.aidlc/` never changes a count.',
+  'The gated metrics are `modules` (modules loaded), `depBytes` (source bytes loaded from node_modules), `startFsCalls` (fs calls of the bin freshness check, before the entry module loads), `fsCalls` and `fsBytesRead` (fs calls and bytes read after it), `spawns` (child processes started) and `outBytes` (the output, which a hook adds to the model\'s context on every event). Fs calls made by Node\'s own module loader are not counted; `modules` and `depBytes` carry that cost. The report also names the three largest dependencies each journey loads, where a cut saves the most.',
+  'Wall time is reported and never gated: `npm run bench -- --time 5` prints the median of five runs beside the counts, and identical runs on one machine differ by tens of milliseconds, so a gate on wall time would fail at random. Each count was tied to wall time when it was added: on Windows, 853 KB of zod source costs about 80 ms per hook, one git spawn about 25 ms, and 200 finished goals about 130 ms per Stop. A metric stays gated only while lowering it lowers the median wall time; a metric that stops tracking wall time is removed from `GATED` in `bench/ratchet.ts`.',
+  'Ceilings only go down. `npm run bench -- --check` fails when a count exceeds its ceiling in `bench/baseline.json` by more than the larger of the metric\'s slack and its allowance (2 to 10 percent, or 10 modules, 25 fs calls or 32 KB read; none for `spawns` and `outBytes`), so a count fails only on a cost that moves wall time, and `npm run bench -- --ratchet`, run after `npm run build`, lowers each ceiling to its count and never raises one. Each report lists the ceilings a `--ratchet` would lower (`lowerable` in the `--json` report). A change that needs a higher ceiling edits `bench/baseline.json` by hand and gives the reason in its PR body. A card that changes a hook, the CLI start or a dependency runs `npm run bench -- --check` before its first review, since a CI failure after review costs a review decision. `startFsCalls` is compared only between runs of the same entry, since a checkout without `dist/` skips the freshness check, and a journey or metric with no ceiling is reported as new until the next `--ratchet`.',
+  'The `bench` job in `.github/workflows/ci.yml` runs `npm run bench -- --check` after `npm run build` on every pull request and every push to main that runs the `ci` workflow, beside the `check` job; no hook and no `npm run check` compares counts with the ceilings. Run `npm run bench -- --time 5` by hand before and after a Node or dependency upgrade and compare the two reports.',
+];
 
-test('T0-LOOP-BENCH acceptance 6: the docs carry the loop benchmark sentences [R7]', () => {
-  const ops = read('docs/OPERATIONS.md');
+const ARCHITECTURE_SENTENCE = '`bench/` (outside `src/` and never shipped) holds the loop benchmark: `npm run bench` counts the modules, fs calls, child processes and output of each hook event and the CLI start, and compares them with the ceilings in `bench/baseline.json` (docs/OPERATIONS.md, Loop benchmark).';
+const CLAUDE_LINE = 'npm run bench                  # loop benchmark: deterministic counts of each hook event against bench/baseline.json (--check, --ratchet, --time 5)';
+const CHANGELOG_ENTRY = '- T0-LOOP-BENCH: `npm run bench` runs six journeys of the loop (the four hook events, the Stop hook over 200 finished goals, the CLI start) under a counting preload (`bench/counter.ts`) and compares modules loaded, dependency bytes, fs calls, bytes read, child processes and output bytes with the ceilings in `bench/baseline.json`; `--check` fails a count above the larger of its ceiling plus a share and its ceiling plus a fixed allowance, `--ratchet` only lowers ceilings, `--time <n>` reports the median wall time without gating it, and a `bench` job in the `ci` workflow runs the check on every pull request and push to main. The first baseline (Windows, Node 22.23.1, compiled entry): every hook loads 189 modules and 1.14 MB of dependency source (zod 853 KB, yaml 288 KB), stats 113 files for the bin freshness check and spawns one git process; the Stop hook over 200 finished goals makes 409 fs calls and reads 307 KB, about 130 ms more per Stop than over none.';
+
+/** The sentences of a paragraph: a split after a full stop that a space and a capital letter or a backtick follow. */
+const sentences = (paragraph: string): string[] => paragraph.split(/(?<=\.)\s+(?=[A-Z`])/);
+
+/** Whether each doc text this card adds is present whole: the section paragraphs exactly, and each single line. */
+function docsHold(ops: string, architecture: string, claude: string, changelog: string): boolean {
   const evals = ops.indexOf('\n## Evals\n');
-  const benchAt = ops.indexOf('\n## Loop benchmark\n');
+  const at = ops.indexOf('\n## Loop benchmark\n');
   const audit = ops.indexOf('\n## Audit\n');
-  assert.ok(evals >= 0 && benchAt > evals && audit > benchAt, `Evals ${evals} < Loop benchmark ${benchAt} < Audit ${audit}`);
-  const text = section(ops, 'Loop benchmark');
-  for (const sentence of [
-    "`npm run bench` measures the loop's hot paths with counts that are the same on every run of the same code.",
-    'It runs six journeys once each under a counting preload (`bench/counter.ts`): `hook.pre-bash`, `hook.pre-edit`, `hook.prompt` and `hook.stop` send one event each to `bin/aidlc-hook.js`, `hook.stop.200-goals` sends the Stop event over a state directory holding 200 finished goals, and `cli.start` runs `aidlc goal list` over an empty state directory.',
-    'The gated metrics are `modules` (modules loaded), `depBytes` (source bytes loaded from node_modules), `startFsCalls` (fs calls of the bin freshness check, before the entry module loads), `fsCalls` and `fsBytesRead` (fs calls and bytes read after it), `spawns` (child processes started) and `outBytes` (the output, which a hook adds to the model\'s context on every event).',
-    'Wall time is reported and never gated: `npm run bench -- --time 5` prints the median of five runs beside the counts, and identical runs on one machine differ by tens of milliseconds, so a gate on wall time would fail at random.',
-    'A metric stays gated only while lowering it lowers the median wall time; a metric that stops tracking wall time is removed from `GATED` in `bench/ratchet.ts`.',
-    'Ceilings only go down.',
-    'A change that needs a higher ceiling edits `bench/baseline.json` by hand and gives the reason in its PR body.',
-    'A card that changes a hook, the CLI start or a dependency runs `npm run bench -- --check` before its first review, since a CI failure after review costs a review decision.',
-    "by more than the larger of the metric's slack and its allowance (2 to 10 percent, or 10 modules, 25 fs calls or 32 KB read; none for `spawns` and `outBytes`), so a count fails only on a cost that moves wall time",
-    'The `bench` job in `.github/workflows/ci.yml` runs `npm run bench -- --check` after `npm run build` on every pull request and every push to main that runs the `ci` workflow, beside the `check` job; no hook and no `npm run check` compares counts with the ceilings.',
-    'Run `npm run bench -- --time 5` by hand before and after a Node or dependency upgrade and compare the two reports.',
-  ]) {
-    assert.ok(text.includes(sentence), `OPERATIONS Loop benchmark: ${sentence}`);
-  }
-  assert.ok(read('docs/ARCHITECTURE.md').includes('`bench/` (outside `src/` and never shipped) holds the loop benchmark: `npm run bench` counts the modules, fs calls, child processes and output of each hook event and the CLI start, and compares them with the ceilings in `bench/baseline.json` (docs/OPERATIONS.md, Loop benchmark).'));
-  const commands = read('CLAUDE.md').split('```bash\n')[1]?.split('```')[0] ?? '';
-  assert.ok(commands.includes('\nnpm run bench                  # loop benchmark: deterministic counts of each hook event against bench/baseline.json (--check, --ratchet, --time 5)\n'), commands);
-  const changelog = read('CHANGELOG.md');
+  if (!(evals >= 0 && at > evals && audit > at)) return false;
+  const body = ops.slice(at + '\n## Loop benchmark\n'.length, audit).trim().split('\n\n');
+  if (JSON.stringify(body) !== JSON.stringify(LOOP_BENCHMARK)) return false;
+  if (!architecture.split('\n').includes(ARCHITECTURE_SENTENCE)) return false;
+  const commands = claude.split('```bash\n')[1]?.split('```')[0] ?? '';
+  if (!commands.split('\n').includes(CLAUDE_LINE)) return false;
   const start = changelog.indexOf('## Unreleased');
   const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
-  assert.ok(unreleased.includes('\n- T0-LOOP-BENCH: `npm run bench` runs six journeys of the loop'), 'CHANGELOG Unreleased entry');
+  return unreleased.split('\n').includes(CHANGELOG_ENTRY);
+}
+
+test('T0-LOOP-BENCH acceptance 6: the docs carry every loop benchmark sentence, and removing any one of them fails [R7]', () => {
+  const docs = [read('docs/OPERATIONS.md'), read('docs/ARCHITECTURE.md'), read('CLAUDE.md'), read('CHANGELOG.md')] as const;
+  assert.ok(docsHold(...docs), 'the doc texts this card adds are present whole');
+  const [ops, architecture, claude, changelog] = docs;
+  const removals: [string, () => boolean][] = [
+    ...LOOP_BENCHMARK.flatMap((p) => sentences(p)).map((s): [string, () => boolean] => [s, () => docsHold(ops.replace(s, ''), architecture, claude, changelog)]),
+    ...sentences(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, architecture, claude, changelog.replace(s, ''))]),
+    [ARCHITECTURE_SENTENCE, () => docsHold(ops, architecture.replace(ARCHITECTURE_SENTENCE, ''), claude, changelog)],
+    [CLAUDE_LINE, () => docsHold(ops, architecture, claude.replace(CLAUDE_LINE, ''), changelog)],
+    ['## Loop benchmark', () => docsHold(ops.replace('\n## Loop benchmark\n', '\n'), architecture, claude, changelog)],
+  ];
+  // 17 section sentences, 2 CHANGELOG sentences, the ARCHITECTURE sentence, the CLAUDE.md line and the heading.
+  assert.equal(removals.length, 22);
+  for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
 });
