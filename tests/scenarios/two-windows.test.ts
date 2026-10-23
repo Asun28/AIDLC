@@ -5,7 +5,7 @@ import fs, { unlinkSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { makeFixture, writeCard, goalForCards, actorA, actorB, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, driveCardToDone, actorA, actorB, T0, type Fixture } from './_harness.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
@@ -1667,4 +1667,94 @@ test('T0-TAKEOVER-LOCKED-HINT: docs/OPERATIONS.md and the CHANGELOG Unreleased s
   const changelog = read('CHANGELOG.md');
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   assert.ok(unreleased.includes("- Takeover refusal after the lease write, card T0-TAKEOVER-LOCKED-HINT (issue 87 item 3): a card takeover refused with `LOCKED` after its lease write names the card, the lease generation it took and the refusal, and the command that goes on from there: `aidlc card takeover <card> --goal <goal>` again while the run does not carry that generation, `aidlc card next <card> --goal <goal>` once it does; the error keeps the `LOCKED` code."), 'the CHANGELOG states it');
+});
+
+/** A one-card goal created by win-A with its card DONE, the clock past the goal lease TTL and the goal in VERIFY_ARC. */
+function closableGoal(fx: Fixture): { goalId: string; goalKey: string } {
+  writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
+  const goal = goalForCards(fx, ['T1-HELLO']);
+  driveCardToDone(fx, goal.id, 'T1-HELLO');
+  fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+  assert.equal(fx.controller.next(goal.id).kind, 'verify-arc');
+  return { goalId: goal.id, goalKey: resourceKeys.goal(fx.repo.key, goal.id) };
+}
+
+test('T0-GOAL-CLOSE-LEASE acceptance 1: a goal whose lease expired under the intake session is closed by another session: DONE, the board written, the lease taken over and released [R1]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, goalKey } = closableGoal(fx);
+    setActorForTests(actorB);
+    const { directive } = fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} });
+    assert.equal(directive.kind, 'done', directive.narration);
+    assert.equal(fx.goal(goalId).state, 'DONE');
+    assert.match(fs.readFileSync(path.join(fx.paths.board, `${goalId}.md`), 'utf8'), /\*\*State\*\*: DONE/);
+    const lease = fx.leases.read(goalKey);
+    assert.equal(lease?.owner.session, 'win-B');
+    assert.equal(lease?.generation, 1);
+    assert.equal(lease?.released, true);
+    const types = fx.events(goalId).map((e) => e.type);
+    const takeovers = fx.events(goalId).filter((e) => e.type === 'GOAL_TAKEOVER');
+    assert.equal(takeovers.length, 1);
+    assert.equal(takeovers[0]!.data['previousOwner'], 'win-A');
+    assert.equal(takeovers[0]!.data['leaseGeneration'], 1);
+    assert.ok(types.indexOf('GOAL_TAKEOVER') < types.indexOf('GOAL_DONE'), 'the takeover is journaled before GOAL_DONE');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-GOAL-CLOSE-LEASE acceptance 2: the intake session closing its own goal releases its lease at generation 0 with no takeover [R2]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, goalKey } = closableGoal(fx);
+    const { directive } = fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} });
+    assert.equal(directive.kind, 'done', directive.narration);
+    const lease = fx.leases.read(goalKey);
+    assert.equal(lease?.owner.session, 'win-A');
+    assert.equal(lease?.generation, 0);
+    assert.equal(lease?.released, true);
+    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_TAKEOVER'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-GOAL-CLOSE-LEASE acceptance 3: a goal lease released before close is left as it is [R3]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, goalKey } = closableGoal(fx);
+    fx.leases.release(goalKey, 0, actorA);
+    const before = fx.leases.read(goalKey);
+    setActorForTests(actorB);
+    const { directive } = fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} });
+    assert.equal(directive.kind, 'done', directive.narration);
+    assert.deepEqual(fx.leases.read(goalKey), before);
+    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_TAKEOVER'));
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-GOAL-CLOSE-LEASE acceptance 4: a refused takeover of the expired goal lease throws before DONE, and the goal stays CLOSE with the lease unchanged [R4]', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goalId, goalKey } = closableGoal(fx);
+    const before = fx.leases.read(goalKey);
+    // An operation of the goal recorded after the closing `next` passed its reconcile check, just before the takeover reads the ledger.
+    const takeover = fx.leases.takeover.bind(fx.leases);
+    fx.leases.takeover = (...args: Parameters<typeof takeover>) => {
+      fx.ops.recordIntent({ kind: 'merge', goalId, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
+      return takeover(...args);
+    };
+    setActorForTests(actorB);
+    assert.throws(() => fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} }), /takeover refused/);
+    assert.equal(fx.goal(goalId).state, 'CLOSE');
+    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_DONE' || e.type === 'GOAL_TAKEOVER'));
+    assert.deepEqual(fx.leases.read(goalKey), before);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
 });
