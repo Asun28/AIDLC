@@ -84,3 +84,9 @@ npm run typecheck && node --test tests/surface/review-bench.test.ts tests/surfac
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+BUILD attempt 1, Windows, Node 22.23.1.
+- RED: commit 94bf982 (the new test file over a seam: `ReviewBenchCase` as an accept-all `z.custom`, `loadBenchCases` returning no case, `runReviewBench` returning an empty report, no CLI command, no docs). The DoD command exited 1 in 10577 ms: 31 tests, 23 passed, 8 failed. First failing line: `not ok 11 - T1-REVIEW-BENCH acceptance 1: ReviewBenchCase accepts a bug case with two sites and a clean case, and refuses each malformed case [R1]`. Acceptance 8 passed in RED, as R10 asks: `loadEvals` is unchanged.
+- GREEN: commits 3e971f8 (implementation), 090fb43 (docs), 5c943f7 and 9b08c6d (window edges, a cited line range, the file match and the `git worktree remove` fallback). The DoD command exits 0: 31 tests, 31 passed. `npm test`: 1457 tests, 1451 passed, 6 skipped, 0 failed. `npm run build && npm run bench -- --check`: exit 0, every count within its ceiling; `cli.start` loads 242 modules against a ceiling of 241, inside the 10-module allowance (the one new module is `src/review/bench.ts`).
+- Mutation check, by hand on `src/review/bench.ts`, each break restored and none committed; every break fails a test: the window ignored, the upper edge shifted, the lower edge shifted, the range end ignored and the file not compared (acceptance 3); a miss scored as a hit, a clean pass scored as a false block, a clean block scored as a pass and a no-verdict scored by its kind (acceptance 3); no `git worktree remove`, no `git worktree prune` after a failed remove, the temporary directory kept, and the removal outside the `finally` block (acceptance 4).
