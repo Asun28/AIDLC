@@ -252,16 +252,117 @@ describe('changedSourceLines (card T1-VERIFY-MUTANT-GEN)', () => {
   });
 });
 
+describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN)', () => {
+  const file = (name: string, hunk: string) => `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${hunk}`;
+  const lines = (diff: string) => changedSourceLines(diff);
+
+  test('F1: an identifier named like an Object.prototype member is never an operator [R3]', () => {
+    const source = 'const a = constructor ();\nconst b = toString ();\nconst c = __proto__ ;\nconst d = hasOwnProperty ();\nx = valueOf ();';
+    assert.deepEqual(view(mutantsFor(source, every(source))), [[5, 1, 'drop-statement', 'x = valueOf ();', '']]);
+  });
+
+  test('F2: a hunk with lines still owed at the end of the diff gives no entry, with and without a final newline [R1]', () => {
+    for (const end of ['', '\n']) {
+      assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1,2 @@\n+a();' + end)), [], `new side, end ${JSON.stringify(end)}`);
+      assert.deepEqual(lines(file('src/a.ts', '@@ -1,2 +1 @@\n-a();\n+b();' + end)), [], `old side, end ${JSON.stringify(end)}`);
+    }
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();')), [{ file: 'src/a.ts', lines: [1] }], 'a complete hunk without a final newline');
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1,2 @@\n+a();\n@@ -0,0 +5 @@\n+b();\n')), [], 'a hunk cut short by the next hunk header');
+  });
+
+  test('F3: a body line after the counts are spent, or a line no diff carries there, fails the file closed [R1]', () => {
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();\n+b();\n')), []);
+    assert.deepEqual(lines(file('src/a.ts', '@@ -1 +1 @@\n-a();\n+b();\n-c();\n')), []);
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();\ngarbage\n')), []);
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();\n\n@@ -0,0 +3 @@\n+c();\n')), []);
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();\n\\ No newline at end of file\n@@ -0,0 +3 @@\n+c();\n')), [{ file: 'src/a.ts', lines: [1, 3] }]);
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,0 +1 @@\n+a();\n@@ nonsense @@\n')), [], 'an unreadable hunk header after a complete hunk');
+    assert.deepEqual(lines('--- a/src/a.ts\n+++ b/src/a.ts\n@@ -0,0 +1 @@\n+a();\n'), [], 'file headers outside a diff --git section');
+  });
+
+  test('F4: hunk coordinates must be safe integers and a non-empty range must start at line 1 or later [R1]', () => {
+    for (const header of ['@@ -0,0 +0 @@', '@@ -0,0 +0,1 @@', '@@ -0,0 +-1 @@', '@@ -0,0 +1.5 @@', '@@ -0,0 +9007199254740993 @@', '@@ -0,0 +1,9007199254740993 @@', '@@ -0,0 +9007199254740991 @@']) {
+      assert.deepEqual(lines(file('src/a.ts', `${header}\n+a();\n`)), [], header);
+    }
+    assert.deepEqual(lines(file('src/a.ts', '@@ -0,1 +1 @@\n-a();\n+b();\n')), [], 'old side starting at 0');
+    assert.deepEqual(lines(file('src/a.ts', '@@ -1 +0,0 @@\n-a();\n@@ -3,0 +2 @@\n+b();\n')), [{ file: 'src/a.ts', lines: [2] }], 'an empty new side may start at 0');
+  });
+
+  test('F5: a statement after a leading comment is dropped and the comment stays [R3]', () => {
+    const source = '/* lead */ run();\n/* a\n   b */ go();\n/* lead */ const x = 1;';
+    const ms = mutantsFor(source, every(source));
+    assert.deepEqual(view(ms), [
+      [1, 12, 'drop-statement', 'run();', ''],
+      [3, 9, 'drop-statement', 'go();', ''],
+    ]);
+    assert.equal(applyMutant(source, ms[0]!), '/* lead */ \n/* a\n   b */ go();\n/* lead */ const x = 1;');
+  });
+
+  test('F6: a non-null assertion is read from the previous significant token across spaces, comments and lines; a unary ! after (, = or return is dropped [R3]', () => {
+    const source = [
+      'const a = value !;',
+      'const b = value /* c */ !;',
+      'const c = f() !;',
+      'const d = arr[0]',
+      '  !.size;',
+      'const e = (!x);',
+      'const f = !x;',
+      'return !x;',
+      'return /* c */ !x;',
+    ].join('\n');
+    assert.deepEqual(view(mutantsFor(source, every(source))), [
+      [5, 3, 'drop-statement', '!.size;', ''],
+      [6, 12, 'drop-not', '!', ''],
+      [7, 11, 'drop-not', '!', ''],
+      [8, 8, 'drop-not', '!', ''],
+      [9, 16, 'drop-not', '!', ''],
+    ]);
+    const unterminated = "const s = 'abc\n!x;";
+    assert.deepEqual(view(mutantsFor(unterminated, [2])), [[2, 1, 'drop-statement', '!x;', ''], [2, 1, 'drop-not', '!', '']], 'a literal is not a token a ! can follow');
+  });
+
+  test('F7 and F8: true, false and if after a property dot are never mutated, across spaces, comments and lines; an if after else is [R3]', () => {
+    const source = [
+      'const a = obj.',
+      '  true;',
+      'const b = obj',
+      '  .false;',
+      'const c = obj. /* c */ true;',
+      'const d = obj?.',
+      '  true;',
+      'obj.',
+      '  if (ok) {',
+      'obj.if(ok);',
+      'obj. /* c */ if (ok) {',
+      '} else if (ok) {',
+      'const o = { if: 1 };',
+    ].join('\n');
+    assert.deepEqual(view(mutantsFor(source, every(source))), [
+      [2, 3, 'drop-statement', 'true;', ''],
+      [4, 3, 'drop-statement', '.false;', ''],
+      [7, 3, 'drop-statement', 'true;', ''],
+      [10, 1, 'drop-statement', 'obj.if(ok);', ''],
+      [12, 12, 'force-true', 'ok', 'true'],
+      [12, 12, 'force-false', 'ok', 'false'],
+    ]);
+  });
+
+  test('R2 suggestion: the start and the end of the input count as whitespace for a binary operator [R4]', () => {
+    assert.deepEqual(view(mutantsFor('ok = a &&', [1])), [[1, 8, 'swap-logic', '&&', '||']]);
+    assert.deepEqual(view(mutantsFor('&& b', [1])), [[1, 1, 'swap-logic', '&&', '||']]);
+  });
+});
+
 describe('docs (card T1-VERIFY-MUTANT-GEN)', () => {
   const OPERATIONS = [
     '`src/review/mutant-gen.ts` (card T1-VERIFY-MUTANT-GEN) lists the mutants of the source lines a change adds; it is pure, reads no file and runs nothing, and the command that runs the mutants under a card\'s DoD arrives with card T1-VERIFY-MUTANTS.',
-    '`changedSourceLines(diff)` reads a `git diff --unified=0` text and returns, for each file under `src/` that ends in `.ts` but not in `.d.ts` or `.test.ts`, the new-side line numbers of its added lines in ascending order; a deleted file, a file whose hunks only delete and a path git quoted get no entry, and an empty diff, text that is not a diff or a file with a hunk header or a hunk line it cannot read (a context line included) yields no lines, so no mutant is ever generated over a whole file.',
+    '`changedSourceLines(diff)` reads a `git diff --unified=0` text and returns, for each file under `src/` that ends in `.ts` but not in `.d.ts` or `.test.ts`, the new-side line numbers of its added lines in ascending order; a deleted file, a file whose hunks only delete and a path git quoted get no entry, and an empty diff, text outside a `diff --git` section, a hunk header it cannot read (a coordinate that is not a safe integer, a non-empty side starting below line 1), a hunk whose `+` and `-` lines do not match its counts or a line after the hunks that is neither a hunk header nor a `\\ No newline` marker leaves the file without an entry, so no mutant is ever generated over a whole file.',
     '`mutantsFor(source, changedLines)` returns the mutants of those lines, each with its 1-based line and column (in UTF-16 code units), its operator, its original and mutated text and its source offsets, ordered by line, column and operator; `applyMutant(source, mutant)` replaces exactly that span and refuses a source whose span no longer holds the original text.',
     'The mutation operators, in run order, are `drop-statement`, `force-true`, `force-false`, `negate-equality`, `swap-logic`, `drop-not`, `boundary` and `flip-boolean`; an operator counts only in code, never inside a comment, a string, a template literal or a regex literal.',
-    '`drop-statement` removes the code of a line that ends with `;`, balances `()`, `[]` and `{}` within the line and does not begin with `const`, `let`, `var`, `return`, `import`, `export`, `type`, `interface` or `declare`.',
-    '`force-true` and `force-false` replace the condition of an `if (...)` whose closing parenthesis is on the same line with `true` and with `false`.',
-    '`negate-equality` swaps `===` with `!==` and `==` with `!=`, `swap-logic` swaps `&&` with `||`, and `boundary` swaps `<` with `<=` and `>` with `>=`; each counts only with whitespace (a space, a tab or a line break) on both sides, so a generic such as `Array<string>` and a comparison written without spaces (`a<b`) are never mutated.',
-    '`drop-not` removes a unary `!`, never the `!` of `!=` or `!==` nor a non-null assertion after an identifier, `)` or `]`, and `flip-boolean` swaps the words `true` and `false` where no `.` precedes them.',
+    '`drop-statement` removes the code of a line that ends with `;`, balances `()`, `[]` and `{}` within the line and does not begin with `const`, `let`, `var`, `return`, `import`, `export`, `type`, `interface` or `declare`; the code starts after any leading whitespace and comment, which stay in place.',
+    '`force-true` and `force-false` replace the condition of an `if (...)` whose closing parenthesis is on the same line with `true` and with `false`, never the argument of a member named `if` (`obj.if(...)`).',
+    '`negate-equality` swaps `===` with `!==` and `==` with `!=`, `swap-logic` swaps `&&` with `||`, and `boundary` swaps `<` with `<=` and `>` with `>=`; each counts only with whitespace (a space, a tab or a line break) or the start or end of the input on both sides, so a generic such as `Array<string>` and a comparison written without spaces (`a<b`) are never mutated.',
+    '`drop-not` removes a unary `!`, never the `!` of `!=` or `!==` nor a non-null assertion after an identifier, `)` or `]`, and `flip-boolean` swaps the words `true` and `false` where no `.` precedes them; both read what precedes the token across whitespace, comments and line ends, and a `!` after a word that starts an expression (`return`, `typeof` and the other words of the regex rule) is unary.',
     'An in-house scanner reads the whole file once (no new dependency), takes operator tokens greedily, so `=>`, `<<`, `>>`, `>>>`, `<<=`, `>>=`, `??`, `&&=` and `||=` never match, and treats the `\\r` of a `\\r\\n` line end as whitespace, so no mutant span holds it.',
     'A `/` opens a regex literal after no code, after one of `( , = : [ ! & | ? { } ; + - * % < > ~ ^` or after the word `return`, `typeof`, `case`, `do`, `else`, `in`, `of`, `new`, `delete`, `void`, `throw`, `instanceof`, `yield` or `await`, and is a division otherwise; this reads a regex literal after `)` as a division and a division after `}` as a regex, which adds or drops a mutant and changes nothing else.',
   ];
