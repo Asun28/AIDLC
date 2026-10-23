@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-ADMIT-FOREIGN
 title: A card asking the review pool for admission is admitted only for its own request and waits its turn behind another card's request instead of making that request running with nobody to run it, so two cards sharing a pool no longer stall each other for good
-status: todo
+status: merged
 branch: T0-REVIEW-ADMIT-FOREIGN
 worktree: D:\wt\AIDLC\T0-REVIEW-ADMIT-FOREIGN
 allow_paths:
