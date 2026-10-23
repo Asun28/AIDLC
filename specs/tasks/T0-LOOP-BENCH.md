@@ -1,7 +1,7 @@
 ---
 id: T0-LOOP-BENCH
 title: npm run bench measures the loop's hot paths (each hook event, the Stop hook over 200 finished goals, the CLI start) with deterministic counts against ceilings in bench/baseline.json that only go down, and a CI job fails a change that raises one
-status: todo
+status: merged
 branch: T0-LOOP-BENCH
 worktree: D:\wt\AIDLC\T0-LOOP-BENCH
 allow_paths:
