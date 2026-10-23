@@ -1843,3 +1843,41 @@ test('T0-GOAL-CLOSE-LEASE acceptance 8: a goal lease another session takes betwe
     }
   }
 });
+
+test('T0-GOAL-CLOSE-LEASE-2 acceptance 9: a close takeover left without its GOAL_TAKEOVER by a session that never calls again is journaled by the later session that takes the lease over, before its own intent [R7]', () => {
+  const actorC: ActorIdentity = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+  const fx = makeFixture({ actor: actorA });
+  const append = Journal.prototype.append;
+  try {
+    const { goalId, goalKey } = closableGoal(fx);
+    Journal.prototype.append = function (this: Journal, input: Parameters<typeof append>[0]) {
+      if (input.type === 'GOAL_TAKEOVER') {
+        Journal.prototype.append = append;
+        throw new Error('injected takeover append failure');
+      }
+      return append.call(this, input);
+    };
+    setActorForTests(actorB);
+    assert.throws(() => fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} }), /injected/);
+    Journal.prototype.append = append;
+    assert.equal(fx.leases.read(goalKey)?.owner.session, 'win-B', 'win-B took generation 1 and never calls again');
+
+    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+    setActorForTests(actorC);
+    const d = fx.controller.next(goalId);
+    assert.equal(d.kind, 'done', d.narration);
+    const lease = fx.leases.read(goalKey);
+    assert.equal(lease?.owner.session, 'win-C');
+    assert.equal(lease?.generation, 2);
+    assert.equal(lease?.released, true);
+    const events = fx.events(goalId);
+    const takeovers = events.filter((e) => e.type === 'GOAL_TAKEOVER');
+    assert.deepEqual(takeovers.map((e) => [e.data['leaseGeneration'], e.data['previousOwner'], e.data['acquirer']]), [[1, 'win-A', 'win-B'], [2, 'win-B', 'win-C']]);
+    const intentC = events.findIndex((e) => e.data['kind'] === 'goal-close-takeover-intent' && e.data['leaseGeneration'] === 2);
+    assert.ok(intentC > 0 && events.indexOf(takeovers[0]!) < intentC, 'the generation 1 event is journaled before win-C\'s intent');
+  } finally {
+    Journal.prototype.append = append;
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
