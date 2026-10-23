@@ -120,10 +120,11 @@ export class ReviewQueue {
   /**
    * Admit the next eligible request in persisted order if the pool has a free slot. With `key` (card
    * T0-REVIEW-ADMIT-FOREIGN) only that request is admitted, and only while fewer eligible requests stand ahead of it
-   * than the pool has free slots; otherwise `behind` names the first request ahead. A request past its deadline met
-   * after the first eligible request is cancelled only once the caller's request is admitted, so `behind` writes no
-   * more than the keyless call writes on its way to the request it admits (R3 decision 1 F1) and leaves the pool file
-   * unwritten, a stale slot included (the next admitting call cleans it).
+   * than the pool has free slots; otherwise `behind` names the first request ahead. Deadline rule: a keyed call cancels
+   * each request past its deadline that its scan passes, as keyless calls draining the queue to the same point do, except
+   * that on `behind` it writes only those before the first eligible request, what one keyless call writes (R3 decisions
+   * 1 and 2), and leaves the pool file unwritten, a stale slot included (the next admitting call cleans it). A key no
+   * queued or retry-after request carries is treated as the last request of the queue.
    */
   admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), key?: string): AdmitResult {
     const p = this.pool(pool, now);
@@ -146,7 +147,8 @@ export class ReviewQueue {
     };
     for (const r of candidates) {
       if (Date.parse(r.deadline) <= Date.parse(now)) {
-        // Past the first eligible request (keyed calls only) the cancellation waits for this call to admit.
+        // Past the first eligible request (keyed calls only) the cancellation is held: written on `admitted` and `empty`,
+        // dropped on `behind`.
         if (ahead.length) expired.push(r);
         else cancelExpired(r);
         continue;
@@ -165,6 +167,8 @@ export class ReviewQueue {
       this.savePool({ ...p, active: [...active, r.key], updatedAt: now });
       return { status: 'admitted', request: admitted };
     }
+    // The scan passed the whole queue: every held cancellation is written, as keyless calls draining the queue write them.
+    expired.forEach(cancelExpired);
     if (active.length !== p.active.length) this.savePool({ ...p, active, updatedAt: now });
     return { status: 'empty' };
   }

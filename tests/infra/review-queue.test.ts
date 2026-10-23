@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ReviewQueue, type EnqueueInput } from '../../src/coordination/review-queue.ts';
+import { reviewRequestKey } from '../../src/core/review-policy.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { actor, cleanup, iso, tmpDir } from './helpers.ts';
 
@@ -338,6 +339,77 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     assert.deepEqual([x.state, x.finishedAt, x.lastError], ['cancelled', iso(200), 'deadline passed before admission']);
     assert.equal(q.get(keyOf(q, 'Y'))?.state, 'queued');
   });
+
+  // R3 decision 2 N1: the deadline rule of a keyed call as one table over outcome and position. Rule: a keyed call cancels
+  // each request past its deadline that its scan passes, as keyless calls do when they drain the queue up to the same point
+  // (the caller's admission, or the end of the queue for `empty`); on `behind` it writes only those before the first eligible
+  // request, which is what one keyless call writes, and leaves the pool file unwritten. X* are past their deadline; the
+  // caller is Z (eligible), Zx (past its deadline), Zr (retry-after not yet due) or `absent` (a key no request carries).
+  const buildTable = (d: string, slots: number, order: string[]): ReviewQueue => {
+    const q = new ReviewQueue(d);
+    if (slots > 1) q.setPoolLimit('codex:acct', slots, 'two seats');
+    order.forEach((name, i) => q.enqueue(input({ candidateDigest: name, requester: `goal-1/T1-${name}`, deadline: name.startsWith('X') || name === 'Zx' ? iso(100) : iso(10_000), now: iso(10 + i) })));
+    if (order.includes('Zr')) {
+      q.hold(keyOf(q, 'Zr'), iso(60_000), 'HTTP 429', iso(50));
+      q.savePool({ ...q.pool('codex:acct'), resetAt: undefined });
+    }
+    return q;
+  };
+  const cancelledNames = (q: ReviewQueue): string[] => q.list('codex:acct').filter((r) => r.state === 'cancelled').map((r) => r.candidateDigest);
+  /** Keyless calls at the same moment: one call for `behind`; for `admitted` and `empty`, calls that drain the queue (each admitted request completed) until the caller is admitted or the queue is empty. */
+  const keylessOracle = (q: ReviewQueue, callerKey: string, drain: boolean): void => {
+    for (let i = 0; i < 20; i += 1) {
+      const r = q.admit('codex:acct', A, iso(200));
+      if (!drain || r.status !== 'admitted' || r.request.key === callerKey) return;
+      q.complete(r.request.key, 'oracle', iso(200));
+    }
+  };
+  for (const [name, slots, order, caller, outcome, cancelled] of [
+    ['admitted, expired before the first eligible request', 2, ['X1', 'Y', 'Z'], 'Z', 'admitted', ['X1']],
+    ['admitted, expired between the first eligible request and the caller', 2, ['Y', 'X1', 'Z'], 'Z', 'admitted', ['X1']],
+    ['admitted, expired after the caller', 2, ['Y', 'Z', 'X1'], 'Z', 'admitted', []],
+    ['admitted, the caller first eligible after an expired request', 2, ['X1', 'Z', 'Y'], 'Z', 'admitted', ['X1']],
+    ['admitted, several expired before, between and after', 2, ['X1', 'Y', 'X2', 'Z', 'X3'], 'Z', 'admitted', ['X1', 'X2']],
+    ['empty, the caller itself expired and alone', 2, ['Zx'], 'Zx', 'empty', ['Zx']],
+    ['empty, the caller itself expired behind an eligible request (the N1 case)', 2, ['Y', 'Zx'], 'Zx', 'empty', ['Zx']],
+    ['empty, several expired before, between, the caller and after', 2, ['X1', 'Y', 'X2', 'Zx', 'X3'], 'Zx', 'empty', ['X1', 'X2', 'Zx', 'X3']],
+    ['empty, the caller retry-after not yet due with expired between and after', 2, ['Y', 'X1', 'Zr', 'X2'], 'Zr', 'empty', ['X1', 'X2']],
+    ['empty, a key no request carries, as if the caller were last', 2, ['Y', 'X1'], 'absent', 'empty', ['X1']],
+    ['behind, expired before the first eligible request', 1, ['X1', 'Y', 'Z'], 'Z', 'behind', ['X1']],
+    ['behind, expired between the first eligible request and the caller', 1, ['Y', 'X1', 'Z'], 'Z', 'behind', []],
+    ['behind, the caller itself expired', 2, ['Y', 'X1', 'W', 'Zx'], 'Zx', 'behind', []],
+    ['behind, expired after the caller', 1, ['Y', 'Z', 'X1'], 'Z', 'behind', []],
+    ['behind, several expired before, between and after', 2, ['X1', 'Y', 'X2', 'W', 'X3', 'Z', 'X4'], 'Z', 'behind', ['X1']],
+    ['behind, the caller retry-after not yet due', 1, ['Y', 'X1', 'Zr'], 'Zr', 'behind', []],
+    ['behind, a key no request carries, as if the caller were last', 2, ['Y', 'X1', 'W', 'X2'], 'absent', 'behind', []],
+  ] as Array<[string, number, string[], string, 'admitted' | 'empty' | 'behind', string[]]>) {
+    it(`T0-REVIEW-ADMIT-FOREIGN R3 decision 2 N1: ${name}: the keyed call writes the cancellations of keyless calls to the same point [R1] [R2]`, () => {
+      const base = path.join(dir, `n1-${order.join('')}-${slots}-${caller}`);
+      const pre = buildTable(path.join(base, 'pre'), slots, order);
+      const oracle = buildTable(path.join(base, 'keyless'), slots, order);
+      const keyed = buildTable(path.join(base, 'keyed'), slots, order);
+      const callerKey = caller === 'absent' ? reviewRequestKey(input({ candidateDigest: 'absent' })) : keyOf(pre, caller);
+      const before = files(pre.dir);
+      const result = keyed.admit('codex:acct', A, iso(200), callerKey);
+      keylessOracle(oracle, callerKey, outcome !== 'behind');
+      if (outcome === 'behind') assert.deepEqual(result, { status: 'behind', ahead: { key: keyOf(pre, 'Y'), requesters: ['goal-1/T1-Y'] } });
+      else if (outcome === 'empty') assert.deepEqual(result, { status: 'empty' });
+      else assert.equal(result.status === 'admitted' && result.request.key, callerKey);
+      assert.deepEqual(cancelledNames(keyed), cancelled, 'the cancellations the rule names');
+      assert.deepEqual(cancelledNames(oracle), cancelled, 'the keyless calls to the same point cancel the same requests');
+      const after = files(keyed.dir);
+      const oracleFiles = files(oracle.dir);
+      for (const r of pre.list('codex:acct')) {
+        const f = [...before.keys()].find((k) => JSON.parse(before.get(k)!).key === r.key)!;
+        if (cancelled.includes(r.candidateDigest)) assert.equal(after.get(f), oracleFiles.get(f), `${r.candidateDigest}: byte-identical to the keyless cancellation`);
+        else if (r.key === callerKey && outcome === 'admitted') assert.equal(keyed.get(r.key)?.state, 'running');
+        else assert.equal(after.get(f), before.get(f), `${r.candidateDigest}: untouched`);
+      }
+      const poolFile = [...before.keys()].find((f) => f.startsWith('_pool-'))!;
+      if (outcome === 'admitted') assert.deepEqual(keyed.pool('codex:acct').active, [callerKey]);
+      else assert.equal(after.get(poolFile), before.get(poolFile), 'the pool file is not written');
+    });
+  }
 
   it('T0-REVIEW-ADMIT-FOREIGN acceptance 2: without a key admit still admits Y for the caller of Z, as in the reproduction of the diagnosis [R2]', () => {
     const q = new ReviewQueue(path.join(dir, 'foreign-keyless'));
