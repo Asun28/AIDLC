@@ -185,11 +185,12 @@ const CITED_LINES = /@\s*[^\s@:]+(?::(\d+)(?:-(\d+))?)?/u;
 
 /**
  * A `[pre-existing]` reason the changed-line rule makes advisory (card T1-REVIEW-PRE-EXISTING): the tag in its position, a
- * location naming a file and a line or range, and no cited line changed. No map, no file, no line, or a cited line inside a
+ * location naming a file and a line or range, and no cited line changed. No map or an empty one, no file, no line, or a cited line inside a
  * changed range (or a file changed at every line) leaves the reason as it would be without the tag.
  */
 export function preExistingAdvisory(reason: string, changedLines?: ChangedLines): boolean {
-  if (!changedLines || !PRE_EXISTING_TAG.test(reason)) return false;
+  // An empty map (an empty or unread diff) is no map: the tag is ignored, never read as every line unchanged.
+  if (!changedLines?.size || !PRE_EXISTING_TAG.test(reason)) return false;
   const file = findingLocation(reason);
   const m = CITED_LINES.exec(reason);
   if (!file || m?.[1] === undefined) return false;
@@ -197,7 +198,8 @@ export function preExistingAdvisory(reason: string, changedLines?: ChangedLines)
   const b = m[2] === undefined ? a : Number(m[2]);
   const lo = Math.min(a, b);
   const hi = Math.max(a, b);
-  const changed = changedLines.get(file);
+  // The map keys and the cited path are compared in one normal form (findingLocation already gives it; kept explicit here).
+  const changed = changedLines.get(normPath(file));
   if (changed === undefined) return true;
   if (changed === 'all') return false;
   return !changed.some(([start, end]) => start <= hi && end >= lo);

@@ -188,6 +188,9 @@ test('acceptance 7: on the ship path a [pre-existing] block on an unchanged line
   assertShipBlock(shipRun(outside, { 'git diff --name-only': { stdout: 'src/hello.ts\u0000' }, 'git diff': { exitCode: 1, stderr: 'fatal: bad revision' } }), outside, 'a git diff that exits non-zero');
   assertShipBlock(shipRun(outside, SHIP_DIFF, { formalReview: { maxDiffBytes: 40 } }), outside, 'a diff above formalReview.maxDiffBytes');
 
+  // R2 F1 (class: empty-diff-advisory): a git diff that exits 0 with no output builds no map, so the block stands.
+  assertShipBlock(shipRun(outside, { 'git diff --name-only': { stdout: '' }, 'git diff': { stdout: '' } }), outside, 'an empty diff');
+
   const plain = '[spec] 6 tests missing @ src/hello.ts:40: the helper has no test -> add one';
   const noTag = shipRun(plain, SHIP_DIFF);
   assertShipBlock(noTag, plain, 'a document without the tag');

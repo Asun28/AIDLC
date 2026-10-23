@@ -2276,7 +2276,7 @@ export class CardRunner {
   /**
    * The changed lines a ship-path document's [pre-existing] reasons are judged against (card T1-REVIEW-PRE-EXISTING): the
    * candidate diff against the run's base, pinned to the candidate, under `formalReview.maxDiffBytes`, collected only for a
-   * document that carries the tag. A failed or oversized collection returns none, so the tag is ignored and the document is
+   * document that carries the tag. A failed, empty or oversized collection returns none, so the tag is ignored and the document is
    * classified as it was before.
    */
   private shipChangedLines(run: CardRun, verdict: Verdict): ChangedLines | undefined {
@@ -2285,7 +2285,8 @@ export class CardRunner {
     try {
       const head = this.repo.isGit && run.candidate?.sha ? run.candidate.sha : 'HEAD';
       const { changedPaths, diff } = collectCandidateDiff(this.runner, this.reviewCheckout(run), run.base?.oid ?? this.config.base, this.config.formalReview.maxDiffBytes, head, 'formalReview.maxDiffBytes');
-      return changedLineRanges(diff, changedPaths);
+      // A diff with no hunk text (an empty answer from git) reads nothing: no map, so the tag is ignored and a block stands.
+      return diff.trim() ? changedLineRanges(diff, changedPaths) : undefined;
     } catch {
       return undefined;
     }

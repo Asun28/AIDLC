@@ -275,12 +275,12 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
 }
 
 /**
- * The advisory reasons carrying the `[pre-existing]` tag (card T1-REVIEW-PRE-EXISTING) over every decided R2 round (a pass or a
- * block) and every R3 decision, whatever made each reason advisory; a decision recorded before the field adds nothing.
+ * The advisory reasons carrying the `[pre-existing]` tag (card T1-REVIEW-PRE-EXISTING) over every decided R2 round and every
+ * decided R3 invocation (a pass or a block; a no-verdict, held or pending record decided nothing), whatever made each reason advisory; a decision recorded before the field adds nothing.
  */
 function countPreExisting(run: CardRun): number {
   const rounds = run.preReview.rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').flatMap((r) => r.advisory ?? []);
-  const decisions = run.review.invocations.flatMap((i) => i.advisory ?? []);
+  const decisions = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block').flatMap((i) => i.advisory ?? []);
   return [...rounds, ...decisions].filter((reason) => PRE_EXISTING_TAG.test(reason)).length;
 }
 

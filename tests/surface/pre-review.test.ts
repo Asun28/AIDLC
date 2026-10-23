@@ -1752,3 +1752,26 @@ test('T1-REVIEW-PRE-EXISTING acceptance 5: every prompt carries the pre-existing
   assert.ok(notes.includes(NOTES_INTRO.now), notes);
   assert.ok(notes.includes(JSON.stringify(PE_AT('src/a.ts:30'))), 'the note is quoted evidence');
 });
+
+test('T1-REVIEW-PRE-EXISTING R2 F1 (class: empty-diff-advisory): a map built from an empty diff with no changed path is no map; the tag is ignored and the block stands [R3]', () => {
+  const reason = PE_AT('src/a.ts:30');
+  for (const empty of [inputs.changedLineRanges('', []), inputs.changedLineRanges('\n', []), new Map()]) {
+    assert.equal(inputs.preExistingAdvisory(reason, empty), false);
+    const enforced = enforceCitations(onlyBlock(reason), ['src/a.ts'], empty);
+    assert.equal(enforced.verdict.verdict, 'block');
+    assert.deepEqual(enforced.advisory, []);
+    const stripped = inputs.stripAdvisoryTags(onlyBlock(reason), empty);
+    assert.equal(stripped.verdict.verdict, 'block');
+    assert.deepEqual(stripped.advisory, []);
+  }
+});
+
+test('T1-REVIEW-PRE-EXISTING R2 F2 (class: unnormalized-cited-path): a citation with a leading ./ or backslashes on a changed line, a deleted file or a rename source blocks; on an unchanged line it is advisory [R2] [R3]', () => {
+  const map = peMap();
+  for (const loc of ['./src/a.ts:13', 'src\\a.ts:13', '.\\src\\a.ts:15', './src/moved.ts:5', 'src\\moved.ts:5', './src/gone.ts:3', 'src\\old.ts:20', './src/q.ts:2']) {
+    const enforced = enforceCitations(onlyBlock(PE_AT(loc)), PE_PATHS, map);
+    assert.equal(enforced.verdict.verdict, 'block', loc);
+    assert.equal(inputs.stripAdvisoryTags(onlyBlock(PE_AT(loc)), map).verdict.verdict, 'block', loc);
+  }
+  for (const loc of ['./src/a.ts:30', 'src\\moved.ts:20']) assert.equal(enforceCitations(onlyBlock(PE_AT(loc)), PE_PATHS, map).verdict.verdict, 'pass', loc);
+});

@@ -553,6 +553,14 @@ describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-
     const undecided = { round: 3, cycle: 0, reviewer: 'r2', candidateDigest: 'd3', requestedAt: at(30 * MIN), durationMs: 0, reasons: [], advisory: ['[pre-existing] @ src/a.ts:50: old -> new'] };
     const withUndecided = CardRun.parse({ ...decided, preReview: { ...decided.preReview, rounds: [...decided.preReview.rounds, { ...undecided, outcome: 'no-verdict' }, { ...undecided, round: 4, outcome: 'pending' }] } });
     assert.equal(stats.summarizeReviews([withUndecided], [])[0]?.findings.preExistingAdvisory, 3, 'only decided rounds are counted');
+    // R3 decision 1 F3 (class: undecided-advisory-count): an R3 record that decided nothing (no verdict, a quota hold, pending) adds nothing.
+    const note = ['[pre-existing] @ src/b.ts:9: old -> new'];
+    const invocation = { candidateDigest: 'd3', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(40 * MIN), advisory: note };
+    const withHeld = CardRun.parse({ ...decided, review: { ...decided.review, invocations: [...decided.review.invocations, { ...invocation, invocationId: 'r3:T1-PE.r3.2.cccccccc', outcome: 'no-verdict' }, { ...invocation, invocationId: 'r3:T1-PE.r3.2.dddddddd', outcome: 'quota-hold' }, { ...invocation, invocationId: 'r3:T1-PE.r3.2.eeeeeeee', outcome: 'pending' }] } });
+    assert.equal(stats.summarizeReviews([withHeld], [])[0]?.findings.preExistingAdvisory, 3, 'only decided R3 invocations are counted');
+    const registry2 = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
+    const heldOlder = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 0, substantiveBlocks: 0, scriptCounter: 0, noVerdictRetriesUsed: 0, invocations: [{ ...invocation, invocationId: 'r3:T1-PE-0.r3.1.ffffffff', outcome: 'no-verdict' }] } });
+    assert.equal(stats.summarizeReviews([heldOlder, preExistingRun()], registry2).find((s) => s.cardId === 'T1-PE')?.family?.totals.findings.preExistingAdvisory, 3, 'the family totals add no undecided record');
     // The family totals sum the count: a predecessor with one tagged R3 note and the card above.
     const registry = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
     const older = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 1, substantiveBlocks: 0, scriptCounter: 1, noVerdictRetriesUsed: 0, invocations: [{ invocationId: 'r3:T1-PE-0.r3.1.bbbbbbbb', candidateDigest: 'd0', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(0), outcome: 'pass', advisory: ['[pre-existing] @ src/c.ts:4: old -> new', '[suggestion] rename it'] }] } });
