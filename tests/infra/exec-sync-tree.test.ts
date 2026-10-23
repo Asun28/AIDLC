@@ -73,8 +73,10 @@ const OPERATIONS_SENTENCES = [
 /** The sentence of T0-EXEC-TREE-KILL this card replaces. */
 const OLD_OPERATIONS_SENTENCE = 'The synchronous runner (git, gh, the scaffold ship script, ops bindings, eval commands) still ends only the root of a timed-out command, so a descendant of such a command keeps running after its receipt returns.';
 const ARCHITECTURE_CLAUSE = ' and `runSync` with `killTree` running the command under `exec-tree-helper.ts`, which applies that tree kill,';
+/** The clause of the CHANGELOG entry that supersedes the T0-EXEC-TREE-KILL entry's runSync note, which that card's doc test still pins. */
+const CHANGELOG_SUPERSEDES = ', superseding the note of the T0-EXEC-TREE-KILL entry that `runSync` still ends only the root of a timed-out command';
 const CHANGELOG_ENTRY =
-  '- T0-EXEC-SYNC-TREE-KILL (bugfix): a command the synchronous runner `runSync` times out with `killTree` set (the scaffold ship script, ops bindings and status lookups, eval command checks) is ended with its whole process tree: `runSync` runs it under a helper node process, `src/probes/exec-tree-helper.ts`, which starts it with the async runner and its tree kill under the same 64 MiB output limit (the new optional `maxBuffer` of the async runner, set only by the helper) and prints the receipt as a JSON header line followed by the output bytes. Before, a timed-out scaffold ship script, ops binding or eval command left its descendants running after aidlc exited: a 1500 ms timeout returned at 1518 ms with the sleeper of the test fixture still running. A `timeoutMs` above 2 147 483 647 ms runs on the direct path as before. The git and gh probes and the GitHub ship path\'s git calls are left as they were: a timed-out call still ends only its root, and they start no helper.';
+  '- T0-EXEC-SYNC-TREE-KILL (bugfix), superseding the note of the T0-EXEC-TREE-KILL entry that `runSync` still ends only the root of a timed-out command: a command the synchronous runner `runSync` times out with `killTree` set (the scaffold ship script, ops bindings and status lookups, eval command checks) is ended with its whole process tree: `runSync` runs it under a helper node process, `src/probes/exec-tree-helper.ts`, which starts it with the async runner and its tree kill under the same 64 MiB output limit (the new optional `maxBuffer` of the async runner, set only by the helper) and prints the receipt as a JSON header line followed by the output bytes. Before, a timed-out scaffold ship script, ops binding or eval command left its descendants running after aidlc exited: a 1500 ms timeout returned at 1518 ms with the sleeper of the test fixture still running. A `timeoutMs` above 2 147 483 647 ms runs on the direct path as before. The git and gh probes and the GitHub ship path\'s git calls are left as they were: a timed-out call still ends only its root, and they start no helper.';
 
 const readDoc = (path: string): string => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
 const sentencesOf = (text: string): string[] => text.split(/(?<=\.)\s+(?=[A-Z`])/);
@@ -99,10 +101,11 @@ describe('T0-EXEC-SYNC-TREE-KILL docs [R5] [R6] [R7]', () => {
       ...OPERATIONS_SENTENCES.map((s): [string, () => boolean] => [s, () => docsHold(ops.replace(s, ''), architecture, changelog)]),
       ['the old sentence restored', () => docsHold(ops.replace(OPERATIONS_SENTENCES[1]!, `${OPERATIONS_SENTENCES[1]!} ${OLD_OPERATIONS_SENTENCE}`), architecture, changelog)],
       [ARCHITECTURE_CLAUSE, () => docsHold(ops, architecture.replace(ARCHITECTURE_CLAUSE, ','), changelog)],
+      [CHANGELOG_SUPERSEDES, () => docsHold(ops, architecture, changelog.replace(CHANGELOG_SUPERSEDES, ''))],
       ...sentencesOf(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, architecture, changelog.replace(s, ''))]),
     ];
-    // 3 OPERATIONS sentences, the old sentence, the ARCHITECTURE clause, 4 CHANGELOG sentences.
-    assert.equal(breaks.length, 9);
+    // 3 OPERATIONS sentences, the old sentence, the ARCHITECTURE clause, the CHANGELOG superseding clause, 4 CHANGELOG sentences.
+    assert.equal(breaks.length, 10);
     for (const [text, holds] of breaks) assert.equal(holds(), false, `this change still passes: ${text}`);
   });
 });
