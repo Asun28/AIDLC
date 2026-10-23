@@ -54,3 +54,55 @@ npm run typecheck && node --test tests/infra/exec.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+BUILD attempt 1 (Windows 11, node 22.23.1, worktree D:\wt\AIDLC\T0-EXEC-TREE-KILL).
+
+Reproduction before the fix (scratch harness importing `run` from src/probes/exec.ts at c9df773, the fixture `tests/infra/exec-tree.child.ts`, `timeoutMs` 1500, raced against a 15 s bound):
+- stay mode: no receipt at 15000 ms, sleeper alive at 15011 ms.
+- exit mode: no receipt at 15000 ms, sleeper alive at 15019 ms.
+
+Seam commit c2fb747 exports `createRun`, `killProcessTree` and `TIMEOUT_GRACE_MS` with today's behaviour, so the RED fails on assertions.
+
+RED at 22f00cc: `npm run typecheck && node --test tests/infra/exec.test.ts`, exit 1, 29379 ms, tests 23, pass 11, fail 12. First failing line: `not ok 1 - acceptance 1: runs %SystemRoot%\System32\taskkill.exe /pid 4242 /T /F once, with a 10 000 ms timeout and no shell, and kills nothing when it exits 0` (`Expected values to be strictly deep-equal`). Real-process failures: acceptance 3 and both acceptance 4 cases `no receipt within 6000 ms of the call` (6010, 6022, 6011 ms), acceptance 5 `no receipt within 4500 ms of the call (4506 ms)`; acceptance 7 `the doc texts this card adds are present whole`.
+
+GREEN at a961b1a: the same command, exit 0, tests 24, pass 24, fail 0, three runs of 20207, 19877 and 20011 ms. Real-process durations of run 3: acceptance 3 1661 ms, acceptance 4 stay 1676 ms, exit 1532 ms, acceptance 5 3531 ms, the slow tree kill case 5045 ms. `npm test` with `CLAUDE_CODE_SESSION_ID` unset: tests 1502, pass 1496, fail 0, skipped 6 (before the slow-kill and exit-mode assertions were added). `npm run build && npm run bench -- --check`: exit 0, every count within its ceiling (6 journeys, spawns 1/1). The POSIX branch of acceptance 2 to 5 runs on the ubuntu CI job only; WSL here has no node.
+
+Mutation sweep (each mutant applied alone to src/probes/exec.ts, `node --test tests/infra/exec.test.ts`, restored):
+
+| Mutant | Result | First failing test |
+|---|---|---|
+| remove the tree kill | killed | acceptance 3 |
+| drop `/T` | killed | acceptance 1 (exit 0) |
+| drop the win32 fallback kill (a failed taskkill looks successful) | killed | acceptance 1 (exits 128) |
+| a failed ps read looks successful | killed | acceptance 2 (ps exits 1) |
+| kill after an observed exit | killed | acceptance 4 (exit mode) |
+| skip the stdio destroy | killed | acceptance 4 (exit mode, resolves before the bound) |
+| drop the grace timer | killed | acceptance 5 |
+| arm the bound before the tree kill returns | killed | acceptance 5 [R3] (slow tree kill) |
+| walk direct children only | killed | acceptance 2 |
+| kill a pid outside the chain | killed | acceptance 2 |
+| stop at the first ESRCH | killed | acceptance 2 (ESRCH for 11) |
+| root not first | killed | acceptance 2 |
+| the bound reports an exit code for an unobserved exit | killed | acceptance 5 |
+
+The skip-the-destroy and arm-early mutants survived the first GREEN; commit a961b1a adds the exit-mode bound and exit code to the acceptance 4 exit case and the slow tree kill case under acceptance 5. That the child is unref'd at the bound is reviewer-verified against the diff.
+
+### Repair attempt 2 (R3 decision 1: F1, F2; R2 notes)
+
+- F1 (elapsed-bound-not-asserted), commit 02a8510: `raceFixture` now fails any receipt whose `elapsedMs` exceeds `boundMs`, so acceptance 3, 4 and 5 and the slow tree kill case each assert their bound. New test `raceFixture fails a receipt that settles after its bound while synchronous work held the bound timer back` (a runner that blocks 150 ms and then resolves, bound 50 ms): on bb0513d's helper `not ok 1 ... error: 'Missing expected rejection.'` on Windows and on Linux (WSL, node 22.23.1). Sweep of the other measured values: `goneWithin`, `alive` and the acceptance 5 root and sleeper checks were already asserted, the exit-mode elapsed time is asserted, and the slow tree kill case asserts `waited` from below and, through the helper, the receipt from above.
+- F2 (pending-stdin-keeps-runner-alive), commit fc6e5f0: at the grace bound `child.stdin` is destroyed before `child.unref()`; stdout and stderr are destroyed at the timeout, and `finish` clears both timers. A later close event reaches `finish`, which returns once settled. New test `acceptance 5 [R3]: with a tree kill that kills nothing and a large input the root never reads, the runner process exits on its own after the receipt, the root still alive at the receipt` runs the fixture's `runner` mode (createRun, a no-op tree kill, `timeoutMs` 1500, 8 MB of unread input) in its own process: on bb0513d's src/probes/exec.ts `the runner process is still running 6508 ms after its start` on Windows (6507 ms on Linux); with the fix it exits after about 3.6 s, and the fixture records the root alive at the receipt. The runner's pipes are not used, since on Windows the root and sleeper inherit the runner's own handles, and the root dies with the runner there (a node process's direct children are ended with it).
+- R2 note, zombies: `alive()` reads `/proc/<pid>/stat` on Linux and counts state Z as gone (chosen over watching the inherited pipe close).
+- R2 note, helper timeout: kept at 10 000 ms. Requirement R3 decides it: the bound is "2000 ms ... after `timeoutMs` or after the tree kill returns, whichever is later, the tree kill's helper calls each running with a 10 000 ms timeout", and acceptance 1 and 2 pin that timeout. The documented bound counts from the tree kill's return, so a hung helper delays the receipt by at most 10 000 ms plus the grace. The case `acceptance 5 [R3]: the bound counts from the return of a tree kill that takes 1500 ms` stands in for a hung helper and is now asserted from both sides.
+
+DoD at fc6e5f0, Windows, three runs: exit 0 each, `# tests 26 # pass 26 # fail 0`, 23964, 23730 and 23626 ms. Linux (WSL clone of the branch, node 22.23.1, CLAUDE_CODE_SESSION_ID and AIDLC_SESSION unset), three runs of `node --test tests/infra/exec.test.ts`: exit 0 each, `# tests 26 # pass 26 # fail 0`. `npm test` with CLAUDE_CODE_SESSION_ID unset: tests 1505, pass 1499, fail 0, skipped 6.
+
+The mutation sweep at fc6e5f0 adds `skip the stdin destroy at the bound` and `drop child.unref at the bound`, both killed by the runner-mode test; the 13 earlier mutants are still killed.
+
+### Repair attempt 3 (R3 decision 2: process-death-check-weakened)
+
+- Commit fed819f replaces the `/proc` zombie check of repair attempt 2 (the R2 zombie note is dropped by ruling: acceptance 3 requires `process.kill(pid, 0)` to throw). Every liveness check in tests/infra/exec.test.ts and the runner fixture now reads `process.kill(pid, 0)` alone, through `probe` (`alive`, or the code of the error thrown): `assertGoneWithin` polls up to 3000 ms until it throws and asserts the code equals `ESRCH`; acceptance 5 asserts `alive` for the root and the sleeper; the runner fixture writes `root=<alive|code>` and the test expects `root=alive`. No helper reads the filesystem or treats an unexpected error as gone.
+- New tests `the death check of acceptance 3`: with a stubbed kill, ESRCH passes; EPERM, an error with no code and a kill that keeps succeeding (a zombie) fail. Against the `/proc` variant (the repair 2 helpers with the kill made injectable, uncommitted), Windows: `not ok 2 - fails when process.kill(pid, 0) throws EPERM` and `not ok 3 - fails when process.kill(pid, 0) throws an error with no code (as a failed read does)`, both `Missing expected rejection.`; pass 2, fail 2.
+
+DoD at fed819f, Windows, three runs: exit 0 each, `# tests 30 # pass 30 # fail 0`, 24273, 24010 and 23903 ms. Linux (WSL clone at fed819f), three runs: exit 0 each, `# tests 30 # pass 30 # fail 0`. `npm test` with CLAUDE_CODE_SESSION_ID unset: tests 1509, pass 1503, fail 0, skipped 6.
