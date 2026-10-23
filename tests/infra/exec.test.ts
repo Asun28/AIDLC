@@ -384,13 +384,17 @@ describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the boun
   });
 });
 
-/** The sentences this card appends to the pre-review command paragraph of docs/OPERATIONS.md. */
+/**
+ * The sentences this card appends to the pre-review command paragraph of docs/OPERATIONS.md. Its third
+ * sentence, on the synchronous runner's limit, was replaced by card T0-EXEC-SYNC-TREE-KILL (its R5),
+ * whose tests/infra/exec-sync-tree.test.ts pins the replacement and the old sentence's absence.
+ */
 const OPERATIONS_SENTENCES = [
   "A command the async runner starts (the R2 and R3 reviewers, the claude-code provider of `aidlc run`) is ended at its `timeoutMs` with its whole process tree: on Windows by `taskkill /T /F` on the root's pid, elsewhere by `SIGKILL` to the root and to each of its descendants found in one process-table read (card T0-EXEC-TREE-KILL).",
   'Its receipt then resolves with `timedOut` true no later than 2000 ms after the timeout or the tree kill, whichever ends later, whatever a surviving descendant still holds open.',
-  'The synchronous runner (git, gh, the scaffold ship script, ops bindings, eval commands) still ends only the root of a timed-out command, so a descendant of such a command keeps running after its receipt returns.',
 ];
-const ARCHITECTURE_SENTENCE = "`exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree, with a scripted runner for tests.";
+/** The exec.ts sentence as card T0-EXEC-SYNC-TREE-KILL (its R6) extended it with the `runSync` clause. */
+const ARCHITECTURE_SENTENCE = "`exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree and `runSync` with `killTree` running the command under `exec-tree-helper.ts`, which applies that tree kill, with a scripted runner for tests.";
 const CHANGELOG_ENTRY =
   '- T0-EXEC-TREE-KILL (bugfix): a command the async runner `run` times out (an R2 or R3 reviewer, the claude-code provider of `aidlc run`) is ended with its whole process tree, `taskkill /T /F` on Windows and `SIGKILL` to the root and its descendants from one `ps` read elsewhere, and its receipt resolves with `timedOut` true within `TIMEOUT_GRACE_MS` (2000 ms) of the timeout or the tree kill. Before, only the root (on Windows the shell) was killed, so a timed-out reviewer kept running and its receipt waited until it exited on its own: a 1 s timeout returned at 12.1 s. The synchronous runner `runSync` still ends only the root of a timed-out command (card T0-EXEC-SYNC-TREE-KILL).';
 
@@ -417,8 +421,8 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
       [ARCHITECTURE_SENTENCE, () => docsHold(ops, architecture.replace(ARCHITECTURE_SENTENCE, ''), changelog)],
       ...sentencesOf(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, architecture, changelog.replace(s, ''))]),
     ];
-    // 3 OPERATIONS sentences, the ARCHITECTURE sentence, 3 CHANGELOG sentences.
-    assert.equal(removals.length, 7);
+    // 2 OPERATIONS sentences, the ARCHITECTURE sentence, 3 CHANGELOG sentences.
+    assert.equal(removals.length, 6);
     for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
   });
 });
