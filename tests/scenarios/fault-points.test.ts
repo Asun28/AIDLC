@@ -238,6 +238,8 @@ function observe(c: Ctx, base: { r2: number; r3: number; ship: number }, extra: 
   };
 }
 
+const DISCARD = /^(discarded|superseded|released|abandoned)/;
+
 /** The invariants I1 to I6 over one observation; each violation names its invariant and the persisted field. */
 function check(o: Observation): string[] {
   const v: string[] = [];
@@ -250,7 +252,17 @@ function check(o: Observation): string[] {
   const invocations = o.run?.review.invocations ?? [];
   const rounds = o.run?.preReview.rounds ?? [];
   // I3: every decision event names a decision the card run holds; the covered path decides only passes.
-  // (not yet checked)
+  for (const e of o.events) {
+    const d = e.data as Record<string, unknown>;
+    if (e.type === 'REVIEW_DECIDED') {
+      const held = invocations.some((i) => i.invocationId === d['invocationId'] && i.outcome === 'pass');
+      if (d['outcome'] !== 'pass' || DISCARD.test(String(d['decision'] ?? '')) || !held) v.push(`I3: REVIEW_DECIDED seq ${e.seq} (invocation ${String(d['invocationId'])}, outcome ${String(d['outcome'])}, decision ${String(d['decision'])}) names no pass the card run holds (review.invocations)`);
+    }
+    if (e.type === 'PRE_REVIEW_DECIDED') {
+      const held = rounds.some((r) => r.cycle === d['cycle'] && r.round === d['round'] && r.candidateDigest === d['candidateDigest'] && r.outcome === 'pass');
+      if (d['exhausted'] || d['outcome'] !== 'pass' || d['decision'] !== undefined || !held) v.push(`I3: PRE_REVIEW_DECIDED seq ${e.seq} (cycle ${String(d['cycle'])}, round ${String(d['round'])}, outcome ${String(d['outcome'])}, decision ${String(d['decision'] ?? d['action'])}) names no pass round the card run holds (preReview.rounds)`);
+    }
+  }
   // I4: no decision recorded twice.
   const twice = (ids: string[]) => ids.filter((id, n) => ids.indexOf(id) !== n);
   for (const id of twice(invocations.map((i) => i.invocationId))) v.push(`I4: invocation ${id} held twice (review.invocations)`);
