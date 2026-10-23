@@ -104,14 +104,36 @@ interface Covered {
   run: (c: Ctx) => unknown;
   /** The command is E: its fault-free run and every recovery must end in the deadline stop (I6). */
   deadline?: boolean;
+  /** How the fault-free run's result and persisted run differ from the end the card names for the command (`field actual, expected value`). */
+  ends: (value: unknown, run: CardRun | undefined, shipped: number) => string[];
 }
 
+/** Each `[field, actual, expected]` whose actual differs, as `field actual, expected value`. */
+const differ = (...pairs: Array<[string, unknown, unknown]>): string[] => pairs.filter(([, a, e]) => a !== e).map(([f, a, e]) => `${f} ${String(a)}, expected ${String(e)}`);
+const field = (value: unknown, ...keys: string[]): unknown => keys.reduce<unknown>((v, k) => (v as Record<string, unknown> | undefined)?.[k], value);
+const directiveOf = (value: unknown): string | undefined => (value as { directive?: { kind?: string } } | undefined)?.directive?.kind;
+
 const COVERED: Covered[] = [
-  { stage: 'A', name: 'A recordAttempt success (card attempt)', run: attempt },
-  { stage: 'B', name: 'B preReview R2 pass (review pre)', run: preReview },
-  { stage: 'C', name: 'C formalReview R3 pass (review r3)', run: formalReview },
-  { stage: 'D', name: 'D next at SHIP after the pass (card next, ship to CLOSE)', run: next },
-  { stage: 'E', name: 'E next at SHIP past the deadline (card next, STOP/time)', run: next, deadline: true },
+  {
+    stage: 'A', name: 'A recordAttempt success (card attempt)', run: attempt,
+    ends: (_v, run) => differ(['state', run?.state, 'BUILD'], ['last attempt', run?.effort?.attempts.at(-1)?.outcome, 'success'], ['dodReceipt', run?.dodReceipt, 'dod:1'], ['candidate', run?.candidate?.sha, 'sha-fp']),
+  },
+  {
+    stage: 'B', name: 'B preReview R2 pass (review pre)', run: preReview,
+    ends: (v, run) => differ(['result', field(v, 'result', 'outcome'), 'pass'], ['round', run?.preReview.rounds.at(-1)?.outcome, 'pass'], ['rounds', run?.preReview.rounds.length, 1]),
+  },
+  {
+    stage: 'C', name: 'C formalReview R3 pass (review r3)', run: formalReview,
+    ends: (v, run) => differ(['result', field(v, 'classified', 'outcome'), 'pass'], ['invocation', run?.review.invocations.at(-1)?.outcome, 'pass'], ['substantiveDecisions', run?.review.substantiveDecisions, 1]),
+  },
+  {
+    stage: 'D', name: 'D next at SHIP after the pass (card next, ship to CLOSE)', run: next,
+    ends: (v, run, shipped) => differ(['directive', directiveOf(v), 'close'], ['state', run?.state, 'CLOSE'], ['mergeVerified', run?.mergeVerified, true], ['ship requests', shipped, 1]),
+  },
+  {
+    stage: 'E', name: 'E next at SHIP past the deadline (card next, STOP/time)', run: next, deadline: true,
+    ends: (v, run) => differ(['directive', directiveOf(v), 'stop'], ['state', run?.state, 'STOP'], ['stop.reason', run?.stop?.reason, 'time']),
+  },
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -218,7 +240,8 @@ function observe(c: Ctx, base: { r2: number; r3: number; ship: number }, extra: 
   } catch (err) {
     runError = (err as Error).message;
   }
-  const stray = (readdirSync(c.fx.paths.root, { recursive: true }) as string[]).filter((f) => /\.tmp-\d+-[0-9a-f]{8}$/.test(f) || f.endsWith('.lock')).sort();
+  // The card's `*.tmp-*` and `*.lock`, matched on the file name: a temporary file of any suffix is a leftover.
+  const stray = (readdirSync(c.fx.paths.root, { recursive: true }) as string[]).filter((f) => path.basename(f).includes('.tmp-') || path.basename(f).endsWith('.lock')).sort();
   const journal = Journal.forGoal(c.fx.paths.journal, c.goalId);
   const verified = journal.verify();
   let events: JournalEvent[] = [];
@@ -289,8 +312,6 @@ interface Enumerated {
   violations: string[];
 }
 
-const directiveOf = (value: unknown): string | undefined => (value as { directive?: { kind?: string } } | undefined)?.directive?.kind;
-
 /** The recovery: next, the review command it directs, next again; a refusal of the review command is printed, not failed. */
 async function recover(c: Ctx, log: (msg: string) => void, label: string): Promise<Step[]> {
   const steps: Step[] = [];
@@ -326,8 +347,12 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
     const base = { ...counted.spawned, ship: counted.ship.requests.length };
     const res = await underFaults(counted.fx.paths, 0, () => cmd.run(counted));
     points = res.points;
-    if (res.error) violations.push(`${cmd.name} k=0: the fault-free command threw: ${res.error.message}`);
-    for (const x of check(observe(counted, base, { steps: [], deadline: Boolean(cmd.deadline), lastDirective: directiveOf(res.value) }))) violations.push(`${cmd.name} k=0 of ${points.length}: ${x}`);
+    const label = `${cmd.name} k=0 of ${points.length}, no fault`;
+    // The fault-free run must reach the end the card names before its count of fault points is accepted.
+    const obs = observe(counted, base, { steps: [], deadline: Boolean(cmd.deadline), lastDirective: directiveOf(res.value) });
+    if (res.error) violations.push(`${label}; the command threw: ${res.error.message}`);
+    for (const e of cmd.ends(res.value, obs.run, obs.spawned.ship)) violations.push(`${label}; end state: ${e}`);
+    for (const x of check(obs)) violations.push(`${label}; recovery: none; after the command: ${x}`);
   } finally {
     counted.fx.cleanup();
   }
@@ -339,13 +364,18 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
       const res = await underFaults(c.fx.paths, k, () => cmd.run(c));
       const label = `${cmd.name} k=${k} of ${points.length}, failed ${describePoint(res.points[k - 1] ?? points[k - 1]!)}`;
       const outcome = res.error ? `the command threw: ${res.error.message}` : `the command returned ${directiveOf(res.value) ?? 'a value'}`;
-      const found = check(observe(c, base, { steps: [], deadline: false })).map((x) => `${label}; ${outcome}; after the command: ${x}`);
+      // The observation after the command is kept and reported with the completed recovery trail, so a violation the
+      // recovery repairs still names every step taken after it.
+      const afterCommand = check(observe(c, base, { steps: [], deadline: false }));
+      let afterRecovery: string[] = [];
+      let trail = 'none';
       if (recovery) {
         const steps = await recover(c, log, label);
         const last = [...steps].reverse().find((s) => s.call === 'next')?.directive;
-        const trail = steps.map(stepText).join(', ');
-        found.push(...check(observe(c, base, { steps, deadline: Boolean(cmd.deadline), lastDirective: last })).map((x) => `${label}; ${outcome}; recovery: ${trail}; ${x}`));
+        trail = steps.map(stepText).join(', ');
+        afterRecovery = check(observe(c, base, { steps, deadline: Boolean(cmd.deadline), lastDirective: last }));
       }
+      const found = [...afterCommand.map((x) => `${label}; ${outcome}; recovery: ${trail}; after the command: ${x}`), ...afterRecovery.map((x) => `${label}; ${outcome}; recovery: ${trail}; after the recovery: ${x}`)];
       if (found.length) reported.push(k);
       violations.push(...found);
     } finally {
@@ -372,8 +402,8 @@ function holdInvocation(c: Ctx): void {
   c.fx.store.updateCardRun(c.goalId, CARD, (current) => ({ ...current!, review: { ...current!.review, invocations: [...current!.review.invocations, selftestInvocation()] } }));
 }
 
-const decideOutOfOrder: Covered = { stage: 'A', name: 'decideOutOfOrder', run: (c) => (appendDecided(c), holdInvocation(c)) };
-const decideInOrder: Covered = { stage: 'A', name: 'decideInOrder', run: (c) => (holdInvocation(c), appendDecided(c)) };
+const decideOutOfOrder: Covered = { stage: 'A', name: 'decideOutOfOrder', run: (c) => (appendDecided(c), holdInvocation(c)), ends: () => [] };
+const decideInOrder: Covered = { stage: 'A', name: 'decideInOrder', run: (c) => (holdInvocation(c), appendDecided(c)), ends: () => [] };
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Doc text (acceptance 8).
@@ -410,10 +440,22 @@ describe('fault-point check: each card-run write and journal append of five comm
     const broken = await enumerate(decideOutOfOrder, () => startAt('A'), log, false);
     assert.deepEqual(broken.points.map((p) => p.call), ['appendFileSync', 'renameSync']);
     assert.deepEqual(broken.reported, [2]);
-    assert.match(broken.violations.join('\n'), /^decideOutOfOrder k=2 of 2, failed renameSync .*; after the command: I3: REVIEW_DECIDED seq \d+ \(invocation r3:selftest/m);
+    assert.match(broken.violations.join('\n'), /^decideOutOfOrder k=2 of 2, failed renameSync .*; recovery: none; after the command: I3: REVIEW_DECIDED seq \d+ \(invocation r3:selftest/m);
+    // Every counterexample carries the recovery trail, the one found after the command as well as the one after the recovery.
+    const traced = await enumerate(decideOutOfOrder, () => startAt('A'), log);
+    assert.deepEqual(traced.reported, [2]);
+    assert.ok(traced.violations.length >= 1);
+    for (const v of traced.violations) assert.match(v, /^decideOutOfOrder k=2 of 2, failed renameSync .*; recovery: next -> \w+(, \w+ -> [^;]+)*; after the (command|recovery): I3: REVIEW_DECIDED .*\(review\.invocations\)$/);
+    assert.ok(traced.violations.some((v) => v.includes('; after the command: I3:')), traced.violations.join('\n'));
     const twin = await enumerate(decideInOrder, () => startAt('A'), log, false);
     assert.deepEqual(twin.points.map((p) => p.call), ['renameSync', 'appendFileSync']);
     assert.deepEqual(twin.reported, []);
+  });
+
+  it('a fault-free run that does not reach the end state its command names is reported before its fault points are accepted [R1]', async (t) => {
+    // D's command from the review directive: next returns review, nothing ships, and check() alone finds nothing wrong.
+    const stalled = await enumerate({ ...COVERED[3]!, name: 'D from the review directive' }, () => startAt('C'), (msg) => t.diagnostic(msg), false);
+    assert.match(stalled.violations[0] ?? '', /^D from the review directive k=0 of \d+, no fault; end state: directive review, expected close/);
   });
 
   it('I1, I2, I4, I5 and I6 each report one violation for an observation that breaks it alone, and none unbroken [R5]', async () => {
@@ -433,6 +475,11 @@ describe('fault-point check: each card-run write and journal append of five comm
       only(observe(c, { ...c.spawned, ship: 0 }, { steps: [], deadline: false }), 'I1');
       fs.unlinkSync(lock);
       assert.ok(!existsSync(lock));
+      // I1: a temporary file of any suffix beside the card run (the card's `*.tmp-*`).
+      const leftover = `${c.fx.store.cardFile(c.goalId, CARD)}.tmp-leftover`;
+      writeFileSync(leftover, '{}', 'utf8');
+      only(observe(c, { ...c.spawned, ship: 0 }, { steps: [], deadline: false }), 'I1');
+      fs.unlinkSync(leftover);
       assert.deepEqual(check(observe(c, { ...c.spawned, ship: 0 }, { steps: [], deadline: false })), []);
       // I2: a recovery next that threw.
       only({ ...unbroken, steps: [{ call: 'next', threw: 'CARD_RUN_STALE' }] }, 'I2');
