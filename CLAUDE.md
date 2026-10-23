@@ -24,6 +24,7 @@ npm run test:watch
 npm run build                  # tsc -> dist/ (rewrites .ts imports to .js)
 node bin/aidlc.js <cmd>        # the CLI (dist/ when it is at least as new as src/, else src/)
 npm run dev -- <cmd>           # the CLI from src/cli/main.ts, always current
+npm run bench                  # loop benchmark: deterministic counts of each hook event against bench/baseline.json (--check, --ratchet, --time 5)
 ```
 
 There is no linter; strict `tsc` with `noUnusedLocals` and `noUnusedParameters` is the only static gate.

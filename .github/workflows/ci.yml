@@ -33,3 +33,18 @@ jobs:
       - name: doctor (informational)
         shell: bash
         run: node bin/aidlc.js doctor --json || true
+
+  # The loop benchmark (docs/OPERATIONS.md, Loop benchmark): deterministic counts of each hook event and the CLI start
+  # against bench/baseline.json, apart from `check` so no local step waits on it. The build comes first, so the
+  # compiled entry runs as it does for a user.
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run bench -- --check

@@ -8,5 +8,87 @@
     "spawns": 0,
     "outBytes": 0
   },
-  "journeys": {}
+  "allowance": {
+    "modules": 10,
+    "depBytes": 0,
+    "startFsCalls": 25,
+    "fsCalls": 25,
+    "fsBytesRead": 32768,
+    "spawns": 0,
+    "outBytes": 0
+  },
+  "journeys": {
+    "hook.pre-bash": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 189,
+        "depBytes": 1140981,
+        "startFsCalls": 113,
+        "fsCalls": 7,
+        "fsBytesRead": 3649,
+        "spawns": 1,
+        "outBytes": 0
+      }
+    },
+    "hook.pre-edit": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 189,
+        "depBytes": 1140981,
+        "startFsCalls": 113,
+        "fsCalls": 8,
+        "fsBytesRead": 3649,
+        "spawns": 1,
+        "outBytes": 0
+      }
+    },
+    "hook.prompt": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 189,
+        "depBytes": 1140981,
+        "startFsCalls": 113,
+        "fsCalls": 7,
+        "fsBytesRead": 3649,
+        "spawns": 1,
+        "outBytes": 258
+      }
+    },
+    "hook.stop": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 189,
+        "depBytes": 1140981,
+        "startFsCalls": 113,
+        "fsCalls": 8,
+        "fsBytesRead": 3649,
+        "spawns": 1,
+        "outBytes": 0
+      }
+    },
+    "hook.stop.200-goals": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 189,
+        "depBytes": 1140981,
+        "startFsCalls": 113,
+        "fsCalls": 409,
+        "fsBytesRead": 306849,
+        "spawns": 1,
+        "outBytes": 0
+      }
+    },
+    "cli.start": {
+      "entry": "dist",
+      "ceilings": {
+        "modules": 241,
+        "depBytes": 1267883,
+        "startFsCalls": 113,
+        "fsCalls": 6,
+        "fsBytesRead": 3649,
+        "spawns": 1,
+        "outBytes": 3
+      }
+    }
+  }
 }
