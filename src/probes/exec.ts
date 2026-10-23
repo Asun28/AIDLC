@@ -70,7 +70,25 @@ export const runSync: SyncRunner = (command, args, options = {}) => {
   };
 };
 
-export const run: Runner = (command, args, options = {}) =>
+/** Sends a signal to one process; `process.kill` in production, a recorder in tests. */
+export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => unknown;
+/** Ends the process tree rooted at a pid. */
+export type TreeKill = (pid: number) => void;
+
+/** How long a timed-out receipt waits for the child's close event after the timeout or the tree kill. */
+export const TIMEOUT_GRACE_MS = 2000;
+
+/** Ends the process tree rooted at `pid` (seam: today ends the root alone). */
+export function killProcessTree(pid: number, _platform: NodeJS.Platform, _runner: SyncRunner, killer: ProcessKiller, _env: NodeJS.ProcessEnv = process.env): void {
+  try {
+    killer(pid, 'SIGKILL');
+  } catch {
+    /* already gone */
+  }
+}
+
+/** Builds the async runner around a tree kill (seam: today the tree kill is not used). */
+export const createRun = (_treeKill: TreeKill): Runner => (command, args, options = {}) =>
   new Promise<ExecReceipt>((resolve) => {
     const startedAt = new Date();
     const shell = needsShell(command, options.shell);
@@ -122,6 +140,8 @@ export const run: Runner = (command, args, options = {}) =>
     if (options.input !== undefined) child.stdin.end(options.input);
     else child.stdin.end();
   });
+
+export const run: Runner = createRun((pid) => killProcessTree(pid, process.platform, runSync, (p, signal) => process.kill(p, signal)));
 
 /** A scripted runner for tests: map "command args..." to canned receipts. */
 export function scriptedRunner(script: Record<string, Partial<ExecReceipt> | ((args: string[]) => Partial<ExecReceipt>)>): SyncRunner {
