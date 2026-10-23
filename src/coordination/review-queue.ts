@@ -28,7 +28,7 @@ export interface EnqueueInput {
 
 export type EnqueueResult = { status: 'enqueued'; request: ReviewRequest } | { status: 'joined'; request: ReviewRequest } | { status: 'completed'; request: ReviewRequest };
 
-export type AdmitResult = { status: 'admitted'; request: ReviewRequest } | { status: 'busy'; active: string[] } | { status: 'empty' } | { status: 'reset-pending'; resetAt: string };
+export type AdmitResult = { status: 'admitted'; request: ReviewRequest } | { status: 'busy'; active: string[] } | { status: 'empty' } | { status: 'reset-pending'; resetAt: string } | { status: 'behind'; ahead: { key: string; requesters: string[] } };
 
 export class ReviewQueue {
   readonly dir: string;
@@ -118,7 +118,7 @@ export class ReviewQueue {
   }
 
   /** Admit the next eligible request in persisted order if the pool has a free slot. */
-  admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso()): AdmitResult {
+  admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), _key?: string): AdmitResult {
     const p = this.pool(pool, now);
     if (p.resetAt && Date.parse(p.resetAt) > Date.parse(now)) return { status: 'reset-pending', resetAt: p.resetAt };
     // Drop active entries that are no longer running (completed/cancelled) but keep 'lost' ones: a lost
