@@ -27,6 +27,11 @@ Procedure:
 8. End your turn with the JSON verdict line: a progress note, a summary
    that announces a next step or an offer to continue is not the end of
    the review.
+9. Give each block reason a defect class, `(class: <slug>)` after the
+   dimension and before the location, with the same slug at every site of
+   one class and no class on a `[question]` or `[suggestion]` reason. For a
+   prior finding that has a class, check every site of that class in the
+   candidate and re-raise it with `re:F<n>` once per remaining site.
 
 Output exactly one JSON document as the last line, nothing after it:
 {"verdict":"pass|block","reasons":["[spec] <dim> @ <file:line>: <why> -> <fix>"],"axes":{"spec":{"verdict":"pass|block","reasons":[]},"standards":{"verdict":"pass|block","reasons":[]}}}
