@@ -10,6 +10,7 @@
  */
 import type { CardRun, PreReviewRound, ReviewFinding, ReviewInvocation } from '../core/types.ts';
 import { disputeKindOf } from '../core/review-policy.ts';
+import { PRE_EXISTING_TAG } from './pre-review.ts';
 
 export interface R2Stats {
   /** Decided rounds: a round still reserved (`pending`) is a dispatch in flight, not a round. */
@@ -274,6 +275,16 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
 }
 
 /**
+ * The advisory reasons carrying the `[pre-existing]` tag (card T1-REVIEW-PRE-EXISTING) over every decided R2 round (a pass or a
+ * block) and every R3 decision, whatever made each reason advisory; a decision recorded before the field adds nothing.
+ */
+function countPreExisting(run: CardRun): number {
+  const rounds = run.preReview.rounds.filter((r) => r.outcome === 'pass' || r.outcome === 'block').flatMap((r) => r.advisory ?? []);
+  const decisions = run.review.invocations.flatMap((i) => i.advisory ?? []);
+  return [...rounds, ...decisions].filter((reason) => PRE_EXISTING_TAG.test(reason)).length;
+}
+
+/**
  * When a pre-review round ended: the artifact `commitPreReviewResult` writes for it
  * (`pre-review-<cycle>-<round>-<attempt>`, the attempt taken from the round's reservation id), whose
  * `createdAt` also covers the wait between the request and the reviewer (the diff, the prompt, pool
@@ -318,6 +329,7 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
   for (const run of runs) {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
+    findings.preExistingAdvisory += countPreExisting(run);
     r3.decisions += run.review.substantiveDecisions;
     for (const invocation of run.review.invocations) {
       // Every recorded block, read from the decision itself: the ledger's `substantiveBlocks` counts only the merge-blocking ones.
@@ -390,6 +402,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.firstRoundMiss += s.findings.firstRoundMiss;
     findings.resolved += s.findings.resolved;
     for (const key of RESPONSE_KEYS) findings.responses[key] += s.findings.responses[key];
+    findings.preExistingAdvisory += s.findings.preExistingAdvisory;
     coverage.roundsRequested += s.coverage.roundsRequested;
     coverage.roundsComplete += s.coverage.roundsComplete;
     coverage.unaccounted += s.coverage.unaccounted;
@@ -466,7 +479,7 @@ function findingsText(s: FindingStats): string {
   if (s.reraised) parts.push(`${s.reraised} re-raised`);
   if (s.firstRoundMiss) parts.push(`${s.firstRoundMiss} first-round miss`);
   const responses = RESPONSE_KEYS.filter((key) => s.responses[key]).map((key) => `${s.responses[key]} ${key === 'notWorthFixing' ? 'not-worth-fixing' : key}`);
-  return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}${responses.length ? `; responses: ${responses.join(', ')}` : ''}`;
+  return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}${responses.length ? `; responses: ${responses.join(', ')}` : ''}${s.preExistingAdvisory ? `; pre-existing advisory ${s.preExistingAdvisory}` : ''}`;
 }
 
 /** `not requested` when no round asked for coverage; otherwise the completeness of the rounds that did. */

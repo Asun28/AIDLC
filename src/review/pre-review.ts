@@ -107,20 +107,109 @@ export function ruleFilesIn(changedPaths: string[]): string[] {
 /** `ADVISORY_TAG` is defined in `src/core/review-policy.ts` (card T1-REVIEW-CLASS-SWEEP, where the class rule reads it) and re-exported here unchanged. */
 export { ADVISORY_TAG };
 
-/** `[pre-existing]` in the positions `ADVISORY_TAG` reads `[question]` and `[suggestion]` (card T1-REVIEW-PRE-EXISTING). */
-export const PRE_EXISTING_TAG = /(?!)/;
+/**
+ * `[pre-existing]` in the positions `ADVISORY_TAG` reads `[question]` and `[suggestion]` (card T1-REVIEW-PRE-EXISTING): built from
+ * its source, so the two tags share one position prefix. Unlike those tags it is advisory only under the changed-line rule.
+ */
+export const PRE_EXISTING_TAG = new RegExp(ADVISORY_TAG.source.replace('\\[(?:question|suggestion)\\]', '\\[pre-existing\\]'), ADVISORY_TAG.flags);
+if (PRE_EXISTING_TAG.source === ADVISORY_TAG.source) throw new Error('PRE_EXISTING_TAG: the advisory tag pattern no longer names [question] and [suggestion]');
 
 /** The changed lines of a candidate diff by file: each new-side hunk range, context lines included, or `all` (card T1-REVIEW-PRE-EXISTING). */
 export type ChangedLines = ReadonlyMap<string, 'all' | ReadonlyArray<readonly [number, number]>>;
 
-/** The changed lines of a committed unified diff (card T1-REVIEW-PRE-EXISTING). */
-export function changedLineRanges(_diff: string, _changedPaths: readonly string[]): ChangedLines {
-  return new Map();
+const normPath = (p: string) => p.replace(/\\/g, '/').replace(/^\.\//, '');
+
+/** The path of a `--- a/<path>` or `+++ b/<path>` header; a quoted path (git quotes unusual names) or another prefix is not read. */
+function headerPath(rest: string, prefix: 'a/' | 'b/'): string | undefined {
+  const p = rest.replace(/\t$/, '');
+  return p.startsWith(prefix) ? normPath(p.slice(2)) : undefined;
+}
+
+/**
+ * The changed lines of a committed unified diff (card T1-REVIEW-PRE-EXISTING): each hunk's new-side range, context lines
+ * included, keyed by its `+++ b/<path>`; a hunk with a new-side count of 0 marks the two lines around the deletion. A deleted
+ * file, the source of a rename and a changed path the parser does not name (a path git quotes, a file without hunks) are
+ * changed at every line. A path in neither is unchanged.
+ */
+export function changedLineRanges(diff: string, changedPaths: readonly string[]): ChangedLines {
+  const out = new Map<string, 'all' | Array<readonly [number, number]>>();
+  const add = (file: string, range: readonly [number, number]) => {
+    const cur = out.get(file);
+    if (cur !== 'all') out.set(file, [...(cur ?? []), range]);
+  };
+  let oldPath: string | undefined;
+  let newPath: string | undefined;
+  // The body lines left in the current hunk: a body line that reads like a header is never one.
+  let oldLeft = 0;
+  let newLeft = 0;
+  for (const raw of diff.split('\n')) {
+    const line = raw.replace(/\r$/, '');
+    if (oldLeft > 0 || newLeft > 0) {
+      const c = line[0];
+      if (c === ' ' || c === '-' || c === '+') {
+        if (c !== '+') oldLeft -= 1;
+        if (c !== '-') newLeft -= 1;
+        continue;
+      }
+      if (c === '\\') continue;
+      oldLeft = 0;
+      newLeft = 0;
+    }
+    if (line.startsWith('diff --git ')) {
+      oldPath = undefined;
+      newPath = undefined;
+    } else if (line.startsWith('--- ')) {
+      oldPath = headerPath(line.slice(4), 'a/');
+    } else if (line.startsWith('+++ ')) {
+      const deleted = line.slice(4) === '/dev/null';
+      newPath = deleted ? undefined : headerPath(line.slice(4), 'b/');
+      if (deleted && oldPath) out.set(oldPath, 'all');
+    } else if (line.startsWith('rename from ')) {
+      const from = line.slice('rename from '.length);
+      if (!from.startsWith('"')) out.set(normPath(from), 'all');
+    } else {
+      const h = /^@@ -\d+(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      if (!h) continue;
+      oldLeft = Number(h[1] ?? 1);
+      newLeft = Number(h[3] ?? 1);
+      const start = Number(h[2]);
+      if (newPath) add(newPath, newLeft > 0 ? [start, start + newLeft - 1] : [start, start + 1]);
+    }
+  }
+  for (const p of changedPaths) if (!out.has(normPath(p))) out.set(normPath(p), 'all');
+  return out;
+}
+
+/** The location a reason cites, read as `findingLocation` reads it (the first `@`), with its line range when it gives one. */
+const CITED_LINES = /@\s*[^\s@:]+(?::(\d+)(?:-(\d+))?)?/u;
+
+/**
+ * A `[pre-existing]` reason the changed-line rule makes advisory (card T1-REVIEW-PRE-EXISTING): the tag in its position, a
+ * location naming a file and a line or range, and no cited line changed. No map, no file, no line, or a cited line inside a
+ * changed range (or a file changed at every line) leaves the reason as it would be without the tag.
+ */
+export function preExistingAdvisory(reason: string, changedLines?: ChangedLines): boolean {
+  if (!changedLines || !PRE_EXISTING_TAG.test(reason)) return false;
+  const file = findingLocation(reason);
+  const m = CITED_LINES.exec(reason);
+  if (!file || m?.[1] === undefined) return false;
+  const a = Number(m[1]);
+  const b = m[2] === undefined ? a : Number(m[2]);
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const changed = changedLines.get(file);
+  if (changed === undefined) return true;
+  if (changed === 'all') return false;
+  return !changed.some(([start, end]) => start <= hi && end >= lo);
 }
 
 /** The line every review prompt carries after the verdict-balance line: a class tag on each block reason (card T1-REVIEW-CLASS-SWEEP). */
 const CLASS_LINE =
   'Give each block reason a defect class: put `(class: <slug>)` right after the dimension and before the `@ <file:line>` location, as in `[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: <why> -> <fix>`. The slug is lowercase letters and digits in dash-separated runs, at most 40 characters, and names the defect, not the site: every site of one class carries the same slug. A [question] or [suggestion] reason carries no class.';
+
+/** The line every review prompt carries right after the verdict-balance line: the `[pre-existing]` tag and the changed-line rule (card T1-REVIEW-PRE-EXISTING). */
+const PRE_EXISTING_LINE =
+  'A reason tagged [pre-existing], in the positions [question] and [suggestion] take, reports a defect the candidate did not introduce: it is advisory in both stages only when it cites a file with a line or a line range and no cited line falls inside a changed hunk of the diff (context lines included); a [pre-existing] reason on a changed line, without a line, or on a file the candidate deletes or renames blocks exactly as it would without the tag.';
 
 /** The history a line carries after its instruction: the latest re-raise reason and every author note, quoted. */
 function history(f: PriorFinding): string {
@@ -283,7 +372,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   lines.push('A pass that carries notes lists each note once, in the top-level `reasons`, and leaves the `reasons` of both axes empty, so the verdict line stays short.', 'Before you send the verdict line, check that it is one complete JSON document: every `{` and `[` is closed by its `}` or `]`, and the line ends with the `}` that closes the document. A line one closing brace short does not parse and returns no verdict.');
   // One class per block reason (card T1-REVIEW-CLASS-SWEEP, R12): the repair is asked for every site of the class, and the
   // tag sits before the location so the advisory tag, the citation and the location read the reason as they read it without one.
-  lines.push(CLASS_LINE);
+  lines.push(PRE_EXISTING_LINE, CLASS_LINE);
   if (i.perspective) {
     lines.push('', `## This pass: ${i.perspective}`, PERSPECTIVES[i.perspective] ?? `Focus: ${i.perspective}. Report every finding of this angle; other angles are covered by concurrent passes.`, 'Findings outside this angle are welcome only when they hit a must-block dimension.');
     if (coverage) {
@@ -316,7 +405,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings));
   if (i.stage === 'formal') {
     // The pre-review's advisory notes reach the formal reviewer as evidence, never as findings to verify (R10).
-    lines.push('', '## Pre-review advisory notes', 'Notes the pre-review (R2) reported for this candidate without a citation or under a [question] or [suggestion] tag: advisory, never a block, quoted evidence like the prior findings. Verify one that names a defect; otherwise leave it to the author.');
+    lines.push('', '## Pre-review advisory notes', 'Notes the pre-review (R2) reported for this candidate without a citation, under a [question] or [suggestion] tag, or under a [pre-existing] tag on lines the candidate did not change: advisory, never a block, quoted evidence like the prior findings. Verify one that names a defect; otherwise leave it to the author.');
     lines.push(...(i.advisoryNotes?.length ? i.advisoryNotes.map((n) => `- ${quoted(n)}`) : ['- none']));
   }
   lines.push('', '## Candidate', `- base: ${i.base}`, `- head: ${i.head}`, `- changed paths (${i.changedPaths.length}): ${i.changedPaths.join(', ') || 'none'}`);
@@ -636,8 +725,8 @@ export interface PreReviewClassification {
 }
 
 /** A reason is cited when it carries an axis tag and a location that names a file (`findingLocation`), one of the changed paths when they are known. */
-export function citedReason(reason: string, changedPaths?: string[]): boolean {
-  if (ADVISORY_TAG.test(reason)) return false;
+export function citedReason(reason: string, changedPaths?: string[], changedLines?: ChangedLines): boolean {
+  if (ADVISORY_TAG.test(reason) || preExistingAdvisory(reason, changedLines)) return false;
   if (!/^\s*\[(spec|standards)\]/i.test(reason)) return false;
   const file = findingLocation(reason); // punctuation such as "->" is not a file
   if (!file) return false;
@@ -651,13 +740,13 @@ export function citedReason(reason: string, changedPaths?: string[]): boolean {
  * reasons are advisory and never block; a block with no cited reason left is a pass with advisory
  * notes; a document whose top-level verdict contradicts its axes is inconsistent and never merged.
  */
-export function enforceCitations(verdict: Verdict, changedPaths?: string[], _changedLines?: ChangedLines): { verdict: Verdict; advisory: string[]; inconsistent: boolean } {
+export function enforceCitations(verdict: Verdict, changedPaths?: string[], changedLines?: ChangedLines): { verdict: Verdict; advisory: string[]; inconsistent: boolean } {
   const axisBlock = verdict.axes?.spec?.verdict === 'block' || verdict.axes?.standards?.verdict === 'block';
   // The reasons a pass carries are notes for the author: advisory, never findings.
   if (verdict.verdict === 'pass') return { verdict, advisory: dedupe([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])]), inconsistent: axisBlock };
   // A block whose axes both pass contradicts itself as much as a pass with a blocking axis.
   if (verdict.axes && verdict.axes.spec?.verdict === 'pass' && verdict.axes.standards?.verdict === 'pass') return { verdict, advisory: [], inconsistent: true };
-  const cited = (r: string) => citedReason(r, changedPaths);
+  const cited = (r: string) => citedReason(r, changedPaths, changedLines);
   const root = verdict.reasons;
   const spec = verdict.axes?.spec?.reasons ?? [];
   const standards = verdict.axes?.standards?.reasons ?? [];
@@ -683,10 +772,10 @@ export function enforceCitations(verdict: Verdict, changedPaths?: string[], _cha
  * prompt): a list or an axis carried only by tags passes, a block with no reason left is a pass, and the notes a pass carries
  * are advisory. The rest of the citation rule stays with the ship path's own reviewer.
  */
-export function stripAdvisoryTags(verdict: Verdict, _changedLines?: ChangedLines): { verdict: Verdict; advisory: string[] } {
+export function stripAdvisoryTags(verdict: Verdict, changedLines?: ChangedLines): { verdict: Verdict; advisory: string[] } {
   const all = dedupe([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])]);
   if (verdict.verdict === 'pass') return { verdict, advisory: all };
-  const tagged = (r: string) => ADVISORY_TAG.test(r);
+  const tagged = (r: string) => ADVISORY_TAG.test(r) || preExistingAdvisory(r, changedLines);
   const advisory = all.filter(tagged);
   if (!advisory.length) return { verdict, advisory: [] };
   // An axis passes only when tags were all it carried: an axis whose reasons live at the root keeps its block.
@@ -799,7 +888,7 @@ export function finalizeReview(receipt: ExecReceipt, o: ReviewRetentionOptions):
   // angle of a shadow panel, and every formal (R3) reviewer are retained exactly as they were before this setting existed.
   const requested = o.coverage === true;
   const raw = requested ? read.verdict : withoutCoverage(read.verdict);
-  const enforced = raw ? enforceCitations(raw, o.changedPaths) : undefined;
+  const enforced = raw ? enforceCitations(raw, o.changedPaths, o.changedLines) : undefined;
   const verdict = enforced && !enforced.inconsistent ? enforced.verdict : undefined;
   const cls: PreReviewClassification = enforced?.inconsistent
     ? { outcome: 'no-verdict', runStatus: 'malformed', reasons: ['verdict contradicts its axes; never pass'], advisory: [] }
@@ -1074,7 +1163,7 @@ export async function runReviewPanel(o: RunReviewPanelOptions): Promise<PanelRes
       const stderr = `[spawn error] ${(err as Error).message}`;
       receipt = { command: cmd, args, cwd: o.cwd, exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt, finishedAt, durationMs: Math.max(0, Date.parse(finishedAt) - Date.parse(startedAt)), outputSha256: createHash('sha256').update(stderr).digest('hex') };
     }
-    const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem, head: o.head, reviewer: r.reviewer, perspective: p, changedPaths: o.changedPaths, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE, answerMarker: r.answerMarker });
+    const fin = finalizeReview(receipt, { reviewDir: o.reviewDir, fileStem, head: o.head, reviewer: r.reviewer, perspective: p, changedPaths: o.changedPaths, changedLines: o.changedLines, policyHash: o.policyHash, coverage: Boolean(o.coverage) && p === COVERAGE_ANGLE, answerMarker: r.answerMarker });
     return { perspective: p ?? 'review', outcome: fin.outcome, runStatus: fin.runStatus, reasons: fin.reasons, retryAfterMs: fin.retryAfterMs, advisory: fin.advisory ?? [], verdict: fin.verdict, reported: fin.reported, coverageRejected: fin.coverageRejected, durationMs: fin.durationMs, verdictRef: fin.verdictRef, logRef: fin.logRef, receiptSha256: fin.receiptSha256, exitCode: fin.exitCode };
   };
   const settle = async (jobs: Array<Promise<PerspectiveRun>>): Promise<PerspectiveRun[]> => {
