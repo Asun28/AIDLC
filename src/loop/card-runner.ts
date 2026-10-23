@@ -494,19 +494,24 @@ export class CardRunner {
     return [...pending.filter((o) => !journalHolds(o, events)), ...fresh];
   }
 
+  /** An owed event still to append: the journal does not hold it, and a merge result's operation shows its status (R5). */
+  private owedDue(owed: OwedEvent, events: JournalEvent[]): boolean {
+    return !journalHolds(owed, events) && (owed.type !== 'OPERATION_RESULT' || this.ops.get(String(owed.data['operationId']))?.status === owed.data['status']);
+  }
+
   /**
-   * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing. The
-   * entries named in `own` are the calling command's commit, appended with `extra`; every other one is completed for an
-   * earlier command (`completed: true`). A merge result is appended only while the ledger shows its status (R5).
+   * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing, once
+   * `read` (the run as the command read it) shows one due. The entries named in `own` are the calling command's commit,
+   * appended with `extra`; every other one is completed for an earlier command (`completed: true`).
    */
-  private deliverOwed(goal: Goal, card: Card, own: { keys: string[]; extra?: Record<string, unknown> } = { keys: [] }): void {
-    if (!this.store.getCardRun(goal.id, card.id)?.journalOwed?.length) return;
+  private deliverOwed(goal: Goal, card: Card, read: CardRun, own: { keys: string[]; extra?: Record<string, unknown> } = { keys: [] }): void {
+    const journal = this.journal(goal.id);
+    const seen = read.journalOwed?.length ? journal.readAll() : [];
+    if (!(read.journalOwed ?? []).some((o) => this.owedDue(o, seen))) return;
     this.store.updateCardRun(goal.id, card.id, (current) => {
-      const journal = this.journal(goal.id);
-      const events = current?.journalOwed?.length ? journal.readAll() : [];
+      const events = journal.readAll();
       for (const owed of current?.journalOwed ?? []) {
-        if (journalHolds(owed, events)) continue;
-        if (owed.type === 'OPERATION_RESULT' && this.ops.get(String(owed.data['operationId']))?.status !== owed.data['status']) continue;
+        if (!this.owedDue(owed, events)) continue;
         const data = own.keys.includes(owed.key) ? { ...owed.data, ...own.extra } : { ...owed.data, completed: true };
         events.push(journal.append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
       }
@@ -631,11 +636,11 @@ export class CardRunner {
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
-    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card);
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card, run);
     // A T2 goal back in CARDS (a recovery re-entry after an extension or a resumed revision) whose plan checkpoint is not
     // approved for the current revision has not admitted its projection: no worker executes a card of it before `aidlc next` does.
     const checkpointMissing = (r: CardRun): boolean => goal.state === 'CARDS' && goal.routing.size === 'T2' && !r.stop && r.state !== 'DONE' && requireAuthority(goal.authorizations, 'plan-checkpoint', { goalRevision: goal.revision }, now).status === 'missing';
@@ -676,7 +681,7 @@ export class CardRunner {
         }
         // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
         next = this.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
-        if (started) this.deliverOwed(goal, card, { keys: [started.key] });
+        if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
         const reasons = run.review.lastVerdict?.reasons ?? [];
@@ -900,7 +905,7 @@ export class CardRunner {
     }
     const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${run.pendingRepair.detail} ` : '';
     const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
-    if (started) this.deliverOwed(goal, card, { keys: [started.key] });
+    if (started) this.deliverOwed(goal, card, next, { keys: [started.key] });
     return {
       run: next,
       directive: {
@@ -923,13 +928,13 @@ export class CardRunner {
   /** Record an attempt outcome and, on success, the DoD/RED receipts. */
   recordAttempt(goal: Goal, card: Card, run: CardRun, input: { outcome: 'success' | 'fail' | 'not-counted'; cause?: string; notCountedReason?: 'expected-red' | 'quota' | 'admission-hold' | 'tool-outage' | 'env-setup'; progress?: boolean; evidence?: string; dodReceipt?: string; redReceipt?: string; candidateSha?: string; checksGained?: string[]; checksLost?: string[] }): CardRun {
     const now = this.clock();
-    // R4: an owed event a lost append left is journaled before the stored run is read (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
     if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
     // writer applies no fence (see docs/OPERATIONS.md, Sessions): what it records lands on the stored run as it is.
     run = this.store.getCardRun(goal.id, card.id) ?? run;
+    // R4: an owed event a lost append left is journaled before anything is recorded (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card, run);
     // A success on a tdd card binds the candidate and ends the episode; without a RED receipt the card could never ship, so
     // it is refused before anything is recorded and the caller records it again with the receipt.
     if (input.outcome === 'success' && card.tdd && !run.redReceipt && !input.redReceipt) throw new Error(`a successful attempt on tdd card ${card.id} needs a RED receipt: none is recorded on the run and the attempt carries none; record it again with --red-receipt "<sha>:<test>"`);
@@ -971,7 +976,7 @@ export class CardRunner {
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;
     // The finished attempt and its owed events land in one write; the events are appended after it (card T0-JOURNAL-FAULT-EVENTS).
     const saved = this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined, journalOwed: this.owedWith(goal.id, run, ...owed) });
-    this.deliverOwed(goal, card, { keys: owed.map((o) => o.key) });
+    this.deliverOwed(goal, card, saved, { keys: owed.map((o) => o.key) });
     return saved;
   }
 
@@ -1563,10 +1568,10 @@ export class CardRunner {
    */
   async formalReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; classified: ClassifiedVerdict; verdict?: Verdict; advisory: string[]; verdictRef?: string; logRef?: string; durationMs: number; receiptSha256: string; reviewer: string }> {
     if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
-    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card);
     // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
     let persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card, persisted);
     const reviewDir = path.join(this.reviewCheckout(persisted), '.review');
     // A result retained for a reservation of this card whose commit did not land (the card-run lock was held by another
     // writer at the time) is committed now, under the same invocation, without running the reviewer again. The recovery
@@ -2096,7 +2101,7 @@ export class CardRunner {
       }
     }
     // The owed REVIEW_DECIDED is appended after the commit, with the publication this command alone knows (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card, { keys: [committed.owedKey], extra: { canonicalPublished: publication?.published, publicationError: publication?.error } });
+    this.deliverOwed(goal, card, committed.run, { keys: [committed.owedKey], extra: { canonicalPublished: publication?.published, publicationError: publication?.error } });
     return { run: committed.run, ...result, reviewer };
   }
 
@@ -2209,10 +2214,10 @@ export class CardRunner {
   async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
     const primary = this.config.preReview;
     if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
-    // R4: an owed event a lost append left is journaled before the round is reserved (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card);
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
+    // R4: an owed event a lost append left is journaled before the round is reserved (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card, persisted);
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
@@ -2361,7 +2366,7 @@ export class CardRunner {
       after,
     );
     const { run: saved } = committed;
-    this.deliverOwed(goal, card, { keys: [committed.owedKey] });
+    this.deliverOwed(goal, card, saved, { keys: [committed.owedKey] });
     return { run: saved, result, round: record };
   }
 
@@ -2582,7 +2587,7 @@ export class CardRunner {
       return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
-        this.deliverOwed(goal, card, { keys: [owedResult.key] });
+        this.deliverOwed(goal, card, next, { keys: [owedResult.key] });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
       });
     }
