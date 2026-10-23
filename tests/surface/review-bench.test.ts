@@ -313,6 +313,62 @@ test('T1-REVIEW-BENCH acceptance 6: the CLI prints the report and writes no stat
   }
 });
 
+const isSha = (a: string) => /^[0-9a-f]{40}$/.test(a);
+/** A reviewer whose verdict carries the binding `bindingFor` gives the head: c1 blocks at the hit line, every other head passes. */
+const boundReviewer = (fx: Fixture, bindingFor: (head: string) => Record<string, string>): Runner => async (command, args, options) => {
+  const head = args.find(isSha) ?? '';
+  const doc = { ...(JSON.parse(head === fx.heads.c1 ? verdict('block', [HIT_REASON]) : verdict('pass')) as object), ...bindingFor(head) };
+  return scriptedRunner({ [command]: { stdout: `${JSON.stringify(doc)}\n` } })(command, args, options);
+};
+
+test('T1-REVIEW-BENCH R3 decision 1 F1: a verdict bound to another sha or branch scores as no-verdict in both stages, single and panel; an unbound or own-bound one is scored [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const pre = (perspectives: string[]) => ({ preReview: { command: ['reviewer', '{perspective}', '{head}'], reviewer: 'bench-r2', perspectives, shell: false } });
+    const stages: Array<[string, 'pre' | 'formal', unknown]> = [['formal', 'formal', formalConfig()], ['pre single', 'pre', pre([])], ['pre panel', 'pre', pre(['bugs', 'security'])]];
+    const bindings: Array<[string, (head: string) => Record<string, string>, string[]]> = [
+      ['absent', () => ({}), ['hit', 'pass']],
+      ['own', (head) => ({ sha: head, branch: CARD_ID }), ['hit', 'pass']],
+      ['wrong sha', () => ({ sha: fx.base }), ['no-verdict', 'no-verdict']],
+      ['wrong branch', () => ({ branch: 'T1-OTHER' }), ['no-verdict', 'no-verdict']],
+    ];
+    for (const [stageName, stage, config] of stages) {
+      writeConfig(fx, config);
+      for (const [name, bindingFor, expected] of bindings) {
+        const report = await bench(fx, boundReviewer(fx, bindingFor), { stage });
+        assert.deepEqual(report.cases.map((c) => c.outcome), expected, `${stageName}, ${name} binding`);
+      }
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH R3 decision 1 F2: a checkout git still lists, or one the listing cannot confirm gone, is reported in leftCheckouts even when its directory is deleted [R4]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const failing = (fail: (args: string[]) => boolean) => (command: string, args: string[], options?: Parameters<typeof runSync>[2]) => (fail(args) ? { ...runSync(command, ['--version'], options), exitCode: 1 } : runSync(command, args, options));
+    const stuck = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: failing((a) => a[0] === 'worktree' && (a[1] === 'remove' || a[1] === 'prune')) });
+    assert.equal(stuck.cases[0]!.outcome, 'pass');
+    assert.deepEqual(readdirSync(fx.tmpRoot), [], 'the directory itself is deleted');
+    assert.equal(stuck.leftCheckouts.length, 1, 'git still lists the checkout, so it is reported');
+    assert.equal(path.dirname(path.dirname(stuck.leftCheckouts[0]!)), fx.tmpRoot);
+    assert.equal(git(fx.root, ['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).length, 2);
+    git(fx.root, ['worktree', 'prune']);
+    assertNoCheckoutLeft(fx);
+
+    const unlisted = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: failing((a) => a[0] === 'worktree' && a[1] === 'list') });
+    assert.equal(unlisted.leftCheckouts.length, 1, 'a listing that fails cannot confirm the checkout is gone');
+    assertNoCheckoutLeft(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 /** Every file under a directory, recursively; a missing directory has none. */
 function filesUnder(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -344,8 +400,8 @@ test('T1-REVIEW-BENCH acceptance 8: loadEvals reads only the JSON files directly
 const OPERATIONS_SECTION = [
   '`aidlc review bench run --stage <pre|formal> [--dir <path>] [--case <id>] [--include-unconfirmed]` scores the stage\'s configured primary reviewer on the cases in `evals/review/` (`--dir` names another directory, resolved against the root of the checkout the command runs in). It reads `REVIEW.md`, `aidlc.config.json` and `docs/LESSONS.md` from that root, so a run with `npm run dev -- review bench run` in a card worktree scores that worktree\'s policy, prompts and configuration. It selects the confirmed cases, every case with `--include-unconfirmed`, or the one case `--case` names, and counts the unconfirmed cases it left out.',
   'A case is one JSON file named after its `id` (`ReviewBenchCase` in `src/core/types.ts`; `evals/review/README.md` describes each field): `kind` `bug` or `clean`, the `candidate` and `base` commits, the card\'s `id` and its `path` at the candidate, `confirmed`, `confirmedBy`, `origin`, an optional `note`, and for a bug case the `expected` sites, each a `file`, a `line`, a `window` and a `class`.',
-  'The reviewer bench reviews each distinct candidate, base and card path once, one review after another, in a detached checkout of the candidate that `git worktree add --detach` creates in a fresh directory under the OS temp directory. That checkout is the reviewer\'s working directory and `{cwd}`, and it is removed after every review, with the directory deleted and `git worktree prune` run when `git worktree remove --force` fails. The review is the loop\'s first R2 round or first R3 decision, built by the loop\'s own functions: the card parsed from `card.path` in the checkout, the diff from `collectCandidateDiff` under the stage\'s `maxDiffBytes`, the prompt from `buildReviewPrompt` with no prior findings, no delta and no advisory notes, and the run from `runReviewPanel` with the stage\'s primary `command` (with the R2 perspectives and coverage request, or the R3 `{schema}` and `{effort}`) and no fallback. Logs and verdicts go to `.review/bench/` of the checkout root.',
-  'A bug case is a `hit` when a cited reason of a block names an expected `file` with a line or line range that overlaps `line - window` to `line + window`, and a `miss` otherwise, a pass included. A clean case is a `false-block` when the review blocks and a `pass` when it passes. A review that ends without a verdict or on a quota hold makes its cases `no-verdict`, and a case that could not be reviewed (no checkout, a card file missing, unparseable or naming another id, an empty diff, a diff above the cap, an expected file the diff does not change) is an `error`; neither counts as a hit, a miss, a pass or a false block.',
+  'The reviewer bench reviews each distinct candidate, base and card path once, one review after another, in a detached checkout of the candidate that `git worktree add --detach` creates in a fresh directory under the OS temp directory. That checkout is the reviewer\'s working directory and `{cwd}`, and it is removed after every review, with the directory deleted and `git worktree prune` run when `git worktree remove --force` fails. A checkout is listed in `leftCheckouts` unless its directory is gone, any prune it needed exited 0, and `git worktree list --porcelain` exited 0 without naming it. The review is the loop\'s first R2 round or first R3 decision, built by the loop\'s own functions: the card parsed from `card.path` in the checkout, the diff from `collectCandidateDiff` under the stage\'s `maxDiffBytes`, the prompt from `buildReviewPrompt` with no prior findings, no delta and no advisory notes, and the run from `runReviewPanel` with the stage\'s primary `command` (with the R2 perspectives and coverage request, or the R3 `{schema}` and `{effort}`) and no fallback. Logs and verdicts go to `.review/bench/` of the checkout root.',
+  'A bug case is a `hit` when a cited reason of a block names an expected `file` with a line or line range that overlaps `line - window` to `line + window`, and a `miss` otherwise, a pass included. A clean case is a `false-block` when the review blocks and a `pass` when it passes. A review that ends without a verdict or on a quota hold makes its cases `no-verdict`, and a case that could not be reviewed (no checkout, a card file missing, unparseable or naming another id, an empty diff, a diff above the cap, an expected file the diff does not change) is an `error`; neither counts as a hit, a miss, a pass or a false block. A verdict bound to another commit (`sha`) or another card (`branch`) is a `no-verdict`, as the R3 classification of the loop reads it (`classifyVerdict`); the bench applies this rule to R2 as well, whose rounds the loop records without it.',
   'The report gives `stage`, `reviewer`, `policyHash`, `leftCheckouts`, one entry per case (`outcome`, `runStatus`, the cited reasons, `matched` with the reason and the expected file and line for a hit, `detail`, `verdictRef`, `logRef`, `durationMs`) and `totals`. In the totals `recall` is hits / (hits + misses) and `falseBlockRate` is false blocks / (clean passes + false blocks), each `null` when its denominator is 0, beside `noVerdict`, `errors` and `skippedUnconfirmed`. The report is JSON with `--json` or when stdout is not a TTY, and one line per case and a totals line otherwise. The command exits 0 after a report whose `leftCheckouts` is empty, whatever the scores, and 1 when it refuses before any review (no `REVIEW.md`, an empty stage `command`, a missing case directory, a case file that does not load, an unknown `--case`) or leaves a checkout behind.',
   'The reviewer bench stays outside the loop: no workflow names it, so it never runs in CI, and it reads no goal, card run, journal or review queue and writes nothing under the state directory, so it never changes a card run and never blocks a card. Before a change to `REVIEW.md`, a review perspective, a review prompt or a reviewer model, run it for both stages from a checkout of the version before and a checkout of the version after the change, and keep the change only when recall does not drop. This is a documented practice and no gate enforces it.',
 ];

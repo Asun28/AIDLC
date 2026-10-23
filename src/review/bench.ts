@@ -8,14 +8,14 @@
  * The bench stays outside the loop: it reads no goal, card run, journal or review queue, writes nothing under the state
  * directory, and nothing in the loop or in CI reads its scores.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
-import { FINDING_LOCATION, findingLocation } from '../core/review-policy.ts';
+import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
@@ -155,6 +155,8 @@ async function reviewGroup(ctx: BenchContext, cases: ReviewBenchCase[], n: numbe
   let holder: string | undefined;
   try {
     holder = mkdtempSync(path.join(ctx.tmpRoot, 'aidlc-review-bench-'));
+    // The long, canonical form, so the path git records compares equal to the one the cleanup looks for.
+    holder = realpathSync.native(holder);
     const checkout = path.join(holder, 'checkout');
     const add = ctx.git('git', ['worktree', 'add', '--detach', checkout, candidate], { cwd: ctx.root });
     if (add.exitCode !== 0) return cases.map((c) => errorOf(c, `no checkout of ${candidate}: ${add.stderr.trim() || `git worktree add exit ${add.exitCode}`}`));
@@ -166,7 +168,17 @@ async function reviewGroup(ctx: BenchContext, cases: ReviewBenchCase[], n: numbe
   }
 }
 
-/** `git worktree remove --force`, else delete the directory and prune; a directory that still exists is reported. */
+/** Paths compared as the OS compares them: resolved, and without letter case on Windows. */
+const samePath = (a: string, b: string): boolean => {
+  const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  return norm(a) === norm(b);
+};
+
+/**
+ * `git worktree remove --force`, else delete the directory and `git worktree prune`. The checkout is reported in
+ * `leftCheckouts` unless every step is confirmed: the directory is gone, a prune the failed remove needed exited 0, and
+ * `git worktree list --porcelain` exited 0 without naming it.
+ */
 function removeCheckout(ctx: BenchContext, holder: string): void {
   const checkout = path.join(holder, 'checkout');
   const removed = ctx.git('git', ['worktree', 'remove', '--force', checkout], { cwd: ctx.root });
@@ -175,8 +187,10 @@ function removeCheckout(ctx: BenchContext, holder: string): void {
   } catch {
     // reported below
   }
-  if (removed.exitCode !== 0) ctx.git('git', ['worktree', 'prune'], { cwd: ctx.root });
-  if (existsSync(holder)) ctx.leftCheckouts.push(holder);
+  const pruned = removed.exitCode === 0 || ctx.git('git', ['worktree', 'prune'], { cwd: ctx.root }).exitCode === 0;
+  const listed = ctx.git('git', ['worktree', 'list', '--porcelain'], { cwd: ctx.root });
+  const named = listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
+  if (existsSync(holder) || !pruned || named) ctx.leftCheckouts.push(checkout);
 }
 
 async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: string, n: number): Promise<BenchCaseResult[]> {
@@ -213,9 +227,10 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
     const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1) });
     panel = await runReviewPanel({ ...retention, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
   }
+  const bound = bindToCandidate(panel, candidate, card.id);
   return cases.map((c) => {
     const reason = unscorable(c);
-    return reason ? errorOf(c, reason) : score(c, panel, changedPaths);
+    return reason ? errorOf(c, reason) : score(c, bound, changedPaths);
   });
 }
 
@@ -227,6 +242,21 @@ function citedSite(reason: string): { file: string; from: number; to: number } |
   const a = Number(range[1]);
   const b = range[2] === undefined ? a : Number(range[2]);
   return { file, from: Math.min(a, b), to: Math.max(a, b) };
+}
+
+/**
+ * The review result with the binding rule of the loop's R3 classification (`classifyFormal` in src/loop/card-runner.ts,
+ * mirrored because the bench imports nothing from src/loop/): an absent sha or branch binds to this candidate and card,
+ * `classifyVerdict` makes a verdict bound to another sha a no-verdict, and one bound to another branch is a no-verdict too.
+ * The bench applies it to both stages, so a stale verdict never scores as a pass, a hit, a miss or a false block.
+ */
+function bindToCandidate(panel: PanelResult, candidate: string, cardId: string): PanelResult {
+  if ((panel.outcome !== 'pass' && panel.outcome !== 'block') || !panel.verdict) return panel;
+  const verdict = { ...panel.verdict, sha: panel.verdict.sha ?? candidate, branch: panel.verdict.branch ?? cardId, run_status: panel.runStatus };
+  const classified = classifyVerdict(verdict, { candidateSha: candidate });
+  if (classified.stale) return { ...panel, outcome: 'no-verdict', runStatus: classified.runStatus ?? 'malformed', reasons: classified.reasons, verdict: undefined };
+  if (verdict.branch !== cardId) return { ...panel, outcome: 'no-verdict', runStatus: 'malformed', reasons: [`stale verdict branch ${verdict.branch}`], verdict: undefined };
+  return panel;
 }
 
 function score(c: ReviewBenchCase, panel: PanelResult, changedPaths: string[]): BenchCaseResult {
