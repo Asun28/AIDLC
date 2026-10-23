@@ -6,6 +6,11 @@
  *   node exec-tree.child.ts exit <pidFile>     the same, but the root exits once the pid file exists,
  *                                              so the sleeper alone keeps the inherited output open
  *   node exec-tree.child.ts sleeper <pidFile>  writes its pid to <pidFile>, then sleeps
+ *   node exec-tree.child.ts runner <pidFile>   runs `stay` through createRun with a tree kill that
+ *                                              kills nothing, timeoutMs 1500 and an 8 MB input the
+ *                                              root never reads, writes the receipt and whether
+ *                                              the root is alive to `<pidFile>.receipt`, returns;
+ *                                              the process exits only once no handle holds it
  *
  * The root writes its own pid to `<pidFile>.root` before it starts the sleeper.
  *
@@ -17,8 +22,8 @@ import { fileURLToPath } from 'node:url';
 
 const SLEEP_MS = 60_000;
 const [mode, pidFile] = process.argv.slice(2);
-if (!pidFile || !['stay', 'exit', 'sleeper'].includes(mode ?? '')) {
-  process.stderr.write('usage: exec-tree.child.ts stay|exit|sleeper <pidFile>\n');
+if (!pidFile || !['stay', 'exit', 'sleeper', 'runner'].includes(mode ?? '')) {
+  process.stderr.write('usage: exec-tree.child.ts stay|exit|sleeper|runner <pidFile>\n');
   process.exit(2);
 }
 
@@ -26,6 +31,16 @@ if (mode === 'sleeper') {
   writeFileSync(`${pidFile}.tmp`, String(process.pid));
   renameSync(`${pidFile}.tmp`, pidFile);
   setTimeout(() => {}, SLEEP_MS);
+} else if (mode === 'runner') {
+  const { createRun } = await import('../../src/probes/exec.ts');
+  const receipt = await createRun(() => {})(process.execPath, [fileURLToPath(import.meta.url), 'stay', pidFile], { timeoutMs: 1500, input: 'x'.repeat(8 * 1024 * 1024) });
+  let rootAlive = true;
+  try {
+    process.kill(Number(readFileSync(`${pidFile}.root`, 'utf8')), 0);
+  } catch {
+    rootAlive = false;
+  }
+  writeFileSync(`${pidFile}.receipt`, `resolved timedOut=${receipt.timedOut} exitCode=${receipt.exitCode} rootAlive=${rootAlive}`);
 } else {
   writeFileSync(`${pidFile}.root`, String(process.pid));
   // Quote each path: node lives under Program Files on a developer machine.

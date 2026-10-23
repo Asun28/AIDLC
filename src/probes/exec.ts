@@ -190,6 +190,10 @@ export const createRun = (treeKill: TreeKill): Runner => (command, args, options
         child.stdout.destroy();
         child.stderr.destroy();
         grace = setTimeout(() => {
+          // Release every handle on the child: stdout and stderr went at the timeout, a pending write
+          // of an input the surviving root never reads holds stdin, child.unref() the process handle,
+          // and finish clears both timers.
+          child.stdin.destroy();
           child.unref();
           finish(exitCode, exitSignal);
         }, TIMEOUT_GRACE_MS);
