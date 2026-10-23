@@ -2,6 +2,7 @@
 id: T0-GOAL-CLOSE-LEASE
 title: The session that closes a goal settles the goal lease before DONE is saved, releasing its own lease or taking over and releasing a lease another session left to expire, so goal close never throws FencedError after DONE and always writes the board and returns the done directive
 status: todo
+superseded_by: T0-GOAL-CLOSE-LEASE-2
 branch: T0-GOAL-CLOSE-LEASE
 worktree: D:\wt\AIDLC\T0-GOAL-CLOSE-LEASE
 allow_paths:
