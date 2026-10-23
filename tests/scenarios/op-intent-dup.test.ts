@@ -180,6 +180,27 @@ describe('T0-OP-INTENT-DUP: the next ship continues under the merge intent a fai
     assert.deepEqual(intentEvents(c), [id]);
   });
 
+  it('a taken-over intent gets its own OPERATION_INTENT when the journal names only an earlier, cancelled intent of the card [R2]', async () => {
+    const c = await atShip();
+    // A first ship waits on a busy pool and cancels the intent it recorded and journaled.
+    c.fx.queue.enqueue({ pool: 'default', repository: c.g().repository, candidateDigest: 'sha-else', base: 'main', policyVersion: c.fx.config.reviewPolicyVersion, reviewer: c.fx.config.reviewer, requester: 'g-20260911000000-000000:T1-ELSE', deadline: c.run().deadline, now: c.fx.now() });
+    assert.equal(c.fx.queue.admit('default', actorB, c.fx.now()).status, 'admitted');
+    assert.equal(waitOn(next(c).directive), 'review-pool:default:busy');
+    const [cancelled] = merges(c);
+    assert.equal(cancelled![1], 'cancelled');
+    assert.deepEqual(intentEvents(c), [cancelled![0]]);
+    for (const r of c.fx.queue.list('default').filter((q) => q.state === 'running')) c.fx.queue.complete(r.key, 'done', c.fx.now());
+    // A second ship records a new intent and fails at its OPERATION_INTENT append; the third takes it over.
+    withAppendFault(c, 'OPERATION_INTENT', () => assert.throws(() => next(c), { message: faultMessage('OPERATION_INTENT') }));
+    const stranded = merges(c).find(([id]) => id !== cancelled![0])![0];
+    assert.equal(c.fx.ops.get(stranded)?.status, 'intended');
+    assert.equal(next(c).directive.kind, 'close');
+    assert.equal(c.fx.ops.get(stranded)?.status, 'succeeded');
+    assert.equal(c.fx.ops.get(cancelled![0])?.status, 'cancelled');
+    assert.deepEqual(intentEvents(c), [cancelled![0], stranded]);
+    assert.deepEqual(opCodes(c), []);
+  });
+
   it('of two matching intended intents the ship takes over the earliest, and the later one stays intended [R1]', async () => {
     const c = await atShip();
     const first = c.fx.ops.recordIntent(shipIntent(c), earlier(c, 2000));
@@ -238,6 +259,17 @@ describe('T0-OP-INTENT-DUP: what the ship never takes over [R1]', () => {
     const d = next(c).directive;
     assert.equal(waitOn(d), `operation:${issued.id}`);
     assert.deepEqual(c.fx.ops.list({}), before);
+  });
+
+  it('an intended merge intent of the card is not taken over while the duplicate check returns an earlier issued record: card next waits on operation:<id> with the ledger unchanged', async () => {
+    const c = await atShip();
+    const issued = c.fx.ops.recordIntent(shipIntent(c, { cardId: undefined }), earlier(c, 2000));
+    c.fx.ops.markIssued(issued.id, undefined, earlier(c, 1500));
+    c.fx.ops.recordIntent(shipIntent(c), earlier(c, 1000));
+    const before: OperationRecord[] = c.fx.ops.list({});
+    assert.equal(waitOn(next(c).directive), `operation:${issued.id}`);
+    assert.deepEqual(c.fx.ops.list({}), before);
+    assert.deepEqual(c.ship.requests, []);
   });
 });
 
