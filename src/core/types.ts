@@ -709,6 +709,21 @@ const GitOid = z.string().regex(/^[0-9a-f]{40}$/, 'expected a lowercase SHA-1 gi
 export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
 export type ShippedFacts = z.infer<typeof ShippedFacts>;
 
+/** A reviewer bench case (card T1-REVIEW-BENCH; seam for the RED run, the schema follows). */
+export type ReviewBenchCase = {
+  kind: 'bug' | 'clean';
+  id: string;
+  candidate: string;
+  base: string;
+  card: { id: string; path: string };
+  confirmed: boolean;
+  confirmedBy?: string;
+  origin: string;
+  note?: string;
+  expected?: Array<{ file: string; line: number; window: number; class: string }>;
+};
+export const ReviewBenchCase = z.custom<ReviewBenchCase>(() => true);
+
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
