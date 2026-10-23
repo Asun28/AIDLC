@@ -117,3 +117,8 @@ npm run typecheck && node --test tests/scenarios/fault-points.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every test in the file passes: no violation of I1 to I6 at k = 0 or at any fault point of A to E, the broken-order component reported at exactly k = 2 and its twin at none, each invariant's hand-built violation reported, and the doc and CHANGELOG sentences present.
+
+## Attempt evidence (acceptance 6; the reviewers see the diff, not the attempt record)
+- RED at `de3743a`: `npm run typecheck && node --test tests/scenarios/fault-points.test.ts` exit 1, 14 tests, 6 pass, 8 fail, `duration_ms 5832.0962` (5.8 s). The first failure is the R4 test (actual `[]`, expected `[2]`); the other 7 are the doc and CHANGELOG assertions written before the docs.
+- GREEN at `9db1d7d` (attempt 1): exit 0, 14 pass, `duration_ms 5977.6955`.
+- GREEN at `d5e0257` (attempt 2, R3 decision 1 repair): exit 0, 15 pass, `duration_ms 6726.6839`; `npm test` 1422 pass, 0 fail, 6 skipped.
