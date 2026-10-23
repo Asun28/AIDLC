@@ -405,6 +405,10 @@ export type FindingStage = z.infer<typeof FindingStage>;
 export const FindingDisposition = z.enum(['open', 'disputed']);
 export type FindingDisposition = z.infer<typeof FindingDisposition>;
 
+/** The author's response a dispute records (card T1-REVIEW-RESPONSES); every reader takes an absent kind as `wrong`. */
+export const DisputeKind = z.enum(['wrong', 'intentional', 'not-worth-fixing']);
+export type DisputeKind = z.infer<typeof DisputeKind>;
+
 /** A defect class slug (card T1-REVIEW-CLASS-SWEEP): lowercase letters and digits in dash-separated runs, at most FINDING_CLASS_MAX characters. */
 export const FINDING_CLASS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const FINDING_CLASS_MAX = 40;

@@ -41,6 +41,16 @@ export interface FindingStats {
   reraised: number;
   firstRoundMiss: number;
   resolved: number;
+  responses: ResponseStats;
+}
+
+/** Every finding by the author's response (card T1-REVIEW-RESPONSES). */
+export interface ResponseStats {
+  fixed: number;
+  wrong: number;
+  intentional: number;
+  notWorthFixing: number;
+  open: number;
 }
 
 /**
@@ -127,7 +137,7 @@ function emptyCoverage(): CoverageStats {
 }
 
 function emptyFindings(): FindingStats {
-  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0 };
+  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 } };
 }
 
 /**

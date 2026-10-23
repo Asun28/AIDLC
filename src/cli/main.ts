@@ -768,7 +768,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .description('dispute an open finding with a note; the next round or decision receives the note, and a candidate blocked only by disputed findings is re-reviewed unchanged')
     .option('--goal <id>')
     .requiredOption('--note <text>', 'why the finding does not hold (evidence, file:line, the acceptance item)')
-    .action((cardId: string, findingId: string, o: { goal?: string; note: string }) => {
+    .option('--kind <kind>', 'the response: wrong (default), intentional or not-worth-fixing')
+    .action((cardId: string, findingId: string, o: { goal?: string; note: string; kind?: string }) => {
       const c = ctx(g());
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const next = runnerFor(c).disputeFinding(goalRec, parsed.card, run, findingId, o.note);

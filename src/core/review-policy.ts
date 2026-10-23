@@ -15,7 +15,7 @@
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
 import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
-import { FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
+import { DisputeKind, FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
 
@@ -509,7 +509,7 @@ export function describeContested(findings: ReviewFinding[]): string {
  * The author disputes an open finding with a note. A second dispute needs a re-raise in between; a
  * finding disputed twice and re-raised twice is a deadlock that only a human ruling settles.
  */
-export function disputeFinding(findings: ReviewFinding[], id: string, note: string, at: string): ReviewFinding[] {
+export function disputeFinding(findings: ReviewFinding[], id: string, note: string, at: string, _kind: DisputeKind = 'wrong'): ReviewFinding[] {
   const f = findingOrThrow(findings, id);
   if (!note.trim()) throw new Error(`a dispute needs a note: why ${f.id} does not hold`);
   if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to dispute`);
@@ -520,6 +520,11 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
   // dispute received none of it and opens no second dispute.
   if (f.disputes.length && !receivedEveryDispute(f)) throw new Error(`${f.id} was already disputed since the last re-raise that received it (a withdrawn dispute counts); a second dispute needs a re-raise in between`);
   return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length }], revision: x.revision + 1 } : x));
+}
+
+/** The `--kind` of a dispute (card T1-REVIEW-RESPONSES). */
+export function parseDisputeKind(_value: string | undefined): DisputeKind {
+  return 'wrong';
 }
 
 /** The author withdraws a dispute: the finding returns to open; the note stays in the history. */
