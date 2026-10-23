@@ -105,3 +105,27 @@ npm run typecheck && node --test tests/scenarios/fault-points.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every test in the file passes: the fault-free end states equal their literals, every fault point reaches the fault-free end state or matches its pin exactly, no pin is stale, the judge self-test reports its four cases, and the doc and CHANGELOG sentences are present.
+
+## Attempt evidence
+BUILD attempt 1. The fault-free literals were committed in 07d0c22 before any run of the drive; the RED commit is 3154980 (`KNOWN_VIOLATIONS` empty, no doc text); the pins are 7045b2d, the doc text 6a0d231.
+
+RED (at 3154980): `npm run typecheck && node --test tests/scenarios/fault-points.test.ts`, exit 1, tests 28, pass 23, fail 5, duration_ms 8852.8397. The failing tests: the judge over every fault point (10 unpinned differences, listed below) and the four doc and CHANGELOG sentence checks. First failing line: `not ok 11 - every fault point of A to E reaches its command's fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]`. Acceptance 1 passed at RED: every fault-free continuation deep-equalled its literal.
+
+Two literals differ from the Design text above, both read from the code before the run: the R3 invocation's reviewer is `primary` (the fixture's `formalReview.reviewer`; `fake-p` is its argv) and a success attempt ends the episode with terminal `succeeded` (`finishAttempt`, src/core/effort.ts).
+
+Hypotheses (each RED difference is the pin's `difference`, unchanged):
+- H1 confirmed, pin `C/append REVIEW_ADMITTED`: directive `review`, state `SHIP`, no R3 invocation, the formal request `running`, 1 active slot, no operation, no REVIEW_DECIDED or OPERATION_RESULT; every `formalReview` of the drive refused with "a matching formal review is already running in pool "default"; join it, do not dispatch another".
+- H2 confirmed, pin `D/append REVIEW_ADMITTED`: directive `wait`, state `WAIT`, the ship's request `running`, 1 active slot, the stranded operation `intended` plus one `cancelled` intent per `next` (12), no OPERATION_RESULT. The card predicted one intended and one cancelled per `next`; the run shows a single `intended` (the stranded one) and one `cancelled` per `next`.
+- H3 confirmed, pin `D/append OPERATION_INTENT`: CLOSE reached, an extra `['merge', 'intended', false]`.
+- H4 confirmed, pin `D/append REVIEW_REQUESTED`: CLOSE reached, an extra `['merge', 'intended', true]`.
+- H5 confirmed, pin `A/record 1`: CLOSE reached, ATTEMPT_FINISHED success counted 2; the drive took `build` -> `recordAttempt` after the recovery's `next -> build`.
+- H6 confirmed, pin `C/append REVIEW_DECIDED`: CLOSE reached, REVIEW_DECIDED pass counted 0.
+- H7 confirmed, pin `B/append PRE_REVIEW_DECIDED`: CLOSE reached, PRE_REVIEW_DECIDED pass counted 0.
+- H8 confirmed, pin `D/append OPERATION_RESULT`: CLOSE reached, OPERATION_RESULT succeeded counted 0.
+- H9 confirmed, pin `D/append OPERATION_ISSUED`, docRecovery `aidlc ops reconcile`: WAIT ("attached to running operation <id>"), the operation `issued`, the ship's request `running` with 1 active slot, `mergeVerified` false.
+- H10 confirmed, pin `D/record 1`, docRecovery `aidlc ops reconcile`: WAIT, the operation `issued`, `mergeVerified` false; the ship's request is `completed` (it is settled before the lost write).
+- Refuted: none. Every fault point predicted to reach the fault-free end state did (`A/append ATTEMPT_FINISHED`, `B/record 1`, `B/record 2` after 60 s waits, `C/record 1`, `C/record 2`, `D/append LEASE_RENEWED`, `D/record 2`, and the three of E). No difference outside H1 to H10 (no `new` pin).
+
+GREEN (at 6a0d231): the same command, exit 0, tests 28, pass 28, fail 0, duration_ms 8561.3541 (the top-level `describe` timeout is 30 000 ms).
+
+Mutation check (scratch edits, not committed): with the `D/append OPERATION_RESULT` pin removed, the judge test fails with `D/append OPERATION_RESULT: journal.OPERATION_RESULT succeeded fault-free 1, observed 0`; with the `A/record 1` pin's observed value edited to 1, it fails with `pin A/record 1 (H5): the difference changed: ...`; with the `D/append OPERATION_RESULT` pin moved to `D/record 2`, it fails with `pin D/record 2 (H8): the fault point reaches the fault-free end state`.
