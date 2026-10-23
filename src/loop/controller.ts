@@ -34,10 +34,11 @@ import {
   addMs,
   nowIso,
   type DeliveryTarget,
+  type Lease,
   type StopRecord,
 } from '../core/types.ts';
 import { finalStateForTarget } from '../core/release-machine.ts';
-import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import { FencedError, LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -415,11 +416,49 @@ export class GoalController {
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
+    // The lease is settled before DONE is saved: a refused takeover throws with the goal still in CLOSE.
+    this.releaseGoalLease(goal, now);
     this.store.saveGoal(next);
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
-    this.leases.release(resourceKeys.goal(this.repo.key, goal.id), this.leases.read(resourceKeys.goal(this.repo.key, goal.id))?.generation ?? 0);
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
+  }
+
+  /**
+   * The closing session ends the goal lease, each step under the lease lock on the record as it is then. An absent or
+   * released lease is left as it is. A lease of another session has expired by now (`next` waits on a live one): it is
+   * taken over once no operation of the goal is unresolved, after a handoff intent naming the previous owner is journaled
+   * bound to the acquisition it precedes. The session's own lease is then released, after `GOAL_TAKEOVER` is journaled for
+   * an acquisition whose intent has none yet, so a close interrupted between the steps completes the event on the next call.
+   */
+  private releaseGoalLease(goal: Goal, now: string): void {
+    const key = resourceKeys.goal(this.repo.key, goal.id);
+    const me = currentActor();
+    const j = this.journal(goal.id);
+    const mine = (lease: Lease) => lease.owner.session === me.session && lease.owner.host === me.host;
+    const held = this.leases.update(key, (existing) => {
+      if (!existing || existing.released || mine(existing)) return existing;
+      const next = this.leases.successor(key, existing, { operation: 'close', now });
+      const unresolved = this.ops.unresolved(goal.id).map((o) => o.id);
+      if (unresolved.length) throw new Error(`takeover refused: old owner effects not reconciled (${unresolved.join(',')}); reconcile with \`aidlc ops reconcile\` first`);
+      j.append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { kind: 'goal-close-takeover-intent', resource: key, previousOwner: existing.owner, previousGeneration: existing.generation, leaseGeneration: next.generation, acquirer: { session: me.session, host: me.host }, acquiredAt: next.acquiredAt } });
+      return next;
+    });
+    if (!held || held.released || !mine(held)) return;
+    this.leases.update(key, (existing) => {
+      if (!existing || existing.released || existing.generation !== held.generation || !mine(existing)) throw new FencedError(key, held.generation, 'the goal lease changed hands before the close released it');
+      const events = j.readAll();
+      const intent = events.filter((e) => {
+        const acquirer = e.data['acquirer'] as { session?: unknown; host?: unknown } | undefined;
+        return e.type === 'NOTE' && e.data['kind'] === 'goal-close-takeover-intent' && e.data['resource'] === key && e.data['leaseGeneration'] === existing.generation && e.data['acquiredAt'] === existing.acquiredAt && acquirer?.session === me.session && acquirer?.host === me.host;
+      }).pop();
+      const journaled = events.some((e) => e.type === 'GOAL_TAKEOVER' && e.data['resource'] === key && e.data['leaseGeneration'] === existing.generation);
+      if (intent && !journaled) {
+        const previousOwner = (intent.data['previousOwner'] as { session?: unknown } | undefined)?.session;
+        j.append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation: goal.generation, data: { resource: key, leaseGeneration: existing.generation, previousOwner, previousGeneration: intent.data['previousGeneration'] } });
+      }
+      return { ...existing, released: true };
+    });
   }
 
   // ---------------------------------------------------------------------------------------
