@@ -66,14 +66,15 @@ describe('T0-EXEC-SYNC-TREE-KILL callers of the synchronous runner [R3] [R4]', (
 
 /** The sentences this card puts in place of the synchronous-runner sentence of T0-EXEC-TREE-KILL in docs/OPERATIONS.md. */
 const OPERATIONS_SENTENCES = [
-  'The scaffold ship script, ops bindings and status lookups, and eval command checks, which the synchronous runner runs, are ended at their timeout with their whole process tree through a helper process: `runSync` with `killTree` starts `node` on `src/probes/exec-tree-helper.ts`, which runs the command with the async runner and its tree kill and prints the receipt (card T0-EXEC-SYNC-TREE-KILL).',
+  "The scaffold ship script, ops bindings and status lookups, and eval command checks, which the synchronous runner runs, are ended at their timeout with their whole process tree through a helper process: `runSync` with `killTree` starts `node` on `src/probes/exec-tree-helper.ts`, which runs the command with the async runner and its tree kill under runSync's 64 MiB output limit and prints the receipt as a JSON header line followed by the output bytes (card T0-EXEC-SYNC-TREE-KILL).",
   'The git and gh probes (60 s and 120 s, run on every command) still end only the root of a timed-out command, so a descendant of such a command keeps running after its receipt returns.',
+  'A `killTree` call whose `timeoutMs` is not a whole number from 1 to 2 147 483 647, the largest delay a Node timer keeps, runs on the direct path as a call without `killTree` does and ends only the root of a timed-out command.',
 ];
 /** The sentence of T0-EXEC-TREE-KILL this card replaces. */
 const OLD_OPERATIONS_SENTENCE = 'The synchronous runner (git, gh, the scaffold ship script, ops bindings, eval commands) still ends only the root of a timed-out command, so a descendant of such a command keeps running after its receipt returns.';
 const ARCHITECTURE_CLAUSE = ' and `runSync` with `killTree` running the command under `exec-tree-helper.ts`, which applies that tree kill,';
 const CHANGELOG_ENTRY =
-  '- T0-EXEC-SYNC-TREE-KILL (bugfix): a command the synchronous runner `runSync` times out with `killTree` set (the scaffold ship script, ops bindings and status lookups, eval command checks) is ended with its whole process tree: `runSync` runs it under a helper node process, `src/probes/exec-tree-helper.ts`, which starts it with the async runner and its tree kill and prints the receipt. Before, a timed-out scaffold ship script, ops binding or eval command left its descendants running after aidlc exited: a 1500 ms timeout returned at 1518 ms with the sleeper of the test fixture still running. The git and gh probes and the GitHub ship path\'s git calls are left as they were: a timed-out call still ends only its root, and they start no helper.';
+  '- T0-EXEC-SYNC-TREE-KILL (bugfix): a command the synchronous runner `runSync` times out with `killTree` set (the scaffold ship script, ops bindings and status lookups, eval command checks) is ended with its whole process tree: `runSync` runs it under a helper node process, `src/probes/exec-tree-helper.ts`, which starts it with the async runner and its tree kill under the same 64 MiB output limit (the new optional `maxBuffer` of the async runner, set only by the helper) and prints the receipt as a JSON header line followed by the output bytes. Before, a timed-out scaffold ship script, ops binding or eval command left its descendants running after aidlc exited: a 1500 ms timeout returned at 1518 ms with the sleeper of the test fixture still running. A `timeoutMs` above 2 147 483 647 ms runs on the direct path as before. The git and gh probes and the GitHub ship path\'s git calls are left as they were: a timed-out call still ends only its root, and they start no helper.';
 
 const readDoc = (path: string): string => readFileSync(fileURLToPath(new URL(`../../${path}`, import.meta.url)), 'utf8');
 const sentencesOf = (text: string): string[] => text.split(/(?<=\.)\s+(?=[A-Z`])/);
@@ -100,8 +101,8 @@ describe('T0-EXEC-SYNC-TREE-KILL docs [R5] [R6] [R7]', () => {
       [ARCHITECTURE_CLAUSE, () => docsHold(ops, architecture.replace(ARCHITECTURE_CLAUSE, ','), changelog)],
       ...sentencesOf(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, architecture, changelog.replace(s, ''))]),
     ];
-    // 2 OPERATIONS sentences, the old sentence, the ARCHITECTURE clause, 3 CHANGELOG sentences.
-    assert.equal(breaks.length, 7);
+    // 3 OPERATIONS sentences, the old sentence, the ARCHITECTURE clause, 4 CHANGELOG sentences.
+    assert.equal(breaks.length, 9);
     for (const [text, holds] of breaks) assert.equal(holds(), false, `this change still passes: ${text}`);
   });
 });
