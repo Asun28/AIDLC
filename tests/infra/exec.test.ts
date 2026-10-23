@@ -166,23 +166,15 @@ describe('T0-EXEC-TREE-KILL killProcessTree elsewhere (one ps read, SIGKILL to t
 const FIXTURE = fileURLToPath(new URL('./exec-tree.child.ts', import.meta.url));
 const TIMEOUT_MS = 1500;
 
-/**
- * Whether `pid` is a running process. `process.kill(pid, 0)` also succeeds for a POSIX zombie, a
- * killed process its parent has not reaped yet; on Linux a process whose /proc/<pid>/stat state is
- * Z counts as gone, so a CI whose PID 1 reaps orphans late does not read a killed sleeper as alive.
- */
-function alive(pid: number): boolean {
+type KillZero = (pid: number, signal: 0) => unknown;
+
+/** What `process.kill(pid, 0)` reports: `alive` when it succeeds, else the code of the error it throws. */
+function probe(pid: number, kill: KillZero = process.kill): string {
   try {
-    process.kill(pid, 0);
-  } catch {
-    return false;
-  }
-  if (process.platform !== 'linux') return true;
-  try {
-    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-    return stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z';
-  } catch {
-    return false;
+    kill(pid, 0);
+    return 'alive';
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code ?? `no code: ${(err as Error).message}`;
   }
 }
 
@@ -195,14 +187,19 @@ function end(pid: number | undefined): void {
   }
 }
 
-/** Polls until `pid` is gone (a killed POSIX process stays a zombie until it is reaped), up to `ms`. */
-async function goneWithin(pid: number, ms: number): Promise<boolean> {
+/**
+ * Acceptance 3's death check: polls `process.kill(pid, 0)` up to `ms` until it throws, then asserts
+ * the code is ESRCH. A process that still answers (a POSIX zombie included) or any other error
+ * (EPERM, an error with no code) fails.
+ */
+async function assertGoneWithin(pid: number, ms: number, kill: KillZero = process.kill): Promise<void> {
   const until = Date.now() + ms;
-  while (Date.now() < until) {
-    if (!alive(pid)) return true;
+  let state = probe(pid, kill);
+  while (state === 'alive' && Date.now() < until) {
     await new Promise((r) => setTimeout(r, 50));
+    state = probe(pid, kill);
   }
-  return !alive(pid);
+  assert.equal(state, 'ESRCH', `process.kill(${pid}, 0) after ${ms} ms: ${state}`);
 }
 
 function readPid(file: string): number | undefined {
@@ -251,6 +248,24 @@ function delegatingTreeKill(): { calls: number[]; treeKill: (pid: number) => voi
   return { calls, treeKill: (pid) => (calls.push(pid), killProcessTree(pid, process.platform, runSync, (p, signal) => process.kill(p, signal))) };
 }
 
+describe('T0-EXEC-TREE-KILL the death check of acceptance 3', () => {
+  const throwing = (code: string | undefined): KillZero => () => {
+    throw Object.assign(new Error(`kill ${code ?? 'no code'}`), code === undefined ? {} : { code });
+  };
+  it('passes when process.kill(pid, 0) throws ESRCH', async () => {
+    await assertGoneWithin(4242, 200, throwing('ESRCH'));
+  });
+  for (const [name, kill] of [
+    ['throws EPERM', throwing('EPERM')],
+    ['throws an error with no code (as a failed read does)', throwing(undefined)],
+    ['keeps succeeding, as it does for a POSIX zombie', () => true],
+  ] as [string, KillZero][]) {
+    it(`fails when process.kill(pid, 0) ${name}`, async () => {
+      await assert.rejects(assertGoneWithin(process.pid, 200, kill));
+    });
+  }
+});
+
 describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node sleeper) [R1] [R2] [R3] [R4]', () => {
   it('raceFixture fails a receipt that settles after its bound while synchronous work held the bound timer back', async () => {
     const receipt = scriptedRunner({ late: { timedOut: true } })('late', []);
@@ -273,7 +288,7 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
-      assert.equal(await goneWithin(sleeper, 3000), true, `sleeper ${sleeper} is still alive`);
+      await assertGoneWithin(sleeper, 3000);
     });
   });
 
@@ -307,16 +322,16 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     const calls: number[] = [];
     const bound = TIMEOUT_MS + 2000 + 1000;
     await raceFixture(createRun((pid) => void calls.push(pid)), 'stay', bound, ({ receipt, elapsedMs, sleeper, root }) => {
-      const rootAlive = calls.length === 1 && alive(calls[0]!);
-      const sleeperAlive = sleeper !== undefined && alive(sleeper);
+      const rootState = calls.length === 1 ? probe(calls[0]!) : `tree kill called ${calls.length} times`;
+      const sleeperState = sleeper !== undefined ? probe(sleeper) : 'no sleeper pid';
       assert.ok(receipt, `no receipt within ${bound} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.equal(receipt.exitCode, null);
       assert.equal(receipt.signal, null);
       assert.deepEqual(calls, [root], 'the tree kill was called once, with the root pid');
-      assert.equal(rootAlive, true, 'the root is still alive at the receipt');
-      assert.equal(sleeperAlive, true, 'the sleeper is still alive at the receipt');
+      assert.equal(rootState, 'alive', 'the root is still alive at the receipt');
+      assert.equal(sleeperState, 'alive', 'the sleeper is still alive at the receipt');
     });
   });
 
@@ -358,7 +373,7 @@ describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the boun
       const elapsedMs = Date.now() - started;
       assert.equal(exited, true, `the runner process is still running ${elapsedMs} ms after its start`);
       assert.ok(elapsedMs <= boundMs, `the runner exited after ${elapsedMs} ms, past the ${boundMs} ms bound`);
-      assert.equal(existsSync(`${pidFile}.receipt`) ? readFileSync(`${pidFile}.receipt`, 'utf8') : 'no receipt', 'resolved timedOut=true exitCode=null rootAlive=true');
+      assert.equal(existsSync(`${pidFile}.receipt`) ? readFileSync(`${pidFile}.receipt`, 'utf8') : 'no receipt', 'resolved timedOut=true exitCode=null root=alive');
     } finally {
       clearTimeout(bound);
       end(runner.pid);

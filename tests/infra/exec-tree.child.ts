@@ -8,8 +8,9 @@
  *   node exec-tree.child.ts sleeper <pidFile>  writes its pid to <pidFile>, then sleeps
  *   node exec-tree.child.ts runner <pidFile>   runs `stay` through createRun with a tree kill that
  *                                              kills nothing, timeoutMs 1500 and an 8 MB input the
- *                                              root never reads, writes the receipt and whether
- *                                              the root is alive to `<pidFile>.receipt`, returns;
+ *                                              root never reads, writes the receipt and what
+ *                                              process.kill(root, 0) reports to
+ *                                              `<pidFile>.receipt`, then returns;
  *                                              the process exits only once no handle holds it
  *
  * The root writes its own pid to `<pidFile>.root` before it starts the sleeper.
@@ -34,13 +35,14 @@ if (mode === 'sleeper') {
 } else if (mode === 'runner') {
   const { createRun } = await import('../../src/probes/exec.ts');
   const receipt = await createRun(() => {})(process.execPath, [fileURLToPath(import.meta.url), 'stay', pidFile], { timeoutMs: 1500, input: 'x'.repeat(8 * 1024 * 1024) });
-  let rootAlive = true;
+  // `alive` when process.kill(root, 0) succeeds, else the code of the error it throws.
+  let root = 'alive';
   try {
     process.kill(Number(readFileSync(`${pidFile}.root`, 'utf8')), 0);
-  } catch {
-    rootAlive = false;
+  } catch (err) {
+    root = (err as NodeJS.ErrnoException).code ?? 'no code';
   }
-  writeFileSync(`${pidFile}.receipt`, `resolved timedOut=${receipt.timedOut} exitCode=${receipt.exitCode} rootAlive=${rootAlive}`);
+  writeFileSync(`${pidFile}.receipt`, `resolved timedOut=${receipt.timedOut} exitCode=${receipt.exitCode} root=${root}`);
 } else {
   writeFileSync(`${pidFile}.root`, String(process.pid));
   // Quote each path: node lives under Program Files on a developer machine.
