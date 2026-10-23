@@ -825,12 +825,18 @@ function shipPathClassRun(tagged: boolean) {
     return {
       blocked: blocked.directive,
       repair: repair.directive,
-      summary: { state: blocked.run.state, substantiveDecisions: blocked.run.review.substantiveDecisions, substantiveBlocks: blocked.run.review.substantiveBlocks, remainingDecisions: blocked.directive.kind === 'review-fix' ? blocked.directive.remainingDecisions : undefined, kinds: [blocked.directive.kind, repair.directive.kind], repairState: repair.run.state },
+      summary: { state: blocked.run.state, substantiveDecisions: blocked.run.review.substantiveDecisions, substantiveBlocks: blocked.run.review.substantiveBlocks, remainingDecisions: blocked.directive.kind === 'review-fix' ? blocked.directive.remainingDecisions : undefined, repairRemaining: remainingIn(repair.directive.narration), kinds: [blocked.directive.kind, repair.directive.kind], repairState: repair.run.state },
     };
   } finally {
     fx.cleanup();
   }
 }
+
+/** The decisions left that a REVIEW_FIX build narration states (`... ships with <n> substantive decision(s) left.`). */
+const remainingIn = (narration: string): number | undefined => {
+  const m = /ships with (\d+) substantive decision\(s\) left\./.exec(narration);
+  return m ? Number(m[1]) : undefined;
+};
 
 async function commandPathClassRun(tagged: boolean, pendingGate = false) {
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
@@ -866,7 +872,7 @@ async function commandPathClassRun(tagged: boolean, pendingGate = false) {
       const other = { invocationId: 'ship:other', candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'other-reviewer', requestedAt: fx.now(), outcome: 'pass' as const, runStatus: 'success' as const };
       const seeded = fx.store.updateCardRun(goal.id, 'T1-CLS', (current) => ({ ...current!, dodReceipt: 'dod:1', review: { ...current!.review, invocations: [...current!.review.invocations, other] } }));
       const pending = runner.next(fx.goal(goal.id), card, seeded);
-      return { repair: pending.directive, priorF1: '', summary: { outcome: block.classified.outcome, state: pending.run.state, substantiveDecisions: pending.run.review.substantiveDecisions, substantiveBlocks: pending.run.review.substantiveBlocks, kinds: [...kinds, pending.directive.kind], decision2: block.classified.outcome } };
+      return { repair: pending.directive, priorF1: '', summary: { outcome: block.classified.outcome, state: pending.run.state, substantiveDecisions: pending.run.review.substantiveDecisions, substantiveBlocks: pending.run.review.substantiveBlocks, remainingDecisions: pending.directive.kind === 'review-fix' ? pending.directive.remainingDecisions : undefined, kinds: [...kinds, pending.directive.kind], decision2: block.classified.outcome } };
     }
     const repair = runner.next(fx.goal(goal.id), card, block.run);
     kinds.push(repair.directive.kind);
@@ -881,7 +887,7 @@ async function commandPathClassRun(tagged: boolean, pendingGate = false) {
     return {
       repair: repair.directive,
       priorF1,
-      summary: { outcome: block.classified.outcome, state: block.run.state, substantiveDecisions: block.run.review.substantiveDecisions, substantiveBlocks: block.run.review.substantiveBlocks, kinds, decision2: decision2.classified.outcome },
+      summary: { outcome: block.classified.outcome, state: block.run.state, substantiveDecisions: block.run.review.substantiveDecisions, substantiveBlocks: block.run.review.substantiveBlocks, remainingDecisions: remainingIn(repair.directive.narration), kinds, decision2: decision2.classified.outcome },
     };
   } finally {
     fx.cleanup();
@@ -914,13 +920,18 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 7: untagged blocks leave both narrations 
   assert.equal(shipPlain.blocked.narration, SHIP_FIX_NARRATION);
   assert.ok(!shipPlain.repair.narration.includes('Defect classes'), shipPlain.repair.narration);
   assert.ok(!shipPlain.repair.narration.includes('class'), 'no class word at all in the untagged repair narration');
-  assert.deepEqual(shipPlain.summary, shipTagged.summary);
+  // Each end-state field pinned at its value on both runs: one ship-path decision spent of two, one left, also in the build narration.
+  const SHIP_END = { state: 'REVIEW_FIX', substantiveDecisions: 1, substantiveBlocks: 1, remainingDecisions: 1, repairRemaining: 1, kinds: ['review-fix', 'build'], repairState: 'REVIEW_FIX' };
+  assert.deepEqual(shipTagged.summary, SHIP_END);
+  assert.deepEqual(shipPlain.summary, SHIP_END);
   const commandTagged = await commandPathClassRun(true);
   const commandPlain = await commandPathClassRun(false);
   assert.ok(!commandPlain.repair.narration.includes('Defect classes'), commandPlain.repair.narration);
   assert.ok(!commandPlain.priorF1.includes('class'), commandPlain.priorF1);
-  assert.deepEqual(commandPlain.summary, commandTagged.summary);
-  assert.deepEqual(commandTagged.summary.kinds, ['review', 'build', 'review']);
+  // A command reviewer has MAX_R3_DECISIONS (4) while its blocks raise new findings: one spent, three left in the build narration.
+  const COMMAND_END = { outcome: 'block-defect', state: 'REVIEW_FIX', substantiveDecisions: 1, substantiveBlocks: 1, remainingDecisions: 3, kinds: ['review', 'build', 'review'], decision2: 'pass' };
+  assert.deepEqual(commandTagged.summary, COMMAND_END);
+  assert.deepEqual(commandPlain.summary, COMMAND_END);
 });
 
 test('T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the formal gate appends the same class list with its sites; an untagged block appends nothing [R11]', async () => {
@@ -931,5 +942,8 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the fo
   const plain = await commandPathClassRun(false, true);
   assert.equal(plain.repair.kind, 'review-fix', plain.repair.narration);
   assert.ok(!plain.repair.narration.includes('Defect classes'), plain.repair.narration);
-  assert.deepEqual(plain.summary, tagged.summary);
+  // The seeded pass is the run's last decided invocation, so formalAllowance (unchanged by this card) reads two decisions: one left.
+  const PENDING_END = { outcome: 'block-defect', state: 'REVIEW_FIX', substantiveDecisions: 1, substantiveBlocks: 1, remainingDecisions: 1, kinds: ['review', 'review-fix'], decision2: 'block-defect' };
+  assert.deepEqual(tagged.summary, PENDING_END);
+  assert.deepEqual(plain.summary, PENDING_END);
 });
