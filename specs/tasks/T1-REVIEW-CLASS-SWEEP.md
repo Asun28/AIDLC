@@ -76,3 +76,38 @@ npm run typecheck && node --test tests/core/review-policy.test.ts tests/core/typ
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes, including the new assertions on the class tag, the recorded class, the repair directive's class list, the class line and the prior-findings sweep check in both stages, the policy and agent text, `REVIEW.md@4` and the docs.
+
+## Attempt evidence
+BUILD attempt 1, effort medium, Windows 11, Node 22.
+
+- RED at c5d49a3 (the tests plus a seam that exports `findingClass`, `blockClasses` and `classRepairText` with the baseline behaviour, no class, so every new test fails on an assertion, not on an import): the `dod_command` exited 1 in 14 s wall (`duration_ms 8711.6`), 192 of 203 passed, 11 failed. First failing line: `not ok 1 - acceptance 1: findingClass reads a well-formed (class: <slug>) tag ...` at `tests/core/review-policy.test.ts:622`, `+ undefined - 'journal-before-save'`. Failing: acceptance 1, 2, 4 (review-policy), 3 (types), 5, 6 (review-block), 8, 9 (pre-review), 10, 11 and the REVIEW.md@4 pin (templates). Acceptance 7 passed at RED as a preservation item: the untagged runs equal main, and the tagged runs change no state or counter.
+- GREEN at be4b07f: the `dod_command` exited 0 in 15 s wall (`duration_ms 8708.3`), 203 of 203 passed.
+- GREEN at 0afc250, with the pending-block `review-fix` test added (`tests/scenarios/review-block.test.ts`, command path; a later pass by a reviewer that is not a formal reviewer, with the DoD receipt restored, leaves the card state no pending block, so `card next` reaches SHIP and the formal gate finds its own block still pending): the `dod_command` exited 0 in 14 s wall (`duration_ms 9005.3`), 204 of 204 passed. With the class list removed from that narration (uncommitted, restored) the new test failed: `not ok 1 - T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the formal gate appends the same class list with its sites; an untagged block appends nothing [R11]`.
+- Fault-point check at 0afc250: 28 of 28 passed (in sync).
+- Full suite (`npm test`) at be4b07f: 1459 tests, 1453 passed, 0 failed, 6 skipped.
+- Fault-point check (`node --test tests/scenarios/fault-points.test.ts`) at be4b07f: 28 of 28 passed. This card changes only narration text and a `PriorFinding` field in `src/loop/card-runner.ts`, no write and no write order: in sync.
+- Mutation check, each break applied alone, the eight DoD test files run, restored, never committed:
+
+| Break | Failing tests |
+| --- | --- |
+| `findingClass` reads no tag | acceptance 1, 2, 4 |
+| slug length not checked | acceptance 1 |
+| a new finding records no class | acceptance 2, 4 |
+| a tagged re-raise sets no class | acceptance 2 |
+| a tagged re-raise replaces an existing class | acceptance 2 |
+| `blockClasses` keeps a disputed finding | acceptance 4 |
+| `blockClasses` drops the re-raise sites | acceptance 4 |
+| repair text without the sites | acceptance 5, 6 |
+| repair text without the `allow_paths` request | acceptance 5, 6 |
+| REVIEW_FIX `build` narration without the class list | acceptance 5, 6 |
+| ship-path `review-fix` narration without the class list | acceptance 5 |
+| pending-block `review-fix` narration without the class list | acceptance 5 (pending-block test, added at 0afc250) |
+| `priorFindingsFor` drops the class | acceptance 6 |
+| prompt without the class line | acceptance 8 |
+| prior findings without the sweep sentence | acceptance 6, 9 |
+| class rule line on every prior-findings section | acceptance 9 |
+
+### Repair attempt 2 (REVIEW_FIX after R3 decision 1, effort medium)
+- F1 (acceptance 7 did not compare `remainingDecisions` on the command path), e8f1bc9: the command-path summaries now carry the budget the REVIEW_FIX `build` narration states and the pending `review-fix` directive's `remainingDecisions`, the ship-path summary also carries the `build` narration's budget, and every summary is compared with a literal (ship path 1 decision spent, 1 left; command path 1 spent, 3 left; pending block 1 left, since the seeded later pass makes `formalAllowance` read two decisions), tagged and untagged alike. Shown failing against the tests at a21a763 with two uncommitted mutants that lower the budget by one only when the block has a class: the REVIEW_FIX `build` budget mutant passed every a21a763 test and failed acceptance 7; the pending `remainingDecisions` mutant passed every a21a763 test and failed the pending-block acceptance 5 test.
+- R2 suggestions, b12ae11. Failing on the a21a763 code before the fix: `R2 suggestions at a21a763: a [question] or [suggestion] reason carries no class ...` with `[question]: findingClass`, `+ 'journal-before-save' - undefined`. `findingClass` returns no class for a reason `ADVISORY_TAG` reads as `[question]` or `[suggestion]` (`ADVISORY_TAG` moved to `src/core/review-policy.ts` byte for byte and re-exported by `src/review/pre-review.ts`); `blockClasses` skips an advisory-block finding (removing the check fails the same test with `an advisory finding is never a merge bar, so no repair asks for its class`); the `PriorFinding.class` comment is on its own line. A slug with a line break (`abc\n`, `abc\r\n`, `ab\nc`) is pinned as malformed in `findingClass` and in the `CardRun` parse; these assertions passed on a21a763 too, since `$` in a JavaScript pattern without the `m` flag matches only at the end of the input, so the pattern needed no change. Not taken: anchoring the tag before the location, since this card reads the tag "anywhere in the reason ... the first `(class:` group deciding" (Decisions, Tag) and acceptance 1 pins a second tag in the prose.
+- DoD at b12ae11: exit 0, 205 of 205 passed (`duration_ms 9129.3`, 15 s wall). Fault-point check: 28 of 28 passed (in sync). `npm test`: 1461 tests, 1455 passed, 0 failed, 6 skipped.

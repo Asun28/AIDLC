@@ -15,7 +15,7 @@
  * - An introduced defect must be fixed within scope or reverted; never deferred as a nit.
  */
 import { detectQuotaHold, quotaOutput } from './parse-guard.ts';
-import { MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
+import { FINDING_CLASS_MAX, FINDING_CLASS_PATTERN, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, type FindingDisposition, type FindingStage, type ReviewFinding, type ReviewInvocation, type ReviewLedger, type Verdict } from './types.ts';
 
 export type ReviewOutcomeClass = 'pass' | 'block-defect' | 'block-advisory' | 'no-verdict' | 'quota-hold' | 'routed-skip';
 
@@ -240,6 +240,65 @@ export function findingLocation(reason: string): string | undefined {
   return /[\p{L}\p{N}]/u.test(file) ? file : undefined;
 }
 
+/**
+ * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
+ * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
+ * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
+ * downgraded by its wording.
+ */
+export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+
+/** `(class: <slug>)` anywhere in a reason, the keyword in any case with at most one space after the colon; the first group decides. */
+const FINDING_CLASS_TAG = /\(class: ?([^)]*)\)/i;
+
+/** The defect class a reason names (card T1-REVIEW-CLASS-SWEEP); a malformed slug names none, and a `[question]` or `[suggestion]` reason carries none. */
+export function findingClass(reason: string): string | undefined {
+  if (ADVISORY_TAG.test(reason)) return undefined;
+  const slug = FINDING_CLASS_TAG.exec(reason)?.[1];
+  return slug !== undefined && slug.length <= FINDING_CLASS_MAX && FINDING_CLASS_PATTERN.test(slug) ? slug : undefined;
+}
+
+/** The `file:line` a reason cites: the normalised file of `findingLocation` with the line range the reason gives. */
+function findingSite(reason: string): string | undefined {
+  const file = findingLocation(reason);
+  const m = FINDING_LOCATION.exec(reason);
+  return file && m ? file + m[0].slice(m[0].indexOf(m[1]!) + m[1]!.length) : undefined;
+}
+
+/** One defect class of a block: the ids of its open findings and the sites they cite. */
+export interface BlockClass {
+  class: string;
+  ids: string[];
+  sites: string[];
+}
+
+/**
+ * The classes of a block's findings (`findingsOfBlock`), in first-raised order: each open finding with a class adds its id
+ * and every site its raising and re-raise reasons cite, once each. A disputed, resolved, advisory (never a merge bar) or
+ * class-less finding adds nothing.
+ */
+export function blockClasses(findings: ReviewFinding[]): BlockClass[] {
+  const out: BlockClass[] = [];
+  for (const f of findings) {
+    if (!f.class || f.advisory || f.disposition === 'disputed' || f.resolvedAt) continue;
+    let entry = out.find((c) => c.class === f.class);
+    if (!entry) out.push((entry = { class: f.class, ids: [], sites: [] }));
+    entry.ids.push(f.id);
+    for (const reason of [f.reason, ...f.reraised.map((r) => r.reason)]) {
+      const site = findingSite(reason);
+      if (site && !entry.sites.includes(site)) entry.sites.push(site);
+    }
+  }
+  return out;
+}
+
+/** The text a formal repair narration appends for the classes of its block (R11); empty for a block without a class. */
+export function classRepairText(classes: BlockClass[]): string {
+  if (!classes.length) return '';
+  const list = classes.map((c) => `${c.class} (${c.ids.join(', ')}${c.sites.length ? ` at ${c.sites.join(', ')}` : ''})`).join('; ');
+  return ` Defect classes of this block: ${list}. Fix every site of each class inside the card's allow_paths, not only the cited lines; leave a site outside allow_paths unchanged and dispute a re-raise that cites one.`;
+}
+
 export interface RecordFindingsInput {
   stage: FindingStage;
   cycle?: number;
@@ -339,10 +398,15 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
         prior.resolvedAt = undefined;
       }
       prior.revision = before.revision + 1;
+      // A tagged re-raise names the class of a finding that has none; an existing class is never replaced.
+      const cls = findingClass(reason);
+      if (cls && !prior.class) prior.class = cls;
       continue;
     }
     const id = nextFindingId(next);
     const finding: ReviewFinding = { id, stage: input.stage, cycle: input.cycle, round: input.round, perspective: perspectiveOf(reason), reason, file: findingLocation(reason), candidateSha: input.candidateSha, raisedAt: input.at, disposition: 'open', disputes: [], reraised: [], revision: 0 };
+    const cls = findingClass(reason);
+    if (cls) finding.class = cls;
     if (input.advisory) finding.advisory = true;
     if (input.deltaPaths && (!finding.file || !input.deltaPaths.includes(finding.file))) finding.outsideDelta = true;
     next = [...next, finding];
