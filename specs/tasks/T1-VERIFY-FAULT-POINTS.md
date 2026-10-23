@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-FAULT-POINTS
 title: A fault-point test fails each card-run record write and goal journal append of five card-run commands in turn, takes the card's next step and checks six invariants
-status: todo
+status: merged
 branch: T1-VERIFY-FAULT-POINTS
 worktree: D:\wt\AIDLC\T1-VERIFY-FAULT-POINTS
 plan_ref: plans/review-verification.md#order-of-work
