@@ -234,6 +234,15 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     if (admitted.status === 'admitted') assert.equal(admitted.request.key, two.z.key);
     assert.deepEqual(free.get(two.y.key), two.y, 'Y stays queued, unchanged');
     assert.deepEqual(free.pool('codex:acct').active, [two.z.key]);
+
+    // two free slots and two requests ahead: behind, naming the first of them
+    const full = new ReviewQueue(path.join(dir, 'foreign-two-ahead'));
+    full.setPoolLimit('codex:acct', 2, 'two seats');
+    const w = full.enqueue(input({ candidateDigest: 'w', requester: 'goal-2/T1-W', now: iso(9) })).request;
+    const three = queueYZ(full);
+    const unchanged = snapshot(full);
+    assert.deepEqual(full.admit('codex:acct', B, iso(20), three.z.key), { status: 'behind', ahead: { key: w.key, requesters: ['goal-2/T1-W'] } });
+    assert.deepEqual(snapshot(full), unchanged);
   });
 
   it('T0-REVIEW-ADMIT-FOREIGN acceptance 1: a queued head past its deadline is cancelled and the caller admitted [R1]', () => {

@@ -151,12 +151,14 @@ describe('T0-REVIEW-ADMIT-FOREIGN: a card is admitted only for its own request a
   it('acceptance 5: a queued request of Y alone for an earlier candidate is superseded and Y admitted; one Y shares with another requester is not, and Y is behind it [R3]', async () => {
     const c = await atReview();
     const earlier = { pool: 'default', repository: c.g().repository, candidateDigest: 'digest-y-earlier', base: 'main', policyVersion: c.fx.config.reviewPolicyVersion, reviewer: 'primary', requester: requesterOf(c, Y), deadline: c.run(Y).deadline, now: c.fx.now() };
-    const stale = c.fx.queue.enqueue(earlier).request;
+    const stale = [c.fx.queue.enqueue(earlier).request, c.fx.queue.enqueue({ ...earlier, candidateDigest: 'digest-y-earlier-2' }).request];
     assert.equal((await formalReview(c, Y)).classified.outcome, 'pass');
     assert.equal(c.spawned.r3, 1);
-    const superseded = c.fx.queue.get(stale.key)!;
-    assert.equal(superseded.state, 'completed');
-    assert.equal(superseded.verdictRef, 'superseded by a newer candidate of the same card');
+    for (const request of stale) {
+      const superseded = c.fx.queue.get(request.key)!;
+      assert.equal(superseded.state, 'completed');
+      assert.equal(superseded.verdictRef, 'superseded by a newer candidate of the same card');
+    }
 
     const shared = await atReview();
     const base = { pool: 'default', repository: shared.g().repository, candidateDigest: 'digest-y-earlier', base: 'main', policyVersion: shared.fx.config.reviewPolicyVersion, reviewer: 'primary', deadline: shared.run(Y).deadline, now: shared.fx.now() };
@@ -166,6 +168,20 @@ describe('T0-REVIEW-ADMIT-FOREIGN: a card is admitted only for its own request a
     await assert.rejects(formalReview(shared, Y), { message: `review pool "default" is behind the request of ${requesterOf(shared, Y)}, ${OTHER}; the formal review waits for admission (aidlc review status --pool "default")` });
     assert.deepEqual(shared.fx.queue.get(joint.key), joint, 'the shared request is not superseded');
     assert.equal(shared.spawned.r3, 0);
+
+    // After the supersede Y asks again for its own request only: Z's request, queued behind the earlier candidate, stays queued.
+    const between = await atReview();
+    const old = between.fx.queue.enqueue({ ...earlier, repository: between.g().repository, requester: requesterOf(between, Y), deadline: between.run(Y).deadline, now: between.fx.now() }).request;
+    await assert.rejects(formalReview(between, Z), { message: `review pool "default" is behind the request of ${requesterOf(between, Y)}; the formal review waits for admission (aidlc review status --pool "default")` });
+    const zRequest = requestOf(between, Z, 'primary');
+    await assert.rejects(formalReview(between, Y), { message: `review pool "default" is behind the request of ${requesterOf(between, Z)}; the formal review waits for admission (aidlc review status --pool "default")` });
+    assert.equal(between.fx.queue.get(old.key)?.verdictRef, 'superseded by a newer candidate of the same card');
+    assert.deepEqual(requestOf(between, Z, 'primary'), zRequest, "Z's request is unchanged");
+    assert.equal(zRequest.state, 'queued');
+    assert.deepEqual(activeSlots(between), []);
+    assert.equal((await formalReview(between, Z)).classified.outcome, 'pass');
+    assert.equal((await formalReview(between, Y)).classified.outcome, 'pass');
+    assert.equal(between.spawned.r3, 2);
   });
 });
 
