@@ -989,7 +989,18 @@ export class CardRunner {
       const until = admit.status === 'reset-pending' ? ` until ${admit.resetAt}` : '';
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review-pool:${goal.reviewPool}:${admit.status}`, pollSeconds: 120, narration: `Review pool ${goal.reviewPool} is ${admit.status}${until}; waiting holds no active slot. Continue independent work within limits.` } };
     }
-    this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq } });
+    try {
+      this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq } });
+    } catch (err) {
+      // Nothing is dispatched: the admitted request is cancelled so its slot is freed, and the append's error is the caller's.
+      // The merge intent stays `intended` (the next ship records its own); a cancellation that fails leaves the request running.
+      try {
+        this.queue.cancel(key, `ship not dispatched: ${(err as Error).message}`, now);
+      } catch {
+        /* the append's error is reported; the request stays running */
+      }
+      throw err;
+    }
     // The record is re-read under the card-run lock right before the external effect: the candidate this ship was issued
     // for must still be the record's, with its receipts, no stop, no round or decision reserved meanwhile and the same
     // owner generation; anything else cancels the intent and the pool request and sends the caller back to `card next`.
@@ -1560,11 +1571,11 @@ export class CardRunner {
     const admit = this.admitReview(goal, card, key, now, pool);
     if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${JSON.stringify(pool)} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
     const admittedSeq = admit.request.seq;
-    this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
     // Reserve the invocation under the card-run lock before dispatch so a concurrent call cannot spend the same decision.
     // The guards are re-checked on the locked record (a dispute withdrawn or a decision recorded since the first read
     // refuses here), the owner's lease is renewed and fenced in the same transaction, and the numbering, the prior
-    // findings and the snapshot the reviewer receives come from that record. A refused reservation frees the pool slot.
+    // findings and the snapshot the reviewer receives come from that record. A refused reservation frees the pool slot, and so
+    // does a failed `REVIEW_ADMITTED` append, the first step after the admission.
     let fileStem = '';
     let invocationId = '';
     let decisionNo = 0;
@@ -1574,6 +1585,7 @@ export class CardRunner {
     let seen: Record<string, FindingSnapshot> = {};
     let held: string[] = [];
     try {
+      this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admittedSeq, reviewer: cfg.reviewer } });
       this.store.updateCardRun(goal.id, card.id, (locked) => {
         const current = locked ?? persisted;
         this.refuseReplacedCandidate(current, card, 'formal', candidateSha, candidateDigest);
@@ -1599,7 +1611,11 @@ export class CardRunner {
         return { ...current, review: { ...current.review, invocations: [...current.review.invocations, reservation] } };
       });
     } catch (err) {
-      this.queue.cancel(key, `formal review not dispatched: ${(err as Error).message}`, now);
+      try {
+        this.queue.cancel(key, `formal review not dispatched: ${(err as Error).message}`, now);
+      } catch {
+        /* the append's or the reservation's error is reported; the request stays running */
+      }
       throw err;
     }
     // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
