@@ -165,10 +165,21 @@ describe('T0-EXEC-TREE-KILL killProcessTree elsewhere (one ps read, SIGKILL to t
 const FIXTURE = fileURLToPath(new URL('./exec-tree.child.ts', import.meta.url));
 const TIMEOUT_MS = 1500;
 
+/**
+ * Whether `pid` is a running process. `process.kill(pid, 0)` also succeeds for a POSIX zombie, a
+ * killed process its parent has not reaped yet; on Linux a process whose /proc/<pid>/stat state is
+ * Z counts as gone, so a CI whose PID 1 reaps orphans late does not read a killed sleeper as alive.
+ */
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
+  } catch {
+    return false;
+  }
+  if (process.platform !== 'linux') return true;
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    return stat.slice(stat.lastIndexOf(')') + 2, stat.lastIndexOf(')') + 3) !== 'Z';
   } catch {
     return false;
   }
@@ -221,6 +232,9 @@ async function raceFixture(runner: typeof run, mode: 'stay' | 'exit', boundMs: n
       new Promise<undefined>((r) => (bound = setTimeout(() => r(undefined), boundMs))),
     ]);
     const elapsedMs = Date.now() - started;
+    // A receipt that settles while synchronous work holds the bound timer back still wins the race:
+    // the elapsed time decides, not which promise settled first.
+    if (receipt) assert.ok(elapsedMs <= boundMs, `receipt after ${elapsedMs} ms, past the ${boundMs} ms bound`);
     await check({ receipt, elapsedMs, sleeper: readPid(pidFile), root: readPid(`${pidFile}.root`) });
   } finally {
     clearTimeout(bound);
@@ -237,6 +251,21 @@ function delegatingTreeKill(): { calls: number[]; treeKill: (pid: number) => voi
 }
 
 describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node sleeper) [R1] [R2] [R3] [R4]', () => {
+  it('raceFixture fails a receipt that settles after its bound while synchronous work held the bound timer back', async () => {
+    const receipt = scriptedRunner({ late: { timedOut: true } })('late', []);
+    const late: typeof run = () =>
+      new Promise((resolve) =>
+        setTimeout(() => {
+          const until = Date.now() + 150;
+          while (Date.now() < until) {
+            /* blocks past the 50 ms bound */
+          }
+          resolve(receipt);
+        }, 10),
+      );
+    await assert.rejects(raceFixture(late, 'stay', 50, () => {}), /past the 50 ms bound/);
+  });
+
   it('acceptance 3: run on the stay fixture with timeoutMs 1500 resolves within 6 s, timed out and not ok, and the sleeper is gone', async () => {
     await raceFixture(run, 'stay', 6000, async ({ receipt, elapsedMs, sleeper }) => {
       assert.ok(receipt, `no receipt within 6000 ms of the call (${elapsedMs} ms)`);
