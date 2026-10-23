@@ -591,24 +591,6 @@ const KNOWN_VIOLATIONS: Pin[] = [
     counterexample: 'CardRunner.commitFormalResult appends REVIEW_DECIDED after commitReviewed saved the pass invocation; the lost append is never written again: card next reads the pass in review.invocations and ships to `close`, and the card closes with no REVIEW_DECIDED event for its R3 pass.',
   },
   {
-    faultPoint: 'D/append OPERATION_INTENT',
-    difference: { operations: [[SHIPPED], [['merge', 'intended', false], SHIPPED]] },
-    hypothesis: 'H3',
-    counterexample: 'CardRunner.ship records the merge intent (ops.recordIntent) and then appends OPERATION_INTENT; the lost append leaves the operation `intended` with no event, and the next ship gets it from ops.findDuplicate but, its status not being issued, running or UNKNOWN, records a second intent and merges, so the first stays `intended` for good.',
-  },
-  {
-    faultPoint: 'D/append REVIEW_REQUESTED',
-    difference: { operations: [[SHIPPED], [['merge', 'intended', true], SHIPPED]] },
-    hypothesis: 'H4',
-    counterexample: 'CardRunner.ship has recorded and journaled the merge intent and queued the review request when the REVIEW_REQUESTED append fails; nothing settles that operation, and the next ship records a second intent (ops.findDuplicate returns an `intended` record, which does not block) and merges, so the first stays `intended` for good.',
-  },
-  {
-    faultPoint: 'D/append REVIEW_ADMITTED',
-    difference: { operations: [[SHIPPED], [['merge', 'intended', true], SHIPPED]] },
-    hypothesis: 'H2',
-    counterexample: 'CardRunner.ship cancels its admitted pool request when the REVIEW_ADMITTED append fails and leaves the merge intent `intended`; the next ship gets that record from ops.findDuplicate but, its status not being issued, running or UNKNOWN, records a second intent and merges, so the first stays `intended` for good (the second-intent class of T0-OP-INTENT-DUP).',
-  },
-  {
     faultPoint: 'D/append OPERATION_ISSUED',
     difference: {
       directive: ['close', 'wait'],

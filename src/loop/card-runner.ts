@@ -950,11 +950,24 @@ export class CardRunner {
     const intent = { kind: 'merge' as const, goalId: goal.id, cardId: card.id, target: this.config.base, candidateDigest, ownerGeneration: run.ownerGeneration ?? 0 };
     let duplicate: OperationRecord | undefined;
     let op: OperationRecord | undefined;
+    // Whether this call recorded the intent; an intent taken over from an earlier ship that failed before its dispatch is not
+    // this call's to cancel (card T0-OP-INTENT-DUP).
+    let recorded = false;
     try {
       this.leases.update(cardKey, (lease) => {
         if (run.ownerGeneration !== undefined) this.leases.fence(cardKey, run.ownerGeneration, currentActor(), now);
         duplicate = this.ops.findDuplicate({ ...intent, timeoutMs: 1 });
-        if (!duplicate || !['issued', 'running', 'UNKNOWN'].includes(duplicate.status)) op = this.ops.recordIntent({ ...intent, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] });
+        if (!duplicate || !['issued', 'running', 'UNKNOWN'].includes(duplicate.status)) {
+          // The earliest `intended` merge intent of this goal, card, target, candidate and owner generation is the one an earlier
+          // ship recorded and never dispatched: this ship continues under it instead of recording a second one.
+          op = this.ops
+            .list({ goalId: goal.id, cardId: card.id, kind: 'merge', status: 'intended' })
+            .find((r) => r.target === intent.target && r.candidateDigest === candidateDigest && r.ownerGeneration === intent.ownerGeneration);
+          if (!op) {
+            op = this.ops.recordIntent({ ...intent, timeoutMs: 60 * 60 * 1000, effects: ['push', 'pr', 'review', 'ci', 'merge'] });
+            recorded = true;
+          }
+        }
         return lease;
       });
     } catch (err) {
@@ -967,7 +980,10 @@ export class CardRunner {
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `operation:${duplicate!.id}`, pollSeconds: 60, narration: `A ship for this candidate is already ${duplicate!.status} (${duplicate!.id}); reconcile it instead of launching a second one.` } };
     }
-    this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, kind: 'merge', candidateDigest } });
+    const opId = op.id;
+    if (recorded || !this.journal(goal.id).readAll().some((e) => e.type === 'OPERATION_INTENT' && e.data['operationId'] === opId)) {
+      this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id, kind: 'merge', candidateDigest } });
+    }
     // Shared review admission (MS3): one request per candidate/base/policy/reviewer.
     const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer });
     let enq = this.queue.enqueue({ pool: goal.reviewPool, repository: goal.repository, candidateDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requester: `${goal.id}:${card.id}`, deadline: run.deadline, now });
@@ -978,13 +994,13 @@ export class CardRunner {
     }
     this.journal(goal.id).append({ type: 'REVIEW_REQUESTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, status: enq.status } });
     if (enq.status === 'joined' && enq.request.state === 'running') {
-      this.ops.markResult(op.id, 'cancelled', { error: 'joined running review request' });
+      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: 'joined running review request' });
       const next = this.save({ ...run, state: 'WAIT' });
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review:${key}`, pollSeconds: 60, narration: 'A matching review is already running in the shared pool; join it instead of launching another.' } };
     }
     const admit = this.admitReview(goal, card, key, now);
     if (admit.status !== 'admitted' || admit.request.key !== key) {
-      this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` });
+      if (recorded) this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` });
       const next = this.save({ ...run, state: 'WAIT' });
       const until = admit.status === 'reset-pending' ? ` until ${admit.resetAt}` : '';
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review-pool:${goal.reviewPool}:${admit.status}`, pollSeconds: 120, narration: `Review pool ${goal.reviewPool} is ${admit.status}${until}; waiting holds no active slot. Continue independent work within limits.` } };
@@ -993,7 +1009,7 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'REVIEW_ADMITTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { key, seq: admit.request.seq } });
     } catch (err) {
       // Nothing is dispatched: the admitted request is cancelled so its slot is freed, and the append's error is the caller's.
-      // The merge intent stays `intended` (the next ship records its own); a cancellation that fails leaves the request running.
+      // The merge intent stays `intended` (the next ship continues under it); a cancellation that fails leaves the request running.
       try {
         this.queue.cancel(key, `ship not dispatched: ${(err as Error).message}`, now);
       } catch {
