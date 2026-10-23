@@ -197,8 +197,10 @@ test('T1-REVIEW-BENCH acceptance 3: the formal bench scores hit, miss, pass, fal
     writeCase(fx, 'evals/edges', bugCase(fx, 'edge-low', fx.heads.c1, 6, 2));
     writeCase(fx, 'evals/edges', bugCase(fx, 'edge-high', fx.heads.c1, 11, 2));
     writeCase(fx, 'evals/edges', bugCase(fx, 'edge-out', fx.heads.c1, 7, 2));
+    // Another changed file at the cited line is no hit: the file must match too.
+    writeCase(fx, 'evals/edges', bugCase(fx, 'edge-other-file', fx.heads.c1, 13, 0, { expected: [{ ...site(13, 0), file: CARD_PATH }] }));
     const edges = await bench(fx, reviewer(fx, []), { dir: 'evals/edges' });
-    assert.deepEqual(edges.cases.map((c) => [c.id, c.outcome, c.matched?.reason]), [['edge-high', 'hit', HIT_REASON], ['edge-low', 'hit', RANGE_REASON], ['edge-out', 'miss', undefined]]);
+    assert.deepEqual(edges.cases.map((c) => [c.id, c.outcome, c.matched?.reason]), [['edge-high', 'hit', HIT_REASON], ['edge-low', 'hit', RANGE_REASON], ['edge-other-file', 'miss', undefined], ['edge-out', 'miss', undefined]]);
   } finally {
     fx.cleanup();
   }
@@ -234,6 +236,14 @@ test('T1-REVIEW-BENCH acceptance 4: no checkout and no worktree entry remains af
     assert.match(capped.cases[0]!.detail ?? '', /formalReview\.maxDiffBytes \(10\)/);
     assert.equal(calls.length, 0, 'no reviewer call above the cap');
     reports.push(capped);
+    assertNoCheckoutLeft(fx);
+
+    // A failed git worktree remove falls back to deleting the directory and git worktree prune.
+    writeConfig(fx, formalConfig());
+    const refusing = (command: string, args: string[], options?: Parameters<typeof runSync>[2]) => (args[0] === 'worktree' && args[1] === 'remove' ? { ...runSync(command, ['--version'], options), exitCode: 1 } : runSync(command, args, options));
+    const fallback = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: refusing });
+    assert.equal(fallback.cases[0]!.outcome, 'pass');
+    reports.push(fallback);
     assertNoCheckoutLeft(fx);
     for (const r of reports) assert.deepEqual(r.leftCheckouts, []);
   } finally {
