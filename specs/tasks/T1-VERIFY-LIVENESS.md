@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-LIVENESS
 title: The fault-point test continues each fault run to rest and fails when the card does not reach the fault-free end state, apart from violations pinned with their counterexamples
-status: todo
+status: merged
 branch: T1-VERIFY-LIVENESS
 worktree: D:\wt\AIDLC\T1-VERIFY-LIVENESS
 plan_ref: plans/review-verification.md#order-of-work
@@ -129,3 +129,15 @@ Hypotheses (each RED difference is the pin's `difference`, unchanged):
 GREEN (at 6a0d231): the same command, exit 0, tests 28, pass 28, fail 0, duration_ms 8561.3541 (the top-level `describe` timeout is 30 000 ms).
 
 Mutation check (scratch edits, not committed): with the `D/append OPERATION_RESULT` pin removed, the judge test fails with `D/append OPERATION_RESULT: journal.OPERATION_RESULT succeeded fault-free 1, observed 0`; with the `A/record 1` pin's observed value edited to 1, it fails with `pin A/record 1 (H5): the difference changed: ...`; with the `D/append OPERATION_RESULT` pin moved to `D/record 2`, it fails with `pin D/record 2 (H8): the fault point reaches the fault-free end state`.
+
+## Known violations (CLOSE, from `KNOWN_VIOLATIONS` at dd6542c)
+- `A/record 1` (H5): `journal.ATTEMPT_FINISHED success` 1 -> 2. `recordAttempt` appends ATTEMPT_FINISHED before `this.save`; the lost save redoes attempt 1 and appends a second success. Filed: T0-JOURNAL-FAULT-EVENTS.
+- `B/append PRE_REVIEW_DECIDED` (H7): `journal.PRE_REVIEW_DECIDED pass` 1 -> 0. Appended after `commitReviewed` saved the pass; never written again. Filed: T0-JOURNAL-FAULT-EVENTS.
+- `C/append REVIEW_ADMITTED` (H1): the card stays at SHIP, `review` directed for all 12 calls, the pool request `running` with its slot. The append runs after `admitReview`, outside the try whose catch calls `this.queue.cancel`; every later `formalReview` refuses "a matching formal review is already running". Filed: T0-REVIEW-ADMIT-STRAND.
+- `C/append REVIEW_DECIDED` (H6): `journal.REVIEW_DECIDED pass` 1 -> 0. Appended after `commitReviewed` saved the pass; never written again. Filed: T0-JOURNAL-FAULT-EVENTS.
+- `D/append OPERATION_INTENT` (H3): an extra `merge` operation stays `intended`. `ops.findDuplicate` returns the `intended` record, which does not block a second intent. Filed: T0-OP-INTENT-DUP.
+- `D/append REVIEW_REQUESTED` (H4): an extra `merge` operation stays `intended`, as H3. Filed: T0-OP-INTENT-DUP.
+- `D/append REVIEW_ADMITTED` (H2): the card stays WAIT on `review:<key>`, the ship's pool request `running` with its slot, one intent `cancelled` per `next` and one left `intended`. Same cause as H1. Filed: T0-REVIEW-ADMIT-STRAND.
+- `D/append OPERATION_ISSUED` (H9): the operation stays `issued`, WAIT "attached to running operation". docRecovery: `aidlc ops reconcile` (a person's step the docs assign; not filed).
+- `D/record 1` (H10): the operation stays `issued` after the merge, WAIT "attached to running operation". docRecovery: `aidlc ops reconcile` (not filed).
+- `D/append OPERATION_RESULT` (H8): `journal.OPERATION_RESULT succeeded` 1 -> 0 while the ledger records the merge `succeeded`. Appended after `finish` saved CLOSE; never written again. Filed: T0-JOURNAL-FAULT-EVENTS.
