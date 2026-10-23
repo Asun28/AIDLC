@@ -79,7 +79,8 @@ export interface PriorFinding {
   reraisedReasons?: string[];
   origin: string;
   /** Re-raises that answered a dispute; two is a deadlock awaiting a human ruling. */
-  nonAcceptanceRounds?: number;
+  nonAcceptanceRounds?: number;  /** The defect class the finding records (`ReviewFinding.class`). */
+  class?: string;
 }
 
 /** Prior reasons, author notes and re-raise reasons are quoted as one JSON string each: quotes and newlines stay inside the string. */

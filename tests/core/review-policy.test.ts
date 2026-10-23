@@ -609,3 +609,77 @@ describe('first-round misses (T1-REVIEW-INPUTS acceptance 3)', () => {
     assert.equal(same.findings.find((f) => f.id === 'F4')?.outsideDelta, true, 'on an unchanged candidate every new finding is a first-round miss');
   });
 });
+
+describe('defect classes (T1-REVIEW-CLASS-SWEEP)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const LATEST = '2026-09-11T02:00:00.000Z';
+  /** A finding as this card records it: `class` is read through this view so the RED compiles against the baseline type. */
+  type Classed = ReviewFinding & { class?: string };
+  const classOf = (f: ReviewFinding | undefined): string | undefined => (f as Classed | undefined)?.class;
+  const rec = (findings: ReviewFinding[], round: number, reasons: string[], at = T0, stage: 'pre' | 'formal' = 'formal') => policy.recordFindings(findings, { stage, round, candidateSha: 'sha-1', at, outcome: 'block', reasons });
+  const reason = (slug: string) => `[standards] 9 error handling (class: ${slug}) @ src/a.ts:3: x -> y`;
+
+  test('acceptance 1: findingClass reads a well-formed (class: <slug>) tag in any case with at most one space; a reason without one or with a malformed slug has no class, and the first tag decides [R10]', () => {
+    assert.equal(policy.findingClass('[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: x -> y'), 'journal-before-save');
+    assert.equal(policy.findingClass('[standards] 9 error handling (class:journal-before-save) @ src/a.ts:3: x -> y'), 'journal-before-save');
+    assert.equal(policy.findingClass('[standards] 9 error handling (CLASS: journal-before-save) @ src/a.ts:3: x -> y'), 'journal-before-save');
+    assert.equal(policy.findingClass('[standards] 9 error handling @ src/a.ts:3: x -> y'), undefined, 'no tag');
+    for (const slug of ['Journal-Order', 'two words', 'a_b', '-a', 'a-', 'a--b', '', 'a'.repeat(41), ' two-spaces']) assert.equal(policy.findingClass(reason(slug)), undefined, `malformed slug "${slug}"`);
+    assert.equal(policy.findingClass(reason('a'.repeat(40))), 'a'.repeat(40), 'forty characters is the limit');
+    assert.equal(policy.findingClass(reason('r3-2')), 'r3-2', 'digits are slug characters');
+    assert.equal(policy.findingClass('[standards] 9 (class: first-one) @ src/a.ts:3: x (class: second-one) -> y'), 'first-one', 'the first tag decides');
+    assert.equal(policy.findingClass('[standards] 9 (class: Bad-One) @ src/a.ts:3: x (class: second-one) -> y'), undefined, 'a malformed first tag decides too');
+  });
+
+  test('acceptance 2: recordFindings sets the class of a new tagged finding, records an untagged or malformed reason as main does, and a tagged re-raise sets a missing class and keeps an existing one, with the same ids, dispositions and revisions as an untagged copy [R10]', () => {
+    const tagged = rec([], 1, [reason('journal-before-save'), '[spec] 6 tests @ src/b.ts:1: no RED -> add one']);
+    assert.equal(classOf(tagged.findings[0]), 'journal-before-save');
+    assert.equal('class' in tagged.findings[1]!, false, 'an untagged reason records no class key');
+    const plain = '[standards] 9 error handling @ src/a.ts:3: x -> y';
+    const malformed = reason('Two Words');
+    const asMain = (text: string) => [{ id: 'F1', stage: 'formal', cycle: undefined, round: 1, perspective: undefined, reason: text, file: 'src/a.ts', candidateSha: 'sha-1', raisedAt: T0, disposition: 'open', disputes: [], reraised: [], revision: 0 }];
+    assert.deepEqual(rec([], 1, [plain]).findings, asMain(plain), 'an untagged reason records the finding main records');
+    assert.deepEqual(rec([], 1, [malformed]).findings, asMain(malformed), 'a malformed tag records the finding main records');
+
+    // Round 1 raises F1 and F2 (tagged) and F3 (untagged); F2 is disputed; round 2 re-raises F1 under another class and F3 under one.
+    const round1 = [reason('journal-before-save'), '[standards] 9 error handling (class: journal-before-save) @ src/c.ts:5: x -> y', '[spec] 6 tests @ src/b.ts:1: no RED -> add one'];
+    const round2 = ['[standards] 9 error handling (class: other-class) @ src/d.ts:2: still x (re:F1) -> y', '[spec] 6 tests (class: missing-red) @ src/b.ts:1: no RED (re:F3) -> add one'];
+    const strip = (reasons: string[]) => reasons.map((r) => r.replace(/ \(class: [^)]*\)/, ''));
+    const run = (first: string[], second: string[]) => {
+      const a = rec([], 1, first);
+      const b = rec(policy.disputeFinding(a.findings, 'F2', 'not a defect', LATER), 2, second, LATEST);
+      return { a, b };
+    };
+    const withTags = run(round1, round2);
+    const without = run(strip(round1), strip(round2));
+    const shape = (r: { a: policy.RecordFindingsResult; b: policy.RecordFindingsResult }) => [r.a, r.b].map((x) => ({ raised: x.raised, reraised: x.reraised, resolved: x.resolved, findings: x.findings.map((f) => [f.id, f.disposition, f.revision, f.resolvedAt ?? null]) }));
+    assert.deepEqual(shape(withTags), shape(without), 'the class changes no id, list, disposition, revision or resolution');
+    assert.deepEqual(withTags.b.reraised, ['F1', 'F3']);
+    assert.deepEqual(withTags.b.resolved, ['F2']);
+    const after = withTags.b.findings;
+    assert.equal(classOf(after.find((f) => f.id === 'F1')), 'journal-before-save', 'a re-raise never replaces an existing class');
+    assert.equal(classOf(after.find((f) => f.id === 'F3')), 'missing-red', 'a tagged re-raise sets the class of a finding that had none');
+    assert.equal(after.find((f) => f.id === 'F3')!.reraised[0]!.reason, round2[1], 'the re-raise reason keeps the tag as text');
+    assert.deepEqual(without.b.findings.map(classOf), [undefined, undefined, undefined]);
+  });
+
+  test('acceptance 4: blockClasses groups the open findings of a block by class in first-raised order, with their ids and every cited file:line once; disputed, resolved and class-less findings add nothing [R11]', () => {
+    const first = rec([], 1, [
+      reason('journal-before-save'), // F1 src/a.ts:3
+      '[spec] 6 tests (class: missing-red) @ src/b.ts:1: no RED -> add one', // F2
+      '[standards] 9 error handling (class: journal-before-save) @ src\\c.ts:5: x -> y', // F3, a Windows separator
+      '[spec] 14 scope @ src/d.ts:2: helper -> remove', // F4, no class
+      '[standards] 9 error handling (class: disputed-one) @ src/e.ts:1: x -> y', // F5, disputed below
+      '[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: the same site again -> y', // F6
+      '[standards] 9 error handling (class: resolved-one) @ src/f.ts:4: x -> y', // F7, resolved below
+    ]);
+    // A later round re-raises F1 at a second site and again at its first.
+    const second = rec(first.findings, 1, ['[standards] 9 error handling @ src/a.ts:9: x (re:F1) -> y', '[standards] 9 error handling @ src/a.ts:3: x (re:F1) -> y'], LATER, 'pre');
+    const findings = policy.disputeFinding(second.findings, 'F5', 'not a defect', LATEST).map((f) => (f.id === 'F7' ? { ...f, resolvedAt: LATEST } : f));
+    assert.deepEqual(policy.blockClasses(findings), [
+      { class: 'journal-before-save', ids: ['F1', 'F3', 'F6'], sites: ['src/a.ts:3', 'src/a.ts:9', 'src/c.ts:5'] },
+      { class: 'missing-red', ids: ['F2'], sites: ['src/b.ts:1'] },
+    ]);
+    assert.deepEqual(policy.blockClasses(rec([], 1, ['[spec] 6 tests @ src/b.ts:1: no RED -> add one', '[standards] 9 error handling @ src/a.ts:3: x -> y']).findings), [], 'a block without a class');
+  });
+});

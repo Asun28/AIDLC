@@ -240,6 +240,28 @@ export function findingLocation(reason: string): string | undefined {
   return /[\p{L}\p{N}]/u.test(file) ? file : undefined;
 }
 
+/** Seam (card T1-REVIEW-CLASS-SWEEP, RED): the defect class a reason names; the baseline reads none. */
+export function findingClass(_reason: string): string | undefined {
+  return undefined;
+}
+
+/** One defect class of a block: the ids of its open findings and the sites they cite. */
+export interface BlockClass {
+  class: string;
+  ids: string[];
+  sites: string[];
+}
+
+/** Seam (card T1-REVIEW-CLASS-SWEEP, RED): the classes of a block's open findings; the baseline groups none. */
+export function blockClasses(_findings: ReviewFinding[]): BlockClass[] {
+  return [];
+}
+
+/** Seam (card T1-REVIEW-CLASS-SWEEP, RED): the text a repair narration appends for the classes of a block; the baseline appends nothing. */
+export function classRepairText(_classes: BlockClass[]): string {
+  return '';
+}
+
 export interface RecordFindingsInput {
   stage: FindingStage;
   cycle?: number;

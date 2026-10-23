@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, countedFailures, InjectedShipPath } from './_harness.ts';
+import { CardRunner } from '../../src/loop/card-runner.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
 import { rmSync, writeFileSync } from 'node:fs';
@@ -785,4 +787,130 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 16): the transient-CI denial i
   } finally {
     fx.cleanup();
   }
+});
+
+// ---------------------------------------------------------------------------
+// Defect classes in the repair directives (T1-REVIEW-CLASS-SWEEP acceptance 5 to 7)
+// ---------------------------------------------------------------------------
+
+/** Two block reasons of one class at two sites and one untagged reason; `tagged` false drops the tags. */
+const classReasons = (files: [string, string], tagged: boolean): string[] =>
+  [
+    `[standards] 9 error handling (class: journal-before-save) @ ${files[0]}:3: the event is appended before the save -> save first`,
+    `[standards] 9 error handling (class: journal-before-save) @ ${files[1]}:7: the event is appended before the save -> save first`,
+    `[spec] 6 tests missing @ ${files[0]}:1: no RED -> add a failing test`,
+  ].map((r) => (tagged ? r : r.replace(' (class: journal-before-save)', '')));
+
+/** The text every formal repair narration appends for the class, as the card words it (R11). */
+const classText = (files: [string, string]) =>
+  ` Defect classes of this block: journal-before-save (F1, F2 at ${files[0]}:3, ${files[1]}:7). Fix every site of each class inside the card's allow_paths, not only the cited lines; leave a site outside allow_paths unchanged and dispute a re-raise that cites one.`;
+
+/** The ship-path review-fix narration on main, byte for byte. */
+const SHIP_FIX_NARRATION = 'Substantive block: fix within scope or revert; then rebuild and ship the repaired candidate (run `aidlc card next` to open the repair attempt).';
+
+function shipPathClassRun(tagged: boolean) {
+  const fx = makeFixture();
+  try {
+    tierSCard(fx);
+    const goal = goalForCards(fx, ['T1-HELLO']);
+    const reasons = classReasons(['src/hello.ts', 'src/greet.ts'], tagged);
+    const verdict: Verdict = { verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons: [reasons[2]!] }, standards: { verdict: 'block', reasons: reasons.slice(0, 2) } }, sha: candidateShaFor('T1-HELLO'), run_status: 'success' };
+    const runner = fx.runner(new DryRunShipPath(['review-blocked', 'review-blocked'], verdict));
+    const card = fx.card('T1-HELLO');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
+    r = runner.next(fx.goal(goal.id), card, r.run);
+    const run1 = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidateShaFor('T1-HELLO') });
+    const blocked = runner.next(fx.goal(goal.id), card, run1);
+    const repair = runner.next(fx.goal(goal.id), card, blocked.run);
+    return {
+      blocked: blocked.directive,
+      repair: repair.directive,
+      summary: { state: blocked.run.state, substantiveDecisions: blocked.run.review.substantiveDecisions, substantiveBlocks: blocked.run.review.substantiveBlocks, remainingDecisions: blocked.directive.kind === 'review-fix' ? blocked.directive.remainingDecisions : undefined, kinds: [blocked.directive.kind, repair.directive.kind], repairState: repair.run.state },
+    };
+  } finally {
+    fx.cleanup();
+  }
+}
+
+async function commandPathClassRun(tagged: boolean) {
+  const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
+  try {
+    const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
+    const reasons = classReasons(['src/t1-cls.ts', 'src/t1-cls2.ts'], tagged);
+    const r3: string[] = [JSON.stringify({ verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons: [reasons[2]] }, standards: { verdict: 'block', reasons: reasons.slice(0, 2) } } }) + '\n'];
+    const prompts: string[] = [];
+    const script = scriptedRunner({
+      'git diff --name-only': { stdout: 'src/t1-cls.ts\u0000src/t1-cls2.ts\u0000' },
+      'git diff': { stdout: 'diff --git a/src/t1-cls.ts b/src/t1-cls.ts\n+export const cls = 1;\n' },
+      'fake-r2': () => ({ stdout: PASS }),
+      'fake-r3': (args) => {
+        prompts.push(args.at(-1)!);
+        return { stdout: r3.shift() ?? PASS };
+      },
+    });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: fx.config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged', 'merged']), now: fx.now, runner: script });
+    writeCard(fx, { id: 'T1-CLS', title: 'class sweep', allowPaths: ['src/t1-cls.ts', 'src/t1-cls2.ts'] });
+    const goal = fx.controller.createGoal({ text: 'implement T1-CLS', source: 'card', ref: 'T1-CLS', affectedSurfaces: [] }, { cards: ['T1-CLS'] });
+    fx.controller.next(goal.id);
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cards-projected', data: { cards: ['T1-CLS'] } });
+    const card = fx.card('T1-CLS');
+    let r = runner.next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-CLS'));
+    let run = runner.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    const kinds: string[] = [r.directive.kind];
+    const block = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    const repair = runner.next(fx.goal(goal.id), card, block.run);
+    kinds.push(repair.directive.kind);
+    // The repaired candidate passes R2 and reaches R3 decision 2, whose prompt the scripted reviewer receives.
+    run = runner.recordAttempt(fx.goal(goal.id), card, repair.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    r = runner.next(fx.goal(goal.id), card, run);
+    r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
+    kinds.push(r.directive.kind);
+    const decision2 = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    const prompt2 = prompts[1] ?? '';
+    const priorF1 = prompt2.slice(prompt2.indexOf('## Prior findings')).split('\n').find((l) => l.startsWith('- F1 (')) ?? '';
+    return {
+      repair: repair.directive,
+      priorF1,
+      summary: { outcome: block.classified.outcome, state: block.run.state, substantiveDecisions: block.run.review.substantiveDecisions, substantiveBlocks: block.run.review.substantiveBlocks, kinds, decision2: decision2.classified.outcome },
+    };
+  } finally {
+    fx.cleanup();
+  }
+}
+
+test('T1-REVIEW-CLASS-SWEEP acceptance 5: on the ship path a block with two tagged sites names the class, both finding ids and both sites in the review-fix narration and the next REVIEW_FIX build directive, and asks for every site inside allow_paths [R11]', () => {
+  const tagged = shipPathClassRun(true);
+  const text = classText(['src/hello.ts', 'src/greet.ts']);
+  assert.equal(tagged.blocked.kind, 'review-fix');
+  assert.equal(tagged.blocked.narration, SHIP_FIX_NARRATION + text, 'the class text is appended to the narration main returns');
+  assert.equal(tagged.repair.kind, 'build');
+  assert.ok(tagged.repair.narration.startsWith('Review block to repair: '), tagged.repair.narration);
+  assert.ok(tagged.repair.narration.endsWith(text), `the REVIEW_FIX build directive carries the same class list: ${tagged.repair.narration}`);
+  assert.equal(tagged.repair.narration.split('Defect classes of this block').length, 2, 'once');
+});
+
+test('T1-REVIEW-CLASS-SWEEP acceptance 6: on the command path an R3 block with tagged reasons leads card next to the REVIEW_FIX build directive with the class list, and the decision-2 prompt names the class on the finding\'s prior-findings line [R11] [R12]', async () => {
+  const tagged = await commandPathClassRun(true);
+  assert.equal(tagged.summary.outcome, 'block-defect');
+  assert.equal(tagged.repair.kind, 'build');
+  assert.ok(tagged.repair.narration.endsWith(classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])), `the REVIEW_FIX build directive carries the class list: ${tagged.repair.narration}`);
+  assert.ok(tagged.priorF1.startsWith('- F1 (open; class journal-before-save; R3 decision 1): '), `the decision-2 prompt names the class on F1: ${tagged.priorF1}`);
+  assert.ok(tagged.priorF1.includes('Check every site of class journal-before-save in this candidate and re-raise with re:F1 once per remaining site, each cited with file:line.'), tagged.priorF1);
+});
+
+test('T1-REVIEW-CLASS-SWEEP acceptance 7: untagged blocks leave both narrations without a class sentence (the ship-path narration as on main) and end with the same state, counters, remaining decisions and directive kinds as the tagged runs [R10] [R11]', async () => {
+  const shipTagged = shipPathClassRun(true);
+  const shipPlain = shipPathClassRun(false);
+  assert.equal(shipPlain.blocked.narration, SHIP_FIX_NARRATION);
+  assert.ok(!shipPlain.repair.narration.includes('Defect classes'), shipPlain.repair.narration);
+  assert.ok(!shipPlain.repair.narration.includes('class'), 'no class word at all in the untagged repair narration');
+  assert.deepEqual(shipPlain.summary, shipTagged.summary);
+  const commandTagged = await commandPathClassRun(true);
+  const commandPlain = await commandPathClassRun(false);
+  assert.ok(!commandPlain.repair.narration.includes('Defect classes'), commandPlain.repair.narration);
+  assert.ok(!commandPlain.priorF1.includes('class'), commandPlain.priorF1);
+  assert.deepEqual(commandPlain.summary, commandTagged.summary);
+  assert.deepEqual(commandTagged.summary.kinds, ['review', 'build', 'review']);
 });

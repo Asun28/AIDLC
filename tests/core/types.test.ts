@@ -189,6 +189,18 @@ describe('types: ReviewInvocation effort (T1-OPUS55-R3 acceptance 4)', () => {
   });
 });
 
+describe('types: ReviewFinding class (T1-REVIEW-CLASS-SWEEP acceptance 3)', () => {
+  const finding = { id: 'F1', stage: 'formal', round: 1, reason: '[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: x -> y', raisedAt: T0 };
+  const classOf = (findings: unknown[]) => (CardRun.parse({ ...cardRun(), findings }).findings[0] as { class?: string }).class;
+
+  test('a finding written before the class field parses with no class; a well-formed class is kept and a malformed one fails the parse [R10]', () => {
+    const parsed = CardRun.parse({ ...cardRun(), findings: [finding] }).findings[0]!;
+    assert.equal('class' in parsed, false, 'a record written before this card parses without a class');
+    assert.equal(classOf([{ ...finding, class: 'journal-before-save' }]), 'journal-before-save');
+    assert.equal(CardRun.safeParse({ ...cardRun(), findings: [{ ...finding, class: 'Two Words' }] }).success, false, 'a malformed class fails the parse');
+  });
+});
+
 describe('types: ReviewEffortLevel (T1-OPUS55-R3-2 acceptance 10)', () => {
   test('the R3 levels are the effort levels without low [R1]', () => {
     assert.deepEqual(ReviewEffortLevel.options, EffortLevel.options.filter((l) => l !== 'low'));

@@ -177,13 +177,13 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry REVIEW.md@3, and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@4 since T1-REVIEW-CLASS-SWEEP), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@3', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@4', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -501,5 +501,64 @@ describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule 
     // 7 section sentences, 3 CHANGELOG sentences, the CLAUDE.md sentence and the heading.
     assert.equal(removals.length, 12);
     for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
+  });
+});
+
+describe('defect classes in the policy, the reviewer agent and the docs (T1-REVIEW-CLASS-SWEEP)', () => {
+  const flat = (text: string) => text.replace(/\r\n/g, '\n').replace(/\s+/g, ' ');
+  /** The output-contract sentence both REVIEW.md copies add (R12). */
+  const REVIEW_CLASS =
+    'Give each block reason a defect class with `(class: <slug>)` right after the dimension and before the location: the slug is lowercase letters and digits in dash-separated runs, at most 40 characters, and every site of one class carries the same slug. A `[question]` or `[suggestion]` reason carries no class. For a prior finding that has a class, check every site of that class in the candidate and re-raise the finding with `re:F<n>` once per remaining site, each cited with file:line.';
+  /** The procedure step both reviewer agent copies add (R12). */
+  const REVIEWER_STEP =
+    '9. Give each block reason a defect class, `(class: <slug>)` after the dimension and before the location, with the same slug at every site of one class and no class on a `[question]` or `[suggestion]` reason. For a prior finding that has a class, check every site of that class in the candidate and re-raise it with `re:F<n>` once per remaining site.';
+  /** The paragraph docs/OPERATIONS.md adds under Findings and dispositions (R21), pinned whole, one sentence per entry. */
+  const OPERATIONS = [
+    'Defect classes (card T1-REVIEW-CLASS-SWEEP).',
+    'Both prompts, `REVIEW.md` and the reviewer agent ask for a class on each block reason: `(class: <slug>)` right after the dimension and before the `@ <file:line>` location, the slug lowercase letters and digits in dash-separated runs of at most 40 characters, the same slug at every site of one class, and no class on a `[question]` or `[suggestion]` reason.',
+    '`findingClass` reads the first tag of a reason (the keyword in any case, at most one space after the colon); a malformed slug records no class.',
+    'The class is recorded as `ReviewFinding.class` on the finding the reason raises, or on the finding it re-raises when that finding has none, and changes no id, disposition, revision, resolution, counter or decision.',
+    "When a formal block returns the card to REVIEW_FIX, each repair directive (the ship path's `review-fix`, the pending-block `review-fix` and the REVIEW_FIX `build`) appends the class list of the block's open findings, each class with its finding ids and cited sites, and asks for every site of each class inside the card's `allow_paths`, not only the cited lines; a block without a class appends nothing.",
+    'The sweep check: under `## Prior findings` an open finding with a class names it and asks the reviewer to check every site of that class in the candidate and to re-raise the finding with `re:F<n>` once per remaining site; a disputed or deadlocked finding names its class and keeps its instruction.',
+    'The class sentence in the output contract moved `reviewPolicyVersion` to `REVIEW.md@4`.',
+  ];
+  const CHANGELOG = [
+    "- T1-REVIEW-CLASS-SWEEP: a block reason names its defect class with `(class: <slug>)` after the dimension, and the finding records it as `ReviewFinding.class` (a re-raise sets it on a finding that has none).",
+    "The repair directives of a formal block list each class of the block's open findings with their ids and cited sites and ask for every site inside `allow_paths`, not only the cited lines, and the next round or decision is asked to check every site of the class and re-raise each remaining one with `re:F<n>`.",
+    'Both prompts, `REVIEW.md` and the reviewer agent ask for the tag; `reviewPolicyVersion` is `REVIEW.md@4` in both configs.',
+    'The R3 stop rule, the decision allowance and the R2 rounds are unchanged.',
+  ];
+  const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
+  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+
+  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs REVIEW.md@4 [R12]', () => {
+    for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
+      const review = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+      const contract = review.slice(review.indexOf('## Output contract'));
+      assert.ok(contract.split('\n').includes(REVIEW_CLASS), `${file}: the class sentence in the output contract`);
+      assert.ok(contract.includes('\n`{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}`\n'), `${file}: the JSON example line`);
+      assert.ok(contract.includes('\nBlock reasons are formatted `[spec] <dimension #/name> @ <file:location>: <why it violates> -> <how to fix>`.\n'), `${file}: the reason-format line`);
+    }
+    for (const file of [path.join(tpl, 'claude', 'agents', 'reviewer.md'), path.join(root, '.claude', 'agents', 'reviewer.md')]) {
+      const reviewer = flat(readFileSync(file, 'utf8'));
+      assert.ok(reviewer.includes(REVIEWER_STEP), `${file}: the class step`);
+      assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
+    }
+    for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@4', `${file} policy version`);
+    }
+  });
+
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and REVIEW.md@4, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+    const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
+    const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
+    const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@4` in both configs');
+    const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
+    assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
+    assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
+    assert.ok(changelogHolds(changelog), 'CHANGELOG.md Unreleased carries the T1-REVIEW-CLASS-SWEEP entry');
+    for (const sentence of OPERATIONS) assert.equal(opsHolds(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
   });
 });
