@@ -88,4 +88,60 @@ npm run typecheck && node --test tests/scenarios/op-intent-dup.test.ts tests/sce
 - Assertion: the typecheck is clean; the new tests pass (one merge operation and one `OPERATION_INTENT` after each of the three failures, nothing unresolved, no reconcile wait or audit block, the take-over bounds and the two waits, the doc and CHANGELOG sentences present); the fault-point judge passes with no `D/append OPERATION_INTENT`, `D/append REVIEW_REQUESTED` or `D/append REVIEW_ADMITTED` pin; the other listed files pass.
 
 ## Attempt evidence
-(Filled at BUILD: the RED commit and its first failing line, the RED and GREEN DoD exit codes, test counts and durations, the mutation sweep and its survivors.)
+BUILD attempt 1, on main at 1248647 (T0-REVIEW-ADMIT-STRAND merged).
+
+### Write order of the fix (`CardRunner.ship`)
+1. Card lease lock: fence, `ops.findDuplicate`; an `issued`, `running` or `UNKNOWN` record returns `wait` on `operation:<id>` and writes nothing to the ledger (unchanged).
+2. Same section, otherwise: `ops.list({ goalId, cardId, kind: 'merge', status: 'intended' })` (sorted by `intentRecordedAt`), the first with the same target, candidate digest and owner generation is taken over; none: `ops.recordIntent` and `recorded = true`. Lock released.
+3. `OPERATION_INTENT` append: always when `recorded`; for a taken-over intent only when no `OPERATION_INTENT` of the goal journal names its id.
+4. Unchanged from here: enqueue or requeue, `REVIEW_REQUESTED`, join wait, admission, admission wait, `REVIEW_ADMITTED` (request cancelled on failure), record re-read and its two cleanups, `markIssued`, `OPERATION_ISSUED`, dispatch. The join wait and the admission wait call `markResult(..., 'cancelled')` only when `recorded`.
+
+### Crash or append failure at each point, and the recovery
+- Lease section throws (fence, ledger read, `recordIntent`): nothing recorded, or one `intended` intent with no event; the next ship takes it over.
+- `OPERATION_INTENT` append (or the journal read before it) fails: intent `intended`, no event; the next ship takes it over and appends the event once (acceptance 1).
+- Enqueue, `REVIEW_REQUESTED`, admission fail: intent `intended` with its event; the next ship takes it over, joins or recreates the request, appends no second event (acceptance 2, and the second-failure test).
+- `REVIEW_ADMITTED` fails: request cancelled (T0-REVIEW-ADMIT-STRAND), intent `intended`; the next ship takes it over and enqueues again (acceptance 3).
+- A wait (join or pool): an own intent is `cancelled` as at 794624a; a taken-over one stays `intended` for the next ship (acceptance 5).
+- Process death at any of these points leaves the state of the matching throw; same recovery.
+- From `markIssued` on the operation is `issued`: unchanged (H9, H10, `aidlc ops reconcile`).
+
+Ledger states: only `intended` is taken over; `issued`, `running` and `UNKNOWN` still block through `findDuplicate` (an earlier blocking record wins over a later `intended` one: test "not taken over while the duplicate check returns an earlier issued record"); `succeeded`, `failed` and `cancelled` are never taken over (tests per status). A taken-over intent is only ever `intended`, so no dispatch has run under it; the one exception is two processes of one session in the ship of one card at once (Design, Limits).
+
+### Reproduction (scratch script at e14b9d6, acceptance 1 setup, no src change)
+```
+after fault [["op-20261023173053-3d61ad6f","intended"]] intent events []
+next -> close
+merges [["op-20261023173053-3d61ad6f","intended"],["op-20261023173053-9ccc0ced","succeeded"]] intent events ["op-20261023173053-9ccc0ced"] stranded op-20261023173053-3d61ad6f
+unresolved [["op-20261023173053-3d61ad6f","intended"]]
+goal next wait reconcile:op-20261023173053-3d61ad6f
+audit OP codes ["OP_UNRESOLVED","OP_INTENT_MISSING"]
+```
+
+### RED (commit e14b9d6: tests/scenarios/op-intent-dup.test.ts added, the three pins removed, no src change)
+DoD command of the card, Windows: exit 1, 46633 ms wall (node 40784 ms), 367 tests, 355 pass, 12 fail. First failing line:
+```
+    not ok 11 - every fault point of A to E reaches its command's fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]
+```
+with `unpinned` naming `D/append OPERATION_INTENT` (observed `[["merge","intended",false],["merge","succeeded",true]]`), `D/append REVIEW_REQUESTED` and `D/append REVIEW_ADMITTED` (each `[["merge","intended",true],["merge","succeeded",true]]`). The op-intent-dup failures are acceptance 1 to 3, 5 (take-over halves) and 7; the negatives of acceptance 4 pass at RED, as at 794624a.
+
+### GREEN (fix 4fb56d1, docs 2bf9dbe, survivor tests 2d227eb)
+DoD command, Windows, at 2d227eb: exit 0, 46221 ms wall (node 40180 ms), 369 tests, 369 pass. `npm test` with `CLAUDE_CODE_SESSION_ID` unset: 1549 tests, 1543 pass, 0 fail, 6 skipped.
+
+### Mutation sweep (src/loop/card-runner.ts, run against op-intent-dup and fault-points; restored after each)
+| Mutant | Result |
+| --- | --- |
+| drop goal / card / kind / status filter | killed (another goal; another card and no card; another kind; cancelled, failed, succeeded) |
+| drop target / digest / owner generation condition | killed (another target; acceptance 4 digest; acceptance 4 generation) |
+| latest instead of earliest | killed (two matching intents) |
+| always append `OPERATION_INTENT` | killed (acceptance 2, 3) |
+| append only for an own intent | killed (acceptance 1, fault-point judge) |
+| any `OPERATION_INTENT` event counts | survived, then killed by the added test (event names only an earlier cancelled intent) |
+| cancel a taken-over intent in the join wait / pool wait | killed (acceptance 5, each) |
+| `recorded` always true | killed (acceptance 2, 3, 5) |
+| take over past a blocking duplicate | killed (acceptance 4 issued case) |
+| take over when blocked, record only when free | survived, then killed by the added test (earlier issued record) |
+| never take over | killed (acceptance 1 to 3, fault-point judge) |
+| drop the `recorded ||` short-circuit before the journal read | equivalent: a just-recorded id is new, so no event names it |
+
+### verify-card-run-writes
+`git diff --name-only de34902 -- <record files>` lists src/loop/card-runner.ts and tests/scenarios/fault-points.test.ts. Outcome: updated. The fault-free write order of the five commands is unchanged (same count of fault points, 28 of 28 pass); `CardRunner.ship`'s `OPERATION_INTENT` append became conditional, and the pins H3, H4 and H2 were removed as it now recovers. Scratch break (not committed): the append condition reduced to `if (recorded)`; the check failed, 1 of 28, `D/append OPERATION_INTENT: operations fault-free [["merge","succeeded",true]], observed [["merge","succeeded",false]]; drive: next -> close, next -> close`; restored, 28 of 28. The sync commit moves only on main, after the merge (the skill file is outside allow_paths).
