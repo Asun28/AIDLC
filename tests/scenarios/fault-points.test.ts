@@ -9,6 +9,7 @@ import { describe, it } from 'node:test';
 import fs, { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { goalForCards, makeFixture, writeCard, T0, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -112,6 +113,10 @@ interface Covered {
 const differ = (...pairs: Array<[string, unknown, unknown]>): string[] => pairs.filter(([, a, e]) => a !== e).map(([f, a, e]) => `${f} ${String(a)}, expected ${String(e)}`);
 const field = (value: unknown, ...keys: string[]): unknown => keys.reduce<unknown>((v, k) => (v as Record<string, unknown> | undefined)?.[k], value);
 const directiveOf = (value: unknown): string | undefined => (value as { directive?: { kind?: string } } | undefined)?.directive?.kind;
+const pollOf = (value: unknown): { pollSeconds?: number } => {
+  const poll = (value as { directive?: { pollSeconds?: number } } | undefined)?.directive?.pollSeconds;
+  return poll === undefined ? {} : { pollSeconds: poll };
+};
 
 const COVERED: Covered[] = [
   {
@@ -272,6 +277,8 @@ interface Step {
   directive?: string;
   /** The message of a throw (a refusal). */
   threw?: string;
+  /** The `pollSeconds` of a `wait` directive, for the liveness drive. */
+  pollSeconds?: number;
 }
 
 interface Observation {
@@ -377,8 +384,9 @@ async function recover(c: Ctx, log: (msg: string) => void, label: string): Promi
   const steps: Step[] = [];
   const step = async (call: Step['call'], body: () => unknown): Promise<string | undefined> => {
     try {
-      const directive = directiveOf(await body());
-      steps.push({ call, directive });
+      const value = await body();
+      const directive = directiveOf(value);
+      steps.push({ call, directive, ...pollOf(value) });
       return directive;
     } catch (err) {
       steps.push({ call, threw: (err as Error).message });
@@ -395,11 +403,180 @@ async function recover(c: Ctx, log: (msg: string) => void, label: string): Promi
 
 const stepText = (s: Step): string => `${s.call} -> ${s.threw !== undefined ? `refused: ${s.threw}` : (s.directive ?? 'returned')}`;
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Liveness: the drive to rest, the end state and the judge (T1-VERIFY-LIVENESS R1 to R8).
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** R1: the drive ends at one of these kinds, at a kind it has no move for, or after this many `next` calls in all. */
+const AT_REST = new Set(['close', 'done', 'stop']);
+const NEXT_BOUND = 12;
+
+interface DriveStep {
+  call: Step['call'] | 'recordAttempt' | 'wait';
+  directive?: string;
+  threw?: string;
+  pollSeconds?: number;
+  /** The fixture clock before and after a wait. */
+  clock?: [string, string];
+}
+
+/** R2: the one move each directive kind names; every other kind ends the drive. */
+const MOVES: Record<string, { call: DriveStep['call']; move: (c: Ctx, pollSeconds: number | undefined) => unknown }> = {
+  build: { call: 'recordAttempt', move: attempt },
+  'pre-review': { call: 'preReview', move: preReview },
+  review: { call: 'formalReview', move: formalReview },
+  wait: { call: 'wait', move: (c, poll) => c.fx.advance((poll ?? 0) * 1000) },
+};
+
+/**
+ * Continue a run from the recovery's steps (or, for a fault-free `next` command, from its own directive) to rest: after each
+ * `next` the move its directive names; a move that throws is logged and the next `next` follows.
+ */
+async function drive(c: Ctx, prior: Step[], seed?: Step): Promise<{ steps: DriveStep[]; last?: string; nexts: number }> {
+  const steps: DriveStep[] = [...prior];
+  let nexts = prior.filter((s) => s.call === 'next').length;
+  let pending: Step | undefined = prior.length ? (prior.at(-1)!.call === 'next' ? prior.at(-1) : undefined) : seed;
+  let last = [...prior].reverse().find((s) => s.call === 'next' && s.directive !== undefined)?.directive ?? seed?.directive;
+  for (;;) {
+    if (pending?.directive !== undefined) {
+      const named = MOVES[pending.directive];
+      if (AT_REST.has(pending.directive) || !named) break;
+      const before = c.fx.now();
+      try {
+        await named.move(c, pending.pollSeconds);
+        steps.push(named.call === 'wait' ? { call: 'wait', pollSeconds: pending.pollSeconds ?? 0, clock: [before, c.fx.now()] } : { call: named.call });
+      } catch (err) {
+        steps.push({ call: named.call, threw: (err as Error).message });
+      }
+    }
+    if (nexts >= NEXT_BOUND) break;
+    nexts += 1;
+    try {
+      const value = next(c);
+      pending = { call: 'next', directive: directiveOf(value), ...pollOf(value) };
+      last = pending.directive;
+    } catch (err) {
+      pending = { call: 'next', threw: (err as Error).message };
+    }
+    steps.push(pending);
+  }
+  return { steps, last, nexts };
+}
+
+const driveText = (s: DriveStep): string => (s.call === 'wait' ? `wait ${s.pollSeconds ?? 0}s, clock ${s.clock?.[0]} -> ${s.clock?.[1]}` : s.call === 'next' || s.threw !== undefined ? stepText(s as Step) : `${s.call} -> done`);
+
+/** R3: the journal events counted, each by the field that names its outcome or status. */
+const COUNTED_EVENTS: Record<string, string | undefined> = { ATTEMPT_STARTED: undefined, ATTEMPT_FINISHED: 'outcome', PRE_REVIEW_DECIDED: 'outcome', REVIEW_DECIDED: 'outcome', OPERATION_RESULT: 'status', OPERATION_RECONCILED: 'outcome' };
+const byText = (a: unknown, b: unknown): number => JSON.stringify(a).localeCompare(JSON.stringify(b));
+
+function endState(c: Ctx, directive: string | undefined): EndState {
+  const run = c.fx.store.getCardRun(c.goalId, CARD);
+  const events = Journal.forGoal(c.fx.paths.journal, c.goalId).readAll();
+  const requests = c.fx.queue.list().filter((r) => r.requesters.includes(`${c.goalId}:${CARD}`));
+  const intents = new Set(events.filter((e) => e.type === 'OPERATION_INTENT').map((e) => String((e.data as Record<string, unknown>)['operationId'])));
+  const journal: Record<string, number> = {};
+  for (const e of events) {
+    const d = e.data as Record<string, unknown>;
+    if (!(e.type in COUNTED_EVENTS) || DISCARD.test(String(d['decision'] ?? ''))) continue;
+    const by = COUNTED_EVENTS[e.type];
+    const key = by ? `${e.type} ${String(d[by])}` : e.type;
+    journal[key] = (journal[key] ?? 0) + 1;
+  }
+  return {
+    directive: directive ?? null,
+    state: run?.state ?? null,
+    stop: run?.stop?.reason ?? null,
+    mergeVerified: run?.mergeVerified ?? null,
+    attempts: (run?.effort?.attempts ?? []).map((a): [number, string] => [a.n, a.outcome]),
+    terminal: run?.effort?.terminal ?? null,
+    r2: (run?.preReview.rounds ?? []).map((r): [number, number, string] => [r.cycle, r.round, r.outcome]),
+    r3: { invocations: (run?.review.invocations ?? []).map((i): [string, string] => [i.reviewer, i.outcome]), substantiveDecisions: run?.review.substantiveDecisions ?? 0, substantiveBlocks: run?.review.substantiveBlocks ?? 0, noVerdictRetriesUsed: run?.review.noVerdictRetriesUsed ?? 0 },
+    requests: requests.map((r): [string, string] => [r.reviewer, r.state]).sort(byText),
+    activeSlots: [...new Set(requests.map((r) => r.pool))].sort().map((p): [string, number] => [p, c.fx.queue.pool(p, c.fx.now()).active.length]),
+    operations: c.fx.ops.list({ goalId: c.goalId, cardId: CARD }).map((o): [string, string, boolean] => [o.kind, o.status, intents.has(o.id)]).sort(byText),
+    journal,
+  };
+}
+
+/** Each differing path with its fault-free and observed value; a journal count absent on one side is 0. */
+type Difference = Record<string, [unknown, unknown]>;
+function difference(faultFree: EndState, observed: EndState): Difference {
+  const out: Difference = {};
+  const put = (at: string, a: unknown, b: unknown) => {
+    if (!isDeepStrictEqual(a, b)) out[at] = [a, b];
+  };
+  for (const key of Object.keys(faultFree) as Array<keyof EndState>) {
+    if (key === 'r3') for (const k of Object.keys(faultFree.r3) as Array<keyof EndState['r3']>) put(`r3.${k}`, faultFree.r3[k], observed.r3[k]);
+    else if (key === 'journal') for (const k of [...new Set([...Object.keys(faultFree.journal), ...Object.keys(observed.journal)])].sort()) put(`journal.${k}`, faultFree.journal[k] ?? 0, observed.journal[k] ?? 0);
+    else put(key, faultFree[key], observed[key]);
+  }
+  return out;
+}
+
+/** One fault run at rest, with its command's fault-free end state and the drive's steps (the recovery's included). */
+interface Rested {
+  faultPoint: string;
+  faultFree: EndState;
+  end: EndState;
+  steps: DriveStep[];
+}
+
+/** A known violation: the fault point, its exact difference, the hypothesis it confirms, and the counterexample. */
+interface Pin {
+  faultPoint: string;
+  difference: Difference;
+  hypothesis: string;
+  counterexample: string;
+  /** The step docs/OPERATIONS.md assigns to a person for this state. */
+  docRecovery?: string;
+}
+
+const diffText = (d: Difference): string => Object.entries(d).map(([at, [a, b]]) => `${at} fault-free ${JSON.stringify(a)}, observed ${JSON.stringify(b)}`).join('; ');
+
+/** R5, R6: unpinned differences, and pins that reach the fault-free end state, differ otherwise or name no counted fault point. */
+function judge(observed: Rested[], pins: Pin[]): { unpinned: string[]; stale: string[] } {
+  const unpinned: string[] = [];
+  const stale: string[] = [];
+  for (const o of observed) {
+    const diff = difference(o.faultFree, o.end);
+    const pin = pins.find((p) => p.faultPoint === o.faultPoint);
+    const trail = `drive: ${o.steps.map(driveText).join(', ')}`;
+    if (!pin) {
+      if (Object.keys(diff).length) unpinned.push(`${o.faultPoint}: ${diffText(diff)}; ${trail}`);
+    } else if (!Object.keys(diff).length) {
+      stale.push(`pin ${pin.faultPoint} (${pin.hypothesis}): the fault point reaches the fault-free end state; remove the pin; ${trail}`);
+    } else if (!isDeepStrictEqual(pin.difference, diff)) {
+      stale.push(`pin ${pin.faultPoint} (${pin.hypothesis}): the difference changed: pinned ${diffText(pin.difference)}; observed ${diffText(diff)}; ${trail}`);
+    }
+  }
+  for (const pin of pins) if (!observed.some((o) => o.faultPoint === pin.faultPoint)) stale.push(`pin ${pin.faultPoint} (${pin.hypothesis}): no counted fault point has this name`);
+  return { unpinned, stale };
+}
+
+/** R7: `<stage>/record <n>` for the n-th card-run record write, `<stage>/append <EVENT>[ <n>]` for a journal append. */
+function pointName(stage: Stage, points: FaultPoint[], k: number): string {
+  const p = points[k - 1]!;
+  const upTo = points.slice(0, k);
+  if (p.call === 'renameSync') return `${stage}/record ${upTo.filter((q) => q.call === 'renameSync').length}`;
+  const same = (q: FaultPoint) => q.call === 'appendFileSync' && q.event === p.event;
+  return `${stage}/append ${p.event ?? 'unparsed'}${points.filter(same).length > 1 ? ` ${upTo.filter(same).length}` : ''}`;
+}
+
+/** Where a covered command's liveness runs land: its fault-free run at rest, the count of its fault points, each fault run at rest. */
+interface Rest {
+  faultFree?: { end: EndState; steps: DriveStep[]; nexts: number };
+  counted: number;
+  points: Rested[];
+}
+
+/** R5: the violations the base reproduces, each with its counterexample; a fix removes its pin. */
+const KNOWN_VIOLATIONS: Pin[] = [];
+
 /**
  * Count the fault points of `cmd` on a fault-free run, then fail each one on a fresh fixture, recover (unless `recovery`
  * is false) and check the invariants after the faulted command and after the recovery.
  */
-async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: string) => void, recovery = true): Promise<Enumerated> {
+async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: string) => void, recovery = true, rest?: Rest): Promise<Enumerated> {
   const counted = await start();
   let points: FaultPoint[];
   const violations: string[] = [];
@@ -413,6 +590,13 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
     if (res.error) violations.push(`${label}; the command threw: ${res.error.message}`);
     for (const e of cmd.ends(res.value, obs.run, obs.spawned.ship)) violations.push(`${label}; end state: ${e}`);
     for (const x of check(obs)) violations.push(`${label}; recovery: none; after the command: ${x}`);
+    if (rest) {
+      // Liveness (R1): the fault-free run continues to rest; a `next` command's own directive is the drive's first.
+      const seed: Step | undefined = cmd.run === next ? { call: 'next', directive: directiveOf(res.value), ...pollOf(res.value) } : undefined;
+      const d = await drive(counted, [], seed);
+      rest.faultFree = { end: endState(counted, d.last), steps: d.steps, nexts: d.nexts };
+      rest.counted = points.length;
+    }
   } finally {
     counted.fx.cleanup();
   }
@@ -429,8 +613,9 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
       const afterCommand = check(observe(c, base, { steps: [], deadline: false }));
       let afterRecovery: string[] = [];
       let trail = 'none';
+      let steps: Step[] = [];
       if (recovery) {
-        const steps = await recover(c, log, label);
+        steps = await recover(c, log, label);
         const last = [...steps].reverse().find((s) => s.call === 'next')?.directive;
         trail = steps.map(stepText).join(', ');
         afterRecovery = check(observe(c, base, { steps, deadline: Boolean(cmd.deadline), lastDirective: last }));
@@ -438,6 +623,11 @@ async function enumerate(cmd: Covered, start: () => Promise<Ctx>, log: (msg: str
       const found = [...afterCommand.map((x) => `${label}; ${outcome}; recovery: ${trail}; after the command: ${x}`), ...afterRecovery.map((x) => `${label}; ${outcome}; recovery: ${trail}; after the recovery: ${x}`)];
       if (found.length) reported.push(k);
       violations.push(...found);
+      if (rest?.faultFree && recovery) {
+        // Liveness (R1): after the recovery the run continues to rest and is compared with the fault-free run's end state.
+        const d = await drive(c, steps);
+        rest.points.push({ faultPoint: pointName(cmd.stage, points, k), faultFree: rest.faultFree.end, end: endState(c, d.last), steps: d.steps });
+      }
     } finally {
       c.fx.cleanup();
     }
@@ -480,20 +670,88 @@ const DOC_SENTENCES = [
 
 const CHANGELOG_ENTRY = '- T1-VERIFY-FAULT-POINTS: `tests/scenarios/fault-points.test.ts` fails each card-run record write and goal journal append of `card attempt`, `review pre`, `review r3` and two `card next` steps (the ship to CLOSE and the deadline stop) one at a time, takes the card\'s next step, and checks six invariants over the card run and the goal journal; a self-test shows that it reports a component that journals a decision before it writes the record.';
 
+const LIVENESS_SENTENCES = [
+  'The liveness check (card T1-VERIFY-LIVENESS) continues each fault run until `card next` returns `close`, `done` or `stop`, or for 12 `card next` calls, taking the move each directive names (`card attempt`, `review pre`, `review r3`, or a wait of `pollSeconds` on the fixture clock), and compares the end state with the fault-free run\'s: the card state and stop, the attempts, both review ledgers, the review-pool requests and slots, the card\'s operations and the decision events of the journal.',
+  'A fault point whose end state differs fails the test unless `KNOWN_VIOLATIONS` in the test file pins it with that difference and its counterexample; a pin that no longer reproduces fails the test too, so a fix removes its pin in the same change.',
+  'Each pin is a defect to file as a T0-bugfix card, except where the pin names a recovery these docs assign to a person, such as `aidlc ops reconcile` for an operation left `issued`.',
+];
+
+const LIVENESS_CHANGELOG_ENTRY = '- T1-VERIFY-LIVENESS: the fault-point test continues each fault run to rest and fails when the card does not reach the fault-free end state (card state, attempts, review ledgers, review-pool slots, operations, journal decisions), apart from the violations pinned in `KNOWN_VIOLATIONS` with their counterexamples; a pin that no longer reproduces fails the test.';
+
 const lf = (file: string): string => readFileSync(path.join(root, file), 'utf8').replace(/\r\n/g, '\n');
 
 // ---------------------------------------------------------------------------------------------------------------------
 
 describe('fault-point check: each card-run write and journal append of five commands fails in turn (T1-VERIFY-FAULT-POINTS)', { timeout: 30_000 }, () => {
+  const rested = new Map<Stage, Rest>();
   for (const cmd of COVERED) {
     it(`${cmd.name}: the fault-free run has fault points and no violation, and every fault point and its recovery keep I1 to I6 [R1] [R2] [R3]`, async (t) => {
-      const out = await enumerate(cmd, () => startAt(cmd.stage), (msg) => t.diagnostic(msg));
+      const rest: Rest = { counted: 0, points: [] };
+      rested.set(cmd.stage, rest);
+      const out = await enumerate(cmd, () => startAt(cmd.stage), (msg) => t.diagnostic(msg), true, rest);
       t.diagnostic(`${cmd.name}: ${out.points.length} fault points: ${out.points.map((p, n) => `${n + 1} ${describePoint(p)}`).join('; ')}`);
       assert.ok(out.points.some((p) => p.call === 'renameSync'), 'at least one card-run record write');
       assert.ok(out.points.some((p) => p.call === 'appendFileSync'), 'at least one goal journal append');
       assert.deepEqual(out.violations, []);
     });
+
+    it(`${cmd.name}: the fault-free run rests at ${cmd.deadline ? 'stop with FAULT_FREE_TIME' : 'close with FAULT_FREE_CLOSE'} inside ${NEXT_BOUND} next calls [R1] [R3] [R4]`, () => {
+      const ff = rested.get(cmd.stage)?.faultFree;
+      assert.ok(ff, `${cmd.name}: the fault-free run was driven`);
+      const trail = `drive: ${ff.steps.map(driveText).join(', ')}`;
+      assert.deepEqual(ff.end, cmd.deadline ? FAULT_FREE_TIME : FAULT_FREE_CLOSE, trail);
+      assert.ok(ff.nexts <= NEXT_BOUND, `${ff.nexts} next calls; ${trail}`);
+    });
   }
+
+  it('every fault point of A to E reaches its command\'s fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]', () => {
+    assert.deepEqual([...rested.keys()], COVERED.map((c) => c.stage));
+    for (const [stage, rest] of rested) assert.ok(rest.counted > 0 && rest.points.length === rest.counted, `${stage}: ${rest.points.length} of ${rest.counted} fault points driven to rest`);
+    const observed = [...rested.values()].flatMap((r) => r.points);
+    assert.deepEqual(judge(observed, KNOWN_VIOLATIONS), { unpinned: [], stale: [] });
+  });
+
+  it('every pin names a fault point, a difference, its hypothesis and a counterexample, and a documented recovery where it names one [R5]', () => {
+    const ops = lf('docs/OPERATIONS.md');
+    for (const pin of KNOWN_VIOLATIONS) {
+      assert.match(pin.faultPoint, /^[A-E]\/(record \d+|append [A-Z_]+( \d+)?)$/, pin.faultPoint);
+      assert.ok(Object.keys(pin.difference).length > 0, `${pin.faultPoint}: a difference`);
+      assert.match(pin.hypothesis, /^(H([1-9]|10)|new)$/, `${pin.faultPoint}: ${pin.hypothesis}`);
+      assert.ok(pin.counterexample.length > 80, `${pin.faultPoint}: a counterexample`);
+      if (pin.docRecovery !== undefined) assert.ok(ops.includes(pin.docRecovery), `${pin.faultPoint}: docs/OPERATIONS.md names ${pin.docRecovery}`);
+    }
+    assert.equal(new Set(KNOWN_VIOLATIONS.map((p) => p.faultPoint)).size, KNOWN_VIOLATIONS.length, 'one pin per fault point');
+  });
+
+  it('the judge reports an unpinned difference, a pin now at the fault-free end state, a pin whose difference changed and a pin on an uncounted fault point, and nothing for a matching pin [R8]', () => {
+    const at = (faultPoint: string, end: EndState): Rested => ({ faultPoint, faultFree: FAULT_FREE_CLOSE, end, steps: [{ call: 'next', directive: end.directive ?? undefined }] });
+    const stuck: EndState = { ...FAULT_FREE_CLOSE, directive: 'review', state: 'SHIP' };
+    const doubled: EndState = { ...FAULT_FREE_CLOSE, journal: { ...FAULT_FREE_CLOSE.journal, 'ATTEMPT_FINISHED success': 2 } };
+    const pin = (faultPoint: string, difference: Difference): Pin => ({ faultPoint, difference, hypothesis: 'new', counterexample: 'hand-built' });
+    const verdict = judge(
+      [at('X/append NOTE', stuck), at('Y/record 1', FAULT_FREE_CLOSE), at('Z/record 2', doubled), at('M/record 3', stuck)],
+      [pin('Y/record 1', { state: ['CLOSE', 'SHIP'] }), pin('Z/record 2', { state: ['CLOSE', 'SHIP'] }), pin('M/record 3', { directive: ['close', 'review'], state: ['CLOSE', 'SHIP'] }), pin('Q/record 9', { state: ['CLOSE', 'SHIP'] })],
+    );
+    assert.deepEqual(verdict.unpinned, ['X/append NOTE: directive fault-free "close", observed "review"; state fault-free "CLOSE", observed "SHIP"; drive: next -> review']);
+    assert.equal(verdict.stale.length, 3, verdict.stale.join('\n'));
+    assert.match(verdict.stale[0]!, /^pin Y\/record 1 \(new\): the fault point reaches the fault-free end state/);
+    assert.match(verdict.stale[1]!, /^pin Z\/record 2 \(new\): the difference changed: pinned state fault-free "CLOSE", observed "SHIP"; observed journal\.ATTEMPT_FINISHED success fault-free 1, observed 2; drive: next -> close$/);
+    assert.match(verdict.stale[2]!, /^pin Q\/record 9 \(new\): no counted fault point has this name$/);
+  });
+
+  it('fault points are named by command and call, uniquely per command, and the drive takes the build and wait moves on the base [R2] [R7]', () => {
+    for (const [stage, rest] of rested) {
+      const names = rest.points.map((p) => p.faultPoint);
+      for (const n of names) assert.match(n, new RegExp(`^${stage}/(record \\d+|append [A-Z_]+( \\d+)?)$`), n);
+      assert.equal(new Set(names).size, names.length, `${stage}: ${names.join(', ')}`);
+    }
+    const point = (name: string) => [...rested.values()].flatMap((r) => r.points).find((p) => p.faultPoint === name);
+    const a = point('A/record 1');
+    assert.ok(a?.steps.some((s, n) => s.call === 'recordAttempt' && s.threw === undefined && a.steps[n - 1]?.directive === 'build'), a?.steps.map(driveText).join(', '));
+    const b = point('B/record 2');
+    const waits = b?.steps.filter((s) => s.call === 'wait') ?? [];
+    assert.ok(waits.length > 0 && waits.every((s) => s.clock !== undefined && Date.parse(s.clock[1]) - Date.parse(s.clock[0]) === (s.pollSeconds ?? 0) * 1000) && waits.some((s) => (s.pollSeconds ?? 0) > 0), b?.steps.map(driveText).join(', '));
+  });
 
   it('the enumerator and I3 report a component that journals a decision before its record at exactly k = 2, and its in-order twin at none [R4]', async (t) => {
     const log = (msg: string) => t.diagnostic(msg);
@@ -579,5 +837,18 @@ describe('fault-point check: each card-run write and journal append of five comm
     const start = changelog.indexOf('## Unreleased');
     const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
     assert.ok(unreleased.split('\n').includes(CHANGELOG_ENTRY), CHANGELOG_ENTRY);
+  });
+
+  LIVENESS_SENTENCES.forEach((sentence, n) => {
+    it(`docs/OPERATIONS.md Fault-point check states sentence ${n + 1} of the liveness doc text (T1-VERIFY-LIVENESS) [R9]`, () => {
+      assert.ok(section().includes(sentence), sentence);
+    });
+  });
+
+  it('the CHANGELOG Unreleased section carries the T1-VERIFY-LIVENESS entry [R10]', () => {
+    const changelog = lf('CHANGELOG.md');
+    const start = changelog.indexOf('## Unreleased');
+    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    assert.ok(unreleased.split('\n').includes(LIVENESS_CHANGELOG_ENTRY), LIVENESS_CHANGELOG_ENTRY);
   });
 });
