@@ -122,19 +122,19 @@ GREEN (cd8aa09, Windows, same environment): the dod_command exited 0; typecheck 
 Admission order with a key (review-queue.ts `admit`):
 1. A pool `resetAt` still ahead returns `reset-pending`, no write.
 2. The active slots are filtered to `running` and `lost` requests; with no free slot `admit` returns `busy`, writing the pool only when the filter dropped an entry.
-3. The pool's `queued` and `retry-after` requests are read in persisted `seq` order. One past its deadline is written `cancelled` (`deadline passed before admission`) and skipped; a `retry-after` request not yet due is skipped; each other request that is not the caller's counts as ahead. Once the count reaches the free slots, `admit` returns `behind` naming the first request ahead (key and requesters), writing the pool only when step 2 dropped an entry.
-4. The caller's request, reached with a free slot left for it, is written `running` (slotOwner the caller, attempts + 1), then added to the pool's active slots.
-5. No caller request reached: `empty`, after the same cleanup.
+3. The pool's `queued` and `retry-after` requests are read in persisted `seq` order. One past its deadline is skipped: before the first eligible request it is written `cancelled` (`deadline passed before admission`) at once, as the keyless call writes it; after the first eligible request (keyed calls only) its cancellation is held for step 4 (R3 decision 1 F1). A `retry-after` request not yet due is skipped; each other request that is not the caller's counts as ahead. Once the count reaches the free slots, `admit` returns `behind` naming the first request ahead (key and requesters), drops the held cancellations, and writes the pool only when step 2 dropped an entry.
+4. The caller's request, reached with a free slot left for it: the held cancellations are written, then the request is written `running` (slotOwner the caller, attempts + 1), then added to the pool's active slots.
+5. No caller request reached: `empty`, after the same cleanup; held cancellations are dropped.
 Without a key step 3 counts nothing ahead, so the first eligible request is admitted, as at e8cd3c2.
 
 Queue states a keyed call can produce:
 - `admitted`: the caller's request, `queued` or a due `retry-after`, becomes `running` and holds a slot; every other request keeps its state and `seq`.
-- `behind`: the caller's request stays `queued` (or `retry-after`) behind the named request; the request ahead and every other request keep state and `seq`. The only other writes are the `cancelled` of requests met before the stop and past their deadline, which a keyless call cancels on its way too, and the slot cleanup. Acceptance 1 pins the requests and the pool deep-equal before and after.
+- `behind`: the caller's request stays `queued` (or `retry-after`) behind the named request; the request ahead and every other request keep state and `seq`. The only other writes are the `cancelled` of requests past their deadline that stand before the first eligible request, which the keyless call at the same moment writes too, and the slot cleanup R1 names. Acceptance 1 pins the requests and the pool deep-equal before and after; the F1 tests pin every request file byte-identical to the keyless call's (see Repair attempt 2).
 - `busy`, `reset-pending`, `empty`: as at e8cd3c2.
 - `admitReview`: a request ahead whose only requester is this card becomes `completed` (verdictRef `superseded by a newer candidate of the same card`) and the card asks again with its key, at most 10 times; a request ahead with any other requester is never completed, and the card returns `behind`, leaving it `queued`.
 - A keyed call never writes `running` onto another card's request (acceptance 3 and 4: Y's request stays `queued` and the pool has no active slot after Z's call).
 
-Sweep (git grep at cd8aa09): `queue.admit(` in src only at card-runner.ts:2301 and :2304, both in `admitReview`, both keyed; `admitReview(` is called only from the ship (:1001) and `review r3` (:1587). Keyless calls remain only in tests (tests/infra/review-queue.test.ts, two-windows.test.ts, t0-flow.test.ts, op-intent-dup.test.ts and the fixture of the new scenario file), unchanged.
+Sweep (git grep at cd8aa09; lines at 68ab7fa): `queue.admit(` in src only at card-runner.ts:2302 and :2305, both in `admitReview`, both keyed; `admitReview(` is called only from the ship (:1001) and `review r3` (:1588). Keyless calls remain only in tests (tests/infra/review-queue.test.ts, two-windows.test.ts, t0-flow.test.ts, op-intent-dup.test.ts and the fixture of the new scenario file), unchanged.
 
 Mutation sweep (each applied alone to the GREEN tree, run against tests/infra/review-queue.test.ts, tests/scenarios/review-admit-foreign.test.ts and tests/scenarios/two-windows.test.ts, then restored; none committed):
 
@@ -156,7 +156,29 @@ Mutation sweep (each applied alone to the GREEN tree, run against tests/infra/re
 | M13 the ask after a supersede passes no key | acceptance 5 (own key after a supersede) |
 | M14 the key filter applies without a key | acceptance 2, 3, 4 and five existing queue tests |
 | M15 supersede at most once | acceptance 5 (two stale candidates) |
+| M16 cancel an expired request behind an eligible one at once (the f42b02d code) | F1 (between; several; stale slot) |
+| M17 drop the held cancellations on admission | F1 (admitted) |
+| M18 hold every cancellation, also before the first eligible request | F1 (before; several) |
+| M19 write the held cancellations on `behind` | F1 (between; several; stale slot) |
+| M20 no slot cleanup on `behind` | F1 (stale slot) |
 
 Survivors: none.
 
 verify-card-run-writes: src/loop/card-runner.ts changed since the sync commit 71826c8, with no card-run record write or journal append added, removed or reordered (the supersede and the admission write only review-queue files, outside the check's coverage); tests/scenarios/fault-points.test.ts passes unchanged. Outcome: in sync; the sync commit moves only on main.
+
+### Repair attempt 2 (REVIEW_FIX, R3 decision 1)
+F1 (behind-extra-deadline-write): with two free slots and queued order Y, expired X, W, Z, `admit(..., keyZ)` at f42b02d cancelled X and then answered `behind`, while the keyless call stops at Y and never touches X. Fix (68ab7fa): a cancellation met after the first eligible request is held and written only when the call admits its own request; on `behind` (and `empty`) it is dropped.
+
+RED, the new tests on f42b02d with the test change uncommitted (`node --test --test-name-pattern "R3 decision 1 F1" tests/infra/review-queue.test.ts`): exit 1, 7 tests, 4 pass, 3 fail, duration_ms 752. First failing line:
+`not ok 2 - T0-REVIEW-ADMIT-FOREIGN R3 decision 1 F1: behind leaves the queue as the keyless call leaves it apart from its admission, an expired request between the first eligible one and the caller (the F1 order) [R1]`
+The diff shows X's file with `"lastError": "deadline passed before admission"` in the keyed run only. The other two failures are the several-expired and stale-slot orders; the before, after and one-slot orders and the admitted case pass on f42b02d.
+
+Class sweep, every write a keyed `admit` makes on `behind`, against the forbid ("a write by `admit` with a key when it returns `behind`, beyond what the same call without a key would write before reaching its candidates") and R1 ("no write beyond the deadline cancellations and the active-slot cleanup"):
+- Deadline cancellations: only those before the first eligible request, the ones the keyless call writes before the request it admits. The tests build three identical queues (before, keyless, keyed) for six orders (expired before the first eligible request; between it and the caller; after the caller; several before, between and after; a one-slot pool; a stale active slot) and assert every request file of the keyed run byte-identical to the keyless run's, with the request the keyless call admitted restored to its file before the call.
+- Slot cleanup: the pool is written only when a slot entry is no longer `running` or `lost`; its active slots equal the keyless call's without the one it admitted, and the pool file is byte-identical to the one before the call when no entry needed cleaning (the five orders without a stale slot). This is the cleanup R1 and the Design section name; the keyless call writes the same cleaned list in its own pool write.
+- Superseding is not a write of `admit`: `admitReview` completes, through `complete`, only a request ahead whose requesters are all this card, then asks again with its key (acceptance 5).
+- Admission: none on `behind`.
+
+R2 note taken: `admitReview` always asks with its key, so the `admit.request.key !== key` half of the ship wait guard (card-runner.ts:1003) and the `occupied by another request` branch of the `review r3` refusal (:1589) could not be reached and are removed; no test pinned either text.
+
+GREEN (68ab7fa, Windows, CLAUDE_CODE_SESSION_ID and AIDLC_SESSION unset): the dod_command exited 0; typecheck clean; 451 tests, 451 pass, 0 fail; duration_ms 41548. Linux (WSL clone of the branch at 68ab7fa): typecheck exit 0, 451 tests, 451 pass, 0 fail, duration_ms 31161. `npm test` (Windows, CLAUDE_CODE_SESSION_ID unset): exit 0, 1569 tests, 1563 pass, 0 fail, 6 skipped, duration_ms 66112. Mutation sweep rerun on 68ab7fa: M1 to M20, none survive (table above).
