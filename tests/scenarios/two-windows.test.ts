@@ -6,10 +6,10 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, actorA, actorB, T0, type Fixture } from './_harness.ts';
-import { setActorForTests } from '../../src/state/journal.ts';
+import { Journal, setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
 import { DEFAULT_LEASE_TTL_MS, FencedError, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
-import { MINUTE_MS, addMs } from '../../src/core/types.ts';
+import { MINUTE_MS, addMs, type ActorIdentity } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
@@ -1697,6 +1697,7 @@ test('T0-GOAL-CLOSE-LEASE acceptance 1: a goal whose lease expired under the int
     assert.equal(takeovers.length, 1);
     assert.equal(takeovers[0]!.data['previousOwner'], 'win-A');
     assert.equal(takeovers[0]!.data['leaseGeneration'], 1);
+    assert.equal(takeovers[0]!.data['previousGeneration'], 0);
     assert.ok(types.indexOf('GOAL_TAKEOVER') < types.indexOf('GOAL_DONE'), 'the takeover is journaled before GOAL_DONE');
   } finally {
     setActorForTests(actorA);
@@ -1742,19 +1743,103 @@ test('T0-GOAL-CLOSE-LEASE acceptance 4: a refused takeover of the expired goal l
   try {
     const { goalId, goalKey } = closableGoal(fx);
     const before = fx.leases.read(goalKey);
-    // An operation of the goal recorded after the closing `next` passed its reconcile check, just before the takeover reads the ledger.
-    const takeover = fx.leases.takeover.bind(fx.leases);
-    fx.leases.takeover = (...args: Parameters<typeof takeover>) => {
+    // An operation of the goal recorded after the closing `next` passed its reconcile check, just before the close's lease section reads the ledger.
+    const update = fx.leases.update.bind(fx.leases);
+    fx.leases.update = (...args: Parameters<typeof update>) => {
       fx.ops.recordIntent({ kind: 'merge', goalId, cardId: 'T1-HELLO', target: 'main', candidateDigest: 'c1', ownerGeneration: 0, timeoutMs: 1000 }, fx.now());
-      return takeover(...args);
+      fx.leases.update = update;
+      return update(...args);
     };
     setActorForTests(actorB);
     assert.throws(() => fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} }), /takeover refused/);
     assert.equal(fx.goal(goalId).state, 'CLOSE');
-    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_DONE' || e.type === 'GOAL_TAKEOVER'));
+    assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_DONE' || e.type === 'GOAL_TAKEOVER' || e.data['kind'] === 'goal-close-takeover-intent'));
     assert.deepEqual(fx.leases.read(goalKey), before);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
+  }
+});
+
+test('T0-GOAL-CLOSE-LEASE acceptance 7: a close interrupted at the intent append, the GOAL_TAKEOVER append or the release write leaves the goal CLOSE, and the next call completes it with one GOAL_TAKEOVER and the lease released [R5]', () => {
+  for (const failAt of ['intent', 'takeover', 'release'] as const) {
+    const fx = makeFixture({ actor: actorA });
+    const append = Journal.prototype.append;
+    try {
+      const { goalId, goalKey } = closableGoal(fx);
+      const before = fx.leases.read(goalKey);
+      const update = fx.leases.update.bind(fx.leases);
+      if (failAt === 'release') {
+        // The second lease section (the release) runs its change, then its write fails.
+        let calls = 0;
+        fx.leases.update = (...args: Parameters<typeof update>) => (++calls === 2 ? update(args[0], (existing) => {
+          args[1](existing);
+          throw new Error('injected release write failure');
+        }) : update(...args));
+      } else {
+        const failing = failAt === 'intent' ? (type: string, kind: unknown) => type === 'NOTE' && kind === 'goal-close-takeover-intent' : (type: string) => type === 'GOAL_TAKEOVER';
+        Journal.prototype.append = function (this: Journal, input: Parameters<typeof append>[0]) {
+          if (failing(input.type, input.data?.['kind'])) {
+            Journal.prototype.append = append;
+            throw new Error(`injected ${failAt} append failure`);
+          }
+          return append.call(this, input);
+        };
+      }
+      setActorForTests(actorB);
+      assert.throws(() => fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} }), /injected/, failAt);
+      Journal.prototype.append = append;
+      fx.leases.update = update;
+      assert.equal(fx.goal(goalId).state, 'CLOSE', failAt);
+      assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_DONE'), failAt);
+      if (failAt === 'intent') assert.deepEqual(fx.leases.read(goalKey), before, 'a failed intent append writes no lease');
+      else assert.equal(fx.leases.read(goalKey)?.owner.session, 'win-B', `${failAt}: the takeover landed`);
+
+      const d = fx.controller.next(goalId);
+      assert.equal(d.kind, 'done', `${failAt}: ${d.narration}`);
+      const lease = fx.leases.read(goalKey);
+      assert.equal(lease?.owner.session, 'win-B', failAt);
+      assert.equal(lease?.generation, 1, failAt);
+      assert.equal(lease?.released, true, failAt);
+      const takeovers = fx.events(goalId).filter((e) => e.type === 'GOAL_TAKEOVER');
+      assert.equal(takeovers.length, 1, `${failAt}: one GOAL_TAKEOVER`);
+      assert.equal(takeovers[0]!.data['previousOwner'], 'win-A', failAt);
+    } finally {
+      Journal.prototype.append = append;
+      setActorForTests(actorA);
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-GOAL-CLOSE-LEASE acceptance 8: a goal lease another session takes between the ownership check and the close is judged on the locked record: released, it is left as it is; live, the close is refused and the goal stays CLOSE [R6]', () => {
+  const actorC: ActorIdentity = { session: 'win-C', pid: 3, processStart: T0, host: 'h' };
+  for (const released of [true, false]) {
+    const fx = makeFixture({ actor: actorA });
+    try {
+      const { goalId, goalKey } = closableGoal(fx);
+      const update = fx.leases.update.bind(fx.leases);
+      fx.leases.update = (...args: Parameters<typeof update>) => {
+        fx.leases.update = update;
+        update(goalKey, (existing) => ({ ...fx.leases.successor(goalKey, existing, { actor: actorC, now: fx.now() }), released }));
+        return update(...args);
+      };
+      setActorForTests(actorB);
+      if (released) {
+        const { directive } = fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} });
+        assert.equal(directive.kind, 'done', directive.narration);
+      } else {
+        assert.throws(() => fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: {} }), /still held by win-C/);
+        assert.equal(fx.goal(goalId).state, 'CLOSE');
+      }
+      const lease = fx.leases.read(goalKey);
+      assert.equal(lease?.owner.session, 'win-C', `released=${released}`);
+      assert.equal(lease?.generation, 1, `released=${released}`);
+      assert.equal(lease?.released, released);
+      assert.ok(!fx.events(goalId).some((e) => e.type === 'GOAL_TAKEOVER' || e.data['kind'] === 'goal-close-takeover-intent'), `released=${released}`);
+    } finally {
+      setActorForTests(actorA);
+      fx.cleanup();
+    }
   }
 });
