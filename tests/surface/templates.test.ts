@@ -339,3 +339,167 @@ describe('T1-EFF-AGENTS-DOD: agent model and effort, the implementer effort rule
     assert.match(unreleased, /^- T1-EFF-AGENTS-DOD: /m);
   });
 });
+
+describe('T1-VERIFY-SKILL: the verify-card-run-writes skill, the card-loop rule for project verify skills and their docs', () => {
+  const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+  const SKILL = '.claude/skills/verify-card-run-writes/SKILL.md';
+  const CHECK = 'tests/scenarios/fault-points.test.ts';
+  const HEADINGS = ['Property', 'Coverage', 'Run', 'Bounds and assumptions', 'Not covered', 'Shown failing', 'Bug or modelling error', 'Findings', 'Extending the check', 'Keeping in sync'];
+  /** The body of the `## <heading>` section of `text`, up to the next `## ` heading or the end. */
+  const section = (text: string, heading: string): string => {
+    const at = text.indexOf(`\n## ${heading}\n`);
+    assert.ok(at >= 0, `## ${heading} missing`);
+    const end = text.indexOf('\n## ', at + 1);
+    return text.slice(at + `\n## ${heading}\n`.length, end < 0 ? undefined : end);
+  };
+  const spansOf = (text: string): string[] => [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!);
+  const isPath = (span: string): boolean => /^[\w.-]+(\/[\w.-]+)+$/.test(span);
+  const fences = (text: string): string[] => [...text.matchAll(/```[a-z]*\n([\s\S]*?)```/g)].map((m) => m[1]!);
+  /** One sentence: ends with a full stop, and no full stop, `!` or `?` before it is followed by a space and a capital letter or a backtick. */
+  const oneSentence = (text: string): boolean => /\.$/.test(text) && !/[.!?]["')\]]*\s+["'(`]*[A-Z`]/.test(text.slice(0, -1));
+  /** Coverage lines `- \`path\`: \`Function\`, \`Class.method\``, as the path and the names after it. */
+  const coverage = (body: string): Array<{ file: string; names: string[] }> =>
+    body.split('\n').filter((l) => l.startsWith('- `')).map((l) => {
+      const [file, ...names] = spansOf(l);
+      return { file: file!, names };
+    });
+
+  test('acceptance 1: the skill exists, is ASCII and at most 8000 bytes, its front matter names it and says what it covers and when to use it, and it carries no placeholder [R1]', () => {
+    const file = path.join(root, SKILL);
+    assert.ok(existsSync(file), `${SKILL} missing`);
+    assert.ok(statSync(file).size <= 8000, `${SKILL} is ${statSync(file).size} bytes > 8000`);
+    const text = read(SKILL);
+    assert.ok(!/[^\x00-\x7F]/.test(text), `${SKILL} must be ASCII`);
+    assert.ok(text.startsWith('---\nname: verify-card-run-writes\n'), 'front matter opens with name: verify-card-run-writes');
+    const front = text.slice(4, text.indexOf('\n---\n', 4));
+    const description = (front.split(/\n(?=\S)/).find((k) => k.startsWith('description:')) ?? '').replace(/\s+/g, ' ');
+    assert.ok(description.includes('card-run'), `the description names the card-run write protocol: ${description}`);
+    assert.ok(description.includes('Use when'), `the description says when to use the skill: ${description}`);
+    for (const marker of [/\bTODO\b/, /\bTBD\b/, /\bFIXME\b/, /<[A-Za-z][^<>\n]*>/]) assert.ok(!marker.test(text), `${SKILL} carries a placeholder: ${marker}`);
+  });
+
+  test('acceptance 2: the skill has the ten sections, the property and harm in one sentence each, the run command with its runtime, what it leaves out, where findings go and the four drift outcomes [R2]', () => {
+    const text = read(SKILL);
+    for (const heading of HEADINGS) assert.ok(text.includes(`\n## ${heading}\n`), `## ${heading} missing`);
+    const property = section(text, 'Property').split('\n');
+    for (const key of ['Property', 'Harm']) {
+      const lines = property.filter((l) => l.startsWith(`${key}:`));
+      assert.equal(lines.length, 1, `one ${key}: line`);
+      assert.ok(oneSentence(lines[0]!.slice(key.length + 1).trim()), `${key}: is one sentence: ${lines[0]}`);
+    }
+    const run = section(text, 'Run');
+    assert.deepEqual(fences(run).map((b) => b.trim()), [`node --test ${CHECK}`], 'Run has one fenced block holding the check command');
+    assert.match(run.replace(/```[\s\S]*?```/g, ''), /\b\d+(\.\d+)? ?(s|seconds)\b/, 'Run states the runtime in seconds');
+    const notCovered = section(text, 'Not covered').replace(/\s+/g, ' ');
+    assert.match(notCovered, /\blease\b/i, 'Not covered names the lease');
+    assert.match(notCovered, /\breview[- ]queue\b/i, 'Not covered names the review queue');
+    assert.match(notCovered, /more than one fault per run/i, 'Not covered names more than one fault per run');
+    assert.ok(section(text, 'Findings').includes('T0-bugfix'), 'Findings names a T0-bugfix card');
+    const sync = section(text, 'Keeping in sync').replace(/\s+/g, ' ');
+    for (const outcome of ['in sync', 'updated', 'bug', 'blocked']) assert.match(sync, new RegExp(`\\b${outcome}\\b`), `Keeping in sync names the outcome ${outcome}`);
+  });
+
+  test('acceptance 3: the coverage record names one sync commit and only existing files, functions found in them and CardRunner methods the check drives [R3] [R4]', () => {
+    const body = section(read(SKILL), 'Coverage');
+    const sync = body.split('\n').filter((l) => l.startsWith('Sync commit:'));
+    assert.equal(sync.length, 1, 'one Sync commit: line');
+    assert.match(sync[0]!, /^Sync commit: `[0-9a-f]{40}`$/, 'the sync commit is a full 40-hex sha in backticks');
+    const paths = spansOf(body).filter(isPath);
+    for (const p of paths) assert.ok(existsSync(path.join(root, p)), `${p} does not exist`);
+    for (const p of [CHECK, 'src/loop/card-runner.ts', 'src/state/goal-store.ts', 'src/state/journal.ts']) assert.ok(paths.includes(p), `the record names ${p}`);
+    const lines = coverage(body);
+    assert.ok(lines.length >= 4, 'one coverage line per file');
+    const check = read(CHECK);
+    const methods: string[] = [];
+    for (const { file, names } of lines) {
+      assert.ok(isPath(file) && existsSync(path.join(root, file)), `${file} is a repository path`);
+      assert.ok(names.length > 0, `${file} lists what it covers`);
+      const source = read(file);
+      for (const name of names) {
+        const [owner, fn] = name.includes('.') ? name.split('.') : [undefined, name];
+        assert.match(fn!, /^\w+$/, `${file}: ${name} is a function or Class.method`);
+        assert.match(source, new RegExp(`\\b${fn}\\(`), `${file} has no ${fn}(`);
+        if (owner) assert.match(source, new RegExp(`\\bclass ${owner}\\b`), `${file} has no class ${owner}`);
+        if (owner === 'CardRunner') methods.push(fn!);
+      }
+    }
+    assert.ok(methods.length > 0, 'the record names the CardRunner commands');
+    for (const m of new Set([...methods, ...spansOf(body).filter((s) => s.startsWith('CardRunner.')).map((s) => s.slice('CardRunner.'.length))])) {
+      assert.match(check, new RegExp(`\\b${m}\\b`), `CardRunner.${m} does not occur in ${CHECK}`);
+    }
+  });
+
+  test('acceptance 4: Shown failing names an existing src/ file and a covered function and holds a TAP excerpt with a not ok line of the check [R10]', () => {
+    const text = read(SKILL);
+    const shown = section(text, 'Shown failing');
+    const prose = shown.replace(/```[\s\S]*?```/g, '');
+    const src = spansOf(prose).filter((s) => isPath(s) && s.startsWith('src/'));
+    assert.ok(src.length > 0 && src.every((s) => existsSync(path.join(root, s))), `Shown failing names an existing file under src/: ${src.join(', ')}`);
+    const covered = coverage(section(text, 'Coverage')).flatMap((l) => l.names);
+    assert.ok(spansOf(prose).some((s) => covered.includes(s)), `Shown failing names a covered function of ${covered.join(', ')}`);
+    const tap = fences(shown).find((b) => /^\s*not ok \d+ - /m.test(b));
+    assert.ok(tap, 'a fenced TAP excerpt with a not ok line');
+    assert.match(tap, /tests[\\/]+scenarios[\\/]+fault-points\.test\.ts:\d+:\d+/, 'the excerpt locates the failure in the check');
+  });
+
+  const RULE = "Verify skills: when a card changes a file that a `.claude/skills/verify-*/SKILL.md` covers, run that skill's check before SHIP; at CLOSE, move its sync commit to the merge commit only after confirming that the check describes the code there.";
+
+  test('acceptance 5: both card-loop.md copies are identical, ASCII, under the cap and open SHIP with the verify-skill rule, without the two removed passages [R5]', () => {
+    const live = read('.claude/skills/aidlc-loop/card-loop.md');
+    const template = read('templates/claude/skills/aidlc-loop/card-loop.md');
+    assert.equal(live, template, 'both card-loop.md copies are identical');
+    assert.ok(Buffer.byteLength(template, 'utf8') <= CAPS['card-loop.md']!, `card-loop.md is ${Buffer.byteLength(template, 'utf8')} bytes > cap ${CAPS['card-loop.md']}`);
+    assert.ok(!/[^\x00-\x7F]/.test(template), 'card-loop.md is ASCII');
+    const flat = template.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(RULE), 'card-loop.md carries the verify-skill rule');
+    assert.ok(template.includes('\n## SHIP\nVerify skills: '), 'the rule opens ## SHIP');
+    assert.ok(!flat.includes('Reasons: card, capability'), 'the STOP reason list is removed');
+    assert.ok(flat.includes('- Card: `aidlc cards validate --card <id>`. Registry is authority; board is a view.'), 'the field list after cards validate is removed');
+  });
+
+  /** The `## Project verify skills` section of docs/OPERATIONS.md, paragraph by paragraph. */
+  const PROJECT_VERIFY_SKILLS = [
+    "A project verify skill is `.claude/skills/verify-*/SKILL.md`: one check of this repository's own code, with a coverage record that names every file and function the check covers, and a sync commit, the commit on main at which the check was last confirmed to describe the covered code.",
+    "The card-loop rule (`card-loop.md`, SHIP): a card that changes a file a verify skill covers runs that skill's check before SHIP and, at CLOSE, moves the sync commit to the merge commit only after confirming that the check describes the code there, so such a card names the skill in its `doc_sync`. The skill's Keeping in sync section tells whether a change touches covered code and what to do in each of its four outcomes: in sync, updated, bug and blocked.",
+    'This repository has one, `verify-card-run-writes`, for the card-run write protocol: the `CardRunner` store writes and goal journal appends that the fault-point check fails in turn (see Fault-point check). Its check is `node --test tests/scenarios/fault-points.test.ts`, which `npm test` and CI also run.',
+    '`aidlc init` does not install project verify skills: each names the code of the repository it lives in, so `templates/claude/skills/` holds none. `tests/surface/mirror.test.ts` refuses a `verify-*` directory there and exempts the live ones under `.claude/skills/` from the check that every live skill is shipped by the templates.',
+  ];
+  const CLAUDE_SENTENCE = "`.claude/skills/verify-*/` holds this repository's own verify skills, which have no copy under `templates/claude/` and which `aidlc init` does not install.";
+  const CHANGELOG_ENTRY = "- T1-VERIFY-SKILL: `.claude/skills/verify-card-run-writes/SKILL.md` wraps the fault-point check for the next agent: the property, a coverage record with a sync commit, the run command, bounds, what is not covered, a recorded failure on a real-code break, how to tell a bug from a modelling error, how to report one and how to keep the check in sync. Both `card-loop.md` copies open SHIP with a rule for project verify skills (run the check before SHIP, move the sync commit at CLOSE only after confirming that the check describes the code); to stay under the 6500-byte cap they drop the STOP reason list of DONE / STOP and the field list after `aidlc cards validate --card <id>`. `tests/surface/mirror.test.ts` exempts live `.claude/skills/verify-*/` files from the shipped-by-templates check and refuses a `verify-*` directory under `templates/claude/skills/`.";
+  /** The sentences of a paragraph: a split after a full stop that a space and a capital letter or a backtick follow. */
+  const sentences = (paragraph: string): string[] => paragraph.split(/(?<=\.)\s+(?=[A-Z`])/);
+
+  /** Whether each doc text this card adds is present whole: the OPERATIONS section exactly, right after Companion skills; the CLAUDE.md sentence in Conventions; the CHANGELOG entry in Unreleased. */
+  function docsHold(ops: string, claude: string, changelog: string): boolean {
+    const companion = ops.indexOf('\n## Companion skills\n');
+    const at = ops.indexOf('\n## Project verify skills\n');
+    if (!(companion >= 0 && at > companion && ops.indexOf('\n## ', companion + 1) === at)) return false;
+    const end = ops.indexOf('\n## ', at + 1);
+    const body = ops.slice(at + '\n## Project verify skills\n'.length, end < 0 ? undefined : end).trim().split('\n\n');
+    if (JSON.stringify(body) !== JSON.stringify(PROJECT_VERIFY_SKILLS)) return false;
+    const from = claude.indexOf('\n## Conventions\n');
+    const to = claude.indexOf('\n## AI-native SDLC (aidlc)\n');
+    if (!(from >= 0 && to > from && claude.slice(from, to).replace(/\s+/g, ' ').includes(CLAUDE_SENTENCE))) return false;
+    const start = changelog.indexOf('## Unreleased');
+    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    return unreleased.split('\n').includes(CHANGELOG_ENTRY);
+  }
+
+  test('acceptance 8: OPERATIONS carries the Project verify skills section whole, CLAUDE.md Conventions names .claude/skills/verify-*/, the CHANGELOG carries the entry, and removing any sentence fails [R7] [R8] [R9]', () => {
+    const docs = [read('docs/OPERATIONS.md'), read('CLAUDE.md'), read('CHANGELOG.md')] as const;
+    const [ops, claude, changelog] = docs;
+    const whole = PROJECT_VERIFY_SKILLS.join(' ');
+    for (const needle of ['`.claude/skills/verify-*/SKILL.md`', '`verify-card-run-writes`', '`node --test tests/scenarios/fault-points.test.ts`', 'sync commit', '`aidlc init` does not install project verify skills']) assert.ok(whole.includes(needle), `the section names ${needle}`);
+    assert.ok(claude.replace(/\s+/g, ' ').includes('`.claude/skills/verify-*/`'), 'CLAUDE.md names .claude/skills/verify-*/');
+    assert.ok(docsHold(...docs), 'the doc texts this card adds are present whole');
+    const removals: [string, () => boolean][] = [
+      ...PROJECT_VERIFY_SKILLS.flatMap((p) => sentences(p)).map((s): [string, () => boolean] => [s, () => docsHold(ops.replace(s, ''), claude, changelog)]),
+      ...sentences(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, claude, changelog.replace(s, ''))]),
+      [CLAUDE_SENTENCE, () => docsHold(ops, claude.replace(/`\.claude\/skills\/verify-\*\/` holds[^.]*\./, ''), changelog)],
+      ['## Project verify skills', () => docsHold(ops.replace('\n## Project verify skills\n', '\n'), claude, changelog)],
+    ];
+    // 7 section sentences, 3 CHANGELOG sentences, the CLAUDE.md sentence and the heading.
+    assert.equal(removals.length, 12);
+    for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
+  });
+});

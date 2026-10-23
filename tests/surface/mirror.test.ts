@@ -21,6 +21,9 @@ function walk(dir: string, base = dir): string[] {
   return out.sort();
 }
 
+// A project verify skill (`.claude/skills/verify-*/`) names this repository's code, so the templates never ship it (CLAUDE.md, Conventions).
+const projectVerifySkill = (rel: string): boolean => /^skills\/verify-[^/]+\//.test(rel);
+
 /**
  * `.claude/` is the live copy of what `aidlc init` installs from `templates/claude/`
  * (CLAUDE.md, Conventions). Nothing else keeps the two trees equal, so this test does.
@@ -39,8 +42,22 @@ describe('mirror (templates/claude == .claude)', () => {
   test('every live skill and agent file is shipped by the templates', () => {
     for (const sub of ['skills', 'agents']) {
       for (const rel of walk(path.join(live, sub), live)) {
+        if (projectVerifySkill(rel)) continue;
         assert.ok(existsSync(path.join(tpl, rel)), `templates/claude/${rel} missing: .claude/${rel} would not be installed by aidlc init`);
       }
+    }
+  });
+
+  test('project verify skills live only under .claude/skills/verify-*/, each with a SKILL.md, and templates/claude/skills/ has none (T1-VERIFY-SKILL)', () => {
+    for (const rel of ['skills/verify-x/SKILL.md', 'skills/verify-card-run-writes/notes/a.md']) assert.equal(projectVerifySkill(rel), true, rel);
+    for (const rel of ['skills/verifyx/SKILL.md', 'skills/tdd/verify-x/SKILL.md', 'agents/verify-x/a.md', 'skills/verify-x', 'skills/aidlc-loop/verify-x.md']) assert.equal(projectVerifySkill(rel), false, rel);
+    const shipped = readdirSync(path.join(tpl, 'skills')).filter((name) => name.startsWith('verify-'));
+    assert.deepEqual(shipped, [], 'a project verify skill under templates/claude/skills/ would be installed downstream by aidlc init');
+    const verify = readdirSync(path.join(live, 'skills'), { withFileTypes: true }).filter((e) => e.name.startsWith('verify-'));
+    assert.ok(verify.length > 0, 'this repository carries its verify skill under .claude/skills/verify-*/');
+    for (const e of verify) {
+      assert.ok(e.isDirectory(), `.claude/skills/${e.name} is a directory`);
+      assert.ok(existsSync(path.join(live, 'skills', e.name, 'SKILL.md')), `.claude/skills/${e.name}/SKILL.md missing`);
     }
   });
 
