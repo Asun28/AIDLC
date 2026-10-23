@@ -68,10 +68,11 @@ function fixture(): Fixture {
 
 const verdict = (v: 'pass' | 'block', reasons: string[] = []) => JSON.stringify({ verdict: v, reasons, axes: { spec: { verdict: v, reasons: [] }, standards: { verdict: 'pass', reasons: [] } } }) + '\n';
 const HIT_REASON = '[spec] 2 wrong value @ src/calc.ts:13: v13 is 14 -> restore 13';
+const RANGE_REASON = '[spec] 2 values drift @ src/calc.ts:2-4: the first values are unchecked -> add a check';
 
 function replies(fx: Fixture): Record<string, Partial<ExecReceipt>> {
   return {
-    [fx.heads.c1]: { stdout: verdict('block', [HIT_REASON]) },
+    [fx.heads.c1]: { stdout: verdict('block', [HIT_REASON, RANGE_REASON]) },
     [fx.heads.c2]: { stdout: verdict('pass') },
     [fx.heads.c3]: { stdout: verdict('block', ['[standards] 6 needless cast @ src/calc.ts:20: the cast adds nothing -> remove it']) },
     [fx.heads.c4]: { exitCode: 1, stdout: 'I could not finish the review.\n' },
@@ -173,7 +174,7 @@ test('T1-REVIEW-BENCH acceptance 3: the formal bench scores hit, miss, pass, fal
     const byId = new Map(report.cases.map((c) => [c.id, c]));
     assert.deepEqual(report.cases.map((c) => [c.id, c.outcome]), [['a-hit', 'hit'], ['b-miss', 'miss'], ['c-pass', 'pass'], ['d-false-block', 'false-block'], ['e-no-verdict', 'no-verdict']]);
     assert.deepEqual(byId.get('a-hit')!.matched, { reason: HIT_REASON, file: 'src/calc.ts', line: 12 });
-    assert.deepEqual(byId.get('b-miss')!.cited, [HIT_REASON]);
+    assert.deepEqual(byId.get('b-miss')!.cited, [HIT_REASON, RANGE_REASON]);
     assert.equal(byId.get('e-no-verdict')!.runStatus, 'tool_error');
     assert.deepEqual(report.totals, { bugCases: 3, hits: 1, misses: 1, recall: 0.5, cleanCases: 2, cleanPasses: 1, falseBlocks: 1, falseBlockRate: 0.5, noVerdict: 1, errors: 0, skippedUnconfirmed: 1 });
     assert.deepEqual(calls.map((c) => c.checkoutHead), [fx.heads.c1, fx.heads.c2, fx.heads.c3, fx.heads.c4], 'four calls, one per distinct candidate, each in a checkout of it');
@@ -191,6 +192,13 @@ test('T1-REVIEW-BENCH acceptance 3: the formal bench scores hit, miss, pass, fal
     const one = await bench(fx, reviewer(fx, []), { caseId: 'c-pass' });
     assert.deepEqual(one.cases.map((c) => [c.id, c.outcome]), [['c-pass', 'pass']]);
     await assert.rejects(bench(fx, reviewer(fx, []), { caseId: 'zz' }), /zz/);
+
+    // The window edges: line 6 window 2 starts at 4, where the range 2-4 ends; line 11 window 2 ends at 13, the cited line.
+    writeCase(fx, 'evals/edges', bugCase(fx, 'edge-low', fx.heads.c1, 6, 2));
+    writeCase(fx, 'evals/edges', bugCase(fx, 'edge-high', fx.heads.c1, 11, 2));
+    writeCase(fx, 'evals/edges', bugCase(fx, 'edge-out', fx.heads.c1, 7, 2));
+    const edges = await bench(fx, reviewer(fx, []), { dir: 'evals/edges' });
+    assert.deepEqual(edges.cases.map((c) => [c.id, c.outcome, c.matched?.reason]), [['edge-high', 'hit', HIT_REASON], ['edge-low', 'hit', RANGE_REASON], ['edge-out', 'miss', undefined]]);
   } finally {
     fx.cleanup();
   }
