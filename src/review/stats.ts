@@ -9,6 +9,7 @@
  * first-round-miss label.
  */
 import type { CardRun, PreReviewRound, ReviewFinding, ReviewInvocation } from '../core/types.ts';
+import { disputeKindOf } from '../core/review-policy.ts';
 
 export interface R2Stats {
   /** Decided rounds: a round still reserved (`pending`) is a dispatch in flight, not a round. */
@@ -44,7 +45,11 @@ export interface FindingStats {
   responses: ResponseStats;
 }
 
-/** Every finding by the author's response (card T1-REVIEW-RESPONSES). */
+/**
+ * Every finding by the author's response (card T1-REVIEW-RESPONSES); the five counts partition `total`. `fixed`: resolved
+ * with an open disposition. `wrong`, `intentional`, `notWorthFixing`: a disputed disposition, resolved or not, by the kind
+ * of its latest dispute (an absent kind is `wrong`). `open`: unresolved with an open disposition.
+ */
 export interface ResponseStats {
   fixed: number;
   wrong: number;
@@ -52,6 +57,9 @@ export interface ResponseStats {
   notWorthFixing: number;
   open: number;
 }
+
+/** The responses in the order the line form prints them. */
+const RESPONSE_KEYS = ['fixed', 'wrong', 'intentional', 'notWorthFixing', 'open'] as const;
 
 /**
  * Acceptance coverage over the rounds that asked for it (`preReview.coverage: shadow`), read off the
@@ -251,6 +259,12 @@ function countFindings(findings: readonly ReviewFinding[], into: FindingStats): 
     if (f.resolvedAt) into.resolved += 1;
     else if (f.disposition === 'disputed') into.disputed += 1;
     else into.open += 1;
+    // The response: a disputed disposition (resolved or not) by its latest dispute's kind, else fixed when resolved, else open.
+    if (f.disposition === 'disputed') {
+      const kind = disputeKindOf(f.disputes.at(-1));
+      into.responses[kind === 'not-worth-fixing' ? 'notWorthFixing' : kind] += 1;
+    } else if (f.resolvedAt) into.responses.fixed += 1;
+    else into.responses.open += 1;
     if (f.reraised.length) into.reraised += 1;
     if (f.outsideDelta) into.firstRoundMiss += 1;
   }
@@ -373,6 +387,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     findings.reraised += s.findings.reraised;
     findings.firstRoundMiss += s.findings.firstRoundMiss;
     findings.resolved += s.findings.resolved;
+    for (const key of RESPONSE_KEYS) findings.responses[key] += s.findings.responses[key];
     coverage.roundsRequested += s.coverage.roundsRequested;
     coverage.roundsComplete += s.coverage.roundsComplete;
     coverage.unaccounted += s.coverage.unaccounted;
@@ -448,7 +463,8 @@ function findingsText(s: FindingStats): string {
   if (s.resolved) parts.push(`${s.resolved} resolved`);
   if (s.reraised) parts.push(`${s.reraised} re-raised`);
   if (s.firstRoundMiss) parts.push(`${s.firstRoundMiss} first-round miss`);
-  return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}`;
+  const responses = RESPONSE_KEYS.filter((key) => s.responses[key]).map((key) => `${s.responses[key]} ${key === 'notWorthFixing' ? 'not-worth-fixing' : key}`);
+  return `findings ${s.total}${parts.length ? `: ${parts.join(', ')}` : ''}${responses.length ? `; responses: ${responses.join(', ')}` : ''}`;
 }
 
 /** `not requested` when no round asked for coverage; otherwise the completeness of the rounds that did. */

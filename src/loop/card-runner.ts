@@ -391,10 +391,10 @@ export class CardRunner {
   }
 
   /** The author disputes an open finding with a note; the next round or decision receives the note. */
-  disputeFinding(goal: Goal, card: Card, run: CardRun, id: string, note: string, _kind: DisputeKind = 'wrong'): CardRun {
+  disputeFinding(goal: Goal, card: Card, run: CardRun, id: string, note: string, kind: DisputeKind = 'wrong'): CardRun {
     const now = this.clock();
-    const next = this.changeFinding(goal, card, run, id, (findings) => disputeFinding(findings, id, note, now));
-    this.journal(goal.id).append({ type: 'FINDING_DISPUTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), note: note.trim(), disputes: next.findings.find((f) => f.id === id.toUpperCase())?.disputes.length ?? 0 } });
+    const next = this.changeFinding(goal, card, run, id, (findings) => disputeFinding(findings, id, note, now, kind));
+    this.journal(goal.id).append({ type: 'FINDING_DISPUTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { finding: id.toUpperCase(), note: note.trim(), kind, disputes: next.findings.find((f) => f.id === id.toUpperCase())?.disputes.length ?? 0 } });
     return next;
   }
 

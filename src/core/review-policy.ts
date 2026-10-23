@@ -509,7 +509,7 @@ export function describeContested(findings: ReviewFinding[]): string {
  * The author disputes an open finding with a note. A second dispute needs a re-raise in between; a
  * finding disputed twice and re-raised twice is a deadlock that only a human ruling settles.
  */
-export function disputeFinding(findings: ReviewFinding[], id: string, note: string, at: string, _kind: DisputeKind = 'wrong'): ReviewFinding[] {
+export function disputeFinding(findings: ReviewFinding[], id: string, note: string, at: string, kind: DisputeKind = 'wrong'): ReviewFinding[] {
   const f = findingOrThrow(findings, id);
   if (!note.trim()) throw new Error(`a dispute needs a note: why ${f.id} does not hold`);
   if (f.resolvedAt) throw new Error(`${f.id} is resolved (no later round re-raised it); nothing to dispute`);
@@ -519,12 +519,20 @@ export function disputeFinding(findings: ReviewFinding[], id: string, note: stri
   // reviewer who received every dispute so far to re-raise the finding. A re-raise by a round dispatched before the
   // dispute received none of it and opens no second dispute.
   if (f.disputes.length && !receivedEveryDispute(f)) throw new Error(`${f.id} was already disputed since the last re-raise that received it (a withdrawn dispute counts); a second dispute needs a re-raise in between`);
-  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length }], revision: x.revision + 1 } : x));
+  return findings.map((x) => (x.id === f.id ? { ...x, disposition: 'disputed' as const, disputes: [...x.disputes, { at, note: note.trim(), afterReraises: x.reraised.length, kind }], revision: x.revision + 1 } : x));
 }
 
-/** The `--kind` of a dispute (card T1-REVIEW-RESPONSES). */
-export function parseDisputeKind(_value: string | undefined): DisputeKind {
-  return 'wrong';
+/** The `--kind` of a dispute (card T1-REVIEW-RESPONSES): `wrong` when absent; any other value than the three kinds throws. */
+export function parseDisputeKind(value: string | undefined): DisputeKind {
+  if (value === undefined) return 'wrong';
+  const parsed = DisputeKind.safeParse(value);
+  if (!parsed.success) throw new Error(`unknown dispute kind '${value}': --kind is one of ${DisputeKind.options.join(', ')}`);
+  return parsed.data;
+}
+
+/** The response a dispute records; a dispute recorded before card T1-REVIEW-RESPONSES has no kind and reads as `wrong`. */
+export function disputeKindOf(dispute: { kind?: DisputeKind } | undefined): DisputeKind {
+  return dispute?.kind ?? 'wrong';
 }
 
 /** The author withdraws a dispute: the finding returns to open; the note stays in the history. */

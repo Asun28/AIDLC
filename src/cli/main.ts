@@ -47,7 +47,8 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, nowIso, type DeliveryTarget, type RequestSize, type RoundCoverage } from '../core/types.ts';
+import { Goal, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
+import { disputeKindOf, parseDisputeKind } from '../core/review-policy.ts';
 
 interface Ctx {
   root: string;
@@ -746,8 +747,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const summary = { outcome: r.classified.outcome, mergeBlocking: r.classified.mergeBlocking, runStatus: r.classified.runStatus, decisions: r.run.review.substantiveDecisions, blocks: r.run.review.substantiveBlocks, reviewer: r.reviewer, durationMs: r.durationMs, reasons: r.classified.reasons, advisory: r.advisory, verdictRef: r.verdictRef, logRef: r.logRef, state: r.run.state };
       out(c, summary, () => `formal review ${summary.reviewer}: ${summary.outcome} (${summary.runStatus}, ${summary.durationMs} ms); decisions ${summary.decisions}/2, blocks ${summary.blocks}\n${summary.reasons.map((x) => `  - ${x}`).join('\n') || '  no findings'}${summary.advisory.length ? `\n  advisory: ${summary.advisory.join(' | ')}` : ''}\nstate=${summary.state}; next: \`aidlc card next ${cardId}\``);
     });
-  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; outsideDelta?: boolean; disputes: Array<{ note: string }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
-    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''}${f.outsideDelta ? ' (first-round miss)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note: ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
+  const findingLine = (f: { id: string; stage: string; round: number; perspective?: string; disposition: string; advisory?: boolean; outsideDelta?: boolean; disputes: Array<{ note: string; kind?: DisputeKind }>; reraised: Array<{ round: number; stage: string; answeredDispute?: number }>; resolvedAt?: string; reason: string }) =>
+    `${f.id.padEnd(4)} ${f.resolvedAt ? 'resolved' : f.disposition}${f.advisory ? ' (advisory)' : ''}${f.outsideDelta ? ' (first-round miss)' : ''} ${f.stage === 'pre' ? `R2 round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.reraised.length ? `; re-raised ${f.reraised.map((r) => `${r.stage === 'pre' ? 'R2' : 'R3'} ${r.round}${r.answeredDispute !== undefined ? ` answering dispute ${r.answeredDispute + 1}` : ''}`).join(', ')}` : ''}${f.disputes.length ? `; disputed ${f.disputes.length}x, last note (${disputeKindOf(f.disputes.at(-1))}): ${f.disputes.at(-1)?.note}` : ''}\n     ${f.reason}`;
   review
     .command('findings <cardId>')
     .description('list the findings of the card run with their dispositions, disputes, re-raises and resolution')
@@ -770,9 +771,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--note <text>', 'why the finding does not hold (evidence, file:line, the acceptance item)')
     .option('--kind <kind>', 'the response: wrong (default), intentional or not-worth-fixing')
     .action((cardId: string, findingId: string, o: { goal?: string; note: string; kind?: string }) => {
+      // Refused before the card run is read or created, so an unknown kind writes nothing.
+      const kind = parseDisputeKind(o.kind);
       const c = ctx(g());
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
-      const next = runnerFor(c).disputeFinding(goalRec, parsed.card, run, findingId, o.note);
+      const next = runnerFor(c).disputeFinding(goalRec, parsed.card, run, findingId, o.note, kind);
       c.controller.writeBoard(goalRec);
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       const shipPathNote = f.stage === 'formal' && !c.config.formalReview.command.length ? '\nnote: the ship-path reviewer re-reads a verdict file and receives no notes; the dispute is recorded for the human adjudicator, and the candidate ships again only once it changes' : '';
