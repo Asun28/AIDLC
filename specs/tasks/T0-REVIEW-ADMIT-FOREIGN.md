@@ -124,7 +124,7 @@ Admission order with a key (review-queue.ts `admit`):
 2. The active slots are filtered to `running` and `lost` requests; with no free slot `admit` returns `busy`, writing the pool only when the filter dropped an entry.
 3. The pool's `queued` and `retry-after` requests are read in persisted `seq` order. One past its deadline is skipped: before the first eligible request it is written `cancelled` (`deadline passed before admission`) at once, as the keyless call writes it; after the first eligible request (keyed calls only) its cancellation is held for step 4 (R3 decision 1 F1). A `retry-after` request not yet due is skipped; each other request that is not the caller's counts as ahead. Once the count reaches the free slots, `admit` returns `behind` naming the first request ahead (key and requesters), drops the held cancellations, and does not write the pool file: slots step 2 dropped count as free in memory only, and the next admitting call writes the cleaned list (coordinator ruling after repair attempt 2).
 4. The caller's request, reached with a free slot left for it: the held cancellations are written, then the request is written `running` (slotOwner the caller, attempts + 1), then added to the pool's active slots.
-5. No caller request reached: `empty`, after the same cleanup; held cancellations are dropped.
+5. No caller request reached (the caller's request past its deadline, a `retry-after` not yet due, or a key no queued or `retry-after` request carries, which is treated as the last request of the queue): the held cancellations are written, then `empty` after the same cleanup (R3 decision 2 N1).
 Without a key step 3 counts nothing ahead, so the first eligible request is admitted, as at e8cd3c2.
 
 Queue states a keyed call can produce:
@@ -162,6 +162,8 @@ Mutation sweep (each applied alone to the GREEN tree, run against tests/infra/re
 | M18 hold every cancellation, also before the first eligible request | F1 (before; several) |
 | M19 write the held cancellations on `behind` | F1 (between; several; stale slot) |
 | M21 count stale slots against the free slots (`p.active` for the cleaned list) | stale active slot test |
+| M22 drop the held cancellations on `empty` (the 3f037cc code) | N1 table (four `empty` rows) |
+| M23 on `empty` write only the first held cancellation | N1 table (two `empty` rows) |
 
 Survivors: none.
 
@@ -192,3 +194,38 @@ RED on 61f8787 with the test change uncommitted (`node --test --test-name-patter
 (message `the pool file is byte-identical to the file before the call`; the keyed run wrote `"active": []` and a new `updatedAt`). The test now pins the pool file byte-identical to the file before the call in all six orders, and in the stale-slot order that the next admitting call admits Y and leaves the active slots `[Y]`, the stale slot gone. A new test pins that a stale slot does not count against the free slots of a keyed call (two slots, one stale, Y then Z: Z admitted, Y queued, active `[Z]`).
 
 GREEN (61603a1): Windows, the dod_command exited 0, typecheck clean, 452 tests, 452 pass, 0 fail, duration_ms 42666. Linux (WSL clone of the branch at 61603a1): typecheck exit 0, 452 tests, 452 pass, 0 fail, duration_ms 30775. `npm test` (Windows, CLAUDE_CODE_SESSION_ID unset): exit 0, 1570 tests, 1564 pass, 0 fail, 6 skipped, duration_ms 65566. Mutation sweep rerun on 61603a1: M1 to M19, M5b and M21 all killed; M20 (no cleanup on `behind`) is now the code and leaves the table.
+
+### Repair attempt 3 (REVIEW_FIX, R3 decision 2)
+N1 (dropped-expiry-on-empty): at 3f037cc a keyed call dropped the held cancellations on `empty`, so with two free slots, eligible Y then expired caller Z, `admit(..., keyZ)` returned `empty` and left Z `queued`. Fix (e9540bd): the held cancellations are written before `empty` as before `admitted`, and dropped only on `behind`. The keyless path holds nothing (only a keyed call counts requests ahead), so it is unchanged.
+
+Deadline rule, one statement: a keyed call cancels each request past its deadline that its scan passes, as keyless calls draining the queue to the same point do (the caller's admission, or the end of the queue for `empty`); on `behind` it writes only those before the first eligible request, which is what one keyless call writes, and the pool file is not written.
+
+Outcome table (tests/infra/review-queue.test.ts, `R3 decision 2 N1`). X* are past their deadline; the caller is Z (eligible), Zx (past its deadline), Zr (`retry-after` not yet due) or absent (a key no request carries). Each row asserts the literal outcome, the literal cancelled set, that keyless calls draining to the same point (one keyless call for `behind`) cancel the same set, every cancelled file byte-identical to the keyless one, every other request file byte-identical to before the call (the admitted caller `running`), and the pool file unwritten on `empty` and `behind`:
+
+| Outcome | Slots | Queue order | Caller | Cancelled |
+| --- | --- | --- | --- | --- |
+| admitted | 2 | X1 Y Z | Z | X1 |
+| admitted | 2 | Y X1 Z | Z | X1 |
+| admitted | 2 | Y Z X1 | Z | none |
+| admitted | 2 | X1 Z Y | Z | X1 |
+| admitted | 2 | X1 Y X2 Z X3 | Z | X1 X2 |
+| empty | 2 | Zx | Zx | Zx |
+| empty | 2 | Y Zx | Zx | Zx (the N1 case) |
+| empty | 2 | X1 Y X2 Zx X3 | Zx | X1 X2 Zx X3 |
+| empty | 2 | Y X1 Zr X2 | Zr | X1 X2 |
+| empty | 2 | Y X1 | absent | X1 |
+| behind Y | 1 | X1 Y Z | Z | X1 |
+| behind Y | 1 | Y X1 Z | Z | none |
+| behind Y | 2 | Y X1 W Zx | Zx | none |
+| behind Y | 1 | Y Z X1 | Z | none |
+| behind Y | 2 | X1 Y X2 W X3 Z X4 | Z | X1 |
+| behind Y | 1 | Y X1 Zr | Zr | none |
+| behind Y | 2 | Y X1 W X2 | absent | none |
+
+R2 question pinned: a key that matches no queued or `retry-after` request behaves as if the caller were last in the queue: `behind` when the eligible requests ahead fill the free slots (last row), else `empty` (row 10), writing what that outcome writes under the rule.
+
+RED on 3f037cc with the test change uncommitted (`node --test --test-name-pattern "R3 decision 2 N1" tests/infra/review-queue.test.ts`): exit 1, 17 tests, 13 pass, 4 fail, duration_ms 1459. First failing line:
+`not ok 7 - T0-REVIEW-ADMIT-FOREIGN R3 decision 2 N1: empty, the caller itself expired behind an eligible request (the N1 case): the keyed call writes the cancellations of keyless calls to the same point [R1] [R2]`
+(`the cancellations the rule names`: actual `[]`, expected `['Zx']`). The other three failures are the other `empty` rows with a held cancellation (several; `retry-after` caller; absent key).
+
+GREEN (e9540bd): Windows, the dod_command exited 0, 469 tests, 469 pass, 0 fail, duration_ms 42573. Linux (WSL clone of the branch at e9540bd): typecheck exit 0, 469 tests, 469 pass, 0 fail, duration_ms 31317. `npm test` (Windows, CLAUDE_CODE_SESSION_ID unset): exit 0, 1587 tests, 1581 pass, 0 fail, 6 skipped, duration_ms 66894. Mutation sweep rerun on e9540bd: M1 to M19, M5b and M21 to M23 all killed, no survivors.
