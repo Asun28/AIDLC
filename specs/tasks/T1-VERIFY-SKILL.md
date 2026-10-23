@@ -84,3 +84,23 @@ npm run typecheck && node --test tests/surface/templates.test.ts tests/surface/m
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean; `tests/scenarios/fault-points.test.ts` passing on the candidate shows the check is back to passing after the scratch break was dropped.
+
+## Attempt evidence
+BUILD attempt 1, worktree D:\wt\AIDLC\T1-VERIFY-SKILL, base origin/main `794624a0d26cbb5ee8eec2a363b7a578590abef9`. Windows, Git Bash.
+
+1. RED (commit `6dcaa58`, tests only): the DoD exited 1 in 12.0 s (`# duration_ms 12045.3919`), `# tests 84`, `# pass 77`, `# fail 7`. First failing lines:
+   - `not ok 3 - project verify skills live only under .claude/skills/verify-*/, each with a SKILL.md, and templates/claude/skills/ has none (T1-VERIFY-SKILL)`, `error: 'this repository carries its verify skill under .claude/skills/verify-*/'`
+   - `not ok 1 - acceptance 1: ...`, `error: '.claude/skills/verify-card-run-writes/SKILL.md missing'`; acceptance 2 to 4 failed on the missing file (ENOENT)
+   - `not ok 5 - acceptance 5: ...`, `error: 'card-loop.md carries the verify-skill rule'`
+   - `not ok 6 - acceptance 8: ...`, `error: 'CLAUDE.md names .claude/skills/verify-*/'`
+2. Scratch break, uncommitted, applied after the skill text was written and followed from it: in `src/loop/card-runner.ts`, `CardRunner.preReview`, the `PRE_REVIEW_DECIDED` append moved from after `this.commitReviewed(...)` to before it (data reduced to `cycle, round, reviewer, candidateDigest, outcome, runStatus, reasons`, since `committed` and `found` do not exist yet there). `git diff --stat -- src`: `src/loop/card-runner.ts | 2 +-`.
+3. Keeping in sync, with the break applied: `git diff --name-only 794624a0d26cbb5ee8eec2a363b7a578590abef9 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts` exit 0, output `src/loop/card-runner.ts`.
+4. `node --test --test-reporter=tap tests/scenarios/fault-points.test.ts` with the break: exit 1, `# tests 28`, `# pass 26`, `# fail 2`; `not ok 3 - B preReview R2 pass (review pre): ...` (I3 at `k=3 of 3, failed renameSync`: `PRE_REVIEW_DECIDED seq 9 (cycle 0, round 1, outcome pass, decision undefined) names no pass round the card run holds (preReview.rounds)`) and `not ok 11 - every fault point of A to E reaches ...` (pin `B/append PRE_REVIEW_DECIDED (H7)` stale; unpinned `B/record 2: journal.PRE_REVIEW_DECIDED pass fault-free 1, observed 2`). Excerpt in the skill, `## Shown failing`.
+5. Replay and classification: fault point 2 is the early `Journal.append`, fault point 3 the `renameSync` inside `GoalStore.saveCardRun` called by `commitReviewed`; with the break the append happens, the save throws `EIO` and leaves the round `pending`, and `card next` returns `wait`. Every step can happen in the changed code, so the outcome is bug (of the scratch change), not a modelling error.
+6. `git restore src/loop/card-runner.ts`: exit 0; `git status --short` then listed no `src/` path.
+7. `node --test --test-reporter=tap tests/scenarios/fault-points.test.ts` after the restore: exit 0, `# tests 28`, `# pass 28`, `# fail 0`, `# duration_ms 11748.057`.
+8. Sync commit, at candidate `19760ac4b1cb8ed4b9c9478cbcb2a7d21b836b83`:
+   - `git merge-base --is-ancestor 794624a0d26cbb5ee8eec2a363b7a578590abef9 origin/main`: exit 0 (origin/main is `794624a0d26cbb5ee8eec2a363b7a578590abef9`).
+   - `git diff --quiet 794624a0d26cbb5ee8eec2a363b7a578590abef9 HEAD -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`: exit 0, no output.
+   - `git diff --name-only origin/main...HEAD`: exit 0; `.claude/skills/aidlc-loop/card-loop.md`, `.claude/skills/verify-card-run-writes/SKILL.md`, `CHANGELOG.md`, `CLAUDE.md`, `docs/OPERATIONS.md`, `templates/claude/skills/aidlc-loop/card-loop.md`, `tests/surface/mirror.test.ts`, `tests/surface/templates.test.ts` (no `src/` or `tests/scenarios/` path).
+9. DoD at `19760ac`: exit 0, `# tests 84`, `# pass 84`, `# fail 0`, `# duration_ms 11171.3992`. Both `card-loop.md` copies 6475 bytes, identical (`cmp`).
