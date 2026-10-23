@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-PRE-EXISTING
 title: Treat a review reason tagged [pre-existing] as advisory when its cited lines are outside the candidate's changed hunks, in both stages and on the ship path, and count such reasons in aidlc review stats
-status: todo
+status: merged
 branch: T1-REVIEW-PRE-EXISTING
 worktree: D:\wt\AIDLC\T1-REVIEW-PRE-EXISTING
 plan_ref: plans/review-verification.md#order-of-work
