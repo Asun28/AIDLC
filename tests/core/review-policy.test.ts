@@ -682,4 +682,18 @@ describe('defect classes (T1-REVIEW-CLASS-SWEEP)', () => {
     ]);
     assert.deepEqual(policy.blockClasses(rec([], 1, ['[spec] 6 tests @ src/b.ts:1: no RED -> add one', '[standards] 9 error handling @ src/a.ts:3: x -> y']).findings), [], 'a block without a class');
   });
+
+  test('R2 suggestions at a21a763: a [question] or [suggestion] reason carries no class, an advisory-block finding adds nothing to blockClasses, and a slug with a line break is malformed [R10] [R11]', () => {
+    for (const tag of ['[question]', '[suggestion]']) {
+      const advisory = `[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: ${tag} is the event saved first? -> confirm`;
+      assert.equal(policy.findingClass(advisory), undefined, `${tag}: findingClass`);
+      assert.equal('class' in rec([], 1, [advisory]).findings[0]!, false, `${tag}: recordFindings records no class key`);
+    }
+    assert.equal(policy.findingClass(`[standards] 9 error handling ${'[question]'} (class: journal-before-save) @ src/a.ts:3: x -> y`), 'journal-before-save', 'a tag the advisory rule does not read stays a block reason with its class');
+    const advisoryBlock = policy.recordFindings([], { stage: 'formal', round: 1, candidateSha: 'sha-1', at: T0, outcome: 'block', reasons: [reason('journal-before-save')], advisory: true });
+    assert.equal(advisoryBlock.findings[0]!.advisory, true);
+    assert.equal(classOf(advisoryBlock.findings[0]), 'journal-before-save', 'an advisory block records the class of its reason');
+    assert.deepEqual(policy.blockClasses(advisoryBlock.findings), [], 'an advisory finding is never a merge bar, so no repair asks for its class');
+    for (const slug of ['abc\n', 'abc\r\n', 'ab\nc']) assert.equal(policy.findingClass(reason(slug)), undefined, `a line break in ${JSON.stringify(slug)}`);
+  });
 });

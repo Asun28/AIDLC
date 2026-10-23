@@ -198,6 +198,7 @@ describe('types: ReviewFinding class (T1-REVIEW-CLASS-SWEEP acceptance 3)', () =
     assert.equal('class' in parsed, false, 'a record written before this card parses without a class');
     assert.equal(classOf([{ ...finding, class: 'journal-before-save' }]), 'journal-before-save');
     assert.equal(CardRun.safeParse({ ...cardRun(), findings: [{ ...finding, class: 'Two Words' }] }).success, false, 'a malformed class fails the parse');
+    for (const slug of ['abc\n', 'abc\r\n', 'ab\nc']) assert.equal(CardRun.safeParse({ ...cardRun(), findings: [{ ...finding, class: slug }] }).success, false, `a line break in ${JSON.stringify(slug)} fails the parse`);
   });
 });
 

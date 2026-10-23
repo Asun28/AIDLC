@@ -240,11 +240,20 @@ export function findingLocation(reason: string): string | undefined {
   return /[\p{L}\p{N}]/u.test(file) ? file : undefined;
 }
 
+/**
+ * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
+ * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
+ * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
+ * downgraded by its wording.
+ */
+export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+
 /** `(class: <slug>)` anywhere in a reason, the keyword in any case with at most one space after the colon; the first group decides. */
 const FINDING_CLASS_TAG = /\(class: ?([^)]*)\)/i;
 
-/** The defect class a reason names (card T1-REVIEW-CLASS-SWEEP); a malformed slug names none. */
+/** The defect class a reason names (card T1-REVIEW-CLASS-SWEEP); a malformed slug names none, and a `[question]` or `[suggestion]` reason carries none. */
 export function findingClass(reason: string): string | undefined {
+  if (ADVISORY_TAG.test(reason)) return undefined;
   const slug = FINDING_CLASS_TAG.exec(reason)?.[1];
   return slug !== undefined && slug.length <= FINDING_CLASS_MAX && FINDING_CLASS_PATTERN.test(slug) ? slug : undefined;
 }
@@ -265,12 +274,13 @@ export interface BlockClass {
 
 /**
  * The classes of a block's findings (`findingsOfBlock`), in first-raised order: each open finding with a class adds its id
- * and every site its raising and re-raise reasons cite, once each. A disputed, resolved or class-less finding adds nothing.
+ * and every site its raising and re-raise reasons cite, once each. A disputed, resolved, advisory (never a merge bar) or
+ * class-less finding adds nothing.
  */
 export function blockClasses(findings: ReviewFinding[]): BlockClass[] {
   const out: BlockClass[] = [];
   for (const f of findings) {
-    if (!f.class || f.disposition === 'disputed' || f.resolvedAt) continue;
+    if (!f.class || f.advisory || f.disposition === 'disputed' || f.resolvedAt) continue;
     let entry = out.find((c) => c.class === f.class);
     if (!entry) out.push((entry = { class: f.class, ids: [], sites: [] }));
     entry.ids.push(f.id);

@@ -23,7 +23,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
-import { findingLocation, parseVerdict } from '../core/review-policy.ts';
+import { ADVISORY_TAG, findingLocation, parseVerdict } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
 import type { Card, CoverageEntry as CoverageEntryType, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
@@ -79,7 +79,8 @@ export interface PriorFinding {
   reraisedReasons?: string[];
   origin: string;
   /** Re-raises that answered a dispute; two is a deadlock awaiting a human ruling. */
-  nonAcceptanceRounds?: number;  /** The defect class the finding records (`ReviewFinding.class`). */
+  nonAcceptanceRounds?: number;
+  /** The defect class the finding records (`ReviewFinding.class`). */
   class?: string;
 }
 
@@ -103,13 +104,8 @@ export function ruleFilesIn(changedPaths: string[]): string[] {
   });
 }
 
-/**
- * A reason tagged `[question]` or `[suggestion]` is advisory in both stages: never a block, whatever else it carries (R10). The
- * tag counts only where the output contract puts it: opening the reason (after the axis tag if any), or opening the text after
- * the `@ <file:line>:` location. A path or prose that merely contains the bracket text is no tag, so a cited block is never
- * downgraded by its wording.
- */
-export const ADVISORY_TAG = /^\s*(?:\[(?:spec|standards)\]\s*)?(?:[^@\n]*?@\s*[^\s@:]+(?::\d+(?:-\d+)?)?\s*:\s*)?\[(?:question|suggestion)\]/i;
+/** `ADVISORY_TAG` is defined in `src/core/review-policy.ts` (card T1-REVIEW-CLASS-SWEEP, where the class rule reads it) and re-exported here unchanged. */
+export { ADVISORY_TAG };
 
 /** The line every review prompt carries after the verdict-balance line: a class tag on each block reason (card T1-REVIEW-CLASS-SWEEP). */
 const CLASS_LINE =
