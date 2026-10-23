@@ -295,13 +295,15 @@ test('T1-REVIEW-BENCH acceptance 6: the CLI prints the report and writes no stat
     writeConfig(fx, { formalReview: { command: [process.execPath, path.join(fx.root, 'reviewer.mjs'), '{head}'], reviewer: 'node-pass', shell: false } });
     writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
     const state = path.join(fx.dir, 'state-never');
-    const cli = (args: string[]) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'run', '--stage', 'formal', '--json', ...args], { cwd: fx.root, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: state, TMPDIR: fx.tmpRoot, TEMP: fx.tmpRoot, TMP: fx.tmpRoot }, windowsHide: true });
+    // No session variable, as on a CI runner: a CLI that resolves the default session writes it under the state directory.
+    const { AIDLC_SESSION: _session, CLAUDE_CODE_SESSION_ID: _claude, ...env } = process.env;
+    const cli = (args: string[]) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'run', '--stage', 'formal', '--json', ...args], { cwd: fx.root, encoding: 'utf8', env: { ...env, AIDLC_STATE_DIR: state, TMPDIR: fx.tmpRoot, TEMP: fx.tmpRoot, TMP: fx.tmpRoot }, windowsHide: true });
     const ok = cli([]);
     assert.equal(ok.status, 0, ok.stderr);
     const report = JSON.parse(ok.stdout) as { totals: { cleanCases: number; falseBlocks: number }; leftCheckouts: string[] };
     assert.equal(report.totals.cleanCases, 1);
     assert.equal(report.totals.falseBlocks, 0);
-    assert.equal(existsSync(state), false, 'nothing under the state directory');
+    assert.deepEqual(existsSync(state) ? [state, ...filesUnder(state)] : [], [], 'nothing under the state directory');
 
     writeCase(fx, 'evals/bad', cleanCase(fx, 'y', fx.heads.c2), 'x.json');
     const refused = cli(['--dir', 'evals/bad']);

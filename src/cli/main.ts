@@ -657,16 +657,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   intent
     .command('new')
     .requiredOption('--title <t>')
-    .option('--author <a>', 'author', currentActor().session)
+    // The default is read in the action: a default computed here would resolve the session, and so write the default
+    // session token under the state directory, for every command the CLI runs (R9 of T1-REVIEW-BENCH).
+    .option('--author <a>', 'author (default: this session)')
     .option('--problem <p>', 'problem statement', '')
     .option('--outcome <o>', 'proposed outcome', '')
     .option('--affected <a>', 'affected users and systems', '')
     .option('--constraints <c>', 'constraints', '')
     .option('--question <q...>', 'open questions')
-    .action((o: { title: string; author: string; problem: string; outcome: string; affected: string; constraints: string; question?: string[] }) => {
+    .action((o: { title: string; author?: string; problem: string; outcome: string; affected: string; constraints: string; question?: string[] }) => {
       const c = ctx(g());
       const slug = slugify(o.title);
-      const text = renderIntent({ slug, title: o.title, author: o.author, status: 'draft', createdAt: new Date().toISOString(), problem: o.problem, proposedOutcome: o.outcome, affected: o.affected, constraints: o.constraints, openQuestions: o.question ?? [] });
+      const text = renderIntent({ slug, title: o.title, author: o.author ?? currentActor().session, status: 'draft', createdAt: new Date().toISOString(), problem: o.problem, proposedOutcome: o.outcome, affected: o.affected, constraints: o.constraints, openQuestions: o.question ?? [] });
       const file = path.join(c.root, c.config.intentDir, `${slug}.md`);
       mkdirSync(path.dirname(file), { recursive: true });
       if (existsSync(file)) fail(`${file} exists`);
