@@ -73,7 +73,7 @@ describe('mutantsFor (card T1-VERIFY-MUTANT-GEN)', () => {
       'const c2 = "a // b || \\" !c" && h;',
       "const t1 = `x === ${y && `n ${z || !w}` ? 'a' : true} < v` && k;",
       'const r1 = s.match(/ === && /g) && m;',
-      'const r2 = /[/] < true/ || n;',
+      'const r2 = / < true/ || n;',
       'return /\\/ !x/.test(p) && q;',
     ].join('\n');
     assert.deepEqual(view(mutantsFor(source, every(source))), [
@@ -82,7 +82,7 @@ describe('mutantsFor (card T1-VERIFY-MUTANT-GEN)', () => {
       [5, 30, 'swap-logic', '&&', '||'],
       [6, 60, 'swap-logic', '&&', '||'],
       [7, 33, 'swap-logic', '&&', '||'],
-      [8, 25, 'swap-logic', '||', '&&'],
+      [8, 22, 'swap-logic', '||', '&&'],
       [9, 24, 'swap-logic', '&&', '||'],
     ]);
   });
@@ -114,12 +114,47 @@ describe('mutantsFor (card T1-VERIFY-MUTANT-GEN)', () => {
 
   test('the first and last line of a file without a final newline, a line break as whitespace, and lines outside the file or repeated [R2] [R4]', () => {
     const source = 'x();\nok = a &&\n  b ? 1 : 2\ny = a || b';
-    assert.deepEqual(view(mutantsFor(source, [0, 4, 1, 2, 4, 5])), [
+    assert.deepEqual(view(mutantsFor(source, [0, 4, 1, 2, 4, 5, 1.5])), [
       [1, 1, 'drop-statement', 'x();', ''],
       [2, 8, 'swap-logic', '&&', '||'],
       [4, 7, 'swap-logic', '||', '&&'],
     ]);
     assert.deepEqual(mutantsFor(source, []), []);
+  });
+
+  /** Each case closes a scanner or operator branch the hand mutation sweep found untested (card hygiene, T1-OPUS55-R3-3). */
+  const CASES: [source: string, expected: Row[]][] = [
+    ["const s = 'a \\\n=== b' && c;", [[2, 8, 'swap-logic', '&&', '||']]],
+    ["const s = 'a \\\r\n=== b' && c;", [[2, 8, 'swap-logic', '&&', '||']]],
+    ["const u = 'open\nok = a && b", [[2, 8, 'swap-logic', '&&', '||']]],
+    ['const t = `a \\` && b` && c;', [[1, 23, 'swap-logic', '&&', '||']]],
+    ["const o = `${ {a: b}.a + '`' } && x` && y;", [[1, 38, 'swap-logic', '&&', '||']]],
+    ['/ === /.test(s) && ok;', [[1, 17, 'swap-logic', '&&', '||']]],
+    ['const r3 = s.split(/[/] < 1/) || n;', [[1, 31, 'swap-logic', '||', '&&']]],
+    ['return /oops\nok = a && b', [[2, 8, 'swap-logic', '&&', '||']]],
+    ['run(); /* x && y */', [[1, 1, 'drop-statement', 'run();', '']]],
+    ['x = `a;\nb`;', []],
+    [';', [[1, 1, 'drop-statement', ';', '']]],
+    ["log(')');", [[1, 1, 'drop-statement', "log(')');", '']]],
+    ['  }).then(done);\nx = f(g(1);\na) + (b;', []],
+    ['if (ok(a)) {', [[1, 5, 'force-true', 'ok(a)', 'true'], [1, 5, 'force-false', 'ok(a)', 'false']]],
+    ['const lt = a <b || c> d;', [[1, 17, 'swap-logic', '||', '&&']]],
+    ['const m = cfg?.false;\nconst n = é!.size;\nconst p = cfg.if;', []],
+    ["var a = 1;\nimport x from 'y';\nexport const z = 1;\ntype T = A;\ninterface I { a: number };\ndeclare const d: number;\nconstant();\nlets();", [
+      [7, 1, 'drop-statement', 'constant();', ''],
+      [8, 1, 'drop-statement', 'lets();', ''],
+    ]],
+  ];
+  test('a / opens a regex literal after each listed character and word, so the operators inside it are not code [R4]', () => {
+    const chars = '( , = : [ ! & | ? { } ; + - * % < > ~ ^'.split(' ').map((c) => `x${c}/ === / && a`).join('\n');
+    assert.deepEqual(view(mutantsFor(chars, every(chars))), every(chars).map((line): Row => [line, 11, 'swap-logic', '&&', '||']));
+    const words = 'typeof case do else in of new delete void throw instanceof yield await'.split(' ').map((w) => `${w} / === / && a`).join('\n');
+    const columns = [16, 14, 12, 14, 12, 12, 13, 16, 14, 15, 20, 15, 15];
+    assert.deepEqual(view(mutantsFor(words, every(words))), columns.map((column, i): Row => [i + 1, column, 'swap-logic', '&&', '||']));
+  });
+
+  test('scanner and operator edges:continued and unterminated literals, escapes, braces in ${}, a regex first in the file, trailing comments, bracket balance, nested if parentheses, one-sided spaces, ?., every excluded keyword [R3] [R4]', () => {
+    for (const [source, expected] of CASES) assert.deepEqual(view(mutantsFor(source, every(source))), expected, JSON.stringify(source));
   });
 });
 
@@ -172,7 +207,10 @@ describe('changedSourceLines (card T1-VERIFY-MUTANT-GEN)', () => {
       '+++ b/not-a-header',
       '+x',
       '+y',
-      file('src/b.ts', '@@ -1,0 +1 @@\n+first();'),
+      file('src/b.ts', '@@ -1 +1,2 @@\n-x();\n\\ No newline at end of file\n+first();\n+second();\n\\ No newline at end of file'),
+      file('bench/x.ts', '@@ -0,0 +1 @@\n+b();'),
+      file('src/x.js', '@@ -0,0 +1 @@\n+b();'),
+      'diff --git i/src/w.ts w/src/w.ts\n--- i/src/w.ts\n+++ w/src/w.ts\n@@ -0,0 +1 @@\n+w();',
       file('src/c.ts', '@@ -5 +4,0 @@\n-onlyDeletes();'),
       file('src/m.d.ts', '@@ -0,0 +1 @@\n+declare const x: number;'),
       file('src/m.test.ts', '@@ -0,0 +1 @@\n+t();'),
@@ -194,29 +232,37 @@ describe('changedSourceLines (card T1-VERIFY-MUTANT-GEN)', () => {
     ].join('\n');
     assert.deepEqual(changedSourceLines(diff), [
       { file: 'src/a.ts', lines: [4, 5, 12, 30, 31, 32] },
-      { file: 'src/b.ts', lines: [1] },
+      { file: 'src/b.ts', lines: [1, 2] },
     ]);
+  });
+
+  test('hunks out of order or repeated still give ascending lines, each once [R1]', () => {
+    assert.deepEqual(changedSourceLines(file('src/i.ts', '@@ -0,0 +9 @@\n+a();\n@@ -0,0 +2 @@\n+b();\n@@ -0,0 +9 @@\n+c();')), [{ file: 'src/i.ts', lines: [2, 9] }]);
   });
 
   test('fails closed: an empty diff, text that is not a diff and a file with an unreadable hunk header yield nothing [R1]', () => {
     assert.deepEqual(changedSourceLines(''), []);
     assert.deepEqual(changedSourceLines('+ok();\n@@ -1 +1 @@\n+ok();\n'), []);
     assert.deepEqual(changedSourceLines(file('src/d.ts', '@@ -0,0 +1 @@\n+ok();\n@@ nonsense @@\n+y();\n')), []);
-    assert.deepEqual(changedSourceLines(file('src/e.ts', '@@ -0,0 +1 @@\r\n+ok();\r\n')), [{ file: 'src/e.ts', lines: [1] }]);
+    assert.deepEqual(changedSourceLines(file('src/f.ts', '@@ -0,0 +1,2 @@\n+a();') + '\n' + file('src/g.ts', '@@ -0,0 +5 @@\n+g();')), [{ file: 'src/g.ts', lines: [5] }]);
+    assert.deepEqual(changedSourceLines(file('src/h.ts', '@@ -1,2 +1,2 @@\n ctx();\n-a();\n+b();')), []);
+    assert.deepEqual(changedSourceLines(file('src/j.ts', '@@ -1 +1 @@\n+a();\n+b();\n-c();')), []);
+    assert.deepEqual(changedSourceLines(file('src/k.ts', '@@ -1 +1,2 @@\n-a();\n-b();\n+c();\n+d();')), []);
+    assert.deepEqual(changedSourceLines(file('src/e.ts', '@@ -0,0 +1 @@\n+ok();\n').replaceAll('\n', '\r\n')), [{ file: 'src/e.ts', lines: [1] }]);
   });
 });
 
 describe('docs (card T1-VERIFY-MUTANT-GEN)', () => {
   const OPERATIONS = [
     '`src/review/mutant-gen.ts` (card T1-VERIFY-MUTANT-GEN) lists the mutants of the source lines a change adds; it is pure, reads no file and runs nothing, and the command that runs the mutants under a card\'s DoD arrives with card T1-VERIFY-MUTANTS.',
-    '`changedSourceLines(diff)` reads a `git diff --unified=0` text and returns, for each file under `src/` that ends in `.ts` but not in `.d.ts` or `.test.ts`, the new-side line numbers of its added lines in ascending order; a deleted file, a file whose hunks only delete and a path git quoted get no entry, and an empty diff, text that is not a diff or a file with a hunk header it cannot read yields no lines, so no mutant is ever generated over a whole file.',
+    '`changedSourceLines(diff)` reads a `git diff --unified=0` text and returns, for each file under `src/` that ends in `.ts` but not in `.d.ts` or `.test.ts`, the new-side line numbers of its added lines in ascending order; a deleted file, a file whose hunks only delete and a path git quoted get no entry, and an empty diff, text that is not a diff or a file with a hunk header or a hunk line it cannot read (a context line included) yields no lines, so no mutant is ever generated over a whole file.',
     '`mutantsFor(source, changedLines)` returns the mutants of those lines, each with its 1-based line and column (in UTF-16 code units), its operator, its original and mutated text and its source offsets, ordered by line, column and operator; `applyMutant(source, mutant)` replaces exactly that span and refuses a source whose span no longer holds the original text.',
     'The mutation operators, in run order, are `drop-statement`, `force-true`, `force-false`, `negate-equality`, `swap-logic`, `drop-not`, `boundary` and `flip-boolean`; an operator counts only in code, never inside a comment, a string, a template literal or a regex literal.',
     '`drop-statement` removes the code of a line that ends with `;`, balances `()`, `[]` and `{}` within the line and does not begin with `const`, `let`, `var`, `return`, `import`, `export`, `type`, `interface` or `declare`.',
     '`force-true` and `force-false` replace the condition of an `if (...)` whose closing parenthesis is on the same line with `true` and with `false`.',
     '`negate-equality` swaps `===` with `!==` and `==` with `!=`, `swap-logic` swaps `&&` with `||`, and `boundary` swaps `<` with `<=` and `>` with `>=`; each counts only with whitespace (a space, a tab or a line break) on both sides, so a generic such as `Array<string>` and a comparison written without spaces (`a<b`) are never mutated.',
     '`drop-not` removes a unary `!`, never the `!` of `!=` or `!==` nor a non-null assertion after an identifier, `)` or `]`, and `flip-boolean` swaps the words `true` and `false` where no `.` precedes them.',
-    'An in-house scanner reads the whole file once (no new dependency), takes operator tokens greedily, so `=>`, `<<`, `>>`, `>>>`, `<<=`, `>>=`, `??`, `&&=` and `||=` never match, and keeps the `\\r` of a `\\r\\n` line end out of the code.',
+    'An in-house scanner reads the whole file once (no new dependency), takes operator tokens greedily, so `=>`, `<<`, `>>`, `>>>`, `<<=`, `>>=`, `??`, `&&=` and `||=` never match, and treats the `\\r` of a `\\r\\n` line end as whitespace, so no mutant span holds it.',
     'A `/` opens a regex literal after no code, after one of `( , = : [ ! & | ? { } ; + - * % < > ~ ^` or after the word `return`, `typeof`, `case`, `do`, `else`, `in`, `of`, `new`, `delete`, `void`, `throw`, `instanceof`, `yield` or `await`, and is a division otherwise; this reads a regex literal after `)` as a division and a division after `}` as a regex, which adds or drops a mutant and changes nothing else.',
   ];
   const ARCHITECTURE = '`src/review/mutant-gen.ts` lists the mutants of the `src/` TypeScript lines a zero-context diff adds under eight fixed operators, with an in-house scanner that keeps comments, strings, template literals and regex literals out of reach; it is pure and adds no dependency (card T1-VERIFY-MUTANT-GEN).';
