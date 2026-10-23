@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -85,6 +85,8 @@ interface CommitReviewInput {
   release: (latest: CardRun) => CardRun;
   /** The decision computed from the locked record: the findings input, the full commit and the history-only commit. */
   decide: (latest: CardRun) => { findingsInput: RecordFindingsInput; commit: (run: CardRun, found: RecordFindingsResult) => CardRun; history: (run: CardRun, found: RecordFindingsResult) => CardRun };
+  /** The decision event the commit owes the journal, for whatever status it reaches (card T0-JOURNAL-FAULT-EVENTS). */
+  event: (status: CommitReviewStatus, found: RecordFindingsResult) => { type: 'PRE_REVIEW_DECIDED' | 'REVIEW_DECIDED'; data: Record<string, unknown> };
 }
 
 type CommitReviewStatus = 'committed' | 'stopped' | 'abandoned' | 'fenced' | 'superseded';
@@ -136,6 +138,15 @@ interface FormalResult {
 type RetainedFormalResult = FormalResult & { key: string };
 
 /** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
+/**
+ * Whether the goal journal holds an owed event (card T0-JOURNAL-FAULT-EVENTS, R3): an attempt, R2 or R3 event by the key it
+ * carries as `eventKey`, a merge result by an `OPERATION_RESULT` or `OPERATION_RECONCILED` that names its operation.
+ */
+function journalHolds(owed: OwedEvent, events: JournalEvent[]): boolean {
+  if (owed.type !== 'OPERATION_RESULT') return events.some((e) => e.type === owed.type && e.data['eventKey'] === owed.key);
+  return events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === owed.data['operationId']);
+}
+
 function discardedDecision(status: CommitReviewStatus): string | undefined {
   switch (status) {
     case 'stopped':
@@ -470,6 +481,39 @@ export class CardRunner {
     return this.store.saveCardRun(run);
   }
 
+  /** A fresh owed entry (R1); every type but the merge result carries its key in its data as `eventKey`. */
+  private owe(goal: Goal, type: OwedEvent['type'], data: Record<string, unknown>): OwedEvent {
+    const key = randomUUID();
+    return { key, type, generation: goal.generation, data: type === 'OPERATION_RESULT' ? data : { ...data, eventKey: key } };
+  }
+
+  /** R1: the owed entries of `run` the goal journal does not hold, then `fresh`. */
+  private owedWith(goalId: string, run: CardRun, ...fresh: OwedEvent[]): OwedEvent[] {
+    const pending = run.journalOwed ?? [];
+    const events = pending.length ? this.journal(goalId).readAll() : [];
+    return [...pending.filter((o) => !journalHolds(o, events)), ...fresh];
+  }
+
+  /**
+   * R2 and R4: append each owed event the goal journal does not hold, in one card-run lock section that writes nothing. The
+   * entries named in `own` are the calling command's commit, appended with `extra`; every other one is completed for an
+   * earlier command (`completed: true`). A merge result is appended only while the ledger shows its status (R5).
+   */
+  private deliverOwed(goal: Goal, card: Card, own: { keys: string[]; extra?: Record<string, unknown> } = { keys: [] }): void {
+    if (!this.store.getCardRun(goal.id, card.id)?.journalOwed?.length) return;
+    this.store.updateCardRun(goal.id, card.id, (current) => {
+      const journal = this.journal(goal.id);
+      const events = current?.journalOwed?.length ? journal.readAll() : [];
+      for (const owed of current?.journalOwed ?? []) {
+        if (journalHolds(owed, events)) continue;
+        if (owed.type === 'OPERATION_RESULT' && this.ops.get(String(owed.data['operationId']))?.status !== owed.data['status']) continue;
+        const data = own.keys.includes(owed.key) ? { ...owed.data, ...own.extra } : { ...owed.data, completed: true };
+        events.push(journal.append({ type: owed.type, goalId: goal.id, cardId: card.id, generation: owed.generation, data }));
+      }
+      return current as CardRun;
+    });
+  }
+
   /**
    * Evidence from the persisted facts alone (lease record, operation ledger, run record; no probe), the owner's lease
    * renewal and the state selection, shared by `next`, which then performs the selected state's action, and by
@@ -587,6 +631,8 @@ export class CardRunner {
   /** Gather evidence and select the next card directive. Performs only the bounded action of the selected state. */
   next(goal: Goal, card: Card, caller: CardRun, options: { effort?: EffortLevel } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card);
     // The stored run, before anything reads it: a caller's snapshot (a window that kept the run it read before a takeover
     // cleared its stop) decides nothing here either; the caller's copy stands in only when no record exists yet.
     let run: CardRun = this.store.getCardRun(goal.id, card.id) ?? caller;
@@ -614,6 +660,7 @@ export class CardRunner {
         // The repair is a counted attempt of the same episode (MA2): start it here so `aidlc card attempt` can finish it.
         let episode = next.effort;
         let attemptNote = '';
+        let started: OwedEvent | undefined;
         if (episode && !episode.attempts.some((a) => a.outcome === 'running')) {
           const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
           if (action.action === 'stop') {
@@ -624,10 +671,12 @@ export class CardRunner {
           if (action.action === 'attempt') {
             episode = startAttempt(episode, action.effort, now);
             attemptNote = ` Attempt ${action.n} at effort ${action.effort}${action.escalated ? ' (escalated)' : ''}.`;
-            this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: action.n, effort: action.effort, escalated: action.escalated, reason: 'review-fix' } });
+            started = this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, reason: 'review-fix' });
           }
         }
-        next = this.save({ ...next, effort: episode });
+        // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
+        next = this.save({ ...next, effort: episode, ...(started ? { journalOwed: this.owedWith(goal.id, next, started) } : {}) });
+        if (started) this.deliverOwed(goal, card, { keys: [started.key] });
         // The handoff (`review-fix`) was returned by the ship; from here on the repair is BUILD work.
         const running = episode?.attempts.find((a) => a.outcome === 'running');
         const reasons = run.review.lastVerdict?.reasons ?? [];
@@ -826,6 +875,7 @@ export class CardRunner {
     const running = episode.attempts.find((a) => a.outcome === 'running');
     let attemptNo = running?.n ?? episode.attempts.length + 1;
     let effort: EffortLevel = running?.effort ?? episode.baseline;
+    let started: OwedEvent | undefined;
     if (!running) {
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
       if (action.action === 'stop') {
@@ -837,7 +887,7 @@ export class CardRunner {
         episode = startAttempt(episode, action.effort, now);
         attemptNo = action.n;
         effort = action.effort;
-        this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: attemptNo, effort, escalated: action.escalated } });
+        started = this.owe(goal, 'ATTEMPT_STARTED', { n: attemptNo, effort, escalated: action.escalated });
       }
     }
     // Refresh the RED receipt from the scaffold worktree when available.
@@ -849,7 +899,8 @@ export class CardRunner {
       if (id && id !== run.pendingRepair?.rejectedReceipt) redReceipt = id;
     }
     const repairPrefix = run.pendingRepair ? `Pending ${run.pendingRepair.kind} repair: ${run.pendingRepair.detail} ` : '';
-    const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt });
+    const next = this.save({ ...run, state: 'BUILD', effort: episode, redReceipt, ...(started ? { journalOwed: this.owedWith(goal.id, run, started) } : {}) });
+    if (started) this.deliverOwed(goal, card, { keys: [started.key] });
     return {
       run: next,
       directive: {
@@ -872,6 +923,8 @@ export class CardRunner {
   /** Record an attempt outcome and, on success, the DoD/RED receipts. */
   recordAttempt(goal: Goal, card: Card, run: CardRun, input: { outcome: 'success' | 'fail' | 'not-counted'; cause?: string; notCountedReason?: 'expected-red' | 'quota' | 'admission-hold' | 'tool-outage' | 'env-setup'; progress?: boolean; evidence?: string; dodReceipt?: string; redReceipt?: string; candidateSha?: string; checksGained?: string[]; checksLost?: string[] }): CardRun {
     const now = this.clock();
+    // R4: an owed event a lost append left is journaled before the stored run is read (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
     if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
@@ -882,15 +935,16 @@ export class CardRunner {
     if (input.outcome === 'success' && card.tdd && !run.redReceipt && !input.redReceipt) throw new Error(`a successful attempt on tdd card ${card.id} needs a RED receipt: none is recorded on the run and the attempt carries none; record it again with --red-receipt "<sha>:<test>"`);
     const ladder = goal.roleProfiles.find((p) => p.role === 'implementer')?.supportedEfforts ?? ['low', 'medium', 'high'];
     let episode = run.effort ?? createEpisode(card.id, 'implementer', ladder.includes('medium') ? 'medium' : ladder[0]!, ladder);
+    const owed: OwedEvent[] = [];
     if (!episode.attempts.some((a) => a.outcome === 'running')) {
       // The agent skipped `card next`: open the attempt under the same bounded rules before finishing it.
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
       if (action.action !== 'attempt') throw new Error(action.action === 'stop' ? `no attempt may start: ${action.reason}: ${action.detail}` : 'episode already succeeded; ship the candidate instead');
       episode = startAttempt(episode, action.effort, now);
-      this.journal(goal.id).append({ type: 'ATTEMPT_STARTED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true } });
+      owed.push(this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true }));
     }
     episode = finishAttempt(episode, { finishedAt: now, outcome: input.outcome, cause: input.cause, notCountedReason: input.notCountedReason, progress: input.progress, evidence: input.evidence, checksGained: input.checksGained, checksLost: input.checksLost });
-    this.journal(goal.id).append({ type: 'ATTEMPT_FINISHED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { outcome: input.outcome, cause: input.cause, progress: input.progress, evidence: input.evidence } });
+    owed.push(this.owe(goal, 'ATTEMPT_FINISHED', { outcome: input.outcome, cause: input.cause, progress: input.progress, evidence: input.evidence }));
     let candidate = run.candidate;
     if (input.outcome === 'success') {
       if (this.config.shipPath !== 'dry-run' && run.worktree && existsSync(run.worktree)) {
@@ -915,7 +969,10 @@ export class CardRunner {
     }
     // A failed check, or lost checks, leave no DoD evidence: neither the active receipt nor the one a block retained.
     const checksHold = input.outcome === 'not-counted' && !input.checksLost?.length;
-    return this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined });
+    // The finished attempt and its owed events land in one write; the events are appended after it (card T0-JOURNAL-FAULT-EVENTS).
+    const saved = this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined, journalOwed: this.owedWith(goal.id, run, ...owed) });
+    this.deliverOwed(goal, card, { keys: owed.map((o) => o.key) });
+    return saved;
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {
@@ -1506,6 +1563,8 @@ export class CardRunner {
    */
   async formalReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; classified: ClassifiedVerdict; verdict?: Verdict; advisory: string[]; verdictRef?: string; logRef?: string; durationMs: number; receiptSha256: string; reviewer: string }> {
     if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
+    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card);
     // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
     let persisted = this.store.getCardRun(goal.id, card.id) ?? run;
     const reviewDir = path.join(this.reviewCheckout(persisted), '.review');
@@ -2018,6 +2077,7 @@ export class CardRunner {
             },
           };
         },
+        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash } }),
       },
       after,
     );
@@ -2035,7 +2095,8 @@ export class CardRunner {
         publication = { published: false, error: (err as Error).message };
       }
     }
-    this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(committed.status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: committed.found.raised, reraised: committed.found.reraised, resolved: committed.found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, canonicalPublished: publication?.published, publicationError: publication?.error, policyHash: r.policyHash } });
+    // The owed REVIEW_DECIDED is appended after the commit, with the publication this command alone knows (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card, { keys: [committed.owedKey], extra: { canonicalPublished: publication?.published, publicationError: publication?.error } });
     return { run: committed.run, ...result, reviewer };
   }
 
@@ -2047,10 +2108,11 @@ export class CardRunner {
    * the decision are computed from the locked record; a result for a candidate the author replaced meanwhile is
    * recorded as history without touching the newer candidate's receipts, effort or state.
    */
-  private commitReviewed(goal: Goal, card: Card, expected: CardRun, input: CommitReviewInput, now: string): { run: CardRun; found: RecordFindingsResult; status: CommitReviewStatus } {
+  private commitReviewed(goal: Goal, card: Card, expected: CardRun, input: CommitReviewInput, now: string): { run: CardRun; found: RecordFindingsResult; status: CommitReviewStatus; owedKey: string } {
     let found: RecordFindingsResult = { findings: [], raised: [], reraised: [], resolved: [] };
     const outcome: { status: CommitReviewStatus } = { status: 'committed' };
-    const run = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+    let owedKey = '';
+    const change = (persisted: CardRun | undefined): CardRun => {
       const latest = persisted ?? expected;
       const evidence = [...latest.evidence, input.evidence];
       if (latest.stop || latest.state === 'STOP') {
@@ -2080,9 +2142,17 @@ export class CardRunner {
         return decision.history(withFindings, found);
       }
       return { ...decision.commit(withFindings, found), ownerGeneration: latest.ownerGeneration };
+    };
+    // The decision event of whatever status the write reaches is owed in that same write (card T0-JOURNAL-FAULT-EVENTS, R1).
+    const run = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      const next = change(persisted);
+      const event = input.event(outcome.status, found);
+      const entry = this.owe(goal, event.type, event.data);
+      owedKey = entry.key;
+      return { ...next, journalOwed: this.owedWith(goal.id, persisted ?? expected, entry) };
     });
     if (outcome.status === 'stopped') this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: run.state, to: 'STOP', reason: 'a stop was saved while the review result was being committed; the result is kept as evidence only' } });
-    return { run, found, status: outcome.status };
+    return { run, found, status: outcome.status, owedKey };
   }
 
   /**
@@ -2139,6 +2209,8 @@ export class CardRunner {
   async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
     const primary = this.config.preReview;
     if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
+    // R4: an owed event a lost append left is journaled before the round is reserved (card T0-JOURNAL-FAULT-EVENTS).
+    this.deliverOwed(goal, card);
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
@@ -2284,11 +2356,12 @@ export class CardRunner {
             return next;
           },
         }),
+        event: (status, found) => ({ type: 'PRE_REVIEW_DECIDED', data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}), ...(fallbackAngles.length ? { fallbackAngles } : {}) } }),
       },
       after,
     );
-    const { run: saved, found } = committed;
-    this.journal(goal.id).append({ type: 'PRE_REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { cycle, round, reviewer: cfg.reviewer, candidateDigest, outcome: result.outcome, decision: discardedDecision(committed.status), runStatus: result.runStatus, reasons: result.reasons, advisory: result.advisory ?? [], findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: result.verdictRef, receiptSha256: result.receiptSha256, durationMs: record.durationMs, holdUntil, perspectives: perspectives.map((p) => `${p.name}:${p.outcome}`), policyHash: hash, coverage: record.coverage, ...(record.effort ? { effort: record.effort } : {}), ...(fallbackAngles.length ? { fallbackAngles } : {}) } });
+    const { run: saved } = committed;
+    this.deliverOwed(goal, card, { keys: [committed.owedKey] });
     return { run: saved, result, round: record };
   }
 
@@ -2504,10 +2577,12 @@ export class CardRunner {
           return { run: next, directive: { kind: 'stop', cardId: card.id, stop, narration: stop.detail } };
         });
       }
-      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr }), (next) => {
+      // The merge result is owed in `finish`'s write and appended after `markResult`, while the ledger shows it (card T0-JOURNAL-FAULT-EVENTS).
+      const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts });
+      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
-        this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts } });
+        this.deliverOwed(goal, card, { keys: [owedResult.key] });
         return mergeVerified ? this.close(goal, card, next) : { run: next, directive: { kind: 'wait', cardId: card.id, on: `merge-verify:${operationId}`, pollSeconds: 60, narration: `Ship exited 0 but the merge is not verified on the intended base; reconcile the PR/merge token before CLOSE${noSha}.` } };
       });
     }
