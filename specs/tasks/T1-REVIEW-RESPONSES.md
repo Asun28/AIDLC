@@ -65,3 +65,13 @@ npm run typecheck && node --test tests/core/review-policy.test.ts tests/scenario
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes, including the dispute kind default and each value, the refusal of an unknown kind with nothing written, the kindless old record, the journal kind, the findings line, the responses per card and in the family totals, the stats line and the docs.
+
+## Attempt evidence
+BUILD attempt 1 (Windows 11, Node 22). Seam commits 0868c3f and acecb24 export `DisputeKind`, `parseDisputeKind`, the kind parameters, the optional schema field and `findings.responses` with the old behaviour, so the RED fails on assertions, not on imports.
+
+- RED at e166bf1: the DoD command exited 1 after 6785 ms (typecheck clean; 105 tests, 93 pass, 12 fail, every failure an assertion). First failing line: `tests/core/review-policy.test.ts` "dispute needs an open finding and a note, ...": deepEqual of the appended dispute, expected `kind: 'wrong'`, actual no kind.
+- GREEN at 2d470e7: the DoD command exited 0 after 10799 ms (typecheck clean; 105 tests, 105 pass).
+- `npm test` with `CLAUDE_CODE_SESSION_ID` and `AIDLC_SESSION` unset: exit 0, 1469 tests, 1463 pass, 0 fail, 6 skipped.
+- `npm run build && npm run bench -- --check`: exit 0, every count within its ceiling (6 journeys; cli.start 241/241 modules).
+- `node --test tests/scenarios/fault-points.test.ts`: exit 0, 28 of 28 (in sync: the card changes `CardRunner.disputeFinding`, which the coverage record lists as not covered, and no covered write).
+- Mutation check (each break applied, the named test file run, the break restored, none committed); every mutant failed at least one test: default `intentional` in `disputeFinding` (acceptance 1) and in `CardRunner.disputeFinding` (acceptance 3); `data.kind` dropped (acceptance 3); a finding resolved while disputed counted as fixed (acceptance 5); an unknown kind accepted (acceptance 1, 4); `--kind` parsed after `cardCtx` (acceptance 4, the card with no run); an absent kind read as `intentional` in `disputeKindOf`, in the stats reader and in the CLI reader (acceptance 4, 5); zero counts printed, and the part printed for a card with no findings (acceptance 6, the quiet line); the family totals without responses (acceptance 5); a zod default `wrong` on the schema (acceptance 2).
