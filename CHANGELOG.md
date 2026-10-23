@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-REVIEW-ADMIT-FOREIGN (bugfix): a card asking the review pool for admission is admitted only for its own request and waits its turn behind another card's request (`review r3` refuses, the ship waits on `review-pool:<pool>:behind`, both naming the card ahead). Before, it admitted the other card's request on its behalf, that request stayed `running` with the slot and nobody to run it, the other card's `review r3` refused with "a matching formal review is already running" and both cards waited for good.
+
 - T0-OP-INTENT-DUP (bugfix): a ship that failed after recording its merge intent (at the `OPERATION_INTENT`, `REVIEW_REQUESTED` or `REVIEW_ADMITTED` append, the review enqueue or the admission) no longer leaves that intent `intended` for good: the next ship of the same candidate continues under it and journals its `OPERATION_INTENT` when it is missing. Before, the next ship recorded a second intent and merged, and the first kept the goal's `aidlc next` waiting on `reconcile:<id>`, refused takeovers and blocked `aidlc audit verify` until a person ran `aidlc ops reconcile`.
 
 - T0-REVIEW-ADMIT-STRAND (bugfix): a `REVIEW_ADMITTED` append that fails after the review pool admitted the request no longer leaves the request `running` with its slot: `review r3` and the ship of `card next` cancel it and fail with the append's error. Before, every later `review r3` of the candidate refused with "a matching formal review is already running", the ship waited on `review:<key>` for good, and the held slot kept every other review of the pool waiting.

@@ -28,7 +28,7 @@ export interface EnqueueInput {
 
 export type EnqueueResult = { status: 'enqueued'; request: ReviewRequest } | { status: 'joined'; request: ReviewRequest } | { status: 'completed'; request: ReviewRequest };
 
-export type AdmitResult = { status: 'admitted'; request: ReviewRequest } | { status: 'busy'; active: string[] } | { status: 'empty' } | { status: 'reset-pending'; resetAt: string };
+export type AdmitResult = { status: 'admitted'; request: ReviewRequest } | { status: 'busy'; active: string[] } | { status: 'empty' } | { status: 'reset-pending'; resetAt: string } | { status: 'behind'; ahead: { key: string; requesters: string[] } };
 
 export class ReviewQueue {
   readonly dir: string;
@@ -117,8 +117,16 @@ export class ReviewQueue {
     return requeued;
   }
 
-  /** Admit the next eligible request in persisted order if the pool has a free slot. */
-  admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso()): AdmitResult {
+  /**
+   * Admit the next eligible request in persisted order if the pool has a free slot. With `key` (card
+   * T0-REVIEW-ADMIT-FOREIGN) only that request is admitted, and only while fewer eligible requests stand ahead of it
+   * than the pool has free slots; otherwise `behind` names the first request ahead. Deadline rule: a keyed call cancels
+   * each request past its deadline that its scan passes, as keyless calls draining the queue to the same point do, except
+   * that on `behind` it writes only those before the first eligible request, what one keyless call writes (R3 decisions
+   * 1 and 2), and leaves the pool file unwritten, a stale slot included (the next admitting call cleans it). A key no
+   * queued or retry-after request carries is treated as the last request of the queue.
+   */
+  admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), key?: string): AdmitResult {
     const p = this.pool(pool, now);
     if (p.resetAt && Date.parse(p.resetAt) > Date.parse(now)) return { status: 'reset-pending', resetAt: p.resetAt };
     // Drop active entries that are no longer running (completed/cancelled) but keep 'lost' ones: a lost
@@ -132,17 +140,35 @@ export class ReviewQueue {
       return { status: 'busy', active };
     }
     const candidates = this.list(pool).filter((r) => r.state === 'queued' || r.state === 'retry-after');
+    const ahead: ReviewRequest[] = [];
+    const expired: ReviewRequest[] = [];
+    const cancelExpired = (r: ReviewRequest): void => {
+      atomicWriteJson(this.requestFile(r.key), { ...r, state: 'cancelled', finishedAt: now, lastError: 'deadline passed before admission' });
+    };
     for (const r of candidates) {
       if (Date.parse(r.deadline) <= Date.parse(now)) {
-        atomicWriteJson(this.requestFile(r.key), { ...r, state: 'cancelled', finishedAt: now, lastError: 'deadline passed before admission' });
+        // Past the first eligible request (keyed calls only) the cancellation is held: written on `admitted` and `empty`,
+        // dropped on `behind`.
+        if (ahead.length) expired.push(r);
+        else cancelExpired(r);
         continue;
       }
       if (r.state === 'retry-after' && r.retryAfter && Date.parse(r.retryAfter) > Date.parse(now)) continue;
+      if (key !== undefined && r.key !== key) {
+        // Another eligible request ahead of the caller's takes a free slot first; once they fill them all, the caller waits.
+        ahead.push(r);
+        if (ahead.length < p.maxConcurrent - active.length) continue;
+        // No pool write here: the cleaned slots count only in memory, and the next admitting call writes them.
+        return { status: 'behind', ahead: { key: ahead[0]!.key, requesters: ahead[0]!.requesters } };
+      }
+      expired.forEach(cancelExpired);
       const admitted: ReviewRequest = { ...r, state: 'running', startedAt: now, slotOwner: actor, attempts: r.attempts + 1 };
       atomicWriteJson(this.requestFile(r.key), admitted);
       this.savePool({ ...p, active: [...active, r.key], updatedAt: now });
       return { status: 'admitted', request: admitted };
     }
+    // The scan passed the whole queue: every held cancellation is written, as keyless calls draining the queue write them.
+    expired.forEach(cancelExpired);
     if (active.length !== p.active.length) this.savePool({ ...p, active, updatedAt: now });
     return { status: 'empty' };
   }
