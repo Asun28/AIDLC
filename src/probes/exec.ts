@@ -4,7 +4,7 @@
  * Every probe records the actual command, exit code, output digest and environment binding.
  * "Check command exits before parsing. Errors are not empty results."
  */
-import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
+import { spawn, spawnSync, type SpawnSyncOptionsWithBufferEncoding, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
@@ -44,60 +44,102 @@ function digest(stdout: string, stderr: string): string {
   return createHash('sha256').update(stdout).update('\u0000').update(stderr).digest('hex');
 }
 
-/** Starts a process synchronously; `spawnSync` in production, a recorder in tests. */
-export type SpawnSyncFn = (command: string, args: string[], options: SpawnSyncOptionsWithStringEncoding) => SpawnSyncReturns<string>;
+/**
+ * Starts a process synchronously: `spawnSync` in production. A test seam: tests pass a recorder to
+ * `createRunSync` to see how the command or the tree helper is started and to answer for it.
+ */
+export interface SpawnSyncFn {
+  (command: string, args: string[], options: SpawnSyncOptionsWithStringEncoding): SpawnSyncReturns<string>;
+  (command: string, args: string[], options: SpawnSyncOptionsWithBufferEncoding): SpawnSyncReturns<Buffer>;
+}
 
-/** The tree helper beside the exec module at `moduleUrl`, with that module's own extension (`.ts` from the sources, `.js` from the build). */
+/**
+ * The tree helper beside the exec module at `moduleUrl`, with that module's own extension (`.ts` from the
+ * sources, `.js` from the build). Exported as a test seam; runSync passes its own module URL.
+ */
 export function treeHelperPath(moduleUrl: string): string {
   return fileURLToPath(new URL(`./exec-tree-helper${moduleUrl.endsWith('.ts') ? '.ts' : '.js'}`, moduleUrl));
 }
 
 /** How long past the command's `timeoutMs` and TIMEOUT_GRACE_MS `runSync` lets the tree helper run before it ends the helper. */
-const TREE_HELPER_BACKSTOP_MS = 15_000;
+export const TREE_HELPER_BACKSTOP_MS = 15_000;
 
-/** Whether a parsed helper stdout carries the command's exit, signal, timedOut, stdout and stderr. */
-function isHelperReceipt(value: unknown): value is Pick<ExecReceipt, 'exitCode' | 'signal' | 'timedOut' | 'stdout' | 'stderr'> {
-  if (typeof value !== 'object' || value === null) return false;
-  const r = value as Record<string, unknown>;
-  return (r['exitCode'] === null || Number.isInteger(r['exitCode'])) && (r['signal'] === null || typeof r['signal'] === 'string') && typeof r['timedOut'] === 'boolean' && typeof r['stdout'] === 'string' && typeof r['stderr'] === 'string';
+/** The direct runner's spawnSync `maxBuffer`: at most 64 MiB of stdout and stderr together. */
+const SYNC_MAX_BUFFER = 64 * 1024 * 1024;
+
+/**
+ * The tree helper's transport limit. The helper prints a one-line JSON header and then the command's stdout
+ * and stderr as UTF-8 bytes, so no byte is escaped; a byte that is not valid UTF-8 decodes to U+FFFD, three
+ * bytes, so the 64 MiB the direct runner accepts needs at most 3 x 64 MiB, plus 1 MiB for the header.
+ */
+const TREE_HELPER_MAX_BUFFER = 3 * SYNC_MAX_BUFFER + 1024 * 1024;
+
+type HelperResult = Pick<ExecReceipt, 'exitCode' | 'signal' | 'timedOut' | 'stdout' | 'stderr'>;
+
+const isByteCount = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+
+/**
+ * Decodes the tree helper's stdout: a JSON header line ({ exitCode, signal, timedOut, stdoutBytes,
+ * stderrBytes }), then exactly `stdoutBytes` and `stderrBytes` bytes. Anything else (no header line, a header
+ * that is not JSON or not a header, a body shorter or longer than the header says) is undefined, so a
+ * truncated or malformed transport never yields a partial receipt.
+ */
+function decodeHelperOutput(out: Buffer): HelperResult | undefined {
+  const eol = out.indexOf(0x0a);
+  if (eol < 0) return undefined;
+  let header: unknown;
+  try {
+    header = JSON.parse(out.subarray(0, eol).toString('utf8'));
+  } catch {
+    return undefined;
+  }
+  if (typeof header !== 'object' || header === null) return undefined;
+  const h = header as Record<string, unknown>;
+  const [exitCode, signal, timedOut, stdoutBytes, stderrBytes] = [h['exitCode'], h['signal'], h['timedOut'], h['stdoutBytes'], h['stderrBytes']];
+  if (!(exitCode === null || Number.isInteger(exitCode)) || !(signal === null || typeof signal === 'string') || typeof timedOut !== 'boolean') return undefined;
+  if (!isByteCount(stdoutBytes) || !isByteCount(stderrBytes) || out.length !== eol + 1 + stdoutBytes + stderrBytes) return undefined;
+  const body = eol + 1;
+  return {
+    exitCode: exitCode as number | null,
+    signal,
+    timedOut,
+    stdout: out.subarray(body, body + stdoutBytes).toString('utf8'),
+    stderr: out.subarray(body + stdoutBytes).toString('utf8'),
+  };
 }
 
 /**
- * Runs the command under the tree helper: node on `exec-tree-helper` with the caller's cwd and environment
- * and the request as JSON on stdin. The receipt is the command's own under the caller's command, args and
- * cwd, timed around the helper; a helper that exits non-zero or prints anything but one receipt gives exit
- * code null and a `[tree helper error]`, timed out when the helper reached its backstop.
+ * Runs the command under the tree helper: node on `exec-tree-helper` with the caller's cwd and environment.
+ * Its stdin is a JSON header line ({ command, args, timeoutMs, shell, inputBytes }, inputBytes only with an
+ * input) followed by the input as UTF-8 bytes. The receipt is the command's own under the caller's command,
+ * args and cwd, timed around the helper; a helper that exits non-zero or prints anything but one well-formed
+ * transport gives exit code null and a `[tree helper error]`, timed out when the helper reached its backstop.
  */
 function runInTreeHelper(spawner: SpawnSyncFn, command: string, args: string[], options: ExecOptions, timeoutMs: number): ExecReceipt {
   const startedAt = new Date();
   const backstopMs = timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS;
+  const input = options.input === undefined ? undefined : Buffer.from(options.input, 'utf8');
+  const header = JSON.stringify({ command, args, timeoutMs, shell: options.shell, inputBytes: input?.length });
   const res = spawner(process.execPath, [treeHelperPath(import.meta.url)], {
     cwd: options.cwd,
     env: options.env ?? process.env,
-    encoding: 'utf8',
+    encoding: 'buffer',
     timeout: backstopMs,
-    input: JSON.stringify({ command, args, input: options.input, timeoutMs, shell: options.shell }),
+    input: Buffer.concat([Buffer.from(`${header}\n`, 'utf8'), ...(input ? [input] : [])]),
     shell: false,
     windowsHide: true,
-    maxBuffer: 256 * 1024 * 1024,
+    maxBuffer: TREE_HELPER_MAX_BUFFER,
   });
   const finishedAt = new Date();
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(res.stdout ?? '');
-  } catch {
-    parsed = undefined;
-  }
-  let result: Pick<ExecReceipt, 'exitCode' | 'signal' | 'timedOut' | 'stdout' | 'stderr'>;
-  if (res.status === 0 && isHelperReceipt(parsed)) {
-    result = { exitCode: parsed.exitCode, signal: parsed.signal, timedOut: parsed.timedOut, stdout: parsed.stdout, stderr: parsed.stderr };
+  const decoded = res.status === 0 && res.stdout ? decodeHelperOutput(res.stdout) : undefined;
+  let result: HelperResult;
+  if (decoded) {
+    result = decoded;
   } else {
     const timedOut = res.error !== undefined && (res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
     const how = timedOut ? ` (${res.signal}, backstop ${backstopMs} ms)` : res.signal ? ` (${res.signal})` : '';
-    const spawnError = res.error && !timedOut ? `
-[spawn error] ${res.error.message}` : '';
-    result = { exitCode: null, signal: res.signal ?? null, timedOut, stdout: '', stderr: `[tree helper error] exit ${res.status}${how}
-${res.stderr ?? ''}${spawnError}` };
+    const spawnError = res.error && !timedOut ? `\n[spawn error] ${res.error.message}` : '';
+    result = { exitCode: null, signal: res.signal ?? null, timedOut, stdout: '', stderr: `[tree helper error] exit ${res.status}${how}\n${res.stderr?.toString('utf8') ?? ''}${spawnError}` };
   }
   return {
     command,
@@ -112,8 +154,9 @@ ${res.stderr ?? ''}${spawnError}` };
 }
 
 /**
- * Builds the synchronous runner around a process starter. With `killTree` and `timeoutMs` the command
- * runs under the tree helper; otherwise it is one spawn of the command, whose timeout ends the root alone.
+ * Builds the synchronous runner around a process starter; `runSync` is `createRunSync(spawnSync)`, and tests
+ * use it as a seam with a recording starter. With `killTree` and `timeoutMs` the command runs under the tree
+ * helper; otherwise it is one spawn of the command, whose timeout ends the root alone.
  */
 export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, args, options = {}) => {
   if (options.killTree && options.timeoutMs) return runInTreeHelper(spawner, command, args, options, options.timeoutMs);
@@ -127,7 +170,7 @@ export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, arg
     input: options.input,
     shell,
     windowsHide: true,
-    maxBuffer: 64 * 1024 * 1024,
+    maxBuffer: SYNC_MAX_BUFFER,
   });
   const finishedAt = new Date();
   const timedOut = res.error !== undefined && (res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';

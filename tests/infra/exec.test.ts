@@ -1,11 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
+import { spawn, type SpawnSyncOptions } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRun, createRunSync, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS, treeHelperPath } from '../../src/probes/exec.ts';
+import { createRun, createRunSync, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS, TREE_HELPER_BACKSTOP_MS, treeHelperPath } from '../../src/probes/exec.ts';
 import type { ExecOptions, ExecReceipt, ProcessKiller, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
 
 describe('probes/exec (receipts: exit, output digest, timeout)', () => {
@@ -471,20 +471,66 @@ describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R
   });
 });
 
-type SpawnCall = { command: string; args: string[]; options: SpawnSyncOptionsWithStringEncoding };
+/**
+ * The largest output the direct runner returns whole: its spawnSync `maxBuffer` is 64 MiB over stdout and
+ * stderr together, and an output that reaches it ends the command (ENOBUFS). Split as 32 MiB of stdout and
+ * 32 MiB - 1 byte of stderr.
+ */
+const [OUT_BYTES, ERR_BYTES] = [32 * 1024 * 1024, 32 * 1024 * 1024 - 1];
 
-/** A spawnSync stand-in that records each call and answers with `result`. */
-function recordingSpawner(result: Partial<SpawnSyncReturns<string>>): { spawner: SpawnSyncFn; calls: SpawnCall[] } {
+describe('T0-EXEC-SYNC-TREE-KILL worst-case output and input through the helper (R3 decision 1 F2) [R2]', () => {
+  for (const [name, byte, char] of [
+    ['NUL bytes', 0x00, '\u0000'],
+    ['invalid UTF-8 (0xFF, one U+FFFD per byte, as the direct runner decodes it)', 0xff, '�'],
+  ] as [string, number, string][]) {
+    it(`a command writing 64 MiB - 1 byte of ${name} (32 MiB to stdout, the rest to stderr) returns exit 0 and both outputs whole, as the direct runner does`, () => {
+      const args = ['-e', `process.stdout.write(Buffer.alloc(${OUT_BYTES}, ${byte})); process.stderr.write(Buffer.alloc(${ERR_BYTES}, ${byte}))`];
+      const [expectedOut, expectedErr] = [char.repeat(OUT_BYTES), char.repeat(ERR_BYTES)];
+      const direct = runSync(process.execPath, args, { timeoutMs: 120_000 });
+      assert.ok(direct.exitCode === 0 && direct.stdout === expectedOut && direct.stderr === expectedErr, `direct runner: exit ${direct.exitCode}, stdout ${direct.stdout.length} chars, stderr ${JSON.stringify(direct.stderr.slice(-200))}`);
+      const r = runSync(process.execPath, args, { timeoutMs: 120_000, killTree: true });
+      assert.equal(r.exitCode, 0, `stderr: ${r.stderr.slice(0, 300)}`);
+      assert.equal(r.timedOut, false);
+      assert.ok(r.stdout === expectedOut, `stdout: ${r.stdout.length} chars, not ${OUT_BYTES} of ${name}`);
+      assert.ok(r.stderr === expectedErr, `stderr: ${r.stderr.length} chars, not ${ERR_BYTES} of ${name}; starts ${JSON.stringify(r.stderr.slice(0, 200))}`);
+    });
+  }
+
+  it('a 96 MiB input of NUL characters reaches the command whole, as it does through the direct runner', () => {
+    const args = ['-e', 'let n = 0; process.stdin.on("data", (d) => (n += d.length)); process.stdin.on("end", () => process.stdout.write(String(n)))'];
+    const input = '\u0000'.repeat(96 * 1024 * 1024);
+    assert.equal(runSync(process.execPath, args, { timeoutMs: 120_000, input }).stdout, '100663296');
+    let r: ExecReceipt | undefined;
+    assert.doesNotThrow(() => (r = runSync(process.execPath, args, { timeoutMs: 120_000, killTree: true, input })));
+    assert.equal(r?.exitCode, 0, `stderr: ${r?.stderr.slice(0, 300)}`);
+    assert.equal(r?.stdout, '100663296');
+  });
+});
+
+type SpawnCall = { command: string; args: string[]; options: SpawnSyncOptions };
+type SpawnAnswer = { status?: number | null; signal?: NodeJS.Signals | null; stdout?: string | Buffer; stderr?: string | Buffer; error?: Error };
+
+/** A spawnSync stand-in that records each call and answers with `answer`, its outputs in the encoding asked for. */
+function recordingSpawner(answer: SpawnAnswer): { spawner: SpawnSyncFn; calls: SpawnCall[] } {
   const calls: SpawnCall[] = [];
-  return {
-    calls,
-    spawner: (command, args, options) => (calls.push({ command, args, options }), { pid: 1, output: [], stdout: '', stderr: '', status: 0, signal: null, ...result }),
+  const spawner = (command: string, args: string[], options: SpawnSyncOptions) => {
+    calls.push({ command, args, options });
+    const as = (v: string | Buffer | undefined) => (options.encoding === 'buffer' ? Buffer.from(v ?? '') : String(v ?? ''));
+    return { pid: 1, output: [], status: 0, signal: null, ...answer, stdout: as(answer.stdout), stderr: as(answer.stderr) };
   };
+  return { calls, spawner: spawner as unknown as SpawnSyncFn };
+}
+
+/** The helper's transport: a JSON header line, then the stdout and stderr bytes. */
+function transport(header: Record<string, unknown>, stdout: string, stderr: string): Buffer {
+  const [out, err] = [Buffer.from(stdout), Buffer.from(stderr)];
+  return Buffer.concat([Buffer.from(`${JSON.stringify({ stdoutBytes: out.length, stderrBytes: err.length, ...header })}\n`), out, err]);
 }
 
 const EXEC_MODULE = new URL('../../src/probes/exec.ts', import.meta.url).href;
 const HELPER_TS = fileURLToPath(new URL('../../src/probes/exec-tree-helper.ts', import.meta.url));
-const HELPER_RECEIPT = { command: 'helper-reported', args: ['x'], cwd: '/elsewhere', exitCode: 3, signal: null, timedOut: false, stdout: 'out', stderr: 'err', startedAt: '2026-10-23T15:00:00.000Z', finishedAt: '2026-10-23T15:00:01.000Z', durationMs: 1000, outputSha256: 'f'.repeat(64) };
+const HELPER_HEADER = { exitCode: 3, signal: null, timedOut: false };
+const HELPER_OUTPUT = transport(HELPER_HEADER, 'out', 'err');
 
 describe('T0-EXEC-SYNC-TREE-KILL the helper start and its receipt [R1] [R2] [R3]', () => {
   it('acceptance 3: the helper path is exec-tree-helper.ts beside a .ts exec module and exec-tree-helper.js beside a .js one', () => {
@@ -493,55 +539,71 @@ describe('T0-EXEC-SYNC-TREE-KILL the helper start and its receipt [R1] [R2] [R3]
     assert.equal(treeHelperPath(new URL('../../dist/probes/exec.js', import.meta.url).href), fileURLToPath(new URL('../../dist/probes/exec-tree-helper.js', import.meta.url)));
   });
 
-  it("acceptance 3 [R1]: starts node on the helper with the caller's cwd and env, the command, args, input, timeoutMs and shell as JSON on stdin, and a backstop of timeoutMs + 2000 + 15 000 ms", () => {
-    const { spawner, calls } = recordingSpawner({ stdout: JSON.stringify(HELPER_RECEIPT) });
+  it("acceptance 3 [R1]: starts node on the helper with the caller's cwd and env, a JSON header line on stdin (command, args, timeoutMs, shell, inputBytes) and the input bytes after it, a backstop of timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS (15 000 ms), a buffer transport of 3 x 64 MiB + 1 MiB", () => {
+    assert.equal(TREE_HELPER_BACKSTOP_MS, 15_000);
+    const { spawner, calls } = recordingSpawner({ stdout: HELPER_OUTPUT });
     const env = { AIDLC_TEST_MARKER: 'env-marker' };
-    createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', env, timeoutMs: 1500, input: 'payload', shell: false, killTree: true });
+    createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', env, timeoutMs: 1500, input: 'payload \u0000 é', shell: false, killTree: true });
     assert.equal(calls.length, 1);
-    assert.equal(calls[0]!.command, process.execPath);
-    assert.deepEqual(calls[0]!.args, [HELPER_TS]);
-    assert.equal(calls[0]!.options.cwd, '/work');
-    assert.equal(calls[0]!.options.env, env);
-    assert.equal(calls[0]!.options.timeout, 18_500);
-    assert.equal(calls[0]!.options.shell, false);
-    assert.deepEqual(JSON.parse(String(calls[0]!.options.input)), { command: 'deploy', args: ['--to', 'staging'], input: 'payload', timeoutMs: 1500, shell: false });
+    const { command, args, options } = calls[0]!;
+    assert.equal(command, process.execPath);
+    assert.deepEqual(args, [HELPER_TS]);
+    assert.equal(options.cwd, '/work');
+    assert.equal(options.env, env);
+    assert.equal(options.timeout, 1500 + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS);
+    assert.equal(options.shell, false);
+    assert.equal(options.encoding, 'buffer');
+    assert.equal(options.maxBuffer, 3 * 64 * 1024 * 1024 + 1024 * 1024);
+    const stdin = options.input as Buffer;
+    const eol = stdin.indexOf(0x0a);
+    assert.deepEqual(JSON.parse(stdin.subarray(0, eol).toString('utf8')), { command: 'deploy', args: ['--to', 'staging'], timeoutMs: 1500, shell: false, inputBytes: 12 });
+    assert.equal(stdin.subarray(eol + 1).toString('utf8'), 'payload \u0000 é');
   });
 
-  it("acceptance 3 [R2]: a helper receipt gives the command's exit, signal, timedOut, stdout and stderr under the caller's command, args and cwd", () => {
-    const { spawner } = recordingSpawner({ stdout: JSON.stringify(HELPER_RECEIPT) });
+  it("acceptance 3 [R2]: a helper transport gives the command's exit, signal, timedOut, stdout and stderr under the caller's command, args and cwd", () => {
+    const { spawner } = recordingSpawner({ stdout: HELPER_OUTPUT });
     const r = createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', timeoutMs: 1500, killTree: true });
     assert.deepEqual([r.command, r.args, r.cwd], ['deploy', ['--to', 'staging'], '/work']);
     assert.deepEqual([r.exitCode, r.signal, r.timedOut, r.stdout, r.stderr], [3, null, false, 'out', 'err']);
-    assert.notEqual(r.startedAt, HELPER_RECEIPT.startedAt);
     assert.match(r.outputSha256, /^[a-f0-9]{64}$/);
-    assert.notEqual(r.outputSha256, HELPER_RECEIPT.outputSha256);
   });
 
-  for (const [name, result] of [
-    ['an empty stdout (exit 1)', { status: 1, stdout: '', stderr: 'helper crashed' }],
-    ['a stdout that is not JSON (exit 0)', { status: 0, stdout: 'not json', stderr: 'helper crashed' }],
-    ['JSON that is not a receipt (exit 0)', { status: 0, stdout: JSON.stringify({ ...HELPER_RECEIPT, exitCode: '3' }), stderr: 'helper crashed' }],
-    ['a receipt with a helper exit 2', { status: 2, stdout: JSON.stringify(HELPER_RECEIPT), stderr: 'helper crashed' }],
-  ] as [string, Partial<SpawnSyncReturns<string>>][]) {
+  for (const [name, answer] of [
+    ['an empty stdout (exit 1)', { status: 1, stdout: '' }],
+    ['a stdout that is not JSON (exit 0)', { status: 0, stdout: 'not json\n' }],
+    ['JSON that is not a receipt (exit 0)', { status: 0, stdout: transport({ ...HELPER_HEADER, exitCode: '3' }, 'out', 'err') }],
+    ['a header with no line end (exit 0)', { status: 0, stdout: JSON.stringify({ ...HELPER_HEADER, stdoutBytes: 0, stderrBytes: 0 }) }],
+    ['a body shorter than the header says, as a truncated transport is (exit 0)', { status: 0, stdout: HELPER_OUTPUT.subarray(0, HELPER_OUTPUT.length - 1) }],
+    ['a body longer than the header says (exit 0)', { status: 0, stdout: Buffer.concat([HELPER_OUTPUT, Buffer.from('x')]) }],
+    ['a negative byte count (exit 0)', { status: 0, stdout: transport({ ...HELPER_HEADER, stdoutBytes: -1, stderrBytes: 7 }, 'out', 'err') }],
+    ['a well-formed transport with a helper exit 2', { status: 2, stdout: HELPER_OUTPUT }],
+  ] as [string, SpawnAnswer][]) {
     it(`acceptance 3 [R2]: ${name} gives exitCode null, not ok, stderr beginning [tree helper error] with the helper's exit code`, () => {
-      const { spawner } = recordingSpawner(result);
+      const { spawner } = recordingSpawner({ ...answer, stderr: 'helper crashed' });
       const r = createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', timeoutMs: 1500, killTree: true });
       assert.equal(r.exitCode, null);
       assert.equal(ok(r), false);
       assert.equal(r.timedOut, false);
       assert.equal(r.stdout, '');
-      assert.equal(r.stderr, `[tree helper error] exit ${result.status}\nhelper crashed`);
+      assert.equal(r.stderr, `[tree helper error] exit ${answer.status}\nhelper crashed`);
       assert.deepEqual([r.command, r.args, r.cwd], ['deploy', ['--to', 'staging'], '/work']);
     });
   }
 
   it('acceptance 3 [R2]: a helper that reaches its backstop gives timedOut true, exitCode null and a [tree helper error]', () => {
-    const { spawner } = recordingSpawner({ status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) });
+    const { spawner } = recordingSpawner({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) });
     const r = createRunSync(spawner)('deploy', [], { timeoutMs: 1500, killTree: true });
     assert.equal(r.timedOut, true);
     assert.equal(r.exitCode, null);
     assert.equal(ok(r), false);
     assert.equal(r.stderr, '[tree helper error] exit null (SIGTERM, backstop 18500 ms)\n');
+  });
+
+  it('acceptance 3 [R2]: a helper transport that overflows (ENOBUFS) gives exitCode null and a [tree helper error], never a partial receipt', () => {
+    const { spawner } = recordingSpawner({ status: null, signal: 'SIGTERM', stdout: HELPER_OUTPUT.subarray(0, 20), error: Object.assign(new Error('spawnSync node ENOBUFS'), { code: 'ENOBUFS' }) });
+    const r = createRunSync(spawner)('deploy', [], { timeoutMs: 1500, killTree: true });
+    assert.deepEqual([r.exitCode, r.timedOut, r.stdout], [null, false, '']);
+    assert.equal(r.stderr, '[tree helper error] exit null (SIGTERM)\n\n[spawn error] spawnSync node ENOBUFS');
   });
 
   for (const [name, options] of [
