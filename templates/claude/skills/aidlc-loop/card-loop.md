@@ -20,8 +20,8 @@ changes. PREPARE never reruns the planning funnel or a survey.
 11. Candidate ready, no active operation, merge incomplete => SHIP.
 
 ## Probes (check exits before parsing; an error is not an empty result)
-- Card: `aidlc cards validate --card <id>` (id, status, dod, allow_paths,
-  depends_on, tier, acceptance). Registry is authority; board is a view.
+- Card: `aidlc cards validate --card <id>`. Registry is authority; board is
+  a view.
 - Worktree/owner: `git worktree list --porcelain`, exact branch + canonical
   path + common dir + lease. A directory name or start exception is not
   ownership; a mismatch => STOP/ownership.
@@ -60,6 +60,10 @@ failure with evidenced progress and a diagnosed harder problem; a fourth
 failure ends the episode; no fifth from another session or card.
 
 ## SHIP
+Verify skills: when a card changes a file that a
+`.claude/skills/verify-*/SKILL.md` covers, run that skill's check before
+SHIP; at CLOSE, move its sync commit to the merge commit only after
+confirming that the check describes the code there.
 Pre-review (R2) when `preReview.command` is set: `aidlc review pre <id>` on
 the committed candidate; pass opens the ship, block returns to BUILD as a
 repair, rounds cap per R3 cycle, an R3 block restarts the cycle. Panel:
@@ -105,8 +109,6 @@ no unrelated staging, sweeps or base pushes.
 
 ## DONE / STOP
 DONE is a child result; the parent verifies and delivers the goal. STOP
-preserves partial effects, reason and the precise next action. Reasons:
-card, capability, scope, risk, frozen, checkpoint, review, tool, ci, auth,
-time, arc-verify, release-config, release-auth, release-health, migration,
-rollback-auth, audit, ownership, cancelled. Late wakeups check the terminal
-generation and do nothing. Never wake repeatedly to manufacture approval.
+preserves partial effects, reason and the precise next action. Late wakeups
+check the terminal generation and do nothing. Never wake repeatedly to
+manufacture approval.
