@@ -318,6 +318,14 @@ aidlc evals run [--dir evals] [--threshold 0.9] [--provider mock|claude-code|cla
 
 The gate fails (exit 1) below the threshold. `templates/github/workflows/agent-evals.yml` runs `aidlc evals run --skip-model --threshold 0.9` on changes to `CLAUDE.md`, `.claude/**`, `evals/**` and `REVIEW.md` and nightly: the deterministic checks only, with no model and no credentials, so the workflow needs no repository secret; under `--skip-model` the `output-matches` and `json-field` checks see no model output and fail. The model-backed run is local: `aidlc evals run --provider claude-code --threshold 0.9` calls the `claude` CLI, which uses the Claude Code CLI login of whoever runs it (card T1-EVALS-NO-KEY). Every incident that ships a fix should add a `regression` eval.
 
+## Fault-point check
+
+`tests/scenarios/fault-points.test.ts` (card T1-VERIFY-FAULT-POINTS) fails each card-run record write and each goal journal append of five card-run commands, one write per run, then takes the card's next step and checks the persisted card run and the goal journal. The covered commands are `card attempt` (a success at BUILD), `review pre` (an R2 pass), `review r3` (an R3 pass), `card next` at SHIP after the R3 pass (the dry-run ship merges and the card reaches CLOSE) and `card next` at SHIP once the card deadline has passed (STOP/time).
+
+A write fails by a throw from `fs.renameSync` onto the card-run record or from `fs.appendFileSync` onto the goal journal; the next step is `card next`, the `review pre` or `review r3` it directs, and `card next` again, and a refusal of that review command is printed, not failed. After the faulted command and after the next step the test checks six invariants: the records and the journal chain are intact (I1), every `card next` returns a directive (I2), every `REVIEW_DECIDED` and `PRE_REVIEW_DECIDED` event names a decision the card run holds (I3), no decision is recorded twice (I4), no reviewer or ship runs twice (I5), and a deadline stop is kept (I6).
+
+It does not fail lease, review-queue, operation-ledger or `.review/` writes, does not model a process that dies mid-command or a torn journal line, and does not require every card-run change to reach the journal. Run it with `node --test tests/scenarios/fault-points.test.ts`; `npm test` runs it, so CI runs it on every push.
+
 ## Loop benchmark
 
 `npm run bench` measures the loop's hot paths with counts that are the same on every run of the same code. It runs six journeys once each under a counting preload (`bench/counter.ts`): `hook.pre-bash`, `hook.pre-edit`, `hook.prompt` and `hook.stop` send one event each to `bin/aidlc-hook.js`, `hook.stop.200-goals` sends the Stop event over a state directory holding 200 finished goals, and `cli.start` runs `aidlc goal list` over an empty state directory. Each run gets its own temporary state directory and an environment without the loop's variables, so the live `.aidlc/` never changes a count.
