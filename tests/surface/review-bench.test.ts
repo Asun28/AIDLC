@@ -364,6 +364,20 @@ test('T1-REVIEW-BENCH R3 decision 1 F2: a checkout git still lists, or one the l
     const unlisted = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: failing((a) => a[0] === 'worktree' && a[1] === 'list') });
     assert.equal(unlisted.leftCheckouts.length, 1, 'a listing that fails cannot confirm the checkout is gone');
     assertNoCheckoutLeft(fx);
+
+    // Each receipt counts on its own: a prune that reports success while git still lists the checkout, and a failed
+    // prune under a listing that names only the repository, are both reported.
+    const scripted = (answers: Record<string, Partial<ExecReceipt>>) => (command: string, args: string[], options?: Parameters<typeof runSync>[2]) => {
+      const answer = args[0] === 'worktree' ? answers[args[1]!] : undefined;
+      return answer ? { ...runSync(command, ['--version'], options), ...answer } : runSync(command, args, options);
+    };
+    const silentPrune = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: scripted({ remove: { exitCode: 1 }, prune: { exitCode: 0 } }) });
+    assert.equal(silentPrune.leftCheckouts.length, 1, 'git still lists the checkout after a prune that did nothing');
+    git(fx.root, ['worktree', 'prune']);
+    const failedPrune = await bench(fx, reviewer(fx, []), { caseId: 'c-pass', git: scripted({ remove: { exitCode: 1 }, prune: { exitCode: 1 }, list: { exitCode: 0, stdout: `worktree ${fx.root}\n` } }) });
+    assert.equal(failedPrune.leftCheckouts.length, 1, 'a failed prune is reported whatever the listing says');
+    git(fx.root, ['worktree', 'prune']);
+    assertNoCheckoutLeft(fx);
   } finally {
     fx.cleanup();
   }
