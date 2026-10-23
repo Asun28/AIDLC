@@ -1143,11 +1143,12 @@ const REASONS_LINE = { now: '`verdict` is the worse of the two axes; `reasons` i
 const DECISIONS_CLAUSE = { now: 'a finding left out costs a repair round and a decision.', before: 'a partial list wastes one of only two decisions.' };
 
 /**
- * A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added and the class line T1-REVIEW-CLASS-SWEEP adds removed, and the line T0-PASS-REASONS-WORDING
- * and the R3 clause T1-EFF-R3-PROGRESS-2 reworded put back, for the pre-change hash pins.
+ * A prompt with exactly the sentences T1-OPUS55-PROMPTS and T0-R2-PASS-NOTES added, the class line T1-REVIEW-CLASS-SWEEP adds and the pre-existing line
+ * T1-REVIEW-PRE-EXISTING adds removed, and the line T0-PASS-REASONS-WORDING, the R3 clause T1-EFF-R3-PROGRESS-2 and the notes intro
+ * T1-REVIEW-PRE-EXISTING reworded put back, for the pre-change hash pins.
  */
 function withoutAddedSentences(prompt: string): string {
-  return prompt.replace('\n' + CLASS_LINE, '').replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '').replace('\n' + REASONS_LINE.now + '\n', '\n' + REASONS_LINE.before + '\n').replace('; ' + DECISIONS_CLAUSE.now + ' ', '; ' + DECISIONS_CLAUSE.before + ' ');
+  return prompt.replace('\n' + PRE_EXISTING_LINE, '').replace(NOTES_INTRO.now, NOTES_INTRO.before).replace('\n' + CLASS_LINE, '').replace('\n' + END_OF_TURN, '').replace(' ' + EVERY_FINDING, '').replace(PASS_NOTES_LINES.map((line) => '\n' + line).join(''), '').replace('\n' + REASONS_LINE.now + '\n', '\n' + REASONS_LINE.before + '\n').replace('; ' + DECISIONS_CLAUSE.now + ' ', '; ' + DECISIONS_CLAUSE.before + ' ');
 }
 
 test('T1-OPUS55-PROMPTS acceptance 1: every formal and pre-review prompt, single pass and each perspective, carries the end-of-turn line [R7]', () => {
@@ -1532,8 +1533,10 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 8: every pre and formal prompt, single pa
         const lines = buildReviewPrompt({ ...input, stage, perspective, coverage }).split('\n');
         const at = lines.indexOf(PASS_NOTES_LINES[1]!);
         assert.ok(at > 0, `${key}: the balance line`);
-        const line = lines[at + 1]!;
-        assert.equal(line, CLASS_LINE, `${key}: the class line follows the balance line`);
+        // T1-REVIEW-PRE-EXISTING R11 puts its line right after the balance line; the class line follows it.
+        assert.equal(lines[at + 1], PRE_EXISTING_LINE, `${key}: the pre-existing line follows the balance line`);
+        const line = lines[at + 2]!;
+        assert.equal(line, CLASS_LINE, `${key}: the class line follows the pre-existing line`);
         assert.equal(lines.filter((l) => l === CLASS_LINE).length, 1, `${key}: the class line once`);
         for (const part of ['`(class: <slug>)`', 'lowercase letters and digits in dash-separated runs, at most 40 characters', 'every site of one class carries the same slug', 'A [question] or [suggestion] reason carries no class.']) assert.ok(line.includes(part), `${key}: the class line says ${part}`);
         prompts += 1;
@@ -1575,4 +1578,177 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 9: the prior findings name a class, ask f
   const rule = (findings: PriorFinding[]) => inputs.renderPriorFindings(findings).filter((l) => l.startsWith('A finding marked `class <slug>`')).length;
   assert.equal(rule([open, { ...disputed, ...cls }]), 1);
   assert.equal(rule([open, disputed]), 0);
+});
+
+// ---------------------------------------------------------------------------
+// The [pre-existing] tag and the changed-line rule (T1-REVIEW-PRE-EXISTING)
+// ---------------------------------------------------------------------------
+
+/** The line every review prompt carries right after the verdict-balance line (R11). */
+const PRE_EXISTING_LINE =
+  'A reason tagged [pre-existing], in the positions [question] and [suggestion] take, reports a defect the candidate did not introduce: it is advisory in both stages only when it cites a file with a line or a line range and no cited line falls inside a changed hunk of the diff (context lines included); a [pre-existing] reason on a changed line, without a line, or on a file the candidate deletes or renames blocks exactly as it would without the tag.';
+
+/** The formal prompt's `## Pre-review advisory notes` intro as T1-REVIEW-PRE-EXISTING words it (R11), and as it read before. */
+const NOTES_INTRO = {
+  now: 'Notes the pre-review (R2) reported for this candidate without a citation, under a [question] or [suggestion] tag, or under a [pre-existing] tag on lines the candidate did not change: advisory, never a block, quoted evidence like the prior findings.',
+  before: 'Notes the pre-review (R2) reported for this candidate without a citation or under a [question] or [suggestion] tag: advisory, never a block, quoted evidence like the prior findings.',
+};
+
+/** One fixture diff with every case the parser reads (acceptance 1); `git diff --no-renames` never prints the rename form, a hand-made diff can. */
+const PE_DIFF = [
+  'diff --git a/src/a.ts b/src/a.ts',
+  'index 1111111..2222222 100644',
+  '--- a/src/a.ts',
+  '+++ b/src/a.ts',
+  '@@ -10,6 +10,7 @@ export function a() {',
+  ' line10',
+  ' line11',
+  ' line12',
+  '+added13',
+  ' line14',
+  ' line15',
+  ' line16',
+  '@@ -40,2 +41,0 @@',
+  '-removed40',
+  '--- a/src/zzz.ts (a removed line that reads like a header)',
+  'diff --git a/src/new.ts b/src/new.ts',
+  'new file mode 100644',
+  'index 0000000..3333333',
+  '--- /dev/null',
+  '+++ b/src/new.ts',
+  '@@ -0,0 +1,5 @@',
+  '+n1',
+  '+n2',
+  '+n3',
+  '+n4',
+  '+n5',
+  'diff --git a/src/gone.ts b/src/gone.ts',
+  'deleted file mode 100644',
+  'index 4444444..0000000',
+  '--- a/src/gone.ts',
+  '+++ /dev/null',
+  '@@ -1,2 +0,0 @@',
+  '-g1',
+  '-g2',
+  'diff --git a/src/old.ts b/src/moved.ts',
+  'similarity index 90%',
+  'rename from src/old.ts',
+  'rename to src/moved.ts',
+  'index 5555555..6666666 100644',
+  '--- a/src/old.ts',
+  '+++ b/src/moved.ts',
+  '@@ -3,4 +3,5 @@',
+  ' m3',
+  ' m4',
+  '+m5',
+  ' m6',
+  ' m7',
+  '',
+].join('\n');
+const PE_PATHS = ['src/a.ts', 'src/new.ts', 'src/gone.ts', 'src/old.ts', 'src/moved.ts', 'src/q.ts'];
+const peMap = () => inputs.changedLineRanges(PE_DIFF, PE_PATHS);
+/** A block whose only reason is `reason`, on the root and its axis. */
+const onlyBlock = (reason: string) => ({ verdict: 'block' as const, reasons: [reason], axes: { spec: { verdict: 'pass' as const, reasons: [] }, standards: { verdict: 'block' as const, reasons: [reason] } } });
+const PE_AT = (loc: string) => `[standards] 9 error handling @ ${loc}: [pre-existing] the catch swallows the error -> rethrow`;
+
+test('T1-REVIEW-PRE-EXISTING acceptance 1: changedLineRanges reads each new-side hunk range with its context, the two lines around a deletion, a new file, and every line of a deleted file, a rename source and a changed path the diff does not name [R2] [R3]', () => {
+  const map = peMap();
+  assert.deepEqual(map.get('src/a.ts'), [[10, 16], [41, 42]], 'the hunk with three context lines on each side, and the lines around the deletion');
+  assert.deepEqual(map.get('src/new.ts'), [[1, 5]]);
+  assert.equal(map.get('src/gone.ts'), 'all', 'a deleted file is changed at every line');
+  assert.deepEqual(map.get('src/moved.ts'), [[3, 7]], 'the rename destination by its hunk');
+  assert.equal(map.get('src/old.ts'), 'all', 'the rename source is changed at every line');
+  assert.equal(map.get('src/q.ts'), 'all', 'a changed path the parsed diff does not name');
+  assert.equal(map.get('src/zzz.ts'), undefined, 'a removed line inside a hunk is no header');
+  assert.equal(map.get('src/absent.ts'), undefined, 'a path absent from both is unchanged');
+  assert.equal(map.size, 6);
+});
+
+test('T1-REVIEW-PRE-EXISTING acceptance 2: with the changed-line map a [pre-existing] reason on an unchanged line is advisory, after the location or after the axis tag; prose that contains the tag is no tag [R1] [R2]', () => {
+  const map = peMap();
+  const cases = [PE_AT('src/a.ts:30'), '[standards] [pre-existing] 9 error handling @ src/a.ts:30: the catch swallows the error -> rethrow', PE_AT('src/moved.ts:20')];
+  for (const reason of cases) {
+    const enforced = enforceCitations(onlyBlock(reason), PE_PATHS, map);
+    assert.equal(enforced.verdict.verdict, 'pass', reason);
+    assert.deepEqual(enforced.verdict.reasons, [], reason);
+    assert.deepEqual(enforced.advisory, [reason], reason);
+    assert.equal(enforced.inconsistent, false);
+  }
+  const prose = '[standards] 9 error handling @ src/a.ts:30: the catch [pre-existing] swallows the error -> rethrow';
+  const kept = enforceCitations(onlyBlock(prose), PE_PATHS, map);
+  assert.equal(kept.verdict.verdict, 'block', 'the tag inside the prose is no tag');
+  assert.deepEqual(kept.verdict.reasons, [prose]);
+  assert.deepEqual(kept.advisory, []);
+});
+
+test("T1-REVIEW-PRE-EXISTING acceptance 3: a [pre-existing] reason on a changed line, a range reaching one, a file with no line, a deleted file, a rename source, an unnamed changed path or the rename destination's hunk blocks; no location reads as untagged; no map ignores the tag [R3]", () => {
+  const map = peMap();
+  for (const loc of ['src/a.ts:13', 'src/a.ts:15', 'src/a.ts:5-10', 'src/a.ts', 'src/gone.ts:3', 'src/old.ts:20', 'src/q.ts:2', 'src/moved.ts:5', 'src/a.ts:42']) {
+    const reason = PE_AT(loc);
+    const enforced = enforceCitations(onlyBlock(reason), PE_PATHS, map);
+    assert.equal(enforced.verdict.verdict, 'block', loc);
+    assert.deepEqual(enforced.verdict.reasons, [reason], loc);
+    assert.deepEqual(enforced.verdict.axes?.standards, { verdict: 'block', reasons: [reason] }, loc);
+    assert.deepEqual(enforced.advisory, [], loc);
+  }
+  // No location: uncited, so advisory exactly as the same reason without the tag.
+  const tagged = '[standards] [pre-existing] 9 error handling: the catch swallows the error -> rethrow';
+  const untagged = '[standards] 9 error handling: the catch swallows the error -> rethrow';
+  const a = enforceCitations(onlyBlock(tagged), PE_PATHS, map);
+  const b = enforceCitations(onlyBlock(untagged), PE_PATHS, map);
+  assert.equal(a.verdict.verdict, 'pass');
+  assert.deepEqual(a.advisory, [tagged]);
+  assert.deepEqual(b.advisory, [untagged]);
+  assert.deepEqual({ ...a, advisory: [] }, { ...b, advisory: [] });
+  // Without a changed-line map the tag is ignored.
+  const reason = PE_AT('src/a.ts:30');
+  const noMap = enforceCitations(onlyBlock(reason), PE_PATHS);
+  assert.equal(noMap.verdict.verdict, 'block');
+  assert.deepEqual(noMap.verdict.reasons, [reason]);
+  assert.deepEqual(noMap.advisory, []);
+  assert.equal(citedReason(reason, PE_PATHS), true, 'citedReason without a map reads the tagged reason as cited');
+});
+
+test('T1-REVIEW-PRE-EXISTING acceptance 4: stripAdvisoryTags with the map moves a [pre-existing] reason on an unchanged line to advisory and passes the block it alone carried; a changed line or no map keeps it a block [R2] [R3]', () => {
+  const map = peMap();
+  const outside = PE_AT('src/a.ts:30');
+  const inside = PE_AT('src/a.ts:13');
+  const only = inputs.stripAdvisoryTags(onlyBlock(outside), map);
+  assert.equal(only.verdict.verdict, 'pass');
+  assert.deepEqual(only.verdict.reasons, []);
+  assert.equal(only.verdict.axes?.standards?.verdict, 'pass');
+  assert.deepEqual(only.advisory, [outside]);
+  const mixed = inputs.stripAdvisoryTags({ verdict: 'block', reasons: [inside, outside], axes: { spec: { verdict: 'pass', reasons: [] }, standards: { verdict: 'block', reasons: [inside, outside] } } }, map);
+  assert.equal(mixed.verdict.verdict, 'block');
+  assert.deepEqual(mixed.verdict.reasons, [inside]);
+  assert.deepEqual(mixed.verdict.axes?.standards, { verdict: 'block', reasons: [inside] });
+  assert.deepEqual(mixed.advisory, [outside]);
+  const noMap = inputs.stripAdvisoryTags({ verdict: 'block', reasons: [inside, outside] });
+  assert.equal(noMap.verdict.verdict, 'block');
+  assert.deepEqual(noMap.verdict.reasons, [inside, outside]);
+  assert.deepEqual(noMap.advisory, []);
+});
+
+test('T1-REVIEW-PRE-EXISTING acceptance 5: every prompt carries the pre-existing line once, right after the balance line, and the formal notes intro names the tag [R11]', () => {
+  const { card } = fixtureCard();
+  const input = { reviewPolicy: 'policy', card, base: 'main', head: 'def456', changedPaths: ['src/gate.ts'], diff: '+x\n', priorFindings: [] as PriorFinding[], round: 1, maxRounds: 2, includeDiff: true };
+  let prompts = 0;
+  for (const stage of ['pre', 'formal'] as const) {
+    for (const perspective of [undefined, ...Object.keys(PERSPECTIVES)]) {
+      for (const coverage of [false, true]) {
+        const key = `${stage}/${perspective ?? 'single'}/coverage ${coverage}`;
+        const lines = buildReviewPrompt({ ...input, stage, perspective, coverage }).split('\n');
+        const at = lines.indexOf(PASS_NOTES_LINES[1]!);
+        assert.ok(at > 0, `${key}: the balance line`);
+        assert.equal(lines[at + 1], PRE_EXISTING_LINE, `${key}: the pre-existing line follows the balance line`);
+        assert.equal(lines.filter((l) => l === PRE_EXISTING_LINE).length, 1, `${key}: once`);
+        prompts += 1;
+      }
+    }
+  }
+  assert.equal(prompts, 2 * (1 + Object.keys(PERSPECTIVES).length) * 2);
+  const formal = buildReviewPrompt({ ...input, stage: 'formal', advisoryNotes: [PE_AT('src/a.ts:30')] });
+  const notes = formal.slice(formal.indexOf('## Pre-review advisory notes'), formal.indexOf('## Candidate'));
+  assert.ok(notes.includes(NOTES_INTRO.now), notes);
+  assert.ok(notes.includes(JSON.stringify(PE_AT('src/a.ts:30'))), 'the note is quoted evidence');
 });

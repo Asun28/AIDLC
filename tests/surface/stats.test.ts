@@ -516,3 +516,59 @@ describe('review statistics (R11, R12)', () => {
     assert.match(line, /\| findings 6: 6 pre, 1 open, 2 disputed, 3 resolved, 1 re-raised; responses: 2 fixed, 1 wrong, 1 intentional, 1 not-worth-fixing, 1 open \|/);
   });
 });
+
+/**
+ * One card whose decided R2 rounds and R3 decision retain advisory reasons (card T1-REVIEW-PRE-EXISTING): two R2 reasons and
+ * the R3 reason carry the [pre-existing] tag, the [question] note does not, and the one finding is open.
+ */
+function preExistingRun(overrides: Record<string, unknown> = {}): CardRun {
+  return run({
+    cardId: 'T1-PE',
+    preReview: {
+      rounds: [
+        { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], advisory: ['[standards] 9 @ src/a.ts:30: [pre-existing] x -> y (bugs)', '[question] is the helper needed?'] },
+        { round: 2, cycle: 0, reviewer: 'r2', candidateDigest: 'd2', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], advisory: ['[pre-existing] the parser never checks the input'] },
+      ],
+      handoffs: [],
+    },
+    review: {
+      substantiveDecisions: 1,
+      substantiveBlocks: 0,
+      scriptCounter: 1,
+      noVerdictRetriesUsed: 0,
+      invocations: [{ invocationId: 'r3:T1-PE.r3.1.aaaaaaaa', candidateDigest: 'd2', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(20 * MIN), outcome: 'pass', candidateSha: 'sha2', advisory: ['[spec] 6 @ src/b.ts:8: [pre-existing] y -> z'] }],
+    },
+    findings: [{ id: 'F1', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 1 @ src/a.ts:1: wrong -> fix', raisedAt: at(MIN), disposition: 'open' }],
+    ...overrides,
+  });
+}
+
+describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-EXISTING)', () => {
+  test('acceptance 9: findings.preExistingAdvisory counts the tagged advisory reasons of every decided R2 round and R3 decision, outside total, per card and in the family totals [R9]', () => {
+    const [summary] = stats.summarizeReviews([preExistingRun()], []);
+    assert.deepEqual(summary?.findings, { total: 1, pre: 1, formal: 0, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 3 });
+    assert.equal(stats.summarizeReviews([reviewedRun()], [])[0]?.findings.preExistingAdvisory, 0, 'a run with no advisory reason counts none');
+    // The family totals sum the count: a predecessor with one tagged R3 note and the card above.
+    const registry = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
+    const older = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 1, substantiveBlocks: 0, scriptCounter: 1, noVerdictRetriesUsed: 0, invocations: [{ invocationId: 'r3:T1-PE-0.r3.1.bbbbbbbb', candidateDigest: 'd0', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(0), outcome: 'pass', advisory: ['[pre-existing] @ src/c.ts:4: old -> new', '[suggestion] rename it'] }] } });
+    const family = stats.summarizeReviews([older, preExistingRun()], registry).find((s) => s.cardId === 'T1-PE')?.family;
+    assert.equal(family?.members[0]?.findings.preExistingAdvisory, 1);
+    assert.equal(family?.totals.findings.preExistingAdvisory, 4);
+    assert.equal(family?.totals.findings.total, 1, 'the count stays outside total');
+  });
+
+  test('acceptance 10: the line form ends the findings segment with the count after the responses and leaves a zero count out; the CLI JSON carries it [R10]', () => {
+    const line = stats.formatReviewStats(stats.summarizeReviews([preExistingRun()], []));
+    assert.equal(line, 'T1-PE  R2 2 rounds, 1 block (r2 1), 2m 00s | R3 1 decision, 0s | findings 1: 1 pre, 1 open; responses: 1 open; pre-existing advisory 3 | coverage: not requested | wall 20m 00s');
+    const quiet = stats.formatReviewStats(stats.summarizeReviews([preExistingRun({ findings: [] })], []));
+    assert.ok(quiet.includes('| findings 0; pre-existing advisory 3 |'), quiet);
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-pe-'));
+    mkdirSync(path.join(dir, 'cards', 'g-stats-pe'), { recursive: true });
+    mkdirSync(path.join(dir, 'goals'), { recursive: true });
+    writeFileSync(path.join(dir, 'goals', 'g-stats-pe.json'), JSON.stringify(goal({ id: 'g-stats-pe' }), null, 2), 'utf8');
+    writeFileSync(path.join(dir, 'cards', 'g-stats-pe', 'T1-PE.json'), JSON.stringify({ ...preExistingRun(), goalId: 'g-stats-pe' }, null, 2), 'utf8');
+    const json = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'review', 'stats', '--goal', 'g-stats-pe'], { cwd: root, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: dir }, windowsHide: true });
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal((JSON.parse(json.stdout) as { cards: stats.CardReviewStats[] }).cards[0]?.findings.preExistingAdvisory, 3);
+  });
+});

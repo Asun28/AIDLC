@@ -177,13 +177,13 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@4 since T1-REVIEW-CLASS-SWEEP), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@5 since T1-REVIEW-PRE-EXISTING), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@4', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -531,7 +531,7 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
   const ARCHITECTURE = 'findings (ids, dispositions, re-raises, revisions), their defect class (`ReviewFinding.class`) and their first-round misses (`outsideDelta`)';
   const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
 
-  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs REVIEW.md@4 [R12]', () => {
+  test('acceptance 10: both REVIEW.md copies carry the class sentence in the output contract with the JSON example and reason-format lines as on main, both reviewer agents the class step, both configs the current version REVIEW.md@5 [R12]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
       const contract = review.slice(review.indexOf('## Output contract'));
@@ -545,15 +545,15 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
       assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@4', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
     }
   });
 
-  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and REVIEW.md@4, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@5, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@4` in both configs');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@5` in both configs');
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
     assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
@@ -609,5 +609,73 @@ describe('dispute kinds and responses in the docs (T1-REVIEW-RESPONSES)', () => 
     for (const sentence of KINDS) assert.equal(kindsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of RESPONSES) assert.equal(responsesHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+  });
+});
+
+describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXISTING)', () => {
+  /** The output-contract line both REVIEW.md copies add after the [question] and [suggestion] line (R12). */
+  const REVIEW_PRE_EXISTING =
+    'A reason tagged `[pre-existing]` (the tag in the same positions) reports a defect the candidate did not introduce. It is advisory in both stages only when it cites a file with a line or a line range and no cited line falls inside a changed hunk of the diff, context lines included; on a changed line, without a line, on a file the candidate deletes, on the source of a rename, or when the loop cannot read the changed lines, it is classified as if untagged, so a cited block still blocks.';
+  /** The paragraph docs/OPERATIONS.md adds under Pre-review (R14), pinned whole, one sentence per entry. */
+  const PRE_REVIEW = [
+    'Pre-existing reasons (card T1-REVIEW-PRE-EXISTING).',
+    'A reason tagged `[pre-existing]`, in the positions the `[question]` and `[suggestion]` tags take (`PRE_EXISTING_TAG`), reports a defect the candidate did not introduce, and it is advisory in both stages only when it cites a file with a line or a line range and no cited line falls inside a new-side hunk range of the candidate diff, context lines included.',
+    "`changedLineRanges(diff, changedPaths)` reads those ranges from the committed unified diff, keyed by each file's `+++ b/<path>`: a hunk with a new-side count of 0 marks the two lines around the deletion, and a deleted file, the source of a rename and a changed path the parser does not match (a path git quotes) count as changed at every line.",
+    'The tag is ignored, so the reason is classified exactly as it would be without it, when a cited line is changed, when the reason cites a file with no line or has no location, and when the classifying code has no changed-line map (the `citedReasonsOf` checks that record findings, the reviewer bench).',
+    'On the command path `CardRunner.preReview` and `CardRunner.formalReview` pass the changed lines of the diff they collected through `runReviewPanel` and `finalizeReview` to `enforceCitations`, for a single pass, every angle of a panel and an angle rerun on the R2 fallback.',
+    "On the ship path `CardRunner.applyShipResult` collects the candidate diff against the run's base under `formalReview.maxDiffBytes` only for a verdict document that carries a `[pre-existing]` reason, and passes its changed lines to `stripAdvisoryTags`; when that collection fails or exceeds the cap the document is classified without a map, so every `[pre-existing]` tag in it is ignored and the ship result is applied as before this card.",
+    "A reason made advisory this way is retained with the other advisory reasons (`PreReviewRound.advisory`, the verdict file, the `PRE_REVIEW_DECIDED` and `REVIEW_DECIDED` events, the `advisory:` line of `aidlc review pre` and `aidlc review r3`, the formal prompt's `## Pre-review advisory notes`), never as a finding.",
+    'The optional `ReviewInvocation.advisory` keeps the advisory reasons of a command or ship-path R3 decision that retained at least one; a decision that retained none, and a record written before this card, carries no `advisory`.',
+    'The tag line in both prompts and in the output contract moved `reviewPolicyVersion` to `REVIEW.md@5`.',
+  ];
+  /** The paragraph docs/OPERATIONS.md adds under Review statistics (R14), pinned whole. */
+  const STATS = [
+    'Pre-existing advisory (card T1-REVIEW-PRE-EXISTING).',
+    '`findings.preExistingAdvisory` counts, per card, per family member and in the family totals, every advisory reason that carries the `[pre-existing]` tag (`PRE_EXISTING_TAG`) over the `advisory` of every decided R2 round (a pass or a block) and of every R3 decision (`ReviewInvocation.advisory`), whatever made each reason advisory (the changed-line rule, a missing citation, or a pass that carried it as a note), and it is counted outside `total`.',
+    'A decision recorded before this card carries no `advisory` and adds nothing.',
+    'The line form ends the findings segment with `; pre-existing advisory <n>` after the responses and leaves it out when the count is zero.',
+  ];
+  const CHANGELOG = [
+    '- T1-REVIEW-PRE-EXISTING: a review reason tagged `[pre-existing]` is advisory in both stages, on the command path and on the ship path, when it cites a file with a line or a line range and no cited line is inside a changed hunk of the candidate diff; on a changed line, without a line, on a deleted file or a rename source, or without a changed-line map the tag is ignored.',
+    'The advisory reasons of a command or ship-path R3 decision are kept as `ReviewInvocation.advisory`, and `aidlc review stats` reports `findings.preExistingAdvisory` per card and family, printed as `; pre-existing advisory <n>` when it is not zero.',
+    'Both prompts and `REVIEW.md` state the tag; `reviewPolicyVersion` is `REVIEW.md@5` in both configs.',
+  ];
+  const ARCHITECTURE = 'the policy hash and the advisory notes per decision (`ReviewInvocation.advisory`)';
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  const sectionOf = (text: string, heading: string) => {
+    const start = text.indexOf(`\n${heading}\n`);
+    return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
+  };
+  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+
+  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@5 [R12] [R13]', () => {
+    for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
+      const contract = lf(readFileSync(file, 'utf8')).split('\n## Output contract\n')[1]?.split('\n## ')[0] ?? '';
+      const lines = contract.split('\n');
+      const tags = lines.findIndex((l) => l.startsWith('A reason tagged `[question]` or `[suggestion]`'));
+      assert.ok(tags >= 0, `${file}: the [question] and [suggestion] line`);
+      assert.equal(lines.indexOf(REVIEW_PRE_EXISTING), tags + 1, `${file}: the pre-existing line follows it`);
+    }
+    for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
+    }
+  });
+
+  test('acceptance 11: OPERATIONS.md carries the pre-review and statistics paragraphs whole, ARCHITECTURE.md the advisory notes per decision in the card-run row, the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R14]', () => {
+    const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
+    const architecture = lf(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'));
+    const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
+    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@5` in both configs');
+    const statsHold = (text: string) => sectionOf(text, '### Review statistics').includes(STATS.join(' '));
+    const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
+    assert.ok(preReviewHolds(operations), 'OPERATIONS.md Pre-review carries the pre-existing paragraph and the policy version');
+    assert.ok(statsHold(operations), 'OPERATIONS.md Review statistics carries the count paragraph');
+    const row = architecture.split('\n').find((l) => l.startsWith('| `cards/<goalId>/<cardId>.json` |')) ?? '';
+    assert.ok(row.includes(ARCHITECTURE), 'ARCHITECTURE.md names the advisory notes per decision in the card-run row');
+    assert.ok(changelogHolds(changelog), 'CHANGELOG.md Unreleased carries the T1-REVIEW-PRE-EXISTING entry');
+    for (const sentence of PRE_REVIEW) assert.equal(preReviewHolds(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    for (const sentence of STATS) assert.equal(statsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@5` in both configs', '')), false, 'removing the version sentence fails');
   });
 });
