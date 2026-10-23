@@ -60,6 +60,8 @@ export interface ReviewBenchReport {
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
+  /** Present only when the run selected no case, so an empty report never reads as a scored run. */
+  note?: string;
   cases: BenchCaseResult[];
   totals: BenchTotals;
 }
@@ -128,6 +130,8 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const all = loadBenchCases(dir);
   if (o.caseId !== undefined && !all.some((c) => c.id === o.caseId)) throw new Error(`no case ${o.caseId} in ${dir}`);
   const pool = o.caseId !== undefined ? all.filter((c) => c.id === o.caseId) : all;
+  // A case named on purpose never scores nothing in silence: an unconfirmed one needs the flag that admits it.
+  if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
   const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [] };
@@ -144,7 +148,9 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
     for (const r of await reviewGroup(ctx, cases, n)) results.set(r.id, r);
   }
   const ordered = selected.map((c) => results.get(c.id)!);
-  return { stage: o.stage, reviewer: reviewer.reviewer, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, cases: ordered, totals: totalsOf(ordered, pool.length - selected.length) };
+  const skipped = pool.length - selected.length;
+  const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
+  return { stage: o.stage, reviewer: reviewer.reviewer, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), cases: ordered, totals: totalsOf(ordered, skipped) };
 }
 
 const errorOf = (c: ReviewBenchCase, detail: string): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'error', cited: [], detail, durationMs: 0 });
@@ -294,7 +300,8 @@ function totalsOf(cases: BenchCaseResult[], skippedUnconfirmed: number): BenchTo
 export function formatBenchReport(r: ReviewBenchReport): string {
   const rate = (x: number | null) => (x === null ? '-' : x.toFixed(2));
   const t = r.totals;
-  const lines = r.cases.map((c) => `${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`);
+  const lines = r.note ? [r.note] : [];
+  lines.push(...r.cases.map((c) => `${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
   lines.push(`${r.stage} ${r.reviewer}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
   if (r.leftCheckouts.length) lines.push(`checkouts left behind: ${r.leftCheckouts.join(', ')}`);
   return lines.join('\n');

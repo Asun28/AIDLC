@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpath
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ReviewBenchCase } from '../../src/core/types.ts';
-import { loadBenchCases, runReviewBench, type ReviewBenchOptions } from '../../src/review/bench.ts';
+import { formatBenchReport, loadBenchCases, runReviewBench, type ReviewBenchOptions } from '../../src/review/bench.ts';
 import { loadEvals } from '../../src/evals/runner.ts';
 import { renderCard } from '../../src/artifacts/card.ts';
 import { runSync, scriptedRunner, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
@@ -369,6 +369,26 @@ test('T1-REVIEW-BENCH R3 decision 1 F2: a checkout git still lists, or one the l
   }
 });
 
+test('T1-REVIEW-BENCH R3 decision 1 advisories: an unconfirmed --case is refused naming --include-unconfirmed, a run that selects no case says so, and a class outside kebab-case is refused [R1] [R3] [R7] [R8]', async () => {
+  const bug = { kind: 'bug', id: 'x', candidate: SHA('a'), base: SHA('b'), card, confirmed: false, origin: 'hand' };
+  for (const cls of ['dim_9', '-dim', 'dim-', 'dim--9']) assert.equal(ReviewBenchCase.safeParse({ ...bug, expected: [{ ...site(1, 0), class: cls }] }).success, false, cls);
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'f-unconfirmed', fx.heads.c1, 13, 0, { confirmed: false, confirmedBy: undefined }));
+    const calls: Call[] = [];
+    await assert.rejects(bench(fx, reviewer(fx, calls), { caseId: 'f-unconfirmed' }), /f-unconfirmed is not confirmed.*--include-unconfirmed/);
+    assert.equal(calls.length, 0, 'refused before any review');
+    assert.equal((await bench(fx, reviewer(fx, calls), { caseId: 'f-unconfirmed', includeUnconfirmed: true })).cases[0]?.outcome, 'hit');
+    const empty = await bench(fx, reviewer(fx, []));
+    assert.deepEqual([empty.cases, empty.leftCheckouts, empty.totals.skippedUnconfirmed], [[], [], 1]);
+    assert.equal(empty.note, 'no case selected: the case directory holds no confirmed case (1 unconfirmed left out; --include-unconfirmed scores them); nothing was scored');
+    assert.equal(formatBenchReport(empty).split('\n')[0], empty.note);
+  } finally {
+    fx.cleanup();
+  }
+});
+
 /** Every file under a directory, recursively; a missing directory has none. */
 function filesUnder(dir: string): string[] {
   if (!existsSync(dir)) return [];
@@ -398,11 +418,11 @@ test('T1-REVIEW-BENCH acceptance 8: loadEvals reads only the JSON files directly
 
 /** The `### Reviewer bench` section of docs/OPERATIONS.md, paragraph by paragraph. */
 const OPERATIONS_SECTION = [
-  '`aidlc review bench run --stage <pre|formal> [--dir <path>] [--case <id>] [--include-unconfirmed]` scores the stage\'s configured primary reviewer on the cases in `evals/review/` (`--dir` names another directory, resolved against the root of the checkout the command runs in). It reads `REVIEW.md`, `aidlc.config.json` and `docs/LESSONS.md` from that root, so a run with `npm run dev -- review bench run` in a card worktree scores that worktree\'s policy, prompts and configuration. It selects the confirmed cases, every case with `--include-unconfirmed`, or the one case `--case` names, and counts the unconfirmed cases it left out.',
+  '`aidlc review bench run --stage <pre|formal> [--dir <path>] [--case <id>] [--include-unconfirmed]` scores the stage\'s configured primary reviewer on the cases in `evals/review/` (`--dir` names another directory, resolved against the root of the checkout the command runs in). It reads `REVIEW.md`, `aidlc.config.json` and `docs/LESSONS.md` from that root, so a run with `npm run dev -- review bench run` in a card worktree scores that worktree\'s policy, prompts and configuration. It selects the confirmed cases, every case with `--include-unconfirmed`, or the one case `--case` names, and counts the unconfirmed cases it left out. A `--case` that names an unconfirmed case is refused unless `--include-unconfirmed` is given, and a run that selects no case says so in the report (`note`) and on the first line of its line form.',
   'A case is one JSON file named after its `id` (`ReviewBenchCase` in `src/core/types.ts`; `evals/review/README.md` describes each field): `kind` `bug` or `clean`, the `candidate` and `base` commits, the card\'s `id` and its `path` at the candidate, `confirmed`, `confirmedBy`, `origin`, an optional `note`, and for a bug case the `expected` sites, each a `file`, a `line`, a `window` and a `class`.',
   'The reviewer bench reviews each distinct candidate, base and card path once, one review after another, in a detached checkout of the candidate that `git worktree add --detach` creates in a fresh directory under the OS temp directory. That checkout is the reviewer\'s working directory and `{cwd}`, and it is removed after every review, with the directory deleted and `git worktree prune` run when `git worktree remove --force` fails. A checkout is listed in `leftCheckouts` unless its directory is gone, any prune it needed exited 0, and `git worktree list --porcelain` exited 0 without naming it. The review is the loop\'s first R2 round or first R3 decision, built by the loop\'s own functions: the card parsed from `card.path` in the checkout, the diff from `collectCandidateDiff` under the stage\'s `maxDiffBytes`, the prompt from `buildReviewPrompt` with no prior findings, no delta and no advisory notes, and the run from `runReviewPanel` with the stage\'s primary `command` (with the R2 perspectives and coverage request, or the R3 `{schema}` and `{effort}`) and no fallback. Logs and verdicts go to `.review/bench/` of the checkout root.',
   'A bug case is a `hit` when a cited reason of a block names an expected `file` with a line or line range that overlaps `line - window` to `line + window`, and a `miss` otherwise, a pass included. A clean case is a `false-block` when the review blocks and a `pass` when it passes. A review that ends without a verdict or on a quota hold makes its cases `no-verdict`, and a case that could not be reviewed (no checkout, a card file missing, unparseable or naming another id, an empty diff, a diff above the cap, an expected file the diff does not change) is an `error`; neither counts as a hit, a miss, a pass or a false block. A verdict bound to another commit (`sha`) or another card (`branch`) is a `no-verdict`, as the R3 classification of the loop reads it (`classifyVerdict`); the bench applies this rule to R2 as well, whose rounds the loop records without it.',
-  'The report gives `stage`, `reviewer`, `policyHash`, `leftCheckouts`, one entry per case (`outcome`, `runStatus`, the cited reasons, `matched` with the reason and the expected file and line for a hit, `detail`, `verdictRef`, `logRef`, `durationMs`) and `totals`. In the totals `recall` is hits / (hits + misses) and `falseBlockRate` is false blocks / (clean passes + false blocks), each `null` when its denominator is 0, beside `noVerdict`, `errors` and `skippedUnconfirmed`. The report is JSON with `--json` or when stdout is not a TTY, and one line per case and a totals line otherwise. The command exits 0 after a report whose `leftCheckouts` is empty, whatever the scores, and 1 when it refuses before any review (no `REVIEW.md`, an empty stage `command`, a missing case directory, a case file that does not load, an unknown `--case`) or leaves a checkout behind.',
+  'The report gives `stage`, `reviewer`, `policyHash`, `leftCheckouts`, one entry per case (`outcome`, `runStatus`, the cited reasons, `matched` with the reason and the expected file and line for a hit, `detail`, `verdictRef`, `logRef`, `durationMs`) and `totals`. In the totals `recall` is hits / (hits + misses) and `falseBlockRate` is false blocks / (clean passes + false blocks), each `null` when its denominator is 0, beside `noVerdict`, `errors` and `skippedUnconfirmed`. The report is JSON with `--json` or when stdout is not a TTY, and one line per case and a totals line otherwise. The command exits 0 after a report whose `leftCheckouts` is empty, whatever the scores, and 1 when it refuses before any review (no `REVIEW.md`, an empty stage `command`, a missing case directory, a case file that does not load, an unknown `--case`, an unconfirmed `--case` without `--include-unconfirmed`) or leaves a checkout behind.',
   'The reviewer bench stays outside the loop: no workflow names it, so it never runs in CI, and it reads no goal, card run, journal or review queue and writes nothing under the state directory, so it never changes a card run and never blocks a card. Before a change to `REVIEW.md`, a review perspective, a review prompt or a reviewer model, run it for both stages from a checkout of the version before and a checkout of the version after the change, and keep the change only when recall does not drop. This is a documented practice and no gate enforces it.',
 ];
 const ARCHITECTURE_SENTENCE = '`src/review/bench.ts` is the reviewer bench (`aidlc review bench run`): it scores a stage\'s primary reviewer on the confirmed cases under `evals/review/`, each candidate reviewed once in a detached temporary checkout through the loop\'s own prompt and panel functions, and it imports nothing from `src/state/`, `src/coordination/` or `src/loop/` (docs/OPERATIONS.md, Reviewer bench).';
@@ -411,7 +431,7 @@ const EVALS_SENTENCE = '- `aidlc evals run` reads only `evals/*.json`, so the re
 /** evals/review/README.md, paragraph by paragraph (a list is one paragraph). */
 const CASES_README = [
   '# evals/review/ (reviewer bench cases)',
-  '`aidlc review bench run --stage pre|formal` scores a stage\'s configured reviewer on the confirmed cases in this directory (docs/OPERATIONS.md, Reviewer bench). Each case is one JSON file named `<id>.json`, and `aidlc evals run` never reads it.',
+  '`aidlc review bench run --stage pre|formal` scores a stage\'s configured reviewer on the confirmed cases in this directory (docs/OPERATIONS.md, Reviewer bench). Each case is one JSON file named `<id>.json`, and `aidlc evals run` never reads it. Every case file of the directory is loaded and checked on each run, `--case` included, so one file that does not load refuses the run.',
   [
     'Fields (`ReviewBenchCase` in `src/core/types.ts`; an unknown key is refused):',
     '- `kind`: `bug` (the candidate has a defect at the expected sites) or `clean` (the candidate is correct and a review should pass it).',
@@ -425,7 +445,7 @@ const CASES_README = [
     '- `note`: optional free text.',
     '- `expected` (bug cases only): one or more sites, each a repository `file`, a positive `line`, a `window` of 0 to 50 lines on either side of it, and a `class`.',
   ].join('\n'),
-  'The `class` is `dim-<n>`, where `<n>` is the REVIEW.md dimension number the finding\'s reason cites.',
+  'The `class` is any lowercase kebab-case name (lowercase letters and digits joined by single dashes); by convention it is `dim-<n>`, where `<n>` is the REVIEW.md dimension number the finding\'s reason cites.',
   'The `base` is `git merge-base <base> <candidate>`, where `<base>` is the card run\'s `base.oid`, else its `base.ref`; read both, and the candidate, with `aidlc card status <card> --json`.',
   'A hand-written case pins its candidate so that git never collects it: `git update-ref refs/aidlc/bench/<id> <candidate>`.',
   'To confirm a case, check out the candidate (`git worktree add --detach <dir> <candidate>`), find the defect at the expected lines (for a clean case, check that the candidate has none), then set `confirmed` to true and `confirmedBy` to your name.',

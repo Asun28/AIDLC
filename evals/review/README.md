@@ -1,6 +1,6 @@
 # evals/review/ (reviewer bench cases)
 
-`aidlc review bench run --stage pre|formal` scores a stage's configured reviewer on the confirmed cases in this directory (docs/OPERATIONS.md, Reviewer bench). Each case is one JSON file named `<id>.json`, and `aidlc evals run` never reads it.
+`aidlc review bench run --stage pre|formal` scores a stage's configured reviewer on the confirmed cases in this directory (docs/OPERATIONS.md, Reviewer bench). Each case is one JSON file named `<id>.json`, and `aidlc evals run` never reads it. Every case file of the directory is loaded and checked on each run, `--case` included, so one file that does not load refuses the run.
 
 Fields (`ReviewBenchCase` in `src/core/types.ts`; an unknown key is refused):
 - `kind`: `bug` (the candidate has a defect at the expected sites) or `clean` (the candidate is correct and a review should pass it).
@@ -14,7 +14,7 @@ Fields (`ReviewBenchCase` in `src/core/types.ts`; an unknown key is refused):
 - `note`: optional free text.
 - `expected` (bug cases only): one or more sites, each a repository `file`, a positive `line`, a `window` of 0 to 50 lines on either side of it, and a `class`.
 
-The `class` is `dim-<n>`, where `<n>` is the REVIEW.md dimension number the finding's reason cites.
+The `class` is any lowercase kebab-case name (lowercase letters and digits joined by single dashes); by convention it is `dim-<n>`, where `<n>` is the REVIEW.md dimension number the finding's reason cites.
 
 The `base` is `git merge-base <base> <candidate>`, where `<base>` is the card run's `base.oid`, else its `base.ref`; read both, and the candidate, with `aidlc card status <card> --json`.
 
