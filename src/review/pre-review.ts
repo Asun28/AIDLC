@@ -107,6 +107,17 @@ export function ruleFilesIn(changedPaths: string[]): string[] {
 /** `ADVISORY_TAG` is defined in `src/core/review-policy.ts` (card T1-REVIEW-CLASS-SWEEP, where the class rule reads it) and re-exported here unchanged. */
 export { ADVISORY_TAG };
 
+/** `[pre-existing]` in the positions `ADVISORY_TAG` reads `[question]` and `[suggestion]` (card T1-REVIEW-PRE-EXISTING). */
+export const PRE_EXISTING_TAG = /(?!)/;
+
+/** The changed lines of a candidate diff by file: each new-side hunk range, context lines included, or `all` (card T1-REVIEW-PRE-EXISTING). */
+export type ChangedLines = ReadonlyMap<string, 'all' | ReadonlyArray<readonly [number, number]>>;
+
+/** The changed lines of a committed unified diff (card T1-REVIEW-PRE-EXISTING). */
+export function changedLineRanges(_diff: string, _changedPaths: readonly string[]): ChangedLines {
+  return new Map();
+}
+
 /** The line every review prompt carries after the verdict-balance line: a class tag on each block reason (card T1-REVIEW-CLASS-SWEEP). */
 const CLASS_LINE =
   'Give each block reason a defect class: put `(class: <slug>)` right after the dimension and before the `@ <file:line>` location, as in `[standards] 9 error handling (class: journal-before-save) @ src/a.ts:3: <why> -> <fix>`. The slug is lowercase letters and digits in dash-separated runs, at most 40 characters, and names the defect, not the site: every site of one class carries the same slug. A [question] or [suggestion] reason carries no class.';
@@ -640,7 +651,7 @@ export function citedReason(reason: string, changedPaths?: string[]): boolean {
  * reasons are advisory and never block; a block with no cited reason left is a pass with advisory
  * notes; a document whose top-level verdict contradicts its axes is inconsistent and never merged.
  */
-export function enforceCitations(verdict: Verdict, changedPaths?: string[]): { verdict: Verdict; advisory: string[]; inconsistent: boolean } {
+export function enforceCitations(verdict: Verdict, changedPaths?: string[], _changedLines?: ChangedLines): { verdict: Verdict; advisory: string[]; inconsistent: boolean } {
   const axisBlock = verdict.axes?.spec?.verdict === 'block' || verdict.axes?.standards?.verdict === 'block';
   // The reasons a pass carries are notes for the author: advisory, never findings.
   if (verdict.verdict === 'pass') return { verdict, advisory: dedupe([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])]), inconsistent: axisBlock };
@@ -672,7 +683,7 @@ export function enforceCitations(verdict: Verdict, changedPaths?: string[]): { v
  * prompt): a list or an axis carried only by tags passes, a block with no reason left is a pass, and the notes a pass carries
  * are advisory. The rest of the citation rule stays with the ship path's own reviewer.
  */
-export function stripAdvisoryTags(verdict: Verdict): { verdict: Verdict; advisory: string[] } {
+export function stripAdvisoryTags(verdict: Verdict, _changedLines?: ChangedLines): { verdict: Verdict; advisory: string[] } {
   const all = dedupe([...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])]);
   if (verdict.verdict === 'pass') return { verdict, advisory: all };
   const tagged = (r: string) => ADVISORY_TAG.test(r);
@@ -743,6 +754,8 @@ export interface ReviewRetentionOptions {
   perspective?: string;
   /** Changed paths of the candidate; when given, a cited location must name one of them. */
   changedPaths?: string[];
+  /** The changed lines of the candidate diff (`changedLineRanges`); without them a `[pre-existing]` tag is ignored (card T1-REVIEW-PRE-EXISTING). */
+  changedLines?: ChangedLines;
   /** sha256 of the applied policy text, written as `policy_hash` on every retained verdict document (R8). */
   policyHash?: string;
   /** This angle was asked for acceptance coverage; only then is a coverage list kept, joined and retained (R4, R9). */

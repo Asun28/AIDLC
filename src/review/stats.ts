@@ -43,6 +43,8 @@ export interface FindingStats {
   firstRoundMiss: number;
   resolved: number;
   responses: ResponseStats;
+  /** Advisory reasons carrying the `[pre-existing]` tag over every decided R2 round and R3 decision, counted outside `total` (card T1-REVIEW-PRE-EXISTING). */
+  preExistingAdvisory: number;
 }
 
 /**
@@ -145,7 +147,7 @@ function emptyCoverage(): CoverageStats {
 }
 
 function emptyFindings(): FindingStats {
-  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 } };
+  return { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0 };
 }
 
 /**

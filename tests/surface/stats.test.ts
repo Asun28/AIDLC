@@ -128,7 +128,7 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summary?.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 1, durationMs: 90_000, blocksByPerspective: { bugs: 1 } });
     // 15:00 - 10:00 for the blocked decision, 33:00 - 30:00 for the passing one.
     assert.deepEqual(summary?.r3, { decisions: 2, blocks: 1, durationMs: 8 * MIN });
-    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 } });
+    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
     // First request at 00:00, last pass decided at 33:00.
     assert.equal(summary?.wallMs, 33 * MIN);
   });
@@ -138,7 +138,7 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.cardId, 'T1-QUIET');
     assert.deepEqual(summary?.r2, { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: {} });
     assert.deepEqual(summary?.r3, { decisions: 0, blocks: 0, durationMs: 0 });
-    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 } });
+    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0 });
     assert.equal(summary?.wallMs, 0);
     assert.equal(summary?.family, undefined, 'a card that supersedes nothing reports no family');
   });
@@ -174,7 +174,7 @@ describe('review statistics (R11, R12)', () => {
     // The round that blocked carries no panel record, so the block counts under the reviewer that decided it.
     assert.deepEqual(family?.totals.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 60_000, blocksByPerspective: { deepseek: 1 } });
     assert.deepEqual(family?.totals.r3, { decisions: 1, blocks: 0, durationMs: 2 * MIN });
-    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 } });
+    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
     // 10s on the first card, 3 min on the second, 30s on the third.
     assert.equal(family?.totals.wallMs, 220_000);
     assert.equal(summaries.find((s) => s.cardId === 'T1-A')?.family, undefined, 'the oldest card of a family supersedes nothing');
