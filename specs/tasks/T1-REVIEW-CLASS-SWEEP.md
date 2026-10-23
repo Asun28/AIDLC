@@ -82,6 +82,8 @@ BUILD attempt 1, effort medium, Windows 11, Node 22.
 
 - RED at c5d49a3 (the tests plus a seam that exports `findingClass`, `blockClasses` and `classRepairText` with the baseline behaviour, no class, so every new test fails on an assertion, not on an import): the `dod_command` exited 1 in 14 s wall (`duration_ms 8711.6`), 192 of 203 passed, 11 failed. First failing line: `not ok 1 - acceptance 1: findingClass reads a well-formed (class: <slug>) tag ...` at `tests/core/review-policy.test.ts:622`, `+ undefined - 'journal-before-save'`. Failing: acceptance 1, 2, 4 (review-policy), 3 (types), 5, 6 (review-block), 8, 9 (pre-review), 10, 11 and the REVIEW.md@4 pin (templates). Acceptance 7 passed at RED as a preservation item: the untagged runs equal main, and the tagged runs change no state or counter.
 - GREEN at be4b07f: the `dod_command` exited 0 in 15 s wall (`duration_ms 8708.3`), 203 of 203 passed.
+- GREEN at 0afc250, with the pending-block `review-fix` test added (`tests/scenarios/review-block.test.ts`, command path; a later pass by a reviewer that is not a formal reviewer, with the DoD receipt restored, leaves the card state no pending block, so `card next` reaches SHIP and the formal gate finds its own block still pending): the `dod_command` exited 0 in 14 s wall (`duration_ms 9005.3`), 204 of 204 passed. With the class list removed from that narration (uncommitted, restored) the new test failed: `not ok 1 - T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the formal gate appends the same class list with its sites; an untagged block appends nothing [R11]`.
+- Fault-point check at 0afc250: 28 of 28 passed (in sync).
 - Full suite (`npm test`) at be4b07f: 1459 tests, 1453 passed, 0 failed, 6 skipped.
 - Fault-point check (`node --test tests/scenarios/fault-points.test.ts`) at be4b07f: 28 of 28 passed. This card changes only narration text and a `PriorFinding` field in `src/loop/card-runner.ts`, no write and no write order: in sync.
 - Mutation check, each break applied alone, the eight DoD test files run, restored, never committed:
@@ -99,7 +101,7 @@ BUILD attempt 1, effort medium, Windows 11, Node 22.
 | repair text without the `allow_paths` request | acceptance 5, 6 |
 | REVIEW_FIX `build` narration without the class list | acceptance 5, 6 |
 | ship-path `review-fix` narration without the class list | acceptance 5 |
-| pending-block `review-fix` narration without the class list | none: reviewer-verified against the diff, as acceptance 5 states |
+| pending-block `review-fix` narration without the class list | acceptance 5 (pending-block test, added at 0afc250) |
 | `priorFindingsFor` drops the class | acceptance 6 |
 | prompt without the class line | acceptance 8 |
 | prior findings without the sweep sentence | acceptance 6, 9 |
