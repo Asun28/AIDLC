@@ -132,9 +132,11 @@ calls `Date.now()`.
   `tests/scenarios/_harness.ts` for end-to-end goal and card runs. Use fixed
   ISO timestamps.
 - `templates/claude/**` and `.claude/**` are kept identical apart from the
-  hook command in `settings.json`; edit both. The five `aidlc-loop` skill
-  files are ASCII-only with byte caps asserted by
-  `tests/surface/templates.test.ts`. The section below is
+  hook command in `settings.json`; edit both.
+  `.claude/skills/verify-*/` holds this repository's own verify skills,
+  which have no copy under `templates/claude/` and which `aidlc init` does
+  not install. The five `aidlc-loop` skill files are ASCII-only with byte
+  caps asserted by `tests/surface/templates.test.ts`. The section below is
   `templates/CLAUDE.aidlc.md`, which `aidlc init` appends to a downstream
   repo's CLAUDE.md; keep the two identical.
 - Record behaviour changes in `CHANGELOG.md` (Unreleased) and, where they

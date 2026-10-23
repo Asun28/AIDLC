@@ -404,6 +404,16 @@ Advisory skills installed next to `aidlc-loop`; the loop's gates decide, and a s
 
 Lessons: `docs/LESSONS.md` is append-only. PREPARE reads it once per card; CLOSE appends at most one dated `NEVER|ALWAYS|NOTE` line when a review block or an incident taught a rule the playbook did not state.
 
+## Project verify skills
+
+A project verify skill is `.claude/skills/verify-*/SKILL.md`: one check of this repository's own code, with a coverage record that names every file and function the check covers, and a sync commit, the commit on main at which the check was last confirmed to describe the covered code.
+
+The card-loop rule (`card-loop.md`, SHIP): a card that changes a file a verify skill covers runs that skill's check before SHIP and, at CLOSE, moves the sync commit to the merge commit only after confirming that the check describes the code there, so such a card names the skill in its `doc_sync`. The skill's Keeping in sync section tells whether a change touches covered code and what to do in each of its four outcomes: in sync, updated, bug and blocked.
+
+This repository has one, `verify-card-run-writes`, for the card-run write protocol: the `CardRunner` store writes and goal journal appends that the fault-point check fails in turn (see Fault-point check). Its check is `node --test tests/scenarios/fault-points.test.ts`, which `npm test` and CI also run.
+
+`aidlc init` does not install project verify skills: each names the code of the repository it lives in, so `templates/claude/skills/` holds none. `tests/surface/mirror.test.ts` refuses a `verify-*` directory there and exempts the live ones under `.claude/skills/` from the check that every live skill is shipped by the templates.
+
 ## Upgrading a downstream repository
 
 `aidlc init` adds files that are missing and never overwrites an existing one, so a re-run on an existing repository installs new skills, agents, docs and workflows and leaves everything else as it is. `--force` overwrites ordinary files (including `aidlc.config.json` and `docs/LESSONS.md`) but never refreshes a CLAUDE.md section that is already present. To take a new `REVIEW.md` or CLAUDE.md section into an existing repository, copy the changed sections by hand and bump `reviewPolicyVersion` in `aidlc.config.json`: the version is part of the review admission key, so a pass already recorded for a candidate stays valid and only a changed candidate is reviewed under the new text.
