@@ -17,6 +17,8 @@ checks that exit 0/1. No model-graded opinions.
 - Run the model-backed suite locally:
   `aidlc evals run --provider claude-code --threshold 0.9` calls the
   `claude` CLI, which uses your Claude Code CLI login; no API key is needed.
+- `aidlc evals run` reads only `evals/*.json`, so the reviewer bench
+  cases under `evals/review/` (`aidlc review bench run`) never reach it.
 - Every production incident becomes a permanent eval (`dimension:
   regression`, `origin: <incident or intent>`).
 
