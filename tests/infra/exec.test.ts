@@ -264,6 +264,11 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.deepEqual(calls, []);
+      // [R3] stdout and stderr are destroyed at the timeout, so the close event of the exited root
+      // resolves the receipt before the grace bound, with the exit the system reported for the root.
+      assert.ok(elapsedMs < TIMEOUT_MS + 2000, `resolved at ${elapsedMs} ms, not on the close event before the bound`);
+      assert.equal(receipt.exitCode, 0);
+      assert.equal(receipt.signal, null);
     });
   });
 
@@ -282,6 +287,24 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
       assert.deepEqual(calls, [root], 'the tree kill was called once, with the root pid');
       assert.equal(rootAlive, true, 'the root is still alive at the receipt');
       assert.equal(sleeperAlive, true, 'the sleeper is still alive at the receipt');
+    });
+  });
+
+  it('acceptance 5 [R3]: the bound counts from the return of a tree kill that takes 1500 ms and kills nothing, not from the timeout', async () => {
+    const slowMs = 1500;
+    let returnedAt = 0;
+    const slowKill = (): void => {
+      const until = Date.now() + slowMs;
+      while (Date.now() < until) {
+        /* a tree kill that blocks, as a slow taskkill or ps does */
+      }
+      returnedAt = Date.now();
+    };
+    await raceFixture(createRun(slowKill), 'stay', TIMEOUT_MS + slowMs + 2000 + 1000, ({ receipt, elapsedMs }) => {
+      assert.ok(receipt, `no receipt within ${TIMEOUT_MS + slowMs + 2000 + 1000} ms of the call (${elapsedMs} ms)`);
+      assert.equal(receipt.timedOut, true);
+      const waited = Date.parse(receipt.finishedAt) - returnedAt;
+      assert.ok(waited >= 2000 - 50, `resolved ${waited} ms after the tree kill returned, before TIMEOUT_GRACE_MS (2000)`);
     });
   });
 });
