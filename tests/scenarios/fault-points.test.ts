@@ -570,7 +570,105 @@ interface Rest {
 }
 
 /** R5: the violations the base reproduces, each with its counterexample; a fix removes its pin. */
-const KNOWN_VIOLATIONS: Pin[] = [];
+const SHIPPED: [string, string, boolean] = ['merge', 'succeeded', true];
+const KNOWN_VIOLATIONS: Pin[] = [
+  {
+    faultPoint: 'A/record 1',
+    difference: { 'journal.ATTEMPT_FINISHED success': [1, 2] },
+    hypothesis: 'H5',
+    counterexample: 'CardRunner.recordAttempt appends ATTEMPT_FINISHED before `this.save` writes the finished episode; the lost save leaves attempt 1 `running`, card next directs `build` for attempt 1 again and the second recordAttempt appends a second ATTEMPT_FINISHED success for the one attempt the record holds ([1, success]).',
+  },
+  {
+    faultPoint: 'B/append PRE_REVIEW_DECIDED',
+    difference: { 'journal.PRE_REVIEW_DECIDED pass': [1, 0] },
+    hypothesis: 'H7',
+    counterexample: 'CardRunner.preReview appends PRE_REVIEW_DECIDED after commitReviewed saved the pass round; the lost append is never written again: card next reads the pass in preReview.rounds and directs `review`, and the card closes with no PRE_REVIEW_DECIDED event for its R2 pass.',
+  },
+  {
+    faultPoint: 'C/append REVIEW_ADMITTED',
+    difference: {
+      directive: ['close', 'review'],
+      state: ['CLOSE', 'SHIP'],
+      mergeVerified: [true, false],
+      'r3.invocations': [[['primary', 'pass']], []],
+      'r3.substantiveDecisions': [1, 0],
+      requests: [[['codex-review', 'completed'], ['primary', 'completed']], [['primary', 'running']]],
+      activeSlots: [[['default', 0]], [['default', 1]]],
+      operations: [[SHIPPED], []],
+      'journal.OPERATION_RESULT succeeded': [1, 0],
+      'journal.REVIEW_DECIDED pass': [1, 0],
+    },
+    hypothesis: 'H1',
+    counterexample: 'CardRunner.formalReview appends REVIEW_ADMITTED after admitReview has set the pool request `running`, outside the reservation try whose catch calls `this.queue.cancel`; the lost append leaves the request running with its slot, and every later formalReview refuses at the enqueue: "a matching formal review is already running in pool "default"; join it, do not dispatch another", while card next directs `review` at SHIP for all 12 calls.',
+  },
+  {
+    faultPoint: 'C/append REVIEW_DECIDED',
+    difference: { 'journal.REVIEW_DECIDED pass': [1, 0] },
+    hypothesis: 'H6',
+    counterexample: 'CardRunner.commitFormalResult appends REVIEW_DECIDED after commitReviewed saved the pass invocation; the lost append is never written again: card next reads the pass in review.invocations and ships to `close`, and the card closes with no REVIEW_DECIDED event for its R3 pass.',
+  },
+  {
+    faultPoint: 'D/append OPERATION_INTENT',
+    difference: { operations: [[SHIPPED], [['merge', 'intended', false], SHIPPED]] },
+    hypothesis: 'H3',
+    counterexample: 'CardRunner.ship records the merge intent (ops.recordIntent) and then appends OPERATION_INTENT; the lost append leaves the operation `intended` with no event, and the next ship gets it from ops.findDuplicate but, its status not being issued, running or UNKNOWN, records a second intent and merges, so the first stays `intended` for good.',
+  },
+  {
+    faultPoint: 'D/append REVIEW_REQUESTED',
+    difference: { operations: [[SHIPPED], [['merge', 'intended', true], SHIPPED]] },
+    hypothesis: 'H4',
+    counterexample: 'CardRunner.ship has recorded and journaled the merge intent and queued the review request when the REVIEW_REQUESTED append fails; nothing settles that operation, and the next ship records a second intent (ops.findDuplicate returns an `intended` record, which does not block) and merges, so the first stays `intended` for good.',
+  },
+  {
+    faultPoint: 'D/append REVIEW_ADMITTED',
+    difference: {
+      directive: ['close', 'wait'],
+      state: ['CLOSE', 'WAIT'],
+      mergeVerified: [true, false],
+      requests: [[['codex-review', 'completed'], ['primary', 'completed']], [['codex-review', 'running'], ['primary', 'completed']]],
+      activeSlots: [[['default', 0]], [['default', 1]]],
+      // One intent cancelled by each of the 12 next calls (2 of the recovery, 10 of the drive), and the stranded one.
+      operations: [[SHIPPED], [...Array.from({ length: 12 }, (): [string, string, boolean] => ['merge', 'cancelled', true]), ['merge', 'intended', true]]],
+      'journal.OPERATION_RESULT succeeded': [1, 0],
+    },
+    hypothesis: 'H2',
+    counterexample: 'CardRunner.ship appends REVIEW_ADMITTED after admitReview has set the ship\'s pool request `running`; the lost append leaves that request running with its slot and the operation `intended`, and each later card next records a new intent, finds the request joined and running, marks the intent `cancelled` ("joined running review request") and returns `wait` on `review:<key>`: "A matching review is already running in the shared pool; join it instead of launching another."',
+  },
+  {
+    faultPoint: 'D/append OPERATION_ISSUED',
+    difference: {
+      directive: ['close', 'wait'],
+      state: ['CLOSE', 'WAIT'],
+      mergeVerified: [true, false],
+      requests: [[['codex-review', 'completed'], ['primary', 'completed']], [['codex-review', 'running'], ['primary', 'completed']]],
+      activeSlots: [[['default', 0]], [['default', 1]]],
+      operations: [[SHIPPED], [['merge', 'issued', true]]],
+      'journal.OPERATION_RESULT succeeded': [1, 0],
+    },
+    hypothesis: 'H9',
+    counterexample: 'CardRunner.ship calls ops.markIssued and then appends OPERATION_ISSUED; the lost append ends the ship before shipPath.ship runs, the operation stays `issued` and the ship\'s pool request `running`, and every card next selects WAIT "attached to running operation <id>" (selectCardState, runningOperation) until a person reconciles the operation.',
+    docRecovery: 'aidlc ops reconcile',
+  },
+  {
+    faultPoint: 'D/record 1',
+    difference: {
+      directive: ['close', 'wait'],
+      state: ['CLOSE', 'WAIT'],
+      mergeVerified: [true, false],
+      operations: [[SHIPPED], [['merge', 'issued', true]]],
+      'journal.OPERATION_RESULT succeeded': [1, 0],
+    },
+    hypothesis: 'H10',
+    counterexample: 'CardRunner.applyShipResult completes the pool request and then writes CLOSE and mergeVerified in `finish`; the lost write after the dry-run merge leaves the operation `issued` (ops.markResult runs only after the write), and every card next selects WAIT "attached to running operation <id>" (selectCardState, runningOperation) until a person reconciles the operation.',
+    docRecovery: 'aidlc ops reconcile',
+  },
+  {
+    faultPoint: 'D/append OPERATION_RESULT',
+    difference: { 'journal.OPERATION_RESULT succeeded': [1, 0] },
+    hypothesis: 'H8',
+    counterexample: 'CardRunner.applyShipResult marks the operation `succeeded` (ops.markResult) after `finish` saved CLOSE and then appends OPERATION_RESULT; the lost append is never written again: card next reads mergeVerified and returns `close`, and the journal holds no result for the merge the ledger records as succeeded.',
+  },
+];
 
 /**
  * Count the fault points of `cmd` on a fault-free run, then fail each one on a fresh fixture, recover (unless `recovery`
