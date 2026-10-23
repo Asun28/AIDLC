@@ -52,8 +52,71 @@ export function treeHelperPath(moduleUrl: string): string {
   return fileURLToPath(new URL(`./exec-tree-helper${moduleUrl.endsWith('.ts') ? '.ts' : '.js'}`, moduleUrl));
 }
 
-/** Builds the synchronous runner around a process starter. */
+/** How long past the command's `timeoutMs` and TIMEOUT_GRACE_MS `runSync` lets the tree helper run before it ends the helper. */
+const TREE_HELPER_BACKSTOP_MS = 15_000;
+
+/** Whether a parsed helper stdout carries the command's exit, signal, timedOut, stdout and stderr. */
+function isHelperReceipt(value: unknown): value is Pick<ExecReceipt, 'exitCode' | 'signal' | 'timedOut' | 'stdout' | 'stderr'> {
+  if (typeof value !== 'object' || value === null) return false;
+  const r = value as Record<string, unknown>;
+  return (r['exitCode'] === null || Number.isInteger(r['exitCode'])) && (r['signal'] === null || typeof r['signal'] === 'string') && typeof r['timedOut'] === 'boolean' && typeof r['stdout'] === 'string' && typeof r['stderr'] === 'string';
+}
+
+/**
+ * Runs the command under the tree helper: node on `exec-tree-helper` with the caller's cwd and environment
+ * and the request as JSON on stdin. The receipt is the command's own under the caller's command, args and
+ * cwd, timed around the helper; a helper that exits non-zero or prints anything but one receipt gives exit
+ * code null and a `[tree helper error]`, timed out when the helper reached its backstop.
+ */
+function runInTreeHelper(spawner: SpawnSyncFn, command: string, args: string[], options: ExecOptions, timeoutMs: number): ExecReceipt {
+  const startedAt = new Date();
+  const backstopMs = timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS;
+  const res = spawner(process.execPath, [treeHelperPath(import.meta.url)], {
+    cwd: options.cwd,
+    env: options.env ?? process.env,
+    encoding: 'utf8',
+    timeout: backstopMs,
+    input: JSON.stringify({ command, args, input: options.input, timeoutMs, shell: options.shell }),
+    shell: false,
+    windowsHide: true,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  const finishedAt = new Date();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(res.stdout ?? '');
+  } catch {
+    parsed = undefined;
+  }
+  let result: Pick<ExecReceipt, 'exitCode' | 'signal' | 'timedOut' | 'stdout' | 'stderr'>;
+  if (res.status === 0 && isHelperReceipt(parsed)) {
+    result = { exitCode: parsed.exitCode, signal: parsed.signal, timedOut: parsed.timedOut, stdout: parsed.stdout, stderr: parsed.stderr };
+  } else {
+    const timedOut = res.error !== undefined && (res.error as NodeJS.ErrnoException).code === 'ETIMEDOUT';
+    const how = timedOut ? ` (${res.signal}, backstop ${backstopMs} ms)` : res.signal ? ` (${res.signal})` : '';
+    const spawnError = res.error && !timedOut ? `
+[spawn error] ${res.error.message}` : '';
+    result = { exitCode: null, signal: res.signal ?? null, timedOut, stdout: '', stderr: `[tree helper error] exit ${res.status}${how}
+${res.stderr ?? ''}${spawnError}` };
+  }
+  return {
+    command,
+    args,
+    cwd: options.cwd ?? process.cwd(),
+    ...result,
+    startedAt: startedAt.toISOString(),
+    finishedAt: finishedAt.toISOString(),
+    durationMs: finishedAt.getTime() - startedAt.getTime(),
+    outputSha256: digest(result.stdout, result.stderr),
+  };
+}
+
+/**
+ * Builds the synchronous runner around a process starter. With `killTree` and `timeoutMs` the command
+ * runs under the tree helper; otherwise it is one spawn of the command, whose timeout ends the root alone.
+ */
 export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, args, options = {}) => {
+  if (options.killTree && options.timeoutMs) return runInTreeHelper(spawner, command, args, options, options.timeoutMs);
   const startedAt = new Date();
   const shell = needsShell(command, options.shell);
   const res = spawner(command, shell ? args.map(quoteForShell) : args, {

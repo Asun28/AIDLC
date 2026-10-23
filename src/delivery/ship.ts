@@ -248,7 +248,7 @@ export class ScaffoldShipPath implements ShipPath {
 
   phase(cardId: string, phase: 'start' | 'red' | 'ship' | 'cleanup', extra: string[] = [], timeoutMs = 60 * 60 * 1000): ExecReceipt {
     const args = ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', this.script(), '-TaskId', cardId, '-Phase', phase, ...extra];
-    return this.runner(this.opts.pwsh ?? 'pwsh', args, { cwd: this.opts.mainRoot, timeoutMs });
+    return this.runner(this.opts.pwsh ?? 'pwsh', args, { cwd: this.opts.mainRoot, timeoutMs, killTree: true });
   }
 
   ship(req: ShipRequest): ShipResult {
