@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-TREE-KILL
 title: A command the async runner times out is ended with its whole process tree, so a timed-out reviewer stops and its receipt comes back at the timeout instead of when the reviewer exits on its own
-status: todo
+status: merged
 branch: T0-EXEC-TREE-KILL
 worktree: D:\wt\AIDLC\T0-EXEC-TREE-KILL
 allow_paths:
