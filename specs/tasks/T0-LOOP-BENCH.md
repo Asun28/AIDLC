@@ -15,7 +15,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-LOOP-BENCH.md
-dod_command: npm run typecheck && node --test tests/surface/bench.test.ts tests/surface/tsconfig-gate.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/surface/bench.test.ts tests/surface/tsconfig-gate.test.ts tests/surface/prose.test.ts tests/surface/command-lines.test.ts tests/surface/mirror.test.ts
 dod_exit: 0
 requirements:
   - R1. bench/counter.ts, loaded with `node --import`, shall count for one process `modules` (modules loaded from file URLs), `depBytes` (source bytes of the ones under node_modules), `ownBytes` (source bytes of the others, reported and never compared), `startFsCalls` (synchronous fs calls before the entry module `hooks/entry` or `cli/main` loads), `fsCalls` and `fsBytesRead` (synchronous fs calls, and the bytes `readFileSync` returned, from that load until exit), `spawns` (child processes started) and `entry` (`dist` or `src`, the directory the entry module loaded from); it shall count a fs call only when its direct caller is not a `node:` frame, so Node's own module loader never counts, keep `fs.realpathSync.native` callable, and write the counts as JSON at exit to the file `AIDLC_BENCH_OUT` names, with the unwrapped fs functions.
@@ -31,7 +31,8 @@ acceptance:
   - 3. tests/surface/bench.test.ts, two runs of `hook.pre-bash` give identical gated counts, with `spawns` 1 and `outBytes` 0; `hook.stop.200-goals` reads more bytes than `hook.stop`; no state directory a run created is left in the OS temp directory. [R2] [dod arm 2]
   - 4. tests/surface/bench.test.ts, `node bench/run.ts --check --json` in the candidate exits 0 and its report names the six journeys, each gated metric within its ceiling. [R4] [R5] [dod arm 2]
   - 5. tests/surface/bench.test.ts, ci.yml has a `bench` job whose steps run `npm run build` before `npm run bench -- --check`; no file under src/ imports from bench/; the `check` script in package.json does not name bench. [R6] [dod arm 2]
-  - 6. `npm run typecheck` is clean with bench/ included [dod arm 1]; tests/surface/tsconfig-gate.test.ts and tests/surface/prose.test.ts pass [dod arm 2]; the OPERATIONS section, the ARCHITECTURE sentence, the CLAUDE.md line and the CHANGELOG entry are reviewer-verified against the diff. [R7]
+  - 6. tests/surface/bench.test.ts reads each sentence this card adds to the docs: the `## Loop benchmark` heading of docs/OPERATIONS.md between `## Evals` and `## Audit`, and its sentences on the journeys, the metrics, wall time, the ratchet rule, when the bench runs and when a metric leaves the gate; the docs/ARCHITECTURE.md sentence naming `bench/`; the CLAUDE.md Commands line naming `npm run bench`; the CHANGELOG.md Unreleased entry beginning `- T0-LOOP-BENCH:`; each assertion fails with its sentence removed. [R7] [dod arm 2]
+  - 7. `npm run typecheck` is clean with bench/ included [dod arm 1]; tests/surface/tsconfig-gate.test.ts, prose.test.ts, command-lines.test.ts and mirror.test.ts pass [dod arm 2]. [R7]
 depends_on: []
 budget: 150
 tdd: true
