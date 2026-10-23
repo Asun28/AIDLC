@@ -34,6 +34,7 @@
     "check": "npm run typecheck && npm test",
     "dev": "node src/cli/main.ts",
     "evals": "node src/cli/main.ts evals run",
+    "bench": "node bench/run.ts",
     "prepack": "npm run build"
   },
   "dependencies": {
