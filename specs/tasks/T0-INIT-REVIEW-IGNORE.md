@@ -1,7 +1,7 @@
 ---
 id: T0-INIT-REVIEW-IGNORE
 title: aidlc init adds .review/ to the target's .gitignore, so the verdicts and logs the loop writes into a card worktree no longer make the next review refuse the checkout as dirty
-status: todo
+status: merged
 branch: T0-INIT-REVIEW-IGNORE
 worktree: D:\wt\AIDLC\T0-INIT-REVIEW-IGNORE
 allow_paths:
