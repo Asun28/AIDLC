@@ -1,7 +1,7 @@
 ---
 id: T0-OP-INTENT-DUP
 title: A ship that failed after recording its merge intent leaves that intent to the next ship of the same candidate, which continues under it instead of recording a second one, so no merge intent stays intended and blocks the goal, takeovers and the audit
-status: todo
+status: merged
 branch: T0-OP-INTENT-DUP
 worktree: D:\wt\AIDLC\T0-OP-INTENT-DUP
 allow_paths:
