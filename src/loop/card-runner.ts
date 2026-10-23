@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type EffortLevel, type FindingStage, type Goal, type Lease, type OperationRecord, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -299,7 +299,13 @@ export class CardRunner {
         reraisedReasons: f.reraised.map((r) => r.reason),
         origin: `${f.stage === 'pre' ? `pre-review round ${f.round}${f.perspective ? ` (${f.perspective})` : ''}` : `R3 decision ${f.round}`}${f.advisory ? ', advisory block' : ''}`,
         nonAcceptanceRounds: nonAcceptanceRounds(f),
+        ...(f.class ? { class: f.class } : {}),
       }));
+  }
+
+  /** The class list a formal repair narration appends (card T1-REVIEW-CLASS-SWEEP): the classes of the block's open findings on the run's candidate. */
+  private classRepairNote(run: CardRun): string {
+    return run.candidate?.sha ? classRepairText(blockClasses(findingsOfBlock(run.findings, { stage: 'formal', candidateSha: run.candidate.sha }))) : '';
   }
 
   /** The findings as a reviewer receives them at dispatch: disposition and dispute count of every unresolved finding. */
@@ -644,7 +650,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running?.n ?? (episode?.attempts.length ?? 0),
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint}`,
+            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint}${this.classRepairNote(run)}`,
           },
         };
       }
@@ -1250,7 +1256,7 @@ export class CardRunner {
       if (!answered.answered) {
         const next = this.save({ ...run, state: 'REVIEW_FIX', dodReceipt: undefined, blockedReceipt: this.keepReceipt(run, { stage: 'formal', candidateSha: run.candidate?.sha }) });
         const ids = answered.open.length ? ` Open finding(s): ${answered.open.join(', ')}; dispute one with \`aidlc review dispute ${card.id} <id> --note "<why>"\`, and the next decision runs on the unchanged candidate once every finding of the block is disputed.` : '';
-        return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}` } };
+        return { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: run.review.lastVerdict?.reasons ?? [], remainingDecisions: Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions), narration: `Formal review block still pending on candidate ${digest ?? 'unknown'}: fix within scope or revert, rebuild, and record the attempt with the new candidate sha.${ids}${this.classRepairNote(run)}` } };
       }
       disputedNote = ` Every finding of the last decision on this candidate is disputed; the next decision runs on the unchanged candidate with the author's notes.`;
     }
@@ -2499,7 +2505,7 @@ export class CardRunner {
           (next) =>
             next.state === 'STOP' && next.stop
               ? { run: next, directive: { kind: 'stop', cardId: card.id, stop: next.stop, narration: next.stop.detail } }
-              : { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: classified.reasons, remainingDecisions: Math.max(0, 2 - next.review.substantiveDecisions), narration: 'Substantive block: fix within scope or revert; then rebuild and ship the repaired candidate (run `aidlc card next` to open the repair attempt).' } },
+              : { run: next, directive: { kind: 'review-fix', cardId: card.id, reasons: classified.reasons, remainingDecisions: Math.max(0, 2 - next.review.substantiveDecisions), narration: `Substantive block: fix within scope or revert; then rebuild and ship the repaired candidate (run \`aidlc card next\` to open the repair attempt).${this.classRepairNote(next)}` } },
         );
       }
       case 'review-no-verdict': {

@@ -405,6 +405,11 @@ export type FindingStage = z.infer<typeof FindingStage>;
 export const FindingDisposition = z.enum(['open', 'disputed']);
 export type FindingDisposition = z.infer<typeof FindingDisposition>;
 
+/** A defect class slug (card T1-REVIEW-CLASS-SWEEP): lowercase letters and digits in dash-separated runs, at most FINDING_CLASS_MAX characters. */
+export const FINDING_CLASS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+export const FINDING_CLASS_MAX = 40;
+export const FindingClass = z.string().max(FINDING_CLASS_MAX).regex(FINDING_CLASS_PATTERN);
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
@@ -416,6 +421,8 @@ export const ReviewFinding = z.object({
   reason: z.string().min(1),
   /** The changed file the reason cites (`@ file[:line]`). */
   file: z.string().optional(),
+  /** The defect class a `(class: <slug>)` tag named, on the raising reason or on the first tagged re-raise; absent on records written before card T1-REVIEW-CLASS-SWEEP. */
+  class: FindingClass.optional(),
   candidateSha: z.string().optional(),
   raisedAt: IsoTimestamp,
   disposition: FindingDisposition.default('open'),
