@@ -35,7 +35,7 @@ const isSource = (file: string) => file.startsWith('src/') && file.endsWith('.ts
 /**
  * The added new-side lines of every `src/**\/*.ts` file (not `.d.ts`, not `.test.ts`) in a `git diff --unified=0`
  * text. Fails closed: a deleted file, a path git quoted, text outside a file section and a file with a hunk header
- * or hunk body it cannot read get no entry, so an empty or unreadable diff yields no lines at all.
+ * or a hunk line it cannot read (a context line included, since the input has zero context) get no entry, so an empty or unreadable diff yields no lines at all.
  */
 export function changedSourceLines(diff: string): ChangedSourceFile[] {
   const out: ChangedSourceFile[] = [];
@@ -62,18 +62,11 @@ export function changedSourceLines(diff: string): ChangedSourceFile[] {
         oldLeft--;
         continue;
       }
-      if (c === ' ' && oldLeft > 0 && newLeft > 0) {
-        oldLeft--;
-        newLeft--;
-        next++;
-        continue;
-      }
       if (c === '\\') continue;
       valid = false;
       oldLeft = newLeft = 0;
     }
-    if (line.startsWith('diff --git ')) close();
-    else if (line.startsWith('+++ ')) {
+    if (line.startsWith('+++ ')) {
       close();
       const name = line.slice(4);
       if (name.startsWith('b/')) {
@@ -96,7 +89,7 @@ export function changedSourceLines(diff: string): ChangedSourceFile[] {
 
 const CODE = 1;
 const COMMENT = 2;
-const IDENT = /[A-Za-z0-9_$\u0080-￿]/;
+const IDENT = /[A-Za-z0-9_$\u0080-\uffff]/;
 const REGEX_AFTER = new Set('(,=:[!&|?{};+-*%<>~^');
 const REGEX_WORDS = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'instanceof', 'yield', 'await']);
 
@@ -112,7 +105,7 @@ function stringEnd(src: string, i: number): number {
   return src.length;
 }
 
-/** End offset of the regex literal opening at `i`, flags included; an unterminated one ends at the line end. */
+/** End offset of the regex literal opening at `i` (its flags read as an identifier); an unterminated one ends at the line end. */
 function regexEnd(src: string, i: number): number {
   let inClass = false;
   for (let j = i + 1; j < src.length; j++) {
@@ -121,16 +114,12 @@ function regexEnd(src: string, i: number): number {
     else if (ch === '\n' || ch === '\r') return j;
     else if (inClass) inClass = ch !== ']';
     else if (ch === '[') inClass = true;
-    else if (ch === '/') {
-      let k = j + 1;
-      while (k < src.length && IDENT.test(src[k]!)) k++;
-      return k;
-    }
+    else if (ch === '/') return j + 1;
   }
   return src.length;
 }
 
-/** Per character: CODE at the top level of the file, COMMENT, or 0 (literals, `${}` parts, line ends). */
+/** Per character: CODE at the top level of the file, COMMENT, or 0 (literals and `${}` parts). */
 function scan(src: string): Uint8Array {
   const mask = new Uint8Array(src.length);
   const exprs: number[] = [];
@@ -153,7 +142,7 @@ function scan(src: string): Uint8Array {
     const d = src[i + 1];
     let end = i + 1;
     if (c === '/' && d === '/') {
-      while (end < src.length && src[end] !== '\n' && src[end] !== '\r') end++;
+      while (end < src.length && src[end] !== '\n') end++;
       mask.fill(COMMENT, i, end);
     } else if (c === '/' && d === '*') {
       end = src.indexOf('*/', i + 2) < 0 ? src.length : src.indexOf('*/', i + 2) + 2;
@@ -173,14 +162,15 @@ function scan(src: string): Uint8Array {
       } else if (!/\s/.test(c)) [last, word] = [c, ''];
       if (c === '{') braces++;
       else if (c === '}') braces--;
-      if (exprs.length === 0 && c !== '\r' && c !== '\n') mask.fill(CODE, i, end);
+      if (exprs.length === 0) mask.fill(CODE, i, end);
     }
     i = end;
   }
   return mask;
 }
 
-const PUNCTUATORS = ['>>>=', '===', '!==', '**=', '<<=', '>>=', '>>>', '&&=', '||=', '??=', '...', '=>', '==', '!=', '<=', '>=', '&&', '||', '??', '?.', '++', '--', '+=', '-=', '*=', '/=', '%=', '&=', '|=', '^=', '<<', '>>', '**'];
+/** The operator tokens read whole; with the whitespace rule this is enough for `=>`, `<<`, `>>`, `>>>`, `<<=`, `>>=`, `??`, `&&=` and `||=` never to match. */
+const PUNCTUATORS = ['===', '!==', '==', '!=', '<=', '>=', '&&', '||'];
 const BINARY: Partial<Record<string, [MutationOperator, string]>> = {
   '===': ['negate-equality', '!=='],
   '!==': ['negate-equality', '==='],
@@ -193,7 +183,7 @@ const BINARY: Partial<Record<string, [MutationOperator, string]>> = {
   '>': ['boundary', '>='],
   '>=': ['boundary', '>'],
 };
-const DECLARATION = /^(?:const|let|var|return|import|export|type|interface|declare)(?![A-Za-z0-9_$\u0080-￿])/;
+const DECLARATION = /^(?:const|let|var|return|import|export|type|interface|declare)(?![A-Za-z0-9_$\u0080-\uffff])/;
 const BRACKETS: Partial<Record<string, [number, number]>> = { '(': [0, 1], ')': [0, -1], '[': [1, 1], ']': [1, -1], '{': [2, 1], '}': [2, -1] };
 const isSpace = (ch: string | undefined) => ch !== undefined && /\s/.test(ch);
 
@@ -214,9 +204,9 @@ function tokens(src: string, mask: Uint8Array, from: number, to: number): Token[
       i++;
       continue;
     }
-    if (IDENT.test(c)) while (end < to && mask[end] === CODE && IDENT.test(src[end]!)) end++;
+    if (IDENT.test(c)) while (end < to && IDENT.test(src[end]!)) end++;
     else {
-      const p = PUNCTUATORS.find((op) => src.startsWith(op, i) && i + op.length <= to && mask.subarray(i, i + op.length).every((m) => m === CODE));
+      const p = PUNCTUATORS.find((op) => src.startsWith(op, i) && i + op.length <= to);
       if (p) end = i + p.length;
     }
     out.push({ text: src.slice(i, end), start: i, end });
@@ -232,16 +222,16 @@ export function mutantsFor(source: string, changedLines: readonly number[]): Mut
   for (let i = 0; i < source.length; i++) if (source[i] === '\n') starts.push(i + 1);
   const out: Mutant[] = [];
   for (const line of new Set(changedLines)) {
-    if (!Number.isInteger(line) || line < 1 || line > starts.length) continue;
-    const from = starts[line - 1]!;
-    const to = line < starts.length ? starts[line]! - 1 : source.length;
+    const from = starts[line - 1];
+    if (from === undefined) continue;
+    const to = starts[line] ?? source.length;
     const add = (operator: MutationOperator, start: number, end: number, mutated: string) =>
       out.push({ line, column: start - from + 1, operator, original: source.slice(start, end), mutated, start, end });
     let first = from;
     while (first < to && isSpace(source[first])) first++;
     let last = to - 1;
     while (last >= first && (mask[last] === COMMENT || isSpace(source[last]))) last--;
-    if (last > first && mask[first] === CODE && mask[last] === CODE && source[last] === ';' && !DECLARATION.test(source.slice(first, last))) {
+    if (mask[first] === CODE && mask[last] === CODE && source[last] === ';' && !DECLARATION.test(source.slice(first, last))) {
       const depth = [0, 0, 0];
       let balanced = true;
       for (let k = first; k <= last && balanced; k++) {
@@ -256,14 +246,14 @@ export function mutantsFor(source: string, changedLines: readonly number[]): Mut
       const binary = BINARY[t.text];
       if (binary && isSpace(before) && isSpace(source[t.end])) add(binary[0], t.start, t.end, binary[1]);
       else if (t.text === '!' && !(before !== undefined && (IDENT.test(before) || before === ')' || before === ']'))) add('drop-not', t.start, t.end, '');
-      else if ((t.text === 'true' || t.text === 'false') && toks[n - 1]?.text !== '.' && toks[n - 1]?.text !== '?.') add('flip-boolean', t.start, t.end, t.text === 'true' ? 'false' : 'true');
-      else if (t.text === 'if' && before !== '.' && toks[n + 1]?.text === '(') {
+      else if ((t.text === 'true' || t.text === 'false') && toks[n - 1]?.text !== '.') add('flip-boolean', t.start, t.end, t.text === 'true' ? 'false' : 'true');
+      else if (t.text === 'if' && toks[n + 1]?.text === '(') {
         let depth = 0;
         for (let k = n + 1; k < toks.length; k++) {
           depth += toks[k]!.text === '(' ? 1 : toks[k]!.text === ')' ? -1 : 0;
           if (depth > 0) continue;
           const [open, close] = [toks[n + 1]!.end, toks[k]!.start];
-          if (source.slice(open, close).trim() !== '') for (const value of ['true', 'false'] as const) add(value === 'true' ? 'force-true' : 'force-false', open, close, value);
+          for (const value of ['true', 'false'] as const) add(value === 'true' ? 'force-true' : 'force-false', open, close, value);
           break;
         }
       }
