@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-VERIFY-SKILL: `.claude/skills/verify-card-run-writes/SKILL.md` wraps the fault-point check for the next agent: the property, a coverage record with a sync commit, the run command, bounds, what is not covered, a recorded failure on a real-code break, how to tell a bug from a modelling error, how to report one and how to keep the check in sync. Both `card-loop.md` copies open SHIP with a rule for project verify skills (run the check before SHIP, move the sync commit at CLOSE only after confirming that the check describes the code); to stay under the 6500-byte cap they drop the STOP reason list of DONE / STOP and the field list after `aidlc cards validate --card <id>`. `tests/surface/mirror.test.ts` exempts live `.claude/skills/verify-*/` files from the shipped-by-templates check and refuses a `verify-*` directory under `templates/claude/skills/`.
+
 - T1-VERIFY-LIVENESS: the fault-point test continues each fault run to rest and fails when the card does not reach the fault-free end state (card state, attempts, review ledgers, review-pool slots, operations, journal decisions), apart from the violations pinned in `KNOWN_VIOLATIONS` with their counterexamples; a pin that no longer reproduces fails the test.
 
 - T1-VERIFY-FAULT-POINTS: `tests/scenarios/fault-points.test.ts` fails each card-run record write and goal journal append of `card attempt`, `review pre`, `review r3` and two `card next` steps (the ship to CLOSE and the deadline stop) one at a time, takes the card's next step, and checks six invariants over the card run and the goal journal; a self-test shows that it reports a component that journals a decision before it writes the record.
