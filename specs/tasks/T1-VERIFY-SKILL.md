@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-SKILL
 title: Wrap the card-run fault-point check in a project verify skill with a coverage record, a sync commit and a recorded real-code break, and add one generic card-loop rule for project verify skills
-status: todo
+status: merged
 branch: T1-VERIFY-SKILL
 worktree: D:\wt\AIDLC\T1-VERIFY-SKILL
 plan_ref: plans/review-verification.md#order-of-work
