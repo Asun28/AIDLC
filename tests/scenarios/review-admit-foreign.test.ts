@@ -142,7 +142,7 @@ describe('T0-REVIEW-ADMIT-FOREIGN: a card is admitted only for its own request a
       [['merge', 'cancelled', 'review not admitted: busy'], ['merge', 'cancelled', 'review not admitted: behind']],
       "Z's merge intents, each cancelled by its own admission wait",
     );
-    assert.deepEqual(c.ship.requests, []);
+    assert.equal(c.ship.requests.length, 0, "nothing is shipped while both cards wait");
     assert.equal(next(c, Y).directive.kind, 'close');
     assert.equal(next(c, Z).directive.kind, 'close');
     assert.deepEqual(c.ship.requests.map((r) => r.cardId), [Y, Z]);
