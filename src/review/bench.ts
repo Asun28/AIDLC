@@ -233,7 +233,7 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
     const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1) });
     panel = await runReviewPanel({ ...retention, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
   }
-  const bound = bindToCandidate(panel, candidate, card.id);
+  const bound = ctx.stage === 'formal' ? bindToCandidate(panel, candidate, card.id) : panel;
   return cases.map((c) => {
     const reason = unscorable(c);
     return reason ? errorOf(c, reason) : score(c, bound, changedPaths);
@@ -254,7 +254,7 @@ function citedSite(reason: string): { file: string; from: number; to: number } |
  * The review result with the binding rule of the loop's R3 classification (`classifyFormal` in src/loop/card-runner.ts,
  * mirrored because the bench imports nothing from src/loop/): an absent sha or branch binds to this candidate and card,
  * `classifyVerdict` makes a verdict bound to another sha a no-verdict, and one bound to another branch is a no-verdict too.
- * The bench applies it to both stages, so a stale verdict never scores as a pass, a hit, a miss or a false block.
+ * The formal stage alone applies it: the loop records an R2 round's outcome without reading its binding, and so does the bench.
  */
 function bindToCandidate(panel: PanelResult, candidate: string, cardId: string): PanelResult {
   if ((panel.outcome !== 'pass' && panel.outcome !== 'block') || !panel.verdict) return panel;

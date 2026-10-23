@@ -321,24 +321,25 @@ const boundReviewer = (fx: Fixture, bindingFor: (head: string) => Record<string,
   return scriptedRunner({ [command]: { stdout: `${JSON.stringify(doc)}\n` } })(command, args, options);
 };
 
-test('T1-REVIEW-BENCH R3 decision 1 F1: a verdict bound to another sha or branch scores as no-verdict in both stages, single and panel; an unbound or own-bound one is scored [R6]', async () => {
+test('T1-REVIEW-BENCH R3 decision 1 F1: a verdict bound to another sha or branch is a no-verdict on the formal stage, as the loop R3 reads it, and scores by its verdict on the pre stage, single and panel, as the loop R2 records it [R5] [R6]', async () => {
   const fx = fixture();
   try {
     writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
     writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
     const pre = (perspectives: string[]) => ({ preReview: { command: ['reviewer', '{perspective}', '{head}'], reviewer: 'bench-r2', perspectives, shell: false } });
     const stages: Array<[string, 'pre' | 'formal', unknown]> = [['formal', 'formal', formalConfig()], ['pre single', 'pre', pre([])], ['pre panel', 'pre', pre(['bugs', 'security'])]];
-    const bindings: Array<[string, (head: string) => Record<string, string>, string[]]> = [
-      ['absent', () => ({}), ['hit', 'pass']],
-      ['own', (head) => ({ sha: head, branch: CARD_ID }), ['hit', 'pass']],
-      ['wrong sha', () => ({ sha: fx.base }), ['no-verdict', 'no-verdict']],
-      ['wrong branch', () => ({ branch: 'T1-OTHER' }), ['no-verdict', 'no-verdict']],
+    // [binding, formal outcomes, pre outcomes]: the loop's R2 records a round's outcome without reading its binding.
+    const bindings: Array<[string, (head: string) => Record<string, string>, string[], string[]]> = [
+      ['absent', () => ({}), ['hit', 'pass'], ['hit', 'pass']],
+      ['own', (head) => ({ sha: head, branch: CARD_ID }), ['hit', 'pass'], ['hit', 'pass']],
+      ['wrong sha', () => ({ sha: fx.base }), ['no-verdict', 'no-verdict'], ['hit', 'pass']],
+      ['wrong branch', () => ({ branch: 'T1-OTHER' }), ['no-verdict', 'no-verdict'], ['hit', 'pass']],
     ];
     for (const [stageName, stage, config] of stages) {
       writeConfig(fx, config);
-      for (const [name, bindingFor, expected] of bindings) {
+      for (const [name, bindingFor, formal, pre] of bindings) {
         const report = await bench(fx, boundReviewer(fx, bindingFor), { stage });
-        assert.deepEqual(report.cases.map((c) => c.outcome), expected, `${stageName}, ${name} binding`);
+        assert.deepEqual(report.cases.map((c) => c.outcome), stage === 'formal' ? formal : pre, `${stageName}, ${name} binding`);
       }
     }
   } finally {
@@ -435,7 +436,7 @@ const OPERATIONS_SECTION = [
   '`aidlc review bench run --stage <pre|formal> [--dir <path>] [--case <id>] [--include-unconfirmed]` scores the stage\'s configured primary reviewer on the cases in `evals/review/` (`--dir` names another directory, resolved against the root of the checkout the command runs in). It reads `REVIEW.md`, `aidlc.config.json` and `docs/LESSONS.md` from that root, so a run with `npm run dev -- review bench run` in a card worktree scores that worktree\'s policy, prompts and configuration. It selects the confirmed cases, every case with `--include-unconfirmed`, or the one case `--case` names, and counts the unconfirmed cases it left out. A `--case` that names an unconfirmed case is refused unless `--include-unconfirmed` is given, and a run that selects no case says so in the report (`note`) and on the first line of its line form.',
   'A case is one JSON file named after its `id` (`ReviewBenchCase` in `src/core/types.ts`; `evals/review/README.md` describes each field): `kind` `bug` or `clean`, the `candidate` and `base` commits, the card\'s `id` and its `path` at the candidate, `confirmed`, `confirmedBy`, `origin`, an optional `note`, and for a bug case the `expected` sites, each a `file`, a `line`, a `window` and a `class`.',
   'The reviewer bench reviews each distinct candidate, base and card path once, one review after another, in a detached checkout of the candidate that `git worktree add --detach` creates in a fresh directory under the OS temp directory. That checkout is the reviewer\'s working directory and `{cwd}`, and it is removed after every review, with the directory deleted and `git worktree prune` run when `git worktree remove --force` fails. A checkout is listed in `leftCheckouts` unless its directory is gone, any prune it needed exited 0, and `git worktree list --porcelain` exited 0 without naming it. The review is the loop\'s first R2 round or first R3 decision, built by the loop\'s own functions: the card parsed from `card.path` in the checkout, the diff from `collectCandidateDiff` under the stage\'s `maxDiffBytes`, the prompt from `buildReviewPrompt` with no prior findings, no delta and no advisory notes, and the run from `runReviewPanel` with the stage\'s primary `command` (with the R2 perspectives and coverage request, or the R3 `{schema}` and `{effort}`) and no fallback. Logs and verdicts go to `.review/bench/` of the checkout root.',
-  'A bug case is a `hit` when a cited reason of a block names an expected `file` with a line or line range that overlaps `line - window` to `line + window`, and a `miss` otherwise, a pass included. A clean case is a `false-block` when the review blocks and a `pass` when it passes. A review that ends without a verdict or on a quota hold makes its cases `no-verdict`, and a case that could not be reviewed (no checkout, a card file missing, unparseable or naming another id, an empty diff, a diff above the cap, an expected file the diff does not change) is an `error`; neither counts as a hit, a miss, a pass or a false block. A verdict bound to another commit (`sha`) or another card (`branch`) is a `no-verdict`, as the R3 classification of the loop reads it (`classifyVerdict`); the bench applies this rule to R2 as well, whose rounds the loop records without it.',
+  'A bug case is a `hit` when a cited reason of a block names an expected `file` with a line or line range that overlaps `line - window` to `line + window`, and a `miss` otherwise, a pass included. A clean case is a `false-block` when the review blocks and a `pass` when it passes. A review that ends without a verdict or on a quota hold makes its cases `no-verdict`, and a case that could not be reviewed (no checkout, a card file missing, unparseable or naming another id, an empty diff, a diff above the cap, an expected file the diff does not change) is an `error`; neither counts as a hit, a miss, a pass or a false block. On the formal stage a verdict bound to another commit (`sha`) or another card (`branch`) is a `no-verdict`, as the R3 classification of the loop reads it (`classifyVerdict`); the pre stage scores a verdict as the loop records an R2 round, which reads no binding.',
   'The report gives `stage`, `reviewer`, `policyHash`, `leftCheckouts`, one entry per case (`outcome`, `runStatus`, the cited reasons, `matched` with the reason and the expected file and line for a hit, `detail`, `verdictRef`, `logRef`, `durationMs`) and `totals`. In the totals `recall` is hits / (hits + misses) and `falseBlockRate` is false blocks / (clean passes + false blocks), each `null` when its denominator is 0, beside `noVerdict`, `errors` and `skippedUnconfirmed`. The report is JSON with `--json` or when stdout is not a TTY, and one line per case and a totals line otherwise. The command exits 0 after a report whose `leftCheckouts` is empty, whatever the scores, and 1 when it refuses before any review (no `REVIEW.md`, an empty stage `command`, a missing case directory, a case file that does not load, an unknown `--case`, an unconfirmed `--case` without `--include-unconfirmed`) or leaves a checkout behind.',
   'The reviewer bench stays outside the loop: no workflow names it, so it never runs in CI, and it reads no goal, card run, journal or review queue and writes nothing under the state directory, so it never changes a card run and never blocks a card. Before a change to `REVIEW.md`, a review perspective, a review prompt or a reviewer model, run it for both stages from a checkout of the version before and a checkout of the version after the change, and keep the change only when recall does not drop. This is a documented practice and no gate enforces it.',
 ];
