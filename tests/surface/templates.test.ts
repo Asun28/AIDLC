@@ -562,3 +562,52 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
     for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
   });
 });
+
+describe('dispute kinds and responses in the docs (T1-REVIEW-RESPONSES)', () => {
+  /** The paragraph docs/OPERATIONS.md adds under Findings and dispositions (R8), pinned whole, one sentence per entry. */
+  const KINDS = [
+    'Dispute kinds (card T1-REVIEW-RESPONSES).',
+    "`aidlc review dispute <card> <id> --note \"<why>\" --kind <kind>` records the author's response as `kind` on the dispute entry: `wrong` (the finding does not hold), `intentional` (the code does on purpose what the finding reports) or `not-worth-fixing` (the finding holds and its repair is not worth its cost), and `wrong` when `--kind` is absent.",
+    'Any other value exits non-zero with a message naming the three kinds before the card run is read or created, so the run and the journal stay unchanged.',
+    'The `FINDING_DISPUTED` event carries the kind as `data.kind`, and the `review findings` and `review dispute` line of a disputed finding reads `last note (<kind>): <note>`.',
+    'A dispute recorded before this card has no kind: it is written back without one and every reader takes it as `wrong`.',
+    'The kind is not shown to the reviewer and changes no rule of the loop: the next round or decision receives the note as before, and a disputed finding of every kind is held the same way.',
+  ];
+  /** The paragraph docs/OPERATIONS.md adds under Review statistics (R8), pinned whole. */
+  const RESPONSES = [
+    'Responses (card T1-REVIEW-RESPONSES).',
+    "`findings.responses` reports every finding of the card, of each family member and of the family totals by the author's response: `fixed`, resolved with an open disposition; `wrong`, `intentional` and `notWorthFixing`, a disputed disposition, resolved or not, counted by the kind of its latest dispute, an absent kind as `wrong`; and `open`, unresolved with an open disposition.",
+    'The five counts partition `total`: `responses.open` equals `open`, the three kinds add up to `disputed` plus the findings resolved while disputed, and `open + disputed + resolved === total` holds as before.',
+    '`fixed` also counts a finding that was disputed, then re-raised or withdrawn, and then repaired, and a finding that a later round of its stage dropped without a repair, since the record does not tell a repair from a drop.',
+    'The line form ends the findings segment with `; responses: <n> fixed, <n> wrong, <n> intentional, <n> not-worth-fixing, <n> open`, leaving out each zero count, and prints `findings 0` alone for a card with no findings.',
+  ];
+  const CHANGELOG = [
+    '- T1-REVIEW-RESPONSES: `aidlc review dispute` takes `--kind wrong|intentional|not-worth-fixing` (default `wrong`) and records it as `kind` on the dispute, refusing any other value before anything is written; `FINDING_DISPUTED` carries it as `data.kind`, and the findings line reads `last note (<kind>): <note>`.',
+    '`aidlc review stats` reports `findings.responses` (`fixed`, `wrong`, `intentional`, `notWorthFixing`, `open`) per card, per family member and in the family totals, and the line form ends the findings segment with the non-zero responses.',
+    'A dispute recorded before this card keeps no kind and reads as `wrong`; the reviewer prompt, the hold and stop rules and `reviewPolicyVersion` are unchanged.',
+  ];
+  const ARCHITECTURE = 'the optional kind of each dispute (`wrong`, `intentional` or `not-worth-fixing`; a dispute recorded before card T1-REVIEW-RESPONSES has none and reads as `wrong`)';
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  const sectionOf = (text: string, heading: string) => {
+    const start = text.indexOf(`\n${heading}\n`);
+    return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
+  };
+  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+
+  test('acceptance 7: OPERATIONS.md carries the kinds and the responses paragraphs whole in their sections, ARCHITECTURE.md the dispute kind in the card-run row, the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R8]', () => {
+    const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
+    const architecture = lf(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'));
+    const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
+    const kindsHold = (text: string) => sectionOf(text, '### Findings and dispositions').includes(KINDS.join(' ')) && sectionOf(text, '### Findings and dispositions').includes('--note "<why>" [--kind <kind>]');
+    const responsesHold = (text: string) => sectionOf(text, '### Review statistics').includes(RESPONSES.join(' '));
+    const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
+    assert.ok(kindsHold(operations), 'OPERATIONS.md Findings and dispositions carries the kinds paragraph and the --kind option');
+    assert.ok(responsesHold(operations), 'OPERATIONS.md Review statistics carries the responses paragraph');
+    const row = architecture.split('\n').find((l) => l.startsWith('| `cards/<goalId>/<cardId>.json` |')) ?? '';
+    assert.ok(row.includes(ARCHITECTURE), 'ARCHITECTURE.md names the dispute kind in the card-run row');
+    assert.ok(changelogHolds(changelog), 'CHANGELOG.md Unreleased carries the T1-REVIEW-RESPONSES entry');
+    for (const sentence of KINDS) assert.equal(kindsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    for (const sentence of RESPONSES) assert.equal(responsesHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+    for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+  });
+});

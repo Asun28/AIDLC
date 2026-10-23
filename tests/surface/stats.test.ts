@@ -96,6 +96,28 @@ function coveredRun(): CardRun {
   });
 }
 
+/**
+ * Six findings, one per response path (card T1-REVIEW-RESPONSES):
+ *   F1 resolved, never disputed -> fixed; F2 resolved while disputed `intentional` -> intentional;
+ *   F3 disputed `not-worth-fixing`, unresolved -> notWorthFixing; F4 disputed with no kind, unresolved -> wrong;
+ *   F5 disputed `wrong`, re-raised (open again), then resolved -> fixed; F6 open, unresolved -> open.
+ */
+function respondedRun(): CardRun {
+  const finding = (id: string, over: Record<string, unknown>) => ({ id, stage: 'pre', cycle: 0, round: 1, reason: `[spec] 1 @ src/a.ts:${id.slice(1)}: wrong -> fix`, raisedAt: at(MIN), disposition: 'open', ...over });
+  const dispute = (kind?: string) => ({ at: at(5 * MIN), note: 'the author answers', afterReraises: 0, ...(kind ? { kind } : {}) });
+  return run({
+    cardId: 'T1-R',
+    findings: [
+      finding('F1', { resolvedAt: at(20 * MIN) }),
+      finding('F2', { disposition: 'disputed', disputes: [dispute('intentional')], resolvedAt: at(20 * MIN) }),
+      finding('F3', { disposition: 'disputed', disputes: [dispute('not-worth-fixing')] }),
+      finding('F4', { disposition: 'disputed', disputes: [dispute()] }),
+      finding('F5', { disputes: [dispute('wrong')], reraised: [{ stage: 'pre', cycle: 0, round: 2, at: at(10 * MIN), reason: 'still wrong (re:F5)', answeredDispute: 0, sawDisputes: 1 }], resolvedAt: at(20 * MIN) }),
+      finding('F6', {}),
+    ],
+  });
+}
+
 const NO_COVERAGE = { roundsRequested: 0, roundsComplete: 0, unaccounted: 0, conflicted: 0, inconsistent: 0, r3SpecFindingsAfterIncomplete: 0 };
 
 describe('review statistics (R11, R12)', () => {
@@ -106,7 +128,7 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summary?.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 1, durationMs: 90_000, blocksByPerspective: { bugs: 1 } });
     // 15:00 - 10:00 for the blocked decision, 33:00 - 30:00 for the passing one.
     assert.deepEqual(summary?.r3, { decisions: 2, blocks: 1, durationMs: 8 * MIN });
-    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2 });
+    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 } });
     // First request at 00:00, last pass decided at 33:00.
     assert.equal(summary?.wallMs, 33 * MIN);
   });
@@ -116,7 +138,7 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.cardId, 'T1-QUIET');
     assert.deepEqual(summary?.r2, { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: {} });
     assert.deepEqual(summary?.r3, { decisions: 0, blocks: 0, durationMs: 0 });
-    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0 });
+    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 } });
     assert.equal(summary?.wallMs, 0);
     assert.equal(summary?.family, undefined, 'a card that supersedes nothing reports no family');
   });
@@ -152,7 +174,7 @@ describe('review statistics (R11, R12)', () => {
     // The round that blocked carries no panel record, so the block counts under the reviewer that decided it.
     assert.deepEqual(family?.totals.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 60_000, blocksByPerspective: { deepseek: 1 } });
     assert.deepEqual(family?.totals.r3, { decisions: 1, blocks: 0, durationMs: 2 * MIN });
-    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1 });
+    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 } });
     // 10s on the first card, 3 min on the second, 30s on the third.
     assert.equal(family?.totals.wallMs, 220_000);
     assert.equal(summaries.find((s) => s.cardId === 'T1-A')?.family, undefined, 'the oldest card of a family supersedes nothing');
@@ -230,7 +252,7 @@ describe('review statistics (R11, R12)', () => {
     const line = stats.formatReviewStats(stats.summarizeReviews([reviewedRun()], []));
     assert.equal(
       line,
-      'T1-A  R2 3 rounds, 1 block (bugs 1), 1 quota hold, 1m 30s | R3 2 decisions, 1 block, 8m 00s | findings 4: 3 pre, 1 formal, 1 open, 1 disputed, 2 resolved, 1 re-raised, 1 first-round miss | coverage: not requested | wall 33m 00s',
+      'T1-A  R2 3 rounds, 1 block (bugs 1), 1 quota hold, 1m 30s | R3 2 decisions, 1 block, 8m 00s | findings 4: 3 pre, 1 formal, 1 open, 1 disputed, 2 resolved, 1 re-raised, 1 first-round miss; responses: 2 fixed, 1 wrong, 1 open | coverage: not requested | wall 33m 00s',
     );
     assert.equal(stats.formatReviewStats(stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], [])), 'T1-QUIET  R2 0 rounds, 0s | R3 0 decisions, 0s | findings 0 | coverage: not requested | wall 0s');
     assert.equal(stats.formatReviewStats([]), 'no card runs');
@@ -441,6 +463,7 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(payload.cards[0]?.r2.rounds, 3);
     assert.equal(payload.cards[0]?.r3.decisions, 2);
     assert.equal(payload.cards[0]?.findings.firstRoundMiss, 1);
+    assert.deepEqual(payload.cards[0]?.findings.responses, { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 }, 'the JSON carries the responses');
 
     const human = cli(['--no-json', 'review', 'stats', '--goal', 'g-stats-cli']);
     assert.equal(human.status, 0, human.stderr);
@@ -477,5 +500,19 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.r3.durationMs, 0, 'no decision artifact, no measured duration');
     // No pass yet: the wall time runs to the last review request, at 05:00.
     assert.equal(summary?.wallMs, 5 * MIN);
+  });
+
+  test('T1-REVIEW-RESPONSES acceptance 5: findings.responses partitions the total by response, counting a disputed finding by the kind of its latest dispute and an absent kind as wrong [R6]', () => {
+    const findings = stats.summarizeReviews([respondedRun()], [])[0]?.findings;
+    assert.deepEqual(findings?.responses, { fixed: 2, wrong: 1, intentional: 1, notWorthFixing: 1, open: 1 });
+    assert.equal(findings?.total, 6);
+    assert.equal(findings?.open, 1);
+    assert.equal(findings?.disputed, 2);
+    assert.equal(findings?.resolved, 3);
+  });
+
+  test('T1-REVIEW-RESPONSES acceptance 6: the line form ends the findings segment with the non-zero responses [R7]', () => {
+    const line = stats.formatReviewStats(stats.summarizeReviews([respondedRun()], []));
+    assert.match(line, /\| findings 6: 6 pre, 1 open, 2 disputed, 3 resolved, 1 re-raised; responses: 2 fixed, 1 wrong, 1 intentional, 1 not-worth-fixing, 1 open \|/);
   });
 });

@@ -466,7 +466,7 @@ describe('review findings: dispositions, the same-candidate rule and deadlocks (
     assert.throws(() => policy.disputeFinding(f, 'F7', 'x', LATER), /F7/);
     assert.throws(() => policy.disputeFinding(f, 'F1', '   ', LATER), /note/);
     const d = policy.disputeFinding(f, 'F1', 'the RED is behavioural: tests/gate.test.ts', LATER);
-    assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts', afterReraises: 0 }]);
+    assert.deepEqual(d.find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is behavioural: tests/gate.test.ts', afterReraises: 0, kind: 'wrong' }]);
     assert.throws(() => policy.disputeFinding(d, 'F1', 'again', LATER), /already disputed/);
     const a = policy.acceptFinding(d, 'F1');
     assert.equal(a.find((x) => x.id === 'F1')?.disposition, 'open');
@@ -695,5 +695,38 @@ describe('defect classes (T1-REVIEW-CLASS-SWEEP)', () => {
     assert.equal(classOf(advisoryBlock.findings[0]), 'journal-before-save', 'an advisory block records the class of its reason');
     assert.deepEqual(policy.blockClasses(advisoryBlock.findings), [], 'an advisory finding is never a merge bar, so no repair asks for its class');
     for (const slug of ['abc\n', 'abc\r\n', 'ab\nc']) assert.equal(policy.findingClass(reason(slug)), undefined, `a line break in ${JSON.stringify(slug)}`);
+  });
+});
+
+describe('dispute kinds (T1-REVIEW-RESPONSES)', () => {
+  const LATER = '2026-09-11T01:00:00.000Z';
+  const raised = () => policy.recordFindings([], { stage: 'pre', cycle: 0, round: 1, candidateSha: 'sha-1', at: T0, outcome: 'block', reasons: ['[spec] 6 tests @ src/gate.ts:1: no RED -> add one'] }).findings;
+  const lastDispute = (findings: ReviewFinding[]) => findings.find((x) => x.id === 'F1')?.disputes.at(-1);
+
+  test('acceptance 1: disputeFinding records kind wrong by default and the kind given as the fifth argument [R1]', () => {
+    assert.deepEqual(policy.disputeFinding(raised(), 'F1', 'the RED is tests/gate.test.ts', LATER).find((x) => x.id === 'F1')?.disputes, [{ at: LATER, note: 'the RED is tests/gate.test.ts', afterReraises: 0, kind: 'wrong' }]);
+    assert.deepEqual(lastDispute(policy.disputeFinding(raised(), 'F1', 'the name is the one the card fixes', LATER, 'intentional')), { at: LATER, note: 'the name is the one the card fixes', afterReraises: 0, kind: 'intentional' });
+    assert.deepEqual(lastDispute(policy.disputeFinding(raised(), 'F1', 'a one-line cosmetic change', LATER, 'not-worth-fixing')), { at: LATER, note: 'a one-line cosmetic change', afterReraises: 0, kind: 'not-worth-fixing' });
+  });
+
+  test('acceptance 1: parseDisputeKind reads an absent kind as wrong, each kind as itself, and refuses any other value naming the three kinds [R1] [R2]', () => {
+    assert.equal(policy.parseDisputeKind(undefined), 'wrong');
+    assert.equal(policy.parseDisputeKind('wrong'), 'wrong');
+    assert.equal(policy.parseDisputeKind('intentional'), 'intentional');
+    assert.equal(policy.parseDisputeKind('not-worth-fixing'), 'not-worth-fixing');
+    for (const value of ['maybe', 'Wrong', '']) {
+      assert.throws(
+        () => policy.parseDisputeKind(value),
+        (err: Error) => err.message.includes('wrong') && err.message.includes('intentional') && err.message.includes('not-worth-fixing'),
+        `'${value}' is refused with the three kinds`,
+      );
+    }
+  });
+
+  test('acceptance 2: a dispute recorded before the kind existed parses with no kind and is written back without one [R4]', () => {
+    const parsed = ReviewFinding.parse({ id: 'F1', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 6 tests @ src/gate.ts:1: no RED -> add one', raisedAt: T0, disposition: 'disputed', disputes: [{ at: LATER, note: 'the RED is tests/gate.test.ts', afterReraises: 0 }] });
+    assert.deepEqual(parsed.disputes, [{ at: LATER, note: 'the RED is tests/gate.test.ts', afterReraises: 0 }]);
+    assert.equal('kind' in parsed.disputes[0]!, false, 'no kind key is added');
+    assert.equal(JSON.stringify(parsed).includes('"kind"'), false, 'the written record carries no kind');
   });
 });
