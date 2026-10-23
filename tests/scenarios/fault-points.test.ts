@@ -137,6 +137,66 @@ const COVERED: Covered[] = [
 ];
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Liveness (card T1-VERIFY-LIVENESS, spec review-verification R22, R23): the end state a run comes to rest in.
+// ---------------------------------------------------------------------------------------------------------------------
+
+/** R3: the end state of a run; no timestamp, id, hash, revision, evidence entry or lease field takes part. */
+interface EndState {
+  /** The kind of the drive's last directive. */
+  directive: string | null;
+  state: string | null;
+  stop: string | null;
+  mergeVerified: boolean | null;
+  /** `[n, outcome]` per attempt, and the episode's terminal. */
+  attempts: Array<[number, string]>;
+  terminal: string | null;
+  /** R2 rounds as `[cycle, round, outcome]`. */
+  r2: Array<[number, number, string]>;
+  r3: { invocations: Array<[string, string]>; substantiveDecisions: number; substantiveBlocks: number; noVerdictRetriesUsed: number };
+  /** The goal's review-pool requests as sorted `[reviewer, state]`, and each of their pools' active slots as `[pool, count]`. */
+  requests: Array<[string, string]>;
+  activeSlots: Array<[string, number]>;
+  /** The card's operations as sorted `[kind, status, an OPERATION_INTENT event names it]`. */
+  operations: Array<[string, string, boolean]>;
+  /** Counts per `TYPE outcome` (or `TYPE status`) of the counted journal events, decision events of a discard left out. */
+  journal: Record<string, number>;
+}
+
+// R4: written from the fixture's design before any run. A to D: one success attempt (the episode `succeeded`), one R2 pass
+// in cycle 0, one R3 pass by the formal reviewer `primary`, the formal request and the ship's request (`codex-review`, the
+// config default) completed in pool `default`, one merge operation succeeded through the dry-run ship, and the card at CLOSE.
+const FAULT_FREE_CLOSE: EndState = {
+  directive: 'close',
+  state: 'CLOSE',
+  stop: null,
+  mergeVerified: true,
+  attempts: [[1, 'success']],
+  terminal: 'succeeded',
+  r2: [[0, 1, 'pass']],
+  r3: { invocations: [['primary', 'pass']], substantiveDecisions: 1, substantiveBlocks: 0, noVerdictRetriesUsed: 0 },
+  requests: [['codex-review', 'completed'], ['primary', 'completed']],
+  activeSlots: [['default', 0]],
+  operations: [['merge', 'succeeded', true]],
+  journal: { ATTEMPT_STARTED: 1, 'ATTEMPT_FINISHED success': 1, 'PRE_REVIEW_DECIDED pass': 1, 'REVIEW_DECIDED pass': 1, 'OPERATION_RESULT succeeded': 1 },
+};
+
+// E: the same attempt, R2 and R3 entries, no ship: the formal request alone, no operation, and the deadline stop.
+const FAULT_FREE_TIME: EndState = {
+  directive: 'stop',
+  state: 'STOP',
+  stop: 'time',
+  mergeVerified: false,
+  attempts: [[1, 'success']],
+  terminal: 'succeeded',
+  r2: [[0, 1, 'pass']],
+  r3: { invocations: [['primary', 'pass']], substantiveDecisions: 1, substantiveBlocks: 0, noVerdictRetriesUsed: 0 },
+  requests: [['primary', 'completed']],
+  activeSlots: [['default', 0]],
+  operations: [],
+  journal: { ATTEMPT_STARTED: 1, 'ATTEMPT_FINISHED success': 1, 'PRE_REVIEW_DECIDED pass': 1, 'REVIEW_DECIDED pass': 1 },
+};
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Fault points: the k-th renameSync onto a card-run record or appendFileSync onto a goal journal throws EIO.
 // ---------------------------------------------------------------------------------------------------------------------
 
