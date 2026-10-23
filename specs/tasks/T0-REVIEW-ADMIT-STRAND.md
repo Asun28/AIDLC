@@ -84,4 +84,59 @@ npm run typecheck && node --test tests/scenarios/review-admit-strand.test.ts tes
 - Assertion: the typecheck is clean; the new tests pass (the request cancelled and the slot free on both paths, the append's error kept when the cancellation fails, the doc and CHANGELOG sentences present); the fault-point judge passes with no `C/append REVIEW_ADMITTED` pin and the residual `D/append REVIEW_ADMITTED` pin; the other listed files pass.
 
 ## Attempt evidence
-(Filled at BUILD: the RED commit and its first failing line, the RED and GREEN DoD exit codes, test counts and durations, the mutation sweep and its survivors.)
+BUILD attempt 1, base 423bc26 (origin/main), Windows 11, Node 22.
+
+### Reproduction
+At 423bc26 the pins `C/append REVIEW_ADMITTED` (H1) and `D/append REVIEW_ADMITTED` (H2) of tests/scenarios/fault-points.test.ts reproduce the defect: the formal request stays `running` with one active slot and `card next` directs `review` for all 12 calls (H1); the ship's request stays `running` and every `card next` waits on `review:<key>` (H2). The new tests/scenarios/review-admit-strand.test.ts reproduces both at the command boundary (acceptance 1 and 2 fail on `actual: 'running'`, `expected: 'cancelled'`).
+
+### RED (commit 673e90c, tests and the two `KNOWN_VIOLATIONS` edits, no src change)
+Command: the dod_command. Exit code 1; 386 tests, 378 pass, 8 fail; `duration_ms 39446.7863`.
+First failing line (TAP):
+```
+    not ok 11 - every fault point of A to E reaches its command's fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]
+```
+The judge names both fault points:
+```
++   stale: [
++     'pin D/append REVIEW_ADMITTED (H2): the difference changed: pinned operations fault-free [["merge","succeeded",true]], observed [["merge","intended",true],["merge","succeeded",true]]; observed directive fault-free "close", observed "wait"; ...
++   unpinned: [
++     'C/append REVIEW_ADMITTED: directive fault-free "close", observed "review"; state fault-free "CLOSE", observed "SHIP"; ...
+```
+The other 7 failures are acceptance 1, 2 and 3 (the third case: the cancellation's error replaced the reservation's) and the four acceptance 5 sentence checks.
+
+### GREEN (commits 8442f65 fix, 8fcf482 docs)
+Command: the dod_command. Exit code 0; 386 tests, 386 pass, 0 fail; `duration_ms 39742.8415`. `npm test` (CLAUDE_CODE_SESSION_ID and AIDLC_SESSION unset): exit 0, 1522 tests, 1516 pass, 0 fail, 6 skipped.
+
+### Write order and recovery of the fix
+- `review r3` (`formalReview`): enqueue, admission (`admitReview`: the request `running`, its key in the pool's active slots), then one try: the `REVIEW_ADMITTED` append (card-runner.ts:1588), then the reservation write under the card-run lock. The catch cancels the request (`ReviewQueue.cancel`: request file `cancelled`, then the slot released) in a nested try and rethrows the error that entered the catch.
+- Ship of `card next`: intent, `OPERATION_INTENT`, enqueue, `REVIEW_REQUESTED`, admission, then the `REVIEW_ADMITTED` append (card-runner.ts:993) in a try whose catch cancels the request in a nested try (:998) and rethrows the append's error; the catch writes no intent status, no journal event and no card-run record. The record re-read, `markIssued`, `OPERATION_ISSUED` and the dispatch follow unchanged.
+- Append fails, cancellation lands: the request is `cancelled` and its slot free; `review r3` has written no reservation and the next `review r3` admits a new request for the key; the ship has dispatched nothing, the intent stays `intended`, and the next `card next` records a second intent and ships (pinned as the new H2 difference, T0-OP-INTENT-DUP).
+- Append fails, cancellation fails too: the request stays `running` with its slot, as at 423bc26; the command reports the append's error (acceptance 3). No command releases it (non_goals).
+- Reservation write fails, cancellation fails too: the command reports the reservation's error, the request stays `running` (acceptance 3).
+- The process dies between the admission and the cancellation: the request stays `running` (non_goals).
+- The journal and card-run writes counted by the fault-point check are unchanged in number and order (the append still precedes the reservation write; the ship's writes are untouched); only review-queue writes, which are not fault points, were added on the failure paths.
+
+### Sweep (every admission followed by a write before the cancelling handler)
+`git grep -n -E 'admitReview[(]|queue[.]admit[(]|REVIEW_ADMITTED' -- src` at 423bc26: `admitReview` has two callers, `ship` (append then at :992) and `formalReview` (append then at :1563); `preReview` does not admit. Both fixed. The refused-reservation catch (:1602 at 423bc26) is made best effort (R3). The ship cleanups after the append (:1013-1036 at 423bc26) were already best effort.
+
+### Mutation sweep (run on 8fcf482 against review-admit-strand.test.ts and fault-points.test.ts; each restored, none committed)
+| Mutant | Result |
+|---|---|
+| M1 formalReview append left before the try | killed: acceptance 1, fault-point judge |
+| M2 ship cancel dropped | killed: acceptance 2, judge |
+| M3 ship handler also marks the intent `cancelled` | killed: acceptance 2, judge |
+| M4 formalReview cancellation error rethrown | killed: acceptance 3 |
+| M5 ship cancellation error rethrown | killed: acceptance 3 |
+| M6 formalReview catch cancel dropped (slot not released) | killed: acceptance 1, judge |
+| M7 ship handler swallows the append error | killed: acceptance 2, 3 |
+| M8 ship cancel run before the append | killed: acceptance 3, judge |
+| M9 formalReview append moved after the reservation write | killed: acceptance 1, judge |
+| M10 formalReview cancel run before the append | killed: acceptance 3, judge, five fault-free runs |
+| P1 `C/append REVIEW_ADMITTED` pin restored | killed: judge (stale pin) |
+| P2 `D/append REVIEW_ADMITTED` difference changed | killed: judge |
+| P3 `D/append REVIEW_ADMITTED` pin removed | killed: judge (unpinned) |
+
+No survivors.
+
+### verify-card-run-writes
+`git diff --name-only 794624a0d26cbb5ee8eec2a363b7a578590abef9 -- <record files>` lists src/loop/card-runner.ts and tests/scenarios/fault-points.test.ts. The counted writes of the covered commands keep their number and order; the check's pins were changed to match the code (H1 removed, H2 rewritten) and the check passes (fault-points.test.ts inside the GREEN DoD). The coverage record (files and functions) needs no change; the sync commit moves on main after the merge.
