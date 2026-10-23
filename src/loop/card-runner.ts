@@ -999,7 +999,8 @@ export class CardRunner {
       return { run: next, directive: { kind: 'wait', cardId: card.id, on: `review:${key}`, pollSeconds: 60, narration: 'A matching review is already running in the shared pool; join it instead of launching another.' } };
     }
     const admit = this.admitReview(goal, card, key, now);
-    if (admit.status !== 'admitted' || admit.request.key !== key) {
+    // `admitReview` asks with its key, so an admission is always this request's own.
+    if (admit.status !== 'admitted') {
       if (recorded) this.ops.markResult(op.id, 'cancelled', { error: `review not admitted: ${admit.status}` });
       const next = this.save({ ...run, state: 'WAIT' });
       const until = admit.status === 'reset-pending' ? ` until ${admit.resetAt}` : admit.status === 'behind' ? ` the request of ${admit.ahead.requesters.join(', ')}` : '';
@@ -1585,7 +1586,7 @@ export class CardRunner {
     if (enq.status === 'completed') enq = { status: 'enqueued', request: this.queue.requeue(key, now) };
     if (enq.status === 'joined' && enq.request.state === 'running') throw new Error(`a matching formal review is already running in pool ${JSON.stringify(pool)}; join it, do not dispatch another`);
     const admit = this.admitReview(goal, card, key, now, pool);
-    if (admit.status !== 'admitted' || admit.request.key !== key) throw new Error(`review pool ${JSON.stringify(pool)} is ${admit.status === 'admitted' ? 'occupied by another request' : admit.status === 'behind' ? `behind the request of ${admit.ahead.requesters.join(', ')}` : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
+    if (admit.status !== 'admitted') throw new Error(`review pool ${JSON.stringify(pool)} is ${admit.status === 'behind' ? `behind the request of ${admit.ahead.requesters.join(', ')}` : admit.status}; the formal review waits for admission (aidlc review status --pool ${JSON.stringify(pool)})`);
     const admittedSeq = admit.request.seq;
     // Reserve the invocation under the card-run lock before dispatch so a concurrent call cannot spend the same decision.
     // The guards are re-checked on the locked record (a dispute withdrawn or a decision recorded since the first read

@@ -1,5 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { ReviewQueue, type EnqueueInput } from '../../src/coordination/review-queue.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
@@ -267,6 +268,64 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     assert.equal(admitted.status, 'admitted');
     if (admitted.status === 'admitted') assert.equal(admitted.request.key, z.key);
     assert.deepEqual(q.get(y.key), held, 'the held head is unchanged');
+  });
+
+  // R3 decision 1 F1: a keyed call that answers `behind` writes nothing the keyless call at the same moment does not write
+  // on its way to the request it admits. Requests named X are past their deadline; Z is the caller.
+  const files = (d: string): Map<string, string> => new Map(readdirSync(d).filter((f) => f.endsWith('.json')).map((f) => [f, readFileSync(path.join(d, f), 'utf8')]));
+  const build = (d: string, slots: number, order: string[], stale: boolean): ReviewQueue => {
+    const q = new ReviewQueue(d);
+    if (slots > 1) q.setPoolLimit('codex:acct', slots, 'two seats');
+    if (stale) {
+      const s = q.enqueue(input({ candidateDigest: 'stale', requester: 'goal-3/T1-S', now: iso(1) })).request;
+      q.admit('codex:acct', A, iso(2));
+      q.complete(s.key, 'verdict:stale', iso(3));
+      q.savePool({ ...q.pool('codex:acct'), active: [s.key], updatedAt: iso(4) });
+    }
+    order.forEach((name, i) => q.enqueue(input({ candidateDigest: name, requester: `goal-1/T1-${name}`, deadline: name.startsWith('X') ? iso(100) : iso(10_000), now: iso(10 + i) })));
+    return q;
+  };
+  const keyOf = (q: ReviewQueue, name: string): string => q.list('codex:acct').find((r) => r.candidateDigest === name)!.key;
+  for (const [name, slots, order, stale] of [
+    ['an expired request before the first eligible one', 2, ['X1', 'Y', 'W', 'Z'], false],
+    ['an expired request between the first eligible one and the caller (the F1 order)', 2, ['Y', 'X1', 'W', 'Z'], false],
+    ['an expired request after the caller', 2, ['Y', 'W', 'Z', 'X1'], false],
+    ['several expired requests before, between and after', 2, ['X1', 'Y', 'X2', 'W', 'X3', 'Z', 'X4'], false],
+    ['a one-slot pool with an expired request between', 1, ['Y', 'X1', 'Z'], false],
+    ['a stale active slot and an expired request between', 2, ['Y', 'X1', 'W', 'Z'], true],
+  ] as Array<[string, number, string[], boolean]>) {
+    it(`T0-REVIEW-ADMIT-FOREIGN R3 decision 1 F1: behind leaves the queue as the keyless call leaves it apart from its admission, ${name} [R1]`, () => {
+      const base = path.join(dir, `f1-${order.join('')}-${slots}-${stale}`);
+      const pre = build(path.join(base, 'pre'), slots, order, stale);
+      const keyless = build(path.join(base, 'keyless'), slots, order, stale);
+      const keyed = build(path.join(base, 'keyed'), slots, order, stale);
+      const before = files(pre.dir);
+      const admitted = keyless.admit('codex:acct', A, iso(200));
+      assert.equal(admitted.status, 'admitted');
+      const admittedKey = admitted.status === 'admitted' ? admitted.request.key : '';
+      const first = order.find((n) => !n.startsWith('X'))!;
+      assert.equal(admittedKey, keyOf(pre, first));
+      assert.deepEqual(keyed.admit('codex:acct', A, iso(200), keyOf(pre, 'Z')), { status: 'behind', ahead: { key: keyOf(pre, first), requesters: [`goal-1/T1-${first}`] } });
+      // Every request file is byte-identical to the keyless call's, the request it admitted restored to its state before the call.
+      const poolFile = [...before.keys()].find((f) => f.startsWith('_pool-'))!;
+      const requestsOnly = (m: Map<string, string>) => new Map([...m].filter(([f]) => f !== poolFile));
+      const expected = new Map([...requestsOnly(files(keyless.dir))].map(([f, text]): [string, string] => [f, JSON.parse(text).key === admittedKey ? before.get(f)! : text]));
+      const after = files(keyed.dir);
+      assert.deepEqual(requestsOnly(after), expected);
+      // The pool: the keyless call's active slots without the one it admitted; untouched when no slot needed cleaning.
+      assert.deepEqual(keyed.pool('codex:acct').active, keyless.pool('codex:acct').active.filter((k) => k !== admittedKey));
+      if (!stale) assert.equal(after.get(poolFile), before.get(poolFile));
+      else assert.deepEqual(keyed.pool('codex:acct'), { ...pre.pool('codex:acct'), active: [], updatedAt: iso(200) });
+    });
+  }
+
+  it('T0-REVIEW-ADMIT-FOREIGN R3 decision 1 F1: an expired request met behind an eligible one is cancelled when the caller is admitted [R1]', () => {
+    const q = build(path.join(dir, 'f1-admitted'), 2, ['Y', 'X1', 'Z'], false);
+    const admitted = q.admit('codex:acct', A, iso(200), keyOf(q, 'Z'));
+    assert.equal(admitted.status === 'admitted' && admitted.request.key, keyOf(q, 'Z'));
+    const x = q.get(keyOf(q, 'X1'))!;
+    assert.deepEqual([x.state, x.finishedAt, x.lastError], ['cancelled', iso(200), 'deadline passed before admission']);
+    assert.equal(q.get(keyOf(q, 'Y'))?.state, 'queued');
   });
 
   it('T0-REVIEW-ADMIT-FOREIGN acceptance 2: without a key admit still admits Y for the caller of Z, as in the reproduction of the diagnosis [R2]', () => {

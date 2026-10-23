@@ -120,8 +120,9 @@ export class ReviewQueue {
   /**
    * Admit the next eligible request in persisted order if the pool has a free slot. With `key` (card
    * T0-REVIEW-ADMIT-FOREIGN) only that request is admitted, and only while fewer eligible requests stand ahead of it
-   * than the pool has free slots; otherwise `behind` names the first request ahead and nothing else is written beyond
-   * the deadline cancellations met on the way and the active-slot cleanup.
+   * than the pool has free slots; otherwise `behind` names the first request ahead. A request past its deadline met
+   * after the first eligible request is cancelled only once the caller's request is admitted, so `behind` writes no
+   * more than the keyless call writes on its way to the request it admits (R3 decision 1 F1), plus the slot cleanup.
    */
   admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), key?: string): AdmitResult {
     const p = this.pool(pool, now);
@@ -138,9 +139,15 @@ export class ReviewQueue {
     }
     const candidates = this.list(pool).filter((r) => r.state === 'queued' || r.state === 'retry-after');
     const ahead: ReviewRequest[] = [];
+    const expired: ReviewRequest[] = [];
+    const cancelExpired = (r: ReviewRequest): void => {
+      atomicWriteJson(this.requestFile(r.key), { ...r, state: 'cancelled', finishedAt: now, lastError: 'deadline passed before admission' });
+    };
     for (const r of candidates) {
       if (Date.parse(r.deadline) <= Date.parse(now)) {
-        atomicWriteJson(this.requestFile(r.key), { ...r, state: 'cancelled', finishedAt: now, lastError: 'deadline passed before admission' });
+        // Past the first eligible request (keyed calls only) the cancellation waits for this call to admit.
+        if (ahead.length) expired.push(r);
+        else cancelExpired(r);
         continue;
       }
       if (r.state === 'retry-after' && r.retryAfter && Date.parse(r.retryAfter) > Date.parse(now)) continue;
@@ -151,6 +158,7 @@ export class ReviewQueue {
         if (active.length !== p.active.length) this.savePool({ ...p, active, updatedAt: now });
         return { status: 'behind', ahead: { key: ahead[0]!.key, requesters: ahead[0]!.requesters } };
       }
+      expired.forEach(cancelExpired);
       const admitted: ReviewRequest = { ...r, state: 'running', startedAt: now, slotOwner: actor, attempts: r.attempts + 1 };
       atomicWriteJson(this.requestFile(r.key), admitted);
       this.savePool({ ...p, active: [...active, r.key], updatedAt: now });
