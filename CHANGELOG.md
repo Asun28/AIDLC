@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-OP-INTENT-DUP (bugfix): a ship that failed after recording its merge intent (at the `OPERATION_INTENT`, `REVIEW_REQUESTED` or `REVIEW_ADMITTED` append, the review enqueue or the admission) no longer leaves that intent `intended` for good: the next ship of the same candidate continues under it and journals its `OPERATION_INTENT` when it is missing. Before, the next ship recorded a second intent and merged, and the first kept the goal's `aidlc next` waiting on `reconcile:<id>`, refused takeovers and blocked `aidlc audit verify` until a person ran `aidlc ops reconcile`.
+
 - T0-REVIEW-ADMIT-STRAND (bugfix): a `REVIEW_ADMITTED` append that fails after the review pool admitted the request no longer leaves the request `running` with its slot: `review r3` and the ship of `card next` cancel it and fail with the append's error. Before, every later `review r3` of the candidate refused with "a matching formal review is already running", the ship waited on `review:<key>` for good, and the held slot kept every other review of the pool waiting.
 
 - T0-INIT-REVIEW-IGNORE (bugfix): `aidlc init` adds `.review/` to the target's `.gitignore` beside `.aidlc/` and `_local/`, appending only the entries the file lacks (an entry with or without its trailing slash counts as present), so the verdicts and logs R2 and R3 write under `.review/` in a card worktree no longer stay untracked and make the next review refuse with `the review checkout ... has uncommitted or untracked changes (?? .review/...)`. An existing repository runs `aidlc init` again and commits and pushes `.gitignore` on the base branch; a card worktree created before that commit is covered meanwhile by a `.review/` line in the main checkout's `.git/info/exclude`.
