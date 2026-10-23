@@ -91,4 +91,72 @@ npm run typecheck && node --test tests/infra/review-queue.test.ts tests/scenario
 - Assertion: the typecheck is clean; the new queue tests pass (admission for the caller's key only, `behind` with no write, the free-slot count, deadline and `retry-after` heads) and the existing ones pass unchanged; the two-card scenarios pass on both paths (no request left `running` without a runner, both cards close, the card ahead named), the same-card supersede holds, the doc and CHANGELOG sentences are present; the fault-point test passes with its `KNOWN_VIOLATIONS` unchanged; the other listed files pass.
 
 ## Attempt evidence
-(Filled at BUILD: the seam and RED commits and the first failing line, the RED and GREEN DoD exit codes, test counts and durations, the mutation sweep and its survivors.)
+BUILD attempt 1 (effort medium), base origin/main e8cd3c2. Lines re-read at e8cd3c2 (the two merged cards moved them): `ReviewQueue.admit` review-queue.ts:121-148; `admitReview` card-runner.ts:2298-2306; its callers the ship (:1001, the wait at :1002-1007) and `review r3` (:1587-1588). After the fix the keyed calls are card-runner.ts:2301 and :2304.
+
+Commits:
+- db314b7 seam: `admit(pool, actor, now, _key?)` and the `behind` variant of `AdmitResult`, unused (docs/LESSONS.md 2026-09-26 T1-PARSE-GUARD).
+- f2adce5, 89a856a RED: the tests of acceptance 1 to 6. 89a856a fixes a type error f2adce5 left in the new scenario file (`c.ship.requests` narrowed to never after a deepEqual with `[]`); no assertion changed.
+- 67d2cf7 fix: the key filter in `admit`, `admitReview` passing its key, the `behind` refusal and wait texts.
+- 531d1e4 docs: the three Doc text sentences.
+- cd8aa09 test: cases the mutation sweep needed (two requests ahead of two free slots, two stale candidates, the own key after a supersede).
+
+Reproduction at 89a856a (the RED commit; src as at e8cd3c2), a scratch copy of the new scenario fixture (makeFixture, the fault-point config, T1-Y and T1-Z of one goal, a request of `g-20260911000000-000000:T1-X` admitted in pool `default`), deleted after the run:
+```
+REPRO T1-Y r3 (busy): review pool "default" is busy; the formal review waits for admission (aidlc review status --pool "default")
+REPRO T1-Z r3 (busy): review pool "default" is busy; the formal review waits for admission (aidlc review status --pool "default")
+REPRO Z r3: review pool "default" is occupied by another request; the formal review waits for admission (aidlc review status --pool "default")
+REPRO after Z: Y running, Z queued, active [["<goal>:T1-Y"]]
+REPRO Y r3: a matching formal review is already running in pool "default"; join it, do not dispatch another
+REPRO Z r3 again: review pool "default" is busy; the formal review waits for admission (aidlc review status --pool "default")
+REPRO reviewer runs: 0; Y card next: review
+REPRO Z ship wait: review-pool:default:admitted; Y ship request running, active [["<goal>:T1-Y"]]
+REPRO Y card next: review:<key of Y's ship request>
+```
+
+RED (89a856a, Windows, CLAUDE_CODE_SESSION_ID and AIDLC_SESSION unset): the dod_command exited 1; typecheck clean; 444 tests, 435 pass, 9 fail; duration_ms 41217 (wall 46.9 s). First failing line:
+`not ok 9 - T0-REVIEW-ADMIT-FOREIGN acceptance 1: in a one-slot pool Z behind Y gets behind naming Y and changes nothing; Y is then admitted [R1]`
+The 9 failures: acceptance 1 (the one-slot and the two-slot cases), acceptance 3 (actual `review pool "default" is occupied by another request; ...`), acceptance 4 (actual `on: 'review-pool:default:admitted'`, narration `Review pool default is admitted; ...`), acceptance 5 (the shared request ahead: actual `occupied by another request`), acceptance 6 (four sentences). Passing at RED, as the card expects: acceptance 1's deadline and retry-after cases and acceptance 2 (the keyless path already behaves so), and acceptance 5's supersede of a same-card request.
+
+GREEN (cd8aa09, Windows, same environment): the dod_command exited 0; typecheck clean; 444 tests, 444 pass, 0 fail; duration_ms 41445 (wall 47.2 s). `npm test` with CLAUDE_CODE_SESSION_ID unset: exit 0, 1562 tests, 1556 pass, 0 fail, 6 skipped, duration_ms 65782. tests/scenarios/fault-points.test.ts and its `KNOWN_VIOLATIONS` are unchanged (`git diff origin/main -- tests/scenarios/fault-points.test.ts` is empty) and pass in the DoD.
+
+Admission order with a key (review-queue.ts `admit`):
+1. A pool `resetAt` still ahead returns `reset-pending`, no write.
+2. The active slots are filtered to `running` and `lost` requests; with no free slot `admit` returns `busy`, writing the pool only when the filter dropped an entry.
+3. The pool's `queued` and `retry-after` requests are read in persisted `seq` order. One past its deadline is written `cancelled` (`deadline passed before admission`) and skipped; a `retry-after` request not yet due is skipped; each other request that is not the caller's counts as ahead. Once the count reaches the free slots, `admit` returns `behind` naming the first request ahead (key and requesters), writing the pool only when step 2 dropped an entry.
+4. The caller's request, reached with a free slot left for it, is written `running` (slotOwner the caller, attempts + 1), then added to the pool's active slots.
+5. No caller request reached: `empty`, after the same cleanup.
+Without a key step 3 counts nothing ahead, so the first eligible request is admitted, as at e8cd3c2.
+
+Queue states a keyed call can produce:
+- `admitted`: the caller's request, `queued` or a due `retry-after`, becomes `running` and holds a slot; every other request keeps its state and `seq`.
+- `behind`: the caller's request stays `queued` (or `retry-after`) behind the named request; the request ahead and every other request keep state and `seq`. The only other writes are the `cancelled` of requests met before the stop and past their deadline, which a keyless call cancels on its way too, and the slot cleanup. Acceptance 1 pins the requests and the pool deep-equal before and after.
+- `busy`, `reset-pending`, `empty`: as at e8cd3c2.
+- `admitReview`: a request ahead whose only requester is this card becomes `completed` (verdictRef `superseded by a newer candidate of the same card`) and the card asks again with its key, at most 10 times; a request ahead with any other requester is never completed, and the card returns `behind`, leaving it `queued`.
+- A keyed call never writes `running` onto another card's request (acceptance 3 and 4: Y's request stays `queued` and the pool has no active slot after Z's call).
+
+Sweep (git grep at cd8aa09): `queue.admit(` in src only at card-runner.ts:2301 and :2304, both in `admitReview`, both keyed; `admitReview(` is called only from the ship (:1001) and `review r3` (:1587). Keyless calls remain only in tests (tests/infra/review-queue.test.ts, two-windows.test.ts, t0-flow.test.ts, op-intent-dup.test.ts and the fixture of the new scenario file), unchanged.
+
+Mutation sweep (each applied alone to the GREEN tree, run against tests/infra/review-queue.test.ts, tests/scenarios/review-admit-foreign.test.ts and tests/scenarios/two-windows.test.ts, then restored; none committed):
+
+| Mutant | Killed by |
+| --- | --- |
+| M1 ignore the key in `admit` | acceptance 1 (two cases), 3, 4, 5 |
+| M2a free slots + 1 | acceptance 1 (two cases), 3, 4, 5 |
+| M2b free slots - 1 | acceptance 1 (two-slot) |
+| M3 supersede a request ahead with another requester (`some` for `every`) | acceptance 5 |
+| M4 drop the supersede | acceptance 5 |
+| M5 write the pool on `behind` | acceptance 1 (two cases) |
+| M6 admit the first request ahead instead of the caller's | acceptance 1 (two-slot) |
+| M7 name the last request ahead | acceptance 1 (two-slot, two ahead) |
+| M8 count a deadline-passed head as ahead | acceptance 1 (deadline) |
+| M9 count a `retry-after` head not yet due as ahead | acceptance 1 (retry-after) |
+| M10 `admitReview` passes no key | acceptance 3, 4, 5 |
+| M11 the ship narration drops the card ahead | acceptance 4 |
+| M12 the `review r3` refusal drops the card ahead | acceptance 3, 5 |
+| M13 the ask after a supersede passes no key | acceptance 5 (own key after a supersede) |
+| M14 the key filter applies without a key | acceptance 2, 3, 4 and five existing queue tests |
+| M15 supersede at most once | acceptance 5 (two stale candidates) |
+
+Survivors: none.
+
+verify-card-run-writes: src/loop/card-runner.ts changed since the sync commit 71826c8, with no card-run record write or journal append added, removed or reordered (the supersede and the admission write only review-queue files, outside the check's coverage); tests/scenarios/fault-points.test.ts passes unchanged. Outcome: in sync; the sync commit moves only on main.
