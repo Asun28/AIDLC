@@ -336,6 +336,8 @@ export const ReviewInvocation = z.object({
   held: z.array(z.string()).optional(),
   /** The detail of a decision that stopped the card for a ruling, kept on its record: a commit superseded by a newer candidate still stops the card with it, and no further decision is admitted (card T1-EFF-R3-PROGRESS-2). */
   stopReview: z.string().min(1).optional(),
+  /** The advisory reasons the decision retained (a command or ship-path decision that retained at least one); absent otherwise and on records written before card T1-REVIEW-PRE-EXISTING. */
+  advisory: z.array(z.string()).optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 

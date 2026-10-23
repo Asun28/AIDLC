@@ -30,7 +30,7 @@ import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson } from '../state/store.ts';
@@ -1520,6 +1520,8 @@ export class CardRunner {
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // The changed lines a [pre-existing] reason is judged against (card T1-REVIEW-PRE-EXISTING), from the diff the reviewer receives.
+    const changedLines = changedLineRanges(diff, changedPaths);
     // The effort level is an input like the diff and is counted from the pinned --text diff collected for the review (so a
     // file git treats as binary counts its shown hunks), with the dispatched reviewer's policy, before the first
     // mutation: a retry of the candidate on that reviewer runs at the same level, and a moved HEAD changes nothing.
@@ -1616,7 +1618,7 @@ export class CardRunner {
     let lost: Error | undefined;
     try {
       // The formal review is never fanned out: one exhaustive pass per decision.
-      panel = await runReviewPanel({ runner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash });
+      panel = await runReviewPanel({ runner, command: cfg.command, perspectives: [], promptFor, vars: { schema, cwd, base: baseRef, head: candidateSha, card: card.id, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, changedLines, policyHash: hash });
     } catch (err) {
       if (reviewerRan) lost = err as Error;
       else {
@@ -1949,7 +1951,7 @@ export class CardRunner {
         // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
         release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
-          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}) }, classified, verdict, 0, repeated(latest));
+          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest));
           decision = rec.decision;
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.
@@ -2124,6 +2126,8 @@ export class CardRunner {
     // A diff above the cap is refused here, before the reservation: no round, receipt or event records it (R7).
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // The changed lines a [pre-existing] reason is judged against (card T1-REVIEW-PRE-EXISTING), from the diff the reviewer receives; an R2 angle rerun on the fallback reads them too.
+    const changedLines = changedLineRanges(diff, changedPaths);
     // `{effort}` in the fallback's argv expands to the level its policy selects over the collected diff, as for R3; the primary
     // has no effort policy, and its argv is dispatched as before.
     const effort = cfg.reviewer !== primary.reviewer && cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
@@ -2188,7 +2192,7 @@ export class CardRunner {
       const vars = { cwd, base: baseRef, head: candidateSha, card: card.id };
       const fallback = angleFallback ? { command: angleFallback.command, reviewer: angleFallback.reviewer, timeoutMs: angleFallback.timeoutMs, shell: angleFallback.shell, answerMarker: angleFallback.answerMarker, vars: { ...vars, ...(fallbackEffort ? { effort: fallbackEffort } : {}) }, promptFor: promptsFor(angleFallback.command) } : undefined;
       try {
-        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor: promptsFor(cfg.command), vars: { ...vars, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker, fallback });
+        result = await runReviewPanel({ runner: this.asyncRunner, command: cfg.command, perspectives: cfg.perspectives, promptFor: promptsFor(cfg.command), vars: { ...vars, ...(effort ? { effort } : {}) }, cwd, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir, fileStem, head: candidateSha, reviewer: cfg.reviewer, changedPaths, changedLines, policyHash: hash, coverage: coverage ? { expected: card.acceptance.length } : undefined, answerMarker: cfg.answerMarker, fallback });
       } catch (err) {
         // The failure is retained next to the reservation first (no lock needed), so the gate drops the round at once even
         // when the drop below is refused; neither masks the panel's own error.
@@ -2269,13 +2273,32 @@ export class CardRunner {
     return admit;
   }
 
+  /**
+   * The changed lines a ship-path document's [pre-existing] reasons are judged against (card T1-REVIEW-PRE-EXISTING): the
+   * candidate diff against the run's base, pinned to the candidate, under `formalReview.maxDiffBytes`, collected only for a
+   * document that carries the tag. A failed, empty or oversized collection returns none, so the tag is ignored and the document is
+   * classified as it was before.
+   */
+  private shipChangedLines(run: CardRun, verdict: Verdict): ChangedLines | undefined {
+    const reasons = [...verdict.reasons, ...(verdict.axes?.spec?.reasons ?? []), ...(verdict.axes?.standards?.reasons ?? [])];
+    if (!reasons.some((r) => PRE_EXISTING_TAG.test(r))) return undefined;
+    try {
+      const head = this.repo.isGit && run.candidate?.sha ? run.candidate.sha : 'HEAD';
+      const { changedPaths, diff } = collectCandidateDiff(this.runner, this.reviewCheckout(run), run.base?.oid ?? this.config.base, this.config.formalReview.maxDiffBytes, head, 'formalReview.maxDiffBytes');
+      // A diff with no hunk text (an empty answer from git) reads nothing: no map, so the tag is ignored and a block stands.
+      return diff.trim() ? changedLineRanges(diff, changedPaths) : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   applyShipResult(goal: Goal, card: Card, run: CardRun, result: ShipResult, operationId: string, reviewKey: string, candidateDigest: string, bindings: { policyHash?: string; deltaPaths?: string[] } = {}): { run: CardRun; directive: CardDirective } {
     const now = this.clock();
     const verdictInfo = this.shipPath.readVerdict(card.id);
     // R10 on the ship path: the document is classified with its tagged reasons moved to advisory notes (a block carried only
-    // by [question] or [suggestion] reasons is a pass with the notes, no block consumed); the artifact identity below keeps
-    // the document as written.
-    const stripped = verdictInfo.verdict ? stripAdvisoryTags(verdictInfo.verdict) : undefined;
+    // by [question] or [suggestion] reasons, or by [pre-existing] reasons on unchanged lines, is a pass with the notes, no block
+    // consumed); the artifact identity below keeps the document as written.
+    const stripped = verdictInfo.verdict ? stripAdvisoryTags(verdictInfo.verdict, this.shipChangedLines(run, verdictInfo.verdict)) : undefined;
     const shipVerdict = stripped?.verdict;
     const shipAdvisory = stripped?.advisory ?? [];
     const classified = classifyVerdict(shipVerdict, { candidateSha: run.candidate?.sha, tier: card.tier, gateRequired: this.config.gateRequired, receipt: result.receipt });
@@ -2330,7 +2353,7 @@ export class CardRunner {
         recorded = false;
         found = { findings: current.findings, raised: [], reraised: [], resolved: [] };
         if (standingFor(current.review)) return current;
-        rec = recordReviewOutcome(current.review, { invocationId, candidateDigest, candidateSha: run.candidate?.sha, artifactDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now, mergeBlocking: classified.mergeBlocking, policyHash: shipPolicyHash }, classified, shipVerdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - current.review.scriptCounter) : 0);
+        rec = recordReviewOutcome(current.review, { invocationId, candidateDigest, candidateSha: run.candidate?.sha, artifactDigest, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: this.config.reviewer, requestedAt: now, mergeBlocking: classified.mergeBlocking, policyHash: shipPolicyHash, ...(shipAdvisory.length ? { advisory: shipAdvisory } : {}) }, classified, shipVerdict, verdictInfo.rounds !== undefined ? Math.max(0, verdictInfo.rounds - current.review.scriptCounter) : 0);
         recorded = rec.ledger.invocations.length > current.review.invocations.length;
         if (!recorded) return current;
         // Findings of a ship-path decision: every cited reason of a block (root or axis, advisory included), ids allocated on

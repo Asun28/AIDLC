@@ -128,7 +128,7 @@ describe('review statistics (R11, R12)', () => {
     assert.deepEqual(summary?.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 1, durationMs: 90_000, blocksByPerspective: { bugs: 1 } });
     // 15:00 - 10:00 for the blocked decision, 33:00 - 30:00 for the passing one.
     assert.deepEqual(summary?.r3, { decisions: 2, blocks: 1, durationMs: 8 * MIN });
-    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 } });
+    assert.deepEqual(summary?.findings, { total: 4, pre: 3, formal: 1, open: 1, disputed: 1, reraised: 1, firstRoundMiss: 1, resolved: 2, responses: { fixed: 2, wrong: 1, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
     // First request at 00:00, last pass decided at 33:00.
     assert.equal(summary?.wallMs, 33 * MIN);
   });
@@ -138,7 +138,7 @@ describe('review statistics (R11, R12)', () => {
     assert.equal(summary?.cardId, 'T1-QUIET');
     assert.deepEqual(summary?.r2, { rounds: 0, blocks: 0, noVerdict: 0, quotaHolds: 0, durationMs: 0, blocksByPerspective: {} });
     assert.deepEqual(summary?.r3, { decisions: 0, blocks: 0, durationMs: 0 });
-    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 } });
+    assert.deepEqual(summary?.findings, { total: 0, pre: 0, formal: 0, open: 0, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 0 }, preExistingAdvisory: 0 });
     assert.equal(summary?.wallMs, 0);
     assert.equal(summary?.family, undefined, 'a card that supersedes nothing reports no family');
   });
@@ -174,7 +174,7 @@ describe('review statistics (R11, R12)', () => {
     // The round that blocked carries no panel record, so the block counts under the reviewer that decided it.
     assert.deepEqual(family?.totals.r2, { rounds: 3, blocks: 1, noVerdict: 0, quotaHolds: 0, durationMs: 60_000, blocksByPerspective: { deepseek: 1 } });
     assert.deepEqual(family?.totals.r3, { decisions: 1, blocks: 0, durationMs: 2 * MIN });
-    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 } });
+    assert.deepEqual(family?.totals.findings, { total: 2, pre: 1, formal: 1, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 1, responses: { fixed: 1, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 0 });
     // 10s on the first card, 3 min on the second, 30s on the third.
     assert.equal(family?.totals.wallMs, 220_000);
     assert.equal(summaries.find((s) => s.cardId === 'T1-A')?.family, undefined, 'the oldest card of a family supersedes nothing');
@@ -514,5 +514,74 @@ describe('review statistics (R11, R12)', () => {
   test('T1-REVIEW-RESPONSES acceptance 6: the line form ends the findings segment with the non-zero responses [R7]', () => {
     const line = stats.formatReviewStats(stats.summarizeReviews([respondedRun()], []));
     assert.match(line, /\| findings 6: 6 pre, 1 open, 2 disputed, 3 resolved, 1 re-raised; responses: 2 fixed, 1 wrong, 1 intentional, 1 not-worth-fixing, 1 open \|/);
+  });
+});
+
+/**
+ * One card whose decided R2 rounds and R3 decision retain advisory reasons (card T1-REVIEW-PRE-EXISTING): two R2 reasons and
+ * the R3 reason carry the [pre-existing] tag, the [question] note does not, and the one finding is open.
+ */
+function preExistingRun(overrides: Record<string, unknown> = {}): CardRun {
+  return run({
+    cardId: 'T1-PE',
+    preReview: {
+      rounds: [
+        { round: 1, cycle: 0, reviewer: 'r2', candidateDigest: 'd1', requestedAt: at(0), durationMs: MIN, outcome: 'block', reasons: ['[spec] 1 @ src/a.ts:1: wrong -> fix'], advisory: ['[standards] 9 @ src/a.ts:30: [pre-existing] x -> y (bugs)', '[question] is the helper needed?'] },
+        { round: 2, cycle: 0, reviewer: 'r2', candidateDigest: 'd2', requestedAt: at(10 * MIN), durationMs: MIN, outcome: 'pass', reasons: [], advisory: ['[pre-existing] the parser never checks the input'] },
+      ],
+      handoffs: [],
+    },
+    review: {
+      substantiveDecisions: 1,
+      substantiveBlocks: 0,
+      scriptCounter: 1,
+      noVerdictRetriesUsed: 0,
+      invocations: [{ invocationId: 'r3:T1-PE.r3.1.aaaaaaaa', candidateDigest: 'd2', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(20 * MIN), outcome: 'pass', candidateSha: 'sha2', advisory: ['[spec] 6 @ src/b.ts:8: [pre-existing] y -> z'] }],
+    },
+    findings: [{ id: 'F1', stage: 'pre', cycle: 0, round: 1, reason: '[spec] 1 @ src/a.ts:1: wrong -> fix', raisedAt: at(MIN), disposition: 'open' }],
+    ...overrides,
+  });
+}
+
+describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-EXISTING)', () => {
+  test('acceptance 9: findings.preExistingAdvisory counts the tagged advisory reasons of every decided R2 round and R3 decision, outside total, per card and in the family totals [R9]', () => {
+    const [summary] = stats.summarizeReviews([preExistingRun()], []);
+    assert.deepEqual(summary?.findings, { total: 1, pre: 1, formal: 0, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 3 });
+    assert.equal(stats.summarizeReviews([reviewedRun()], [])[0]?.findings.preExistingAdvisory, 0, 'a run with no advisory reason counts none');
+    // A round that decided nothing (no verdict, still reserved) adds nothing, whatever notes it carries.
+    const decided = preExistingRun();
+    const undecided = { round: 3, cycle: 0, reviewer: 'r2', candidateDigest: 'd3', requestedAt: at(30 * MIN), durationMs: 0, reasons: [], advisory: ['[pre-existing] @ src/a.ts:50: old -> new'] };
+    const withUndecided = CardRun.parse({ ...decided, preReview: { ...decided.preReview, rounds: [...decided.preReview.rounds, { ...undecided, outcome: 'no-verdict' }, { ...undecided, round: 4, outcome: 'pending' }] } });
+    assert.equal(stats.summarizeReviews([withUndecided], [])[0]?.findings.preExistingAdvisory, 3, 'only decided rounds are counted');
+    // R3 decision 1 F3 (class: undecided-advisory-count): an R3 record that decided nothing (no verdict, a quota hold, pending) adds nothing.
+    const note = ['[pre-existing] @ src/b.ts:9: old -> new'];
+    const invocation = { candidateDigest: 'd3', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(40 * MIN), advisory: note };
+    const withHeld = CardRun.parse({ ...decided, review: { ...decided.review, invocations: [...decided.review.invocations, { ...invocation, invocationId: 'r3:T1-PE.r3.2.cccccccc', outcome: 'no-verdict' }, { ...invocation, invocationId: 'r3:T1-PE.r3.2.dddddddd', outcome: 'quota-hold' }, { ...invocation, invocationId: 'r3:T1-PE.r3.2.eeeeeeee', outcome: 'pending' }] } });
+    assert.equal(stats.summarizeReviews([withHeld], [])[0]?.findings.preExistingAdvisory, 3, 'only decided R3 invocations are counted');
+    const registry2 = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
+    const heldOlder = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 0, substantiveBlocks: 0, scriptCounter: 0, noVerdictRetriesUsed: 0, invocations: [{ ...invocation, invocationId: 'r3:T1-PE-0.r3.1.ffffffff', outcome: 'no-verdict' }] } });
+    assert.equal(stats.summarizeReviews([heldOlder, preExistingRun()], registry2).find((s) => s.cardId === 'T1-PE')?.family?.totals.findings.preExistingAdvisory, 3, 'the family totals add no undecided record');
+    // The family totals sum the count: a predecessor with one tagged R3 note and the card above.
+    const registry = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
+    const older = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 1, substantiveBlocks: 0, scriptCounter: 1, noVerdictRetriesUsed: 0, invocations: [{ invocationId: 'r3:T1-PE-0.r3.1.bbbbbbbb', candidateDigest: 'd0', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(0), outcome: 'pass', advisory: ['[pre-existing] @ src/c.ts:4: old -> new', '[suggestion] rename it'] }] } });
+    const family = stats.summarizeReviews([older, preExistingRun()], registry).find((s) => s.cardId === 'T1-PE')?.family;
+    assert.equal(family?.members[0]?.findings.preExistingAdvisory, 1);
+    assert.equal(family?.totals.findings.preExistingAdvisory, 4);
+    assert.equal(family?.totals.findings.total, 1, 'the count stays outside total');
+  });
+
+  test('acceptance 10: the line form ends the findings segment with the count after the responses and leaves a zero count out; the CLI JSON carries it [R10]', () => {
+    const line = stats.formatReviewStats(stats.summarizeReviews([preExistingRun()], []));
+    assert.equal(line, 'T1-PE  R2 2 rounds, 1 block (r2 1), 2m 00s | R3 1 decision, 0s | findings 1: 1 pre, 1 open; responses: 1 open; pre-existing advisory 3 | coverage: not requested | wall 20m 00s');
+    const quiet = stats.formatReviewStats(stats.summarizeReviews([preExistingRun({ findings: [] })], []));
+    assert.ok(quiet.includes('| findings 0; pre-existing advisory 3 |'), quiet);
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-stats-pe-'));
+    mkdirSync(path.join(dir, 'cards', 'g-stats-pe'), { recursive: true });
+    mkdirSync(path.join(dir, 'goals'), { recursive: true });
+    writeFileSync(path.join(dir, 'goals', 'g-stats-pe.json'), JSON.stringify(goal({ id: 'g-stats-pe' }), null, 2), 'utf8');
+    writeFileSync(path.join(dir, 'cards', 'g-stats-pe', 'T1-PE.json'), JSON.stringify({ ...preExistingRun(), goalId: 'g-stats-pe' }, null, 2), 'utf8');
+    const json = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'review', 'stats', '--goal', 'g-stats-pe'], { cwd: root, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: dir }, windowsHide: true });
+    assert.equal(json.status, 0, json.stderr);
+    assert.equal((JSON.parse(json.stdout) as { cards: stats.CardReviewStats[] }).cards[0]?.findings.preExistingAdvisory, 3);
   });
 });
