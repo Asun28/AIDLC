@@ -193,7 +193,10 @@ interface Token {
   end: number;
 }
 
-/** The code tokens of `[from, to)`, operators read greedily, every character of each token code. */
+/**
+ * The code tokens of `[from, to)`, operators read greedily. Each token starts on a code character and stays in code:
+ * a literal or comment opens with a quote, a backtick or a slash, none of which a word or a listed operator holds.
+ */
 function tokens(src: string, mask: Uint8Array, from: number, to: number): Token[] {
   const out: Token[] = [];
   let i = from;
