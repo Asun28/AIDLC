@@ -415,11 +415,34 @@ export class GoalController {
     for (const [stage, status] of Object.entries(goal.stages)) if (status !== 'not_requested' && status !== 'pass') missing.push(`stage ${stage}=${status}`);
     if (missing.length) return Directive.parse({ kind: 'close', ...base, missing, narration: 'Perform only the missing closure steps (status/doc_sync/findings/evidence/cleanup/lessons) through the existing approved procedure; a reminder or exit zero alone is not closure, and the lesson step needs a recorded line or a reason to skip.' });
     const next = transitionGoal(goal, 'DONE', now, { closureComplete: true });
+    // The lease is settled before DONE is saved: a refused takeover throws with the goal still in CLOSE.
+    this.releaseGoalLease(goal, now);
     this.store.saveGoal(next);
     this.journal(goal.id).append({ type: 'GOAL_DONE', goalId: goal.id, generation: goal.generation, data: { cards: goal.cards, stages: goal.stages } });
-    this.leases.release(resourceKeys.goal(this.repo.key, goal.id), this.leases.read(resourceKeys.goal(this.repo.key, goal.id))?.generation ?? 0);
     this.writeBoard(next);
     return Directive.parse({ kind: 'done', ...this.baseOf(next), evidence: { stages: next.stages, cards: next.cards }, narration: 'Goal DONE: every mandatory outcome of the accepted revision maps to retained verification.' });
+  }
+
+  /**
+   * The closing session ends the goal lease. Its own lease is released at its generation. A lease of another session
+   * has expired by now (`next` waits on a live one), so it is taken over once no operation of the goal is unresolved,
+   * journaled as `GOAL_TAKEOVER` with the previous owner, and released. An absent or released lease is left as it is.
+   */
+  private releaseGoalLease(goal: Goal, now: string): void {
+    const key = resourceKeys.goal(this.repo.key, goal.id);
+    const lease = this.leases.read(key);
+    if (!lease || lease.released) return;
+    const me = currentActor();
+    let generation = lease.generation;
+    if (lease.owner.session !== me.session || lease.owner.host !== me.host) {
+      const taken = this.leases.takeover(key, () => {
+        const unresolved = this.ops.unresolved(goal.id).map((o) => o.id);
+        return { reconciled: unresolved.length === 0, unresolvedOperations: unresolved };
+      }, { operation: 'close', now });
+      generation = taken.lease.generation;
+      this.journal(goal.id).append({ type: 'GOAL_TAKEOVER', goalId: goal.id, generation: goal.generation, data: { leaseGeneration: generation, previousOwner: lease.owner.session, report: taken.report } });
+    }
+    this.leases.release(key, generation);
   }
 
   // ---------------------------------------------------------------------------------------
