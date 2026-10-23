@@ -193,4 +193,87 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     q.hold(earlier.key, iso(5 * 60_000), 'a shorter hold', iso(1));
     assert.equal(q.heldUntil('codex:earlier', hold, iso(2)), hold, 'an earlier reset: the hold');
   });
+
+  // Card T0-REVIEW-ADMIT-FOREIGN: with a request key, admit admits only that request, and only while fewer eligible
+  // requests stand ahead of it than the pool has free slots; otherwise `behind` names the first request ahead.
+  const Y = 'goal-1/T1-Y';
+  const Z = 'goal-1/T1-Z';
+  const snapshot = (q: ReviewQueue) => ({ requests: q.list('codex:acct'), pool: q.pool('codex:acct') });
+  const queueYZ = (q: ReviewQueue) => ({
+    y: q.enqueue(input({ candidateDigest: 'y', requester: Y, now: iso(10) })).request,
+    z: q.enqueue(input({ candidateDigest: 'z', requester: Z, now: iso(11) })).request,
+  });
+
+  it('T0-REVIEW-ADMIT-FOREIGN acceptance 1: in a one-slot pool Z behind Y gets behind naming Y and changes nothing; Y is then admitted [R1]', () => {
+    const q = new ReviewQueue(path.join(dir, 'foreign-one'));
+    const { y, z } = queueYZ(q);
+    const before = snapshot(q);
+    assert.deepEqual(q.admit('codex:acct', B, iso(20), z.key), { status: 'behind', ahead: { key: y.key, requesters: [Y] } });
+    assert.deepEqual(snapshot(q), before, 'both requests and the pool are as they were');
+    const admitted = q.admit('codex:acct', A, iso(21), y.key);
+    assert.deepEqual(admitted, { status: 'admitted', request: { ...y, state: 'running', startedAt: iso(21), slotOwner: A, attempts: 1 } });
+    assert.deepEqual(q.pool('codex:acct').active, [y.key]);
+    assert.equal(q.get(z.key)?.state, 'queued');
+  });
+
+  it('T0-REVIEW-ADMIT-FOREIGN acceptance 1: in a two-slot pool with one slot taken Z is behind Y; with both slots free Z is admitted and Y stays queued [R1]', () => {
+    const taken = new ReviewQueue(path.join(dir, 'foreign-two-taken'));
+    taken.setPoolLimit('codex:acct', 2, 'two seats');
+    const x = taken.enqueue(input({ candidateDigest: 'x', requester: 'goal-2/T1-X', now: iso(1) })).request;
+    assert.equal(taken.admit('codex:acct', A, iso(2), x.key).status, 'admitted');
+    const one = queueYZ(taken);
+    const before = snapshot(taken);
+    assert.deepEqual(taken.admit('codex:acct', B, iso(20), one.z.key), { status: 'behind', ahead: { key: one.y.key, requesters: [Y] } });
+    assert.deepEqual(snapshot(taken), before);
+
+    const free = new ReviewQueue(path.join(dir, 'foreign-two-free'));
+    free.setPoolLimit('codex:acct', 2, 'two seats');
+    const two = queueYZ(free);
+    const admitted = free.admit('codex:acct', B, iso(20), two.z.key);
+    assert.equal(admitted.status, 'admitted');
+    if (admitted.status === 'admitted') assert.equal(admitted.request.key, two.z.key);
+    assert.deepEqual(free.get(two.y.key), two.y, 'Y stays queued, unchanged');
+    assert.deepEqual(free.pool('codex:acct').active, [two.z.key]);
+  });
+
+  it('T0-REVIEW-ADMIT-FOREIGN acceptance 1: a queued head past its deadline is cancelled and the caller admitted [R1]', () => {
+    const q = new ReviewQueue(path.join(dir, 'foreign-deadline'));
+    const y = q.enqueue(input({ candidateDigest: 'y', requester: Y, deadline: iso(100), now: iso(10) })).request;
+    const z = q.enqueue(input({ candidateDigest: 'z', requester: Z, deadline: iso(10_000), now: iso(11) })).request;
+    const admitted = q.admit('codex:acct', B, iso(200), z.key);
+    assert.equal(admitted.status, 'admitted');
+    if (admitted.status === 'admitted') assert.equal(admitted.request.key, z.key);
+    assert.equal(q.get(y.key)?.state, 'cancelled');
+    assert.equal(q.get(y.key)?.lastError, 'deadline passed before admission');
+  });
+
+  it('T0-REVIEW-ADMIT-FOREIGN acceptance 1: a retry-after head not yet due is passed over and the caller admitted [R1]', () => {
+    const q = new ReviewQueue(path.join(dir, 'foreign-retry'));
+    const { y, z } = queueYZ(q);
+    assert.equal(q.admit('codex:acct', A, iso(12), y.key).status, 'admitted');
+    q.hold(y.key, iso(60_000), 'HTTP 429', iso(13));
+    q.savePool({ ...q.pool('codex:acct'), resetAt: undefined });
+    const held = q.get(y.key);
+    const admitted = q.admit('codex:acct', B, iso(20), z.key);
+    assert.equal(admitted.status, 'admitted');
+    if (admitted.status === 'admitted') assert.equal(admitted.request.key, z.key);
+    assert.deepEqual(q.get(y.key), held, 'the held head is unchanged');
+  });
+
+  it('T0-REVIEW-ADMIT-FOREIGN acceptance 2: without a key admit still admits Y for the caller of Z, as in the reproduction of the diagnosis [R2]', () => {
+    const q = new ReviewQueue(path.join(dir, 'foreign-keyless'));
+    const x = q.enqueue(input({ candidateDigest: 'x', requester: 'goal-1/T1-X', now: iso(0) })).request;
+    const first = q.admit('codex:acct', A, iso(1));
+    assert.equal(first.status === 'admitted' && first.request.key, x.key);
+    const y = q.enqueue(input({ candidateDigest: 'y', requester: Y, now: iso(2) })).request;
+    assert.equal(q.admit('codex:acct', A, iso(3)).status, 'busy');
+    q.enqueue(input({ candidateDigest: 'z', requester: Z, now: iso(4) }));
+    q.complete(x.key, 'verdict:x', iso(5));
+    const zCall = q.admit('codex:acct', B, iso(6));
+    assert.equal(zCall.status === 'admitted' && zCall.request.key, y.key, "Z's keyless call admits Y");
+    const again = q.enqueue(input({ candidateDigest: 'y', requester: Y, now: iso(7) }));
+    assert.equal(again.status, 'joined');
+    assert.equal(again.request.state, 'running');
+    assert.deepEqual(q.pool('codex:acct').active, [y.key]);
+  });
 });
