@@ -99,7 +99,8 @@ export function initProject(options: InitOptions): InitReport {
   }
   // .gitignore
   const gi = path.join(target, '.gitignore');
-  const need = ['.aidlc/', '_local/'];
+  // Paths the loop writes into a checkout: state, the board mirror, and the R2/R3 verdicts and logs under the review checkout.
+  const need = ['.aidlc/', '_local/', '.review/'];
   const current = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
   const missing = need.filter((n) => !current.split(/\r?\n/).some((l) => l.trim() === n || l.trim() === n.replace(/\/$/, '')));
   if (missing.length) {

@@ -47,3 +47,41 @@ npm run typecheck && node --test tests/infra/init.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+Attempt 1 (BUILD, effort medium).
+
+Reproduction (base 4c11ddb, before the fix; a scratch script outside the repository with `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`): `initProject` on a fresh `git init` repository, `git add -A`, commit, `git worktree add -b T1-X`, then the four files of acceptance 3 under `<worktree>/.review/`.
+- Committed `.gitignore`: `"# aidlc runtime state (never committed)\n.aidlc/\n_local/\n"`.
+- `new GitProbe().status(worktree)`: `{"dirty":true,"entries":["?? .review/T1-X.json","?? .review/T1-X.pre.0.1.1.r1.json","?? .review/T1-X.pre.0.1.1.r1.log","?? .review/verdict.schema.json"],"untracked":[...the same four paths]}`.
+- After appending `.review/` to the main checkout's `.git/info/exclude` (the R3 upgrade paragraph): `{"dirty":false,"entries":[],"untracked":[]}`, so a linked worktree reads that file.
+
+RED (commit a72fae1, test only, src unchanged): `node --test tests/infra/init.test.ts`, exit 1, about 1.3 s (1277 ms wall, duration_ms 1262.6); 8 tests, 3 pass, 5 fail.
+- First failing line: `not ok 1 - lays the playbook layout over an empty directory and is idempotent`, assertion `T0-INIT-REVIEW-IGNORE acceptance 1: the three entries once each, in this order`, actual `'# aidlc runtime state (never committed)\n.aidlc/\n_local/\n'`, expected `'# aidlc runtime state (never committed)\n.aidlc/\n_local/\n.review/\n'`.
+- Also failing: acceptance 2 upgrade cases (no `.review/` appended), acceptance 3 (`dirty: true` with the four `?? .review/...` entries), acceptance 4 and 5 (text absent).
+- Passing on RED as expected: the `.review`-without-slash case of acceptance 2 (main already counts the slashless spelling as present), and the two unrelated init tests.
+
+GREEN (commits 1959401 fix, 4c8fef6 docs): `npm run typecheck && node --test tests/infra/init.test.ts`, exit 0; 8 tests, 8 pass, 0 fail, duration_ms 1361.4.
+
+Pinned end states (acceptance 1 and 2):
+- Empty directory: `.gitignore` is exactly `# aidlc runtime state (never committed)\n.aidlc/\n_local/\n.review/\n`; a second run leaves it byte-identical and does not report it merged.
+- Upgrade from `node_modules/` plus the earlier init block, LF with a trailing newline and without one: `node_modules/\n# aidlc runtime state (never committed)\n.aidlc/\n_local/\n# aidlc runtime state (never committed)\n.review/\n`, reported merged; a further run leaves it byte-identical, not merged.
+- The same file with CRLF line ends: `node_modules/\r\n# aidlc runtime state (never committed)\r\n.aidlc/\r\n_local/\n# aidlc runtime state (never committed)\n.review/\n` (the appended block uses LF, as init did before this card), then byte-identical.
+- `.aidlc/\n_local/\n.review\n`, its CRLF form and `.aidlc\n_local\n.review` (no trailing newline): byte-identical, not merged.
+
+Mutation sweep (each applied alone to the committed tree, DoD test file run, file restored):
+
+| Mutant | Result |
+|---|---|
+| drop `.review/` from the list | killed (acceptance 1, 2, 3) |
+| accept only the slashed form | killed (acceptance 2, slashless case) |
+| accept only the slashless form | killed (acceptance 1, 2) |
+| append entries already present | killed (acceptance 2) |
+| drop `trimEnd` before the append | killed (acceptance 2) |
+| never report `.gitignore` merged | killed (acceptance 2) |
+| rewrite when nothing is missing | killed (acceptance 1, 2) |
+| `.review/` ordered before `_local/` | killed (acceptance 1) |
+| `.review/` listed twice | killed (acceptance 1, 2) |
+| split lines on LF only | survives: equivalent, `l.trim()` strips the `\r` (pre-existing line, unchanged) |
+| each Setup sentence, each upgrade sentence, the CHANGELOG entry removed | killed (acceptance 4, 5) |
