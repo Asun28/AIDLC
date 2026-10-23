@@ -548,6 +548,11 @@ describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-
     const [summary] = stats.summarizeReviews([preExistingRun()], []);
     assert.deepEqual(summary?.findings, { total: 1, pre: 1, formal: 0, open: 1, disputed: 0, reraised: 0, firstRoundMiss: 0, resolved: 0, responses: { fixed: 0, wrong: 0, intentional: 0, notWorthFixing: 0, open: 1 }, preExistingAdvisory: 3 });
     assert.equal(stats.summarizeReviews([reviewedRun()], [])[0]?.findings.preExistingAdvisory, 0, 'a run with no advisory reason counts none');
+    // A round that decided nothing (no verdict, still reserved) adds nothing, whatever notes it carries.
+    const decided = preExistingRun();
+    const undecided = { round: 3, cycle: 0, reviewer: 'r2', candidateDigest: 'd3', requestedAt: at(30 * MIN), durationMs: 0, reasons: [], advisory: ['[pre-existing] @ src/a.ts:50: old -> new'] };
+    const withUndecided = CardRun.parse({ ...decided, preReview: { ...decided.preReview, rounds: [...decided.preReview.rounds, { ...undecided, outcome: 'no-verdict' }, { ...undecided, round: 4, outcome: 'pending' }] } });
+    assert.equal(stats.summarizeReviews([withUndecided], [])[0]?.findings.preExistingAdvisory, 3, 'only decided rounds are counted');
     // The family totals sum the count: a predecessor with one tagged R3 note and the card above.
     const registry = [{ id: 'T1-PE-0', superseded_by: 'T1-PE' }, { id: 'T1-PE' }];
     const older = run({ cardId: 'T1-PE-0', review: { substantiveDecisions: 1, substantiveBlocks: 0, scriptCounter: 1, noVerdictRetriesUsed: 0, invocations: [{ invocationId: 'r3:T1-PE-0.r3.1.bbbbbbbb', candidateDigest: 'd0', base: 'main', policyVersion: 'REVIEW.md@5', reviewer: 'r3', requestedAt: at(0), outcome: 'pass', advisory: ['[pre-existing] @ src/c.ts:4: old -> new', '[suggestion] rename it'] }] } });
