@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-CLASS-SWEEP
 title: A block reason names its defect class with a class tag; the finding records it, the REVIEW_FIX repair directive lists each class with its sites and asks for every site inside allow_paths, and the next review checks that every site was fixed
-status: todo
+status: merged
 branch: T1-REVIEW-CLASS-SWEEP
 worktree: D:\wt\AIDLC\T1-REVIEW-CLASS-SWEEP
 plan_ref: plans/review-verification.md#order-of-work
