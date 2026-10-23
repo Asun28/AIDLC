@@ -832,7 +832,7 @@ function shipPathClassRun(tagged: boolean) {
   }
 }
 
-async function commandPathClassRun(tagged: boolean) {
+async function commandPathClassRun(tagged: boolean, pendingGate = false) {
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -860,6 +860,14 @@ async function commandPathClassRun(tagged: boolean) {
     r = runner.next(fx.goal(goal.id), card, (await runner.preReview(fx.goal(goal.id), card, r.run)).run);
     const kinds: string[] = [r.directive.kind];
     const block = await runner.formalReview(fx.goal(goal.id), card, r.run);
+    if (pendingGate) {
+      // A later pass by a reviewer that is not a formal reviewer, with the DoD receipt back, leaves no pending block for the
+      // card state, so `card next` reaches SHIP and the formal gate finds its own block still pending on the candidate.
+      const other = { invocationId: 'ship:other', candidateDigest: 'sha-1', candidateSha: 'sha-1', base: 'main', policyVersion: fx.config.reviewPolicyVersion, reviewer: 'other-reviewer', requestedAt: fx.now(), outcome: 'pass' as const, runStatus: 'success' as const };
+      const seeded = fx.store.updateCardRun(goal.id, 'T1-CLS', (current) => ({ ...current!, dodReceipt: 'dod:1', review: { ...current!.review, invocations: [...current!.review.invocations, other] } }));
+      const pending = runner.next(fx.goal(goal.id), card, seeded);
+      return { repair: pending.directive, priorF1: '', summary: { outcome: block.classified.outcome, state: pending.run.state, substantiveDecisions: pending.run.review.substantiveDecisions, substantiveBlocks: pending.run.review.substantiveBlocks, kinds: [...kinds, pending.directive.kind], decision2: block.classified.outcome } };
+    }
     const repair = runner.next(fx.goal(goal.id), card, block.run);
     kinds.push(repair.directive.kind);
     // The repaired candidate passes R2 and reaches R3 decision 2, whose prompt the scripted reviewer receives.
@@ -913,4 +921,15 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 7: untagged blocks leave both narrations 
   assert.ok(!commandPlain.priorF1.includes('class'), commandPlain.priorF1);
   assert.deepEqual(commandPlain.summary, commandTagged.summary);
   assert.deepEqual(commandTagged.summary.kinds, ['review', 'build', 'review']);
+});
+
+test('T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the formal gate appends the same class list with its sites; an untagged block appends nothing [R11]', async () => {
+  const tagged = await commandPathClassRun(true, true);
+  assert.equal(tagged.repair.kind, 'review-fix', tagged.repair.narration);
+  assert.ok(tagged.repair.narration.startsWith('Formal review block still pending on candidate sha-1: '), tagged.repair.narration);
+  assert.ok(tagged.repair.narration.endsWith(classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])), `the pending-block narration carries the class list: ${tagged.repair.narration}`);
+  const plain = await commandPathClassRun(false, true);
+  assert.equal(plain.repair.kind, 'review-fix', plain.repair.narration);
+  assert.ok(!plain.repair.narration.includes('Defect classes'), plain.repair.narration);
+  assert.deepEqual(plain.summary, tagged.summary);
 });
