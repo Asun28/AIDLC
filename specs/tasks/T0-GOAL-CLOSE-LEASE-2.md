@@ -11,7 +11,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-GOAL-CLOSE-LEASE-2.md
-dod_command: npm run typecheck && node --test tests/scenarios/two-windows.test.ts tests/scenarios/goal-close-stages.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/amendment.test.ts tests/scenarios/audit.test.ts tests/surface/verifier.test.ts tests/infra/lease.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/two-windows.test.ts tests/scenarios/goal-close-stages.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/amendment.test.ts tests/scenarios/audit.test.ts tests/surface/verifier.test.ts tests/infra/lease.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 requirements:
   - R1. WHEN `aidlc next` (or a `report` that ends in it) closes a goal whose goal lease is held by another session and has expired, the controller shall take the lease over, only while no operation of the goal is unresolved, journal one `GOAL_TAKEOVER` naming the new lease generation and the previous owner, and release the lease, all before the goal is saved DONE; the goal then reaches DONE, the board is written and the directive is `done`.
@@ -26,7 +26,7 @@ acceptance:
   - 2. The same flow closed by win-A, the intake session: the lease stays win-A's at generation 0 and is released, and no `GOAL_TAKEOVER` is journaled. [R2] [dod arm 2]
   - 3. A goal whose lease record was released before close reaches DONE with the lease record unchanged and no `GOAL_TAKEOVER`. [R3] [dod arm 2]
   - 4. A goal in CLOSE whose expired foreign lease cannot be taken over (an operation of the goal recorded after the closing `next` passed its reconcile check: the test records its intent from a wrapped `LeaseStore.update` just before the close's lease section reads the ledger) throws, and the goal stays CLOSE with no `GOAL_DONE`, no takeover intent and the lease unchanged. [R4] [dod arm 2]
-  - 5. `npm run typecheck` is clean [dod arm 1], and tests/scenarios/goal-close-stages, t0-flow, amendment and audit, tests/surface/verifier and tests/infra/lease pass [dod arm 2]; reviewer-verified from the diff: none of those six files changes. [R1] [R2]
+  - 5. `npm run typecheck` is clean [dod arm 1], and tests/scenarios/goal-close-stages, t0-flow, amendment and audit, tests/surface/verifier, tests/infra/lease and tests/surface/prose (the byte cap on the OPERATIONS Sessions section) pass [dod arm 2]; reviewer-verified from the diff: none of those seven files changes. [R1] [R2]
   - 6. docs/OPERATIONS.md (Sessions, the second-window paragraph) and docs/ARCHITECTURE.md (`src/state/` paragraph, the goal takeover sentence) state that the closing session settles the goal lease before DONE, the handoff intent and the completion of an interrupted close by the same or a later session; CHANGELOG.md Unreleased carries the entry under this card id, naming the card it replaces. [R1] [R2] [R5] [R7]
   - 7. For each failure point, the intent append, the `GOAL_TAKEOVER` append (both injected through `Journal.prototype.append`) and the release write (a wrapped `LeaseStore.update` whose second section runs its change and then throws), a close by win-B throws, the goal stays CLOSE with no `GOAL_DONE`, the lease is unchanged after a failed intent append and win-B's otherwise, and the next `next` returns `done` with the lease win-B's at generation 1 and released and exactly one `GOAL_TAKEOVER` naming win-A. [R5] [dod arm 2]
   - 8. With win-C taking the expired lease just before the close's first lease section (a wrapped `LeaseStore.update`): released, the close returns `done` and the lease stays win-C's at generation 1 and released; held, the close throws `still held by win-C` and the goal stays CLOSE; in both no `GOAL_TAKEOVER` and no takeover intent is journaled. [R6] [dod arm 2]
@@ -51,7 +51,7 @@ doc_sync: docs/OPERATIONS.md (Sessions), docs/ARCHITECTURE.md (src/state/ paragr
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/two-windows.test.ts tests/scenarios/goal-close-stages.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/amendment.test.ts tests/scenarios/audit.test.ts tests/surface/verifier.test.ts tests/infra/lease.test.ts
+npm run typecheck && node --test tests/scenarios/two-windows.test.ts tests/scenarios/goal-close-stages.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/amendment.test.ts tests/scenarios/audit.test.ts tests/surface/verifier.test.ts tests/infra/lease.test.ts tests/surface/prose.test.ts
 ```
 - Expected exit code: 0
-- Assertion: typecheck is clean; the close cases pass (foreign expired lease taken over and released, own lease released, released lease untouched, refused takeover leaves the goal CLOSE, each interrupted close completed by the next call with one `GOAL_TAKEOVER`, a lease taken meanwhile judged on the locked record, a handoff left without its event completed by a later session), and the existing goal-close, T0 flow, amendment, audit, verifier and lease tests pass.
+- Assertion: typecheck is clean; the close cases pass (foreign expired lease taken over and released, own lease released, released lease untouched, refused takeover leaves the goal CLOSE, each interrupted close completed by the next call with one `GOAL_TAKEOVER`, a lease taken meanwhile judged on the locked record, a handoff left without its event completed by a later session), and the existing goal-close, T0 flow, amendment, audit, verifier, lease and prose tests pass.
