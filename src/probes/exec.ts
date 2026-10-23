@@ -4,8 +4,9 @@
  * Every probe records the actual command, exit code, output digest and environment binding.
  * "Check command exits before parsing. Errors are not empty results."
  */
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 
 export interface ExecOptions {
   cwd?: string;
@@ -14,6 +15,11 @@ export interface ExecOptions {
   input?: string;
   /** Use a shell (needed for compound commands); default false. */
   shell?: boolean;
+  /**
+   * `runSync` only, with `timeoutMs`: run the command under `exec-tree-helper.ts`, which ends the
+   * command's whole process tree at the timeout (card T0-EXEC-SYNC-TREE-KILL).
+   */
+  killTree?: boolean;
 }
 
 export interface ExecReceipt {
@@ -38,10 +44,19 @@ function digest(stdout: string, stderr: string): string {
   return createHash('sha256').update(stdout).update('\u0000').update(stderr).digest('hex');
 }
 
-export const runSync: SyncRunner = (command, args, options = {}) => {
+/** Starts a process synchronously; `spawnSync` in production, a recorder in tests. */
+export type SpawnSyncFn = (command: string, args: string[], options: SpawnSyncOptionsWithStringEncoding) => SpawnSyncReturns<string>;
+
+/** The tree helper beside the exec module at `moduleUrl`, with that module's own extension (`.ts` from the sources, `.js` from the build). */
+export function treeHelperPath(moduleUrl: string): string {
+  return fileURLToPath(new URL(`./exec-tree-helper${moduleUrl.endsWith('.ts') ? '.ts' : '.js'}`, moduleUrl));
+}
+
+/** Builds the synchronous runner around a process starter. */
+export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, args, options = {}) => {
   const startedAt = new Date();
   const shell = needsShell(command, options.shell);
-  const res = spawnSync(command, shell ? args.map(quoteForShell) : args, {
+  const res = spawner(command, shell ? args.map(quoteForShell) : args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
     encoding: 'utf8',
@@ -69,6 +84,8 @@ export const runSync: SyncRunner = (command, args, options = {}) => {
     outputSha256: digest(res.stdout ?? '', stderr),
   };
 };
+
+export const runSync: SyncRunner = createRunSync(spawnSync);
 
 /** Sends a signal to one process; `process.kill` in production, a recorder in tests. */
 export type ProcessKiller = (pid: number, signal: NodeJS.Signals) => unknown;
