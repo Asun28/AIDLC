@@ -709,6 +709,26 @@ const GitOid = z.string().regex(/^[0-9a-f]{40}$/, 'expected a lowercase SHA-1 gi
 export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
 export type ShippedFacts = z.infer<typeof ShippedFacts>;
 
+/** A repository path as git prints it: relative, forward slashes, no empty, `.` or `..` segment. */
+const RepoPath = z.string().refine((p) => !p.includes('\\') && !/^[A-Za-z]:/.test(p) && !p.split('/').some((s) => s === '' || s === '.' || s === '..'), 'expected a relative repository path: forward slashes, no drive, no empty, . or .. segment');
+/** One expected defect site of a reviewer bench bug case: a cited line within `window` lines of `line` is a hit. */
+const ReviewBenchSite = z.strictObject({ file: RepoPath, line: z.number().int().positive(), window: z.number().int().min(0).max(50), class: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, 'expected a lowercase kebab-case class') });
+const reviewBenchFields = {
+  id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/, 'expected letters, digits, dot, underscore or dash'),
+  candidate: GitOid,
+  base: GitOid,
+  card: z.strictObject({ id: CardId, path: RepoPath }),
+  confirmed: z.boolean(),
+  confirmedBy: z.string().regex(/\S/, 'must not be blank').optional(),
+  origin: z.string().regex(/\S/, 'must not be blank'),
+  note: z.string().optional(),
+};
+/** A reviewer bench case under `evals/review/` (card T1-REVIEW-BENCH): a bug case with its expected sites, or a clean case. */
+export const ReviewBenchCase = z
+  .discriminatedUnion('kind', [z.strictObject({ kind: z.literal('bug'), ...reviewBenchFields, expected: z.array(ReviewBenchSite).min(1) }), z.strictObject({ kind: z.literal('clean'), ...reviewBenchFields })])
+  .refine((c) => !c.confirmed || c.confirmedBy !== undefined, { message: 'a confirmed case names confirmedBy', path: ['confirmedBy'] });
+export type ReviewBenchCase = z.infer<typeof ReviewBenchCase>;
+
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,

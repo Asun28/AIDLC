@@ -35,6 +35,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
+import { formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
@@ -804,6 +805,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const summaries = summarizeReviews(runs, registry.cards.map((p) => p.card), { ...(o.goal ? { goals: [o.goal] } : {}), ...(o.card ? { include: [o.card] } : {}) });
       const cards = o.card ? summaries.filter((s) => s.cardId === o.card) : summaries;
       out(c, { goalId: o.goal, cards }, () => formatReviewStats(cards));
+    });
+  review
+    .command('bench')
+    .description('the reviewer bench: score a stage reviewer on the cases under evals/review (never a gate)')
+    .command('run')
+    .description('review each confirmed case candidate once in a detached temporary checkout and report recall and the false-block rate')
+    .requiredOption('--stage <stage>', 'pre (R2) or formal (R3)')
+    .option('--dir <path>', 'case directory, resolved against the checkout root (default evals/review)')
+    .option('--case <id>', 'score this case alone')
+    .option('--include-unconfirmed', 'score the unconfirmed cases too')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean }) => {
+      if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
+      // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
+      // No ctx(): the bench reads no goal state and writes nothing under the state directory.
+      const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed });
+      out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
+      if (report.leftCheckouts.length) process.exitCode = 1;
     });
   program
     .command('ci')
