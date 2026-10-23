@@ -507,6 +507,28 @@ describe('T0-EXEC-SYNC-TREE-KILL worst-case output and input through the helper 
   });
 });
 
+describe('T0-EXEC-SYNC-TREE-KILL shell commands through the helper (R2 suggestion) [R1]', () => {
+  it('shell: true runs through the shell as on the direct path: quoted args stay whole and the shell expands a variable', () => {
+    const variable = process.platform === 'win32' ? '%AIDLC_SHELL_PROBE%' : '$AIDLC_SHELL_PROBE';
+    const args = ['-e', "process.stdout.write(process.argv.slice(1).join('|'))", 'a b', 'x&y', variable];
+    const env = { ...process.env, AIDLC_SHELL_PROBE: 'expanded' };
+    const direct = runSync('node', args, { shell: true, env, timeoutMs: 30_000 });
+    const r = runSync('node', args, { shell: true, env, timeoutMs: 30_000, killTree: true });
+    assert.equal(direct.stdout, 'a b|x&y|expanded');
+    assert.equal(r.stdout, 'a b|x&y|expanded', `stderr: ${r.stderr.slice(0, 300)}`);
+    assert.equal(r.exitCode, 0);
+  });
+
+  it('without shell, the needsShell fallback runs npm as on the direct path', () => {
+    const direct = runSync('npm', ['--version'], { timeoutMs: 60_000 });
+    const r = runSync('npm', ['--version'], { timeoutMs: 60_000, killTree: true });
+    assert.equal(direct.exitCode, 0, direct.stderr);
+    assert.match(direct.stdout, /^\d+\.\d+\.\d+/);
+    assert.equal(r.exitCode, 0, r.stderr.slice(0, 300));
+    assert.equal(r.stdout, direct.stdout);
+  });
+});
+
 type SpawnCall = { command: string; args: string[]; options: SpawnSyncOptions };
 type SpawnAnswer = { status?: number | null; signal?: NodeJS.Signals | null; stdout?: string | Buffer; stderr?: string | Buffer; error?: Error };
 
