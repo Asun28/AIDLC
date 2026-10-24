@@ -414,7 +414,7 @@ Advisory skills installed next to `aidlc-loop`; the loop's gates decide, and a s
 | `grilling` | T1/T2 intake while the intent's Open questions are not empty, and the T2 plan checkpoint: rounds over the frontier, recommended answer first, at most three rounds, leftovers become `[TBD: ...]` in the spec | Grill on T0 work; ask for a fact that can be looked up; add a confirmation gate the loop does not have |
 | `merge-conflicts` | SHIP when the base moved and the merge-based sync stops on conflicts: resolve by the intent of each side, merge only, rerun DoD and review | Rebase or amend receipt-bound history; take a whole side blindly |
 
-Lessons: `docs/LESSONS.md` is append-only. PREPARE reads it once per card; CLOSE appends at most one dated `NEVER|ALWAYS|NOTE` line when a review block or an incident taught a rule the playbook did not state.
+Lessons: `docs/LESSONS.md` is append-only. PREPARE reads it once per card; CLOSE appends at most one dated `NEVER|ALWAYS|NOTE` line when a review block or an incident taught a rule the playbook did not state. `aidlc card close --lesson` appends that line itself, so it is not written by hand; a line the file already holds for the same card, kind, rule and source counts as written under any date, and the step appends nothing (card T0-LESSON-DUP).
 
 ## Project verify skills
 

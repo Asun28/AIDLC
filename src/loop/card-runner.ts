@@ -27,7 +27,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
-import { appendLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
+import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
@@ -2741,10 +2741,12 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'CLOSE', to: 'DONE' } });
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
-    // The lesson step has its own flags; every other step is marked by its own name.
-    const firstFlag = missing[0] === 'lessons' ? '--lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"' : `--${missing[0]}`;
-    const lessonHint = missing.includes('lessons') ? ' The lesson step takes --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"; --all never records it.' : '';
-    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified. Complete only the missing closure steps (${missing.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} ${firstFlag}\`.${lessonHint}` } };
+    // The lesson step has its own flags and `--lesson` writes its line, so it is never a step done by hand; every other
+    // step is done by hand and marked by its own name.
+    const byHand = missing.filter((m) => m !== 'lessons');
+    const steps = byHand.length ? ` Complete only the missing closure steps (${byHand.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${byHand[0]}\`.` : '';
+    const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
+    return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
   }
 
   /**
@@ -2753,7 +2755,9 @@ export class CardRunner {
    * only a CLOSE run of a live goal accepts flags, and the persisted goal is read again right before anything is written.
    * `lessons` needs a disposition: one lesson line appended to docs/LESSONS.md or a reason to skip. A lesson is journaled
    * as pending before the file changes and as recorded once the closure is saved; a retry reuses the pending line, so a
-   * completed append is recognised even across a date rollover and no line is written twice.
+   * completed append is recognised even across a date rollover and no line is written twice. A line the file already
+   * holds for the same card, kind, rule and source, under any date (written by hand or by an earlier close), is the
+   * lesson: nothing is appended and that line is recorded.
    */
   markClosure(goal: Goal, card: Card, run: CardRun, flags: Partial<CardRun['closure']>, disposition: { lessonText?: string; skipped?: string } = {}): CardRun {
     const now = this.clock();
@@ -2781,7 +2785,7 @@ export class CardRunner {
             const p = parseLessonLine(l);
             return p !== undefined && p.ref === entry.ref && p.kind === entry.kind && p.rule === entry.rule && p.source === entry.source;
           });
-        const line = pending ?? formatLesson(entry);
+        const line = findLesson(file, entry) ?? pending ?? formatLesson(entry);
         if (!hasLesson(file, line)) {
           assertLiveGoal();
           if (!pending) this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure: current.closure, lessonPending: line } });
