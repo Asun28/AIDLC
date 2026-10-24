@@ -928,13 +928,13 @@ export class CardRunner {
   /** Record an attempt outcome and, on success, the DoD/RED receipts. */
   recordAttempt(goal: Goal, card: Card, run: CardRun, input: { outcome: 'success' | 'fail' | 'not-counted'; cause?: string; notCountedReason?: 'expected-red' | 'quota' | 'admission-hold' | 'tool-outage' | 'env-setup'; progress?: boolean; evidence?: string; dodReceipt?: string; redReceipt?: string; candidateSha?: string; checksGained?: string[]; checksLost?: string[] }): CardRun {
     const now = this.clock();
-    // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
-    if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
     // writer applies no fence (see docs/OPERATIONS.md, Sessions): what it records lands on the stored run as it is.
     run = this.store.getCardRun(goal.id, card.id) ?? run;
-    // R4: an owed event a lost append left is journaled before anything is recorded (card T0-JOURNAL-FAULT-EVENTS).
+    // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
+    // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
+    if (input.outcome === 'success' && input.checksLost?.length) throw new Error(`a successful attempt cannot report lost checks (${input.checksLost.join(', ')}); record the attempt as fail with the cause`);
     // A success on a tdd card binds the candidate and ends the episode; without a RED receipt the card could never ship, so
     // it is refused before anything is recorded and the caller records it again with the receipt.
     if (input.outcome === 'success' && card.tdd && !run.redReceipt && !input.redReceipt) throw new Error(`a successful attempt on tdd card ${card.id} needs a RED receipt: none is recorded on the run and the attempt carries none; record it again with --red-receipt "<sha>:<test>"`);
@@ -1567,11 +1567,11 @@ export class CardRunner {
    * T1-EFF-R3-PROGRESS) and the single no-verdict retry apply.
    */
   async formalReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; classified: ClassifiedVerdict; verdict?: Verdict; advisory: string[]; verdictRef?: string; logRef?: string; durationMs: number; receiptSha256: string; reviewer: string }> {
-    if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
     // Guards read the persisted run, not the caller's snapshot, so overlapping calls see each other's reservation.
     let persisted = this.store.getCardRun(goal.id, card.id) ?? run;
-    // R4: an owed event a lost append left is journaled before anything else (card T0-JOURNAL-FAULT-EVENTS).
+    // R4: an owed event a lost append left is journaled before anything else, every refusal included (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, persisted);
+    if (!this.config.formalReview.command.length) throw new Error('formalReview.command is not configured (aidlc.config.json)');
     const reviewDir = path.join(this.reviewCheckout(persisted), '.review');
     // A result retained for a reservation of this card whose commit did not land (the card-run lock was held by another
     // writer at the time) is committed now, under the same invocation, without running the reviewer again. The recovery
@@ -2213,11 +2213,11 @@ export class CardRunner {
   /** R2: run the configured pre-reviewer on the committed candidate and record the round. */
   async preReview(goal: Goal, card: Card, run: CardRun): Promise<{ run: CardRun; result: PanelResult; round: PreReviewRound }> {
     const primary = this.config.preReview;
-    if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     // Guards, prior findings and the snapshot come from the persisted run, never from the caller's copy.
     const persisted = this.store.getCardRun(goal.id, card.id) ?? run;
-    // R4: an owed event a lost append left is journaled before the round is reserved (card T0-JOURNAL-FAULT-EVENTS).
+    // R4: an owed event a lost append left is journaled before the round is reserved or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, persisted);
+    if (!primary.command.length) throw new Error('preReview.command is not configured (aidlc.config.json)');
     if (persisted.stop || persisted.state === 'STOP') throw new Error(`card run is stopped (${persisted.stop?.reason ?? 'STOP'}); no review may run: ${persisted.stop?.nextAction ?? 'resolve the stop first'}`);
     const now = this.clock();
     const cwd = this.reviewCheckout(persisted);
