@@ -112,3 +112,9 @@ export function hostName(): string {
     return 'unknown-host';
   }
 }
+
+/** Seam (card T0-HOOK-GIT-PREFETCH): starts no lookup yet. */
+export function prefetchRepoIdentity(_cwd: string): void {}
+
+/** Seam (card T0-HOOK-GIT-PREFETCH): settles nothing yet. */
+export async function settleRepoIdentity(_cwd: string): Promise<void> {}
