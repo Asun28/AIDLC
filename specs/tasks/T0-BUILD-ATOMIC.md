@@ -1,7 +1,7 @@
 ---
 id: T0-BUILD-ATOMIC
 title: npm run build writes each output of dist/ whole, through a temporary sibling renamed onto it, and the two compiled entries last, so a hook or CLI process started during a build never loads an empty or partly written module
-status: todo
+status: merged
 branch: T0-BUILD-ATOMIC
 worktree: D:\wt\AIDLC\T0-BUILD-ATOMIC
 allow_paths:
