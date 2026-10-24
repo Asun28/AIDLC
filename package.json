@@ -27,7 +27,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node scripts/build.ts",
     "typecheck": "tsc -p tsconfig.test.json --noEmit",
     "test": "node --test --test-reporter=spec \"tests/**/*.test.ts\"",
     "test:watch": "node --test --watch \"tests/**/*.test.ts\"",
