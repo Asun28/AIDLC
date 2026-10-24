@@ -2,6 +2,7 @@
 id: T0-HOOK-LAZY
 title: A PreToolUse hook loads neither zod nor yaml; the guards load the schema, state and router modules on first use, and an aidlc.config.json text the schema accepted is stamped under .aidlc/cache/hook-config, so the next event skips the schema
 status: todo
+superseded_by: T0-HOOK-LAZY-2
 branch: T0-HOOK-LAZY
 worktree: D:\wt\AIDLC\T0-HOOK-LAZY
 allow_paths:
