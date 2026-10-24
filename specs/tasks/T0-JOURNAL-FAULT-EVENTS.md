@@ -154,3 +154,29 @@ Fault-point check: fault points before/after per command A 2/2 (order now record
 | keyed events matched by type only | killed: judge and 9 more |
 
 Run over journal-owed, fault-points, t0-flow, r3-fallback and core/types; 27 mutants, 0 survivors after cbc0899. The fault-point check shown failing on the new order: the first mutant (ATTEMPT_FINISHED appended before the record write) fails the judge with `A/record 1` unpinned.
+
+### REVIEW_FIX attempt 2 (R3 decision 1 on 94342dc)
+F1 (R2 and R3, class owed-result-facts-untested, tests/scenarios/journal-owed.test.ts:218): acceptance 4 asks that the recovered merge `OPERATION_RESULT` carry the owed facts, but the dry-run fixture produced no ShippedFacts and the deep-equal pinned only `operationId`, `status` and `completed`, so a mutant dropping the facts passed.
+
+Fix (4efa29f, test only): acceptance 4 now ships on the GitHub ship path with gh and git scripted as in T1-AUDIT-FACTS-2 acceptance 1 of tests/scenarios/t0-flow.test.ts (PR 42, `gh pr view` MERGED at head a..a with merge commit b..b, `git rev-parse b..b^{tree}` c..c). After the failed append the run's owed entry deep-equals `{ operationId, status: 'succeeded', headSha, mergeSha, tree, pr: 42 }`, and after the next `card next` the recovered event deep-equals the literal `headSha` (40 a), `mergeSha` (40 b), `tree` (40 c), `pr` 42, the operation id, `status` `succeeded` and `completed: true`.
+
+Class sweep of the recovery assertions in journal-owed.test.ts (an owed field the commit writes that no assertion pins with a literal):
+- acceptance 1 (`card next` recovers ATTEMPT_FINISHED): `cause`, `progress` and `evidence` were never set by the fixture and never pinned. The attempt now records `cause: 'none left'`, `progress: true`, `evidence: 'dod 21/21'`, and the recovered data is deep-equal to those literals, `outcome` `success`, the owed key and `completed: true`.
+- acceptance 5 (`review pre` recovers ATTEMPT_FINISHED): the same gap, fixed with the same deep-equal.
+- acceptance 3, PRE_REVIEW_DECIDED: `cycle`, `round`, `reviewer`, `candidateDigest`, `runStatus`, `reasons`, `advisory`, `verdictRef`, `receiptSha256`, `durationMs`, `perspectives`, `policyHash` were unpinned. Now the whole data is deep-equal: literals (`0`, `1`, `fake-r2`, `sha-jo`, `success`, `[]`, `[]`, `0`, `['review:pass']`), and `verdictRef`, `receiptSha256` (also matched against 64 hex) and `policyHash` from the round the ledger holds.
+- acceptance 3, REVIEW_DECIDED: `invocationId`, `reviewer`, `candidateDigest`, `mergeBlocking`, `decision`, `runStatus`, `reasons`, `advisory`, `verdictRef`, `receiptSha256`, `durationMs`, `policyHash` were unpinned. Now the whole data is deep-equal: literals (`primary`, `sha-jo`, `false`, `proceed-merge`, `success`, `[]`, `[]`, `0`), `invocationId` (matched against `r3:T1-JO.r3.1.<8 hex>`), `verdictRef` and `policyHash` from the invocation the ledger holds, `receiptSha256` matched against 64 hex (the invocation record has no receipt hash); still no publication field.
+- Acceptance 5's commit test already deep-equals the kept entry, and its four-command case appends nothing, so neither has the gap.
+
+Mutants, each run against the dod_command test files (src only, restored, none committed): 29 of 29 killed.
+
+| mutant | result |
+|---|---|
+| (a) owed merge data without the facts | killed: acceptance 4 |
+| (b) facts dropped at the re-append only | killed: acceptance 4 |
+| (c) ATTEMPT_FINISHED without `cause`, without `progress`, without `evidence` (3) | each killed: acceptance 1 and 5 |
+| (c) PRE_REVIEW_DECIDED without `cycle`, `round`, `candidateDigest` (3) | each killed: acceptance 3 and the fault-point check (6 failing) |
+| (c) PRE_REVIEW_DECIDED without `reviewer`, `runStatus`, `reasons`, `advisory`, `verdictRef`, `receiptSha256`, `durationMs`, `perspectives`, `policyHash` (9) | each killed: acceptance 3 |
+| (c) REVIEW_DECIDED without `invocationId` | killed: acceptance 3 and the fault-point check (5 failing) |
+| (c) REVIEW_DECIDED without `reviewer`, `candidateDigest`, `mergeBlocking`, `decision`, `runStatus`, `reasons`, `advisory`, `verdictRef`, `receiptSha256`, `durationMs`, `policyHash` (11) | each killed: acceptance 3 |
+
+DoD at 4efa29f: Windows exit 0, 526 tests, 526 pass, 0 fail, 66 s (duration_ms 59583); Linux (WSL clone, node v22.23.1, CLAUDE_CODE_SESSION_ID unset) typecheck clean, exit 0, 526 tests, 526 pass, 0 fail, 36 s.
