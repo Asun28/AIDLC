@@ -113,11 +113,11 @@ test('T0-HOOK-LAZY-2 acceptance 4: bench/baseline.json holds the hook journeys a
   }
 });
 
-const HOOKS_PARAGRAPH = 'What a hook process loads (card T0-HOOK-LAZY-2): the guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so an event that reads no state loads none of them, and no yaml, which only the planning claims load. Every event still loads zod and checks `aidlc.config.json` with the schema the CLI uses, as before. MEASURED';
+const HOOKS_PARAGRAPH = 'What a hook process loads (card T0-HOOK-LAZY-2): the guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so an event that reads no state loads none of them, and no yaml, which only the planning claims load. Every event still loads zod and checks `aidlc.config.json` with the schema the CLI uses, as before. Measured on Windows in two interleaved runs of 15: each hook event takes about 35 ms less (PreToolUse Bash 217 ms to 180 ms and 208 ms to 174 ms) and loads 109 to 113 modules instead of 189.';
 
 const ARCHITECTURE_SENTENCE = '`src/hooks/lazy.ts` loads the modules only some hook events need (the router, the goal, lease and journal stores, and the planning claims, which alone load yaml) on a guard\'s first use, through `require` with the extension of its own file (card T0-HOOK-LAZY-2).';
 
-const CHANGELOG_ENTRY = '- T0-HOOK-LAZY-2 (replaces T0-HOOK-LAZY, stopped when R3 decision 3 re-raised the provenance of its config stamp; ruling 2026-10-24): the hook guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so a hook event that reads no state loads no yaml; the config check with zod is unchanged. MEASURED';
+const CHANGELOG_ENTRY = '- T0-HOOK-LAZY-2 (replaces T0-HOOK-LAZY, stopped when R3 decision 3 re-raised the provenance of its config stamp; ruling 2026-10-24): the hook guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so a hook event that reads no state loads no yaml; the config check with zod is unchanged. Measured on Windows: about 35 ms less per hook event (PreToolUse Bash 217 ms to 180 ms), and 109 to 113 modules loaded instead of 189.';
 
 const SUPERSEDED = 'superseded_by: T0-HOOK-LAZY-2';
 
@@ -150,4 +150,5 @@ test('T0-HOOK-LAZY-2 acceptance 5: the docs carry every sentence this card adds,
   for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
 });
 
-const REMOVALS = 0;
+// 3 Hooks paragraph sentences, the ARCHITECTURE sentence, 2 CHANGELOG sentences and the superseded_by line.
+const REMOVALS = 7;
