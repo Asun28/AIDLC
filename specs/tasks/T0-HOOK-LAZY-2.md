@@ -33,7 +33,7 @@ budget: 100
 tdd: true
 sweep: "Successor of T0-HOOK-LAZY (ruling 2026-10-24 on its STOP/review: R3 decision 3 re-raised F3 and F4, the provenance of a config stamp; the engineer ruled to ship the lazy loading without the stamp, and the stamp returns later as its own card). Measured on T0-HOOK-LAZY at main 794624a, Windows, Node 22.23.1: zod loads 95 files (about 60 ms), yaml 72 (about 39 ms); yaml reaches the hooks only through src/state/claims.ts (src/artifacts/plan.ts, frontmatter.ts); with the stamp gone every event still loads zod for the config check, so the saving is yaml and the state modules: UserPromptSubmit 252 to 206 ms and Stop 242 to 200 ms in that card's A/B, which is the expected PreToolUse saving too. Pinned docs: tests/surface/bench.test.ts reads the Loop benchmark paragraphs, which this card leaves unchanged."
 forbid:
-  - a change to a guard decision, output or order, or to loadHookConfig, runHook or dispatchHook (src/hooks/index.ts, src/hooks/entry.ts)
+  - a change to a guard decision, output or order, or to loadHookConfig, runHook or dispatchHook (src/hooks/index.ts, src/hooks/entry.ts), in an installation whose modules load; a module that fails to load is the failure path the Decisions section states (stderr and exit 0 from the hook entry, where main's failed static import exited 1), which this forbid does not cover
   - any state read or written by a hook that main does not read or write (a stamp, a cache)
   - a changed line in tests/surface/hooks.test.ts, hook-name.test.ts or fix-task-clear.test.ts
   - a ceiling in bench/baseline.json raised
