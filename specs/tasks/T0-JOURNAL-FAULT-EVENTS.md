@@ -180,3 +180,37 @@ Mutants, each run against the dod_command test files (src only, restored, none c
 | (c) REVIEW_DECIDED without `reviewer`, `candidateDigest`, `mergeBlocking`, `decision`, `runStatus`, `reasons`, `advisory`, `verdictRef`, `receiptSha256`, `durationMs`, `policyHash` (11) | each killed: acceptance 3 |
 
 DoD at 4efa29f: Windows exit 0, 526 tests, 526 pass, 0 fail, 66 s (duration_ms 59583); Linux (WSL clone, node v22.23.1, CLAUDE_CODE_SESSION_ID unset) typecheck clean, exit 0, 526 tests, 526 pass, 0 fail, 36 s.
+
+### REVIEW_FIX attempt 3 (R3 decision 2 on b916eab)
+Findings (class guard-before-owed-recovery; R4 asks each of the four commands to append owed events first):
+- F1 card-runner.ts:937 at b916eab, `recordAttempt`: the success-with-`checksLost` guard threw before the stored run was read and delivered.
+- F2 :1574, `formalReview`: the empty `formalReview.command` guard threw first.
+- F3 :2220, `preReview`: the empty `preReview.command` guard threw first.
+
+Fix (2ffd7fb): each guard now runs after the command's own first read of the stored run and its `deliverOwed` call, so the read count and the lock use of the t0-flow tests that hook the first `getCardRun` or the card-run lock are unchanged (t0-flow passes).
+
+Sweep: every way the four commands can throw or return between entry and `deliverOwed` (line numbers at 2ffd7fb):
+
+| site | what throws or returns | bucket |
+|---|---|---|
+| src/loop/card-runner.ts:937 (`recordAttempt`) | success that reports lost checks | (a) moved after delivery |
+| src/loop/card-runner.ts:1574 (`formalReview`) | `formalReview.command` not configured | (a) moved after delivery |
+| src/loop/card-runner.ts:2220 (`preReview`) | `preReview.command` not configured | (a) moved after delivery |
+| src/loop/card-runner.ts:641, :933, :1571, :2217 (`getCardRun` in `next`, `recordAttempt`, `formalReview`, `preReview`), through src/state/store.ts:90, :96, :100 (`readJson`) | the card-run record cannot be read: READ_FAILED, MALFORMED_JSON, SCHEMA_VIOLATION | (b) no stored run to deliver from |
+| src/cli/main.ts:458 -> src/loop/controller.ts:672 (`mustGoal`) | unknown goal | (b) |
+| src/cli/main.ts:114 (`cardGoalId`, `fail(r.error)` from `resolveCardGoal`; :113 lists the goals and reads each card run) | no goal, or more than one, holds or names the card; a goal record or a card-run record that cannot be read | (b) |
+| src/cli/main.ts:135 (`cardOf`) | card not found in the cards directory | (b) |
+| src/cli/main.ts:460 -> src/loop/controller.ts:645-662 (`ensureCardRun`) | no card run yet: it is created (`saveCardRun` :661, `CARD_DISPATCHED` :662) holding nothing owed, and a failure of that creating write throws | (b) |
+| src/cli/main.ts:464, :476, :727, :739 (commander `<cardId>` of `card next`, `card attempt`, `review pre`, `review r3`) | missing argument, unknown option | (c) main.ts option or argument validation |
+| src/cli/main.ts:479 (`card attempt --outcome`, `requiredOption`) | missing `--outcome` | (c) |
+| src/cli/main.ts:469, :488, :731, :743 -> :66 and :67 (`ctx`: `resolveRepoIdentity`, `loadProjectConfig`) | no repository, or a configuration that does not parse | (d) no store or configuration exists yet to read a run from; in main.ts, outside allow_paths |
+| src/loop/card-runner.ts:507-520 (`deliverOwed` itself: the journal read, the card-run lock, the append) | the R4 append section fails | (d) this is R4's own failure path: the command fails with no other write (acceptance 5) |
+
+`CardRunner.next` dispatches no step before its delivery at :643 (the clock read at :638 and the run read at :641 come first), and the other three commands have no return between entry and delivery.
+
+Tests (535b196, journal-owed.test.ts, one per bucket (a) guard): a run holding an owed ATTEMPT_FINISHED the journal lacks; the call is refused at the guard; the journal then holds the event once with its `eventKey` and `completed: true`. RED at b916eab src (`node --test --test-name-pattern "is refused only after" tests/scenarios/journal-owed.test.ts`: 3 tests, 0 pass, 3 fail), each failing at journal-owed.test.ts:348 with `+ []` against the expected `[[<owed key>, true]]`:
+`not ok 1 - card attempt: a success that reports lost checks is refused only after the owed ATTEMPT_FINISHED is journaled once, completed [acceptance 5] [R4]`, `not ok 2 - review r3: no formalReview.command is refused ...`, `not ok 3 - review pre: no preReview.command is refused ...`.
+
+Mutants (each guard put back before the read and delivery, run against the dod_command test files, restored): F1 killed (the card attempt case), F2 killed (the review r3 case), F3 killed (the review pre case).
+
+DoD at 2ffd7fb: Windows exit 0, 529 tests, 529 pass, 0 fail, 53 s (duration_ms 44090); Linux (WSL clone, node v22.23.1, CLAUDE_CODE_SESSION_ID unset) typecheck clean, exit 0, 529 tests, 529 pass, 0 fail, 35 s. `npm test` on Windows (CLAUDE_CODE_SESSION_ID unset): exit 0, 1611 tests, 1605 pass, 0 fail, 6 skipped (platform skips), 69 s.
