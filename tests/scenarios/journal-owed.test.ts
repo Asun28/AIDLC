@@ -335,6 +335,26 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
     });
   }
 
+  /** A runner over the same state whose configuration `patch` changes. */
+  const runnerWith = (c: Ctx, patch: (config: Fixture['config']) => Fixture['config']): CardRunner =>
+    new CardRunner({ paths: c.fx.paths, repo: c.fx.repo, config: patch(c.fx.config), store: c.fx.store, leases: c.fx.leases, queue: c.fx.queue, ops: c.fx.ops, shipPath: new DryRunShipPath(['merged']), now: c.fx.now, runner: scriptedRunner({}) });
+  /** Each guard a command checks after its R4 appends: the call is refused there, and the owed event is journaled first. */
+  const refusals: Array<{ guard: string; refused: RegExp; call: (c: Ctx) => unknown }> = [
+    { guard: 'card attempt: a success that reports lost checks', refused: /cannot report lost checks/, call: (c) => c.runner.recordAttempt(c.g(), c.card, c.run(), { outcome: 'success', checksLost: ['dod'], dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-jo' }) },
+    { guard: 'review r3: no formalReview.command', refused: /formalReview\.command is not configured/, call: (c) => runnerWith(c, (config) => ({ ...config, formalReview: { ...config.formalReview, command: [] } })).formalReview(c.g(), c.card, c.run()) },
+    { guard: 'review pre: no preReview.command', refused: /preReview\.command is not configured/, call: (c) => runnerWith(c, (config) => ({ ...config, preReview: { ...config.preReview, command: [] } })).preReview(c.g(), c.card, c.run()) },
+  ];
+  for (const r of refusals) {
+    it(`${r.guard} is refused only after the owed ATTEMPT_FINISHED is journaled once, completed [acceptance 5] [R4]`, async () => {
+      const c = atBuild();
+      await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => attempt(c));
+      const owed = owedOf(c.run());
+      assert.deepEqual(owed.map((o) => o.type), ['ATTEMPT_FINISHED']);
+      await assert.rejects(async () => r.call(c), r.refused);
+      assert.deepEqual(ofType(c, 'ATTEMPT_FINISHED').map((e) => [e.data['eventKey'], e.data['completed']]), [[owed[0]!.key, true]]);
+    });
+  }
+
   it('a card run without journalOwed parses unchanged, and card next on it appends only the events of its step [acceptance 6]', () => {
     const c = prepared();
     const raw = JSON.parse(readFileSync(c.cardFile, 'utf8')) as Record<string, unknown>;
