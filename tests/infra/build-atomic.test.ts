@@ -227,19 +227,19 @@ function entriesFixture(name: string): string {
   return project;
 }
 
-/** The build of a fresh entries fixture, with the rename onto `out/core/a.js` failing as `fault` says (no fault when undefined). */
-function entriesBuild(name: string, fault?: { code: string; times?: number }): { status: number | null; stdout: string; stderr: string; out: string } {
+/** The build of a fresh entries fixture, with the rename onto `out/<fault.file>` (default `core/a.js`) failing as `fault` says (no fault when undefined). */
+function entriesBuild(name: string, fault?: { code: string; times?: number; file?: string }): { status: number | null; stdout: string; stderr: string; out: string } {
   const preload = path.join(dir, 'fault.mjs');
   if (!existsSync(preload)) writeFileSync(preload, FAULT);
   const project = entriesFixture(name);
-  const env: NodeJS.ProcessEnv = { ...process.env, BUILD_FAIL_RENAME: '/out/core/a.js', BUILD_FAIL_CODE: fault?.code ?? '' };
+  const env: NodeJS.ProcessEnv = { ...process.env, BUILD_FAIL_RENAME: `/out/${fault?.file ?? 'core/a.js'}`, BUILD_FAIL_CODE: fault?.code ?? '' };
   if (fault?.times !== undefined) env['BUILD_FAIL_TIMES'] = String(fault.times);
   const argv = [...(fault ? ['--import', pathToFileURL(preload).href] : []), BUILD, '-p', path.join(project, 'tsconfig.json')];
   const r = spawnSync(process.execPath, argv, { cwd: root, encoding: 'utf8', env });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out: path.join(project, 'out') };
 }
 
-test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit 1 before either entry is written; a rename refused while a file is open is retried [R1] [R2]', () => {
+test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build there with exit 1, so no entry follows a failed write of another output; a rename refused while a file is open is retried [R1] [R2]', () => {
   const failed = entriesBuild('entries-eio', { code: 'EIO' });
   assert.equal(failed.status, 1, failed.stdout + failed.stderr);
   assert.equal(failed.stdout, '');
@@ -263,6 +263,17 @@ test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit
   assert.equal(refused.status, 1, refused.stdout + refused.stderr);
   assert.equal(refused.stderr, 'build: EPERM: injected rename failure\n');
   assert.deepEqual(files(refused.out), []);
+  // A failed entry stops the build there: the entry written before it stays, whole, and every module either loads was written first.
+  const main = entriesBuild('entries-main', { code: 'EIO', file: 'cli/main.js' });
+  assert.equal(main.status, 1, main.stdout + main.stderr);
+  assert.equal(main.stderr, 'build: EIO: injected rename failure\n');
+  assert.deepEqual(files(main.out), ['core/a.js', 'hooks/entry.js']);
+  assert.equal(readFileSync(path.join(main.out, 'hooks', 'entry.js'), 'utf8'), 'export const entry = 1;\n');
+  assert.equal(readFileSync(path.join(main.out, 'core', 'a.js'), 'utf8'), 'export const a = 1;\n');
+  const entry = entriesBuild('entries-entry', { code: 'EIO', file: 'hooks/entry.js' });
+  assert.equal(entry.status, 1, entry.stdout + entry.stderr);
+  assert.equal(entry.stderr, 'build: EIO: injected rename failure\n');
+  assert.deepEqual(files(entry.out), ['core/a.js']);
   const clean = entriesBuild('entries-clean');
   assert.equal(clean.status, 0, clean.stdout + clean.stderr);
   assert.deepEqual(files(clean.out), ['cli/main.js', 'core/a.js', 'hooks/entry.js']);
@@ -270,7 +281,7 @@ test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit
 
 const OPERATIONS_SENTENCES = [
   '`npm run build` runs `scripts/build.ts` (card T0-BUILD-ATOMIC), which compiles the program of `tsconfig.json` as `tsc -p tsconfig.json` does and writes each file of dist/ to a temporary sibling renamed onto it, `hooks/entry.js` and `cli/main.js` last, so a hook or CLI process started during a build loads the whole earlier module or the whole new one.',
-  'A rename Windows refuses while another process reads the file is retried for up to 2 s, and a write that still fails stops the build before either entry is written.',
+  'A rename Windows refuses while another process reads the file is retried for up to 2 s, and a write that still fails stops the build there, so an entry is written only after every module it loads.',
   'Under `tsc` a hook could load a module emptied for its rewrite: a PreToolUse guard then exited 1 with no deny and the routing guard printed nothing.',
   'A bare `tsc` still writes dist/ in place.',
 ];

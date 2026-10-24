@@ -5,8 +5,8 @@
 // tsc empties each output and then writes it, so a hook or CLI process that loads dist/ while tsc emits can read an
 // empty module. Here each output goes to a temporary sibling renamed onto it (`writeWhole`), and the compiled entries
 // that bin/resolve-entry.js compares with the sources go after every other output, so once an entry is newer than the
-// sources every module it loads is an output of this build. A failed write stops the build before either entry is
-// written.
+// sources every module it loads is an output of this build. A failed write stops the build there, so an entry is
+// written only after every module it loads.
 import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
