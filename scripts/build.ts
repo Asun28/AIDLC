@@ -19,6 +19,9 @@ const ENTRIES = new Set(['cli/main.js', 'hooks/entry.js']);
 const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
 const RETRY_MS = 2000;
 
+/** tsconfig options under which tsc prints more than its diagnostics or writes a `.tsbuildinfo`; the build refuses them. */
+const UNSUPPORTED = ['pretty', 'listFiles', 'listEmittedFiles', 'explainFiles', 'traceResolution', 'diagnostics', 'extendedDiagnostics', 'generateCpuProfile', 'generateTrace', 'incremental', 'composite', 'tsBuildInfoFile'];
+
 /** The two options of tsc this build takes. */
 function parseArgs(argv: readonly string[]): { project: string; outDir?: string } {
   let project = 'tsconfig.json';
@@ -82,6 +85,8 @@ function build(argv: readonly string[]): number {
   const report = (d: ts.Diagnostic): void => ts.sys.write(ts.formatDiagnostic(d, formatHost));
   const parsed = ts.getParsedCommandLineOfConfigFile(project, outDir === undefined ? {} : { outDir }, { ...ts.sys, onUnRecoverableConfigFileDiagnostic: report });
   if (!parsed) return 1;
+  const unsupported = UNSUPPORTED.find((name) => Boolean(parsed.options[name]));
+  if (unsupported !== undefined) throw new Error(`tsconfig option ${unsupported} is not supported; run tsc for it`);
   const program = ts.createProgram({
     rootNames: parsed.fileNames,
     options: parsed.options,
@@ -95,6 +100,8 @@ function build(argv: readonly string[]): number {
   if (all.length === configCount) {
     all.push(...program.getOptionsDiagnostics(), ...program.getGlobalDiagnostics());
     if (all.length === configCount) all.push(...program.getSemanticDiagnostics());
+    // `composite`, the other option that makes tsc emit declarations, is refused above.
+    if (parsed.options.noEmit && parsed.options.declaration && all.length === configCount) all.push(...program.getDeclarationDiagnostics());
   }
   const outRoot = parsed.options.outDir;
   const entries: [string, string][] = [];

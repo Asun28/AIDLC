@@ -149,6 +149,8 @@ function fixture(name: string, source: string, options: Record<string, unknown> 
 const TYPE_ERROR = "const x: number = 'a';\nexport { x };\n";
 const CLEAN = 'const x: number = 1;\nexport { x };\n';
 const TS2322 = /^[^\n]*[\\/]a\.ts\(1,7\): error TS2322: Type 'string' is not assignable to type 'number'\.\r?\n$/;
+const PRIVATE_CLASS = 'export const x = class { private p = 1; };\n';
+const TS4094 = /^[^\n]*[\\/]a\.ts\(1,14\): error TS4094: Property 'p' of exported anonymous class type may not be private or protected\.\r?\n$/;
 
 test('T0-BUILD-ATOMIC acceptance 4: node scripts/build.ts prints each diagnostic as tsc does and exits 2 with outputs, 1 with the emit skipped, 0 with none [R3]', () => {
   // `out` is the one compiled file the run leaves, relative to the fixture; `args` gives the project argument.
@@ -165,6 +167,12 @@ test('T0-BUILD-ATOMIC acceptance 4: node scripts/build.ts prints each diagnostic
     // tsc reports an options error without the type error.
     { name: 'options-type', source: TYPE_ERROR, options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5069: [^\n]*\r?\n$/ },
     { name: 'options', source: CLEAN, options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5069: Option 'declarationMap' cannot be specified without specifying option 'declaration' or option 'composite'\.\r?\n$/ },
+    // A declaration error: reported from the declaration diagnostics under noEmit, from the emit without it.
+    { name: 'decl-noemit', source: PRIVATE_CLASS, options: { declaration: true, noEmit: true }, status: 2, stdout: TS4094 },
+    { name: 'decl-noemit-type', source: "const y: number = 'a';\n" + PRIVATE_CLASS, options: { declaration: true, noEmit: true }, status: 2, stdout: TS2322 },
+    { name: 'decl-emit', source: PRIVATE_CLASS, options: { declaration: true }, status: 1, out: 'out/a.js', stdout: TS4094 },
+    // An option only the command line takes: tsc reports it from the config and builds.
+    { name: 'cli-only', source: CLEAN, options: { listFilesOnly: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS6266: Option 'listFilesOnly' can only be specified on command line\.\r?\n$/ },
     { name: 'config', source: CLEAN, options: { notAnOption: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5023: Unknown compiler option 'notAnOption'\.\r?\n$/ },
   ];
   for (const c of cases) {
@@ -196,6 +204,32 @@ test('T0-BUILD-ATOMIC acceptance 4: a tsconfig that cannot be read and an argume
   assert.equal(w.status, 1);
   assert.equal(w.stdout, '');
   assert.equal(w.stderr, 'build: unknown argument "--watch"; takes -p <tsconfig> and --outDir <dir>\n');
+  // Options under which tsc prints more than its diagnostics or writes a .tsbuildinfo: refused, with nothing written.
+  const refused: Record<string, unknown> = {
+    pretty: true,
+    listFiles: true,
+    listEmittedFiles: true,
+    explainFiles: true,
+    traceResolution: true,
+    diagnostics: true,
+    extendedDiagnostics: true,
+    generateCpuProfile: 'profile.cpuprofile',
+    generateTrace: 'trace',
+    incremental: true,
+    composite: true,
+    tsBuildInfoFile: 'build.tsbuildinfo',
+  };
+  for (const [name, value] of Object.entries(refused)) {
+    const project = fixture(`refused-${name}`, CLEAN, { [name]: value });
+    const s = spawnSync(process.execPath, [BUILD, '-p', path.join(project, 'tsconfig.json')], { cwd: root, encoding: 'utf8' });
+    assert.equal(s.status, 1, name);
+    assert.equal(s.stdout, '', name);
+    assert.equal(s.stderr, `build: tsconfig option ${name} is not supported; run tsc for it\n`, name);
+    assert.deepEqual(files(project), ['a.ts', 'tsconfig.json'], name);
+  }
+  // An option set to false is not refused.
+  const off = fixture('refused-off', CLEAN, { incremental: false, pretty: false });
+  assert.equal(spawnSync(process.execPath, [BUILD, '-p', path.join(off, 'tsconfig.json')], { cwd: root, encoding: 'utf8' }).status, 0);
 });
 
 /**
