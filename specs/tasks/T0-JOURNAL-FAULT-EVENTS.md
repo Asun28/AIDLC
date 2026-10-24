@@ -101,4 +101,46 @@ npm run typecheck && node --test tests/scenarios/journal-owed.test.ts tests/scen
 - Assertion: the typecheck is clean; the new tests pass (each covered event appended after its write and once, owed events completed by the next command, the merge result held back while the ledger differs or once reconciled, the doc and CHANGELOG sentences present); the fault-point judge passes with none of the four pins and `A/append ATTEMPT_FINISHED` unpinned; the other listed files pass.
 
 ## Attempt evidence
-(Filled at BUILD: the RED commit and its first failing line, the RED and GREEN DoD exit codes, test counts and durations, the full-suite run before R2, the mutation sweep and its survivors.)
+BUILD attempt 1, effort high, base origin/main 8fa4995.
+
+Step 0 (card against the code at 8fa4995): no requirement, acceptance item, forbid or design entry is wrong, unnecessary or contradictory; only line numbers moved (card-runner.ts :520 -> :526, :621 -> :627, :834 -> :840, :884 -> :890, :887 -> :893, :1003 -> :1037, :1025 -> :1059, :1140 -> :1174, :1911 -> :1952, :1997 -> :2038, :2248 -> :2291, :2342 -> :2405, :2387 -> :2450, :2440 -> :2503, :2447 -> :2510, :2453 -> :2516, :2469 -> :2532, :2471 -> :2534, :2634 -> :2697). The four pins of R6 were in `KNOWN_VIOLATIONS` at 8fa4995.
+
+Reproduction and RED: commit ae924e1 (tests/scenarios/journal-owed.test.ts added, the four pins removed, no src change). `npm run typecheck && node --test <the dod_command files>`: exit 1, 489 tests, 471 pass, 18 fail, duration 46 s (node duration_ms 40581). First failing line of the judge test (fault-points.test.ts:737, `not ok 11 - every fault point of A to E reaches its command's fault-free end state or matches its pin exactly, and no pin is stale [R5] [R6]`):
+`'A/record 1: journal.ATTEMPT_FINISHED success fault-free 1, observed 2; drive: next -> build, next -> build, recordAttempt -> done, next -> pre-review, preReview -> done, next -> review, formalReview -> done, next -> close'`, followed by `B/append PRE_REVIEW_DECIDED` (`journal.PRE_REVIEW_DECIDED pass fault-free 1, observed 0`), `C/append REVIEW_DECIDED` (`journal.REVIEW_DECIDED pass fault-free 1, observed 0`) and `D/append OPERATION_RESULT` (`journal.OPERATION_RESULT succeeded fault-free 1, observed 0`). The other 17 failures are journal-owed.test.ts: 11 behaviour tests (acceptance 1 to 5; acceptance 6 passes at the base, as it states a property the base already has) and the 6 doc pins.
+
+GREEN: commits 2b9872d and 18dece7 (fix), c13e29d (docs), cbc0899 (acceptance 5 run on all four commands after the sweep). DoD on Windows at cbc0899: exit 0, 492 tests, 492 pass, 0 fail, duration 49 s (duration_ms 43014). DoD on Linux (WSL clone of the branch at cbc0899, node 22): typecheck clean, exit 0, 492 tests, 492 pass, duration 33 s. Full suite (`npm test`, CLAUDE_CODE_SESSION_ID unset, Windows): 1608 tests, 1607 pass, 1 fail: tests/surface/templates.test.ts:402 (T1-VERIFY-SKILL acceptance 3), `CardRunner.commitFormalResult does not occur in tests/scenarios/fault-points.test.ts`; the removed `C/append REVIEW_DECIDED` pin held the only mention of the method the verify skill coverage record names. That test is outside the dod_command and the skill file outside allow_paths: open, returned to the loop.
+
+### Write order and recovery at each fault point
+Fault points as the fault-point test counts them (renameSync onto the card-run record, appendFileSync onto the goal journal); the R4 append section of a command takes the card-run lock only when the run it read holds an owed event the journal lacks, so a fault-free run has no extra fault point.
+- `card attempt` (A): R4 appends; record 1 (finished attempt, `journalOwed` + ATTEMPT_FINISHED, and ATTEMPT_STARTED when the attempt was implicit); append ATTEMPT_FINISHED. Record 1 lost: nothing appended, attempt 1 still `running`; `card next` directs `build`, the second `card attempt` journals the one ATTEMPT_FINISHED (was H5). Append lost: the run holds the owed event; the next `card next` appends it with `completed: true` before its own step (acceptance 1).
+- BUILD and REVIEW_FIX steps of `card next`: R4 appends; CARD_STATE; record (started attempt + owed ATTEMPT_STARTED); append ATTEMPT_STARTED. Record lost: no ATTEMPT_STARTED; the next `card next` starts the attempt again and journals one (acceptance 2). Append lost: the next command appends it, completed.
+- `review pre` (B): R4 appends; record 1 (reservation); record 2 (the round and owed PRE_REVIEW_DECIDED, any commit status); append PRE_REVIEW_DECIDED. Record 1 or 2 lost: as at 8fa4995 (no round, or the pending reservation the gate drops), no event. Append lost: owed; the next `card next` appends it, completed (was H7).
+- `review r3` (C): R4 appends; REVIEW_ADMITTED; record 1 (reservation); record 2 (the decision and owed REVIEW_DECIDED, any status); canonical publication; append REVIEW_DECIDED with `canonicalPublished` and `publicationError`. Append lost: owed; the next `card next` appends it, completed, without the publication fields (was H6).
+- `card next` at SHIP (D): R4 appends; OPERATION_INTENT, REVIEW_REQUESTED, REVIEW_ADMITTED, OPERATION_ISSUED; record 1 (`finish`: CLOSE, mergeVerified, owed merge OPERATION_RESULT); `markResult`; append OPERATION_RESULT; close (LEASE_RENEWED, record 2). Record 1 lost: unchanged pin H10 (operation `issued`, WAIT, `aidlc ops reconcile`). `markResult` lost: the owed result is never appended while the operation is `issued`, nor after OPERATION_RECONCILED names it (acceptance 4). Append lost: the next `card next` appends it, completed, while the ledger shows `succeeded` (was H8).
+- E (STOP/time): unchanged writes and order.
+
+The owed record under each single fault: a lost save of the owed marker is a lost record write above (no event, the decision redone); a lost append leaves the marker on the record for the next of the four commands; that command appends it once, found afterwards by its key (or its operation), so a further command appends nothing (acceptance 1, 4); an R4 append that throws fails the command with the run unchanged and no other write (acceptance 5), and the next command tries again.
+
+Fault-point check: fault points before/after per command A 2/2 (order now record 1, then append ATTEMPT_FINISHED), B 3/3, C 4/4, D 8/8, E 3/3; the judge passes with the four pins removed, `A/append ATTEMPT_FINISHED` unpinned and at the fault-free end state, and the other two pins (`D/append OPERATION_ISSUED` H9, `D/record 1` H10) unchanged.
+
+### Mutation sweep (src only, each restored, none committed)
+| mutant | result |
+|---|---|
+| append ATTEMPT_FINISHED before the record write (recordAttempt) | killed: judge (A/record 1), acceptance 1, 2 |
+| drop the journal check (journalHolds false) | killed: 30 tests |
+| drop `completed: true` | killed: acceptance 1, 3, 4 |
+| drop the ledger-status check (R5) | killed: acceptance 4, 5 |
+| drop the `OPERATION_RECONCILED` check | killed: acceptance 4 |
+| replace `journalOwed` instead of keeping unjournaled entries | killed: acceptance 5 |
+| card next settles after its step (R4 removed) | killed: judge, acceptance 1, 3, 4 |
+| review pre, card attempt, review r3 without their R4 append | survived the first sweep; killed after cbc0899 (acceptance 5, one case each) |
+| BUILD, REVIEW_FIX, card attempt, commitReviewed, ship write without its owed marker | killed (each) |
+| BUILD, REVIEW_FIX, card attempt, review pre, review r3, ship without the post-write append | killed (each) |
+| review r3 own append without the publication fields | killed: t0-flow T1-REVIEW-FINDINGS-4 R3 decision 1 |
+| merge result carries `eventKey` | killed: acceptance 4, t0-flow T1-AUDIT-FACTS-2 acceptance 1 |
+| own entries marked `completed` | killed: t0-flow (2) |
+| `journalOwed` defaults to `[]` (old record parse) | killed: acceptance 6 |
+| the append section writes the record | killed: 2 existing tests |
+| keyed events matched by type only | killed: judge and 9 more |
+
+Run over journal-owed, fault-points, t0-flow, r3-fallback and core/types; 27 mutants, 0 survivors after cbc0899. The fault-point check shown failing on the new order: the first mutant (ATTEMPT_FINISHED appended before the record write) fails the judge with `A/record 1` unpinned.
