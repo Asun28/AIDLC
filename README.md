@@ -125,7 +125,7 @@ docs/            architecture, traceability, operations, plans
 ```bash
 npm run check        # typecheck (src + tests) and run the suite
 node --test "tests/**/*.test.ts"
-npm run build        # tsc -> dist/
+npm run build        # scripts/build.ts: tsc -> dist/, each file written whole
 ```
 
 Conventions: ESM, strict TypeScript with `erasableSyntaxOnly` (no enums, namespaces or parameter properties), relative imports with explicit `.ts` extensions (rewritten to `.js` on build), every persisted record has a zod schema, no shell strings for provider commands (argv arrays only), fixed ISO timestamps in tests.

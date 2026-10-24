@@ -4,6 +4,7 @@ import { after, before, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { EOL } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { cleanup, tmpDir } from './helpers.ts';
@@ -135,34 +136,109 @@ test('T0-BUILD-ATOMIC acceptance 3: the last write onto hooks/entry.js and onto 
   }
 });
 
-/** A fixture project with one file, `a.ts`, holding `source`, and the given extra compiler options. */
+/** A fixture project with one file, `a.ts`, holding `source`, compiled with `options` over a base that writes to `out/` (a null option is left out). */
 function fixture(name: string, source: string, options: Record<string, unknown> = {}): string {
   const project = path.join(dir, name);
   mkdirSync(project);
   writeFileSync(path.join(project, 'a.ts'), source);
-  writeFileSync(path.join(project, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', strict: true, outDir: 'out', types: [], ...options }, files: ['a.ts'] }));
+  const compilerOptions = Object.fromEntries(Object.entries({ target: 'ES2022', strict: true, outDir: 'out', types: [], ...options }).filter(([, v]) => v !== null));
+  writeFileSync(path.join(project, 'tsconfig.json'), JSON.stringify({ compilerOptions, files: ['a.ts'] }));
   return project;
 }
 
-test('T0-BUILD-ATOMIC acceptance 4: node scripts/build.ts prints a type error as tsc does and exits 2 with outputs, 1 with the emit skipped, 0 with no error [R3]', () => {
-  const cases = [
-    { name: 'error', source: "const x: number = 'a';\nexport { x };\n", options: {}, status: 2, out: true },
-    { name: 'error-no-emit', source: "const x: number = 'a';\nexport { x };\n", options: { noEmitOnError: true }, status: 1, out: false },
-    { name: 'clean', source: 'const x: number = 1;\nexport { x };\n', options: {}, status: 0, out: true },
+const TYPE_ERROR = "const x: number = 'a';\nexport { x };\n";
+const CLEAN = 'const x: number = 1;\nexport { x };\n';
+const TS2322 = /^[^\n]*[\\/]a\.ts\(1,7\): error TS2322: Type 'string' is not assignable to type 'number'\.\r?\n$/;
+
+test('T0-BUILD-ATOMIC acceptance 4: node scripts/build.ts prints each diagnostic as tsc does and exits 2 with outputs, 1 with the emit skipped, 0 with none [R3]', () => {
+  // `out` is the one compiled file the run leaves, relative to the fixture; `args` gives the project argument.
+  const cases: { name: string; source: string; options?: Record<string, unknown>; args?: (project: string) => string[]; status: number; out?: string; stdout: RegExp | '' }[] = [
+    { name: 'error', source: TYPE_ERROR, status: 2, out: 'out/a.js', stdout: TS2322 },
+    { name: 'error-no-emit', source: TYPE_ERROR, options: { noEmitOnError: true }, status: 1, stdout: TS2322 },
+    { name: 'clean', source: CLEAN, status: 0, out: 'out/a.js', stdout: '' },
+    { name: 'clean-dir', source: CLEAN, args: (p) => ['--project', p], status: 0, out: 'out/a.js', stdout: '' },
+    { name: 'no-outdir', source: CLEAN, options: { outDir: null }, status: 0, out: 'a.js', stdout: '' },
+    { name: 'bom', source: CLEAN, options: { emitBOM: true }, status: 0, out: 'out/a.js', stdout: '' },
+    // tsc reports a syntax error alone, without the type error on line 1 or an options error.
+    { name: 'syntax', source: "const x: number = 'a';\nconst y = ;\n", status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]a\.ts\(2,11\): error TS1109: Expression expected\.\r?\n$/ },
+    { name: 'syntax-options', source: "const x: number = 'a';\nconst y = ;\n", options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]a\.ts\(2,11\): error TS1109: Expression expected\.\r?\n$/ },
+    { name: 'options', source: CLEAN, options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5069: Option 'declarationMap' cannot be specified without specifying option 'declaration' or option 'composite'\.\r?\n$/ },
+    { name: 'config', source: CLEAN, options: { notAnOption: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5023: Unknown compiler option 'notAnOption'\.\r?\n$/ },
   ];
   for (const c of cases) {
     const ours = fixture(`${c.name}-build`, c.source, c.options);
     const theirs = fixture(`${c.name}-tsc`, c.source, c.options);
-    const r = spawnSync(process.execPath, [BUILD, '-p', path.join(ours, 'tsconfig.json')], { cwd: root, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [BUILD, ...(c.args ?? ((p: string) => ['-p', path.join(p, 'tsconfig.json')]))(ours)], { cwd: root, encoding: 'utf8' });
     const t = spawnSync(process.execPath, [TSC, '-p', path.join(theirs, 'tsconfig.json')], { cwd: root, encoding: 'utf8' });
     assert.equal(r.status, c.status, `${c.name}: ${r.stdout}${r.stderr}`);
-    assert.equal(r.status, t.status, c.name);
-    assert.equal(existsSync(path.join(ours, 'out', 'a.js')), c.out, c.name);
+    assert.equal(t.status, c.status, `${c.name} (tsc): ${t.stdout}`);
     assert.equal(r.stderr, '', c.name);
-    if (c.status === 0) assert.equal(r.stdout, '', c.name);
-    else assert.match(r.stdout, /(^|[\\/])a\.ts\(1,7\): error TS2322: Type 'string' is not assignable to type 'number'\.\r?\n$/, c.name);
+    if (c.stdout === '') assert.equal(r.stdout, '', c.name);
+    else assert.match(r.stdout, c.stdout, c.name);
     assert.equal(r.stdout.replaceAll(`${c.name}-build`, '<fixture>'), t.stdout.replaceAll(`${c.name}-tsc`, '<fixture>'), c.name);
+    const js = (p: string) => files(p).filter((f) => f.endsWith('.js'));
+    assert.deepEqual(js(ours), c.out === undefined ? [] : [c.out], c.name);
+    assert.deepEqual(js(theirs), c.out === undefined ? [] : [c.out], `${c.name} (tsc)`);
+    if (c.out !== undefined) assert.ok(readFileSync(path.join(ours, c.out)).equals(readFileSync(path.join(theirs, c.out))), c.name);
   }
+  assert.deepEqual([...readFileSync(path.join(dir, 'bom-build', 'out', 'a.js')).subarray(0, 3)], [0xef, 0xbb, 0xbf]);
+});
+
+test('T0-BUILD-ATOMIC acceptance 4: a tsconfig that cannot be read and an argument the build does not take exit 1 [R3]', () => {
+  const missing = path.join(dir, 'missing', 'tsconfig.json');
+  const r = spawnSync(process.execPath, [BUILD, '-p', missing], { cwd: root, encoding: 'utf8' });
+  assert.equal(r.status, 1);
+  assert.equal(r.stdout, `error TS5083: Cannot read file '${missing}'.${EOL}`);
+  assert.equal(r.stderr, '');
+  const w = spawnSync(process.execPath, [BUILD, '--watch'], { cwd: root, encoding: 'utf8' });
+  assert.equal(w.status, 1);
+  assert.equal(w.stdout, '');
+  assert.equal(w.stderr, 'build: unknown argument "--watch"; takes -p <tsconfig> and --outDir <dir>\n');
+});
+
+/** A preload that makes every `renameSync` onto a path ending in BUILD_FAIL_RENAME throw. */
+const FAULT = `
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const suffix = process.env.BUILD_FAIL_RENAME;
+const { renameSync } = fs;
+fs.renameSync = function (from, to) {
+  if (String(to).split('\\\\').join('/').endsWith(suffix)) throw new Error('EIO: injected rename failure');
+  return renameSync.call(fs, from, to);
+};
+syncBuiltinESMExports();
+`;
+
+/** A fixture whose two entries come before `core/a.ts` in emit order, so a build that wrote them unheld would write them before the failed one. */
+function entriesFixture(name: string): string {
+  const project = path.join(dir, name);
+  for (const rel of ['hooks/entry.ts', 'cli/main.ts', 'core/a.ts']) {
+    mkdirSync(path.dirname(path.join(project, rel)), { recursive: true });
+    writeFileSync(path.join(project, rel), `export const ${path.basename(rel, '.ts')} = 1;\n`);
+  }
+  writeFileSync(path.join(project, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2022', strict: true, rootDir: '.', outDir: 'out', types: [] }, files: ['hooks/entry.ts', 'cli/main.ts', 'core/a.ts'] }));
+  return project;
+}
+
+test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit 1 before either entry is written; without the fault all three are written [R2]', () => {
+  const preload = path.join(dir, 'fault.mjs');
+  writeFileSync(preload, FAULT);
+  const faulted = entriesFixture('entries-fault');
+  const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, BUILD, '-p', path.join(faulted, 'tsconfig.json')], {
+    cwd: root,
+    encoding: 'utf8',
+    env: { ...process.env, BUILD_FAIL_RENAME: '/out/core/a.js' },
+  });
+  assert.equal(r.status, 1, r.stdout + r.stderr);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, 'build: EIO: injected rename failure\n');
+  assert.equal(existsSync(path.join(faulted, 'out', 'hooks', 'entry.js')), false);
+  assert.equal(existsSync(path.join(faulted, 'out', 'cli', 'main.js')), false);
+  assert.deepEqual(files(path.join(faulted, 'out')), []);
+  const clean = entriesFixture('entries-clean');
+  const ok = spawnSync(process.execPath, [BUILD, '-p', path.join(clean, 'tsconfig.json')], { cwd: root, encoding: 'utf8' });
+  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
+  assert.deepEqual(files(path.join(clean, 'out')), ['cli/main.js', 'core/a.js', 'hooks/entry.js']);
 });
 
 const OPERATIONS_SENTENCES = [

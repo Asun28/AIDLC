@@ -21,7 +21,7 @@ npm test                       # node --test over tests/**/*.test.ts, spec repor
 node --test tests/core/router.test.ts                                   # one file
 node --test --test-name-pattern "same cause" tests/core/effort.test.ts  # one test by name
 npm run test:watch
-npm run build                  # tsc -> dist/ (rewrites .ts imports to .js)
+npm run build                  # scripts/build.ts: tsc -> dist/, each file written whole (rewrites .ts imports to .js)
 node bin/aidlc.js <cmd>        # the CLI (dist/ when it is at least as new as src/, else src/)
 npm run dev -- <cmd>           # the CLI from src/cli/main.ts, always current
 npm run bench                  # loop benchmark: deterministic counts of each hook event against bench/baseline.json (--check, --ratchet, --time 5)
