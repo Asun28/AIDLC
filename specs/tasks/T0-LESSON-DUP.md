@@ -1,7 +1,7 @@
 ---
 id: T0-LESSON-DUP
 title: aidlc card close --lesson appends no second line for a lesson docs/LESSONS.md already holds for the same card, kind, rule and source under any date, and the close directive says the flag writes the line itself, so a lesson is recorded once
-status: todo
+status: merged
 branch: T0-LESSON-DUP
 worktree: D:\wt\AIDLC\T0-LESSON-DUP
 allow_paths:
