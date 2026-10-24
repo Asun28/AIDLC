@@ -18,6 +18,7 @@
  * only about the cards this session owns.
  */
 import { isBlock, loadHookConfig, readStdinJson, runHook, type HookEvent, type HookName, type HookResult } from './index.ts';
+import { settleRepoIdentity } from '../state/paths.ts';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
 
@@ -78,7 +79,10 @@ export function readStdin(timeoutMs = 2000): Promise<string> {
 export async function main(): Promise<void> {
   let result: HookResult;
   try {
-    result = dispatchHook(readStdinJson(await readStdin()));
+    const event = readStdinJson(await readStdin());
+    // The repository lookup the bin entry started (card T0-HOOK-GIT-PREFETCH); an event no guard handles never waits for it.
+    if (hookNamesFor(event).length) await settleRepoIdentity(event.cwd ?? process.cwd());
+    result = dispatchHook(event);
   } catch (err) {
     process.stderr.write(`[aidlc hook] ${(err as Error).message}\n`);
     result = { exitCode: 0 };

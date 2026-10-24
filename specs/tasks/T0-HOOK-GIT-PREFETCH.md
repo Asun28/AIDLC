@@ -59,3 +59,9 @@ For every hook event, the identity a guard reads equals the one main's synchrono
 - The import is optional: tests/infra/bin-entry.test.ts runs the shipped bin over stub entries without `state/paths`, and a package where it fails to load runs as on main (the entry then fails on the same module, as before).
 - `main` settles only for an event with a guard, so an event no guard handles never waits for git.
 - Directories are compared with `path.resolve`, as the identity cache keys them; a different spelling of the same directory only costs the synchronous call main makes.
+
+## Attempt evidence
+- RED (ddf1fca, tests over the seam d316a6a): acceptance 1, 2 and 5 of tests/surface/hook-git-prefetch.test.ts fail on their assertions (one synchronous git call and no `spawn` for the main checkout, the identities without a settled lookup, the missing doc texts); the FROZEN denials of acceptance 1 already pass on main, as R3 requires.
+- Mutation sweep, 7 mutants: the bin starting no lookup, a settle that never caches, a settle for any directory, a required bin import (tests/infra/bin-entry.test.ts), a lookup asking git for one ref, and `main` never settling are killed; `main` settling with the process cwd survives as an equivalent mutant (it caches the identity of the directory git ran in, which is correct for that directory, and the event's own directory is still asked synchronously).
+- Bench on the candidate, compiled entry: every count equals main's (`spawns` 1 for every hook journey); `--ratchet` changed no ceiling.
+- Wall time against main, two interleaved runs of 15 (median), Windows, Node 22.23.1: PreToolUse Bash 174 to 146 ms and 173 to 147, Edit 172 to 147 and 176 to 146, UserPromptSubmit 175 to 149 and 179 to 154, Stop 180 to 151 and 182 to 153.

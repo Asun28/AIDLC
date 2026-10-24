@@ -6,7 +6,7 @@
  * checkout's directory (the parent of `git rev-parse --git-common-dir`), so every linked
  * worktree resolves to the same `.aidlc/` directory. `AIDLC_STATE_DIR` overrides it.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { realpathSync } from 'node:fs';
 import { hostname } from 'node:os';
@@ -49,24 +49,59 @@ function gitOut(args: string[], cwd: string): string | undefined {
  */
 const identityCache = new Map<string, RepoIdentity>();
 
+/** One spawn for both refs: git prints them in argument order. */
+const IDENTITY_ARGS = ['rev-parse', '--git-common-dir', '--show-toplevel'];
+
+/** The identity of `cwd` from the output of `git rev-parse` (`IDENTITY_ARGS`); `out` is undefined when git failed. */
+function identityFrom(cwd: string, out: string | undefined): RepoIdentity {
+  const key = path.resolve(cwd);
+  const [common, top] = out ? out.split(/\r?\n/).map((line) => line.trim()) : [];
+  if (!common || !top) return { mainRoot: key, worktreeRoot: key, isGit: false, key: shortKey(key) };
+  const commonAbs = canonical(path.resolve(cwd, common));
+  const mainRoot = canonical(path.resolve(commonAbs, '..'));
+  const worktreeRoot = canonical(path.resolve(top));
+  return { mainRoot, worktreeRoot, isGit: true, key: shortKey(mainRoot) };
+}
+
 export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
   const key = path.resolve(cwd);
   const cached = identityCache.get(key);
   if (cached) return cached;
-  // One spawn for both refs: git prints them in argument order.
-  const out = gitOut(['rev-parse', '--git-common-dir', '--show-toplevel'], cwd);
-  const [common, top] = out ? out.split(/\r?\n/).map((line) => line.trim()) : [];
-  let identity: RepoIdentity;
-  if (!common || !top) {
-    identity = { mainRoot: key, worktreeRoot: key, isGit: false, key: shortKey(key) };
-  } else {
-    const commonAbs = canonical(path.resolve(cwd, common));
-    const mainRoot = canonical(path.resolve(commonAbs, '..'));
-    const worktreeRoot = canonical(path.resolve(top));
-    identity = { mainRoot, worktreeRoot, isGit: true, key: shortKey(mainRoot) };
-  }
+  const identity = identityFrom(cwd, gitOut(IDENTITY_ARGS, cwd));
   identityCache.set(key, identity);
   return identity;
+}
+
+/** The lookup `prefetchRepoIdentity` started, for the one cwd it was started in. */
+let prefetch: { key: string; out: Promise<string | undefined> } | undefined;
+
+/**
+ * Starts the `git rev-parse` of `resolveRepoIdentity` for `cwd` without waiting for it, so git runs while the caller loads
+ * its modules (the hook entry, card T0-HOOK-GIT-PREFETCH). The same arguments, environment and window flag as the
+ * synchronous call; its output is read exactly as that call reads it (exit status 0, stdout trimmed).
+ */
+export function prefetchRepoIdentity(cwd: string): void {
+  if (prefetch) return;
+  const out = new Promise<string | undefined>((resolve) => {
+    const chunks: Buffer[] = [];
+    const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
+    child.stdout.on('data', (d: Buffer) => chunks.push(d));
+    child.stderr.resume();
+    child.on('error', () => resolve(undefined));
+    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined));
+    child.stdin.end();
+  });
+  prefetch = { key: path.resolve(cwd), out };
+}
+
+/**
+ * Waits for the lookup `prefetchRepoIdentity` started and caches its identity when `cwd` resolves to the directory it ran
+ * in, so `resolveRepoIdentity(cwd)` spawns nothing; for any other cwd, or with no lookup started, nothing changes and the
+ * identity is asked of git synchronously as before.
+ */
+export async function settleRepoIdentity(cwd: string): Promise<void> {
+  if (!prefetch || prefetch.key !== path.resolve(cwd) || identityCache.has(prefetch.key)) return;
+  identityCache.set(prefetch.key, identityFrom(cwd, await prefetch.out));
 }
 
 /** Canonical filesystem path (resolves 8.3 short names, symlinks and drive-letter case) when it exists. */
@@ -112,9 +147,3 @@ export function hostName(): string {
     return 'unknown-host';
   }
 }
-
-/** Seam (card T0-HOOK-GIT-PREFETCH): starts no lookup yet. */
-export function prefetchRepoIdentity(_cwd: string): void {}
-
-/** Seam (card T0-HOOK-GIT-PREFETCH): settles nothing yet. */
-export async function settleRepoIdentity(_cwd: string): Promise<void> {}
