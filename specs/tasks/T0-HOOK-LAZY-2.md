@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-LAZY-2
 title: The hook guards load the router, the goal, lease and journal stores and the planning claims on first use, so a hook event that reads no state over a usable config loads no yaml; the config check with zod is unchanged
-status: todo
+status: merged
 branch: T0-HOOK-LAZY-2
 worktree: D:\wt\AIDLC\T0-HOOK-LAZY-2
 allow_paths:
