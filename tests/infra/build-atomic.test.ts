@@ -287,8 +287,8 @@ type Docs = { operations: string; changelog: string; claude: string; readme: str
 function missingDocText(docs: Docs): string[] {
   const missing: string[] = [];
   const paragraphs = docs.operations.split(/\n\s*\n/);
-  const hookProcess = paragraphs.findIndex((p) => p.startsWith('One hook process per event.'));
-  if (hookProcess < 0 || paragraphs[hookProcess + 1] !== OPERATIONS_SENTENCES.join(' ')) missing.push('OPERATIONS');
+  const hookLoading = paragraphs.findIndex((p) => p.startsWith('What a hook process loads'));
+  if (hookLoading < 0 || paragraphs[hookLoading + 1] !== OPERATIONS_SENTENCES.join(' ')) missing.push('OPERATIONS');
   const start = docs.changelog.indexOf('## Unreleased');
   const unreleased = start < 0 ? '' : docs.changelog.slice(start, docs.changelog.indexOf('\n## ', start + 1));
   if (!unreleased.includes(`\n${CHANGELOG_SENTENCES.join(' ')}\n`)) missing.push('CHANGELOG');
