@@ -162,6 +162,8 @@ test('T0-BUILD-ATOMIC acceptance 4: node scripts/build.ts prints each diagnostic
     // tsc reports a syntax error alone, without the type error on line 1 or an options error.
     { name: 'syntax', source: "const x: number = 'a';\nconst y = ;\n", status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]a\.ts\(2,11\): error TS1109: Expression expected\.\r?\n$/ },
     { name: 'syntax-options', source: "const x: number = 'a';\nconst y = ;\n", options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]a\.ts\(2,11\): error TS1109: Expression expected\.\r?\n$/ },
+    // tsc reports an options error without the type error.
+    { name: 'options-type', source: TYPE_ERROR, options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5069: [^\n]*\r?\n$/ },
     { name: 'options', source: CLEAN, options: { declarationMap: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5069: Option 'declarationMap' cannot be specified without specifying option 'declaration' or option 'composite'\.\r?\n$/ },
     { name: 'config', source: CLEAN, options: { notAnOption: true }, status: 2, out: 'out/a.js', stdout: /^[^\n]*[\\/]tsconfig\.json\(1,\d+\): error TS5023: Unknown compiler option 'notAnOption'\.\r?\n$/ },
   ];
@@ -196,14 +198,19 @@ test('T0-BUILD-ATOMIC acceptance 4: a tsconfig that cannot be read and an argume
   assert.equal(w.stderr, 'build: unknown argument "--watch"; takes -p <tsconfig> and --outDir <dir>\n');
 });
 
-/** A preload that makes every `renameSync` onto a path ending in BUILD_FAIL_RENAME throw. */
+/**
+ * A preload that makes `renameSync` onto a path ending in BUILD_FAIL_RENAME throw an error with code BUILD_FAIL_CODE, for
+ * the first BUILD_FAIL_TIMES tries (every try when unset).
+ */
 const FAULT = `
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 const suffix = process.env.BUILD_FAIL_RENAME;
+const code = process.env.BUILD_FAIL_CODE;
+let left = process.env.BUILD_FAIL_TIMES === undefined ? Infinity : Number(process.env.BUILD_FAIL_TIMES);
 const { renameSync } = fs;
 fs.renameSync = function (from, to) {
-  if (String(to).split('\\\\').join('/').endsWith(suffix)) throw new Error('EIO: injected rename failure');
+  if (String(to).split('\\\\').join('/').endsWith(suffix) && left-- > 0) throw Object.assign(new Error(code + ': injected rename failure'), { code });
   return renameSync.call(fs, from, to);
 };
 syncBuiltinESMExports();
@@ -220,29 +227,50 @@ function entriesFixture(name: string): string {
   return project;
 }
 
-test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit 1 before either entry is written; without the fault all three are written [R2]', () => {
+/** The build of a fresh entries fixture, with the rename onto `out/core/a.js` failing as `fault` says (no fault when undefined). */
+function entriesBuild(name: string, fault?: { code: string; times?: number }): { status: number | null; stdout: string; stderr: string; out: string } {
   const preload = path.join(dir, 'fault.mjs');
-  writeFileSync(preload, FAULT);
-  const faulted = entriesFixture('entries-fault');
-  const r = spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, BUILD, '-p', path.join(faulted, 'tsconfig.json')], {
-    cwd: root,
-    encoding: 'utf8',
-    env: { ...process.env, BUILD_FAIL_RENAME: '/out/core/a.js' },
-  });
-  assert.equal(r.status, 1, r.stdout + r.stderr);
-  assert.equal(r.stdout, '');
-  assert.equal(r.stderr, 'build: EIO: injected rename failure\n');
-  assert.equal(existsSync(path.join(faulted, 'out', 'hooks', 'entry.js')), false);
-  assert.equal(existsSync(path.join(faulted, 'out', 'cli', 'main.js')), false);
-  assert.deepEqual(files(path.join(faulted, 'out')), []);
-  const clean = entriesFixture('entries-clean');
-  const ok = spawnSync(process.execPath, [BUILD, '-p', path.join(clean, 'tsconfig.json')], { cwd: root, encoding: 'utf8' });
-  assert.equal(ok.status, 0, ok.stdout + ok.stderr);
-  assert.deepEqual(files(path.join(clean, 'out')), ['cli/main.js', 'core/a.js', 'hooks/entry.js']);
+  if (!existsSync(preload)) writeFileSync(preload, FAULT);
+  const project = entriesFixture(name);
+  const env: NodeJS.ProcessEnv = { ...process.env, BUILD_FAIL_RENAME: '/out/core/a.js', BUILD_FAIL_CODE: fault?.code ?? '' };
+  if (fault?.times !== undefined) env['BUILD_FAIL_TIMES'] = String(fault.times);
+  const argv = [...(fault ? ['--import', pathToFileURL(preload).href] : []), BUILD, '-p', path.join(project, 'tsconfig.json')];
+  const r = spawnSync(process.execPath, argv, { cwd: root, encoding: 'utf8', env });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr, out: path.join(project, 'out') };
+}
+
+test('T0-BUILD-ATOMIC acceptance 6: a write that fails stops the build with exit 1 before either entry is written; a rename refused while a file is open is retried [R1] [R2]', () => {
+  const failed = entriesBuild('entries-eio', { code: 'EIO' });
+  assert.equal(failed.status, 1, failed.stdout + failed.stderr);
+  assert.equal(failed.stdout, '');
+  assert.equal(failed.stderr, 'build: EIO: injected rename failure\n');
+  assert.equal(existsSync(path.join(failed.out, 'hooks', 'entry.js')), false);
+  assert.equal(existsSync(path.join(failed.out, 'cli', 'main.js')), false);
+  assert.deepEqual(files(failed.out), []);
+  // Only the codes of a rename onto an open file are retried: EIO fails at its first try.
+  const once = entriesBuild('entries-eio-1', { code: 'EIO', times: 1 });
+  assert.equal(once.status, 1, once.stdout + once.stderr);
+  assert.equal(once.stderr, 'build: EIO: injected rename failure\n');
+  assert.deepEqual(files(once.out), []);
+  for (const code of ['EPERM', 'EACCES', 'EBUSY']) {
+    const retried = entriesBuild(`entries-${code.toLowerCase()}-3`, { code, times: 3 });
+    assert.equal(retried.status, 0, `${code}: ${retried.stdout}${retried.stderr}`);
+    assert.equal(retried.stderr, '', code);
+    assert.deepEqual(files(retried.out), ['cli/main.js', 'core/a.js', 'hooks/entry.js'], code);
+    assert.equal(readFileSync(path.join(retried.out, 'core', 'a.js'), 'utf8'), 'export const a = 1;\n', code);
+  }
+  const refused = entriesBuild('entries-eperm', { code: 'EPERM' });
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr);
+  assert.equal(refused.stderr, 'build: EPERM: injected rename failure\n');
+  assert.deepEqual(files(refused.out), []);
+  const clean = entriesBuild('entries-clean');
+  assert.equal(clean.status, 0, clean.stdout + clean.stderr);
+  assert.deepEqual(files(clean.out), ['cli/main.js', 'core/a.js', 'hooks/entry.js']);
 });
 
 const OPERATIONS_SENTENCES = [
   '`npm run build` runs `scripts/build.ts` (card T0-BUILD-ATOMIC), which compiles the program of `tsconfig.json` as `tsc -p tsconfig.json` does and writes each file of dist/ to a temporary sibling renamed onto it, `hooks/entry.js` and `cli/main.js` last, so a hook or CLI process started during a build loads the whole earlier module or the whole new one.',
+  'A rename Windows refuses while another process reads the file is retried for up to 2 s, and a write that still fails stops the build before either entry is written.',
   'Under `tsc` a hook could load a module emptied for its rewrite: a PreToolUse guard then exited 1 with no deny and the routing guard printed nothing.',
   'A bare `tsc` still writes dist/ in place.',
 ];

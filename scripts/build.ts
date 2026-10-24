@@ -3,17 +3,21 @@
 // `-p`/`--project <tsconfig or directory>` (default `tsconfig.json`) and `--outDir <dir>`.
 //
 // tsc empties each output and then writes it, so a hook or CLI process that loads dist/ while tsc emits can read an
-// empty module. Here each output goes to a temporary sibling renamed onto it (`atomicWriteText`), and the compiled
-// entries that bin/resolve-entry.js compares with the sources go after every other output, so once an entry is newer
-// than the sources every module it loads is an output of this build. A failed write stops the build before either
-// entry is written.
-import { statSync } from 'node:fs';
+// empty module. Here each output goes to a temporary sibling renamed onto it (`writeWhole`), and the compiled entries
+// that bin/resolve-entry.js compares with the sources go after every other output, so once an entry is newer than the
+// sources every module it loads is an output of this build. A failed write stops the build before either entry is
+// written.
+import { mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import ts from 'typescript';
-import { atomicWriteText } from '../src/state/store.ts';
+import { tempName } from '../src/state/store.ts';
 
 /** The compiled entries of bin/aidlc.js and bin/aidlc-hook.js, relative to the output directory. */
 const ENTRIES = new Set(['cli/main.js', 'hooks/entry.js']);
+
+/** The codes of a rename Windows refuses onto a file another process has open; such a rename is retried. */
+const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY']);
+const RETRY_MS = 2000;
 
 /** The two options of tsc this build takes. */
 function parseArgs(argv: readonly string[]): { project: string; outDir?: string } {
@@ -35,6 +39,32 @@ function isDirectory(file: string): boolean {
     return statSync(file).isDirectory();
   } catch {
     return false;
+  }
+}
+
+/**
+ * Write `text` to a temporary sibling of `file` and rename it onto `file`, so a reader sees the whole earlier file or
+ * the whole new one. A rename refused with a code of `BUSY` is retried for up to `RETRY_MS`; any other failure, or one
+ * that outlasts the retries, removes the temporary file and throws.
+ */
+function writeWhole(file: string, text: string): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  const tmp = tempName(file);
+  try {
+    writeFileSync(tmp, text);
+    const deadline = Date.now() + RETRY_MS;
+    for (let wait = 5; ; wait = Math.min(wait * 2, 100)) {
+      try {
+        renameSync(tmp, file);
+        return;
+      } catch (err) {
+        if (!BUSY.has((err as NodeJS.ErrnoException).code ?? '') || Date.now() + wait > deadline) throw err;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, wait);
+      }
+    }
+  } catch (err) {
+    rmSync(tmp, { force: true });
+    throw err;
   }
 }
 
@@ -69,11 +99,11 @@ function build(argv: readonly string[]): number {
   const outRoot = parsed.options.outDir;
   const entries: [string, string][] = [];
   const emitted = program.emit(undefined, (file, text, bom) => {
-    const content = bom ? '﻿' + text : text;
+    const content = bom ? String.fromCharCode(0xfeff) + text : text;
     if (outRoot !== undefined && ENTRIES.has(path.relative(outRoot, file).split(path.sep).join('/'))) entries.push([file, content]);
-    else atomicWriteText(file, content);
+    else writeWhole(file, content);
   });
-  for (const [file, content] of entries) atomicWriteText(file, content);
+  for (const [file, content] of entries) writeWhole(file, content);
   all.push(...emitted.diagnostics);
   const diagnostics = ts.sortAndDeduplicateDiagnostics(all);
   diagnostics.forEach(report);
