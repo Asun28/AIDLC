@@ -81,7 +81,13 @@ export async function main(): Promise<void> {
   try {
     const event = readStdinJson(await readStdin());
     // The repository lookup the bin entry started (card T0-HOOK-GIT-PREFETCH); an event no guard handles never waits for it.
-    if (hookNamesFor(event).length) await settleRepoIdentity(event.cwd ?? process.cwd());
+    if (hookNamesFor(event).length) {
+      try {
+        await settleRepoIdentity(event.cwd ?? process.cwd());
+      } catch {
+        /* nothing cached: the guards ask git when they need the root */
+      }
+    }
     result = dispatchHook(event);
   } catch (err) {
     process.stderr.write(`[aidlc hook] ${(err as Error).message}\n`);

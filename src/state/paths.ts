@@ -72,36 +72,77 @@ export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
   return identity;
 }
 
+/** `spawnSync`'s default `maxBuffer`: more output than this on stdout or on stderr ends the child, and the call reads none. */
+const MAX_OUTPUT = 1024 * 1024;
+
+/**
+ * A finished lookup: `answered` when git ran, with its output read as `gitOut` reads it; not answered when the spawn itself
+ * failed (a throw, an `error` event, no output streams), which caches nothing (R3 decision 1).
+ */
+type Lookup = { answered: true; out: string | undefined } | { answered: false };
+
 /** The lookup `prefetchRepoIdentity` started, for the one cwd it was started in. */
-let prefetch: { key: string; out: Promise<string | undefined> } | undefined;
+let prefetch: { key: string; lookup: Promise<Lookup> } | undefined;
 
 /**
  * Starts the `git rev-parse` of `resolveRepoIdentity` for `cwd` without waiting for it, so git runs while the caller loads
  * its modules (the hook entry, card T0-HOOK-GIT-PREFETCH). The same arguments, environment and window flag as the
- * synchronous call; its output is read exactly as that call reads it (exit status 0, stdout trimmed).
+ * synchronous call, and its output read as that call reads it: exit status 0 and stdout trimmed, and no output when stdout
+ * or stderr passes `MAX_OUTPUT` (the child is ended, as `spawnSync` ends it). A spawn that fails in any way is no lookup,
+ * so the identity is then asked of git synchronously as before.
  */
 export function prefetchRepoIdentity(cwd: string): void {
   if (prefetch) return;
-  const out = new Promise<string | undefined>((resolve) => {
-    const chunks: Buffer[] = [];
-    const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
-    child.stdout.on('data', (d: Buffer) => chunks.push(d));
-    child.stderr.resume();
-    child.on('error', () => resolve(undefined));
-    child.on('close', (code) => resolve(code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined));
-    child.stdin.end();
+  const lookup = new Promise<Lookup>((resolve) => {
+    const unanswered = () => resolve({ answered: false });
+    try {
+      const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
+      child.on('error', unanswered);
+      const { stdout, stderr, stdin } = child;
+      if (!stdout || !stderr || !stdin) {
+        child.kill();
+        unanswered();
+        return;
+      }
+      const chunks: Buffer[] = [];
+      let outBytes = 0;
+      let errBytes = 0;
+      const overflow = () => {
+        child.kill();
+        resolve({ answered: true, out: undefined });
+      };
+      stdout.on('error', unanswered);
+      stderr.on('error', unanswered);
+      stdin.on('error', () => {
+        /* git reads no input; a closed pipe changes nothing */
+      });
+      stdout.on('data', (d: Buffer) => {
+        outBytes += d.length;
+        if (outBytes > MAX_OUTPUT) overflow();
+        else chunks.push(d);
+      });
+      stderr.on('data', (d: Buffer) => {
+        errBytes += d.length;
+        if (errBytes > MAX_OUTPUT) overflow();
+      });
+      child.on('close', (code) => resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined }));
+      stdin.end();
+    } catch {
+      unanswered();
+    }
   });
-  prefetch = { key: path.resolve(cwd), out };
+  prefetch = { key: path.resolve(cwd), lookup };
 }
 
 /**
  * Waits for the lookup `prefetchRepoIdentity` started and caches its identity when `cwd` resolves to the directory it ran
- * in, so `resolveRepoIdentity(cwd)` spawns nothing; for any other cwd, or with no lookup started, nothing changes and the
- * identity is asked of git synchronously as before.
+ * in and git answered, so `resolveRepoIdentity(cwd)` spawns nothing; for any other cwd, a spawn that failed, or with no
+ * lookup started, nothing changes and the identity is asked of git synchronously as before.
  */
 export async function settleRepoIdentity(cwd: string): Promise<void> {
   if (!prefetch || prefetch.key !== path.resolve(cwd) || identityCache.has(prefetch.key)) return;
-  identityCache.set(prefetch.key, identityFrom(cwd, await prefetch.out));
+  const lookup = await prefetch.lookup;
+  if (lookup.answered) identityCache.set(prefetch.key, identityFrom(cwd, lookup.out));
 }
 
 /** Canonical filesystem path (resolves 8.3 short names, symlinks and drive-letter case) when it exists. */

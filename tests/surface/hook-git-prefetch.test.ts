@@ -34,20 +34,47 @@ function withTemp<T>(fn: (dir: string) => T): T {
 
 /**
  * A preload that counts the `spawn` and `spawnSync` calls of `git` and records whether the first `spawn` came before the
- * hook entry module loaded; it writes the counts to `PROBE_OUT` at exit.
+ * hook entry module loaded; it writes the counts to `PROBE_OUT` at exit. `PROBE_MODE` injects a fault into the `git` calls
+ * (R3 decision 1): `throw` makes `spawn` throw, `nostreams` makes it return a child without output streams that then
+ * reports EMFILE, and `verbose-out` and `verbose-err` run, for `spawn` and `spawnSync` alike, a git stand-in that prints
+ * the two refs of the working directory followed by more than 1 MiB on stdout or on stderr.
  */
 const PROBE = `import cp from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import { registerHooks, syncBuiltinESMExports } from 'node:module';
 const counts = { spawn: 0, spawnSync: 0, spawnBeforeEntry: false };
+const mode = process.env.PROBE_MODE ?? '';
+const VERBOSE = {
+  'verbose-out': "process.stdout.write('.git\\\\n' + process.cwd() + '\\\\n' + 'x'.repeat(1024 * 1024))",
+  'verbose-err': "process.stdout.write('.git\\\\n' + process.cwd() + '\\\\n'); process.stderr.write('x'.repeat(1024 * 1024 + 1))",
+};
 let seq = 0;
 let spawnedAt = 0;
 let entryAt = 0;
 const realSpawn = cp.spawn;
 const realSync = cp.spawnSync;
 const write = fs.writeFileSync;
-cp.spawn = function (cmd, ...rest) { if (cmd === 'git') { counts.spawn++; if (!spawnedAt) spawnedAt = ++seq; } return realSpawn.call(this, cmd, ...rest); };
-cp.spawnSync = function (cmd, ...rest) { if (cmd === 'git') counts.spawnSync++; return realSync.call(this, cmd, ...rest); };
+cp.spawn = function (cmd, args, options) {
+  if (cmd !== 'git') return realSpawn.call(this, cmd, args, options);
+  counts.spawn++;
+  if (!spawnedAt) spawnedAt = ++seq;
+  if (mode === 'throw') throw Object.assign(new Error('spawn git E2BIG'), { code: 'E2BIG' });
+  if (mode === 'nostreams') {
+    const child = new EventEmitter();
+    Object.assign(child, { stdout: null, stderr: null, stdin: null, kill: () => true });
+    process.nextTick(() => child.emit('error', Object.assign(new Error('spawn git EMFILE'), { code: 'EMFILE' })));
+    return child;
+  }
+  if (VERBOSE[mode]) return realSpawn.call(this, process.execPath, ['-e', VERBOSE[mode]], options);
+  return realSpawn.call(this, cmd, args, options);
+};
+cp.spawnSync = function (cmd, args, options) {
+  if (cmd !== 'git') return realSync.call(this, cmd, args, options);
+  counts.spawnSync++;
+  if (VERBOSE[mode]) return realSync.call(this, process.execPath, ['-e', VERBOSE[mode]], options);
+  return realSync.call(this, cmd, args, options);
+};
 syncBuiltinESMExports();
 registerHooks({ load(url, context, next) { if (!entryAt && /\\/hooks\\/entry\\.(js|ts)$/.test(url)) entryAt = ++seq; return next(url, context); } });
 process.on('exit', () => { counts.spawnBeforeEntry = spawnedAt > 0 && entryAt > 0 && spawnedAt < entryAt; write(process.env.PROBE_OUT, JSON.stringify(counts)); });
@@ -88,14 +115,14 @@ test('T0-HOOK-GIT-PREFETCH acceptance 1: the hook entry starts git before its mo
   withTemp((dir) => {
     const f = fixture(dir);
     let n = 0;
-    const hook = (processCwd: string, event: Record<string, unknown>) => {
+    const hook = (processCwd: string, event: Record<string, unknown>, mode = '') => {
       const out = path.join(dir, `probe-${++n}.json`);
       const state = path.join(dir, `state-${n}`);
       mkdirSync(state);
       const r = spawnSync(process.execPath, ['--import', pathToFileURL(f.probe).href, path.join(root, 'bin', 'aidlc-hook.js')], {
         cwd: processCwd,
         input: JSON.stringify({ session_id: 'prefetch', ...event }),
-        env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'prefetch', PROBE_OUT: out }),
+        env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'prefetch', PROBE_OUT: out, PROBE_MODE: mode }),
         encoding: 'utf8',
         windowsHide: true,
         timeout: 60_000,
@@ -117,6 +144,12 @@ test('T0-HOOK-GIT-PREFETCH acceptance 1: the hook entry starts git before its mo
     assert.deepEqual([bash.counts.spawn, bash.counts.spawnSync], [1, 0]);
     const unguarded = hook(f.repo, { hook_event_name: 'PreToolUse', tool_name: 'Read', cwd: f.repo, tool_input: { file_path: 'contracts/a.yaml' } });
     assert.deepEqual([unguarded.status, unguarded.stdout, unguarded.stderr], [0, '', ''], 'an event no guard handles');
+    // A spawn that fails is no lookup (R3 decision 1): the guards still run, asking git synchronously as on main.
+    for (const mode of ['throw', 'nostreams']) {
+      const failed = hook(f.repo, edit(f.repo), mode);
+      assert.deepEqual([failed.status, failed.stdout, failed.stderr], [0, DENIED, ''], `${mode}: the guards run`);
+      assert.deepEqual([failed.counts.spawn, failed.counts.spawnSync], [1, 1], `${mode}: git is asked synchronously`);
+    }
   });
 });
 
@@ -128,13 +161,13 @@ test('T0-HOOK-GIT-PREFETCH acceptance 2: a settled lookup gives the identity git
     const f = fixture(dir);
     const pathsUrl = pathToFileURL(path.join(root, 'src', 'state', 'paths.ts')).href;
     let n = 0;
-    const identity = (cwd: string, settle: string, target: string) => {
+    const identity = (cwd: string, settle: string, target: string, mode = '') => {
       const out = path.join(dir, `identity-${++n}.json`);
       const code = `import { prefetchRepoIdentity, settleRepoIdentity, resolveRepoIdentity } from ${JSON.stringify(pathsUrl)};
 prefetchRepoIdentity(process.cwd());
 await settleRepoIdentity(${JSON.stringify(settle)});
 process.stdout.write(JSON.stringify(resolveRepoIdentity(${JSON.stringify(target)})));`;
-      const r = spawnSync(process.execPath, ['--import', pathToFileURL(f.probe).href, '--input-type=module', '-e', code], { cwd, env: childEnv({ PROBE_OUT: out }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+      const r = spawnSync(process.execPath, ['--import', pathToFileURL(f.probe).href, '--input-type=module', '-e', code], { cwd, env: childEnv({ PROBE_OUT: out, PROBE_MODE: mode }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
       assert.equal(r.status, 0, r.stderr);
       const counts = JSON.parse(readFileSync(out, 'utf8')) as Counts;
       return { identity: JSON.parse(r.stdout) as unknown, spawn: counts.spawn, spawnSync: counts.spawnSync };
@@ -145,6 +178,14 @@ process.stdout.write(JSON.stringify(resolveRepoIdentity(${JSON.stringify(target)
     assert.deepEqual(identity(f.worktree, f.worktree, f.worktree), { identity: { mainRoot: f.repo, worktreeRoot: f.worktree, isGit: true, key: keyOf(f.repo) }, spawn: 1, spawnSync: 0 }, 'a linked worktree');
     assert.deepEqual(identity(f.outside, f.outside, f.outside), { identity: { mainRoot: f.outside, worktreeRoot: f.outside, isGit: false, key: keyOf(f.outside) }, spawn: 1, spawnSync: 0 }, 'a directory outside git');
     assert.deepEqual(identity(f.repo, f.sub, f.sub), { identity: inRepo, spawn: 1, spawnSync: 1 }, 'another directory than the lookup ran in asks git synchronously');
+    // R3 decision 1: a failed spawn caches nothing, so git is asked synchronously; output past spawnSync's 1 MiB on either
+    // stream reads as no output, on the prefetched path as on the synchronous one.
+    for (const mode of ['throw', 'nostreams']) assert.deepEqual(identity(f.repo, f.repo, f.repo, mode), { identity: inRepo, spawn: 1, spawnSync: 1 }, mode);
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    for (const mode of ['verbose-out', 'verbose-err']) {
+      assert.deepEqual(identity(f.repo, f.repo, f.repo, mode), { identity: noRepo, spawn: 1, spawnSync: 0 }, `${mode}: prefetched`);
+      assert.deepEqual(identity(f.repo, f.sub, f.repo, mode), { identity: noRepo, spawn: 1, spawnSync: 1 }, `${mode}: synchronous`);
+    }
   });
 });
 
