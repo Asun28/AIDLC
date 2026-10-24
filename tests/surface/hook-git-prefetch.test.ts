@@ -148,20 +148,21 @@ process.stdout.write(JSON.stringify(resolveRepoIdentity(${JSON.stringify(target)
   });
 });
 
-const OPS_SENTENCES = 'Finding the root costs one `git rev-parse` per hook process, which blocks for about 40 ms on Windows when called synchronously; the hook entry (`bin/aidlc-hook.js`) starts it before it loads its modules, and `main` uses its answer when the event\'s working directory is the one it started in (card T0-HOOK-GIT-PREFETCH), so git runs while the modules load and a hook event takes 25 to 30 ms less. Every other directory and every other caller (`aidlc hook <name>`, `aidlc hook auto`, the CLI) asks git when it needs the root, as before.';
+const OPS_PARAGRAPH = 'When the hook entry asks git (card T0-HOOK-GIT-PREFETCH): that `git rev-parse` blocks for about 40 ms on Windows when called synchronously, so the hook entry (`bin/aidlc-hook.js`) starts it before it loads its modules, and `main` uses its answer when the event\'s working directory is the one it started in; git then runs while the modules load, and a hook event takes 25 to 30 ms less. Every other directory and every other caller (`aidlc hook <name>`, `aidlc hook auto`, the CLI) asks git when it needs the root, as before.';
 
 const CHANGELOG_ENTRY = '- T0-HOOK-GIT-PREFETCH: the hook entry starts the `git rev-parse` that finds the repository root before it loads its modules, and `main` uses the answer when the event\'s working directory is the one git ran in, so git runs while the modules load instead of blocking the guards (about 40 ms on Windows); any other directory and every other caller ask git as before. Measured on Windows in two interleaved runs of 15: each hook event takes 25 to 30 ms less (PreToolUse Bash 174 ms to 146 ms and 173 ms to 147 ms).';
 
 /** The sentences of a paragraph: a split after a full stop that a space and a capital letter or a backtick follow. */
 const sentences = (paragraph: string): string[] => paragraph.split(/(?<=\.)\s+(?=[A-Z`])/);
 
-/** Whether the docs carry this card's texts: the sentences in the config-discovery paragraph of Hooks, and the entry. */
+/** Whether the docs carry this card's texts: the paragraph right after the config-discovery paragraph of Hooks, and the entry. */
 function docsHold(ops: string, changelog: string): boolean {
   const at = ops.indexOf('\n## Hooks\n');
   const end = ops.indexOf('\n## Pre-review (R2)\n');
   if (!(at >= 0 && end > at)) return false;
-  const discovery = ops.slice(at, end).split('\n\n').find((p) => p.startsWith('Which `aidlc.config.json` the guards read'));
-  if (!discovery?.includes(OPS_SENTENCES)) return false;
+  const paragraphs = ops.slice(at, end).split('\n\n');
+  const discovery = paragraphs.findIndex((p) => p.startsWith('Which `aidlc.config.json` the guards read'));
+  if (discovery < 0 || paragraphs[discovery + 1] !== OPS_PARAGRAPH) return false;
   const start = changelog.indexOf('## Unreleased');
   const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
   return unreleased.split('\n').includes(CHANGELOG_ENTRY);
@@ -171,12 +172,12 @@ test('T0-HOOK-GIT-PREFETCH acceptance 5: the docs carry every sentence this card
   const [ops, changelog] = [read('docs/OPERATIONS.md'), read('CHANGELOG.md')];
   assert.ok(docsHold(ops, changelog), 'the doc texts this card adds are present whole');
   const removals: [string, () => boolean][] = [
-    ...sentences(OPS_SENTENCES).map((s): [string, () => boolean] => [s, () => docsHold(ops.replace(s, ''), changelog)]),
+    ...sentences(OPS_PARAGRAPH).map((s): [string, () => boolean] => [s, () => docsHold(ops.replace(s, ''), changelog)]),
     ...sentences(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, changelog.replace(s, ''))]),
   ];
   assert.equal(removals.length, REMOVALS);
   for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
 });
 
-// 2 OPERATIONS sentences and 2 CHANGELOG sentences.
+// 2 OPERATIONS paragraph sentences and 2 CHANGELOG sentences.
 const REMOVALS = 4;
