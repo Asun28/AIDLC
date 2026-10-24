@@ -118,6 +118,10 @@ const pollOf = (value: unknown): { pollSeconds?: number } => {
   return poll === undefined ? {} : { pollSeconds: poll };
 };
 
+// The CardRunner methods each covered command reaches (the coverage record of .claude/skills/verify-card-run-writes/SKILL.md):
+// A recordAttempt -> deliverOwed, save; B preReview -> deliverOwed, commitReviewed, deliverOwed; C formalReview -> deliverOwed,
+// commitFormalResult -> commitReviewed, deliverOwed; D next -> deliverOwed, ship -> save, applyShipResult -> deliverOwed, close
+// -> save; E next -> deliverOwed, save.
 const COVERED: Covered[] = [
   {
     stage: 'A', name: 'A recordAttempt success (card attempt)', run: attempt,
