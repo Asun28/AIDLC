@@ -5,12 +5,13 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import fs, { readFileSync } from 'node:fs';
+import fs, { mkdirSync, readFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { goalForCards, makeFixture, writeCard, type Fixture } from './_harness.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { CardRun, type Card, type Goal, type JournalEvent } from '../../src/core/types.ts';
@@ -68,7 +69,49 @@ function prepared(r3 = PASS): Ctx {
 }
 
 const next = (c: Ctx) => c.runner.next(c.g(), c.card, c.run());
-const attempt = (c: Ctx): CardRun => c.runner.recordAttempt(c.g(), c.card, c.run(), { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-jo' });
+/** The finished attempt's event data as `card attempt` records it, every field set. */
+const FINISHED = { outcome: 'success', cause: 'none left', progress: true, evidence: 'dod 21/21' } as const;
+const attempt = (c: Ctx): CardRun => c.runner.recordAttempt(c.g(), c.card, c.run(), { ...FINISHED, dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: 'sha-jo' });
+const HEX64 = /^[0-9a-f]{64}$/;
+
+/**
+ * A card at SHIP whose next `card next` merges on the GitHub ship path and reads the merge's ShippedFacts from gh and git
+ * (the setup of T1-AUDIT-FACTS-2 acceptance 1 in tests/scenarios/t0-flow.test.ts): PR 42, head a..a, merge b..b, tree c..c.
+ */
+function shipWithFacts(): Ctx {
+  const [HEAD, MERGE, TREE] = ['a', 'b', 'c'].map((ch) => ch.repeat(40)) as [string, string, string];
+  const fx = makeFixture();
+  writeCard(fx, { id: CARD, title: 'journal owed facts' });
+  const goalId = goalForCards(fx, [CARD]).id;
+  const card = fx.card(CARD);
+  const g = () => fx.goal(goalId);
+  const dry = fx.runner();
+  let r = dry.next(g(), card, fx.controller.ensureCardRun(g(), CARD));
+  r = dry.next(g(), card, r.run);
+  dry.recordAttempt(g(), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: HEAD });
+  mkdirSync(path.join(fx.config.worktreeRoot, CARD, '.review'), { recursive: true });
+  let merged = false;
+  const script = scriptedRunner({
+    'gh api user -q .login': { stdout: 'alice\n' },
+    'git add -A': {},
+    'git diff --cached --quiet': {},
+    'git rev-parse --verify HEAD': { stdout: `${HEAD}\n` },
+    'git fetch': {},
+    'git rev-parse --verify --quiet refs/remotes/origin/main^{commit}': { stdout: `${'d'.repeat(40)}\n` },
+    'git merge-tree --write-tree HEAD': { stdout: `${'f'.repeat(40)}\n` },
+    'git push': {},
+    'gh pr list': { stdout: '[]' },
+    'gh pr create': { stdout: 'https://github.com/o/r/pull/42\n' },
+    'gh api repos/o/r/commits': { stdout: JSON.stringify({ check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }] }) },
+    'gh pr merge': () => ((merged = true), {}),
+    'gh pr view 42 --repo o/r --json': () => ({ stdout: JSON.stringify({ number: 42, state: 'MERGED', headRefOid: HEAD, baseRefName: 'main', mergeCommit: merged ? { oid: MERGE } : null }) }),
+    [`git rev-parse ${MERGE}^{tree}`]: { stdout: `${TREE}\n` },
+  });
+  const github = { requiredChecks: ['ci'], requireVerdict: false, ciTimeoutMs: 0, ciPollMs: 1 };
+  const ship = new GitHubShipPath({ mainRoot: fx.tmp, worktreeRoot: fx.config.worktreeRoot, repository: 'o/r', runner: script, ...github, sleep: () => {} });
+  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: 'github', repository: 'o/r', github }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: ship, now: fx.now, runner: script });
+  return { fx, runner, goalId, card, g, run: () => fx.store.getCardRun(goalId, CARD)!, cardFile: path.resolve(fx.paths.cards, goalId, `${CARD}.json`), spawned: { r2: 0, r3: 0 } };
+}
 const preReview = (c: Ctx) => c.runner.preReview(c.g(), c.card, c.run());
 const formalReview = (c: Ctx) => c.runner.formalReview(c.g(), c.card, c.run());
 
@@ -137,9 +180,7 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
     assert.equal(next(c).directive.kind, 'pre-review');
     const finished = ofType(c, 'ATTEMPT_FINISHED');
     assert.equal(finished.length, 1);
-    assert.equal(finished[0]!.data['eventKey'], owed[0]!.key);
-    assert.equal(finished[0]!.data['completed'], true);
-    assert.equal(finished[0]!.data['outcome'], 'success');
+    assert.deepEqual(finished[0]!.data, { outcome: 'success', cause: 'none left', progress: true, evidence: 'dod 21/21', eventKey: owed[0]!.key, completed: true });
     const count = events(c).length;
     assert.equal(next(c).directive.kind, 'pre-review');
     assert.equal(events(c).length, count);
@@ -187,8 +228,10 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
     assert.equal(next(c).directive.kind, 'review');
     const decided = ofType(c, 'PRE_REVIEW_DECIDED');
     assert.equal(decided.length, 1);
-    const d = decided[0]!.data;
-    assert.deepEqual([d['eventKey'], d['completed'], d['outcome'], d['findings'], d['reraised'], d['resolved']], [owed[0]!.key, true, 'pass', [], [], []]);
+    // Every field the commit wrote: literals, and the receipt fields from the round the ledger holds.
+    const round = c.run().preReview.rounds.at(-1)!;
+    assert.match(String(round.receiptSha256), HEX64);
+    assert.deepEqual(decided[0]!.data, { cycle: 0, round: 1, reviewer: 'fake-r2', candidateDigest: 'sha-jo', outcome: 'pass', runStatus: 'success', reasons: [], advisory: [], findings: [], reraised: [], resolved: [], verdictRef: round.verdictRef, receiptSha256: round.receiptSha256, durationMs: 0, perspectives: ['review:pass'], policyHash: round.policyHash, eventKey: owed[0]!.key, completed: true });
   });
 
   it('a lost REVIEW_DECIDED append is made once by the next card next, completed, without publication fields [acceptance 3]', async () => {
@@ -201,21 +244,25 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
     assert.equal(next(c).directive.kind, 'close');
     const decided = ofType(c, 'REVIEW_DECIDED');
     assert.equal(decided.length, 1);
-    const d = decided[0]!.data;
-    assert.deepEqual([d['eventKey'], d['completed'], d['outcome'], d['findings'], d['reraised'], d['resolved']], [owed[0]!.key, true, 'pass', [], [], []]);
-    assert.equal('canonicalPublished' in d, false);
+    const { receiptSha256, ...d } = decided[0]!.data;
+    const invocation = c.run().review.invocations.at(-1)!;
+    assert.match(String(receiptSha256), HEX64);
+    assert.match(invocation.invocationId, /^r3:T1-JO\.r3\.1\.[0-9a-f]{8}$/);
+    // Every field the commit wrote: literals, the ids and refs from the invocation the ledger holds; no publication field.
+    assert.deepEqual(d, { invocationId: invocation.invocationId, reviewer: 'primary', candidateDigest: 'sha-jo', outcome: 'pass', mergeBlocking: false, decision: 'proceed-merge', runStatus: 'success', reasons: [], advisory: [], findings: [], reraised: [], resolved: [], verdictRef: invocation.verdictRef, durationMs: 0, policyHash: invocation.policyHash, eventKey: owed[0]!.key, completed: true });
   });
 
-  it('a lost merge OPERATION_RESULT append is made once by the next card next with the owed data and completed [acceptance 4]', async () => {
-    const c = await atReview();
-    await formalReview(c);
+  it('a lost merge OPERATION_RESULT append is made once by the next card next with the owed operation, status and facts, and completed [acceptance 4]', async () => {
+    const c = shipWithFacts();
     const { error, injected } = await faulted(c, { call: 'appendFileSync', event: 'OPERATION_RESULT' }, () => next(c));
     assert.equal(error, injected);
     assert.equal(ofType(c, 'OPERATION_RESULT').length, 0);
     const op = c.fx.ops.list({ cardId: CARD })[0]!;
     assert.equal(op.status, 'succeeded');
+    const facts = { headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', mergeSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', tree: 'cccccccccccccccccccccccccccccccccccccccc', pr: 42 };
+    assert.deepEqual(owedOf(c.run()).filter((o) => o.type === 'OPERATION_RESULT').map((o) => o.data), [{ operationId: op.id, status: 'succeeded', ...facts }]);
     assert.equal(next(c).directive.kind, 'close');
-    assert.deepEqual(ofType(c, 'OPERATION_RESULT').map((e) => e.data), [{ operationId: op.id, status: 'succeeded', completed: true }]);
+    assert.deepEqual(ofType(c, 'OPERATION_RESULT').map((e) => e.data), [{ operationId: op.id, status: 'succeeded', headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', mergeSha: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', tree: 'cccccccccccccccccccccccccccccccccccccccc', pr: 42, completed: true }]);
     next(c);
     assert.equal(ofType(c, 'OPERATION_RESULT').length, 1);
   });
@@ -246,11 +293,11 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
   it('review pre appends an owed ATTEMPT_FINISHED before its round [acceptance 5]', async () => {
     const c = atBuild();
     await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_FINISHED' }, () => attempt(c));
+    const key = owedOf(c.run())[0]!.key;
     const before = events(c).length;
     await preReview(c);
     const appended = events(c).slice(before);
-    assert.equal(appended[0]!.type, 'ATTEMPT_FINISHED');
-    assert.equal(appended[0]!.data['completed'], true);
+    assert.deepEqual([appended[0]!.type, appended[0]!.data], ['ATTEMPT_FINISHED', { outcome: 'success', cause: 'none left', progress: true, evidence: 'dod 21/21', eventKey: key, completed: true }]);
     const decided = appended.find((e) => e.type === 'PRE_REVIEW_DECIDED');
     assert.ok(decided && decided.seq > appended[0]!.seq);
   });
