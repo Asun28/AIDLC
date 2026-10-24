@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-HOOK-LAZY-2: the hook guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so a hook event that reads no state loads no yaml; the config check with zod is unchanged, and a module that fails to load reaches the hook entry, which names it on stderr and exits 0. It replaces T0-HOOK-LAZY, stopped when R3 decision 3 re-raised the provenance of its config stamp (ruling 2026-10-24). Measured on Windows: about 35 ms less per hook event (PreToolUse Bash 217 ms to 180 ms), and 109 to 113 modules loaded instead of 189.
+
 - T0-REVIEW-ADMIT-FOREIGN (bugfix): a card asking the review pool for admission is admitted only for its own request and waits its turn behind another card's request (`review r3` refuses, the ship waits on `review-pool:<pool>:behind`, both naming the card ahead). Before, it admitted the other card's request on its behalf, that request stayed `running` with the slot and nobody to run it, the other card's `review r3` refused with "a matching formal review is already running" and both cards waited for good.
 
 - T0-OP-INTENT-DUP (bugfix): a ship that failed after recording its merge intent (at the `OPERATION_INTENT`, `REVIEW_REQUESTED` or `REVIEW_ADMITTED` append, the review enqueue or the admission) no longer leaves that intent `intended` for good: the next ship of the same candidate continues under it and journals its `OPERATION_INTENT` when it is missing. Before, the next ship recorded a second intent and merged, and the first kept the goal's `aidlc next` waiting on `reconcile:<id>`, refused takeovers and blocked `aidlc audit verify` until a person ran `aidlc ops reconcile`.
