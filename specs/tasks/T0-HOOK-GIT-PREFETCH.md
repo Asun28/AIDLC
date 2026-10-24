@@ -57,5 +57,5 @@ For every hook event, the identity a guard reads equals the one main's synchrono
 ## Decisions
 - The prefetch lives in bin/aidlc-hook.js because the entry module loads only after its whole import graph has loaded, which is the work git should overlap; the bin imports `state/paths` alone first (it imports node builtins only) and the entry's graph shares that instance.
 - The import is optional: tests/infra/bin-entry.test.ts runs the shipped bin over stub entries without `state/paths`, and a package where it fails to load runs as on main (the entry then fails on the same module, as before).
-- `main` settles only for an event with a guard, so an event no guard handles never waits for git.
+- `main` settles only for an event with a guard, so an event no guard handles never waits for git. `main` ends with `process.exit(result.exitCode)`, so a process that does not settle (no guard, or an event in another directory) exits without waiting on the git child, which finishes on its own; the child is not unreferenced, since the exit already ends the process (R2 cycle 0 advisory, recorded before R3).
 - Directories are compared with `path.resolve`, as the identity cache keys them; a different spelling of the same directory only costs the synchronous call main makes.
