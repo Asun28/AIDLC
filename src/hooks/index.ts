@@ -291,7 +291,8 @@ function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
     if (guard === 'production-gate') return productionGate(event, env, legacy, cwd, true);
     if (guard === 'protect-paths') return protectPaths(event, legacy, true);
     return protectTests(event, cwd, env, legacy);
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -435,7 +436,8 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
         }
       }
       if (!matched && !existsSync(paths.goals)) matched = true; // no aidlc state: honour the plain env approval like the playbook hook
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       matched = false;
     }
   }
@@ -561,6 +563,7 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
       try {
         lease = leases.read(lazy.lease().resourceKeys.card(repoKey, cardId));
       } catch (err) {
+        lazy.rethrowLoadError(err);
         unreadable.push(`${cardId}: ${leaseReadCode(err)}`);
         return true;
       }
@@ -582,18 +585,21 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
         const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
         contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
       }
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       /* the DoD check is advisory */
     }
     try {
       contexts.push(...planningArtifactsContexts(cwd, env, active, leases, repoKey, host, session));
     } catch (err) {
+      lazy.rethrowLoadError(err);
       // The session is told the check did not run, by error code only (git, config or a store read).
       contexts.push(`[aidlc] The planning-artifacts check did not run (${lazy.claims().readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
     }
     if (!contexts.length) return { exitCode: 0 };
     return stopContext(contexts.join(' '));
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -617,7 +623,8 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
     let lease: Lease | undefined;
     try {
       lease = leases.read(lazy.lease().resourceKeys.goal(repoKey, goal.id));
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       return false;
     }
     if (!lease || lease.released) return false;

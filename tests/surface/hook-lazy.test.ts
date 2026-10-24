@@ -3,11 +3,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import * as lazy from '../../src/hooks/lazy.ts';
+import { computeGoalDeadlines } from '../../src/core/deadlines.ts';
+import { stagesForTarget } from '../../src/core/goal-machine.ts';
+import { addMs, CardRun, Goal } from '../../src/core/types.ts';
+import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
+import { GoalStore } from '../../src/state/goal-store.ts';
+import { hostName, resolveRepoIdentity, statePathsFromRoot } from '../../src/state/paths.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const counterUrl = pathToFileURL(path.join(root, 'bench', 'counter.ts')).href;
@@ -113,11 +119,98 @@ test('T0-HOOK-LAZY-2 acceptance 4: bench/baseline.json holds the hook journeys a
   }
 });
 
+const FIXTURE_AT = '2026-01-01T00:00:00.000Z';
+
+/**
+ * A git repository with a goal whose BUILD run has no DoD receipt and whose goal lease the session `hook-lazy` holds on this
+ * host, written with the stores of this checkout into `state`: the Stop hook reaches the DoD check and the planning check.
+ */
+function stopFixture(repo: string, state: string): void {
+  const git = (args: string[]) => {
+    const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: repo, encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git(['init', '-q', '-b', 'main']);
+  git(['commit', '-q', '--allow-empty', '-m', 'init']);
+  const paths = statePathsFromRoot(state);
+  const store = new GoalStore(paths);
+  store.saveGoal(
+    Goal.parse({
+      schemaVersion: 1,
+      id: 'g-lazy',
+      generation: 0,
+      revision: 0,
+      revisions: [{ revision: 0, at: FIXTURE_AT, reason: 'intake', request: { text: 'hook lazy fixture goal', source: 'natural-language' } }],
+      repository: 'repo',
+      routing: { size: 'T0', sizeSource: 'inferred', kind: 'change', target: 'development', targetSource: 'default', cardCount: 1, modules: ['router', 'card-loop'], nextModule: 'card-loop', skills: ['tdd'], dataImpact: false, reasons: [] },
+      target: 'development',
+      stages: stagesForTarget('development'),
+      state: 'RUN',
+      deadlines: computeGoalDeadlines(FIXTURE_AT, { cardCount: 1 }),
+      createdAt: FIXTURE_AT,
+      updatedAt: FIXTURE_AT,
+    }),
+  );
+  store.saveCardRun(CardRun.parse({ goalId: 'g-lazy', cardId: 'T1-LAZY', cardRevision: 0, goalGeneration: 0, state: 'BUILD', startedAt: FIXTURE_AT, deadline: addMs(FIXTURE_AT, 3600_000), updatedAt: FIXTURE_AT }));
+  mkdirSync(paths.leases, { recursive: true });
+  const actor = { session: 'hook-lazy', pid: 4242, processStart: FIXTURE_AT, host: hostName() };
+  new LeaseStore(paths.leases).claim(resourceKeys.goal(resolveRepoIdentity(repo).key, 'g-lazy'), { actor, now: FIXTURE_AT, ttlMs: 100 * 365 * 24 * 3600_000 });
+}
+
+test('T0-HOOK-LAZY-2 acceptance 7: a module that fails to load reaches the hook entry through every guard catch, which names it on stderr and exits 0 (R3 decision 1) [R2]', () => {
+  withTemp((dir) => {
+    const pkg = path.join(dir, 'pkg');
+    for (const part of ['src', 'bin']) cpSync(path.join(root, part), path.join(pkg, part), { recursive: true });
+    cpSync(path.join(root, 'package.json'), path.join(pkg, 'package.json'));
+    symlinkSync(path.join(root, 'node_modules'), path.join(pkg, 'node_modules'), 'junction');
+    const repo = path.join(dir, 'repo');
+    const state = path.join(dir, 'state');
+    mkdirSync(repo);
+    mkdirSync(state);
+    stopFixture(repo, state);
+    const run = (event: Record<string, unknown>, extra: Record<string, string> = {}) =>
+      spawnSync(process.execPath, [path.join(pkg, 'bin', 'aidlc-hook.js')], { cwd: repo, input: JSON.stringify({ ...event, cwd: repo, session_id: 'hook-lazy' }), env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'hook-lazy', ...extra }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const stop = { hook_event_name: 'Stop' };
+    const deploy = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'npm run deploy -- --env production' } };
+    // Before any module is broken: the DoD reminder and the planning check run; the approval names no authorization, so the gate denies.
+    const intact = run(stop);
+    assert.equal(intact.status, 0, intact.stderr);
+    assert.ok(intact.stdout.includes('T1-LAZY (BUILD) have no fresh DoD receipt'), intact.stdout);
+    assert.equal(run(deploy, { RELEASE_APPROVAL: 'rel-1' }).status, 2, 'the gate denies an approval that names no recorded authorization');
+    const broken = (rel: string, act: () => ReturnType<typeof run>, module: string) => {
+      const file = path.join(pkg, 'src', rel);
+      const source = readFileSync(file, 'utf8');
+      writeFileSync(file, "throw new Error('broken by the test');\n");
+      try {
+        const r = act();
+        assert.deepEqual([r.status, r.stdout], [0, ''], `${rel}: ${r.stderr}`);
+        // The cause is the module's own throw, or a link error in a module that imports it (journal.ts through lease.ts).
+        assert.ok(r.stderr.startsWith(`[aidlc hook] cannot load ${module}: `), `${rel}: ${r.stderr}`);
+      } finally {
+        writeFileSync(file, source);
+      }
+    };
+    broken('state/goal-store.ts', () => run(stop), '../state/goal-store');
+    broken('state/goal-store.ts', () => run(deploy, { RELEASE_APPROVAL: 'rel-1' }), '../state/goal-store');
+    // Under a config the schema rejects, the gate first decides on the legacy reading (legacyDecision), whose catch rethrows too.
+    broken('state/goal-store.ts', () => {
+      writeFileSync(path.join(repo, 'aidlc.config.json'), JSON.stringify({ mode: 'x' }));
+      try {
+        return run(deploy, { RELEASE_APPROVAL: 'rel-1' });
+      } finally {
+        rmSync(path.join(repo, 'aidlc.config.json'));
+      }
+    }, '../state/goal-store');
+    broken('state/journal.ts', () => run(stop), '../coordination/lease');
+    broken('state/claims.ts', () => run(stop), '../state/claims');
+  });
+});
+
 const HOOKS_PARAGRAPH = 'What a hook process loads (card T0-HOOK-LAZY-2): the guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so an event that reads no state loads none of them, and no yaml, which only the planning claims load. Every event still loads zod and checks `aidlc.config.json` with the schema the CLI uses, as before. Measured on Windows in two interleaved runs of 15: each hook event takes about 35 ms less (PreToolUse Bash 217 ms to 180 ms and 208 ms to 174 ms) and loads 109 to 113 modules instead of 189.';
 
 const ARCHITECTURE_SENTENCE = '`src/hooks/lazy.ts` loads the modules only some hook events need (the router, the goal, lease and journal stores, and the planning claims, which alone load yaml) on a guard\'s first use, through `require` with the extension of its own file (card T0-HOOK-LAZY-2).';
 
-const CHANGELOG_ENTRY = '- T0-HOOK-LAZY-2 (replaces T0-HOOK-LAZY, stopped when R3 decision 3 re-raised the provenance of its config stamp; ruling 2026-10-24): the hook guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so a hook event that reads no state loads no yaml; the config check with zod is unchanged. Measured on Windows: about 35 ms less per hook event (PreToolUse Bash 217 ms to 180 ms), and 109 to 113 modules loaded instead of 189.';
+const CHANGELOG_ENTRY = '- T0-HOOK-LAZY-2: the hook guards load the router, the goal, lease and journal stores and the planning claims on first use (`src/hooks/lazy.ts`), so a hook event that reads no state loads no yaml; the config check with zod is unchanged, and a module that fails to load reaches the hook entry, which names it on stderr and exits 0. It replaces T0-HOOK-LAZY, stopped when R3 decision 3 re-raised the provenance of its config stamp (ruling 2026-10-24). Measured on Windows: about 35 ms less per hook event (PreToolUse Bash 217 ms to 180 ms), and 109 to 113 modules loaded instead of 189.';
 
 const SUPERSEDED = 'superseded_by: T0-HOOK-LAZY-2';
 
@@ -150,5 +243,5 @@ test('T0-HOOK-LAZY-2 acceptance 5: the docs carry every sentence this card adds,
   for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
 });
 
-// 3 Hooks paragraph sentences, the ARCHITECTURE sentence, 2 CHANGELOG sentences and the superseded_by line.
-const REMOVALS = 7;
+// 3 Hooks paragraph sentences, the ARCHITECTURE sentence, 3 CHANGELOG sentences and the superseded_by line.
+const REMOVALS = 8;

@@ -18,9 +18,35 @@ const EXT = path.extname(fileURLToPath(import.meta.url));
 /** Every module this file loads, relative to this directory and without its extension. */
 export const LAZY_MODULES = ['../core/router', '../state/goal-store', '../state/journal', '../state/claims', '../coordination/lease'] as const;
 
+/**
+ * A module of `LAZY_MODULES` that failed to load (R3 decision 1). Every catch in the guards rethrows it
+ * (`rethrowLoadError`), so it reaches the hook entry, which names it on stderr and exits 0, as for any throw of a guard.
+ */
+export class LazyLoadError extends Error {
+  readonly module: string;
+  constructor(module: string, cause: unknown) {
+    super(`cannot load ${module}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+    this.module = module;
+  }
+}
+
+/** Rethrows `err` when it is a module that failed to load, so no guard's own catch turns it into a decision. */
+export function rethrowLoadError(err: unknown): void {
+  if (err instanceof LazyLoadError) throw err;
+}
+
 function lazy<T>(rel: (typeof LAZY_MODULES)[number]): () => T {
   let mod: T | undefined;
-  return () => (mod ??= require(rel + EXT) as T);
+  return () => {
+    if (mod === undefined) {
+      try {
+        mod = require(rel + EXT) as T;
+      } catch (err) {
+        throw new LazyLoadError(rel, err);
+      }
+    }
+    return mod;
+  };
 }
 
 export const router = lazy<typeof import('../core/router.ts')>('../core/router');
