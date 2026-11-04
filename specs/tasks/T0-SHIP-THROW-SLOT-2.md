@@ -42,6 +42,7 @@ diagnosis:
   same_class: "See the sweep: every unguarded `gh` call inside `shipPath.ship` has the same effect, and R2 covers them all."
 hygiene: "This card replaces T0-SHIP-THROW-SLOT by the user's ruling of 2026-11-05, after R3 decision 2 stopped that card re-raising F1, F2, F3 and F6: the crash fix ships here, with `thrownText` non-throwing across its whole body (F2, F3), and the release command, where F1, F6 and F13 sit, moves to card T0-REVIEW-RELEASE. It ports the settlement of that card's a59721e, whose R3 decision 1 repair of the cleanup and the owed result R3 decision 2 did not re-raise. A throw is UNKNOWN and not `failed`, since `prView` runs after the merge: the outcome is looked up, and `aidlc ops reconcile` records it. Run the verify-card-run-writes check before SHIP (`CardRunner.ship` is covered) and move its sync commit at CLOSE. Every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8); the doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
 doc_sync: CHANGELOG.md, docs/OPERATIONS.md
+superseded_by: T0-SHIP-THROW-SLOT-3
 ---
 
 # T0-SHIP-THROW-SLOT-2
