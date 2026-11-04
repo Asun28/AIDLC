@@ -504,3 +504,60 @@ test('T1-REVIEW-BENCH acceptance 9: the docs carry the reviewer bench whole, and
   assert.ok(removals.length >= 40, `${removals.length} removals`);
   for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
 });
+
+const PRE_EXISTING_REASON = '[standards] 6 old drift @ src/calc.ts:28: [pre-existing] v28 was already unchecked -> check it';
+const PRE_EXISTING_CHANGED = '[standards] 6 old drift @ src/calc.ts:8: [pre-existing] v8 was already unchecked -> check it';
+const UNTAGGED_REASON = '[standards] 6 old drift @ src/calc.ts:28: v28 was already unchecked -> check it';
+
+test('T1-REVIEW-BENCH-2 acceptance 13: a [pre-existing] reason on an unchanged line stays advisory, as in the loop [R13]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', cleanCase(fx, 'a-clean-tagged', fx.heads.c2));
+    writeCase(fx, 'evals/review', cleanCase(fx, 'b-clean-untagged', fx.heads.c3));
+    writeCase(fx, 'evals/review', bugCase(fx, 'c-bug-tagged', fx.heads.c2, 28, 0));
+    writeCase(fx, 'evals/review', bugCase(fx, 'd-bug-untagged', fx.heads.c3, 28, 0));
+    writeCase(fx, 'evals/review', bugCase(fx, 'e-bug-mixed', fx.heads.c1, 28, 0));
+    writeCase(fx, 'evals/review', bugCase(fx, 'f-bug-tagged-changed-line', fx.heads.c4, 8, 0));
+    const table: Record<string, Partial<ExecReceipt>> = {
+      [fx.heads.c1]: { stdout: verdict('block', [PRE_EXISTING_REASON, HIT_REASON]) },
+      [fx.heads.c2]: { stdout: verdict('block', [PRE_EXISTING_REASON]) },
+      [fx.heads.c3]: { stdout: verdict('block', [UNTAGGED_REASON]) },
+      [fx.heads.c4]: { stdout: verdict('block', [PRE_EXISTING_CHANGED]) },
+    };
+    const runner: Runner = async (command, args, options = {}) => scriptedRunner({ [command]: table[args.find(isSha) ?? ''] ?? { exitCode: 2 } })(command, args, options);
+    const report = await bench(fx, runner);
+    assert.deepEqual(report.cases.map((c) => [c.id, c.outcome]), [['a-clean-tagged', 'pass'], ['b-clean-untagged', 'false-block'], ['c-bug-tagged', 'miss'], ['d-bug-untagged', 'hit'], ['e-bug-mixed', 'miss'], ['f-bug-tagged-changed-line', 'hit']]);
+    assert.deepEqual(report.cases.find((c) => c.id === 'e-bug-mixed')!.cited, [HIT_REASON]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-2 acceptance 14: intent new takes the session as its author in the action, and an explicit author wins [R14]', () => {
+  const fx = fixture();
+  try {
+    const { AIDLC_SESSION: _session, CLAUDE_CODE_SESSION_ID: _claude, ...env } = process.env;
+    const cli = (slug: string, extra: string[]) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'intent', 'new', '--title', slug, ...extra], { cwd: fx.root, encoding: 'utf8', env: { ...env, AIDLC_SESSION: 'sess-x', AIDLC_STATE_DIR: path.join(fx.dir, 'state') } });
+    const session = cli('x', []);
+    assert.equal(session.status, 0, session.stderr);
+    assert.ok(readFileSync(path.join(fx.root, 'intent', 'x.md'), 'utf8').includes('Author: sess-x.'));
+    const named = cli('y', ['--author', 'someone']);
+    assert.equal(named.status, 0, named.stderr);
+    assert.ok(readFileSync(path.join(fx.root, 'intent', 'y.md'), 'utf8').includes('Author: someone.'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-2 acceptance 15: the Reviewer bench section ends with the sentence of the card and the changelog carries its entry [R15]', () => {
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  const body = lf(read('specs/tasks/T1-REVIEW-BENCH-2.md'));
+  const sentence = /OPERATIONS sentence:\n\n(.+)\n/.exec(body)![1]!;
+  const entry = /CHANGELOG entry:\n\n(.+)\n/.exec(body)![1]!;
+  const ops = lf(read('docs/OPERATIONS.md'));
+  const from = ops.indexOf('### Reviewer bench');
+  const section = ops.slice(from, ops.indexOf('\n## ', from)).trimEnd();
+  assert.ok(section.endsWith(sentence), 'the section ends with the sentence');
+  assert.ok(read('CHANGELOG.md').includes(entry), 'the changelog carries the entry');
+});
