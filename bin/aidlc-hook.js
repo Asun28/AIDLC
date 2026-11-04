@@ -12,5 +12,13 @@ const dist = path.join(here, '..', 'dist', 'hooks', 'entry.js');
 const src = path.join(here, '..', 'src', 'hooks', 'entry.ts');
 const chosen = resolveEntry({ dist, src, srcRoot: path.join(here, '..', 'src') });
 if (process.env['AIDLC_ENTRY_DEBUG']) process.stderr.write(`[aidlc entry] target=${chosen.target} reason=${chosen.reason}\n`);
+// The repository lookup of the guards starts now and runs while the entry modules load (card T0-HOOK-GIT-PREFETCH). A
+// package whose state/paths beside the entry cannot be imported starts nothing and runs as before.
+try {
+  const paths = await import(pathToFileURL(path.join(path.dirname(chosen.target), '..', 'state', `paths${path.extname(chosen.target)}`)).href);
+  paths.prefetchRepoIdentity(process.cwd());
+} catch {
+  /* no lookup started: the guards ask git when they need the root */
+}
 const mod = await import(pathToFileURL(chosen.target).href);
 await mod.main();
