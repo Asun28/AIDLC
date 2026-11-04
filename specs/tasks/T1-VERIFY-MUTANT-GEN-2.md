@@ -62,6 +62,9 @@ npm run typecheck && node --test tests/surface/mutant-gen.test.ts tests/surface/
 - A file whose path git quotes (control characters, a double quote or a backslash in the name) is skipped, not decoded.
 - The regex rule misreads a regex literal after `)` (read as division) and a division after `}` (read as a regex). A misread adds or drops a mutant; it never changes a restore, which the runner card does from the bytes it read.
 - A comparison written without spaces (`a<b`) is not mutated; this repository's style puts spaces around binary operators.
+- A `/` right after a postfix `!` opens a regex under the regex rule, so `value! / 2 === b / c` loses its `===` mutant. An existing test pins that rule.
+- A `!` before `(` or `[` is read as unary after `await` or `yield` used as plain identifiers, in `a as T<U>![c]`, and after a function or class expression on the same line; each adds one drop-not mutant.
+- `b\n!.size` is read as a postfix `!`, as the F6 assertion pins, although the TypeScript parser reports a syntax error there.
 
 ## Attempt evidence
 - Base: `git merge origin/main` at 8c4c94c (no rebase, no amend); CHANGELOG.md and docs/ARCHITECTURE.md conflicts resolved keeping both sides. The baseline `node --test tests/surface/mutant-gen.test.ts tests/surface/prose.test.ts` after the merge: tests 37, pass 37, fail 0.
@@ -73,7 +76,3 @@ npm run typecheck && node --test tests/surface/mutant-gen.test.ts tests/surface/
 - Differential checks outside the DoD, kept in no file of this card, with the `typescript` devDependency as the reference. Every `.ts` file under src, tests, bench and scripts plus zod's sources (527 files, 1827 unary `!`, 4646 same-line `if` statements): no difference apart from two `!` inside `${}` parts, which R4 excludes. Over src, tests, bench and scripts the mutants of this candidate equal those of ac32c58 for every operator, so the repairs lost nothing on real code. 1025 parsed programs of `{ if ... }` in generated brace contexts: no difference. 39662 parsed programs of a head, a separator and `!` with a tail: 340 differ, in the limit classes below.
 - Limits that fuzz leaves open, each a misread of text no working code in this repository holds: `await` and `yield` used as plain identifiers before `!(` or `![` read as keywords; `a as T<U>![c]`, where `>` closes a type; a function or class expression followed on its line by `!(` or `![`, since the `}` of a body is not read as a value. Each adds one drop-not mutant, which the typecheck kills or the run reports; none changes a restore.
 - OPERATIONS.md is unchanged: its section is pinned whole by acceptance 5 and every sentence in it stays true. The rules added here are recorded in the CHANGELOG line of this card and the comments of `src/review/mutant-gen.ts`.
-
-- A `/` right after a postfix `!` opens a regex under the regex rule, so `value! / 2 === b / c` loses its `===` mutant. An existing test pins that rule.
-- A `!` before `(` or `[` is read as unary after `await` or `yield` used as plain identifiers, in `a as T<U>![c]`, and after a function or class expression on the same line; each adds one drop-not mutant.
-- `b\n!.size` is read as a postfix `!`, as the F6 assertion pins, although the TypeScript parser reports a syntax error there.
