@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-PS-GUARD-WIRE (bugfix, issue 117): a PowerShell tool call now runs the Bash guard set (`production-gate`, `protect-paths`, `secrets-guard`), through the `PreToolUse` matcher `Bash|PowerShell|Edit|Write|MultiEdit` in both settings files, and `aidlc init` takes the dispatcher off an old-matcher entry, so it runs once per tool call and a foreign hook keeps its matcher.
+
 - T0-TAKEOVER-FOREIGN-LINE (bugfix): `aidlc card takeover` reads the journal of the goal it runs under and of each other goal that holds a run of the card, no other journal, so a line the journal schema refuses in an unrelated goal (five `BOUND_FIRED` lines an unmerged build wrote) no longer crashes the takeover of every card after its lease write. A takeover already stopped that way completes when run again.
 
 - T0-BUILD-ATOMIC (bugfix): `npm run build` runs `scripts/build.ts`, which emits the files `tsc -p tsconfig.json` emits with the same bytes, each written to a temporary sibling and renamed onto it, and the two compiled entries last. Before, tsc emptied each file of dist/ before writing it, so a hook started during a build could load an empty module and run no guard: a denied write went ahead, and a typed request got no routing line.
