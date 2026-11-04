@@ -57,3 +57,8 @@ npm run typecheck && node --test tests/scenarios/takeover-foreign-line.test.ts t
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- RED: commit 54c5010 (the new test file, no fix). `node --test tests/scenarios/takeover-foreign-line.test.ts`: 5 tests, 2 passed, 3 failed; acceptance 1 and 2 failed on the journal parse in `takeover`, acceptance 5 on the missing OPERATIONS sentence.
+- GREEN: the DoD command exits 0: typecheck clean, 73 tests passed, 0 failed.
+- Mutation check, by hand on the `events` filter of `CardRunner.takeover`, restored and not committed: no filter fails acceptance 1 and 2 (the RED above); `g.id === goal.id` alone fails acceptance 3 and 4; `getCardRun` alone fails the snapshot case of acceptance 2.
