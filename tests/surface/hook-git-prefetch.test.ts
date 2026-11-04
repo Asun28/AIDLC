@@ -56,8 +56,9 @@ function removeTemp(dir: string): void {
  * `limit` exactly 1 MiB over both streams, `over` one byte more, `linger` more than 1 MiB and then 5 s of waiting
  * (`exitSignal` records how it ended). `kill-eperm` and `kill-enosys` print 16 MiB on each stream and fail `child.kill` as
  * Node fails it, with an `error` event or a throw (`delivered` counts the bytes read from both streams);
- * `nostreams-enosys` is `nostreams` with that throw (`killed` records the call). `read-error-out` and `read-error-err`
- * run real git and fail the read of that stream.
+ * `nostreams-enosys` is `nostreams` with that throw (`killed` records the call), `nostreams-silent` is `nostreams` with no
+ * `error` event. `read-error-out` and `read-error-err` run real git and fail the read of that stream, `stdin-error` fails
+ * the write stream, and `exit-1` prints git's real answer and exits 1.
  */
 const PROBE = `import cp from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -74,6 +75,7 @@ const VERBOSE = {
   limit: REFS + " process.stdout.write(refs + 'x'.repeat(512 * 1024 - refs.length)); process.stderr.write('x'.repeat(512 * 1024));",
   over: REFS + " process.stdout.write(refs + 'x'.repeat(512 * 1024 - refs.length)); process.stderr.write('x'.repeat(512 * 1024 + 1));",
   linger: REFS + " process.stdout.write(refs + 'x'.repeat(1024 * 1024)); setTimeout(() => {}, 5000);",
+  'exit-1': REFS + " process.stdout.write(refs); process.exitCode = 1;",
   'kill-eperm': FLOOD,
   'kill-enosys': FLOOD,
 };
@@ -88,6 +90,7 @@ function faulted(child) {
   if (mode === 'linger') child.on('exit', (code, signal) => { counts.exitSignal = signal; });
   if (mode === 'read-error-out') child.stdout.destroy(new Error('read EIO'));
   if (mode === 'read-error-err') child.stderr.destroy(new Error('read EIO'));
+  if (mode === 'stdin-error') child.stdin.destroy(new Error('write EPIPE'));
   return child;
 }
 let seq = 0;
@@ -101,11 +104,11 @@ cp.spawn = function (cmd, args, options) {
   counts.spawn++;
   if (!spawnedAt) spawnedAt = ++seq;
   if (mode === 'throw') throw Object.assign(new Error('spawn git E2BIG'), { code: 'E2BIG' });
-  if (mode === 'nostreams' || mode === 'nostreams-enosys') {
+  if (mode.startsWith('nostreams')) {
     const child = new EventEmitter();
-    const kill = mode === 'nostreams' ? () => true : () => { counts.killed = true; throw killError('ENOSYS'); };
+    const kill = mode === 'nostreams-enosys' ? () => { counts.killed = true; throw killError('ENOSYS'); } : () => true;
     Object.assign(child, { stdout: null, stderr: null, stdin: null, kill });
-    process.nextTick(() => child.emit('error', Object.assign(new Error('spawn git EMFILE'), { code: 'EMFILE' })));
+    if (mode !== 'nostreams-silent') process.nextTick(() => child.emit('error', Object.assign(new Error('spawn git EMFILE'), { code: 'EMFILE' })));
     return child;
   }
   if (VERBOSE[mode]) return faulted(realSpawn.call(this, process.execPath, ['-e', VERBOSE[mode]], options));
@@ -310,6 +313,7 @@ test('T0-HOOK-GIT-PREFETCH F4: a kill that errors or throws settles the lookup a
     const noStreams = hook(f.repo, f.repo, 'nostreams-enosys');
     assert.deepEqual(noStreams.seen, [0, DENIED, '', 1, 1], 'a child without streams is no lookup, whatever its kill does');
     assert.equal(noStreams.counts.killed, true, 'a child without streams is ended');
+    assert.deepEqual(hook(f.repo, f.repo, 'nostreams-silent').seen, [0, DENIED, '', 1, 1], 'a child without streams settles with no event from it');
   });
 });
 
@@ -321,6 +325,17 @@ test('T0-HOOK-GIT-PREFETCH: a failed read of a stream starts no second git; the 
     const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
     assert.deepEqual(identity(f.repo, 'read-error-out').seen, [noRepo, 1, 0], 'stdout read nothing');
     assert.deepEqual(identity(f.repo, 'read-error-err').seen, [inRepo, 1, 0], 'stdout read whole');
+    assert.deepEqual(identity(f.repo, 'stdin-error').seen, [inRepo, 1, 0], 'git reads no input, so a failed stdin changes nothing');
+  });
+});
+
+test('T0-HOOK-GIT-PREFETCH: an exit status other than 0 is no output whatever stdout holds, on both paths [R1]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { identity } = runs(dir, f);
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    assert.deepEqual(identity(f.repo, 'exit-1').seen, [noRepo, 1, 0], 'prefetched');
+    assert.deepEqual(identity(f.sub, 'exit-1').seen, [noRepo, 1, 1], 'synchronous');
   });
 });
 

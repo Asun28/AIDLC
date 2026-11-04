@@ -72,7 +72,7 @@ export function resolveRepoIdentity(cwd: string = process.cwd()): RepoIdentity {
   return identity;
 }
 
-/** `spawnSync`'s default `maxBuffer`: more output than this on stdout or on stderr ends the child, and the call reads none. */
+/** `spawnSync`'s default `maxBuffer`: one count over stdout and stderr together; more output than this ends the child, and the call reads none. */
 const MAX_OUTPUT = 1024 * 1024;
 
 /**
@@ -84,47 +84,59 @@ type Lookup = { answered: true; out: string | undefined } | { answered: false };
 /** The lookup `prefetchRepoIdentity` started, for the one cwd it was started in. */
 let prefetch: { key: string; lookup: Promise<Lookup> } | undefined;
 
+/** Ends a child and stops reading it. Each step runs whatever the one before did, and a failure of any step changes nothing. */
+function endChild(steps: (() => void)[]): void {
+  for (const step of steps) {
+    try {
+      step();
+    } catch {
+      /* the lookup is already settled, and the process exit ends what is left */
+    }
+  }
+}
+
 /**
  * Starts the `git rev-parse` of `resolveRepoIdentity` for `cwd` without waiting for it, so git runs while the caller loads
  * its modules (the hook entry, card T0-HOOK-GIT-PREFETCH). The same arguments, environment and window flag as the
  * synchronous call, and its output read as that call reads it: exit status 0 and stdout trimmed, and no output when stdout
- * or stderr passes `MAX_OUTPUT` (the child is ended, as `spawnSync` ends it). A spawn that fails in any way is no lookup,
- * so the identity is then asked of git synchronously as before.
+ * and stderr together pass `MAX_OUTPUT` (the child is ended and reading stops, as `spawnSync` does, and at most `MAX_OUTPUT`
+ * bytes stay buffered). A failed read of a stream leaves the exit status and the bytes read, as it does for `spawnSync`. A
+ * spawn that fails in any way is no lookup, so the identity is then asked of git synchronously as before. Every outcome is
+ * settled before any cleanup, so a kill that errors or throws cannot change it or leave it pending (R3 decision 2).
  */
 export function prefetchRepoIdentity(cwd: string): void {
   if (prefetch) return;
   const lookup = new Promise<Lookup>((resolve) => {
     const unanswered = () => resolve({ answered: false });
+    const ignore = () => {
+      /* the `close` event still reports the exit status */
+    };
     try {
       const child = spawn('git', IDENTITY_ARGS, { cwd, windowsHide: true });
       child.on('error', unanswered);
       const { stdout, stderr, stdin } = child;
       if (!stdout || !stderr || !stdin) {
-        child.kill();
         unanswered();
+        endChild([() => child.kill()]);
         return;
       }
       const chunks: Buffer[] = [];
-      let outBytes = 0;
-      let errBytes = 0;
-      const overflow = () => {
-        child.kill();
+      let bytes = 0;
+      /** Counts a chunk of either stream; past the limit the lookup is settled, then the child is ended. */
+      const withinLimit = (d: Buffer): boolean => {
+        bytes += d.length;
+        if (bytes <= MAX_OUTPUT) return true;
         resolve({ answered: true, out: undefined });
+        endChild([() => child.kill(), () => stdout.destroy(), () => stderr.destroy()]);
+        return false;
       };
-      stdout.on('error', unanswered);
-      stderr.on('error', unanswered);
-      stdin.on('error', () => {
-        /* git reads no input; a closed pipe changes nothing */
-      });
+      stdout.on('error', ignore);
+      stderr.on('error', ignore);
+      stdin.on('error', ignore);
       stdout.on('data', (d: Buffer) => {
-        outBytes += d.length;
-        if (outBytes > MAX_OUTPUT) overflow();
-        else chunks.push(d);
+        if (withinLimit(d)) chunks.push(d);
       });
-      stderr.on('data', (d: Buffer) => {
-        errBytes += d.length;
-        if (errBytes > MAX_OUTPUT) overflow();
-      });
+      stderr.on('data', withinLimit);
       child.on('close', (code) => resolve({ answered: true, out: code === 0 ? Buffer.concat(chunks).toString('utf8').trim() : undefined }));
       stdin.end();
     } catch {
