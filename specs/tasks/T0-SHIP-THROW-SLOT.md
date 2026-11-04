@@ -48,6 +48,7 @@ diagnosis:
   same_class: "See the sweep: every unguarded `gh` call inside `shipPath.ship` has the same effect, and R2 covers them all."
 hygiene: "Evidence: PR 189 (`T0-TAKEOVER-FOREIGN-LINE-2`), operation op-20261104102908-8839e494, request digest 99c93e5e, pid 44224. A throw is UNKNOWN and not `failed`, since `prView` runs after the merge: the outcome is looked up, and `aidlc ops reconcile` records it. `src/state/store.ts` changes only to export `processAlive`. Run the verify-card-run-writes check before SHIP (CardRunner.ship is covered) and move its sync commit at CLOSE. Every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8); the doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
 doc_sync: CHANGELOG.md, docs/OPERATIONS.md
+superseded_by: T0-SHIP-THROW-SLOT-2
 ---
 
 # T0-SHIP-THROW-SLOT
