@@ -13,7 +13,7 @@ import { EvalCase, runEval } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { GhProbe } from '../../src/probes/gh.ts';
-import { createRunSync, ok, scriptedRunner } from '../../src/probes/exec.ts';
+import { createRunSync, ok, runSync, scriptedRunner } from '../../src/probes/exec.ts';
 import type { ExecOptions, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
 
 /** A runner that records the options of every call and answers exit 0 with `stdout`. */
@@ -176,5 +176,16 @@ describe('T0-EXEC-SYNC-TREE-KILL-2 a timeoutMs the helper cannot honour starts n
 
   it('acceptance 7: docs/OPERATIONS.md holds the sentence of the 2026-11-05 amendment', () => {
     assert.ok(readDoc('docs/OPERATIONS.md').includes(UNSUPPORTED_TIMEOUT_SENTENCE));
+  });
+});
+
+describe('T0-EXEC-SYNC-TREE-KILL-2 acceptance 8', () => {
+  it('a command that cannot start under killTree returns at once, not at its timeoutMs, and is no timeout', () => {
+    const started = performance.now();
+    const receipt = runSync('aidlc-no-such-command', [], { killTree: true, timeoutMs: 60_000 });
+    assert.ok(performance.now() - started < 30_000, 'it returned before its timeoutMs');
+    assert.equal(ok(receipt), false);
+    assert.equal(receipt.timedOut, false);
+    assert.match(receipt.stderr, /\[spawn error\].*ENOENT/);
   });
 });
