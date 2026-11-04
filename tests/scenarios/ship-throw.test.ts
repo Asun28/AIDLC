@@ -240,6 +240,7 @@ test('T0-SHIP-THROW-SLOT-2 acceptance 4: after the throw nothing ships until the
 
 test('T0-SHIP-THROW-SLOT-2 acceptance 9: the OPERATIONS sentence and the CHANGELOG entry', () => {
   const read = (file: string) => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8');
-  assert.ok(read('docs/OPERATIONS.md').includes('A ship that throws frees its review slot and leaves its merge operation `UNKNOWN`, since a merge may have landed: look the outcome up and record it with `aidlc ops reconcile <opId> --status <s>`, and `card next` ships again.'));
-  assert.ok(read('CHANGELOG.md').includes("- T0-SHIP-THROW-SLOT-2 (bugfix): a GitHub outage during a ship no longer stops every review in the repository. An unreadable check-run read is now a pending read of the CI gate, retried until the gate's timeout, and any other throw of a ship frees its review slot and leaves its merge operation `UNKNOWN` for `aidlc ops reconcile`. Before, an HTTP 502 from the check-runs read left a `running` request in the pool that no command could clear."));
+  const shipGates = read('docs/OPERATIONS.md').replaceAll('\r\n', '\n').split('\n## ').find((section) => section.startsWith('Ship gates (GitHub ship path)')) ?? '';
+  assert.ok(shipGates.includes('A ship that throws frees its review slot and leaves its merge operation `UNKNOWN`, since a merge may have landed: look the outcome up and record it with `aidlc ops reconcile <opId> --status <s>`, and `card next` ships again.'));
+  assert.ok(read('CHANGELOG.md').includes("- T0-SHIP-THROW-SLOT-3 (bugfix): a GitHub outage during a ship no longer stops every review in the repository. An unreadable check-run read is now a pending read of the CI gate, retried until the gate's timeout, and any other throw of a ship frees its review slot and leaves its merge operation `UNKNOWN` for `aidlc ops reconcile`. Before, an HTTP 502 from the check-runs read left a `running` request in the pool that no command could clear."));
 });
