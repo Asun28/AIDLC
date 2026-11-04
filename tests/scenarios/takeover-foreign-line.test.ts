@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, actorA, actorB, type Fixture } from './_harness.ts';
 import { Journal, setActorForTests } from '../../src/state/journal.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
@@ -84,6 +85,24 @@ test('T0-TAKEOVER-FOREIGN-LINE acceptance 2: a takeover interrupted after its le
     assert.equal(done.previousGeneration, 0);
     assert.equal(fx.store.getCardRun(goal.id, CARD)?.ownerGeneration, 1);
     assert.equal(acquired(fx, goal.id, key).length, 1);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-TAKEOVER-FOREIGN-LINE acceptance 2, a snapshot of the caller: with no run stored for the goal, its own journal is still read', () => {
+  const fx = makeFixture({ actor: actorA });
+  try {
+    const { goal, key } = expiredLease(fx);
+    interruptAfterLeaseWrite(fx, goal, key);
+    const snapshot = fx.store.getCardRun(goal.id, CARD)!;
+    rmSync(path.join(fx.paths.cards, goal.id, `${CARD}.json`));
+    assert.equal(fx.store.getCardRun(goal.id, CARD), undefined);
+    const done = fx.runner().takeover(fx.goal(goal.id), fx.card(CARD), snapshot);
+    assert.equal(done.completed, true);
+    assert.equal(done.previousOwner?.session, actorA.session, 'the intent in the journal of the goal names the previous owner');
+    assert.equal(done.previousGeneration, 0);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
