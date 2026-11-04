@@ -1,7 +1,7 @@
 ---
 id: T1-PS-GUARD-WIRE
 title: A PowerShell tool call runs the Bash guard set, and aidlc init moves an existing settings file to the new matcher without running the dispatcher twice
-status: todo
+status: merged
 branch: T1-PS-GUARD-WIRE
 worktree: D:\wt\AIDLC\T1-PS-GUARD-WIRE
 plan_ref: plans/powershell-guards.md#order-of-work
