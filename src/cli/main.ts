@@ -37,6 +37,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
+import { formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
@@ -662,16 +663,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   intent
     .command('new')
     .requiredOption('--title <t>')
-    .option('--author <a>', 'author', currentActor().session)
+    // The default is read in the action: a default computed here would resolve the session, and so write the default
+    // session token under the state directory, for every command the CLI runs (R9 of T1-REVIEW-BENCH).
+    .option('--author <a>', 'author (default: this session)')
     .option('--problem <p>', 'problem statement', '')
     .option('--outcome <o>', 'proposed outcome', '')
     .option('--affected <a>', 'affected users and systems', '')
     .option('--constraints <c>', 'constraints', '')
     .option('--question <q...>', 'open questions')
-    .action((o: { title: string; author: string; problem: string; outcome: string; affected: string; constraints: string; question?: string[] }) => {
+    .action((o: { title: string; author?: string; problem: string; outcome: string; affected: string; constraints: string; question?: string[] }) => {
       const c = ctx(g());
       const slug = slugify(o.title);
-      const text = renderIntent({ slug, title: o.title, author: o.author, status: 'draft', createdAt: new Date().toISOString(), problem: o.problem, proposedOutcome: o.outcome, affected: o.affected, constraints: o.constraints, openQuestions: o.question ?? [] });
+      const text = renderIntent({ slug, title: o.title, author: o.author ?? currentActor().session, status: 'draft', createdAt: new Date().toISOString(), problem: o.problem, proposedOutcome: o.outcome, affected: o.affected, constraints: o.constraints, openQuestions: o.question ?? [] });
       const file = path.join(c.root, c.config.intentDir, `${slug}.md`);
       mkdirSync(path.dirname(file), { recursive: true });
       if (existsSync(file)) fail(`${file} exists`);
@@ -813,6 +816,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const summaries = summarizeReviews(runs, registry.cards.map((p) => p.card), { ...(o.goal ? { goals: [o.goal] } : {}), ...(o.card ? { include: [o.card] } : {}) });
       const cards = o.card ? summaries.filter((s) => s.cardId === o.card) : summaries;
       out(c, { goalId: o.goal, cards }, () => formatReviewStats(cards));
+    });
+  review
+    .command('bench')
+    .description('the reviewer bench: score a stage reviewer on the cases under evals/review (never a gate)')
+    .command('run')
+    .description('review each confirmed case candidate once in a detached temporary checkout and report recall and the false-block rate')
+    .requiredOption('--stage <stage>', 'pre (R2) or formal (R3)')
+    .option('--dir <path>', 'case directory, resolved against the checkout root (default evals/review)')
+    .option('--case <id>', 'score this case alone')
+    .option('--include-unconfirmed', 'score the unconfirmed cases too')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean }) => {
+      if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
+      // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
+      // No ctx(): the bench reads no goal state and writes nothing under the state directory.
+      const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed });
+      out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
+      if (report.leftCheckouts.length) process.exitCode = 1;
     });
   program
     .command('ci')
