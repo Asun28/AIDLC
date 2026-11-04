@@ -29,7 +29,7 @@ none this version
 
 ## 4.5 Module design
 `src/scaffold/init.ts` resolves the hook command and writes the config and workflows. `src/probes/hook-wiring.ts` (new)
-runs the wired dispatcher for `aidlc doctor`.
+checks the file of the wired dispatcher for `aidlc doctor`, and starts no process.
 
 ## 5. Data model and state machine
 none this version
