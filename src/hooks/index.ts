@@ -8,10 +8,10 @@
  * turns a guard off: the guards that read it deny what some valid config would deny and pass the repair (`loadHookConfig`).
  *
  * Hooks:
- *  - production-gate   (PreToolUse Bash): deploy+production needs a matching release authorization.
- *  - protect-paths     (PreToolUse Edit|Write|Bash): frozen paths cannot be edited in place.
+ *  - production-gate   (PreToolUse Bash|PowerShell): deploy+production needs a matching release authorization.
+ *  - protect-paths     (PreToolUse Edit|Write|Bash|PowerShell): frozen paths cannot be edited in place.
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
- *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
+ *  - secrets-guard     (PreToolUse Write|Edit|Bash|PowerShell): credential-looking content never enters a diff.
  *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done (not said
  *                      while Claude Code reports running background work), and a goal whose lease this session
  *                      holds commits its planning artifacts first; nothing is said while Claude Code is already
@@ -276,9 +276,9 @@ function configRepair(cwd: string): string {
 }
 
 /** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes in `cwd`. */
-function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean, cwd: string): HookResult {
+function configDenial(guard: ConfigGuard, error: HookConfigError, shell: 'Bash' | 'PowerShell' | undefined, cwd: string): HookResult {
   const file = lazy.claims().quotePath(error.file);
-  const opening = bash ? `Bash is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
+  const opening = shell ? `${shell} is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
   return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${configRepair(cwd)}`);
 }
 
@@ -301,7 +301,7 @@ function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
  * A guard that reads the config, while it cannot be used. It first decides as it did before on the `hooks` values the file
  * still yields (`legacyDecision`), and a block there is the answer, with its own text: a broken config denies at least
  * what it denied before, a frozen config file included. Beyond that, `production-gate` and `protect-paths` deny every Bash
- * command but the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does
+ * or PowerShell command but the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does
  * the same while a fix task is active. Reads go through the Read, Grep and Glob tools, which no hook guards.
  */
 function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, error: HookConfigError): HookResult {
@@ -310,13 +310,13 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
   if (guard === 'protect-tests') {
-    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
+    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, undefined, cwd);
   }
   // A command is compared with the doctor list whatever else the event carries, so a file path beside it (the config's
   // own included) never lets it through, and whatever its type: a present value that is not one of the doctor strings is
   // denied (card T0-HOOK-CONFIG-NONSTRING); only an absent command is left to the file rule.
-  if (cmd !== undefined && !(typeof cmd === 'string' && isDoctorCommand(cmd, cwd))) return configDenial(guard, error, true, cwd);
-  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
+  if (cmd !== undefined && !(typeof cmd === 'string' && isDoctorCommand(cmd, cwd))) return configDenial(guard, error, event.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash', cwd);
+  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, undefined, cwd);
   return { exitCode: 0 };
 }
 
