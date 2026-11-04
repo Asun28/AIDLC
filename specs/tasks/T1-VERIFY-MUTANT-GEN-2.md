@@ -62,3 +62,6 @@ npm run typecheck && node --test tests/surface/mutant-gen.test.ts tests/surface/
 - A file whose path git quotes (control characters, a double quote or a backslash in the name) is skipped, not decoded.
 - The regex rule misreads a regex literal after `)` (read as division) and a division after `}` (read as a regex). A misread adds or drops a mutant; it never changes a restore, which the runner card does from the bytes it read.
 - A comparison written without spaces (`a<b`) is not mutated; this repository's style puts spaces around binary operators.
+- A `/` right after a postfix `!` opens a regex under the regex rule, so `value! / 2 === b / c` loses its `===` mutant. An existing test pins that rule.
+- A `!` before `(` or `[` is read as unary after `await` or `yield` used as plain identifiers, in `a as T<U>![c]`, and after a function or class expression on the same line; each adds one drop-not mutant.
+- `b\n!.size` is read as a postfix `!`, as the F6 assertion pins, although the TypeScript parser reports a syntax error there.

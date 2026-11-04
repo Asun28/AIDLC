@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-THROW-SLOT-3
 title: A ship that throws any value frees its review slot and leaves its operation UNKNOWN, and an unreadable check-run read is a pending read of the CI gate
-status: todo
+status: merged
 branch: T0-SHIP-THROW-SLOT-3
 worktree: D:\wt\AIDLC\T0-SHIP-THROW-SLOT-3
 allow_paths:
@@ -65,3 +65,7 @@ npm run typecheck && node --test tests/scenarios/ship-throw.test.ts tests/infra/
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- Carried: the candidate of T0-SHIP-THROW-SLOT-2 at 687bc02, whose RED and mutation check are in that card. Its R2 and R3 passed; CI failed on `tests/surface/prose.test.ts` (T1-STORE-CAS-2 acceptance 8): Sessions at 13718 bytes against 13701.
+- This candidate moves the OPERATIONS sentence to Ship gates, pins the section in acceptance 9, and adds that test to the dod_command. Sessions is unchanged from main, and the size test passes unchanged.
