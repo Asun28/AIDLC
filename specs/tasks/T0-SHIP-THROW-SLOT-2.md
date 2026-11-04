@@ -65,3 +65,10 @@ npm run typecheck && node --test tests/scenarios/ship-throw.test.ts tests/infra/
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- Ported from a59721e of T0-SHIP-THROW-SLOT, whose RED and mutation check are on that branch; the release command and its tests stayed behind. `thrownText` is new: the whole body is inside its `try`.
+- RED: commit 33def94 (the tests, the source fix set aside). The tests of `tests/infra/github-ship.test.ts` that exercise the gate fail, and a revoked proxy that reaches node:test unhandled also fails the rest of that file, which is why tests of other cards show as failed in that run; `tests/scenarios/ship-throw.test.ts` fails on every acceptance item it holds.
+- GREEN: `node --test tests/scenarios/ship-throw.test.ts tests/infra/github-ship.test.ts`: 68 tests, 68 passed, 0 failed; the typecheck is clean.
+- Mutation check, by hand, each restored and none committed; each fails one of the two files: `instanceof` and `message` outside the `try`, `message` not made a string (added case), no catch in `thrownText`, one catch for all the settlement steps, no owed write, no direct append when the record write failed, no cancel, no `UNKNOWN`, the settlement skipped, another value thrown, no wait between unreadable reads, and no deadline on them.
+
