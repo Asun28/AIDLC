@@ -699,17 +699,26 @@ describe('T0-EXEC-SYNC-TREE-KILL timeouts past the largest timer delay (R3 decis
     assert.notEqual(Number(r.stdout), process.pid);
   });
 
-  it('timeoutMs 2 147 483 648 runs on the direct path as before this card and the command is not ended early', () => {
-    const r = runSync(process.execPath, PPID_AFTER_300MS, { timeoutMs: 2_147_483_648, killTree: true });
-    assert.deepEqual([r.exitCode, r.timedOut], [0, false], r.stderr.slice(0, 300));
-    assert.equal(Number(r.stdout), process.pid);
+  it('timeoutMs 2 147 483 648 with killTree refuses a real command, which never runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const marker = join(dir, 'ran');
+    try {
+      const r = runSync(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], "x")', marker], { timeoutMs: 2_147_483_648, killTree: true });
+      assert.equal(r.exitCode, null);
+      assert.match(r.stderr, /^\[tree helper error\] unsupported timeoutMs/);
+      assert.equal(existsSync(marker), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
-  for (const timeoutMs of [2_147_483_648, Number.MAX_SAFE_INTEGER + 2, 1500.5, Infinity]) {
-    it(`timeoutMs ${timeoutMs} with killTree spawns the command itself, never the helper`, () => {
+  for (const timeoutMs of [2_147_483_648, Number.MAX_SAFE_INTEGER + 2, 1500.5, Infinity, -1]) {
+    it(`timeoutMs ${timeoutMs} with killTree spawns nothing and returns the refusal`, () => {
       const { spawner, calls } = recordingSpawner({ stdout: 'direct' });
-      createRunSync(spawner)('git', ['status'], { timeoutMs, killTree: true });
-      assert.deepEqual(calls.map((c) => [c.command, c.options.timeout]), [['git', timeoutMs]]);
+      const r = createRunSync(spawner)('git', ['status'], { timeoutMs, killTree: true });
+      assert.deepEqual(calls, []);
+      assert.deepEqual([r.exitCode, ok(r)], [null, false]);
+      assert.match(r.stderr, /^\[tree helper error\] unsupported timeoutMs/);
     });
   }
 
