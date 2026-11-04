@@ -99,7 +99,8 @@ export function initProject(options: InitOptions): InitReport {
   }
   // .gitignore
   const gi = path.join(target, '.gitignore');
-  const need = ['.aidlc/', '_local/'];
+  // Paths the loop writes into a checkout: state, the board mirror, and the R2/R3 verdicts and logs under the review checkout.
+  const need = ['.aidlc/', '_local/', '.review/'];
   const current = existsSync(gi) ? readFileSync(gi, 'utf8') : '';
   const missing = need.filter((n) => !current.split(/\r?\n/).some((l) => l.trim() === n || l.trim() === n.replace(/\/$/, '')));
   if (missing.length) {
@@ -116,6 +117,10 @@ type Settings = { permissions?: { deny?: string[]; allow?: string[] }; hooks?: R
 const TEMPLATE_HOOK_COMMAND = 'npx --no-install aidlc hook auto';
 /** Per-guard wiring from 0.1.0: three `npx` starts per tool call. Replaced by the one-process dispatcher. */
 const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect-tests|secrets-guard|verify-before-done|route-new-work)$/;
+/** The `PreToolUse` matcher before PowerShell joined it. */
+const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
+/** Every spelling of the dispatcher `resolveHookCommand` can write. */
+const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
 
 /**
  * Fastest hook command available in the target: a direct `node` start of the hook entry (no npx
@@ -143,6 +148,14 @@ export function stripLegacyHooks(hooks: Record<string, HookEntry[]>): void {
   }
 }
 
+/** Take the dispatcher off an old-matcher entry, where it would run beside the new entry, and drop an entry left empty; a foreign hook stays. */
+function moveOffOldMatcher(hooks: Record<string, HookEntry[]>): void {
+  const entries = hooks['PreToolUse'];
+  if (!entries) return;
+  for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !DISPATCHER_COMMANDS.has(h.command));
+  hooks['PreToolUse'] = entries.filter((e) => e.matcher !== OLD_PRE_TOOL_MATCHER || e.hooks.length > 0);
+}
+
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
   const dest = path.join(target, '.claude', 'settings.json');
   const incoming = JSON.parse(readFileSync(src, 'utf8')) as Settings;
@@ -161,6 +174,7 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
   existing.permissions = { ...(existing.permissions ?? {}), deny: [...deny] };
   existing.hooks = existing.hooks ?? {};
   stripLegacyHooks(existing.hooks);
+  moveOffOldMatcher(existing.hooks);
   for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
     const list = existing.hooks[event] ?? [];
     for (const entry of entries) {

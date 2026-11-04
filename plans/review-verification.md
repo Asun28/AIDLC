@@ -121,6 +121,7 @@ changes REVIEW.md's output contract.
 2. T1-VERIFY-LIVENESS: after recovery from each fault the run reaches the fault-free end state; each violation the current code shows is pinned with its counterexample and filed as a T0-bugfix card.
 3. T1-VERIFY-SKILL: the project verify skill for that check, with its coverage record, sync commit and recorded real-code break; one card-loop rule for project verify skills.
 4. T1-REVIEW-BENCH: `aidlc review bench run` scores a stage's reviewer on confirmed cases in temporary checkouts and reports recall and false blocks.
+4a. T1-REVIEW-BENCH-2 (successor of T1-REVIEW-BENCH, stopped for ci on PR 177): carries that branch merged with main, passes the loop's changed lines to the panel, and resolves no session while the CLI program is built.
 5. T1-REVIEW-BENCH-EXPORT: `aidlc review bench export` drafts unconfirmed cases from the card-run ledgers, with a clean mode, and pins their candidates.
 6. T1-REVIEW-CLASS-SWEEP: `(class: <slug>)` on block reasons, recorded on the finding, listed with its sites in the repair directive and checked by the next review.
 7. T1-REVIEW-RESPONSES: dispute kinds (`wrong`, `intentional`, `not-worth-fixing`) and the responses in `aidlc review stats`.
@@ -137,7 +138,8 @@ changes REVIEW.md's output contract.
 | T1-VERIFY-LIVENESS | MUST | liveness check with pinned known violations | T1-VERIFY-FAULT-POINTS | W2 | - |
 | T1-VERIFY-SKILL | MUST | project verify skill and the card-loop rule | T1-VERIFY-FAULT-POINTS | W3 | - |
 | T1-REVIEW-BENCH | MUST | reviewer bench run | - | W3 | - |
-| T1-REVIEW-BENCH-EXPORT | MUST | bench case export and candidate pins | T1-REVIEW-BENCH | W4 | - |
+| T1-REVIEW-BENCH-2 | MUST | reviewer bench run, successor | - | W3 | - |
+| T1-REVIEW-BENCH-EXPORT | MUST | bench case export and candidate pins | T1-REVIEW-BENCH-2 | W4 | - |
 | T1-REVIEW-CLASS-SWEEP | SHOULD | class tag, class list in the repair directive | - | W5 | - |
 | T1-REVIEW-RESPONSES | SHOULD | dispute kinds and responses in stats | - | W6 | - |
 | T1-REVIEW-PRE-EXISTING | SHOULD | pre-existing tag with the changed-line check | T1-REVIEW-RESPONSES | W7 | - |

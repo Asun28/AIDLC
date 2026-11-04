@@ -8,10 +8,10 @@
  * turns a guard off: the guards that read it deny what some valid config would deny and pass the repair (`loadHookConfig`).
  *
  * Hooks:
- *  - production-gate   (PreToolUse Bash): deploy+production needs a matching release authorization.
- *  - protect-paths     (PreToolUse Edit|Write|Bash): frozen paths cannot be edited in place.
+ *  - production-gate   (PreToolUse Bash|PowerShell): deploy+production needs a matching release authorization.
+ *  - protect-paths     (PreToolUse Edit|Write|Bash|PowerShell): frozen paths cannot be edited in place.
  *  - protect-tests     (PreToolUse Edit|Write): test files are locked while a fix task is active.
- *  - secrets-guard     (PreToolUse Write|Edit|Bash): credential-looking content never enters a diff.
+ *  - secrets-guard     (PreToolUse Write|Edit|Bash|PowerShell): credential-looking content never enters a diff.
  *  - verify-before-done(Stop): an active card of this session without a fresh DoD receipt is not done (not said
  *                      while Claude Code reports running background work), and a goal whose lease this session
  *                      holds commits its planning artifacts first; nothing is said while Claude Code is already
@@ -28,17 +28,14 @@
  */
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
-import { GoalStore } from '../state/goal-store.ts';
-import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
-import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
-import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import type { LeaseStore } from '../coordination/lease.ts';
 import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
+import * as lazy from './lazy.ts';
 
 export interface HookEvent {
   hook_event_name?: string;
@@ -275,13 +272,13 @@ function isConfigFile(target: string, cwd: string, error: HookConfigError): bool
 function configRepair(cwd: string): string {
   if (atConfigDir(cwd)) return CONFIG_REPAIR;
   const dir = configDir(cwd);
-  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${quotePath(dir)}.`;
+  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${lazy.claims().quotePath(dir)}.`;
 }
 
 /** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes in `cwd`. */
-function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean, cwd: string): HookResult {
-  const file = quotePath(error.file);
-  const opening = bash ? `Bash is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
+function configDenial(guard: ConfigGuard, error: HookConfigError, shell: 'Bash' | 'PowerShell' | undefined, cwd: string): HookResult {
+  const file = lazy.claims().quotePath(error.file);
+  const opening = shell ? `${shell} is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
   return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${configRepair(cwd)}`);
 }
 
@@ -294,7 +291,8 @@ function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
     if (guard === 'production-gate') return productionGate(event, env, legacy, cwd, true);
     if (guard === 'protect-paths') return protectPaths(event, legacy, true);
     return protectTests(event, cwd, env, legacy);
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -303,7 +301,7 @@ function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
  * A guard that reads the config, while it cannot be used. It first decides as it did before on the `hooks` values the file
  * still yields (`legacyDecision`), and a block there is the answer, with its own text: a broken config denies at least
  * what it denied before, a frozen config file included. Beyond that, `production-gate` and `protect-paths` deny every Bash
- * command but the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does
+ * or PowerShell command but the doctor commands, `protect-paths` denies every edit but the config file's own, and `protect-tests` does
  * the same while a fix task is active. Reads go through the Read, Grep and Glob tools, which no hook guards.
  */
 function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, error: HookConfigError): HookResult {
@@ -312,13 +310,13 @@ function unusableConfig(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
   const file = event.tool_input?.['file_path'];
   const cmd = event.tool_input?.['command'];
   if (guard === 'protect-tests') {
-    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
+    return typeof file !== 'string' || !fixTaskMarker(cwd, env) || isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, undefined, cwd);
   }
   // A command is compared with the doctor list whatever else the event carries, so a file path beside it (the config's
   // own included) never lets it through, and whatever its type: a present value that is not one of the doctor strings is
   // denied (card T0-HOOK-CONFIG-NONSTRING); only an absent command is left to the file rule.
-  if (cmd !== undefined && !(typeof cmd === 'string' && isDoctorCommand(cmd, cwd))) return configDenial(guard, error, true, cwd);
-  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, false, cwd);
+  if (cmd !== undefined && !(typeof cmd === 'string' && isDoctorCommand(cmd, cwd))) return configDenial(guard, error, event.tool_name === 'PowerShell' ? 'PowerShell' : 'Bash', cwd);
+  if (guard === 'protect-paths' && typeof file === 'string') return isConfigFile(file, cwd, error) ? { exitCode: 0 } : configDenial(guard, error, undefined, cwd);
   return { exitCode: 0 };
 }
 
@@ -393,6 +391,24 @@ function isMutating(segment: string): boolean {
   return !READ_ONLY_TOOLS.has(name);
 }
 
+/** PowerShell's write commands and aliases that `WRITE_VERBS` does not name (card T1-PS-GUARD-READ), read as a segment's first word. */
+const PS_WRITE_COMMANDS = new Set(['sc', 'ac', 'ni', 'cpi', 'mi', 'rni', 'ren', 'rd', 'rmdir', 'erase', 'clc', 'si', 'copy', 'move', 'epcsv', 'rename-item', 'clear-content', 'set-item', 'export-csv', 'export-clixml']);
+/** PowerShell's file-writing forms that have no write command as a first word. */
+const PS_WRITE_FORMS = /-outfile|\[io\.file\]::(?:write|append|delete|move|copy)/i;
+
+/**
+ * The segments of a PowerShell command (card T1-PS-GUARD-READ): each backtick before a line break is joined into a space, and
+ * `{`, `}`, `(` and `)` split as `commandSegments` splits. Quotes are not read, as there. Only the second pass reads this.
+ */
+function powerShellSegments(cmd: string): string[] {
+  return commandSegments(cmd.replace(/`(?:\r\n|\n|\r)/g, ' ').replace(/[{}()]/g, '\n'));
+}
+
+/** Whether a PowerShell command writes a file in a way `writesFiles`, which reads Bash, does not see. */
+function powerShellWrites(cmd: string): boolean {
+  return PS_WRITE_FORMS.test(cmd) || powerShellSegments(cmd).some((segment) => PS_WRITE_COMMANDS.has(commandOf(segment).name));
+}
+
 /** The classification before card T0-HOOK-CLASSIFIER-3: a first word on the read-only lists, any path stripped, reads. */
 function mainMutating(segment: string): boolean {
   const { name, args } = commandOf(segment);
@@ -417,7 +433,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used
   // and the first pass of `dispatchHook`, tests main's segments alone, so it decides exactly as main did.
   const main = mainSegments(cmd).filter(mainMutating);
-  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd)])];
+  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd), ...(event.tool_name === 'PowerShell' ? powerShellSegments(cmd).filter(isMutating) : [])])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).
@@ -427,7 +443,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   if (approvalRef) {
     try {
       const paths = resolveStatePaths(cwd, env);
-      const store = new GoalStore(paths);
+      const store = new (lazy.goalStore().GoalStore)(paths);
       for (const goal of store.listGoals()) {
         const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a));
         const hitRecord = records.find((r) => r.id === approvalRef || r.ref === approvalRef);
@@ -438,7 +454,8 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
         }
       }
       if (!matched && !existsSync(paths.goals)) matched = true; // no aidlc state: honour the plain env approval like the playbook hook
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       matched = false;
     }
   }
@@ -463,7 +480,7 @@ export function protectPaths(event: HookEvent, config: Required<HookConfig>, cla
   const reason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   if (typeof file === 'string' && matches(file)) return deny('PreToolUse', reason);
   if (typeof cmd === 'string' && matches(cmd)) {
-    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd)) return deny('PreToolUse', reason);
+    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd) || (event.tool_name === 'PowerShell' && powerShellWrites(cmd))) return deny('PreToolUse', reason);
     return defer('PreToolUse', 'Note: this command references a frozen path. Read-only use may continue; any write must go through version review.');
   }
   return { exitCode: 0 };
@@ -545,9 +562,9 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
   const waiting = Array.isArray(event.background_tasks) && event.background_tasks.length > 0;
   try {
     const paths = resolveStatePaths(cwd, env);
-    const store = new GoalStore(paths);
+    const store = new (lazy.goalStore().GoalStore)(paths);
     const active = store.listGoals().filter((g) => !g.terminal);
-    const leases = new LeaseStore(paths.leases);
+    const leases = new (lazy.lease().LeaseStore)(paths.leases);
     const repoKey = resolveRepoIdentity(cwd).key;
     const host = hostName();
     let acting = session;
@@ -562,13 +579,14 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     const ownedHere = (cardId: string): boolean => {
       let lease: Lease | undefined;
       try {
-        lease = leases.read(resourceKeys.card(repoKey, cardId));
+        lease = leases.read(lazy.lease().resourceKeys.card(repoKey, cardId));
       } catch (err) {
+        lazy.rethrowLoadError(err);
         unreadable.push(`${cardId}: ${leaseReadCode(err)}`);
         return true;
       }
       if (!lease || lease.released) return true;
-      if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+      if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
       return lease.owner.session === acting && lease.owner.host === host;
     };
     const contexts: string[] = [];
@@ -585,18 +603,21 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
         const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
         contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
       }
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       /* the DoD check is advisory */
     }
     try {
       contexts.push(...planningArtifactsContexts(cwd, env, active, leases, repoKey, host, session));
     } catch (err) {
+      lazy.rethrowLoadError(err);
       // The session is told the check did not run, by error code only (git, config or a store read).
-      contexts.push(`[aidlc] The planning-artifacts check did not run (${readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
+      contexts.push(`[aidlc] The planning-artifacts check did not run (${lazy.claims().readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
     }
     if (!contexts.length) return { exitCode: 0 };
     return stopContext(contexts.join(' '));
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -619,27 +640,28 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   const owned = active.filter((goal) => {
     let lease: Lease | undefined;
     try {
-      lease = leases.read(resourceKeys.goal(repoKey, goal.id));
-    } catch {
+      lease = leases.read(lazy.lease().resourceKeys.goal(repoKey, goal.id));
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       return false;
     }
     if (!lease || lease.released) return false;
-    if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+    if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
     return lease.owner.session === acting && lease.owner.host === host;
   });
   if (!owned.length) return [];
   const dirs = loadProjectConfig(repo.mainRoot).config;
-  const claims = planningClaims(active, dirs, (ref) => {
+  const claims = lazy.claims().planningClaims(active, dirs, (ref) => {
     const file = path.join(repo.mainRoot, ref);
     return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
   });
-  const uncommitted = uncommittedPlanningFiles(new GitProbe().status(repo.mainRoot), dirs);
+  const uncommitted = lazy.claims().uncommittedPlanningFiles(new GitProbe().status(repo.mainRoot), dirs);
   const contexts: string[] = [];
   for (const goal of owned) {
     const files = uncommitted.filter((file) => claims.get(file) === goal.id);
     // Each path is JSON-quoted, and so is a goal id that is not a plain identifier: a name carrying a
     // newline or a `[aidlc]` stays data inside its quotes.
-    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${quoteId(goal.id)} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
+    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${lazy.claims().quoteId(goal.id)} are uncommitted on main: ${files.map(lazy.claims().quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
   }
   return contexts;
 }
@@ -650,7 +672,7 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
  */
 export function routeNewWork(event: HookEvent, configError?: HookConfigError, cwd?: string): HookResult {
   const routed = routeLine(event);
-  const note = configError && `[aidlc] ${quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${cwd === undefined ? CONFIG_REPAIR : configRepair(cwd)}`;
+  const note = configError && `[aidlc] ${lazy.claims().quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${cwd === undefined ? CONFIG_REPAIR : configRepair(cwd)}`;
   const text = [routed, note].filter(Boolean).join('\n');
   return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
 }
@@ -669,13 +691,13 @@ function routeLine(event: HookEvent): string | undefined {
   const prompt = String(event.prompt ?? '');
   if (machinePrompt(prompt)) return undefined;
   if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return undefined;
-  const routing = classifyRequest({ text: prompt });
+  const routing = lazy.router().classifyRequest({ text: prompt });
   const guidance = routing.size === 'T2'
     ? 'T2: brief -> plan -> plan-forge audit -> card projection; one product checkpoint approves plan + projection together before execution.'
     : routing.size === 'T1'
       ? 'T1: concise plan points -> valid cards -> arc; no full forge where routing policy permits.'
       : 'T0: one coherent card via card-loop; no planning funnel.';
-  return `${formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.`;
+  return `${lazy.router().formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.`;
 }
 
 export function readStdinJson(text: string): HookEvent {
