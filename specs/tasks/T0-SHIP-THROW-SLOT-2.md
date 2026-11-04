@@ -42,6 +42,7 @@ diagnosis:
   same_class: "See the sweep: every unguarded `gh` call inside `shipPath.ship` has the same effect, and R2 covers them all."
 hygiene: "This card replaces T0-SHIP-THROW-SLOT by the user's ruling of 2026-11-05, after R3 decision 2 stopped that card re-raising F1, F2, F3 and F6: the crash fix ships here, with `thrownText` non-throwing across its whole body (F2, F3), and the release command, where F1, F6 and F13 sit, moves to card T0-REVIEW-RELEASE. It ports the settlement of that card's a59721e, whose R3 decision 1 repair of the cleanup and the owed result R3 decision 2 did not re-raise. A throw is UNKNOWN and not `failed`, since `prView` runs after the merge: the outcome is looked up, and `aidlc ops reconcile` records it. Run the verify-card-run-writes check before SHIP (`CardRunner.ship` is covered) and move its sync commit at CLOSE. Every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8); the doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
 doc_sync: CHANGELOG.md, docs/OPERATIONS.md
+superseded_by: T0-SHIP-THROW-SLOT-3
 ---
 
 # T0-SHIP-THROW-SLOT-2
@@ -64,3 +65,10 @@ npm run typecheck && node --test tests/scenarios/ship-throw.test.ts tests/infra/
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- Ported from a59721e of T0-SHIP-THROW-SLOT, whose RED and mutation check are on that branch; the release command and its tests stayed behind. `thrownText` is new: the whole body is inside its `try`.
+- RED: commit 33def94 (the tests, the source fix set aside). The tests of `tests/infra/github-ship.test.ts` that exercise the gate fail, and a revoked proxy that reaches node:test unhandled also fails the rest of that file, which is why tests of other cards show as failed in that run; `tests/scenarios/ship-throw.test.ts` fails on every acceptance item it holds.
+- GREEN: `node --test tests/scenarios/ship-throw.test.ts tests/infra/github-ship.test.ts`: 68 tests, 68 passed, 0 failed; the typecheck is clean.
+- Mutation check, by hand, each restored and none committed; each fails one of the two files: `instanceof` and `message` outside the `try`, `message` not made a string (added case), no catch in `thrownText`, one catch for all the settlement steps, no owed write, no direct append when the record write failed, no cancel, no `UNKNOWN`, the settlement skipped, another value thrown, no wait between unreadable reads, and no deadline on them.
+

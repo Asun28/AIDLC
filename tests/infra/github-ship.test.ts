@@ -123,6 +123,68 @@ describe('GitHubShipPath', () => {
     assert.equal(mergeFail.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merge-failed');
   });
 
+  test('T0-SHIP-THROW-SLOT-2 acceptance 1: a check-run read that fails once is a pending read, and the ship merges after it', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    let reads = 0;
+    let sleeps = 0;
+    const flaky = () => (reads += 1, reads === 1 ? { exitCode: 1, stderr: 'gh: Server Error (HTTP 502)' } : { stdout: JSON.stringify({ check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }] }) });
+    const ship = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner: runnerWith({ 'gh api repos/o/r/commits': flaky }), sleep: () => { sleeps += 1; } });
+    const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'merged');
+    assert.equal(reads, 2);
+    assert.equal(sleeps, 1);
+    assert.equal(r.receipt.stdout.split('\n').filter((l) => l.startsWith('[CI-GATE-WAIT] check runs unreadable: ')).length, 1);
+  });
+
+  test('T0-SHIP-THROW-SLOT-2 acceptance 6: a check-run read that throws a value that is no Error is a pending read', () => {
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const noMessage = Object.defineProperty(new Error('hidden'), 'message', {
+      get() {
+        throw new Error('no message');
+      },
+    });
+    const values: Array<[unknown, string]> = [[null, 'null'], ['plain text', 'plain text'], [Object.create(null), 'a value with no text'], [revoked.proxy, 'a value with no text'], [noMessage, 'a value with no text'], [Object.assign(new Error('hidden'), { message: 42 }), '42']];
+    for (const [thrown, text] of values) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+      dirs.push(f.root);
+      let reads = 0;
+      const flaky = () => {
+        reads += 1;
+        if (reads === 1) throw thrown;
+        return { stdout: JSON.stringify({ check_runs: [{ name: 'ci', status: 'completed', conclusion: 'success' }] }) };
+      };
+      const ship = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner: runnerWith({ 'gh api repos/o/r/commits': flaky }), sleep: () => {} });
+      const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'merged');
+      assert.equal(r.receipt.stdout.split('\n').filter((l) => l === `[CI-GATE-WAIT] check runs unreadable: ${text}`).length, 1);
+    }
+  });
+
+  test('T0-SHIP-THROW-SLOT-2 acceptance 6: a check-run read that always throws a revoked proxy ends in the gate timeout', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const revoked = Proxy.revocable({}, {});
+    revoked.revoke();
+    const always = () => {
+      throw revoked.proxy;
+    };
+    const ship = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', ciTimeoutMs: 0, ciPollMs: 1, runner: runnerWith({ 'gh api repos/o/r/commits': always }), sleep: () => {} });
+    assert.equal(ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'ci-timeout');
+  });
+
+  test('T0-SHIP-THROW-SLOT-2 acceptance 2: a check-run read that always fails ends in the gate timeout and merges nothing', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    let merges = 0;
+    const ship = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', ciTimeoutMs: 0, ciPollMs: 1, runner: runnerWith({ 'gh api repos/o/r/commits': { exitCode: 1, stderr: 'gh: Server Error (HTTP 502)' }, 'gh pr merge': () => (merges += 1, {}) }), sleep: () => {} });
+    const r = ship.ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'ci-timeout');
+    assert.match(r.receipt.stdout, /\[CI-GATE-TIMEOUT\]/);
+    assert.equal(merges, 0);
+  });
+
   test('an already merged PR for the branch is not a new start', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);

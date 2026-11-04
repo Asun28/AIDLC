@@ -93,6 +93,18 @@ const SENTINEL_MAP: Array<[RegExp, ShipOutcomeClass]> = [
 ];
 
 /**
+ * The text of a thrown value, always a primitive string: nothing that catches a value may throw in its turn, and `instanceof`,
+ * a `message` getter and `String` can each throw (card T0-SHIP-THROW-SLOT-2).
+ */
+export function thrownText(thrown: unknown): string {
+  try {
+    return thrown instanceof Error ? String(thrown.message) : String(thrown);
+  } catch {
+    return 'a value with no text';
+  }
+}
+
+/**
  * Untrusted text on the ship output (check names in the gate lines, git's lines and paths from the base sync, the
  * failing line of a ship failure) travels with brackets and percent signs encoded, so it can never form a sentinel or a
  * `[SAGA-RESUME]` marker; everything else stays verbatim. `classifyCiFailure` in core/ci-policy decodes the check names when it reads the gate lines.

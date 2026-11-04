@@ -28,7 +28,7 @@ import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
-import { DryRunShipPath, ScaffoldShipPath, type ShipPath, type ShipResult } from '../delivery/ship.ts';
+import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -1137,8 +1137,40 @@ export class CardRunner {
     }
     this.ops.markIssued(op.id, undefined, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { operationId: op.id } });
-    const result = this.shipPath.ship({ cardId: card.id, base: this.config.base, mode: armed.mode, skipRed: !card.tdd, timeoutMs: 60 * 60 * 1000, candidateSha: armed.candidate?.sha });
+    let result: ShipResult;
+    try {
+      result = this.shipPath.ship({ cardId: card.id, base: this.config.base, mode: armed.mode, skipRed: !card.tdd, timeoutMs: 60 * 60 * 1000, candidateSha: armed.candidate?.sha });
+    } catch (err) {
+      this.settleThrownShip(goal, card, op.id, key, err);
+      throw err;
+    }
     return this.applyShipResult(goal, card, armed, result, op.id, key, candidateDigest, bindings);
+  }
+
+  /**
+   * A ship that threw (card T0-SHIP-THROW-SLOT) no longer runs, so its slot is free, and its push, PR or merge may have landed, so
+   * its operation is UNKNOWN until it is looked up. Each step runs whatever the others do, since one failed write must not keep the
+   * slot or replace the thrown value, and each failure leaves what recovers it: the owed result for the next command, an `issued`
+   * operation for `aidlc ops reconcile`, a running request for `aidlc review release`.
+   */
+  private settleThrownShip(goal: Goal, card: Card, operationId: string, key: string, thrown: unknown): void {
+    const error = `ship threw: ${thrownText(thrown)}`;
+    const result = this.owe(goal, 'OPERATION_RESULT', { operationId, status: 'UNKNOWN', outcome: 'ship-threw' });
+    const attempt = (step: () => void): boolean => {
+      try {
+        step();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const owed = attempt(() => this.store.updateCardRun(goal.id, card.id, (run) => ({ ...run!, journalOwed: this.owedWith(goal.id, run!, result) })));
+    attempt(() => this.ops.markResult(operationId, 'UNKNOWN', { error }));
+    attempt(() => this.queue.cancel(key, error, this.clock()));
+    attempt(() => {
+      if (owed) this.deliverOwed(goal, card, this.store.getCardRun(goal.id, card.id)!, { keys: [result.key] });
+      else this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, cardId: card.id, generation: goal.generation, data: result.data });
+    });
   }
 
   /**
