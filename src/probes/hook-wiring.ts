@@ -2,7 +2,8 @@
  * Doctor's `hookCommand` (card T1-INIT-HOOK-PATH): runs the dispatcher wired in `.claude/settings.json` once on a no-op
  * event. A hook that exits 1 does not stop a tool call and says nothing, so this line is where a broken command shows.
  * A command `isDispatcherCommand` refuses is never run: the settings file may come from a cloned repository. A `node`
- * spelling runs with no shell, so no shell reads its path; only the fixed npx text goes through one.
+ * spelling runs with no shell, so no shell reads its path, and its entry stands after `--`, so Node reads no option from
+ * it; only the fixed npx text goes through a shell. A launch that throws is reported, so doctor keeps its exit code.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -22,12 +23,17 @@ function wiredDispatcher(root: string): string | undefined {
   }
 }
 
-/** `ok: <command>`, `FAILED (exit <n>): ...` (a timeout is `exit null`) or `not wired`. */
-export function hookWiringReport(root: string): string {
+/** `ok: <command>`, `FAILED (exit <n>): ...` (a timeout or a launch that throws is `exit null`) or `not wired`. */
+export function hookWiringReport(root: string, spawn: typeof spawnSync = spawnSync): string {
   const command = wiredDispatcher(root);
   if (command === undefined) return 'not wired';
   const options = { input: NO_OP_EVENT, cwd: root, timeout: 10000, windowsHide: true };
-  const entry = /^node "?(.+?)"?$/.exec(command)?.[1];
-  const r = entry ? spawnSync('node', [entry], options) : spawnSync(command, { ...options, shell: true });
-  return r.status === 0 ? `ok: ${command}` : `FAILED (exit ${r.status}): every guard is off until this command runs: ${command}`;
+  let status: number | null = null;
+  try {
+    const r = command.startsWith('node ') ? spawn('node', ['--', command.slice('node '.length).replace(/^"|"$/g, '')], options) : spawn(command, { ...options, shell: true });
+    status = r.status;
+  } catch {
+    // Reported below as exit null.
+  }
+  return status === 0 ? `ok: ${command}` : `FAILED (exit ${status}): every guard is off until this command runs: ${command}`;
 }

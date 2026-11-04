@@ -123,12 +123,15 @@ const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect
 const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
 /** Every spelling of the dispatcher `resolveHookCommand` can write. */
 const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
-/** The absolute spelling. The path holds no shell expansion or separator character; `(` and `)` stay, for `C:/Program Files (x86)`. */
-const ABSOLUTE_DISPATCHER = /^node "[^"$`%&|<>^\r\n]+\/bin\/aidlc-hook\.js"$/;
+/**
+ * The absolute spelling. An absolute path cannot be read as a Node option. The path holds no shell expansion or separator
+ * character and no NUL, which no process argument can carry; `(` and `)` stay, for `C:/Program Files (x86)`.
+ */
+const ABSOLUTE_DISPATCHER = /^node "(?=\/|[A-Za-z]:\/)[^"$`%&|<>^\0\r\n]*\/bin\/aidlc-hook\.js"$/;
 
-/** Whether a settings command is the aidlc dispatcher in any spelling; only such a command is replaced, or run by doctor. */
-export function isDispatcherCommand(command: string): boolean {
-  return DISPATCHER_COMMANDS.has(command) || ABSOLUTE_DISPATCHER.test(command);
+/** Whether a settings value is the aidlc dispatcher in any spelling; only such a command is replaced, or run by doctor. The value comes from a parsed file, so it may not be a string. */
+export function isDispatcherCommand(command: unknown): command is string {
+  return typeof command === 'string' && (DISPATCHER_COMMANDS.has(command) || ABSOLUTE_DISPATCHER.test(command));
 }
 
 /**
@@ -141,7 +144,7 @@ export function resolveHookCommand(target: string, hookEntry?: string): string {
   if (existsSync(path.join(target, 'node_modules', 'aidlc', 'bin', 'aidlc-hook.js'))) return 'node node_modules/aidlc/bin/aidlc-hook.js';
   const pkg = readPackage(target);
   if (pkg.name === 'aidlc') return existsSync(path.join(target, 'bin', 'aidlc-hook.js')) ? 'node bin/aidlc-hook.js' : TEMPLATE_HOOK_COMMAND;
-  if (hookEntry && !pkg.dependencies?.['aidlc'] && !pkg.devDependencies?.['aidlc']) {
+  if (hookEntry && !holdsAidlc(pkg.dependencies) && !holdsAidlc(pkg.devDependencies)) {
     const direct = `node "${hookEntry.replace(/\\/g, '/')}"`;
     if (isDispatcherCommand(direct)) return direct;
   }
@@ -149,12 +152,17 @@ export function resolveHookCommand(target: string, hookEntry?: string): string {
 }
 
 /** The target's `package.json`; a file that is absent or does not parse lists nothing. */
-function readPackage(target: string): { name?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> } {
+function readPackage(target: string): { name?: string; dependencies?: unknown; devDependencies?: unknown } {
   try {
     return JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) ?? {};
   } catch {
     return {};
   }
+}
+
+/** Whether a dependency map holds the key `aidlc`, whatever its version; a value that is not an object lists nothing. */
+function holdsAidlc(map: unknown): boolean {
+  return typeof map === 'object' && map !== null && Object.hasOwn(map, 'aidlc');
 }
 
 /** Drop 0.1.0 per-guard hooks (superseded by the dispatcher) and any entry left empty by that. */
@@ -171,6 +179,31 @@ function moveOffOldMatcher(hooks: Record<string, HookEntry[]>): void {
   if (!entries) return;
   for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !isDispatcherCommand(h.command));
   hooks['PreToolUse'] = entries.filter((e) => e.matcher !== OLD_PRE_TOOL_MATCHER || e.hooks.length > 0);
+}
+
+/**
+ * The hooks of one event with `entry`'s dispatcher exactly once, in an entry of its matcher, where it already stands if it
+ * does. Every other spelling and repeat comes off every entry of the event, and an entry left empty is dropped. The new
+ * matcher covers every tool a guard reads, so no guard is lost. A foreign hook stays in its place.
+ */
+function settleDispatcher(list: HookEntry[], entry: HookEntry): HookEntry[] {
+  const isHome = (e: HookEntry) => (e.matcher ?? '') === (entry.matcher ?? '');
+  for (const h of entry.hooks) {
+    let held = false;
+    for (const e of list) {
+      e.hooks = e.hooks.filter((x) => {
+        if (!isDispatcherCommand(x.command)) return true;
+        const keep = !held && isHome(e) && x.command === h.command;
+        held ||= keep;
+        return keep;
+      });
+    }
+    if (held) continue;
+    const home = list.find(isHome);
+    if (home) home.hooks.push(h);
+    else list.push({ ...entry, hooks: [h] });
+  }
+  return list.filter((e) => e.hooks.length > 0);
 }
 
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
@@ -193,16 +226,8 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
   stripLegacyHooks(existing.hooks);
   moveOffOldMatcher(existing.hooks);
   for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
-    const list = existing.hooks[event] ?? [];
-    for (const entry of entries) {
-      const same = list.find((e) => (e.matcher ?? '') === (entry.matcher ?? ''));
-      if (same) {
-        for (const h of entry.hooks) {
-          same.hooks = same.hooks.filter((x) => !(isDispatcherCommand(x.command) && x.command !== h.command));
-          if (!same.hooks.some((x) => x.command === h.command)) same.hooks.push(h);
-        }
-      } else list.push(entry);
-    }
+    let list = existing.hooks[event] ?? [];
+    for (const entry of entries) list = settleDispatcher(list, entry);
     existing.hooks[event] = list;
   }
   if (!options.dryRun) writeFileSync(dest, JSON.stringify(existing, null, 2) + '\n');
