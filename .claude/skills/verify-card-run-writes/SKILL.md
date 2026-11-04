@@ -20,7 +20,7 @@ Harm: a card that the journal reports in one state while the run record holds an
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
-- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`
+- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`
 - `src/state/goal-store.ts`: `GoalStore.saveCardRun`, `GoalStore.updateCardRun`
 - `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`
 - `src/state/journal.ts`: `Journal.append`

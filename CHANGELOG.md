@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T0-JOURNAL-FAULT-EVENTS (bugfix): the attempt, R2, R3 and merge-result events of a card run are journaled only after the record write that commits the decision, and once: the write records the event on the card run as owed (`CardRun.journalOwed`), and an append that did not land is made, marked `completed: true`, by the next `card next`, `card attempt`, `review pre` or `review r3` on the card. Before, a failed record write after `ATTEMPT_STARTED` or `ATTEMPT_FINISHED` journaled the attempt event twice, and a failed append after an R2, R3 or merge commit lost the event for good, which also hid a shipped card from `aidlc audit verify --claim-full`. `verifyAudit` does not count a recovered `ATTEMPT_STARTED` as `WORK_AFTER_TERMINAL` when its `startedAt` precedes the last disposition of its generation.
+
 - T1-PS-GUARD-WIRE (bugfix, issue 117): a PowerShell tool call now runs the Bash guard set (`production-gate`, `protect-paths`, `secrets-guard`), through the `PreToolUse` matcher `Bash|PowerShell|Edit|Write|MultiEdit` in both settings files, and `aidlc init` takes the dispatcher off an old-matcher entry, so it runs once per tool call and a foreign hook keeps its matcher.
 
 - T0-TAKEOVER-FOREIGN-LINE (bugfix): `aidlc card takeover` reads the journal of the goal it runs under and of each other goal that holds a run of the card, no other journal, so a line the journal schema refuses in an unrelated goal (five `BOUND_FIRED` lines an unmerged build wrote) no longer crashes the takeover of every card after its lease write. A takeover already stopped that way completes when run again.
