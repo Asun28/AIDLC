@@ -45,6 +45,7 @@ non_goals:
   - the CLI start (bin/aidlc.js)
 hygiene: "RED first: seam exports prefetchRepoIdentity and settleRepoIdentity in src/state/paths.ts that do nothing, committed before the RED run, so the tests fail on their assertions. Tests build git fixtures under a fresh mkdtemp directory removed in a finally block, build child environments without AIDLC_* variables, read no clock, and take every expected value from a literal or a requirement line."
 doc_sync: docs/OPERATIONS.md, CHANGELOG.md
+superseded_by: T0-HOOK-GIT-PREFETCH-2
 ---
 
 # T0-HOOK-GIT-PREFETCH
