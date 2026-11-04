@@ -1,7 +1,7 @@
 ---
 id: T0-EXEC-SYNC-TREE-KILL-2
 title: A long-running command the synchronous runner times out (the scaffold ship script, ops bindings, eval commands) is ended with its whole process tree through a helper process, instead of leaving its descendants running after aidlc exits
-status: todo
+status: merged
 branch: T0-EXEC-SYNC-TREE-KILL-2
 worktree: D:\wt\AIDLC\T0-EXEC-SYNC-TREE-KILL-2
 allow_paths:
