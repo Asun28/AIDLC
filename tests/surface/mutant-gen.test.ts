@@ -353,6 +353,281 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN)', () => {
   });
 });
 
+describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
+  const file = (name: string, hunk: string) => `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n${hunk}`;
+  const MARKER = '\\ No newline at end of file';
+  const ds = (line: number, column: number, original: string): Row => [line, column, 'drop-statement', original, ''];
+  const dn = (line: number, column: number): Row => [line, column, 'drop-not', '!', ''];
+  const conditions = (ms: Mutant[]) => view(ms).filter((row) => row[2] === 'force-true' || row[2] === 'force-false');
+  const forced = (line: number, column: number, condition = 'ok'): Row[] => [
+    [line, column, 'force-true', condition, 'true'],
+    [line, column, 'force-false', condition, 'false'],
+  ];
+
+  test('F3: an excess body line invalidates the file for good, whatever hunk follows [R1]', () => {
+    const cases = [
+      '@@ -0,0 +1 @@\n+a();\n+b();',
+      '@@ -0,0 +1 @@\n+a();\n+b();\n',
+      '@@ -1 +1 @@\n-a\n-b\n+c\n@@ -3 +3 @@\n-d\n+e',
+      '@@ -1 +1 @@\n-a\n-b\n+c\n@@ -3 +3 @@\n-d\n+e\n',
+      '@@ -1 +1 @@\n+a\n+b\n-c\n@@ -3 +3 @@\n-d\n+e',
+      '@@ -1 +1 @@\n+a\n-b\n-c\n@@ -3 +3 @@\n-d\n+e\n@@ -5 +5 @@\n-f\n+g',
+      '@@ -0,0 +1 @@\n+a();\n@@ -0,0 +3 @@\n+c();\n+d();\n@@ -0,0 +9 @@\n+e();',
+    ];
+    for (const hunks of cases) assert.deepEqual(changedSourceLines(file('src/a.ts', hunks)), [], JSON.stringify(hunks));
+  });
+
+  test('F3: a hunk header while the last hunk still owes lines, and a hunk with no lines at all, invalidate the file [R1]', () => {
+    assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -0,0 +1,2 @@\n+a();\n@@ -0,0 +5 @@\n+b();\n@@ -0,0 +7 @@\n+c();')), []);
+    assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -0,0 +0,0 @@\n@@ -0,0 +1 @@\n+a();')), []);
+  });
+
+  test('F3: only the exact marker, right after a body line, is accepted inside or after a hunk [R1]', () => {
+    const notMarkers = ['\\ garbage', '\\', '\\ ', '\\No newline at end of file', '\\  No newline at end of file', '\\ no newline at end of file', `${MARKER}.`, `${MARKER} `, ` ${MARKER}`];
+    for (const bad of notMarkers) {
+      assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n${bad}\n+x;`)), [], `inside a hunk: ${bad}`);
+      assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -1 +1,2 @@\n-a\n${bad}\n+x;\n+y;`)), [], `between the sides: ${bad}`);
+      assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${bad}\n`)), [], `after a complete hunk: ${bad}`);
+      assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${bad}\n@@ -0,0 +3 @@\n+y;`)), [], `before another hunk: ${bad}`);
+    }
+    assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n${MARKER}\n+x;`)), [], 'a marker with no body line before it');
+    assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${MARKER}\n${MARKER}\n`)), [], 'a marker after a marker');
+    assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -1 +1 @@\n-a\n${MARKER}\n+x;\n${MARKER}\n`)), [{ file: 'src/a.ts', lines: [1] }], 'the marker after each side');
+    assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\r\n+x;\r\n${MARKER}\r\n`)), [{ file: 'src/a.ts', lines: [1] }], 'the marker in a \\r\\n diff');
+  });
+
+  test('F3: an invalid file takes no entry and the next file keeps its own [R1]', () => {
+    const diff = file('src/a.ts', '@@ -0,0 +1 @@\n+a();\n+b();\n') + file('src/b.ts', '@@ -0,0 +2 @@\n+c();\n') + file('src/c.ts', '@@ -0,0 +3 @@\n\\ garbage\n+d();\n') + file('src/d.ts', '@@ -0,0 +4 @@\n+e();\n');
+    assert.deepEqual(changedSourceLines(diff), [{ file: 'src/b.ts', lines: [2] }, { file: 'src/d.ts', lines: [4] }]);
+  });
+
+  test('F6: a ! after a value on the same line is postfix, after a property named like a keyword, in a chain and after a literal or an object [R3]', () => {
+    const source = [
+      'const a = obj.return!;',
+      'const b = value!!;',
+      'const c = obj?.in!.size;',
+      'const d = this.#return!;',
+      'const e = obj. /* c */ return !;',
+      'const f = value!!.size;',
+      'const g = `t`!;',
+      "const h = 'a'!.length;",
+      'const i = /r/!.source;',
+      'const j = { a: 1 }!;',
+      'const k = value !c;',
+      'const l = f()!(x);',
+      'const m = y[0]![1]!;',
+      'const n = of!.size;',
+      'const o = obj.await!(x);',
+      'class A { return!: number; }',
+      'let p!: number;',
+      'const q = value !;',
+      'const r = value /* c */ !;',
+    ].join('\n');
+    assert.deepEqual(view(mutantsFor(source, every(source))), []);
+  });
+
+  test('F6: a ! that starts an operand stays unary after keywords, control heads, blocks and other unary operators [R3]', () => {
+    const source = [
+      'const a = !!x;',
+      'const b = c ? !d : !e;',
+      'if (a) !b;',
+      'while (a) !b;',
+      'for (;;) !b;',
+      'for await (const a of b) !c;',
+      'obj.if(a)!.b;',
+      'export default !x;',
+      'const c = [...await !x];',
+      'const d = !(a);',
+      "const e = !'s';",
+      'const f = !-1;',
+      'const g = !.5;',
+      'const h = !/r/.test(s);',
+      'const i = !`t`;',
+      'const j = !a.in;',
+      'x = <T>!y;',
+      '{ a(); } !b;',
+    ].join('\n');
+    assert.deepEqual(view(mutantsFor(source, every(source))), [
+      dn(1, 11),
+      dn(1, 12),
+      dn(2, 15),
+      dn(2, 20),
+      ds(3, 1, 'if (a) !b;'),
+      ...forced(3, 5, 'a'),
+      dn(3, 8),
+      ds(4, 1, 'while (a) !b;'),
+      dn(4, 11),
+      ds(5, 1, 'for (;;) !b;'),
+      dn(5, 10),
+      ds(6, 1, 'for await (const a of b) !c;'),
+      dn(6, 26),
+      ds(7, 1, 'obj.if(a)!.b;'),
+      dn(8, 16),
+      dn(9, 21),
+      dn(10, 11),
+      dn(11, 11),
+      dn(12, 11),
+      dn(13, 11),
+      dn(14, 11),
+      dn(15, 11),
+      dn(16, 11),
+      ds(17, 1, 'x = <T>!y;'),
+      dn(17, 8),
+      ds(18, 1, '{ a(); } !b;'),
+      dn(18, 10),
+    ]);
+  });
+
+  test('F11: after a line break a ! before an operand is unary (automatic semicolon insertion) [R3]', () => {
+    const unary: Row[] = [ds(2, 1, '!c;'), dn(2, 1)];
+    for (const head of ['const a = b', 'const a = f()', 'const a = y[0]', "const a = 's'", 'const a = `t`', 'const a = { b: 1 }', 'b!', 'break', 'continue', 'const a = b // c', 'const a = b /* c */']) {
+      assert.deepEqual(view(mutantsFor(`${head}\n!c;`, [2])), unary, head);
+    }
+    assert.deepEqual(view(mutantsFor('const a = b\r\n!c;', [2])), unary, 'a \\r\\n line end');
+    assert.deepEqual(view(mutantsFor('const a = b /* x\n */ !d;', [2])), [ds(2, 5, '!d;'), dn(2, 5)], 'a comment holding the line break');
+    assert.deepEqual(view(mutantsFor('const a = b\n/* c */ !d;', [2])), [ds(2, 9, '!d;'), dn(2, 9)], 'a comment before the !');
+    assert.deepEqual(view(mutantsFor('const a = b\n!!c;', [2])), [ds(2, 1, '!!c;'), dn(2, 1), dn(2, 2)], 'a double negation');
+    assert.deepEqual(view(mutantsFor('const a = b !c;', [1])), [dn(1, 13)], 'U+2028 ends a line for the language though not for git');
+    assert.deepEqual(view(mutantsFor('const a = b\r!c;', [1])), [dn(1, 13)], 'a lone \\r');
+    for (const operand of ['!(c);', '![c].length;', "!'s'.length;", '!`t`.length;', '!/r/.test(c);', '!-c;', '!+c;', '!~c;', '!<T>c;', '!{}.a;', '!new C();', '!.5;', '!#p in c;']) {
+      assert.deepEqual(view(mutantsFor(`b\n${operand}`, [2])), [ds(2, 1, operand), dn(2, 1)], operand);
+    }
+  });
+
+  test('F11: after a line break a ! with no operand after it continues the expression, the case F6 pins [R3]', () => {
+    for (const tail of ['!.size;', '!?.size;', '!!.size;', '!;', '! in c;', '! instanceof C;', '! as T;', '! satisfies T;', '! ? c : d;']) {
+      assert.deepEqual(view(mutantsFor(`const a = b\n${tail}`, [2])), [ds(2, 1, tail)], tail);
+    }
+    assert.deepEqual(view(mutantsFor('const a = b\n! === c;', [2])), [ds(2, 1, '! === c;'), [2, 3, 'negate-equality', '===', '!==']]);
+    assert.deepEqual(view(mutantsFor('f(b\n!, c);', [2])), []);
+    assert.deepEqual(view(mutantsFor('f(b\n!);', [2])), []);
+    assert.deepEqual(view(mutantsFor('const a = b\n!', [2])), []);
+  });
+
+  test('F9: a member named if in an object literal, a class, an interface or a type literal is no condition [R3]', () => {
+    const sources = [
+      'const o = { if(ok) {} };',
+      'class A { if(ok: boolean) {} }',
+      'const o = { a: 1, if(ok) {} };',
+      'const o = { async if(ok) {} };',
+      'const o = { *if(ok) {} };',
+      'const o = { set if(ok) {} };',
+      'const o = { a: { if(ok) {} } };',
+      'class A { static if(ok: boolean) {} }',
+      'class A { public async if(ok: boolean) {} }',
+      'class A { #if(ok: boolean) {} }',
+      'class A { a() {} if(ok: boolean) {} }',
+      'class A { x = 1; if(ok: boolean) {} }',
+      'abstract class A { abstract if(ok: boolean): void; }',
+      'class A<T> { if(ok: boolean) {} }',
+      'class A extends B implements C { if(ok: boolean) {} }',
+      'class A extends mix({ a: 1 }) { if(ok: boolean) {} }',
+      'const C = class { if(ok: boolean) {} };',
+      'interface I { if(ok: boolean): void; }',
+      'interface I extends J<K> { if(ok: boolean): void; }',
+      'type T = { if(ok: boolean): void };',
+      'function f(p: { if(ok: boolean): void }) {}',
+      'function f(): { if(ok: boolean): void } { return x; }',
+      'const t: { if(ok: boolean): void } = x;',
+      'foo({ if(ok) {} });',
+      'const a = [{ if(ok) {} }];',
+      'const a = x ? { if(ok) {} } : y;',
+      'const a = x ? y : { if(ok) {} };',
+      'const a = x || { if(ok) {} };',
+      'export default { if(ok) {} };',
+      'return { if(ok) {} };',
+      'throw { if(ok) {} };',
+      'const a = await { if(ok) {} };',
+      'const a = b as { if(ok: boolean): void };',
+      'const a = b satisfies { if(ok: boolean): void };',
+      'function f<T extends { if(ok: boolean): void }>() {}',
+      'class A {\n  if(ok: boolean) {}\n}',
+      'const o = {\n  a: 1,\n  if(ok) {},\n};',
+    ];
+    for (const source of sources) assert.deepEqual(conditions(mutantsFor(source, every(source))), [], source);
+  });
+
+  test('F9: an if statement stays a condition in every block, method body and function body [R3]', () => {
+    const CONDITIONS: [source: string, column: number][] = [
+      ['class A { m() { if (ok) {} } }', 21],
+      ['class A extends B { m() { if (ok) {} } }', 31],
+      ['class A { static { if (ok) {} } }', 24],
+      ['class A {} function f(): T { if (ok) {} }', 34],
+      ['{ if (ok) {} }', 7],
+      ['function f(): T { if (ok) {} }', 23],
+      ['function f(): Promise<void> { if (ok) {} }', 35],
+      ['const g = () => { if (ok) {} };', 23],
+      ['const t = (): { a: 1 } => { if (ok) {} };', 33],
+      ['const o = { m() { if (ok) {} } };', 23],
+      ['const o = { a: () => { if (ok) {} } };', 28],
+      ['const o = { a: function () { if (ok) {} } };', 34],
+      ['const o = { if(x) { if (ok) {} } };', 25],
+      ['foo(function () { if (ok) {} });', 23],
+      ['switch (x) { case 1: { if (ok) {} } }', 28],
+      ['switch (x) { default: { if (ok) {} } }', 29],
+      ['switch (x) { case 1: x(); case 2: { if (ok) {} } }', 41],
+      ['lbl: { if (ok) {} }', 12],
+      ['try { if (ok) {} } catch { y(); }', 11],
+      ['do { if (ok) {} } while (x);', 10],
+      ['x(); else { if (ok) {} }', 17],
+      ['namespace N { if (ok) {} }', 19],
+    ];
+    for (const [source, column] of CONDITIONS) assert.deepEqual(conditions(mutantsFor(source, every(source))), forced(1, column), source);
+    assert.deepEqual(conditions(mutantsFor('if (a) { if (ok) {} }', [1])), [...forced(1, 5, 'a'), ...forced(1, 14)]);
+  });
+
+  test('F10: no whitespace character of the language is an identifier character [R3] [R4]', () => {
+    const spaces = [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '　', '﻿', '\u0085', '​'];
+    for (const ws of spaces) {
+      const name = `U+${ws.charCodeAt(0).toString(16)}`;
+      assert.deepEqual(view(mutantsFor(`const${ws}x = 1;`, [1])), [], `declaration keyword, ${name}`);
+      assert.deepEqual(view(mutantsFor(`return${ws}/ === /.test(x);`, [1])), [], `regex after a keyword, ${name}`);
+      assert.deepEqual(view(mutantsFor(`a${ws}===${ws}b`, [1])), [[1, 3, 'negate-equality', '===', '!==']], `binary operator, ${name}`);
+      assert.deepEqual(view(mutantsFor(`y = ${ws}true`, [1])), [[1, 6, 'flip-boolean', 'true', 'false']], `boolean, ${name}`);
+      assert.deepEqual(view(mutantsFor(`if${ws}(ok) {`, [1])), forced(1, 5), `if keyword, ${name}`);
+      assert.deepEqual(view(mutantsFor(`const v = obj.${ws}true;`, [1])), [], `boolean after a dot, ${name}`);
+      assert.deepEqual(view(mutantsFor(`const v = value${ws}!;`, [1])), [], `postfix !, ${name}`);
+      assert.deepEqual(view(mutantsFor(`const v = obj.return${ws}!;`, [1])), [], `postfix ! after a property, ${name}`);
+    }
+  });
+
+  test('F10: non-ASCII identifier characters stay identifier characters [R3] [R4]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ['constΔ();', [ds(1, 1, 'constΔ();')]],
+      ['let‌();', [ds(1, 1, 'let‌();')]],
+      ['var‍();', [ds(1, 1, 'var‍();')]],
+      ['const a = é !;', []],
+      ['const a = 𝒳 !;', []],
+      ['𝒳!.size;', [ds(1, 1, '𝒳!.size;')]],
+      ['returń / 2 === b / c;', [ds(1, 1, 'returń / 2 === b / c;'), [1, 13, 'negate-equality', '===', '!==']]],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, JSON.stringify(source));
+  });
+
+  test('sweep: a line comment and a regex literal end at every line terminator of the language [R4]', () => {
+    for (const end of [' ', ' ', '\r']) {
+      assert.deepEqual(view(mutantsFor(`// x${end}y = a && b;`, [1])), [ds(1, 6, 'y = a && b;'), [1, 12, 'swap-logic', '&&', '||']], JSON.stringify(end));
+      assert.deepEqual(view(mutantsFor(`return /oops${end}ok = a && b`, [1])), [[1, 21, 'swap-logic', '&&', '||']], JSON.stringify(end));
+    }
+  });
+
+  test('sweep: a property named like a keyword does not open a regex; a word after a spread is still a keyword [R4]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ['const a = obj.return / 2 === b / c;', [[1, 26, 'negate-equality', '===', '!==']]],
+      ['const a = this.#in / 2 === b / c;', [[1, 24, 'negate-equality', '===', '!==']]],
+      ['const a = obj. /* c */ of / 2 === b / c;', [[1, 31, 'negate-equality', '===', '!==']]],
+      ['const a = f(...await / === /);', []],
+      ['const a = [...typeof / === /];', []],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, source);
+  });
+
+  test('sweep: a private name is a member, so true, false and if after # are never mutated [R3]', () => {
+    assert.deepEqual(view(mutantsFor('const a = this.#true;\nconst b = this.#false;', [1, 2])), []);
+    assert.deepEqual(view(mutantsFor('this.#if(ok);', [1])), [ds(1, 1, 'this.#if(ok);')]);
+  });
+});
+
 describe('docs (card T1-VERIFY-MUTANT-GEN)', () => {
   const OPERATIONS = [
     '`src/review/mutant-gen.ts` (card T1-VERIFY-MUTANT-GEN) lists the mutants of the source lines a change adds; it is pure, reads no file and runs nothing, and the command that runs the mutants under a card\'s DoD arrives with card T1-VERIFY-MUTANTS.',
