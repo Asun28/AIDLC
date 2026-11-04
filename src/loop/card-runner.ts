@@ -695,9 +695,10 @@ export class CardRunner {
     // Every hint names the goal this command runs under: the default goal of a later command may be another one.
     const scoped = (command: string) => `\`aidlc card ${command} ${card.id} --goal ${goal.id}\``;
     const owns = (generation: number) => new Error(`this session owns card ${card.id} at generation ${generation}; run ${scoped('next')}`);
-    // The handoff intent and the acquisition are looked up by resource and generation in every goal's journal, since the lease
-    // is one resource per repository and card.
-    const events = (type: 'NOTE' | 'LEASE_ACQUIRED', generation: number) => this.store.listGoals().flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === generation));
+    // The handoff intent and the acquisition are looked up by resource and generation in this goal's journal and in the journal
+    // of each other goal that holds a run of the card, since the lease is one resource per repository and card; no other journal
+    // is read, so a line the schema refuses in an unrelated goal never reaches a takeover.
+    const events = (type: 'NOTE' | 'LEASE_ACQUIRED', generation: number) => this.store.listGoals().filter((g) => g.id === goal.id || this.store.getCardRun(g.id, card.id)).flatMap((g) => Journal.forGoal(this.paths.journal, g.id).readAll().filter((e) => e.type === type && e.data['resource'] === key && e.data['leaseGeneration'] === generation));
     const stored = this.store.getCardRun(goal.id, card.id) ?? caller;
     let completed = false;
     let previous: { owner: ActorIdentity; generation: number } | undefined;

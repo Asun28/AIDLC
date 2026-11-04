@@ -1,7 +1,7 @@
 ---
 id: T0-TAKEOVER-FOREIGN-LINE-2
 title: A card takeover reads only the journals of the goals that run the card, so a line the journal schema refuses in an unrelated goal no longer crashes the takeover of every card
-status: todo
+status: merged
 branch: T0-TAKEOVER-FOREIGN-LINE-2
 worktree: D:\wt\AIDLC\T0-TAKEOVER-FOREIGN-LINE-2
 allow_paths:
@@ -57,3 +57,6 @@ npm run typecheck && node --test tests/scenarios/takeover-foreign-line.test.ts t
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- Carried: candidate cb4ddd8 of T0-TAKEOVER-FOREIGN-LINE, RED at 54c5010 and the mutation check are in that card's Attempt evidence. Its R2 (deepseek-v4-pro) and R3 (codex) both passed; the ship then failed at `git push -u origin T0-TAKEOVER-FOREIGN-LINE`, stderr not retained, and the same command by hand exited 0.
