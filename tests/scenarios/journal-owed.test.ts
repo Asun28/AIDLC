@@ -392,23 +392,57 @@ describe('acceptance 12: a recovered attempt counts at startedAt in the terminal
     }
   };
 
-  it('an attempt committed before a stop and appended after it is one marked event before the stop, and no finding', async () => {
-    const c = prepared();
-    await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, () => next(c));
-    assert.equal(ofType(c, 'ATTEMPT_STARTED').length, 0);
-    const committedAt = c.fx.now();
+  const noFinding = (c: Ctx): void => assert.equal(verifyAudit({ goalId: c.goalId, journal: c.fx.journal(c.goalId), now: c.fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL'), undefined);
+
+  /** The ATTEMPT_STARTED append of `lose` fails, the goal stops, and the next `card next` appends the one event, marked, after the stop. */
+  const recoveredAfterStop = async (c: Ctx, lose: () => unknown): Promise<JournalEvent> => {
+    const before = ofType(c, 'ATTEMPT_STARTED').length;
+    await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, lose);
+    assert.equal(ofType(c, 'ATTEMPT_STARTED').length, before);
     c.fx.advance(60_000);
     c.fx.controller.report({ goalId: c.goalId, generation: 0, result: 'cancel', data: {} });
-    const stop = ofType(c, 'GOAL_STOPPED');
-    assert.equal(stop.length, 1);
     next(c);
-    const attempts = ofType(c, 'ATTEMPT_STARTED');
-    assert.equal(attempts.length, 1);
-    assert.equal(attempts[0]?.data['completed'], true);
-    assert.equal(attempts[0]?.data['startedAt'], committedAt);
-    assert.ok(events(c).findIndex((e) => e.type === 'ATTEMPT_STARTED') > events(c).findIndex((e) => e.type === 'GOAL_STOPPED'));
-    assert.ok(Date.parse(String(attempts[0]?.data['startedAt'])) < Date.parse(stop[0]!.ts));
-    assert.equal(verifyAudit({ goalId: c.goalId, journal: c.fx.journal(c.goalId), now: c.fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL'), undefined);
+    const appended = ofType(c, 'ATTEMPT_STARTED').slice(before);
+    assert.equal(appended.length, 1);
+    const recovered = appended[0]!;
+    assert.equal(recovered.data['completed'], true);
+    assert.equal(recovered.data['startedAt'], c.run().effort?.attempts.find((a) => a.n === recovered.data['n'])?.startedAt);
+    assert.ok(events(c).findIndex((e) => e.data['eventKey'] === recovered.data['eventKey']) > events(c).findIndex((e) => e.type === 'GOAL_STOPPED'));
+    assert.ok(Date.parse(String(recovered.data['startedAt'])) < Date.parse(ofType(c, 'GOAL_STOPPED')[0]!.ts));
+    noFinding(c);
+    return recovered;
+  };
+
+  it('the attempt of the BUILD step, recovered after the stop, is no finding', async () => {
+    const c = prepared();
+    assert.equal((await recoveredAfterStop(c, () => next(c))).data['n'], 1);
+  });
+
+  it('the attempt of the REVIEW_FIX step, recovered after the stop, is no finding', async () => {
+    const c = await atReview(BLOCK);
+    assert.equal((await formalReview(c)).classified.outcome, 'block-defect');
+    assert.equal((await recoveredAfterStop(c, () => next(c))).data['reason'], 'review-fix');
+  });
+
+  it('the implicit attempt of card attempt, recovered after the stop, is no finding', async () => {
+    const c = prepared();
+    assert.equal((await recoveredAfterStop(c, () => attempt(c))).data['implicit'], true);
+  });
+
+  it('a generation 0 attempt recovered after a stop and a resume keeps generation 0 and is no finding', async () => {
+    const c = prepared();
+    await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, () => next(c));
+    c.fx.advance(60_000);
+    c.fx.controller.report({ goalId: c.goalId, generation: 0, result: 'cancel', data: {} });
+    c.fx.advance(60_000);
+    c.fx.controller.report({ goalId: c.goalId, generation: 0, result: 'resume', data: { reason: 'user resume' } });
+    assert.equal(c.g().generation, 1);
+    next(c);
+    const appended = ofType(c, 'ATTEMPT_STARTED');
+    assert.equal(appended.length, 1);
+    assert.equal(appended[0]?.generation, 0);
+    assert.equal(appended[0]?.data['completed'], true);
+    noFinding(c);
   });
 
   const cases: Array<[string, Row[], number]> = [
@@ -438,7 +472,7 @@ const lf = (file: string): string => readFileSync(path.join(root, file), 'utf8')
 const OPERATIONS_SENTENCES = [
   'The card runner journals `ATTEMPT_STARTED`, `ATTEMPT_FINISHED`, `PRE_REVIEW_DECIDED`, `REVIEW_DECIDED` and the merge `OPERATION_RESULT` only after the card-run write that commits the decision, and once (card T0-JOURNAL-FAULT-EVENTS): that write records the event on the run as owed, the command appends it after the write, and an append that did not land is made, marked `completed: true`, by the next `card next`, `card attempt`, `review pre` or `review r3` on the card.',
   'A merge result is appended only while the operation ledger shows that result, and never once `aidlc ops reconcile` has journaled `OPERATION_RECONCILED` for the operation.',
-  'An owed `ATTEMPT_STARTED` carries `startedAt`, the time of the write that committed it, and `WORK_AFTER_TERMINAL` does not count one marked `completed: true` whose `startedAt` precedes the last disposition of its generation, so an attempt committed before a goal stopped and journaled after it is no finding, and one committed after the stop still is.',
+  'An owed `ATTEMPT_STARTED` carries `startedAt`, the start time its attempt record holds, and `WORK_AFTER_TERMINAL` does not count one marked `completed: true` whose `startedAt` precedes the last disposition of its generation, so an attempt committed before a goal stopped and journaled after it is no finding, and one committed after the stop still is.',
 ];
 const ARCHITECTURE_SENTENCE = 'The card runner appends an attempt, R2, R3 or merge-result event only after the card-run write that commits its decision, which records the event as owed (`CardRun.journalOwed`); an append that did not land is made by the next card-run command on the card, so each such event reaches the journal once and never ahead of its record (card T0-JOURNAL-FAULT-EVENTS).';
 const ARCHITECTURE_PHRASE = 'the decision events still owed to the journal (`journalOwed`)';

@@ -137,7 +137,6 @@ interface FormalResult {
 /** A formal result recovered from a reservation: it always names the pool request to settle. */
 type RetainedFormalResult = FormalResult & { key: string };
 
-/** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
 /**
  * Whether the goal journal holds an owed event (card T0-JOURNAL-FAULT-EVENTS, R3): an attempt, R2 or R3 event by the key it
  * carries as `eventKey`, a merge result by an `OPERATION_RESULT` or `OPERATION_RECONCILED` that names its operation.
@@ -147,6 +146,7 @@ function journalHolds(owed: OwedEvent, events: JournalEvent[]): boolean {
   return events.some((e) => (e.type === 'OPERATION_RESULT' || e.type === 'OPERATION_RECONCILED') && e.data['operationId'] === owed.data['operationId']);
 }
 
+/** The journal's `decision` text for a result that did not commit; undefined for a committed one. */
 function discardedDecision(status: CommitReviewStatus): string | undefined {
   switch (status) {
     case 'stopped':
