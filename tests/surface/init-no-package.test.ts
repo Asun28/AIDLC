@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DEFAULT_HOOK_CONFIG } from '../../src/hooks/index.ts';
 import * as init from '../../src/scaffold/init.ts';
 
@@ -48,8 +48,7 @@ function commands(target: string): string[] {
   return Object.values(hooks).flat().flatMap((e) => e.hooks.map((h) => h.command));
 }
 
-function targetWithSettings(settings: unknown): string {
-  const target = tempDir();
+function targetWithSettings(settings: unknown, target = tempDir()): string {
   mkdirSync(path.join(target, '.claude'));
   writeFileSync(settingsFile(target), typeof settings === 'string' ? settings : JSON.stringify(settings));
   return target;
@@ -168,7 +167,7 @@ describe('T1-INIT-HOOK-PATH: one dispatcher per matcher entry', () => {
 describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
   test('acceptance 5: the three spellings and the absolute form are dispatchers [R4]', () => {
     assert.equal(typeof init.isDispatcherCommand, 'function', 'exported from src/scaffold/init.ts');
-    for (const command of [NPX, LOCAL, 'node bin/aidlc-hook.js', OTHER_PATH, 'node "/home/a b/aidlc/bin/aidlc-hook.js"']) {
+    for (const command of [NPX, LOCAL, 'node bin/aidlc-hook.js', OTHER_PATH, 'node "/home/a b/aidlc/bin/aidlc-hook.js"', 'node "C:/Program Files (x86)/aidlc/bin/aidlc-hook.js"']) {
       assert.equal(init.isDispatcherCommand(command), true, command);
     }
   });
@@ -184,22 +183,41 @@ describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
       'node "`rm -rf x`/bin/aidlc-hook.js"',
       'node "%COMSPEC%/bin/aidlc-hook.js"',
       'node "a/bin/aidlc-hook.js"\nrm -rf x',
+      ...['&', '|', '<', '>', '^'].map((c) => `node "C:/a${c}b/bin/aidlc-hook.js"`),
     ]) {
       assert.equal(init.isDispatcherCommand(command), false, command);
     }
   });
+
+  test('acceptance 5: a hookEntry holding & makes resolveHookCommand return the npx form [R4]', () => {
+    assert.equal(init.resolveHookCommand(tempDir(), 'C:/a&b/bin/aidlc-hook.js'), NPX);
+  });
 });
 
 describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
-  function doctorLine(cwd: string): string {
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env: { ...process.env, AIDLC_STATE_DIR: path.join(cwd, 'state') }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
+  function doctorLine(cwd: string, base: NodeJS.ProcessEnv = process.env): string {
+    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'doctor', '--json'], { cwd, env: { ...base, AIDLC_STATE_DIR: path.join(cwd, 'state') }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
     assert.equal(r.status, 0, r.stderr);
     return (JSON.parse(r.stdout) as { hookCommand: string }).hookCommand;
   }
 
-  function wired(command: string): string {
-    return targetWithSettings({ hooks: { PreToolUse: [{ matcher: NEW_MATCHER, hooks: [{ type: 'command', command }] }] } });
+  function wired(command: string, target = tempDir()): string {
+    return targetWithSettings({ hooks: { PreToolUse: [{ matcher: NEW_MATCHER, hooks: [{ type: 'command', command }] }] } }, target);
   }
+
+  /** On Windows `shell: true` starts ComSpec, so a command that needs a shell cannot start under this environment. POSIX does not read it. */
+  const NO_WINDOWS_SHELL: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'comspec')), ComSpec: 'C:/no-such-dir/cmd.exe' };
+
+  test('acceptance 6: every node spelling reports ok with no shell, an absolute path holding a space included [R5]', () => {
+    for (const rel of ['with space/bin/aidlc-hook.js', 'bin/aidlc-hook.js', 'node_modules/aidlc/bin/aidlc-hook.js']) {
+      const target = tempDir();
+      const entry = path.join(target, rel);
+      mkdirSync(path.dirname(entry), { recursive: true });
+      writeFileSync(entry, `import(${JSON.stringify(pathToFileURL(HOOK_ENTRY).href)});`);
+      const command = rel.startsWith('with') ? `node "${entry.replace(/\\/g, '/')}"` : `node ${rel}`;
+      assert.equal(doctorLine(wired(command, target), NO_WINDOWS_SHELL), `ok: ${command}`);
+    }
+  });
 
   test('acceptance 6: a working dispatcher reports ok [R5]', () => {
     assert.equal(doctorLine(wired(ABSOLUTE)), `ok: ${ABSOLUTE}`);
@@ -215,10 +233,13 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
     assert.equal(doctorLine(targetWithSettings('{ not json')), 'not wired');
   });
 
-  test('acceptance 6: a settings file whose only hook is foreign reports not wired and the hook does not run [R5]', () => {
-    const target = wired(`node -e "require('fs').writeFileSync('ran.marker', 'x')"`);
-    assert.equal(doctorLine(target), 'not wired');
-    assert.equal(existsSync(path.join(target, 'ran.marker')), false);
+  test('acceptance 6: a foreign hook, or an absolute dispatcher with & in its path, reports not wired and runs nothing [R5]', () => {
+    const ampersand = `node "${tempDir().replace(/\\/g, '/')}/x&mkdir ran.marker&/bin/aidlc-hook.js"`;
+    for (const command of [`node -e "require('fs').mkdirSync('ran.marker')"`, ampersand]) {
+      const target = wired(command);
+      assert.equal(doctorLine(target), 'not wired', command);
+      assert.equal(existsSync(path.join(target, 'ran.marker')), false, command);
+    }
   });
 });
 
