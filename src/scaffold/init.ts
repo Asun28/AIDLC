@@ -125,11 +125,12 @@ const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
 const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
 /**
  * The absolute spelling. An absolute path cannot be read as a Node option. The path holds no shell expansion or separator
- * character and no NUL, which no process argument can carry; `(` and `)` stay, for `C:/Program Files (x86)`.
+ * character and no NUL, which no process argument can carry; `(` and `)` stay, for `C:/Program Files (x86)`. It does not
+ * start `//` and holds no backslash, because on Windows either can name a file on another host, and doctor runs this spelling.
  */
-const ABSOLUTE_DISPATCHER = /^node "(?=\/|[A-Za-z]:\/)[^"$`%&|<>^\0\r\n]*\/bin\/aidlc-hook\.js"$/;
+const ABSOLUTE_DISPATCHER = /^node "(?=\/(?!\/)|[A-Za-z]:\/)[^"$`%&|<>^\\\0\r\n]*\/bin\/aidlc-hook\.js"$/;
 
-/** Whether a settings value is the aidlc dispatcher in any spelling; only such a command is replaced, or run by doctor. The value comes from a parsed file, so it may not be a string. */
+/** Whether a settings value is the aidlc dispatcher in any spelling; only such a command is replaced, or read by doctor. The value comes from a parsed file, so it may not be a string. */
 export function isDispatcherCommand(command: unknown): command is string {
   return typeof command === 'string' && (DISPATCHER_COMMANDS.has(command) || ABSOLUTE_DISPATCHER.test(command));
 }
