@@ -304,6 +304,31 @@ test('acceptance 5: a goal requesting through two cards journals one NOTE [R3]',
   });
 });
 
+test('acceptance 5: a NOTE counts only for its own key and seq, as a NOTE of that kind, and a requester naming no goal journals nothing [R3]', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const requester = `${goal.id}:${CARD}`;
+    const journal = Journal.forGoal(fx.paths.journal, goal.id);
+
+    const first = running(fx, ownerOf(deadPid()), requester, 'pool-one');
+    assert.equal(first.seq, 0);
+    fx.queue.enqueue(input('g-gone:T1-GONE', 'held', 'pool-one'));
+    journal.append({ type: 'NOTE', goalId: goal.id, data: { kind: 'another-kind', key: first.key, seq: first.seq } });
+    journal.append({ type: 'GOAL_CREATED', goalId: goal.id, data: { kind: 'review-slot-released', key: first.key, seq: first.seq } });
+    const released = cli(fx, first.key);
+    assert.equal(released.status, 0, released.stderr);
+    assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, first.key, 0, REASON]]);
+
+    const enqueued = fx.queue.enqueue(input(requester, 'other', 'pool-two')).request;
+    assert.equal(fx.queue.admit('pool-two', ownerOf(deadPid()), fx.now()).status, 'admitted');
+    assert.equal(enqueued.seq, 0);
+    assert.notEqual(enqueued.key, first.key);
+    assert.equal(cli(fx, enqueued.key).status, 0);
+    assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, first.key, 0, REASON], [goal.id, CARD, enqueued.key, 0, REASON]]);
+  });
+});
+
 test('acceptance 6: a release whose second journal cannot be written exits non-zero with the slot held, and running it again finishes it [R3]', () => {
   withFixture((fx) => {
     writeCard(fx, { id: CARD, title: 'held slot' });
@@ -361,6 +386,20 @@ test('acceptance 7: two processes releasing one key end with one exit 0, the oth
   } finally {
     fx.cleanup();
   }
+});
+
+test('acceptance 7: a command run while another holds the section refuses with LOCKED and journals nothing, so its NOTE lookup and append are inside the section [R1] [R3]', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const request = running(fx, ownerOf(deadPid()), `${goal.id}:${CARD}`);
+    const outcomes: Array<[number | null, boolean, number]> = [];
+    fx.queue.release(request.key, REASON, { now: AT, before: () => {
+      const racing = cli(fx, request.key);
+      outcomes.push([racing.status, /LOCKED/.test(racing.stderr), notes(fx, goal.id).length]);
+    } });
+    assert.deepEqual(outcomes, [[1, true, 0]]);
+  });
 });
 
 const read = (file: string): string => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n');

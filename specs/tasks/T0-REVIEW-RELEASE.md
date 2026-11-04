@@ -64,3 +64,26 @@ npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/in
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+Attempt 1.
+
+RED: commit 11d2fd8 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 15, pass 0, fail 15. Each failure is the missing behaviour: `release is not a function` for the queue items (acceptance 1 to 4), `unknown command 'release'` from the CLI (acceptance 5 to 7), a missing text (acceptance 8).
+
+Two tests were added during the mutation check, each killing a mutant: the NOTE matching test of acceptance 5 (key, kind, event type, a requester naming no goal) and the deterministic test of acceptance 7 (a command run inside a held section). The final file has 17 tests.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 250, pass 250, fail 0.
+
+Mutants, each applied by hand to the source, run against the tests that cover it, restored and never committed (`git diff` compared equal to its saved copy after each batch). 41 mutants, 41 killed:
+- A section dropped from each mutation (11): `savePool`, `setPoolLimit`, `enqueue`, `requeue`, `admit`, `complete`, `markLost`, `resolveLost`, `hold`, `cancel`, `release`. Each failed on its own name in acceptance 3, by `Missing expected exception` or, for `resolveLost`, by its `not lost` error in place of `LOCKED`.
+- Section structure (4): `resolveLost` calling public `complete` from its section (`LOCKED` in tests/infra/review-queue.test.ts), `enqueue` locking the pool it names instead of the pool of the stored request, `sectionOf` not reading the pool again in the section, the lock's change returning a copy so the lock writes a stale record.
+- Refusals of `release` (7): the state check, `lost` allowed, no `slotOwner`, pid 0, the pid bound, another host, a live owner.
+- Order and writes of `release` (5): `before` not called, `before` after the write, the check after `before`, the slot kept, the reason dropped.
+- CLI (11): dedupe dropped, dedupe without seq, key, kind or event type, a missing goal throwing, a NOTE without reason, seq or cardId, nothing printed, the first version's NOTEs outside the section.
+- Docs (3): the OPERATIONS sentence removed, the sentence no longer the last paragraph of Ship gates, the CHANGELOG entry removed.
+
+The mutant of the first version's NOTEs outside the section was killed in one run of acceptance 7's two-process test and survived another, since that test depends on the two commands overlapping. The deterministic test of acceptance 7 kills it on every run: the test holds the section and a command run inside it must exit with `LOCKED` and journal nothing.
+
+Callers: `src/loop/card-runner.ts`, `src/loop/run-driver.ts`, `src/loop/controller.ts` and `src/cli/main.ts` call the queue outside any section of the pool lock. Only `ReviewQueue` takes that lock and the CLI's `before` calls only the journal and the goal store. Some card-runner calls follow a card-run section; none runs inside a pool section.
+
+A request can change pool: `enqueue` replaces a cancelled request in the pool its caller names, and the key carries no pool. `sectionOf` reads the pool again in the section and moves to the new pool's section, so `release` is always in the section of the pool holding the request. Against a mutation of a cancelled request in its old pool, an `enqueue` that moves it holds only the new pool's lock: R1 covers mutations of one pool, and `release` refuses a cancelled request, so no forbid clause is reached.
