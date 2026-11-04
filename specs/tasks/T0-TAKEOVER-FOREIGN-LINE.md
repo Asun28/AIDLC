@@ -34,6 +34,7 @@ diagnosis:
   same_class: "See the sweep: no other `listGoals()` caller reads a journal per goal."
 hygiene: "A takeover already stopped by this defect holds its lease at the next generation with its intent journaled, which is the interrupted takeover R1's lookup must complete; T0-JOURNAL-FAULT-EVENTS is in that state on this repository (journal g-20261023193429-707c23 holds one `card-takeover-intent`). Every forbid clause names the code it guards (docs/LESSONS.md 2026-09-27 T0-REVIEWER-UTF8); the doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
 doc_sync: CHANGELOG.md, docs/OPERATIONS.md
+superseded_by: T0-TAKEOVER-FOREIGN-LINE-2
 ---
 
 # T0-TAKEOVER-FOREIGN-LINE
