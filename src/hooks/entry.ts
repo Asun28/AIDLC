@@ -21,6 +21,8 @@ import { isBlock, loadHookConfig, readStdinJson, runHook, type HookEvent, type H
 import { settleRepoIdentity } from '../state/paths.ts';
 
 const EDIT_TOOLS = new Set(['Edit', 'Write', 'MultiEdit']);
+/** A PowerShell command is read as a Bash command until card T1-PS-GUARD-READ adds the PowerShell shapes. */
+const SHELL_TOOLS = new Set(['Bash', 'PowerShell']);
 
 /** The guards whose Bash command classification card T0-HOOK-CLASSIFIER-3 changed: they decide again in the second pass. */
 const CLASSIFIED = new Set<HookName>(['production-gate', 'protect-paths']);
@@ -30,7 +32,7 @@ export function hookNamesFor(event: HookEvent): HookName[] {
   switch (event.hook_event_name) {
     case 'PreToolUse': {
       const tool = String(event.tool_name ?? '');
-      if (tool === 'Bash') return ['production-gate', 'protect-paths', 'secrets-guard'];
+      if (SHELL_TOOLS.has(tool)) return ['production-gate', 'protect-paths', 'secrets-guard'];
       if (EDIT_TOOLS.has(tool)) return ['protect-paths', 'secrets-guard', 'protect-tests'];
       return [];
     }
