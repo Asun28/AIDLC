@@ -95,8 +95,7 @@ describe('T1-INIT-HOOK-PATH: the command init writes', () => {
     mkdirSync(path.join(own, 'bin'));
     writeFileSync(path.join(own, 'bin', 'aidlc-hook.js'), '');
     init.initProject({ target: own, hookEntry: HOOK_ENTRY });
-    const self = 'node bin/aidlc-hook.js';
-    assert.deepEqual(commands(own), [self, self, self]);
+    assert.deepEqual(commands(own), Array(3).fill('node bin/aidlc-hook.js'));
   });
 
   test('acceptance 3: with no hookEntry init writes the npx form [R2]', () => {
@@ -157,23 +156,18 @@ describe('T1-INIT-HOOK-PATH: one dispatcher per matcher entry', () => {
   test('acceptance 4: an absolute dispatcher comes off an old-matcher entry and a foreign hook stays [R4]', () => {
     const target = targetWithSettings({ hooks: { PreToolUse: [{ matcher: OLD_MATCHER, hooks: [{ type: 'command', command: OTHER_PATH }, FOREIGN_A] }] } });
     init.initProject({ target, hookEntry: HOOK_ENTRY });
-    assert.deepEqual(hooksOf(target)['PreToolUse'], [
-      { matcher: OLD_MATCHER, hooks: [FOREIGN_A] },
-      { matcher: NEW_MATCHER, hooks: [{ type: 'command', command: ABSOLUTE }] },
-    ]);
+    assert.deepEqual(hooksOf(target)['PreToolUse'], [{ matcher: OLD_MATCHER, hooks: [FOREIGN_A] }, { matcher: NEW_MATCHER, hooks: [{ type: 'command', command: ABSOLUTE }] }]);
   });
 });
 
 describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
   test('acceptance 5: the three spellings and the absolute form are dispatchers [R4]', () => {
-    assert.equal(typeof init.isDispatcherCommand, 'function', 'exported from src/scaffold/init.ts');
     for (const command of [NPX, LOCAL, 'node bin/aidlc-hook.js', OTHER_PATH, 'node "/home/a b/aidlc/bin/aidlc-hook.js"', 'node "C:/Program Files (x86)/aidlc/bin/aidlc-hook.js"']) {
       assert.equal(init.isDispatcherCommand(command), true, command);
     }
   });
 
   test('acceptance 5: any other command is refused, a chained or expanding one included [R4]', () => {
-    assert.equal(typeof init.isDispatcherCommand, 'function', 'exported from src/scaffold/init.ts');
     for (const command of [
       'node "x.js"',
       'node "a/bin/aidlc-hook.js" ; rm -rf x',
