@@ -250,6 +250,33 @@ test('acceptance 3: a change of updatePool that throws writes nothing, and it ca
   });
 });
 
+test('acceptance 3: updatePool and setPoolLimit make their read of the record inside the section [R1]', () => {
+  for (const [name, write] of [['updatePool', (q: ReviewQueue) => q.updatePool(POOL, (current) => ({ ...current, usageKnown: true }))], ['setPoolLimit', (q: ReviewQueue) => q.setPoolLimit(POOL, 2, 'two seats')]] as const) {
+    withFixture((fx) => {
+      const plain = fx.queue;
+      const outcomes: unknown[] = [];
+      // A second process tries to enqueue at the moment of the read: inside the section it refuses, so the read cannot go stale.
+      class Racing extends ReviewQueue {
+        raced = false;
+        override pool(pool: string, now?: string) {
+          const read = super.pool(pool, now);
+          if (this.raced) return read;
+          this.raced = true;
+          try {
+            plain.enqueue(input('g-race:T1-RACE', 'race'));
+            outcomes.push('enqueued');
+          } catch (err) {
+            outcomes.push(code(err));
+          }
+          return read;
+        }
+      }
+      write(new Racing(fx.paths.reviewQueue));
+      assert.deepEqual(outcomes, ['LOCKED'], name);
+    });
+  }
+});
+
 test('acceptance 3: a read of the pool takes no section [R1]', () => {
   withFixture((fx) => {
     const request = running(fx, ownerOf(deadPid()));
@@ -368,8 +395,8 @@ test('acceptance 5: a NOTE counts only for its own key and seq, as a NOTE of tha
     const first = running(fx, ownerOf(deadPid()), requester, 'pool-one');
     assert.equal(first.seq, 0);
     fx.queue.enqueue(input('g-gone:T1-GONE', 'held', 'pool-one'));
-    journal.append({ type: 'NOTE', goalId: goal.id, data: { kind: 'another-kind', key: first.key, seq: first.seq } });
-    journal.append({ type: 'GOAL_CREATED', goalId: goal.id, data: { kind: 'review-slot-released', key: first.key, seq: first.seq } });
+    journal.append({ type: 'NOTE', goalId: goal.id, data: { kind: 'another-kind', key: first.key, pool: first.pool, seq: first.seq } });
+    journal.append({ type: 'GOAL_CREATED', goalId: goal.id, data: { kind: 'review-slot-released', key: first.key, pool: first.pool, seq: first.seq } });
     const released = cli(fx, first.key);
     assert.equal(released.status, 0, released.stderr);
     assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, first.key, 0, REASON]]);
@@ -380,6 +407,17 @@ test('acceptance 5: a NOTE counts only for its own key and seq, as a NOTE of tha
     assert.notEqual(enqueued.key, first.key);
     assert.equal(cli(fx, enqueued.key).status, 0);
     assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, first.key, 0, REASON], [goal.id, CARD, enqueued.key, 0, REASON]]);
+  });
+});
+
+test('acceptance 5: a NOTE of another key at the same pool and seq is not this release [R3]', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const request = running(fx, ownerOf(deadPid()), `${goal.id}:${CARD}`);
+    Journal.forGoal(fx.paths.journal, goal.id).append({ type: 'NOTE', goalId: goal.id, data: { kind: 'review-slot-released', key: 'another-key', pool: request.pool, seq: request.seq } });
+    assert.equal(cli(fx, request.key).status, 0);
+    assert.deepEqual(notes(fx, goal.id).map((e) => e.data['key']), ['another-key', request.key]);
   });
 });
 

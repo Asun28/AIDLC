@@ -733,15 +733,15 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action((key: string, o: { reason: string }) => {
       const c = ctx(g());
       const released = new ReviewQueue(c.paths.reviewQueue).release(key, o.reason, {
-        // Inside the release's section: each goal journals before the slot is freed, once per key and seq, so a run that failed part way holds the slot and running it again finishes it.
+        // Inside the release's section: each goal journals before the slot is freed, once per key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
         before: (request) => {
           for (const requester of request.requesters) {
             const [goalId, cardId] = requester.split(':');
             const goal = goalId ? c.store.getGoal(goalId) : undefined;
             if (!goal) continue;
             const journal = Journal.forGoal(c.paths.journal, goal.id);
-            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === key && e.data['seq'] === request.seq)) continue;
-            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key, seq: request.seq, reason: o.reason } });
+            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
+            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key, pool: request.pool, seq: request.seq, reason: o.reason } });
           }
         },
       });

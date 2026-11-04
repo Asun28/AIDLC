@@ -96,6 +96,20 @@ export class ReviewQueue {
     return readJson(this.poolFile(pool), ReviewPool) ?? { pool, maxConcurrent: 1, active: [], nextSeq: 0, usageKnown: false, updatedAt: now };
   }
 
+  /**
+   * Change the pool record as stored, in one section: `change` receives the record read under the lock and returns the record
+   * to write, so nothing read before the section can overwrite a later enqueue or admission. A change that throws writes
+   * nothing. It must not call this queue's mutations: the lock is not reentrant.
+   */
+  updatePool(pool: string, change: (current: ReviewPool) => ReviewPool, now: string = nowIso()): ReviewPool {
+    return this.section(pool, () => {
+      const next = { ...change(this.pool(pool, now)), pool };
+      this.writePool(next);
+      return next;
+    });
+  }
+
+  /** Replaces the record with a caller's snapshot, so a snapshot read before a mutation undoes it. No source calls it: test fixtures only, until they move to `updatePool`. */
   savePool(p: ReviewPool): void {
     this.section(p.pool, () => this.writePool(p));
   }
@@ -295,14 +309,12 @@ export class ReviewQueue {
 
   cancel(key: string, reason: string, now: string = nowIso()): ReviewRequest | undefined {
     if (!this.get(key)) return undefined;
-    return this.requestSection(key, (r) => this.cancelInSection(r, reason, now));
-  }
-
-  private cancelInSection(r: ReviewRequest, reason: string, now: string): ReviewRequest {
-    const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
-    atomicWriteJson(this.requestFile(r.key), cancelled);
-    this.releaseSlot(r.pool, r.key, now);
-    return cancelled;
+    return this.requestSection(key, (r) => {
+      const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
+      atomicWriteJson(this.requestFile(key), cancelled);
+      this.releaseSlot(r.pool, key, now);
+      return cancelled;
+    });
   }
 
   /** Why `release` refuses this request as stored, undefined when it may free the slot. */
@@ -318,16 +330,22 @@ export class ReviewQueue {
   /**
    * Free the slot of a running request whose owner process is gone from this host (card T0-REVIEW-RELEASE): a process killed
    * between its admission and the settlement of its request leaves a running request that `admit` keeps and no call settles.
-   * The check, `options.before`, the `cancelled` write and the slot removal are one section, so no mutation of the pool lands
+   * The check, `options.before`, the slot removal and the `cancelled` write are one section, so no mutation of the pool lands
    * between them: a release can never cancel a later admission of the same key, and `before` sees the requesters the release
-   * cancels. Anything but a proved dead owner of this host refuses, writing nothing.
+   * cancels. Anything but a proved dead owner of this host refuses, writing nothing. The request is written last: a failure
+   * at either write leaves it `running`, which is what the next release accepts, so running it again finishes the release;
+   * the slot removal then has nothing to remove and touches no other key.
    */
   release(key: string, reason: string, options: ReleaseOptions = {}): ReviewRequest {
     return this.requestSection(key, (r) => {
       const refusal = this.releaseRefusal(r);
       if (refusal) throw new Error(refusal);
       options.before?.(r);
-      return this.cancelInSection(r, reason, options.now ?? nowIso());
+      const now = options.now ?? nowIso();
+      this.releaseSlot(r.pool, key, now);
+      const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
+      atomicWriteJson(this.requestFile(key), cancelled);
+      return cancelled;
     });
   }
 
