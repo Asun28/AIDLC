@@ -13,6 +13,8 @@ export interface InitOptions {
   cardsDir?: string;
   shipPath?: 'scaffold' | 'github' | 'dry-run';
   dryRun?: boolean;
+  /** Absolute path of the running CLI's `bin/aidlc-hook.js`; a target with no Node package gets a hook command that names it. */
+  hookEntry?: string;
 }
 
 export interface InitReport {
@@ -121,23 +123,35 @@ const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect
 const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
 /** Every spelling of the dispatcher `resolveHookCommand` can write. */
 const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
+/** The absolute spelling. The path holds no character a shell expands inside double quotes, because doctor runs what this accepts. */
+const ABSOLUTE_DISPATCHER = /^node "[^"$`%\r\n]+\/bin\/aidlc-hook\.js"$/;
+
+/** Whether a settings command is the aidlc dispatcher in any spelling; only such a command is replaced, or run by doctor. */
+export function isDispatcherCommand(command: string): boolean {
+  return DISPATCHER_COMMANDS.has(command) || ABSOLUTE_DISPATCHER.test(command);
+}
 
 /**
  * Fastest hook command available in the target: a direct `node` start of the hook entry (no npx
  * resolution, no CLI module graph) when the package is installed locally or the target is aidlc itself;
- * otherwise the portable `npx --no-install` form.
+ * a direct start of `hookEntry` when the target has no aidlc package at all, because the `npx` form exits 1 there
+ * and a hook that exits 1 stops nothing; otherwise the portable `npx --no-install` form.
  */
-export function resolveHookCommand(target: string): string {
+export function resolveHookCommand(target: string, hookEntry?: string): string {
   if (existsSync(path.join(target, 'node_modules', 'aidlc', 'bin', 'aidlc-hook.js'))) return 'node node_modules/aidlc/bin/aidlc-hook.js';
-  if (existsSync(path.join(target, 'bin', 'aidlc-hook.js'))) {
-    try {
-      const pkg = JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) as { name?: string };
-      if (pkg.name === 'aidlc') return 'node bin/aidlc-hook.js';
-    } catch {
-      /* not the aidlc package */
-    }
-  }
+  const pkg = readPackage(target);
+  if (pkg.name === 'aidlc') return existsSync(path.join(target, 'bin', 'aidlc-hook.js')) ? 'node bin/aidlc-hook.js' : TEMPLATE_HOOK_COMMAND;
+  if (hookEntry && !pkg.dependencies?.['aidlc'] && !pkg.devDependencies?.['aidlc']) return `node "${hookEntry.replace(/\\/g, '/')}"`;
   return TEMPLATE_HOOK_COMMAND;
+}
+
+/** The target's `package.json`; a file that is absent or does not parse lists nothing. */
+function readPackage(target: string): { name?: string; dependencies?: Record<string, string>; devDependencies?: Record<string, string> } {
+  try {
+    return JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) ?? {};
+  } catch {
+    return {};
+  }
 }
 
 /** Drop 0.1.0 per-guard hooks (superseded by the dispatcher) and any entry left empty by that. */
@@ -152,14 +166,14 @@ export function stripLegacyHooks(hooks: Record<string, HookEntry[]>): void {
 function moveOffOldMatcher(hooks: Record<string, HookEntry[]>): void {
   const entries = hooks['PreToolUse'];
   if (!entries) return;
-  for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !DISPATCHER_COMMANDS.has(h.command));
+  for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !isDispatcherCommand(h.command));
   hooks['PreToolUse'] = entries.filter((e) => e.matcher !== OLD_PRE_TOOL_MATCHER || e.hooks.length > 0);
 }
 
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
   const dest = path.join(target, '.claude', 'settings.json');
   const incoming = JSON.parse(readFileSync(src, 'utf8')) as Settings;
-  const hookCommand = resolveHookCommand(target);
+  const hookCommand = resolveHookCommand(target, options.hookEntry);
   for (const entries of Object.values(incoming.hooks ?? {})) for (const entry of entries) for (const h of entry.hooks) if (h.command === TEMPLATE_HOOK_COMMAND) h.command = hookCommand;
   if (!existsSync(dest)) {
     if (!options.dryRun) {
@@ -180,7 +194,10 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
     for (const entry of entries) {
       const same = list.find((e) => (e.matcher ?? '') === (entry.matcher ?? ''));
       if (same) {
-        for (const h of entry.hooks) if (!same.hooks.some((x) => x.command === h.command)) same.hooks.push(h);
+        for (const h of entry.hooks) {
+          same.hooks = same.hooks.filter((x) => !(isDispatcherCommand(x.command) && x.command !== h.command));
+          if (!same.hooks.some((x) => x.command === h.command)) same.hooks.push(h);
+        }
       } else list.push(entry);
     }
     existing.hooks[event] = list;

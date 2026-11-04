@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that runs the wired dispatcher and reports `ok`, `FAILED` or `not wired`.
+
 - T1-PS-GUARD-READ (bugfix, issue 117): on a PowerShell event `production-gate` joins backtick continuations and tests script blocks and subexpressions as segments, and `protect-paths` counts PowerShell's write commands, aliases, `-OutFile` and `[IO.File]` writes; a Bash event decides as before.
 
 - T0-JOURNAL-FAULT-EVENTS (bugfix): the attempt, R2, R3 and merge-result events of a card run are journaled only after the record write that commits the decision, and once: the write records the event on the card run as owed (`CardRun.journalOwed`), and an append that did not land is made, marked `completed: true`, by the next `card next`, `card attempt`, `review pre` or `review r3` on the card. Before, a failed record write after `ATTEMPT_STARTED` or `ATTEMPT_FINISHED` journaled the attempt event twice, and a failed append after an R2, R3 or merge commit lost the event for good, which also hid a shipped card from `aidlc audit verify --claim-full`. `verifyAudit` does not count a recovered `ATTEMPT_STARTED` as `WORK_AFTER_TERMINAL` when its `startedAt` precedes the last disposition of its generation.
