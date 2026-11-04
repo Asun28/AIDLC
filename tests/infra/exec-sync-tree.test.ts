@@ -141,6 +141,7 @@ describe('T0-EXEC-SYNC-TREE-KILL-2 a timeoutMs the helper cannot honour starts n
       assert.equal(ok(r), false);
       assert.match(r.stderr, /^\[tree helper error\] unsupported timeoutMs/);
       assert.deepEqual([r.command, r.args, r.cwd, r.signal, r.timedOut, r.stdout], ['deploy', ['--to', 'staging'], '/work', null, false, '']);
+      assert.match(r.outputSha256, /^[a-f0-9]{64}$/);
     });
   }
 

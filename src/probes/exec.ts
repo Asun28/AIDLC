@@ -17,7 +17,8 @@ export interface ExecOptions {
   shell?: boolean;
   /**
    * `runSync` only, with `timeoutMs`: run the command under `exec-tree-helper.ts`, which ends the
-   * command's whole process tree at the timeout (card T0-EXEC-SYNC-TREE-KILL).
+   * command's whole process tree at the timeout (card T0-EXEC-SYNC-TREE-KILL). A `timeoutMs` that is not a
+   * whole number from 1 to 2 147 483 647 starts nothing and returns a `[tree helper error]` receipt.
    */
   killTree?: boolean;
   /**
@@ -72,7 +73,7 @@ export const TREE_HELPER_BACKSTOP_MS = 15_000;
 
 /**
  * The largest delay a Node timer keeps (2^31 - 1 ms, about 24.8 days); a larger one fires after 1 ms. A
- * `killTree` call with a longer, or not a whole positive, `timeoutMs` runs on the direct path.
+ * `killTree` call with a longer, or not a whole positive, `timeoutMs` is refused before any spawn.
  */
 const MAX_TIMER_MS = 2_147_483_647;
 
@@ -165,15 +166,25 @@ function runInTreeHelper(spawner: SpawnSyncFn, command: string, args: string[], 
   };
 }
 
+/** The refusal of a `killTree` call whose `timeoutMs` the helper cannot honour: nothing was started. */
+function refuseTimeout(command: string, args: string[], options: ExecOptions, timeoutMs: number): ExecReceipt {
+  const at = new Date().toISOString();
+  const stderr = `[tree helper error] unsupported timeoutMs ${timeoutMs}: killTree needs a whole number from 1 to ${MAX_TIMER_MS}; nothing was started`;
+  return { command, args, cwd: options.cwd ?? process.cwd(), exitCode: null, signal: null, timedOut: false, stdout: '', stderr, startedAt: at, finishedAt: at, durationMs: 0, outputSha256: digest('', stderr) };
+}
+
 /**
  * Builds the synchronous runner around a process starter; `runSync` is `createRunSync(spawnSync)`, and tests
  * use it as a seam with a recording starter. With `killTree` and `timeoutMs` the command runs under the tree
- * helper when `timeoutMs` is a whole number from 1 to 2 147 483 647; otherwise it is one spawn of the
- * command, whose timeout ends the root alone.
+ * helper when `timeoutMs` is a whole number from 1 to 2 147 483 647, and any other `timeoutMs` starts
+ * nothing, so a command that asked for tree cleanup never runs without it. Without either it is one spawn
+ * of the command, whose timeout ends the root alone.
  */
 export const createRunSync = (spawner: SpawnSyncFn): SyncRunner => (command, args, options = {}) => {
-  if (options.killTree && options.timeoutMs !== undefined && Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0 && options.timeoutMs <= MAX_TIMER_MS) {
-    return runInTreeHelper(spawner, command, args, options, options.timeoutMs);
+  if (options.killTree && options.timeoutMs !== undefined) {
+    const { timeoutMs } = options;
+    const supported = Number.isSafeInteger(timeoutMs) && timeoutMs > 0 && timeoutMs <= MAX_TIMER_MS;
+    return supported ? runInTreeHelper(spawner, command, args, options, timeoutMs) : refuseTimeout(command, args, options, timeoutMs);
   }
   const startedAt = new Date();
   const shell = needsShell(command, options.shell);
