@@ -750,12 +750,14 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
       ['function f(): T extends U ? void : void { if (ok) {} }', 1, 47],
       ['function f(): { a: 1 } | void { if (ok) {} }', 1, 37],
       ['function f(): Array<void> | void { if (ok) {} }', 1, 40],
-      ['function* g<T>(): string | void { if (ok) {} }', 1, 38],
+      ['function* g<T>(): string | void { if (ok) {} }', 1, 39],
       ['function f(): of { if (ok) {} }', 1, 24],
       ['x = function (): string | void { if (ok) {} };', 1, 38],
       ['class A { m(): string | void { if (ok) {} } }', 1, 36],
       ['const o = { m(): string | void { if (ok) {} } };', 1, 38],
       ['const o = { m: function (): A & void { if (ok) {} } };', 1, 44],
+      ['class A { [k](): string | void { if (ok) {} } }', 1, 38],
+      ["class A { 'a'(): string | void { if (ok) {} } }", 1, 38],
     ]);
   });
 
@@ -772,6 +774,12 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
       'return c ? d : void { if(ok) {} };',
       'const a = [c ? d : void { if(ok) {} }];',
       'c ? (d) : void { if(ok) {} };',
+      'declare function m(): a; void { if(ok) {} };',
+      'function f(): T { void { if(ok) {} }; }',
+      'function f(): T (void { if(ok) {} });',
+      'function f(): T [void { if(ok) {} }];',
+      'function f(): a) void { if(ok) {} };',
+      'declare function f(): T\nconst a = void { if(ok) {} };',
     ]);
   });
 
@@ -815,6 +823,10 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
       ['x = \\u{61}true;', [ds(1, 1, 'x = \\u{61}true;')]],
       ['x = true\\u{1d49c};', [ds(1, 1, 'x = true\\u{1d49c};')]],
       ['x = true\\u00E9;', [ds(1, 1, 'x = true\\u00E9;')]],
+      ['x = true\\u{00061};', [ds(1, 1, 'x = true\\u{00061};')]],
+      ['const a = \\u{61} / 2 === b / c;', [[1, 22, 'negate-equality', '===', '!==']]],
+      ['const a = \\u{00061} / 2 === b / c;', [[1, 25, 'negate-equality', '===', '!==']]],
+      ['x = \\u{61}return / 2 === b / c;', [ds(1, 1, 'x = \\u{61}return / 2 === b / c;'), [1, 22, 'negate-equality', '===', '!==']]],
       ['if\\u0061 (ok) {', []],
       ['const a = \\u0061 !c;', []],
       ['const a = \\u{61} !c;', []],
@@ -830,7 +842,7 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
   });
 
   test('F5: text that is no identifier escape ends the word [R3]', () => {
-    for (const source of ['true\\u0020;', 'true\\u00;', 'true\\u{};', 'true\\u{110000};', 'true\\x61;', 'true\\u{g};']) {
+    for (const source of ['true\\u0020;', 'true\\u00;', 'true\\u61;', 'true\\u{};', 'true\\u{110000};', 'true\\x61;', 'true\\u{g};']) {
       assert.deepEqual(view(mutantsFor(source, [1])), [ds(1, 1, source), [1, 1, 'flip-boolean', 'true', 'false']], source);
     }
   });

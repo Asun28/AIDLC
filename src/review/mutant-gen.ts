@@ -32,7 +32,7 @@ export interface ChangedSourceFile {
 const HUNK = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 /** The one line git prints after a body line whose side lacks a final newline; xdiff does not translate it. */
 const NO_NEWLINE = '\\ No newline at end of file';
-const isSource = (file: string) => file.startsWith('src/') && file.endsWith('.ts') && !file.endsWith('.d.ts') && !file.endsWith('.test.ts');
+const isSource = (file: string) => file.startsWith('src/') && !file.includes('\t') && file.endsWith('.ts') && !file.endsWith('.d.ts') && !file.endsWith('.test.ts');
 
 /** `[oldCount, newStart, newCount]` of a hunk header, or null when a number is not a safe integer, a non-empty side starts below line 1 or both sides are empty. */
 function hunkCounts(line: string): [number, number, number] | null {
@@ -45,7 +45,7 @@ function hunkCounts(line: string): [number, number, number] | null {
 
 /**
  * The added new-side lines of every `src/**\/*.ts` file (not `.d.ts`, not `.test.ts`) in a `git diff --unified=0`
- * text. Fails closed: a deleted file, a path git quoted, text outside a `diff --git` section and a file with a hunk
+ * text; the tab git writes after a path holding whitespace is no part of the path. Fails closed: a deleted file, a path git quoted, text outside a `diff --git` section and a file with a hunk
  * header it cannot read (a coordinate that is not a safe integer, a non-empty side starting below line 1, two empty
  * sides), a hunk whose `+` and `-` lines do not match its counts, or any other body line (an excess line, a context
  * line, a blank line, a `\` line other than the exact no-newline marker right after a body line) get no entry: such a
@@ -85,7 +85,7 @@ export function changedSourceLines(diff: string): ChangedSourceFile[] {
     } else if (!inHunks) {
       const name = line.startsWith('+++ ') ? line.slice(4) : '';
       if (name.startsWith('b/')) {
-        current = { file: name.slice(2), lines: [] };
+        current = { file: name.slice(2).replace(/\t$/, ''), lines: [] };
         valid = isSource(current.file);
       }
     } else if (c === '+') {
@@ -109,6 +109,29 @@ const IDENT = /[\p{ID_Continue}$\ud800-\udfff]/u;
 const SPACE = /[\s\u0085\u200b]/;
 const isSpace = (ch: string | undefined) => ch !== undefined && SPACE.test(ch);
 const LINE_BREAK = /[\n\r\u2028\u2029]/;
+const UNICODE_ESCAPE = /\\u(?:([0-9a-fA-F]{4})|\{([0-9a-fA-F]+)\})/y;
+
+/** End offset of the Unicode escape at `i` when it writes an identifier character, else -1. */
+function escapeEnd(src: string, i: number): number {
+  UNICODE_ESCAPE.lastIndex = i;
+  const m = UNICODE_ESCAPE.exec(src);
+  if (!m) return -1;
+  const code = parseInt(m[1] ?? m[2]!, 16);
+  return code <= 0x10ffff && IDENT.test(String.fromCodePoint(code)) ? UNICODE_ESCAPE.lastIndex : -1;
+}
+
+/** End offset of the word at `i`, its Unicode escapes included; `i` itself when no word starts there. */
+function wordEnd(src: string, i: number): number {
+  let j = i;
+  for (;;) {
+    if (j < src.length && IDENT.test(src[j]!)) j++;
+    else {
+      const end = escapeEnd(src, j);
+      if (end < 0) return j;
+      j = end;
+    }
+  }
+}
 const REGEX_AFTER = new Set('(,=:[!&|?{};+-*%<>~^');
 /** Words after which an expression starts: a `/` opens a regex literal there and a `!` is unary. */
 const OPERAND_WORDS = new Set(['return', 'typeof', 'case', 'do', 'else', 'in', 'of', 'new', 'delete', 'void', 'throw', 'instanceof', 'yield', 'await']);
@@ -139,9 +162,13 @@ function regexEnd(src: string, i: number): number {
   return src.length;
 }
 
-/** Per character: CODE at the top level of the file, COMMENT, or 0 (literals and `${}` parts). */
-function scan(src: string): Uint8Array {
+/**
+ * `mask`, per character: CODE at the top level of the file, COMMENT, or 0 (literals and `${}` parts). `opens`: the
+ * offsets where a literal opens at the top level, which tell its first line from the rest of a multiline literal.
+ */
+function scan(src: string): { mask: Uint8Array; opens: Set<number> } {
   const mask = new Uint8Array(src.length);
+  const opens = new Set<number>();
   const exprs: number[] = [];
   let braces = 0;
   let template = false;
@@ -167,18 +194,21 @@ function scan(src: string): Uint8Array {
     } else if (c === '/' && d === '*') {
       end = src.indexOf('*/', i + 2) < 0 ? src.length : src.indexOf('*/', i + 2) + 2;
       mask.fill(COMMENT, i, end);
-    } else if (c === "'" || c === '"') [end, last, word] = [stringEnd(src, i), c, ''];
-    else if (c === '`') template = true;
-    else if (c === '/' && (last === '' || REGEX_AFTER.has(last) || OPERAND_WORDS.has(word))) [end, last, word] = [regexEnd(src, i), '/', ''];
+    } else if (c === "'" || c === '"' || c === '`' || (c === '/' && (last === '' || REGEX_AFTER.has(last) || OPERAND_WORDS.has(word)))) {
+      if (exprs.length === 0) opens.add(i);
+      if (c === '`') template = true;
+      else [end, last, word] = [c === '/' ? regexEnd(src, i) : stringEnd(src, i), c, ''];
+    }
     else if (c === '}' && exprs.length > 0 && braces - 1 === exprs[exprs.length - 1]) {
       exprs.pop();
       [braces, template] = [braces - 1, true];
     }
     else {
-      if (IDENT.test(c)) {
-        while (end < src.length && IDENT.test(src[end]!)) end++;
+      const stop = wordEnd(src, i);
+      if (stop > i) {
+        end = stop;
         word = last === '.' || last === '#' ? '' : src.slice(i, end);
-        last = src[end - 1]!;
+        last = 'a'; // Any word character: an escape may end in `}`, which would read as punctuation.
       } else if (src.startsWith('...', i)) [end, last, word] = [i + 3, '...', ''];
       else if (!isSpace(c)) [last, word] = [c, ''];
       if (c === '{') braces++;
@@ -187,7 +217,7 @@ function scan(src: string): Uint8Array {
     }
     i = end;
   }
-  return mask;
+  return { mask, opens };
 }
 
 /** The operator tokens read whole; with the whitespace rule this is enough for `=>`, `<<`, `>>`, `>>>`, `<<=`, `>>=`, `??`, `&&=` and `||=` never to match. */
@@ -205,7 +235,7 @@ const BINARY = new Map<string, [MutationOperator, string]>([
   ['>', ['boundary', '>=']],
   ['>=', ['boundary', '>']],
 ]);
-const DECLARATION = new RegExp(`^(?:const|let|var|return|import|export|type|interface|declare)(?!${IDENT.source})`, 'u');
+const DECLARATIONS = new Set(['const', 'let', 'var', 'return', 'import', 'export', 'type', 'interface', 'declare']);
 const BRACKETS = new Map<string, [number, number]>([['(', [0, 1]], [')', [0, -1]], ['[', [1, 1]], [']', [1, -1]], ['{', [2, 1]], ['}', [2, -1]]]);
 /** The binary-operator rule: whitespace, or the start or end of the input. */
 const spaceOrEdge = (ch: string | undefined) => ch === undefined || isSpace(ch);
@@ -237,7 +267,8 @@ function tokens(src: string, mask: Uint8Array): Token[] {
       i = end;
       continue;
     }
-    if (IDENT.test(c)) while (end < src.length && IDENT.test(src[end]!)) end++;
+    const stop = wordEnd(src, i);
+    if (stop > i) end = stop;
     else {
       const p = PUNCTUATORS.find((op) => src.startsWith(op, i));
       if (p) end = i + p.length;
@@ -262,7 +293,7 @@ interface Shape {
 }
 
 const OPENERS = new Map([[')', '('], [']', '['], ['}', '{']]);
-/** Words after which a `{` starts an expression or a type; `void` does so unless it ends a return type. */
+/** Words after which a `{` starts an expression or a type, unless the word ends a return type. */
 const OBJECT_WORDS = new Set(['return', 'typeof', 'case', 'in', 'of', 'new', 'delete', 'void', 'throw', 'instanceof', 'yield', 'await', 'default', 'as', 'satisfies', 'extends']);
 /** Words a `!` follows as a unary operator: the operand words and `export default`. */
 const UNARY_WORDS = new Set([...OPERAND_WORDS, 'default']);
@@ -271,18 +302,28 @@ const CONTROL_WORDS = new Set(['if', 'while', 'for', 'with']);
 const BINARY_WORDS = new Set(['in', 'instanceof', 'as', 'satisfies']);
 const OPERAND_PUNCTUATORS = new Set('([{+-~<#');
 
-const isWord = (t: Token) => t.text !== '' && IDENT.test(t.text[0]!);
+const isWord = (t: Token) => wordEnd(t.text, 0) > 0;
 /** A name after a `.`, `?.` or `#` is a member, never a keyword. */
 const isMember = (toks: Token[], n: number) => toks[n - 1]?.text === '.' || toks[n - 1]?.text === '#';
 
-/** The first token of the statement around token `n`, walking back over matched groups, and whether it declares a class or an interface. */
+/** Whether the `>` at token `n` ends an arrow. */
+const isArrow = (toks: Token[], n: number) => toks[n - 1]?.text === '=';
+
+/**
+ * The first token of the statement around token `n`, walking back over matched groups, and whether it declares a
+ * class or an interface. A `}` ends the walk as the end of the statement before, unless it sits in `<...>`, where it
+ * closes a type group of a heritage clause or a type parameter.
+ */
 function statementHead(s: Shape, n: number): { first: number; declares: boolean } {
   let first = n;
   let declares = false;
+  let angles = 0;
   for (let k = n - 1; k >= 0; k--) {
     const text = s.toks[k]!.text;
-    if (text === ';' || text === '{' || text === '(' || text === '[' || text === '}') break;
-    if (text === ')' || text === ']') {
+    if (text === '>' && !isArrow(s.toks, k)) angles++;
+    else if (text === '<' && angles > 0) angles--;
+    if (text === ';' || text === '{' || text === '(' || text === '[' || (text === '}' && angles === 0)) break;
+    if (text === ')' || text === ']' || text === '}') {
       const open = s.match.get(k);
       if (open === undefined) break;
       k = open;
@@ -291,6 +332,27 @@ function statementHead(s: Shape, n: number): { first: number; declares: boolean 
     if ((text === 'class' || text === 'interface') && !isMember(s.toks, k)) declares = true;
   }
   return { first, declares };
+}
+
+/** Whether the `(` at token `open` opens the parameters of a declaration: a name or `function` before it, not a ternary's branch. */
+function opensParameters(s: Shape, open: number): boolean {
+  const name = s.toks[open - 1];
+  if (!name || !(isWord(name) || name.text === '>' || name.text === ']' || name.text === '')) return false;
+  return s.toks[open - 2]?.text !== '?';
+}
+
+/** Whether the `{` at token `n` follows a return type: walking back over its type, the `:` after a parameter list comes first. */
+function followsReturnType(s: Shape, n: number): boolean {
+  for (let k = n - 1; k >= 0; k--) {
+    const text = s.toks[k]!.text;
+    if (text === ')' || text === ']' || text === '}') {
+      const open = s.match.get(k);
+      if (open === undefined) return false;
+      k = open;
+    } else if (text === ';' || text === '{' || text === '(' || text === '[' || (text === '=' && s.toks[k + 1]?.text !== '>')) return false;
+    else if (text === ':' && s.toks[k - 1]?.text === ')') return opensParameters(s, s.match.get(k - 1) ?? 0);
+  }
+  return false;
 }
 
 /** The kind of the `{` at token `n`, read from the token before it and, where that says nothing, from the statement around it. */
@@ -304,7 +366,7 @@ function braceKind(s: Shape, n: number): BraceKind {
     const label = first === n - 2 || s.toks[first]!.text === 'case';
     return label ? 'block' : 'object';
   }
-  const tail = prev.text === '' || prev.text === ')' || prev.text === ']' || prev.text === '>' || (isWord(prev) && (isMember(s.toks, n - 1) || !OBJECT_WORDS.has(prev.text) || (prev.text === 'void' && s.toks[n - 2]?.text === ':')));
+  const tail = prev.text === '' || prev.text === ')' || prev.text === ']' || prev.text === '>' || (isWord(prev) && (isMember(s.toks, n - 1) || !OBJECT_WORDS.has(prev.text) || followsReturnType(s, n)));
   if (!tail) return 'object';
   return statementHead(s, n).declares ? 'class' : 'block';
 }
@@ -376,7 +438,7 @@ function isIfStatement(s: Shape, n: number): boolean {
 
 /** The mutants of the given 1-based lines of `source`, ordered by line, column and `MUTATION_OPERATORS`. */
 export function mutantsFor(source: string, changedLines: readonly number[]): Mutant[] {
-  const mask = scan(source);
+  const { mask, opens } = scan(source);
   const starts = [0];
   for (let i = 0; i < source.length; i++) if (source[i] === '\n') starts.push(i + 1);
   const out: Mutant[] = [];
@@ -391,7 +453,7 @@ export function mutantsFor(source: string, changedLines: readonly number[]): Mut
     while (first < to && (mask[first] === COMMENT || isSpace(source[first]))) first++;
     let last = to - 1;
     while (last >= first && (mask[last] === COMMENT || isSpace(source[last]))) last--;
-    if (mask[first] === CODE && mask[last] === CODE && source[last] === ';' && !DECLARATION.test(source.slice(first, last))) {
+    if ((mask[first] === CODE || opens.has(first)) && mask[last] === CODE && source[last] === ';' && !DECLARATIONS.has(source.slice(first, wordEnd(source, first)))) {
       const depth = [0, 0, 0];
       let balanced = true;
       for (let k = first; k <= last && balanced; k++) {
