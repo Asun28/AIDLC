@@ -80,18 +80,23 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   // a terminal disposition: the resume takeover (it links from an earlier generation and moves to a later one) and the
   // extension of a time stop (GOAL_STATE from STOP to CARDS in the generation of a GOAL_STOPPED for time). A lease takeover
   // re-admits nothing, and work of a generation below the highest one a resume moved to is a late wakeup of a stopped
-  // generation. The chain check guarantees the events are in sequence order.
+  // generation. The chain check guarantees the events are in sequence order. A recovered attempt (`completed: true`, card
+  // T0-JOURNAL-FAULT-EVENTS) counts at `startedAt`, the write that committed it, against the last disposition of its generation.
   const generationOf = (e: { generation?: number }) => e.generation ?? 0;
+  const committedBefore = (e: (typeof events)[number], at: string | undefined): boolean => e.type === 'ATTEMPT_STARTED' && e.data['completed'] === true && typeof e.data['startedAt'] === 'string' && at !== undefined && Date.parse(e.data['startedAt']) < Date.parse(at);
   let terminal: (typeof events)[number] | undefined;
   let resumedGeneration: number | undefined;
   let afterTerminal = 0;
+  const lastDisposition = new Map<number, string>();
   for (const e of events) {
-    if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') terminal = e;
-    else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string') {
+    if (e.type === 'GOAL_DONE' || e.type === 'GOAL_STOPPED') {
+      terminal = e;
+      lastDisposition.set(generationOf(e), e.ts);
+    } else if (e.type === 'GOAL_TAKEOVER' && typeof e.data['linkedFrom'] === 'string') {
       resumedGeneration = Math.max(resumedGeneration ?? 0, generationOf(e));
       if (terminal && generationOf(e) > generationOf(terminal)) terminal = undefined;
     } else if (e.type === 'GOAL_STATE' && e.data['from'] === 'STOP' && e.data['to'] === 'CARDS' && terminal?.type === 'GOAL_STOPPED' && terminal.data['reason'] === 'time' && generationOf(e) === generationOf(terminal)) terminal = undefined;
-    else if (['CARD_DISPATCHED', 'OPERATION_ISSUED', 'ATTEMPT_STARTED'].includes(e.type) && (terminal || (resumedGeneration !== undefined && generationOf(e) < resumedGeneration))) afterTerminal += 1;
+    else if (['CARD_DISPATCHED', 'OPERATION_ISSUED', 'ATTEMPT_STARTED'].includes(e.type) && (terminal || (resumedGeneration !== undefined && generationOf(e) < resumedGeneration)) && !committedBefore(e, lastDisposition.get(generationOf(e)))) afterTerminal += 1;
   }
   if (afterTerminal) findings.push({ severity: 'block', code: 'WORK_AFTER_TERMINAL', detail: `${afterTerminal} mutation event(s) after terminal disposition` });
 

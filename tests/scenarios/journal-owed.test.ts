@@ -396,6 +396,8 @@ describe('acceptance 12: a recovered attempt counts at startedAt in the terminal
     const c = prepared();
     await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, () => next(c));
     assert.equal(ofType(c, 'ATTEMPT_STARTED').length, 0);
+    const committedAt = c.fx.now();
+    c.fx.advance(60_000);
     c.fx.controller.report({ goalId: c.goalId, generation: 0, result: 'cancel', data: {} });
     const stop = ofType(c, 'GOAL_STOPPED');
     assert.equal(stop.length, 1);
@@ -403,8 +405,8 @@ describe('acceptance 12: a recovered attempt counts at startedAt in the terminal
     const attempts = ofType(c, 'ATTEMPT_STARTED');
     assert.equal(attempts.length, 1);
     assert.equal(attempts[0]?.data['completed'], true);
-    assert.equal(attempts[0]?.data['startedAt'], c.fx.now());
-    assert.ok(events(c).indexOf(events(c).find((e) => e.type === 'ATTEMPT_STARTED')!) > events(c).findIndex((e) => e.type === 'GOAL_STOPPED'));
+    assert.equal(attempts[0]?.data['startedAt'], committedAt);
+    assert.ok(events(c).findIndex((e) => e.type === 'ATTEMPT_STARTED') > events(c).findIndex((e) => e.type === 'GOAL_STOPPED'));
     assert.ok(Date.parse(String(attempts[0]?.data['startedAt'])) < Date.parse(stop[0]!.ts));
     assert.equal(verifyAudit({ goalId: c.goalId, journal: c.fx.journal(c.goalId), now: c.fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL'), undefined);
   });
@@ -412,6 +414,7 @@ describe('acceptance 12: a recovered attempt counts at startedAt in the terminal
   const cases: Array<[string, Row[], number]> = [
     ['marked, started before the stop', [stopped(0, STOP), recovered(0, BEFORE)], 0],
     ['generation 0, started before its stop, appended after a resume to generation 1', [stopped(0, STOP), resumed(1, AFTER), recovered(0, BEFORE, LATER_STOP)], 0],
+    ['started after a time stop was re-admitted and before the next stop of that generation', [stopped(0, STOP), ['GOAL_STATE', 0, { from: 'STOP', to: 'CARDS' }, STOP], ['GOAL_STOPPED', 0, { reason: 'time' }, LATER_STOP], recovered(0, AFTER, LATER_STOP)], 0],
     ['unmarked, with a startedAt before the stop', [stopped(0, STOP), ['ATTEMPT_STARTED', 0, { n: 1, startedAt: BEFORE }, AFTER]], 1],
     ['marked, no startedAt', [stopped(0, STOP), ['ATTEMPT_STARTED', 0, { n: 1, completed: true }, AFTER]], 1],
     ['marked, a startedAt that is not a date', [stopped(0, STOP), recovered(0, 'not a date')], 1],

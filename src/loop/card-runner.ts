@@ -676,7 +676,7 @@ export class CardRunner {
           if (action.action === 'attempt') {
             episode = startAttempt(episode, action.effort, now);
             attemptNote = ` Attempt ${action.n} at effort ${action.effort}${action.escalated ? ' (escalated)' : ''}.`;
-            started = this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, reason: 'review-fix' });
+            started = this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, reason: 'review-fix', startedAt: now });
           }
         }
         // The attempt and its owed ATTEMPT_STARTED land in one write; the event is appended after it (card T0-JOURNAL-FAULT-EVENTS).
@@ -893,7 +893,7 @@ export class CardRunner {
         episode = startAttempt(episode, action.effort, now);
         attemptNo = action.n;
         effort = action.effort;
-        started = this.owe(goal, 'ATTEMPT_STARTED', { n: attemptNo, effort, escalated: action.escalated });
+        started = this.owe(goal, 'ATTEMPT_STARTED', { n: attemptNo, effort, escalated: action.escalated, startedAt: now });
       }
     }
     // Refresh the RED receipt from the scaffold worktree when available.
@@ -947,7 +947,7 @@ export class CardRunner {
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
       if (action.action !== 'attempt') throw new Error(action.action === 'stop' ? `no attempt may start: ${action.reason}: ${action.detail}` : 'episode already succeeded; ship the candidate instead');
       episode = startAttempt(episode, action.effort, now);
-      owed.push(this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true }));
+      owed.push(this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true, startedAt: now }));
     }
     episode = finishAttempt(episode, { finishedAt: now, outcome: input.outcome, cause: input.cause, notCountedReason: input.notCountedReason, progress: input.progress, evidence: input.evidence, checksGained: input.checksGained, checksLost: input.checksLost });
     owed.push(this.owe(goal, 'ATTEMPT_FINISHED', { outcome: input.outcome, cause: input.cause, progress: input.progress, evidence: input.evidence }));
