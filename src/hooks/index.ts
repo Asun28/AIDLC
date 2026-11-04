@@ -391,6 +391,24 @@ function isMutating(segment: string): boolean {
   return !READ_ONLY_TOOLS.has(name);
 }
 
+/** PowerShell's write commands and aliases that `WRITE_VERBS` does not name (card T1-PS-GUARD-READ), read as a segment's first word. */
+const PS_WRITE_COMMANDS = new Set(['sc', 'ac', 'ni', 'cpi', 'mi', 'rni', 'ren', 'rd', 'rmdir', 'erase', 'clc', 'si', 'copy', 'move', 'epcsv', 'rename-item', 'clear-content', 'set-item', 'export-csv', 'export-clixml']);
+/** PowerShell's file-writing forms that have no write command as a first word. */
+const PS_WRITE_FORMS = /-outfile|\[io\.file\]::(?:write|append|delete|move|copy)/i;
+
+/**
+ * The segments of a PowerShell command (card T1-PS-GUARD-READ): each backtick before a line break is joined into a space, and
+ * `{`, `}`, `(` and `)` split as `commandSegments` splits. Quotes are not read, as there. Only the second pass reads this.
+ */
+function powerShellSegments(cmd: string): string[] {
+  return commandSegments(cmd.replace(/`(?:\r\n|\n|\r)/g, ' ').replace(/[{}()]/g, '\n'));
+}
+
+/** Whether a PowerShell command writes a file in a way `writesFiles`, which reads Bash, does not see. */
+function powerShellWrites(cmd: string): boolean {
+  return PS_WRITE_FORMS.test(cmd) || powerShellSegments(cmd).some((segment) => PS_WRITE_COMMANDS.has(commandOf(segment).name));
+}
+
 /** The classification before card T0-HOOK-CLASSIFIER-3: a first word on the read-only lists, any path stripped, reads. */
 function mainMutating(segment: string): boolean {
   const { name, args } = commandOf(segment);
@@ -415,7 +433,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   // segments of the new split with the new classification. `classic`, the legacy decision of a config that cannot be used
   // and the first pass of `dispatchHook`, tests main's segments alone, so it decides exactly as main did.
   const main = mainSegments(cmd).filter(mainMutating);
-  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd)])];
+  const segments = classic ? main : [...new Set([...main, ...mutatingSegments(cmd), ...(event.tool_name === 'PowerShell' ? powerShellSegments(cmd).filter(isMutating) : [])])];
   const hit = segments.some((seg) => config.productionPatterns.some((p) => new RegExp(p, 'i').test(seg)));
   if (!hit) return { exitCode: 0 };
   // 1. Explicit release approval reference in the environment (playbook RELEASE_APPROVAL).
@@ -462,7 +480,7 @@ export function protectPaths(event: HookEvent, config: Required<HookConfig>, cla
   const reason = 'FROZEN: this path is a frozen contract/schema (aidlc.config.json hooks.frozenPaths). Changes go through version review, not in-place edits. Stop and ask the user how to proceed.';
   if (typeof file === 'string' && matches(file)) return deny('PreToolUse', reason);
   if (typeof cmd === 'string' && matches(cmd)) {
-    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd)) return deny('PreToolUse', reason);
+    if (classic ? WRITE_VERBS.test(cmd) : writesFiles(cmd) || (event.tool_name === 'PowerShell' && powerShellWrites(cmd))) return deny('PreToolUse', reason);
     return defer('PreToolUse', 'Note: this command references a frozen path. Read-only use may continue; any write must go through version review.');
   }
   return { exitCode: 0 };

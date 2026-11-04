@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-PS-GUARD-READ (bugfix, issue 117): on a PowerShell event `production-gate` joins backtick continuations and tests script blocks and subexpressions as segments, and `protect-paths` counts PowerShell's write commands, aliases, `-OutFile` and `[IO.File]` writes; a Bash event decides as before.
+
 - T1-PS-GUARD-WIRE (bugfix, issue 117): a PowerShell tool call now runs the Bash guard set (`production-gate`, `protect-paths`, `secrets-guard`), through the `PreToolUse` matcher `Bash|PowerShell|Edit|Write|MultiEdit` in both settings files, and `aidlc init` takes the dispatcher off an old-matcher entry, so it runs once per tool call and a foreign hook keeps its matcher.
 
 - T0-TAKEOVER-FOREIGN-LINE (bugfix): `aidlc card takeover` reads the journal of the goal it runs under and of each other goal that holds a run of the card, no other journal, so a line the journal schema refuses in an unrelated goal (five `BOUND_FIRED` lines an unmerged build wrote) no longer crashes the takeover of every card after its lease write. A takeover already stopped that way completes when run again.
