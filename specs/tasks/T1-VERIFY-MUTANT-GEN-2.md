@@ -65,3 +65,4 @@ npm run typecheck && node --test tests/surface/mutant-gen.test.ts tests/surface/
 - A `/` right after a postfix `!` opens a regex under the regex rule, so `value! / 2 === b / c` loses its `===` mutant. An existing test pins that rule.
 - A `!` before `(` or `[` is read as unary after `await` or `yield` used as plain identifiers, in `a as T<U>![c]`, and after a function or class expression on the same line; each adds one drop-not mutant.
 - `b\n!.size` is read as a postfix `!`, as the F6 assertion pins, although the TypeScript parser reports a syntax error there.
+- A `void` expression whose `{` holds a member named `if`, in a ternary branch after a call inside a larger expression (`const a = c ? x + f(d) : void { if(ok) {} };`), reads the `:` as a return type, so that method gets force-true and force-false mutants. A bare `(d)` or `f(d)` branch is told apart.
