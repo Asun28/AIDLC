@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import fs, { readFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { candidateShaFor, goalForCards, makeFixture, writeCard, type Fixture } from './_harness.ts';
-import { DryRunShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
+import { DryRunShipPath, thrownText, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import type { Goal } from '../../src/core/types.ts';
 
 const CARD = 'T1-THROW';
@@ -90,6 +90,13 @@ test('T0-SHIP-THROW-SLOT-2 acceptance 5: a ship that throws a value that is no E
       fx.cleanup();
     }
   }
+});
+
+test('T0-SHIP-THROW-SLOT-2 acceptance 5: thrownText returns a primitive string for any value', () => {
+  assert.equal(thrownText(Object.assign(new Error('hidden'), { message: 42 })), '42');
+  assert.equal(thrownText(new Error('plain')), 'plain');
+  assert.equal(thrownText(undefined), 'undefined');
+  assert.equal(thrownText(Object.create(null)), NO_TEXT);
 });
 
 /** Run `body` with `object[method]` throwing, that one method only, restored in a finally. */

@@ -19,7 +19,7 @@ import { GitProbe } from '../probes/git.ts';
 import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { parseVerdict } from '../core/review-policy.ts';
-import { classifyShipOutput, encodeUntrusted, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
+import { classifyShipOutput, encodeUntrusted, thrownText, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
 
 export interface GitHubShipOptions {
@@ -330,7 +330,17 @@ export class GitHubShipPath implements ShipPath {
     const sleep = this.options.sleep ?? ((ms: number) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms));
     const deadline = Date.now() + timeout;
     for (;;) {
-      const runs = this.gh.checkRuns(this.options.repository, head, wt);
+      let runs: ReturnType<GhProbe['checkRuns']>;
+      try {
+        runs = this.gh.checkRuns(this.options.repository, head, wt);
+      } catch (err) {
+        // An unreadable read says nothing about the checks: it is pending until the gate's deadline (card T0-SHIP-THROW-SLOT).
+        const unreadable = `check runs unreadable: ${thrownText(err)}`;
+        if (Date.now() > deadline) return fail('[CI-GATE-TIMEOUT]', unreadable, prNumber);
+        log.push(`[CI-GATE-WAIT] ${encodeUntrusted(flat(unreadable))}`);
+        sleep(poll);
+        continue;
+      }
       // Required names must be present and green: an absent one is pending until the timeout. Every reported check must succeed.
       const required = this.options.requiredChecks ?? [];
       const absent = required.filter((name) => !runs.some((r) => r.name === name));
