@@ -28,17 +28,14 @@
  */
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { classifyRequest, formatRouting } from '../core/router.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
-import { GoalStore } from '../state/goal-store.ts';
-import { resolveSessionId } from '../state/journal.ts';
 import { StoreError } from '../state/store.ts';
-import { planningClaims, quoteId, quotePath, readErrorCode, uncommittedPlanningFiles } from '../state/claims.ts';
-import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
+import type { LeaseStore } from '../coordination/lease.ts';
 import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
+import * as lazy from './lazy.ts';
 
 export interface HookEvent {
   hook_event_name?: string;
@@ -275,12 +272,12 @@ function isConfigFile(target: string, cwd: string, error: HookConfigError): bool
 function configRepair(cwd: string): string {
   if (atConfigDir(cwd)) return CONFIG_REPAIR;
   const dir = configDir(cwd);
-  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${quotePath(dir)}.`;
+  return `Fix it with Edit or Write; read with Read, Grep or Glob; diagnose with one of \`aidlc doctor\` or \`npx --no-install aidlc doctor\`, each alone or followed by \` --json\`, \` 2>&1\` or \` --json 2>&1\`; \`node bin/aidlc.js doctor\` and \`node node_modules/aidlc/bin/aidlc.js doctor\` pass only from ${lazy.claims().quotePath(dir)}.`;
 }
 
 /** A denial that names the file JSON-quoted, so a path holding a line break stays one value, and what still passes in `cwd`. */
 function configDenial(guard: ConfigGuard, error: HookConfigError, bash: boolean, cwd: string): HookResult {
-  const file = quotePath(error.file);
+  const file = lazy.claims().quotePath(error.file);
   const opening = bash ? `Bash is denied while ${file} cannot be used` : `Editing a file other than ${file} is denied while it cannot be used`;
   return deny('PreToolUse', `${opening} (${error.detail}), since the ${guard} guard cannot read hooks.${CONFIG_KEYS[guard]} from it. ${configRepair(cwd)}`);
 }
@@ -294,7 +291,8 @@ function legacyDecision(guard: ConfigGuard, event: HookEvent, cwd: string, env: 
     if (guard === 'production-gate') return productionGate(event, env, legacy, cwd, true);
     if (guard === 'protect-paths') return protectPaths(event, legacy, true);
     return protectTests(event, cwd, env, legacy);
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -427,7 +425,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   if (approvalRef) {
     try {
       const paths = resolveStatePaths(cwd, env);
-      const store = new GoalStore(paths);
+      const store = new (lazy.goalStore().GoalStore)(paths);
       for (const goal of store.listGoals()) {
         const records = goal.authorizations.map((a) => AuthorizationRecord.parse(a));
         const hitRecord = records.find((r) => r.id === approvalRef || r.ref === approvalRef);
@@ -438,7 +436,8 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
         }
       }
       if (!matched && !existsSync(paths.goals)) matched = true; // no aidlc state: honour the plain env approval like the playbook hook
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       matched = false;
     }
   }
@@ -545,9 +544,9 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
   const waiting = Array.isArray(event.background_tasks) && event.background_tasks.length > 0;
   try {
     const paths = resolveStatePaths(cwd, env);
-    const store = new GoalStore(paths);
+    const store = new (lazy.goalStore().GoalStore)(paths);
     const active = store.listGoals().filter((g) => !g.terminal);
-    const leases = new LeaseStore(paths.leases);
+    const leases = new (lazy.lease().LeaseStore)(paths.leases);
     const repoKey = resolveRepoIdentity(cwd).key;
     const host = hostName();
     let acting = session;
@@ -562,13 +561,14 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     const ownedHere = (cardId: string): boolean => {
       let lease: Lease | undefined;
       try {
-        lease = leases.read(resourceKeys.card(repoKey, cardId));
+        lease = leases.read(lazy.lease().resourceKeys.card(repoKey, cardId));
       } catch (err) {
+        lazy.rethrowLoadError(err);
         unreadable.push(`${cardId}: ${leaseReadCode(err)}`);
         return true;
       }
       if (!lease || lease.released) return true;
-      if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+      if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
       return lease.owner.session === acting && lease.owner.host === host;
     };
     const contexts: string[] = [];
@@ -585,18 +585,21 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
         const note = unreadable.length ? ` Card lease records could not be read, so these runs are listed for every session: ${unreadable.join('; ')}.` : '';
         contexts.push(`[aidlc] Verification is part of done: ${pending.join(', ')} have no fresh DoD receipt. Run the card's dod_command and paste the output before reporting the task complete. If a test fails, fix the code, not the test.${note}`);
       }
-    } catch {
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       /* the DoD check is advisory */
     }
     try {
       contexts.push(...planningArtifactsContexts(cwd, env, active, leases, repoKey, host, session));
     } catch (err) {
+      lazy.rethrowLoadError(err);
       // The session is told the check did not run, by error code only (git, config or a store read).
-      contexts.push(`[aidlc] The planning-artifacts check did not run (${readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
+      contexts.push(`[aidlc] The planning-artifacts check did not run (${lazy.claims().readErrorCode(err)}); run \`aidlc doctor\` and commit your own goal's planning artifacts before the session ends.`);
     }
     if (!contexts.length) return { exitCode: 0 };
     return stopContext(contexts.join(' '));
-  } catch {
+  } catch (err) {
+    lazy.rethrowLoadError(err);
     return { exitCode: 0 };
   }
 }
@@ -619,27 +622,28 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
   const owned = active.filter((goal) => {
     let lease: Lease | undefined;
     try {
-      lease = leases.read(resourceKeys.goal(repoKey, goal.id));
-    } catch {
+      lease = leases.read(lazy.lease().resourceKeys.goal(repoKey, goal.id));
+    } catch (err) {
+      lazy.rethrowLoadError(err);
       return false;
     }
     if (!lease || lease.released) return false;
-    if (acting === undefined) acting = resolveSessionId(env, cwd).session;
+    if (acting === undefined) acting = lazy.journal().resolveSessionId(env, cwd).session;
     return lease.owner.session === acting && lease.owner.host === host;
   });
   if (!owned.length) return [];
   const dirs = loadProjectConfig(repo.mainRoot).config;
-  const claims = planningClaims(active, dirs, (ref) => {
+  const claims = lazy.claims().planningClaims(active, dirs, (ref) => {
     const file = path.join(repo.mainRoot, ref);
     return existsSync(file) ? readFileSync(file, 'utf8') : undefined;
   });
-  const uncommitted = uncommittedPlanningFiles(new GitProbe().status(repo.mainRoot), dirs);
+  const uncommitted = lazy.claims().uncommittedPlanningFiles(new GitProbe().status(repo.mainRoot), dirs);
   const contexts: string[] = [];
   for (const goal of owned) {
     const files = uncommitted.filter((file) => claims.get(file) === goal.id);
     // Each path is JSON-quoted, and so is a goal id that is not a plain identifier: a name carrying a
     // newline or a `[aidlc]` stays data inside its quotes.
-    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${quoteId(goal.id)} are uncommitted on main: ${files.map(quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
+    if (files.length) contexts.push(`[aidlc] Planning artifacts of goal ${lazy.claims().quoteId(goal.id)} are uncommitted on main: ${files.map(lazy.claims().quotePath).join(', ')}. Commit them before the session ends; another session sees only files it does not own.`);
   }
   return contexts;
 }
@@ -650,7 +654,7 @@ function planningArtifactsContexts(cwd: string, env: NodeJS.ProcessEnv, active: 
  */
 export function routeNewWork(event: HookEvent, configError?: HookConfigError, cwd?: string): HookResult {
   const routed = routeLine(event);
-  const note = configError && `[aidlc] ${quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${cwd === undefined ? CONFIG_REPAIR : configRepair(cwd)}`;
+  const note = configError && `[aidlc] ${lazy.claims().quotePath(configError.file)} cannot be used (${configError.detail}), so the hook guards that read it deny every Bash command and every edit of another file until it is fixed. ${cwd === undefined ? CONFIG_REPAIR : configRepair(cwd)}`;
   const text = [routed, note].filter(Boolean).join('\n');
   return text ? { exitCode: 0, stdout: text } : { exitCode: 0 };
 }
@@ -669,13 +673,13 @@ function routeLine(event: HookEvent): string | undefined {
   const prompt = String(event.prompt ?? '');
   if (machinePrompt(prompt)) return undefined;
   if (!/\b(build|implement|fix|add|create|deploy|release|migrate|ship|refactor|investigate)\b/i.test(prompt) || prompt.length < 24) return undefined;
-  const routing = classifyRequest({ text: prompt });
+  const routing = lazy.router().classifyRequest({ text: prompt });
   const guidance = routing.size === 'T2'
     ? 'T2: brief -> plan -> plan-forge audit -> card projection; one product checkpoint approves plan + projection together before execution.'
     : routing.size === 'T1'
       ? 'T1: concise plan points -> valid cards -> arc; no full forge where routing policy permits.'
       : 'T0: one coherent card via card-loop; no planning funnel.';
-  return `${formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.`;
+  return `${lazy.router().formatRouting(routing)}\n[aidlc] ${guidance} Confirm the size only if this routing is materially wrong; otherwise proceed under it.`;
 }
 
 export function readStdinJson(text: string): HookEvent {

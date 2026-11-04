@@ -97,6 +97,17 @@ export function hasLesson(file: string, line: string): boolean {
   return readFileSync(file, 'utf8').split(/\r?\n/).includes(line);
 }
 
+/** The first valid line of the file for the same card, kind, rule and source as `entry`, under any date: a lesson already written, by hand or by an earlier close. */
+export function findLesson(file: string, entry: LessonEntry): string | undefined {
+  if (!existsSync(file)) return undefined;
+  return readFileSync(file, 'utf8')
+    .split(/\r?\n/)
+    .find((l) => {
+      const p = parseLessonLine(l);
+      return p !== undefined && p.ref === entry.ref && p.kind === entry.kind && p.rule === entry.rule && p.source === entry.source;
+    });
+}
+
 /**
  * Append one line. Every write opens the file in append mode, so no writer can overwrite another: a missing
  * file gets its header and first line in one exclusive append (a concurrent creator loses the race and appends
