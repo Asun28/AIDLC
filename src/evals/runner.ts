@@ -86,7 +86,7 @@ export async function runEval(evalCase: EvalCase, provider: ModelProvider, optio
     switch (check.type) {
       case 'command': {
         const [cmd, ...args] = check.command;
-        const rec = runner(cmd!, args, { cwd: check.cwd ?? options.cwd, timeoutMs: check.timeoutMs });
+        const rec = runner(cmd!, args, { cwd: check.cwd ?? options.cwd, timeoutMs: check.timeoutMs, killTree: true });
         checks.push({ check: `command ${check.command.join(' ')}`, ok: rec.exitCode === check.expectExit && !rec.timedOut, detail: `exit ${rec.exitCode}${rec.timedOut ? ' (timeout)' : ''}` });
         break;
       }
