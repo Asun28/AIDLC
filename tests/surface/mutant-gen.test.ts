@@ -379,6 +379,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
 
   test('F3: a hunk header while the last hunk still owes lines, and a hunk with no lines at all, invalidate the file [R1]', () => {
     assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -0,0 +1,2 @@\n+a();\n@@ -0,0 +5 @@\n+b();\n@@ -0,0 +7 @@\n+c();')), []);
+    assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -1,2 +1 @@\n-a();\n+b();\n@@ -5 +5 @@\n-c();\n+d();')), []);
     assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -0,0 +0,0 @@\n@@ -0,0 +1 @@\n+a();')), []);
   });
 
@@ -390,6 +391,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
       assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${bad}\n`)), [], `after a complete hunk: ${bad}`);
       assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${bad}\n@@ -0,0 +3 @@\n+y;`)), [], `before another hunk: ${bad}`);
     }
+    assert.deepEqual(changedSourceLines(file('src/a.ts', '@@ -0,0 +1 @@\n+x;\ngarbage')), [], 'text on the last row of the diff');
     assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n${MARKER}\n+x;`)), [], 'a marker with no body line before it');
     assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -0,0 +1 @@\n+x;\n${MARKER}\n${MARKER}\n`)), [], 'a marker after a marker');
     assert.deepEqual(changedSourceLines(file('src/a.ts', `@@ -1 +1 @@\n-a\n${MARKER}\n+x;\n${MARKER}\n`)), [{ file: 'src/a.ts', lines: [1] }], 'the marker after each side');
@@ -487,7 +489,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
     assert.deepEqual(view(mutantsFor('const a = b /* x\n */ !d;', [2])), [ds(2, 5, '!d;'), dn(2, 5)], 'a comment holding the line break');
     assert.deepEqual(view(mutantsFor('const a = b\n/* c */ !d;', [2])), [ds(2, 9, '!d;'), dn(2, 9)], 'a comment before the !');
     assert.deepEqual(view(mutantsFor('const a = b\n!!c;', [2])), [ds(2, 1, '!!c;'), dn(2, 1), dn(2, 2)], 'a double negation');
-    assert.deepEqual(view(mutantsFor('const a = b !c;', [1])), [dn(1, 13)], 'U+2028 ends a line for the language though not for git');
+    assert.deepEqual(view(mutantsFor('const a = b\u2028!c;', [1])), [dn(1, 13)], 'U+2028 ends a line for the language though not for git');
     assert.deepEqual(view(mutantsFor('const a = b\r!c;', [1])), [dn(1, 13)], 'a lone \\r');
     for (const operand of ['!(c);', '![c].length;', "!'s'.length;", '!`t`.length;', '!/r/.test(c);', '!-c;', '!+c;', '!~c;', '!<T>c;', '!{}.a;', '!new C();', '!.5;', '!#p in c;']) {
       assert.deepEqual(view(mutantsFor(`b\n${operand}`, [2])), [ds(2, 1, operand), dn(2, 1)], operand);
@@ -577,7 +579,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
   });
 
   test('F10: no whitespace character of the language is an identifier character [R3] [R4]', () => {
-    const spaces = [' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', ' ', '　', '﻿', '\u0085', '​'];
+    const spaces = ['\u00a0', '\u1680', '\u2000', '\u2005', '\u200a', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff', '\u0085', '\u200b'];
     for (const ws of spaces) {
       const name = `U+${ws.charCodeAt(0).toString(16)}`;
       assert.deepEqual(view(mutantsFor(`const${ws}x = 1;`, [1])), [], `declaration keyword, ${name}`);
@@ -593,19 +595,24 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
 
   test('F10: non-ASCII identifier characters stay identifier characters [R3] [R4]', () => {
     const cases: [source: string, expected: Row[]][] = [
-      ['constΔ();', [ds(1, 1, 'constΔ();')]],
-      ['let‌();', [ds(1, 1, 'let‌();')]],
-      ['var‍();', [ds(1, 1, 'var‍();')]],
-      ['const a = é !;', []],
-      ['const a = 𝒳 !;', []],
-      ['𝒳!.size;', [ds(1, 1, '𝒳!.size;')]],
-      ['returń / 2 === b / c;', [ds(1, 1, 'returń / 2 === b / c;'), [1, 13, 'negate-equality', '===', '!==']]],
+      ['const\u0394();', [ds(1, 1, 'const\u0394();')]],
+      ['let\u200c();', [ds(1, 1, 'let\u200c();')]],
+      ['var\u200d();', [ds(1, 1, 'var\u200d();')]],
+      ['const a = \u00e9 !;', []],
+      ['const a = \ud835\udcb3 !;', []],
+      ['const a = \ud835\udcb3 !c;', []],
+      ['const\ud835\udcb3();', [ds(1, 1, 'const\ud835\udcb3();')]],
+      ['const$();', [ds(1, 1, 'const$();')]],
+      ['const¶();', []],
+      ['const a = $ !c;', []],
+      ['\ud835\udcb3!.size;', [ds(1, 1, '\ud835\udcb3!.size;')]],
+      ['return\u0301 / 2 === b / c;', [ds(1, 1, 'return\u0301 / 2 === b / c;'), [1, 13, 'negate-equality', '===', '!==']]],
     ];
     for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, JSON.stringify(source));
   });
 
   test('sweep: a line comment and a regex literal end at every line terminator of the language [R4]', () => {
-    for (const end of [' ', ' ', '\r']) {
+    for (const end of ['\u2028', '\u2029', '\r']) {
       assert.deepEqual(view(mutantsFor(`// x${end}y = a && b;`, [1])), [ds(1, 6, 'y = a && b;'), [1, 12, 'swap-logic', '&&', '||']], JSON.stringify(end));
       assert.deepEqual(view(mutantsFor(`return /oops${end}ok = a && b`, [1])), [[1, 21, 'swap-logic', '&&', '||']], JSON.stringify(end));
     }
@@ -620,6 +627,78 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
       ['const a = [...typeof / === /];', []],
     ];
     for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, source);
+  });
+
+  test('sweep: a body after a return type is a block, void included; a brace after a word that starts an expression lists members [R3]', () => {
+    const BLOCKS: [source: string, column: number][] = [
+      ['function f(): void { if (ok) {} }', 26],
+      ['class A { m(): void { if (ok) {} } }', 27],
+      ['function f(): T[] { if (ok) {} }', 25],
+      ['const c = class B extends f(function (): T { if (ok) {} }) {};', 50],
+      ['class B extends a[function (): T { if (ok) {} }] {}', 40],
+      ['x = class; function f(): T { if (ok) {} }', 34],
+      ['class A ) { if (ok) {} }', 17],
+      ['const c = obj.class\n{ if (ok) {} }', 7],
+      ['const c = obj.in\n{ if (ok) {} }', 7],
+      ["const c = 's'\n{ if (ok) {} }", 7],
+      ['x; { if (ok) {} }', 10],
+      ['{ { if (ok) {} } }', 9],
+      ['{} { if (ok) {} }', 10],
+      ['{ lbl: { if (ok) {} } }', 14],
+      ['{ x = class } function f(): T { if (ok) {} }', 37],
+      ['switch (x) { case 1: {} case 2: { if (ok) {} } }', 39],
+    ];
+    for (const [source, column] of BLOCKS) assert.deepEqual(conditions(mutantsFor(source, every(source))), forced(source.split('\n').length, column), source);
+    const MEMBERS = [
+      'const a = typeof { if(ok) {} };',
+      'void { if(ok) {} };',
+      'case { if(ok) {} }:',
+      'const a = x in { if(ok) {} };',
+      'for (const a of { if(ok) {} }) y();',
+      'const a = new { if(ok) {} };',
+      'delete { if(ok) {} };',
+      'const a = x instanceof { if(ok) {} };',
+      'const a = yield { if(ok) {} };',
+      'class A extends m[0] { if(ok: boolean) {} }',
+      'class A extends mix(B) { if(ok: boolean) {} }',
+    ];
+    for (const source of MEMBERS) assert.deepEqual(conditions(mutantsFor(source, every(source))), [], source);
+  });
+
+  test('sweep: unbalanced brackets and the first token of the file, read without a throw [R3]', () => {
+    assert.deepEqual(view(mutantsFor('if ([) {', [1])), [], 'a closer that does not match the innermost opener');
+    assert.deepEqual(view(mutantsFor('if (a', [1])), [], 'an if that never closes');
+    assert.deepEqual(view(mutantsFor('if (a]) {', [1])), forced(1, 5, 'a]'), 'a stray closer stays inside the condition');
+    assert.deepEqual(view(mutantsFor('if [a] {', [1])), [], 'an if with no parenthesis');
+    assert.deepEqual(view(mutantsFor('if (a\n) {', [1])), [], 'a closing parenthesis first on the next line');
+    assert.deepEqual(view(mutantsFor('); if (ok) {', [1])), forced(1, 8), 'a closer with nothing open');
+    assert.deepEqual(view(mutantsFor('!x;', [1])), [ds(1, 1, '!x;'), dn(1, 1)], 'a ! that opens the file');
+    assert.deepEqual(view(mutantsFor('(a)!.b;', [1])), [ds(1, 1, '(a)!.b;')], 'a ) whose ( opens the file');
+    assert.deepEqual(view(mutantsFor('const a = ) !y;', [1])), [], 'a ) with no partner is a value');
+    assert.deepEqual(view(mutantsFor('const a = } !y;', [1])), [dn(1, 13)], 'a } with no partner is not');
+  });
+
+  test('sweep: every control keyword and member spelling around a ! [R3]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ['with (a) !b;', [ds(1, 1, 'with (a) !b;'), dn(1, 10)]],
+      ['x.while(a)!.b;', [ds(1, 1, 'x.while(a)!.b;')]],
+      ['await (a)!.b;', [ds(1, 1, 'await (a)!.b;')]],
+      ['const a = default!.b;', []],
+      ['const a = of !(c);', []],
+      ['const a = (of !(c));', []],
+      ['const a = obj.of !(c);', []],
+      ['for (const a of !b) c();', [ds(1, 1, 'for (const a of !b) c();'), dn(1, 17)]],
+      ['for await (const a of !b) c();', [ds(1, 1, 'for await (const a of !b) c();'), dn(1, 23)]],
+      ['(a) !b;', [ds(1, 1, '(a) !b;')]],
+      ['await (a) !b;', [ds(1, 1, 'await (a) !b;')]],
+      ['if await (a) !b;', [ds(1, 1, 'if await (a) !b;')]],
+      ['x.while(a) !b;', [ds(1, 1, 'x.while(a) !b;')]],
+      ["const a = 's' !b;", []],
+      ['const a = { b: 1 } !c;', []],
+      ['const a = b! !c;', []],
+      ['const a = x.default!;', []],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, [1])), expected, source);
   });
 
   test('sweep: a private name is a member, so true, false and if after # are never mutated [R3]', () => {
