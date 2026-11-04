@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-BENCH-2
 title: Score a stage's configured reviewer on the confirmed cases under evals/review with `aidlc review bench run`, reviewing each candidate as the loop does in a detached temporary checkout and reporting recall over bug cases and the false-block rate over clean cases
-status: todo
+status: merged
 branch: T1-REVIEW-BENCH-2
 worktree: D:\wt\AIDLC\T1-REVIEW-BENCH-2
 plan_ref: plans/review-verification.md#order-of-work
