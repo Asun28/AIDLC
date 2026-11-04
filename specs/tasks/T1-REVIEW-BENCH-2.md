@@ -35,6 +35,8 @@ requirements:
   - R13. The bench shall pass `runReviewPanel` the `changedLines` the loop passes (`changedLineRanges` over the candidate's diff and changed paths), so a `[pre-existing]` reason on lines the candidate did not change stays advisory in the bench as it does in an R2 round and an R3 decision: it neither makes a clean case a `false-block` nor makes a bug case a `hit`.
   - R14. Building the CLI program shall resolve no session: the default of `intent new --author` is read in the action, so no command writes the default session token under the state directory at startup, and `intent new` without `--author` still writes the session as the author.
   - R15. `docs/OPERATIONS.md`, at the end of the `### Reviewer bench` section, shall carry the OPERATIONS sentence of the Doc text section, and the CHANGELOG Unreleased section shall carry the entry of the Doc text section.
+  - R16. WHEN `card.path` resolves, through a symbolic link or a junction at the file or at a parent directory, to a path outside the temporary checkout, the bench shall score every case of that review `error` with a `detail` naming the path, before it reads the file and without running a reviewer; a link that stays inside the checkout is followed.
+  - R17. A cleanup step that throws shall count as that step failing: the later steps still run, the report is still returned, and the checkout is in `leftCheckouts` unless the directory is gone, a prune a failed remove needed exited 0, and `git worktree list --porcelain` exited 0 without naming it.
 acceptance:
   - 1. `tests/surface/review-bench.test.ts`: `ReviewBenchCase.parse` accepts a bug case with two expected sites and a clean case; `safeParse` fails for a confirmed case without `confirmedBy`, a case with an unknown key, a 7-character `candidate`, a `window` of 51, a `class` of `Dim 9`, and a clean case that carries `expected`. [R1] [dod arm 2]
   - 2. `tests/surface/review-bench.test.ts`: `loadBenchCases` over a temporary directory returns its cases in file-name order and ignores `README.md` and a subdirectory holding a `.json` file; it throws an error naming the file for a file that is not JSON, a file that fails the schema, and a file `a.json` whose `id` is `b`. [R2] [dod arm 2]
@@ -48,6 +50,8 @@ acceptance:
   - 13. `tests/surface/review-bench.test.ts`, formal stage, fixture candidate that changes `src/calc.ts`: a clean case whose reviewer blocks with one `[pre-existing]` reason citing a line of `src/calc.ts` the candidate did not change is `pass`; the same clean case and reason without the tag is `false-block`; a bug case expecting that unchanged line whose reviewer blocks with the same tagged reason is `miss`, and the same bug case and reason without the tag is `hit`. [R13] [dod arm 2]
   - 14. `tests/surface/review-bench.test.ts`: `src/cli/main.ts review bench run --stage formal --json`, spawned with neither `AIDLC_SESSION` nor `CLAUDE_CODE_SESSION_ID` in the child environment, leaves no path at all under `AIDLC_STATE_DIR`; `src/cli/main.ts intent new --title x`, spawned with `AIDLC_SESSION=sess-x`, writes an intent file whose author is `sess-x`, and with `--author someone` one whose author is `someone`. [R14] [dod arm 2]
   - 15. `tests/surface/review-bench.test.ts`: the `### Reviewer bench` section of `docs/OPERATIONS.md` ends with the OPERATIONS sentence of this card's Doc text section, read whole from this file, and `CHANGELOG.md` contains the CHANGELOG entry of the same section. [R15] [dod arm 2]
+  - 16. `tests/surface/review-bench.test.ts`, formal stage, a `git` option that changes the new checkout right after `worktree add`: with `specs/tasks` a directory link to a directory outside the checkout holding a valid copy of the card, the case is `error` with a `detail` containing `resolves outside the checkout` and the reviewer received no call; with `specs/tasks` a directory link to another directory inside the checkout holding the same copy, the case is `pass` after one reviewer call; where the platform permits a file symbolic link, a link at `card.path` itself to a file outside the checkout gives the same `error`; no checkout remains. [R16] [dod arm 2]
+  - 17. `tests/surface/review-bench.test.ts`: `runReviewBench` with a `git` option that throws on `worktree remove` returns a report with the case scored, the temporary directory deleted and `leftCheckouts` empty; with one that throws on `worktree remove` and `worktree prune` it returns a report with one `leftCheckouts` entry; with one that throws on `worktree list` it returns a report with one `leftCheckouts` entry. [R17] [dod arm 2]
 depends_on: []
 budget: 560
 tdd: true
@@ -87,11 +91,11 @@ Decisions:
 ## Doc text
 OPERATIONS sentence:
 
-A `[pre-existing]` reason on lines the candidate did not change stays advisory, as it does in the loop, so it neither blocks a clean case nor hits a bug case.
+A `[pre-existing]` reason on lines the candidate did not change stays advisory, as it does in the loop, so it neither blocks a clean case nor hits a bug case. A card path that resolves outside the temporary checkout is an `error`, and the bench never reads that file.
 
 CHANGELOG entry:
 
-- T1-REVIEW-BENCH-2: the reviewer bench passes the changed lines the loop passes, so a `[pre-existing]` reason stays advisory, and building the CLI program resolves no session, so no command writes the default session token at startup.
+- T1-REVIEW-BENCH-2: the reviewer bench passes the changed lines the loop passes, so a `[pre-existing]` reason stays advisory, and building the CLI program resolves no session, so no command writes the default session token at startup. A card path that resolves outside the temporary checkout scores `error` before the bench reads it, and a cleanup step that throws no longer aborts the report.
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell

@@ -1,12 +1,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, type SpawnSyncOptions } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createRun, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS } from '../../src/probes/exec.ts';
-import type { ExecOptions, ExecReceipt, ProcessKiller, SyncRunner } from '../../src/probes/exec.ts';
+import { createRun, createRunSync, killProcessTree, ok, run, runSync, scriptedRunner, TIMEOUT_GRACE_MS, TREE_HELPER_BACKSTOP_MS, treeHelperPath } from '../../src/probes/exec.ts';
+import type { ExecOptions, ExecReceipt, ProcessKiller, SpawnSyncFn, SyncRunner } from '../../src/probes/exec.ts';
 
 describe('probes/exec (receipts: exit, output digest, timeout)', () => {
   it('runSync executes a real node process and records exit 0, output and a sha256 receipt', () => {
@@ -384,13 +384,17 @@ describe('T0-EXEC-TREE-KILL a timed-out runner releases every handle at the boun
   });
 });
 
-/** The sentences this card appends to the pre-review command paragraph of docs/OPERATIONS.md. */
+/**
+ * The sentences this card appends to the pre-review command paragraph of docs/OPERATIONS.md. Its third
+ * sentence, on the synchronous runner's limit, was replaced by card T0-EXEC-SYNC-TREE-KILL (its R5),
+ * whose tests/infra/exec-sync-tree.test.ts pins the replacement and the old sentence's absence.
+ */
 const OPERATIONS_SENTENCES = [
   "A command the async runner starts (the R2 and R3 reviewers, the claude-code provider of `aidlc run`) is ended at its `timeoutMs` with its whole process tree: on Windows by `taskkill /T /F` on the root's pid, elsewhere by `SIGKILL` to the root and to each of its descendants found in one process-table read (card T0-EXEC-TREE-KILL).",
   'Its receipt then resolves with `timedOut` true no later than 2000 ms after the timeout or the tree kill, whichever ends later, whatever a surviving descendant still holds open.',
-  'The synchronous runner (git, gh, the scaffold ship script, ops bindings, eval commands) still ends only the root of a timed-out command, so a descendant of such a command keeps running after its receipt returns.',
 ];
-const ARCHITECTURE_SENTENCE = "`exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree, with a scripted runner for tests.";
+/** The exec.ts sentence as card T0-EXEC-SYNC-TREE-KILL (its R6) extended it with the `runSync` clause. */
+const ARCHITECTURE_SENTENCE = "`exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree and `runSync` with `killTree` running the command under `exec-tree-helper.ts`, which applies that tree kill, with a scripted runner for tests.";
 const CHANGELOG_ENTRY =
   '- T0-EXEC-TREE-KILL (bugfix): a command the async runner `run` times out (an R2 or R3 reviewer, the claude-code provider of `aidlc run`) is ended with its whole process tree, `taskkill /T /F` on Windows and `SIGKILL` to the root and its descendants from one `ps` read elsewhere, and its receipt resolves with `timedOut` true within `TIMEOUT_GRACE_MS` (2000 ms) of the timeout or the tree kill. Before, only the root (on Windows the shell) was killed, so a timed-out reviewer kept running and its receipt waited until it exited on its own: a 1 s timeout returned at 12.1 s. The synchronous runner `runSync` still ends only the root of a timed-out command (card T0-EXEC-SYNC-TREE-KILL).';
 
@@ -417,8 +421,310 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
       [ARCHITECTURE_SENTENCE, () => docsHold(ops, architecture.replace(ARCHITECTURE_SENTENCE, ''), changelog)],
       ...sentencesOf(CHANGELOG_ENTRY).map((s): [string, () => boolean] => [s, () => docsHold(ops, architecture, changelog.replace(s, ''))]),
     ];
-    // 3 OPERATIONS sentences, the ARCHITECTURE sentence, 3 CHANGELOG sentences.
-    assert.equal(removals.length, 7);
+    // 2 OPERATIONS sentences, the ARCHITECTURE sentence, 3 CHANGELOG sentences.
+    assert.equal(removals.length, 6);
     for (const [sentence, holds] of removals) assert.equal(holds(), false, `removing this text still passes: ${sentence}`);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------
+// T0-EXEC-SYNC-TREE-KILL: runSync with killTree runs the command under exec-tree-helper.ts.
+// ---------------------------------------------------------------------------------------------
+
+describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R2]', () => {
+  it("acceptance 1: on the stay fixture with timeoutMs 1500 returns within 6 s, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const pidFile = join(dir, 'sleeper.pid');
+    const args = [FIXTURE, 'stay', pidFile];
+    try {
+      const started = Date.now();
+      // The caller's cwd is the system temp dir, not `dir`: a leaked process holding `dir` as its cwd would make the cleanup fail instead of the assertion.
+      const receipt = runSync(process.execPath, args, { cwd: tmpdir(), timeoutMs: TIMEOUT_MS, killTree: true });
+      const elapsedMs = Date.now() - started;
+      assert.ok(elapsedMs <= 6000, `runSync returned after ${elapsedMs} ms, past the 6000 ms bound`);
+      assert.equal(receipt.timedOut, true);
+      assert.equal(ok(receipt), false);
+      assert.equal(receipt.command, process.execPath);
+      assert.deepEqual(receipt.args, args);
+      assert.equal(receipt.cwd, tmpdir());
+      const sleeper = readPid(pidFile);
+      assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
+      await assertGoneWithin(sleeper, 3000);
+    } finally {
+      end(readPid(pidFile));
+      end(readPid(`${pidFile}.root`));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("acceptance 2: returns the command's own exit code 3, stdout and stderr, and passes input to it on stdin", () => {
+    const args = ['-e', 'process.stdin.on("data", d => process.stdout.write(String(d).toUpperCase())); process.stdin.on("end", () => { process.stderr.write("warn"); process.exit(3); })'];
+    const receipt = runSync(process.execPath, args, { timeoutMs: 30_000, killTree: true, input: 'abc' });
+    assert.equal(receipt.exitCode, 3);
+    assert.equal(receipt.signal, null);
+    assert.equal(receipt.timedOut, false);
+    assert.equal(receipt.stdout, 'ABC');
+    assert.equal(receipt.stderr, 'warn');
+    assert.equal(receipt.command, process.execPath);
+    assert.deepEqual(receipt.args, args);
+    assert.equal(ok(receipt), false);
+  });
+});
+
+/**
+ * The largest output the direct runner returns whole: its spawnSync `maxBuffer` is 64 MiB over stdout and
+ * stderr together, and an output that reaches it ends the command (ENOBUFS). Split as 32 MiB of stdout and
+ * 32 MiB - 1 byte of stderr.
+ */
+const [OUT_BYTES, ERR_BYTES] = [32 * 1024 * 1024, 32 * 1024 * 1024 - 1];
+
+describe('T0-EXEC-SYNC-TREE-KILL worst-case output and input through the helper (R3 decision 1 F2) [R2]', () => {
+  for (const [name, byte, char] of [
+    ['NUL bytes', 0x00, '\u0000'],
+    ['invalid UTF-8 (0xFF, one U+FFFD per byte, as the direct runner decodes it)', 0xff, '�'],
+  ] as [string, number, string][]) {
+    it(`a command writing 64 MiB - 1 byte of ${name} (32 MiB to stdout, the rest to stderr) returns exit 0 and both outputs whole, as the direct runner does`, () => {
+      const args = ['-e', `process.stdout.write(Buffer.alloc(${OUT_BYTES}, ${byte})); process.stderr.write(Buffer.alloc(${ERR_BYTES}, ${byte}))`];
+      const [expectedOut, expectedErr] = [char.repeat(OUT_BYTES), char.repeat(ERR_BYTES)];
+      const direct = runSync(process.execPath, args, { timeoutMs: 120_000 });
+      assert.ok(direct.exitCode === 0 && direct.stdout === expectedOut && direct.stderr === expectedErr, `direct runner: exit ${direct.exitCode}, stdout ${direct.stdout.length} chars, stderr ${JSON.stringify(direct.stderr.slice(-200))}`);
+      const r = runSync(process.execPath, args, { timeoutMs: 120_000, killTree: true });
+      assert.equal(r.exitCode, 0, `stderr: ${r.stderr.slice(0, 300)}`);
+      assert.equal(r.timedOut, false);
+      assert.ok(r.stdout === expectedOut, `stdout: ${r.stdout.length} chars, not ${OUT_BYTES} of ${name}`);
+      assert.ok(r.stderr === expectedErr, `stderr: ${r.stderr.length} chars, not ${ERR_BYTES} of ${name}; starts ${JSON.stringify(r.stderr.slice(0, 200))}`);
+    });
+  }
+
+  it('a 96 MiB input of NUL characters reaches the command whole, as it does through the direct runner', () => {
+    const args = ['-e', 'let n = 0; process.stdin.on("data", (d) => (n += d.length)); process.stdin.on("end", () => process.stdout.write(String(n)))'];
+    const input = '\u0000'.repeat(96 * 1024 * 1024);
+    assert.equal(runSync(process.execPath, args, { timeoutMs: 120_000, input }).stdout, '100663296');
+    let r: ExecReceipt | undefined;
+    assert.doesNotThrow(() => (r = runSync(process.execPath, args, { timeoutMs: 120_000, killTree: true, input })));
+    assert.equal(r?.exitCode, 0, `stderr: ${r?.stderr.slice(0, 300)}`);
+    assert.equal(r?.stdout, '100663296');
+  });
+});
+
+describe('T0-EXEC-SYNC-TREE-KILL shell commands through the helper (R2 suggestion) [R1]', () => {
+  it('shell: true runs through the shell as on the direct path: quoted args stay whole and the shell expands a variable', () => {
+    const variable = process.platform === 'win32' ? '%AIDLC_SHELL_PROBE%' : '$AIDLC_SHELL_PROBE';
+    const args = ['-e', "process.stdout.write(process.argv.slice(1).join('|'))", 'a b', 'x&y', variable];
+    const env = { ...process.env, AIDLC_SHELL_PROBE: 'expanded' };
+    const direct = runSync('node', args, { shell: true, env, timeoutMs: 30_000 });
+    const r = runSync('node', args, { shell: true, env, timeoutMs: 30_000, killTree: true });
+    assert.equal(direct.stdout, 'a b|x&y|expanded');
+    assert.equal(r.stdout, 'a b|x&y|expanded', `stderr: ${r.stderr.slice(0, 300)}`);
+    assert.equal(r.exitCode, 0);
+  });
+
+  it('without shell, the needsShell fallback runs npm as on the direct path', () => {
+    const direct = runSync('npm', ['--version'], { timeoutMs: 60_000 });
+    const r = runSync('npm', ['--version'], { timeoutMs: 60_000, killTree: true });
+    assert.equal(direct.exitCode, 0, direct.stderr);
+    assert.match(direct.stdout, /^\d+\.\d+\.\d+/);
+    assert.equal(r.exitCode, 0, r.stderr.slice(0, 300));
+    assert.equal(r.stdout, direct.stdout);
+  });
+});
+
+type SpawnCall = { command: string; args: string[]; options: SpawnSyncOptions };
+type SpawnAnswer = { status?: number | null; signal?: NodeJS.Signals | null; stdout?: string | Buffer; stderr?: string | Buffer; error?: Error };
+
+/** A spawnSync stand-in that records each call and answers with `answer`, its outputs in the encoding asked for. */
+function recordingSpawner(answer: SpawnAnswer): { spawner: SpawnSyncFn; calls: SpawnCall[] } {
+  const calls: SpawnCall[] = [];
+  const spawner = (command: string, args: string[], options: SpawnSyncOptions) => {
+    calls.push({ command, args, options });
+    const as = (v: string | Buffer | undefined) => (options.encoding === 'buffer' ? Buffer.from(v ?? '') : String(v ?? ''));
+    return { pid: 1, output: [], status: 0, signal: null, ...answer, stdout: as(answer.stdout), stderr: as(answer.stderr) };
+  };
+  return { calls, spawner: spawner as unknown as SpawnSyncFn };
+}
+
+/** The helper's transport: a JSON header line, then the stdout and stderr bytes. */
+function transport(header: Record<string, unknown>, stdout: string, stderr: string): Buffer {
+  const [out, err] = [Buffer.from(stdout), Buffer.from(stderr)];
+  return Buffer.concat([Buffer.from(`${JSON.stringify({ stdoutBytes: out.length, stderrBytes: err.length, ...header })}\n`), out, err]);
+}
+
+const EXEC_MODULE = new URL('../../src/probes/exec.ts', import.meta.url).href;
+const HELPER_TS = fileURLToPath(new URL('../../src/probes/exec-tree-helper.ts', import.meta.url));
+const HELPER_HEADER = { exitCode: 3, signal: null, timedOut: false };
+const HELPER_OUTPUT = transport(HELPER_HEADER, 'out', 'err');
+
+describe('T0-EXEC-SYNC-TREE-KILL the helper start and its receipt [R1] [R2] [R3]', () => {
+  it('acceptance 3: the helper path is exec-tree-helper.ts beside a .ts exec module and exec-tree-helper.js beside a .js one', () => {
+    assert.equal(treeHelperPath(EXEC_MODULE), HELPER_TS);
+    assert.ok(existsSync(HELPER_TS));
+    assert.equal(treeHelperPath(new URL('../../dist/probes/exec.js', import.meta.url).href), fileURLToPath(new URL('../../dist/probes/exec-tree-helper.js', import.meta.url)));
+  });
+
+  it("acceptance 3 [R1]: starts node on the helper with the caller's cwd and env, a JSON header line on stdin (command, args, timeoutMs, shell, inputBytes) and the input bytes after it, a backstop of timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS (15 000 ms), a buffer transport of 3 x 64 MiB + 1 MiB", () => {
+    assert.equal(TREE_HELPER_BACKSTOP_MS, 15_000);
+    const { spawner, calls } = recordingSpawner({ stdout: HELPER_OUTPUT });
+    const env = { AIDLC_TEST_MARKER: 'env-marker' };
+    createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', env, timeoutMs: 1500, input: 'payload \u0000 é', shell: false, killTree: true });
+    assert.equal(calls.length, 1);
+    const { command, args, options } = calls[0]!;
+    assert.equal(command, process.execPath);
+    assert.deepEqual(args, [HELPER_TS]);
+    assert.equal(options.cwd, '/work');
+    assert.equal(options.env, env);
+    assert.equal(options.timeout, 1500 + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS);
+    assert.equal(options.shell, false);
+    assert.equal(options.encoding, 'buffer');
+    assert.equal(options.maxBuffer, 3 * 64 * 1024 * 1024 + 1024 * 1024);
+    const stdin = options.input as Buffer;
+    const eol = stdin.indexOf(0x0a);
+    assert.deepEqual(JSON.parse(stdin.subarray(0, eol).toString('utf8')), { command: 'deploy', args: ['--to', 'staging'], timeoutMs: 1500, shell: false, inputBytes: 12 });
+    assert.equal(stdin.subarray(eol + 1).toString('utf8'), 'payload \u0000 é');
+  });
+
+  it("acceptance 3 [R2]: a helper transport gives the command's exit, signal, timedOut, stdout and stderr under the caller's command, args and cwd", () => {
+    const { spawner } = recordingSpawner({ stdout: HELPER_OUTPUT });
+    const r = createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', timeoutMs: 1500, killTree: true });
+    assert.deepEqual([r.command, r.args, r.cwd], ['deploy', ['--to', 'staging'], '/work']);
+    assert.deepEqual([r.exitCode, r.signal, r.timedOut, r.stdout, r.stderr], [3, null, false, 'out', 'err']);
+    assert.match(r.outputSha256, /^[a-f0-9]{64}$/);
+  });
+
+  for (const [name, answer] of [
+    ['an empty stdout (exit 1)', { status: 1, stdout: '' }],
+    ['a stdout that is not JSON (exit 0)', { status: 0, stdout: 'not json\n' }],
+    ['JSON that is not a receipt (exit 0)', { status: 0, stdout: transport({ ...HELPER_HEADER, exitCode: '3' }, 'out', 'err') }],
+    ['a header with no line end (exit 0)', { status: 0, stdout: JSON.stringify({ ...HELPER_HEADER, stdoutBytes: 0, stderrBytes: 0 }) }],
+    ['a body shorter than the header says, as a truncated transport is (exit 0)', { status: 0, stdout: HELPER_OUTPUT.subarray(0, HELPER_OUTPUT.length - 1) }],
+    ['a body longer than the header says (exit 0)', { status: 0, stdout: Buffer.concat([HELPER_OUTPUT, Buffer.from('x')]) }],
+    ['a negative byte count (exit 0)', { status: 0, stdout: transport({ ...HELPER_HEADER, stdoutBytes: -1, stderrBytes: 7 }, 'out', 'err') }],
+    ['a well-formed transport with a helper exit 2', { status: 2, stdout: HELPER_OUTPUT }],
+  ] as [string, SpawnAnswer][]) {
+    it(`acceptance 3 [R2]: ${name} gives exitCode null, not ok, stderr beginning [tree helper error] with the helper's exit code`, () => {
+      const { spawner } = recordingSpawner({ ...answer, stderr: 'helper crashed' });
+      const r = createRunSync(spawner)('deploy', ['--to', 'staging'], { cwd: '/work', timeoutMs: 1500, killTree: true });
+      assert.equal(r.exitCode, null);
+      assert.equal(ok(r), false);
+      assert.equal(r.timedOut, false);
+      assert.equal(r.stdout, '');
+      assert.equal(r.stderr, `[tree helper error] exit ${answer.status}\nhelper crashed`);
+      assert.deepEqual([r.command, r.args, r.cwd], ['deploy', ['--to', 'staging'], '/work']);
+    });
+  }
+
+  it('acceptance 3 [R2]: a helper that reaches its backstop gives timedOut true, exitCode null and a [tree helper error]', () => {
+    const { spawner } = recordingSpawner({ status: null, signal: 'SIGTERM', error: Object.assign(new Error('spawnSync node ETIMEDOUT'), { code: 'ETIMEDOUT' }) });
+    const r = createRunSync(spawner)('deploy', [], { timeoutMs: 1500, killTree: true });
+    assert.equal(r.timedOut, true);
+    assert.equal(r.exitCode, null);
+    assert.equal(ok(r), false);
+    assert.equal(r.stderr, '[tree helper error] exit null (SIGTERM, backstop 18500 ms)\n');
+  });
+
+  it('acceptance 3 [R2]: a helper transport that overflows (ENOBUFS) gives exitCode null and a [tree helper error], never a partial receipt', () => {
+    const { spawner } = recordingSpawner({ status: null, signal: 'SIGTERM', stdout: HELPER_OUTPUT.subarray(0, 20), error: Object.assign(new Error('spawnSync node ENOBUFS'), { code: 'ENOBUFS' }) });
+    const r = createRunSync(spawner)('deploy', [], { timeoutMs: 1500, killTree: true });
+    assert.deepEqual([r.exitCode, r.timedOut, r.stdout], [null, false, '']);
+    assert.equal(r.stderr, '[tree helper error] exit null (SIGTERM)\n\n[spawn error] spawnSync node ENOBUFS');
+  });
+
+  for (const [name, options] of [
+    ['killTree without timeoutMs', { killTree: true }],
+    ['timeoutMs without killTree', { timeoutMs: 1500 }],
+  ] as [string, ExecOptions][]) {
+    it(`acceptance 2 [R3]: ${name} spawns the command itself, never the helper`, () => {
+      const { spawner, calls } = recordingSpawner({ stdout: 'direct' });
+      const r = createRunSync(spawner)('git', ['status'], options);
+      assert.deepEqual(calls.map((c) => [c.command, c.args, c.options.timeout]), [['git', ['status'], options.timeoutMs]]);
+      assert.equal(r.stdout, 'direct');
+    });
+  }
+});
+
+/**
+ * A root that starts the fixture's sleeper through a shell, with no pipe to it, waits for its pid file and
+ * then writes to stdout without end: `node -e OVERFLOW_ROOT <fixture> <pidFile>`.
+ */
+const OVERFLOW_ROOT = [
+  "const { spawn } = require('node:child_process');",
+  "const { existsSync } = require('node:fs');",
+  'const [fixture, pidFile] = process.argv.slice(1);',
+  'const q = (s) => `"${s}"`;',
+  "spawn(`${q(process.execPath)} ${q(fixture)} sleeper ${q(pidFile)}`, { shell: true, stdio: 'ignore' });",
+  'const poll = setInterval(() => {',
+  '  if (!existsSync(pidFile)) return;',
+  '  clearInterval(poll);',
+  '  const chunk = Buffer.alloc(1 << 20, 120);',
+  "  const flood = () => { while (process.stdout.write(chunk)) {} process.stdout.once('drain', flood); };",
+  '  flood();',
+  '}, 20);',
+].join('\n');
+
+describe('T0-EXEC-SYNC-TREE-KILL the 64 MiB output limit through the helper (R3 decision 2 N2) [R2]', () => {
+  it('a command whose output passes 64 MiB is ended with its tree before its timeout and reported as the direct runner reports ENOBUFS', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const [directPid, helperPid] = [join(dir, 'direct.pid'), join(dir, 'helper.pid')];
+    try {
+      const direct = runSync(process.execPath, ['-e', OVERFLOW_ROOT, FIXTURE, directPid], { cwd: tmpdir(), timeoutMs: 20_000 });
+      const started = Date.now();
+      const r = runSync(process.execPath, ['-e', OVERFLOW_ROOT, FIXTURE, helperPid], { cwd: tmpdir(), timeoutMs: 20_000, killTree: true });
+      const elapsedMs = Date.now() - started;
+      const enobufs = /\n\[spawn error\] spawn(Sync)? .+ ENOBUFS$/;
+      assert.deepEqual([direct.exitCode, direct.signal, direct.timedOut], [null, 'SIGTERM', false]);
+      assert.match(direct.stderr, enobufs);
+      assert.deepEqual([r.exitCode, r.signal, r.timedOut], [null, 'SIGTERM', false], `stderr: ${r.stderr.slice(-300)}`);
+      assert.match(r.stderr, enobufs);
+      assert.equal(ok(r), false);
+      assert.ok(elapsedMs < 15_000, `runSync returned after ${elapsedMs} ms, not before the 20 000 ms timeout`);
+      assert.ok(r.stdout.length > 64 * 1024 * 1024 - (1 << 20) && r.stdout.length <= 65 * 1024 * 1024, `stdout of ${r.stdout.length} chars, not the 64 MiB limit and at most one more MiB`);
+      const sleeper = readPid(helperPid);
+      assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the flood');
+      await assertGoneWithin(sleeper, 3000);
+    } finally {
+      end(readPid(directPid));
+      end(readPid(helperPid));
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+/** Prints the parent pid after 300 ms: the test's own pid on the direct path, the helper's under the helper. */
+const PPID_AFTER_300MS = ['-e', 'setTimeout(() => process.stdout.write(String(process.ppid)), 300)'];
+
+describe('T0-EXEC-SYNC-TREE-KILL timeouts past the largest timer delay (R3 decision 2 N3) [R3]', () => {
+  it('timeoutMs 2 147 483 647, the largest timer delay, runs under the helper and the command ends on its own', () => {
+    const r = runSync(process.execPath, PPID_AFTER_300MS, { timeoutMs: 2_147_483_647, killTree: true });
+    assert.deepEqual([r.exitCode, r.timedOut], [0, false], r.stderr.slice(0, 300));
+    assert.match(r.stdout, /^\d+$/);
+    assert.notEqual(Number(r.stdout), process.pid);
+  });
+
+  it('timeoutMs 2 147 483 648 with killTree refuses a real command, which never runs', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
+    const marker = join(dir, 'ran');
+    try {
+      const r = runSync(process.execPath, ['-e', 'require("node:fs").writeFileSync(process.argv[1], "x")', marker], { timeoutMs: 2_147_483_648, killTree: true });
+      assert.equal(r.exitCode, null);
+      assert.match(r.stderr, /^\[tree helper error\] unsupported timeoutMs/);
+      assert.equal(existsSync(marker), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  for (const timeoutMs of [2_147_483_648, Number.MAX_SAFE_INTEGER + 2, 1500.5, Infinity, -1]) {
+    it(`timeoutMs ${timeoutMs} with killTree spawns nothing and returns the refusal`, () => {
+      const { spawner, calls } = recordingSpawner({ stdout: 'direct' });
+      const r = createRunSync(spawner)('git', ['status'], { timeoutMs, killTree: true });
+      assert.deepEqual(calls, []);
+      assert.deepEqual([r.exitCode, ok(r)], [null, false]);
+      assert.match(r.stderr, /^\[tree helper error\] unsupported timeoutMs/);
+    });
+  }
+
+  it('timeoutMs 2 147 483 647 with killTree spawns the helper', () => {
+    const { spawner, calls } = recordingSpawner({ stdout: HELPER_OUTPUT });
+    createRunSync(spawner)('git', ['status'], { timeoutMs: 2_147_483_647, killTree: true });
+    assert.deepEqual(calls.map((c) => [c.command, c.args]), [[process.execPath, [HELPER_TS]]]);
   });
 });
