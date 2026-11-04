@@ -207,6 +207,9 @@ describe('T1-INIT-HOOK-PATH: isDispatcherCommand', () => {
       'node "./a/bin/aidlc-hook.js"',
       'node "C:a/bin/aidlc-hook.js"',
       'node "--eval=console.log(1)//bin/aidlc-hook.js"',
+      'node "//host/share/bin/aidlc-hook.js"',
+      'node "/\\host\\share/bin/aidlc-hook.js"',
+      'node "C:/a\\b/bin/aidlc-hook.js"',
       'node "-e/bin/aidlc-hook.js"',
       ...['&', '|', '<', '>', '^', '\0'].map((c) => `node "C:/a${c}b/bin/aidlc-hook.js"`),
     ]) {
@@ -234,15 +237,64 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
   /** On Windows `shell: true` starts ComSpec, so a command that needs a shell cannot start under this environment. POSIX does not read it. */
   const NO_WINDOWS_SHELL: NodeJS.ProcessEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'comspec')), ComSpec: 'C:/no-such-dir/cmd.exe' };
 
-  test('acceptance 6: every node spelling reports ok with no shell, an absolute path holding a space included [R5]', () => {
-    for (const rel of ['with space/bin/aidlc-hook.js', 'bin/aidlc-hook.js', 'node_modules/aidlc/bin/aidlc-hook.js']) {
-      const target = tempDir();
-      const entry = path.join(target, rel);
-      mkdirSync(path.dirname(entry), { recursive: true });
-      writeFileSync(entry, `import(${JSON.stringify(pathToFileURL(HOOK_ENTRY).href)});`);
-      const command = rel.startsWith('with') ? `node "${entry.replace(/\\/g, '/')}"` : `node ${rel}`;
-      assert.equal(doctorLine(wired(command, target), NO_WINDOWS_SHELL), `ok: ${command}`);
-    }
+  test('acceptance 6: a real dispatcher under a path holding a space reports ok with no shell [R5]', () => {
+    const target = tempDir();
+    const entry = path.join(target, 'with space', 'bin', 'aidlc-hook.js');
+    mkdirSync(path.dirname(entry), { recursive: true });
+    writeFileSync(entry, `import(${JSON.stringify(pathToFileURL(HOOK_ENTRY).href)});`);
+    const command = `node "${entry.replace(/\\/g, '/')}"`;
+    assert.equal(doctorLine(wired(command, target), NO_WINDOWS_SHELL), `ok: ${command}`);
+  });
+
+  /** A target with `rel` present as a script that leaves a marker directory when it runs. */
+  function withPlantedFile(rel: string): string {
+    const target = tempDir();
+    mkdirSync(path.dirname(path.join(target, rel)), { recursive: true });
+    writeFileSync(path.join(target, rel), `require('fs').mkdirSync(${JSON.stringify(path.join(target, 'ran.marker'))});`);
+    return target;
+  }
+
+  const CHECKED: Array<{ command: string; file: string }> = [
+    { command: 'node bin/aidlc-hook.js', file: 'bin/aidlc-hook.js' },
+    { command: LOCAL, file: 'node_modules/aidlc/bin/aidlc-hook.js' },
+    { command: NPX, file: 'node_modules/aidlc/bin/aidlc-hook.js' },
+  ];
+
+  for (const { command, file } of CHECKED) {
+    test(`acceptance 6: ${command} with its file present reports ok and the file does not run [R5]`, () => {
+      const target = wired(command, withPlantedFile(file));
+      assert.equal(doctorLine(target), `ok: ${command}`);
+      assert.equal(existsSync(path.join(target, 'ran.marker')), false);
+    });
+
+    test(`acceptance 6: ${command} with no file, or a directory in its place, reports the FAILED text [R5]`, () => {
+      const failed = `FAILED (exit 1): every guard is off until this command runs: ${command}`;
+      assert.equal(doctorLine(wired(command)), failed);
+      const directory = tempDir();
+      mkdirSync(path.join(directory, file), { recursive: true });
+      assert.equal(doctorLine(wired(command, directory)), failed);
+    });
+  }
+
+  test('acceptance 6: the npx text does not reach an npx.cmd in the repository root [R5]', () => {
+    const target = wired(NPX);
+    writeFileSync(path.join(target, 'npx.cmd'), '@mkdir ran.marker\r\n');
+    assert.equal(doctorLine(target), `FAILED (exit 1): every guard is off until this command runs: ${NPX}`);
+    assert.equal(existsSync(path.join(target, 'ran.marker')), false);
+  });
+
+  test('acceptance 6: the launcher receives no shell option, and only the absolute spelling reaches it [R5]', () => {
+    const calls: unknown[][] = [];
+    const recording = ((...args: unknown[]) => {
+      calls.push(args);
+      return { status: 0 };
+    }) as unknown as typeof spawnSync;
+    for (const { command, file } of CHECKED) hookWiringReport(wired(command, withPlantedFile(file)), recording);
+    assert.deepEqual(calls, [], 'a relative spelling or the npx text reached the launcher');
+    assert.equal(hookWiringReport(wired(ABSOLUTE), recording), `ok: ${ABSOLUTE}`);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0]![0], 'node');
+    assert.equal('shell' in (calls[0]!.at(-1) as object), false, 'no shell option');
   });
 
   test('acceptance 6: a working dispatcher reports ok [R5]', () => {
@@ -291,7 +343,7 @@ test('T1-INIT-HOOK-PATH acceptance 7: OPERATIONS and the CHANGELOG hold the exac
   const powerShell = lines.findIndex((l) => l.startsWith('A PowerShell tool call is under the same rule'));
   assert.ok(lines.indexOf(paragraph) > powerShell && powerShell >= 0, `docs/OPERATIONS.md states, after the PowerShell paragraph: ${paragraph}`);
 
-  const entry = '- T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that runs the wired dispatcher and reports `ok`, `FAILED` or `not wired`.';
+  const entry = '- T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that runs an absolute dispatcher, checks the file of any other spelling, and reports `ok`, `FAILED` or `not wired`.';
   const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8');
   const start = changelog.indexOf('## Unreleased');
   const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
