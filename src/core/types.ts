@@ -730,6 +730,19 @@ const GitOid = z.string().regex(/^[0-9a-f]{40}$/, 'expected a lowercase SHA-1 gi
 export const ShippedFacts = z.object({ headSha: GitOid, mergeSha: GitOid, tree: GitOid, pr: z.number().int().positive() });
 export type ShippedFacts = z.infer<typeof ShippedFacts>;
 
+/**
+ * A decision event a card-run write owes to the goal journal (card T0-JOURNAL-FAULT-EVENTS): the write that commits the
+ * decision records it, and the command appends it after that write; an append that did not land is made by the next
+ * `card next`, `card attempt`, `review pre` or `review r3` on the card.
+ */
+export const OwedEvent = z.object({
+  key: z.string().min(1),
+  type: z.enum(['ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'PRE_REVIEW_DECIDED', 'REVIEW_DECIDED', 'OPERATION_RESULT']),
+  generation: z.number().int().nonnegative(),
+  data: z.record(z.string(), z.unknown()),
+});
+export type OwedEvent = z.infer<typeof OwedEvent>;
+
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
@@ -775,6 +788,8 @@ export const CardRun = z.object({
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
   pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
+  /** The decision events written to this run and owed to the goal journal until it holds them (card T0-JOURNAL-FAULT-EVENTS); a run written before the field has none. */
+  journalOwed: z.array(OwedEvent).optional(),
   updatedAt: IsoTimestamp,
 });
 export type CardRun = z.infer<typeof CardRun>;

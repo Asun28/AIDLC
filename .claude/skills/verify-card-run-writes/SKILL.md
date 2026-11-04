@@ -20,7 +20,7 @@ Harm: a card that the journal reports in one state while the run record holds an
 
 ## Coverage
 - `tests/scenarios/fault-points.test.ts`: `enumerate`, `underFaults`, `recover`, `check`, `drive`, `endState`, `judge`
-- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`
+- `src/loop/card-runner.ts`: `CardRunner.recordAttempt`, `CardRunner.preReview`, `CardRunner.formalReview`, `CardRunner.next`, `CardRunner.ship`, `CardRunner.applyShipResult`, `CardRunner.commitFormalResult`, `CardRunner.commitReviewed`, `CardRunner.save`, `CardRunner.deliverOwed`
 - `src/state/goal-store.ts`: `GoalStore.saveCardRun`, `GoalStore.updateCardRun`
 - `src/state/store.ts`: `atomicWriteJson`, `atomicWriteText`
 - `src/state/journal.ts`: `Journal.append`
@@ -31,7 +31,7 @@ pass (ship to CLOSE) and `card next` at SHIP past the card deadline
 (STOP/time). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `7176aa48569ba97ba53a846bf64224d8542212c7`
+Sync commit: `df5f50dbc56b1f788757dded861739eb150bd4eb`
 
 ## Run
 ```
@@ -116,7 +116,7 @@ A new command is added to `COVERED` with its stage and named end.
 
 ## Keeping in sync
 Tell whether a change touches covered code:
-`git diff --name-only 794624a0d26cbb5ee8eec2a363b7a578590abef9 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
+`git diff --name-only df5f50dbc56b1f788757dded861739eb150bd4eb -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
 (the sync commit and the record's files). Then exactly one outcome:
 - **in sync**: covered files unchanged, or changed without a change to a
   write or its order, and the check passes; the sync commit may move.

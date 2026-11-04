@@ -102,7 +102,7 @@ test('T1-SWEEP2-FLAGS acceptance 5: no doc says CLAUDE_SESSION_ID is read, OPERA
   const row = read('docs/OPERATIONS.md').split(/\r?\n/).find((l) => l.startsWith('| `production-gate` |'));
   assert.equal(
     row,
-    '| `production-gate` | PreToolUse Bash | the command matches a deploy/release verb together with `prod|production|live` and `RELEASE_APPROVAL` (or `AIDLC_RELEASE_APPROVAL`) is unset or does not name a recorded production authorization; exit 2 with the reason. `RELEASE_APPROVAL` wins when both are set, and a repository with no goal records (no `goals/` directory in the state directory) admits any non-empty value |',
+    '| `production-gate` | PreToolUse Bash, PowerShell | the command matches a deploy/release verb together with `prod|production|live` and `RELEASE_APPROVAL` (or `AIDLC_RELEASE_APPROVAL`) is unset or does not name a recorded production authorization; exit 2 with the reason. `RELEASE_APPROVAL` wins when both are set, and a repository with no goal records (no `goals/` directory in the state directory) admits any non-empty value |',
   );
   const changelog = read('CHANGELOG.md');
   const start = changelog.indexOf('## Unreleased');
