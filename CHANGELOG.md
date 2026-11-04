@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-PS-GUARD-WIRE (bugfix, issue 117): a PowerShell tool call now runs the Bash guard set (`production-gate`, `protect-paths`, `secrets-guard`), through the `PreToolUse` matcher `Bash|PowerShell|Edit|Write|MultiEdit` in both settings files, and `aidlc init` takes the dispatcher off an old-matcher entry, so it runs once per tool call and a foreign hook keeps its matcher.
+
 - T0-BUILD-ATOMIC (bugfix): `npm run build` runs `scripts/build.ts`, which emits the files `tsc -p tsconfig.json` emits with the same bytes, each written to a temporary sibling and renamed onto it, and the two compiled entries last. Before, tsc emptied each file of dist/ before writing it, so a hook started during a build could load an empty module and run no guard: a denied write went ahead, and a typed request got no routing line.
 
 - T0-LESSON-DUP (bugfix): `aidlc card close --lesson` appends no second line for a lesson that docs/LESSONS.md already holds for the same card, kind, rule and source under another date, and the close directive says the flag writes the line itself instead of listing the lesson step among the steps completed by hand. Before, a line written by hand and then recorded with `--lesson` was appended twice whenever its date was not the UTC date of the close.
