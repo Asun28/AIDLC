@@ -13,6 +13,7 @@ import { goalForCards, makeFixture, writeCard, type Fixture } from './_harness.t
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { GitHubShipPath } from '../../src/delivery/github-ship.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
+import { verifyAudit } from '../../src/audit/verifier.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { CardRun, type Card, type Goal, type JournalEvent } from '../../src/core/types.ts';
 
@@ -367,6 +368,65 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
+// Terminal accounting (R11, R3 decision 3 F5): a recovered attempt counts at the write that committed it, not at its append.
+// ---------------------------------------------------------------------------------------------------------------------
+
+describe('acceptance 12: a recovered attempt counts at startedAt in the terminal accounting', () => {
+  const BEFORE = '2026-09-11T01:00:00.000Z';
+  const STOP = '2026-09-11T02:00:00.000Z';
+  const AFTER = '2026-09-11T03:00:00.000Z';
+  const LATER_STOP = '2026-09-11T04:00:00.000Z';
+  type Row = [JournalEvent['type'], number, Record<string, unknown>, string];
+  const stopped = (generation: number, ts: string): Row => ['GOAL_STOPPED', generation, { reason: 'tool' }, ts];
+  const resumed = (generation: number, ts: string): Row => ['GOAL_TAKEOVER', generation, { linkedFrom: `g-recovered@${generation - 1}` }, ts];
+  const recovered = (generation: number, startedAt: unknown, ts = AFTER): Row => ['ATTEMPT_STARTED', generation, { n: 1, completed: true, startedAt }, ts];
+  const counted = (rows: Row[]): number => {
+    const fx = makeFixture();
+    try {
+      const journal = fx.journal('g-recovered');
+      for (const [type, generation, data, ts] of rows) journal.append({ type, goalId: 'g-recovered', generation, data, ts });
+      const finding = verifyAudit({ goalId: 'g-recovered', journal, now: fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL');
+      return Number(finding?.detail.match(/^\d+/)?.[0] ?? 0);
+    } finally {
+      fx.cleanup();
+    }
+  };
+
+  it('an attempt committed before a stop and appended after it is one marked event before the stop, and no finding', async () => {
+    const c = prepared();
+    await faulted(c, { call: 'appendFileSync', event: 'ATTEMPT_STARTED' }, () => next(c));
+    assert.equal(ofType(c, 'ATTEMPT_STARTED').length, 0);
+    c.fx.controller.report({ goalId: c.goalId, generation: 0, result: 'cancel', data: {} });
+    const stop = ofType(c, 'GOAL_STOPPED');
+    assert.equal(stop.length, 1);
+    next(c);
+    const attempts = ofType(c, 'ATTEMPT_STARTED');
+    assert.equal(attempts.length, 1);
+    assert.equal(attempts[0]?.data['completed'], true);
+    assert.equal(attempts[0]?.data['startedAt'], c.fx.now());
+    assert.ok(events(c).indexOf(events(c).find((e) => e.type === 'ATTEMPT_STARTED')!) > events(c).findIndex((e) => e.type === 'GOAL_STOPPED'));
+    assert.ok(Date.parse(String(attempts[0]?.data['startedAt'])) < Date.parse(stop[0]!.ts));
+    assert.equal(verifyAudit({ goalId: c.goalId, journal: c.fx.journal(c.goalId), now: c.fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL'), undefined);
+  });
+
+  const cases: Array<[string, Row[], number]> = [
+    ['marked, started before the stop', [stopped(0, STOP), recovered(0, BEFORE)], 0],
+    ['generation 0, started before its stop, appended after a resume to generation 1', [stopped(0, STOP), resumed(1, AFTER), recovered(0, BEFORE, LATER_STOP)], 0],
+    ['unmarked, with a startedAt before the stop', [stopped(0, STOP), ['ATTEMPT_STARTED', 0, { n: 1, startedAt: BEFORE }, AFTER]], 1],
+    ['marked, no startedAt', [stopped(0, STOP), ['ATTEMPT_STARTED', 0, { n: 1, completed: true }, AFTER]], 1],
+    ['marked, a startedAt that is not a date', [stopped(0, STOP), recovered(0, 'not a date')], 1],
+    ['marked, a startedAt that is not a string', [stopped(0, STOP), recovered(0, 1)], 1],
+    ['marked, started at the stop', [stopped(0, STOP), recovered(0, STOP)], 1],
+    ['marked, started after the stop', [stopped(0, STOP), recovered(0, AFTER)], 1],
+    ['generation 0, started after its stop and before the stop of generation 1', [stopped(0, STOP), resumed(1, AFTER), stopped(1, LATER_STOP), recovered(0, AFTER, LATER_STOP)], 1],
+    ['a marked CARD_DISPATCHED is not an attempt', [stopped(0, STOP), ['CARD_DISPATCHED', 0, { childRef: 'card:T1-JO', completed: true, startedAt: BEFORE }, AFTER]], 1],
+  ];
+  for (const [name, rows, expected] of cases) {
+    it(`${name}: ${expected} counted`, () => assert.equal(counted(rows), expected));
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
 // Doc text (acceptance 8): each sentence and the phrase in its place, and removing any one fails the check.
 // ---------------------------------------------------------------------------------------------------------------------
 
@@ -375,12 +435,14 @@ const lf = (file: string): string => readFileSync(path.join(root, file), 'utf8')
 const OPERATIONS_SENTENCES = [
   'The card runner journals `ATTEMPT_STARTED`, `ATTEMPT_FINISHED`, `PRE_REVIEW_DECIDED`, `REVIEW_DECIDED` and the merge `OPERATION_RESULT` only after the card-run write that commits the decision, and once (card T0-JOURNAL-FAULT-EVENTS): that write records the event on the run as owed, the command appends it after the write, and an append that did not land is made, marked `completed: true`, by the next `card next`, `card attempt`, `review pre` or `review r3` on the card.',
   'A merge result is appended only while the operation ledger shows that result, and never once `aidlc ops reconcile` has journaled `OPERATION_RECONCILED` for the operation.',
+  'An owed `ATTEMPT_STARTED` carries `startedAt`, the time of the write that committed it, and `WORK_AFTER_TERMINAL` does not count one marked `completed: true` whose `startedAt` precedes the last disposition of its generation, so an attempt committed before a goal stopped and journaled after it is no finding, and one committed after the stop still is.',
 ];
 const ARCHITECTURE_SENTENCE = 'The card runner appends an attempt, R2, R3 or merge-result event only after the card-run write that commits its decision, which records the event as owed (`CardRun.journalOwed`); an append that did not land is made by the next card-run command on the card, so each such event reaches the journal once and never ahead of its record (card T0-JOURNAL-FAULT-EVENTS).';
 const ARCHITECTURE_PHRASE = 'the decision events still owed to the journal (`journalOwed`)';
 const CHANGELOG_SENTENCES = [
   '- T0-JOURNAL-FAULT-EVENTS (bugfix): the attempt, R2, R3 and merge-result events of a card run are journaled only after the record write that commits the decision, and once: the write records the event on the card run as owed (`CardRun.journalOwed`), and an append that did not land is made, marked `completed: true`, by the next `card next`, `card attempt`, `review pre` or `review r3` on the card.',
   'Before, a failed record write after `ATTEMPT_STARTED` or `ATTEMPT_FINISHED` journaled the attempt event twice, and a failed append after an R2, R3 or merge commit lost the event for good, which also hid a shipped card from `aidlc audit verify --claim-full`.',
+  '`verifyAudit` does not count a recovered `ATTEMPT_STARTED` as `WORK_AFTER_TERMINAL` when its `startedAt` precedes the last disposition of its generation.',
 ];
 
 const section = (doc: string, heading: string): string => {
