@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-THROW-SLOT-3
 title: A ship that throws any value frees its review slot and leaves its operation UNKNOWN, and an unreadable check-run read is a pending read of the CI gate
-status: todo
+status: merged
 branch: T0-SHIP-THROW-SLOT-3
 worktree: D:\wt\AIDLC\T0-SHIP-THROW-SLOT-3
 allow_paths:
