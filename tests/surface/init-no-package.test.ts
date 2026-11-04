@@ -235,7 +235,7 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
 
   test('acceptance 6: a foreign hook, or an absolute dispatcher with & in its path, reports not wired and runs nothing [R5]', () => {
     const ampersand = `node "${tempDir().replace(/\\/g, '/')}/x&mkdir ran.marker&/bin/aidlc-hook.js"`;
-    for (const command of [`node -e "require('fs').mkdirSync('ran.marker')"`, ampersand]) {
+    for (const command of ['mkdir ran.marker', ampersand]) {
       const target = wired(command);
       assert.equal(doctorLine(target), 'not wired', command);
       assert.equal(existsSync(path.join(target, 'ran.marker')), false, command);
