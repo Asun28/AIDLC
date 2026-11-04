@@ -1,7 +1,8 @@
 /**
  * Doctor's `hookCommand` (card T1-INIT-HOOK-PATH): runs the dispatcher wired in `.claude/settings.json` once on a no-op
  * event. A hook that exits 1 does not stop a tool call and says nothing, so this line is where a broken command shows.
- * A command `isDispatcherCommand` refuses is never run: the settings file may come from a cloned repository.
+ * A command `isDispatcherCommand` refuses is never run: the settings file may come from a cloned repository. A `node`
+ * spelling runs with no shell, so no shell reads its path; only the fixed npx text goes through one.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -25,6 +26,8 @@ function wiredDispatcher(root: string): string | undefined {
 export function hookWiringReport(root: string): string {
   const command = wiredDispatcher(root);
   if (command === undefined) return 'not wired';
-  const r = spawnSync(command, { shell: true, input: NO_OP_EVENT, cwd: root, timeout: 10000, windowsHide: true });
+  const options = { input: NO_OP_EVENT, cwd: root, timeout: 10000, windowsHide: true };
+  const entry = /^node "?(.+?)"?$/.exec(command)?.[1];
+  const r = entry ? spawnSync('node', [entry], options) : spawnSync(command, { ...options, shell: true });
   return r.status === 0 ? `ok: ${command}` : `FAILED (exit ${r.status}): every guard is off until this command runs: ${command}`;
 }

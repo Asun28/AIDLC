@@ -123,8 +123,8 @@ const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect
 const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
 /** Every spelling of the dispatcher `resolveHookCommand` can write. */
 const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
-/** The absolute spelling. The path holds no character a shell expands inside double quotes, because doctor runs what this accepts. */
-const ABSOLUTE_DISPATCHER = /^node "[^"$`%\r\n]+\/bin\/aidlc-hook\.js"$/;
+/** The absolute spelling. The path holds no shell expansion or separator character; `(` and `)` stay, for `C:/Program Files (x86)`. */
+const ABSOLUTE_DISPATCHER = /^node "[^"$`%&|<>^\r\n]+\/bin\/aidlc-hook\.js"$/;
 
 /** Whether a settings command is the aidlc dispatcher in any spelling; only such a command is replaced, or run by doctor. */
 export function isDispatcherCommand(command: string): boolean {
@@ -141,7 +141,10 @@ export function resolveHookCommand(target: string, hookEntry?: string): string {
   if (existsSync(path.join(target, 'node_modules', 'aidlc', 'bin', 'aidlc-hook.js'))) return 'node node_modules/aidlc/bin/aidlc-hook.js';
   const pkg = readPackage(target);
   if (pkg.name === 'aidlc') return existsSync(path.join(target, 'bin', 'aidlc-hook.js')) ? 'node bin/aidlc-hook.js' : TEMPLATE_HOOK_COMMAND;
-  if (hookEntry && !pkg.dependencies?.['aidlc'] && !pkg.devDependencies?.['aidlc']) return `node "${hookEntry.replace(/\\/g, '/')}"`;
+  if (hookEntry && !pkg.dependencies?.['aidlc'] && !pkg.devDependencies?.['aidlc']) {
+    const direct = `node "${hookEntry.replace(/\\/g, '/')}"`;
+    if (isDispatcherCommand(direct)) return direct;
+  }
   return TEMPLATE_HOOK_COMMAND;
 }
 
