@@ -18,7 +18,7 @@ import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { COVERAGE_ANGLE, buildReviewPrompt, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
+import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
 export type BenchOutcome = 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error';
 
@@ -218,7 +218,7 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   if (cases.every((c) => unscorable(c) !== undefined)) return cases.map((c) => errorOf(c, unscorable(c)!));
   const includeDiff = !cfg.command.some((a) => a.includes('{instructions}'));
   const common = { reviewPolicy: ctx.reviewPolicy, lessons: ctx.lessons, card, base, head: candidate, changedPaths, diff, priorFindings: [], includeDiff, round: 1 };
-  const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem: `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`, head: candidate, reviewer: cfg.reviewer, changedPaths, policyHash: ctx.hash };
+  const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem: `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
   const vars = { cwd: checkout, base, head: candidate, card: card.id };
   let panel: PanelResult;
   if (pre) {

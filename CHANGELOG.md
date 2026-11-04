@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-REVIEW-BENCH-2: the reviewer bench passes the changed lines the loop passes, so a `[pre-existing]` reason stays advisory, and building the CLI program resolves no session, so no command writes the default session token at startup.
+
 - T1-REVIEW-BENCH: `aidlc review bench run --stage pre|formal` (the reviewer bench, `src/review/bench.ts`) scores the stage's primary reviewer on the confirmed cases under `evals/review/`, reviewing each candidate once, as the loop reviews a first R2 round or a first R3 decision, in a detached temporary checkout that is always removed. A bug case is a hit when a cited block reason lands inside its expected window and a miss otherwise, a clean case is a pass or a false block, and the report gives recall, the false-block rate and the no-verdict and error counts; the exit code never depends on the scores. Cases can be drafted from the 330 R3 and 134 R2 findings the card runs record (the export and the candidate pins are card T1-REVIEW-BENCH-EXPORT); the bench never runs in CI and never reads or writes a card run.
 
 - T1-PS-GUARD-READ (bugfix, issue 117): on a PowerShell event `production-gate` joins backtick continuations and tests script blocks and subexpressions as segments, and `protect-paths` counts PowerShell's write commands, aliases, `-OutFile` and `[IO.File]` writes; a Bash event decides as before.
