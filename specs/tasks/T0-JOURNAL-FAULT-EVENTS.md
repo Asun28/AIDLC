@@ -1,7 +1,7 @@
 ---
 id: T0-JOURNAL-FAULT-EVENTS
 title: The attempt, R2, R3 and merge-result events of a card run are journaled only after the record write that commits the decision and exactly once, the write recording each event on the card run as owed until the journal holds it, so a failed write no longer doubles an attempt event and a failed append no longer loses a decision event
-status: todo
+status: merged
 branch: T0-JOURNAL-FAULT-EVENTS
 worktree: D:\wt\AIDLC\T0-JOURNAL-FAULT-EVENTS
 allow_paths:
