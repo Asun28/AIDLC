@@ -1,7 +1,7 @@
 ---
 id: T0-HOOK-GIT-PREFETCH-2
 title: The hook entry starts the git rev-parse of the repository identity before it loads its modules and uses the answer when the event's working directory is the one git ran in, so git runs while the modules load instead of blocking the hook
-status: todo
+status: merged
 branch: T0-HOOK-GIT-PREFETCH-2
 worktree: D:\wt\AIDLC\T0-HOOK-GIT-PREFETCH-2
 allow_paths:
