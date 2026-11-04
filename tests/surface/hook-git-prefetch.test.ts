@@ -28,8 +28,20 @@ function withTemp<T>(fn: (dir: string) => T): T {
   try {
     return fn(dir);
   } finally {
-    // A stand-in the hook process left running may hold its working directory for a moment after that process exits.
-    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    removeTemp(dir);
+  }
+}
+
+/** A stand-in a hook process left running holds its working directory on Windows until it exits, which `rmSync` does not retry for a subdirectory. */
+function removeTemp(dir: string): void {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      return;
+    } catch (err) {
+      if (attempt === 100) throw err;
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+    }
   }
 }
 
