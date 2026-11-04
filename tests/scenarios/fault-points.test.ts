@@ -118,6 +118,10 @@ const pollOf = (value: unknown): { pollSeconds?: number } => {
   return poll === undefined ? {} : { pollSeconds: poll };
 };
 
+// The CardRunner methods each covered command reaches (the coverage record of .claude/skills/verify-card-run-writes/SKILL.md):
+// A recordAttempt -> deliverOwed, save; B preReview -> deliverOwed, commitReviewed, deliverOwed; C formalReview -> deliverOwed,
+// commitFormalResult -> commitReviewed, deliverOwed; D next -> deliverOwed, ship -> save, applyShipResult -> deliverOwed, close
+// -> save; E next -> deliverOwed, save.
 const COVERED: Covered[] = [
   {
     stage: 'A', name: 'A recordAttempt success (card attempt)', run: attempt,
@@ -573,24 +577,6 @@ interface Rest {
 const SHIPPED: [string, string, boolean] = ['merge', 'succeeded', true];
 const KNOWN_VIOLATIONS: Pin[] = [
   {
-    faultPoint: 'A/record 1',
-    difference: { 'journal.ATTEMPT_FINISHED success': [1, 2] },
-    hypothesis: 'H5',
-    counterexample: 'CardRunner.recordAttempt appends ATTEMPT_FINISHED before `this.save` writes the finished episode; the lost save leaves attempt 1 `running`, card next directs `build` for attempt 1 again and the second recordAttempt appends a second ATTEMPT_FINISHED success for the one attempt the record holds ([1, success]).',
-  },
-  {
-    faultPoint: 'B/append PRE_REVIEW_DECIDED',
-    difference: { 'journal.PRE_REVIEW_DECIDED pass': [1, 0] },
-    hypothesis: 'H7',
-    counterexample: 'CardRunner.preReview appends PRE_REVIEW_DECIDED after commitReviewed saved the pass round; the lost append is never written again: card next reads the pass in preReview.rounds and directs `review`, and the card closes with no PRE_REVIEW_DECIDED event for its R2 pass.',
-  },
-  {
-    faultPoint: 'C/append REVIEW_DECIDED',
-    difference: { 'journal.REVIEW_DECIDED pass': [1, 0] },
-    hypothesis: 'H6',
-    counterexample: 'CardRunner.commitFormalResult appends REVIEW_DECIDED after commitReviewed saved the pass invocation; the lost append is never written again: card next reads the pass in review.invocations and ships to `close`, and the card closes with no REVIEW_DECIDED event for its R3 pass.',
-  },
-  {
     faultPoint: 'D/append OPERATION_ISSUED',
     difference: {
       directive: ['close', 'wait'],
@@ -617,12 +603,6 @@ const KNOWN_VIOLATIONS: Pin[] = [
     hypothesis: 'H10',
     counterexample: 'CardRunner.applyShipResult completes the pool request and then writes CLOSE and mergeVerified in `finish`; the lost write after the dry-run merge leaves the operation `issued` (ops.markResult runs only after the write), and every card next selects WAIT "attached to running operation <id>" (selectCardState, runningOperation) until a person reconciles the operation.',
     docRecovery: 'aidlc ops reconcile',
-  },
-  {
-    faultPoint: 'D/append OPERATION_RESULT',
-    difference: { 'journal.OPERATION_RESULT succeeded': [1, 0] },
-    hypothesis: 'H8',
-    counterexample: 'CardRunner.applyShipResult marks the operation `succeeded` (ops.markResult) after `finish` saved CLOSE and then appends OPERATION_RESULT; the lost append is never written again: card next reads mergeVerified and returns `close`, and the journal holds no result for the merge the ledger records as succeeded.',
   },
 ];
 
