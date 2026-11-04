@@ -129,7 +129,7 @@ describe('mutantsFor (card T1-VERIFY-MUTANT-GEN)', () => {
     ["const u = 'open\nok = a && b", [[2, 8, 'swap-logic', '&&', '||']]],
     ['const t = `a \\` && b` && c;', [[1, 23, 'swap-logic', '&&', '||']]],
     ["const o = `${ {a: b}.a + '`' } && x` && y;", [[1, 38, 'swap-logic', '&&', '||']]],
-    ['/ === /.test(s) && ok;', [[1, 17, 'swap-logic', '&&', '||']]],
+    ['/ === /.test(s) && ok;', [[1, 1, 'drop-statement', '/ === /.test(s) && ok;', ''], [1, 17, 'swap-logic', '&&', '||']]],
     ['const r3 = s.split(/[/] < 1/) || n;', [[1, 31, 'swap-logic', '||', '&&']]],
     ['return /oops\nok = a && b', [[2, 8, 'swap-logic', '&&', '||']]],
     ['run(); /* x && y */', [[1, 1, 'drop-statement', 'run();', '']]],
@@ -704,6 +704,167 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
   test('sweep: a private name is a member, so true, false and if after # are never mutated [R3]', () => {
     assert.deepEqual(view(mutantsFor('const a = this.#true;\nconst b = this.#false;', [1, 2])), []);
     assert.deepEqual(view(mutantsFor('this.#if(ok);', [1])), [ds(1, 1, 'this.#if(ok);')]);
+  });
+});
+
+describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
+  const ds = (line: number, column: number, original: string): Row => [line, column, 'drop-statement', original, ''];
+  const dn = (line: number, column: number): Row => [line, column, 'drop-not', '!', ''];
+  const conditions = (ms: Mutant[]) => view(ms).filter((row) => row[2] === 'force-true' || row[2] === 'force-false');
+  const forced = (line: number, column: number): Row[] => [
+    [line, column, 'force-true', 'ok', 'true'],
+    [line, column, 'force-false', 'ok', 'false'],
+  ];
+  const noCondition = (sources: string[]) => {
+    for (const source of sources) assert.deepEqual(conditions(mutantsFor(source, every(source))), [], source);
+  };
+  const conditionAt = (cases: [source: string, line: number, column: number][]) => {
+    for (const [source, line, column] of cases) assert.deepEqual(conditions(mutantsFor(source, every(source))), forced(line, column), source);
+  };
+
+  describe('F2: the tab git writes after a path holding whitespace', () => {
+    const spaced = (name: string, hunk = '@@ -0,0 +1 @@\n+a();\n') => `diff --git a/${name} b/${name}\n--- a/${name}\t\n+++ b/${name}\t\n${hunk}`;
+
+    test('it is no part of the path, in a plain and a \\r\\n diff and beside another file [R1]', () => {
+      assert.deepEqual(changedSourceLines(spaced('src/a b.ts')), [{ file: 'src/a b.ts', lines: [1] }]);
+      assert.deepEqual(changedSourceLines(spaced('src/a b.ts').replaceAll('\n', '\r\n')), [{ file: 'src/a b.ts', lines: [1] }]);
+      const second = 'diff --git a/src/c.ts b/src/c.ts\n--- a/src/c.ts\n+++ b/src/c.ts\n@@ -0,0 +2 @@\n+b();\n';
+      assert.deepEqual(changedSourceLines(spaced('src/a b.ts') + second), [{ file: 'src/a b.ts', lines: [1] }, { file: 'src/c.ts', lines: [2] }]);
+    });
+
+    test('the path filters read the name without it, and only one final tab is the delimiter [R1]', () => {
+      for (const name of ['src/a b.d.ts', 'src/a b.test.ts', 'docs/a b.ts', 'src/a b.md']) assert.deepEqual(changedSourceLines(spaced(name)), [], name);
+      assert.deepEqual(changedSourceLines('diff --git a/src/a b.ts b/src/a b.ts\n--- a/src/a b.ts\t\n+++ /dev/null\n@@ -1 +0,0 @@\n-a();\n'), [], 'a deleted file');
+      for (const header of ['+++ b/src/a.ts\t\t', '+++ b/src/a.ts\tx', '+++ b/src/\ta.ts']) {
+        assert.deepEqual(changedSourceLines(`diff --git a/x b/x\n--- a/x\n${header}\n@@ -0,0 +1 @@\n+a();\n`), [], JSON.stringify(header));
+      }
+    });
+  });
+
+  test('F3: a function body after any return type is a block, whatever word ends the type [R3]', () => {
+    conditionAt([
+      ['function f(): string | void { if (ok) {} }', 1, 35],
+      ['function f(): A & void { if (ok) {} }', 1, 30],
+      ['function f(): () => void { if (ok) {} }', 1, 32],
+      ['function f(x): x is void { if (ok) {} }', 1, 32],
+      ['function f(): T extends U ? void : void { if (ok) {} }', 1, 47],
+      ['function f(): { a: 1 } | void { if (ok) {} }', 1, 37],
+      ['function f(): Array<void> | void { if (ok) {} }', 1, 40],
+      ['function* g<T>(): string | void { if (ok) {} }', 1, 38],
+      ['function f(): of { if (ok) {} }', 1, 24],
+      ['x = function (): string | void { if (ok) {} };', 1, 38],
+      ['class A { m(): string | void { if (ok) {} } }', 1, 36],
+      ['const o = { m(): string | void { if (ok) {} } };', 1, 38],
+      ['const o = { m: function (): A & void { if (ok) {} } };', 1, 44],
+    ]);
+  });
+
+  test('F3: void and the operators before it stay an expression where no return type holds them [R3]', () => {
+    noCondition([
+      'const a = void { if(ok) {} };',
+      'const a = b | void { if(ok) {} };',
+      'const a = b & void { if(ok) {} };',
+      'const a = () => void { if(ok) {} };',
+      'const a = c ? d : void { if(ok) {} };',
+      'const a = c ? (d) : void { if(ok) {} };',
+      'const a = c ? f(d) : void { if(ok) {} };',
+      'g(c ? d : void { if(ok) {} });',
+      'return c ? d : void { if(ok) {} };',
+      'const a = [c ? d : void { if(ok) {} }];',
+      'c ? (d) : void { if(ok) {} };',
+    ]);
+  });
+
+  test('F4: a type group in a heritage clause or a type parameter keeps the class head [R3]', () => {
+    noCondition([
+      'class C extends B<{x: number}> { if(ok: boolean) {} }',
+      'class C implements I<{x: number}> { if(ok: boolean) {} }',
+      'interface I extends J<{x: number}> { if(ok: boolean): void; }',
+      'class C<T extends {x: number}> { if(ok: boolean) {} }',
+      'class C<T = {x: number}> { if(ok: boolean) {} }',
+      'class C extends B<D<{x: 1}>> { if(ok: boolean) {} }',
+      'class C extends B<{x: 1}[]> { if(ok: boolean) {} }',
+      'class C extends B<() => {x: 1}> { if(ok: boolean) {} }',
+      'class C extends B<{x: 1}> implements D<{y: 2}>, E { if(ok: boolean) {} }',
+      'const C = class<T extends {x: 1}> { if(ok: boolean) {} };',
+      'export default class<T extends {x: 1}> { if(ok: boolean) {} }',
+      'abstract class C extends B<{x: 1}> { abstract if(ok: boolean): void; }',
+      'interface I<T extends {x: 1}> extends J { if(ok: boolean): void; }',
+      'class C extends B<{ m(a: { b: 1 }): void; }> { if(ok: boolean) {} }',
+      'class C extends B<{x: 1}>\n{ if(ok: boolean) {} }',
+    ]);
+  });
+
+  test('F4: a brace after a type group stays a block where no class heads the statement [R3]', () => {
+    conditionAt([
+      ['class A<T> {} function f<T extends {a: 1}>() { if (ok) {} }', 1, 52],
+      ['class A {} const g = (a: Array<{b: 1}>) => { if (ok) {} };', 1, 50],
+      ['class A<T extends {a: 1}> { m(): Foo<{a: 1}> { if (ok) {} } }', 1, 52],
+      ['class A {}\nconst x = a < b\n{ if (ok) {} }', 3, 7],
+    ]);
+  });
+
+  test('F5: a Unicode escape is part of its identifier in scanner and tokens, in declarations and references [R3]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ['const a = true\\u0061;', []],
+      ['const a = true\\u{61};', []],
+      ['const true\\u0061 = 1;', []],
+      ['const false\\u{61} = 1;', []],
+      ['x = false\\u0061;', [ds(1, 1, 'x = false\\u0061;')]],
+      ['x = \\u0061true;', [ds(1, 1, 'x = \\u0061true;')]],
+      ['x = \\u{61}true;', [ds(1, 1, 'x = \\u{61}true;')]],
+      ['x = true\\u{1d49c};', [ds(1, 1, 'x = true\\u{1d49c};')]],
+      ['x = true\\u00E9;', [ds(1, 1, 'x = true\\u00E9;')]],
+      ['if\\u0061 (ok) {', []],
+      ['const a = \\u0061 !c;', []],
+      ['const a = \\u{61} !c;', []],
+      ['const a = b\\u0061 !c;', []],
+      ['const a = !\\u0061;', [dn(1, 11)]],
+      ['const a = b\n!\\u0061;', [ds(2, 1, '!\\u0061;'), dn(2, 1)]],
+      ['const\\u0061();', [ds(1, 1, 'const\\u0061();')]],
+      ['return\\u{61}();', [ds(1, 1, 'return\\u{61}();')]],
+      ['return\\u0061 / 2 === b / c;', [ds(1, 1, 'return\\u0061 / 2 === b / c;'), [1, 18, 'negate-equality', '===', '!==']]],
+      ['const a = `${x\\u{61}} ${y}` && z;', [[1, 29, 'swap-logic', '&&', '||']]],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, source);
+  });
+
+  test('F5: text that is no identifier escape ends the word [R3]', () => {
+    for (const source of ['true\\u0020;', 'true\\u00;', 'true\\u{};', 'true\\u{110000};', 'true\\x61;', 'true\\u{g};']) {
+      assert.deepEqual(view(mutantsFor(source, [1])), [ds(1, 1, source), [1, 1, 'flip-boolean', 'true', 'false']], source);
+    }
+  });
+
+  test('F6: a whole statement that opens with a literal is dropped [R3]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ["'use strict';", [ds(1, 1, "'use strict';")]],
+      ['"use strict";', [ds(1, 1, '"use strict";')]],
+      ['/a/.test(x);', [ds(1, 1, '/a/.test(x);')]],
+      ['`t`.length;', [ds(1, 1, '`t`.length;')]],
+      ['`a${b}`.c();', [ds(1, 1, '`a${b}`.c();')]],
+      ['  /a/.test(x); // c', [ds(1, 3, '/a/.test(x);')]],
+      ['/* c */ "x";', [ds(1, 9, '"x";')]],
+      ["'a'.b(c) && d;", [ds(1, 1, "'a'.b(c) && d;"), [1, 10, 'swap-logic', '&&', '||']]],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, source);
+  });
+
+  test('F6: the rest of a literal from an earlier line, an open bracket and a line with no ; stay out [R3]', () => {
+    const cases: [source: string, expected: Row[]][] = [
+      ['`a\n`;', []],
+      ['`a\n${b}`;', []],
+      ['`a${b}\n`;', []],
+      ["'a\\\n';", []],
+      ["`${\n'a'}`;", []],
+      ['`${\n`b`}`;', []],
+      ['/* a\n */ `b\n`;', []],
+      ['`a\nb`.c();\n`d`;', [ds(3, 1, '`d`;')]],
+      ["'a' + (b;", []],
+      ["'a'", []],
+      ["'a;", []],
+      ['`a;', []],
+    ];
+    for (const [source, expected] of cases) assert.deepEqual(view(mutantsFor(source, every(source))), expected, JSON.stringify(source));
   });
 });
 
