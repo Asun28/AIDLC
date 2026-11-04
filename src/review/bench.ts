@@ -180,6 +180,15 @@ const samePath = (a: string, b: string): boolean => {
   return norm(a) === norm(b);
 };
 
+/** One git step of the cleanup; a runner that throws counts as a step that failed, so the steps after it still run. */
+function cleanupStep(ctx: BenchContext, args: string[]): ReturnType<SyncRunner> | undefined {
+  try {
+    return ctx.git('git', args, { cwd: ctx.root });
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * `git worktree remove --force`, else delete the directory and `git worktree prune`. The checkout is reported in
  * `leftCheckouts` unless every step is confirmed: the directory is gone, a prune the failed remove needed exited 0, and
@@ -187,15 +196,15 @@ const samePath = (a: string, b: string): boolean => {
  */
 function removeCheckout(ctx: BenchContext, holder: string): void {
   const checkout = path.join(holder, 'checkout');
-  const removed = ctx.git('git', ['worktree', 'remove', '--force', checkout], { cwd: ctx.root });
+  const removed = cleanupStep(ctx, ['worktree', 'remove', '--force', checkout]);
   try {
     rmSync(holder, { recursive: true, force: true });
   } catch {
     // reported below
   }
-  const pruned = removed.exitCode === 0 || ctx.git('git', ['worktree', 'prune'], { cwd: ctx.root }).exitCode === 0;
-  const listed = ctx.git('git', ['worktree', 'list', '--porcelain'], { cwd: ctx.root });
-  const named = listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
+  const pruned = removed?.exitCode === 0 || cleanupStep(ctx, ['worktree', 'prune'])?.exitCode === 0;
+  const listed = cleanupStep(ctx, ['worktree', 'list', '--porcelain']);
+  const named = !listed || listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
   if (existsSync(holder) || !pruned || named) ctx.leftCheckouts.push(checkout);
 }
 
@@ -203,6 +212,9 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   const { candidate, base, card: ref } = cases[0]!;
   const cardFile = path.join(checkout, ...ref.path.split('/'));
   if (!existsSync(cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} is absent at ${candidate}`));
+  // The candidate decides what this path is, so a link out of the checkout is refused before the read.
+  const inside = path.relative(realpathSync.native(checkout), realpathSync.native(cardFile));
+  if (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return cases.map((c) => errorOf(c, `card file ${ref.path} resolves outside the checkout`));
   const parsed = parseCardText(readFileSync(cardFile, 'utf8'), cardFile);
   if ('error' in parsed) return cases.map((c) => errorOf(c, `card file ${ref.path} does not parse: ${parsed.error}`));
   const card = parsed.card;

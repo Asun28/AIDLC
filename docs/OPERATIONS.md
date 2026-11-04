@@ -340,7 +340,7 @@ The report gives `stage`, `reviewer`, `policyHash`, `leftCheckouts`, one entry p
 
 The reviewer bench stays outside the loop: no workflow names it, so it never runs in CI, and it reads no goal, card run, journal or review queue and writes nothing under the state directory, so it never changes a card run and never blocks a card. Before a change to `REVIEW.md`, a review perspective, a review prompt or a reviewer model, run it for both stages from a checkout of the version before and a checkout of the version after the change, and keep the change only when recall does not drop. This is a documented practice and no gate enforces it.
 
-A `[pre-existing]` reason on lines the candidate did not change stays advisory, as it does in the loop, so it neither blocks a clean case nor hits a bug case.
+A `[pre-existing]` reason on lines the candidate did not change stays advisory, as it does in the loop, so it neither blocks a clean case nor hits a bug case. A card path that resolves outside the temporary checkout is an `error`, and the bench never reads that file.
 
 ## Evals
 
