@@ -118,7 +118,7 @@ export function executeOperation(binding: OperationBinding, target: string | und
   if (binding.idempotencyKeyArg && options.idempotencyKey) args.push(binding.idempotencyKeyArg, options.idempotencyKey);
   const env = { ...process.env };
   if (binding.targetSelection === 'env' && target) env['AIDLC_TARGET_ENV'] = target;
-  const receipt = runner(cmd!, args, { cwd: options.cwd ?? binding.cwd, timeoutMs: binding.timeoutMs, env });
+  const receipt = runner(cmd!, args, { cwd: options.cwd ?? binding.cwd, timeoutMs: binding.timeoutMs, env, killTree: true });
   const text = `${receipt.stdout}\n${receipt.stderr}`;
   const id = binding.operationIdPattern ? text.match(new RegExp(binding.operationIdPattern, 'm'))?.[1] : undefined;
   if (receipt.timedOut) return { receipt, providerOperationId: id, status: 'UNKNOWN', detail: 'operation timed out; outcome unknown until reconciled' };
@@ -132,7 +132,7 @@ export function executeOperation(binding: OperationBinding, target: string | und
 export function lookupOperation(binding: OperationBinding, providerOperationId: string, runner: SyncRunner = runSync): { status: 'succeeded' | 'failed' | 'running' | 'UNKNOWN'; receipt?: ExecReceipt; detail: string } {
   if (!binding.statusLookup) return { status: 'UNKNOWN', detail: 'no status lookup bound for this operation role' };
   const [cmd, ...rest] = binding.statusLookup.map((a) => a.replace('{id}', providerOperationId));
-  const receipt = runner(cmd!, rest, { cwd: binding.cwd, timeoutMs: 5 * 60 * 1000 });
+  const receipt = runner(cmd!, rest, { cwd: binding.cwd, timeoutMs: 5 * 60 * 1000, killTree: true });
   if (receipt.exitCode !== 0 || receipt.timedOut) return { status: 'UNKNOWN', receipt, detail: 'status lookup failed' };
   const text = receipt.stdout;
   if (binding.failurePattern && new RegExp(binding.failurePattern, 'm').test(text)) return { status: 'failed', receipt, detail: 'failure pattern in status' };
