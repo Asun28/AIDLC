@@ -279,7 +279,9 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
   test('acceptance 6: the npx text does not reach an npx.cmd in the repository root [R5]', () => {
     const target = wired(NPX);
     writeFileSync(path.join(target, 'npx.cmd'), '@mkdir ran.marker\r\n');
-    assert.equal(doctorLine(target), `FAILED (exit 1): every guard is off until this command runs: ${NPX}`);
+    // Claude Code sets this variable, and it stops cmd.exe searching the current directory, which would hide a planted file.
+    const searching = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'nodefaultcurrentdirectoryinexepath'));
+    assert.equal(doctorLine(target, searching), `FAILED (exit 1): every guard is off until this command runs: ${NPX}`);
     assert.equal(existsSync(path.join(target, 'ran.marker')), false);
   });
 
@@ -292,9 +294,10 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
     for (const { command, file } of CHECKED) hookWiringReport(wired(command, withPlantedFile(file)), recording);
     assert.deepEqual(calls, [], 'a relative spelling or the npx text reached the launcher');
     assert.equal(hookWiringReport(wired(ABSOLUTE), recording), `ok: ${ABSOLUTE}`);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0]![0], 'node');
-    assert.equal('shell' in (calls[0]!.at(-1) as object), false, 'no shell option');
+    const reached = calls as unknown[][];
+    assert.equal(reached.length, 1);
+    assert.equal(reached[0]![0], 'node');
+    assert.equal('shell' in (reached[0]!.at(-1) as object), false, 'no shell option');
   });
 
   test('acceptance 6: a working dispatcher reports ok [R5]', () => {
