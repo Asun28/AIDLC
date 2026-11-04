@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ReviewBenchCase } from '../../src/core/types.ts';
@@ -561,4 +561,102 @@ test('T1-REVIEW-BENCH-2 acceptance 15: the Reviewer bench section ends with the 
   const section = ops.slice(from, ops.indexOf('\n## ', from)).trimEnd();
   assert.ok(section.endsWith(sentence), 'the section ends with the sentence');
   assert.ok(read('CHANGELOG.md').includes(entry), 'the changelog carries the entry');
+});
+
+type GitOption = NonNullable<ReviewBenchOptions['git']>;
+
+/** The real git, with `after` run on the new checkout as soon as `worktree add` has made it. */
+const gitThen = (after: (checkout: string) => void): GitOption => (command, args, options) => {
+  const receipt = runSync(command, args, options);
+  if (args[0] === 'worktree' && args[1] === 'add') after(args[3]!);
+  return receipt;
+};
+
+test('T1-REVIEW-BENCH-2 acceptance 16: a card path that resolves outside the checkout is an error and no reviewer runs, and a link inside it is followed [R16]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+    const outside = path.join(fx.dir, 'outside');
+    const outsideCard = path.join(outside, `${CARD_ID}.md`);
+    mkdirSync(outside);
+    writeFileSync(outsideCard, cardText);
+    const tasksOf = (checkout: string) => path.join(checkout, 'specs', 'tasks');
+
+    const calls: Call[] = [];
+    const refused = await bench(fx, reviewer(fx, calls), {
+      git: gitThen((checkout) => {
+        rmSync(tasksOf(checkout), { recursive: true });
+        symlinkSync(outside, tasksOf(checkout), linkType);
+      }),
+    });
+    assert.equal(refused.cases[0]!.outcome, 'error');
+    assert.ok(refused.cases[0]!.detail?.includes(`card file ${CARD_PATH} resolves outside the checkout`), refused.cases[0]!.detail);
+    assert.equal(calls.length, 0, 'no reviewer ran on a card read from outside the checkout');
+    assertNoCheckoutLeft(fx);
+
+    const followed = await bench(fx, reviewer(fx, calls), {
+      git: gitThen((checkout) => {
+        const kept = path.join(checkout, 'specs', 'kept');
+        renameSync(tasksOf(checkout), kept);
+        symlinkSync(kept, tasksOf(checkout), linkType);
+      }),
+    });
+    assert.equal(followed.cases[0]!.outcome, 'pass');
+    assert.equal(calls.length, 1, 'a link inside the checkout is followed and reviewed');
+    assertNoCheckoutLeft(fx);
+
+    let filesLink = true;
+    try {
+      symlinkSync(outsideCard, path.join(fx.dir, 'probe'), 'file');
+    } catch {
+      filesLink = false;
+    }
+    if (filesLink) {
+      const atFile = await bench(fx, reviewer(fx, calls), {
+        git: gitThen((checkout) => {
+          const file = path.join(tasksOf(checkout), `${CARD_ID}.md`);
+          rmSync(file);
+          symlinkSync(outsideCard, file, 'file');
+        }),
+      });
+      assert.equal(atFile.cases[0]!.outcome, 'error');
+      assert.equal(calls.length, 1, 'no reviewer ran for the file link');
+      assertNoCheckoutLeft(fx);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-2 acceptance 17: a cleanup step that throws counts as failing, the later steps run and the report is returned [R17]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const throwing = (steps: string[]): GitOption => (command, args, options) => {
+      if (args[0] === 'worktree' && steps.includes(args[1]!)) throw new Error(`injected ${args[1]} failure`);
+      return runSync(command, args, options);
+    };
+
+    const remove = await bench(fx, reviewer(fx, []), { git: throwing(['remove']) });
+    assert.equal(remove.cases[0]!.outcome, 'pass');
+    assert.deepEqual(remove.leftCheckouts, [], 'the directory went and the prune and the listing confirm it');
+    assertNoCheckoutLeft(fx);
+
+    const removePrune = await bench(fx, reviewer(fx, []), { git: throwing(['remove', 'prune']) });
+    assert.equal(removePrune.cases[0]!.outcome, 'pass');
+    assert.deepEqual(readdirSync(fx.tmpRoot), [], 'the directory is deleted after the throw');
+    assert.equal(removePrune.leftCheckouts.length, 1, 'nothing confirms the removal');
+    git(fx.root, ['worktree', 'prune']);
+    assertNoCheckoutLeft(fx);
+
+    const list = await bench(fx, reviewer(fx, []), { git: throwing(['list']) });
+    assert.equal(list.cases[0]!.outcome, 'pass');
+    assert.equal(list.leftCheckouts.length, 1, 'a listing that throws cannot confirm the checkout is gone');
+    assertNoCheckoutLeft(fx);
+  } finally {
+    fx.cleanup();
+  }
 });
