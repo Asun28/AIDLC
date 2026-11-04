@@ -1,7 +1,7 @@
 ---
 id: T0-TAKEOVER-FOREIGN-LINE-2
 title: A card takeover reads only the journals of the goals that run the card, so a line the journal schema refuses in an unrelated goal no longer crashes the takeover of every card
-status: todo
+status: merged
 branch: T0-TAKEOVER-FOREIGN-LINE-2
 worktree: D:\wt\AIDLC\T0-TAKEOVER-FOREIGN-LINE-2
 allow_paths:
