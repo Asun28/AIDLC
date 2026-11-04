@@ -16,6 +16,8 @@ const PAIR = [VERB, PLACE].join(' ');
 const FROZEN = 'contracts/api.yaml';
 const NOTE = 'this command references a frozen path';
 
+type Decision = 'exit 2' | 'deny' | 'defer' | 'none';
+
 const dirs: string[] = [];
 after(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
@@ -32,13 +34,13 @@ function shell(tool_name: 'Bash' | 'PowerShell', command: string): HookEvent {
   return { hook_event_name: 'PreToolUse', tool_name, tool_input: { command } };
 }
 
-function decision(r: HookResult): 'exit 2' | 'deny' | 'defer' | 'none' {
+function decision(r: HookResult): Decision {
   if (r.exitCode === 2) return 'exit 2';
   const parsed = JSON.parse(r.stdout ?? '{}') as { hookSpecificOutput?: { permissionDecision?: 'deny' | 'defer' } };
   return parsed.hookSpecificOutput?.permissionDecision ?? 'none';
 }
 
-function decide(tool: 'Bash' | 'PowerShell', command: string, frozenPaths?: string[]): 'exit 2' | 'deny' | 'defer' | 'none' {
+function decide(tool: 'Bash' | 'PowerShell', command: string, frozenPaths?: string[]): Decision {
   return decision(dispatchHook(shell(tool, command), context(frozenPaths)));
 }
 
@@ -79,22 +81,18 @@ const OTHER_WRITES: Array<[string, string]> = [
   ['[io.file]::writealltext in lower case', `[io.file]::writealltext('${FROZEN}', 'x')`],
 ];
 
+/** One test per case: `title` names it, and the command of that case gets `expected` on `tool`. */
+function each(cases: Array<[string, string]>, title: (name: string) => string, tool: 'Bash' | 'PowerShell', expected: Decision, frozenPaths?: string[]): void {
+  for (const [name, command] of cases) test(title(name), () => assert.equal(decide(tool, command, frozenPaths), expected));
+}
+
 test('the pair matches a default production pattern', () => {
   assert.ok(DEFAULT_HOOK_CONFIG.productionPatterns.some((p) => new RegExp(p, 'i').test(PAIR)));
 });
 
 describe('T1-PS-GUARD-READ: production-gate on a PowerShell event', () => {
-  for (const [name, command] of NEW_READINGS) {
-    test(`acceptance 1: ${name} is blocked [R1]`, () => {
-      assert.equal(decide('PowerShell', command), 'exit 2');
-    });
-  }
-
-  for (const [name, command] of PINS) {
-    test(`acceptance 1 pin: ${name} is blocked [R1]`, () => {
-      assert.equal(decide('PowerShell', command), 'exit 2');
-    });
-  }
+  each(NEW_READINGS, (name) => `acceptance 1: ${name} is blocked [R1]`, 'PowerShell', 'exit 2');
+  each(PINS, (name) => `acceptance 1 pin: ${name} is blocked [R1]`, 'PowerShell', 'exit 2');
 
   test('acceptance 1: a read-only first word inside a script block still reads [R1]', () => {
     assert.equal(decide('PowerShell', `Write-Output { Write-Output ${PAIR} }; ( Get-Content a.txt )`), 'none');
@@ -107,18 +105,9 @@ describe('T1-PS-GUARD-READ: production-gate on a PowerShell event', () => {
 
 describe('T1-PS-GUARD-READ: protect-paths on a PowerShell event', () => {
   for (const word of WRITE_COMMANDS) {
-    for (const [form, command] of writeForms(word)) {
-      test(`acceptance 2: ${word} on a frozen path ${form} is denied [R2]`, () => {
-        assert.equal(decide('PowerShell', command, ['contracts/']), 'deny');
-      });
-    }
+    each(writeForms(word), (form) => `acceptance 2: ${word} on a frozen path ${form} is denied [R2]`, 'PowerShell', 'deny', ['contracts/']);
   }
-
-  for (const [name, command] of OTHER_WRITES) {
-    test(`acceptance 2: ${name} on a frozen path is denied [R2]`, () => {
-      assert.equal(decide('PowerShell', command, ['contracts/']), 'deny');
-    });
-  }
+  each(OTHER_WRITES, (name) => `acceptance 2: ${name} on a frozen path is denied [R2]`, 'PowerShell', 'deny', ['contracts/']);
 
   test('acceptance 2: the classic pass does not read PowerShell write commands [R2]', () => {
     assert.equal(decision(runHook('protect-paths', shell('PowerShell', `ni ${FROZEN}`), { ...context(['contracts/']), classic: true })), 'defer');
@@ -130,45 +119,22 @@ describe('T1-PS-GUARD-READ: protect-paths on a PowerShell event', () => {
     assert.ok(r.stdout?.includes(NOTE), r.stdout);
   });
 
-  for (const [name, command] of [
+  const reads: Array<[string, string]> = [
     ['a forward-slash path', 'Get-Content contracts/ni/api.yaml'],
     ['a backslash path', 'Get-Content contracts\\ni\\api.yaml'],
     ['a script block', 'Get-ChildItem | ForEach-Object { Get-Content contracts/ni/api.yaml }'],
-  ] as const) {
-    test(`acceptance 3: a path segment spelled ni in a read is not a write: ${name} [R2]`, () => {
-      assert.equal(decide('PowerShell', command, ['contracts/']), 'defer');
-    });
-  }
-
-  test('acceptance 3: [IO.File]::ReadAllText of the frozen path is deferred [R2]', () => {
-    assert.equal(decide('PowerShell', `[IO.File]::ReadAllText('${FROZEN}')`, ['contracts/']), 'defer');
-  });
+  ];
+  each(reads, (name) => `acceptance 3: a path segment spelled ni in a read is not a write: ${name} [R2]`, 'PowerShell', 'defer', ['contracts/']);
+  each([['[IO.File]::ReadAllText', `[IO.File]::ReadAllText('${FROZEN}')`]], (name) => `acceptance 3: ${name} of the frozen path is deferred [R2]`, 'PowerShell', 'defer', ['contracts/']);
 });
 
 describe('T1-PS-GUARD-READ: a Bash event decides as at the merge of T1-PS-GUARD-WIRE', () => {
-  for (const [name, command] of NEW_READINGS) {
-    test(`acceptance 4: ${name} is not blocked on Bash [R3]`, () => {
-      assert.equal(decide('Bash', command), 'none');
-    });
-  }
-
-  for (const [name, command] of PINS) {
-    test(`acceptance 4: ${name} stays blocked on Bash [R3]`, () => {
-      assert.equal(decide('Bash', command), 'exit 2');
-    });
-  }
-
+  each(NEW_READINGS, (name) => `acceptance 4: ${name} is not blocked on Bash [R3]`, 'Bash', 'none');
+  each(PINS, (name) => `acceptance 4: ${name} stays blocked on Bash [R3]`, 'Bash', 'exit 2');
   for (const word of WRITE_COMMANDS) {
-    test(`acceptance 4: ${word} on a frozen path is deferred on Bash in every form [R3]`, () => {
-      for (const [form, command] of writeForms(word)) assert.equal(decide('Bash', command, ['contracts/']), 'defer', form);
-    });
+    each(writeForms(word), (form) => `acceptance 4: ${word} on a frozen path ${form} is deferred on Bash [R3]`, 'Bash', 'defer', ['contracts/']);
   }
-
-  for (const [name, command] of OTHER_WRITES) {
-    test(`acceptance 4: ${name} on a frozen path is deferred on Bash [R3]`, () => {
-      assert.equal(decide('Bash', command, ['contracts/']), 'defer');
-    });
-  }
+  each(OTHER_WRITES, (name) => `acceptance 4: ${name} on a frozen path is deferred on Bash [R3]`, 'Bash', 'defer', ['contracts/']);
 });
 
 test('T1-PS-GUARD-READ acceptance 5: OPERATIONS and the CHANGELOG hold the exact texts [R4] [R5]', () => {
