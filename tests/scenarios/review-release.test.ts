@@ -7,11 +7,11 @@ import { test } from 'node:test';
 import { spawn, spawnSync, type SpawnSyncReturns } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { goalForCards, makeFixture, writeCard, T0, type Fixture } from './_harness.ts';
 import { ReviewQueue, type EnqueueInput } from '../../src/coordination/review-queue.ts';
 import { Journal } from '../../src/state/journal.ts';
-import { hostName } from '../../src/state/paths.ts';
+import { hostName, shortKey } from '../../src/state/paths.ts';
 import { atomicWriteJson, listJsonFiles } from '../../src/state/store.ts';
 import type { ActorIdentity, ReviewRequest } from '../../src/core/types.ts';
 
@@ -64,6 +64,23 @@ const cliAsync = (fx: Fixture, key: string): Promise<{ status: number | null; st
     child.on('error', reject);
     child.on('close', (status) => resolve({ status, stderr }));
   });
+
+/** The CLI with a preload that fails the rename onto one file of the queue directory, the last step of its atomic write. */
+function cliFailingWrite(fx: Fixture, key: string, file: string): SpawnSyncReturns<string> {
+  const preload = path.join(fx.tmp, 'fail-write.mjs');
+  writeFileSync(preload, [
+    "import fs from 'node:fs';",
+    "import path from 'node:path';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    'const rename = fs.renameSync;',
+    "fs.renameSync = (from, to) => { if (path.basename(String(to)) === process.env.FAIL_WRITE_TO) throw new Error('injected write failure'); return rename(from, to); };",
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return spawnSync(process.execPath, ['--import', pathToFileURL(preload).href, MAIN, 'review', 'release', key, '--reason', REASON], { cwd: fx.tmp, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-B', FAIL_WRITE_TO: file } });
+}
+
+const poolFile = (fx: Fixture): string => readdirSync(fx.paths.reviewQueue).find((name) => name.startsWith('_pool-'))!;
 
 const notes = (fx: Fixture, goalId: string) => fx.events(goalId).filter((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released');
 const noteFields = (fx: Fixture, goalId: string) => notes(fx, goalId).map((e) => [e.goalId, e.cardId, e.data['key'], e.data['seq'], e.data['reason']]);
@@ -193,6 +210,43 @@ test('acceptance 3: every other mutation of the pool takes the same section [R1]
       setPoolLimit: () => fx.queue.setPoolLimit(POOL, 2, 'two seats'),
       savePool: () => fx.queue.savePool({ ...fx.queue.pool(POOL), maxConcurrent: 2 }),
     });
+  });
+});
+
+test('acceptance 3: updatePool takes the same section [R1]', () => {
+  withFixture((fx) => {
+    const request = running(fx, ownerOf(deadPid()));
+    refusedInSection(fx, request.key, { updatePool: () => fx.queue.updatePool(POOL, (current) => ({ ...current, maxConcurrent: 2 })) });
+  });
+});
+
+test('acceptance 3: updatePool changes the pool as stored in its section, so a read taken before an admission loses nothing [R1]', () => {
+  withFixture((fx) => {
+    const stale = fx.queue.pool(POOL, AT);
+    assert.equal(stale.nextSeq, 0);
+    assert.deepEqual(stale.active, []);
+    const request = running(fx, ownerOf(deadPid()));
+
+    const updated = fx.queue.updatePool(POOL, (current) => ({ ...current, resetAt: FAR }));
+
+    assert.deepEqual(updated.active, [request.key]);
+    assert.equal(updated.nextSeq, 1);
+    assert.equal(updated.resetAt, FAR);
+    assert.deepEqual(fx.queue.pool(POOL), updated);
+  });
+});
+
+test('acceptance 3: a change of updatePool that throws writes nothing, and it cannot write another pool [R1]', () => {
+  withFixture((fx) => {
+    running(fx, ownerOf(deadPid()));
+    const before = queueFiles(fx);
+    const failure = new Error('change failed');
+    assert.throws(() => fx.queue.updatePool(POOL, () => {
+      throw failure;
+    }), (err) => err === failure);
+    assert.deepEqual(queueFiles(fx), before);
+    assert.equal(fx.queue.updatePool(POOL, (current) => ({ ...current, pool: 'other' })).pool, POOL);
+    assert.deepEqual(readdirSync(fx.paths.reviewQueue).filter((name) => name.startsWith('_pool-')).length, 1);
   });
 });
 
@@ -326,6 +380,78 @@ test('acceptance 5: a NOTE counts only for its own key and seq, as a NOTE of tha
     assert.notEqual(enqueued.key, first.key);
     assert.equal(cli(fx, enqueued.key).status, 0);
     assert.deepEqual(noteFields(fx, goal.id), [[goal.id, CARD, first.key, 0, REASON], [goal.id, CARD, enqueued.key, 0, REASON]]);
+  });
+});
+
+test('acceptance 5: the same key at the same seq in another pool is another release, with its own NOTE naming its pool [R3]', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const requester = `${goal.id}:${CARD}`;
+
+    const first = running(fx, ownerOf(deadPid()), requester, 'pool-one');
+    assert.equal(cli(fx, first.key).status, 0);
+    const moved = running(fx, ownerOf(deadPid()), requester, 'pool-two');
+    assert.deepEqual([moved.key, moved.seq, moved.pool], [first.key, first.seq, 'pool-two']);
+    const released = cli(fx, moved.key);
+    assert.equal(released.status, 0, released.stderr);
+
+    assert.deepEqual(notes(fx, goal.id).map((e) => [e.data['pool'], e.data['key'], e.data['seq']]), [['pool-one', first.key, 0], ['pool-two', first.key, 0]]);
+  });
+});
+
+/** A dead owner's request of two goals, its slot held; `T1-NEXT` waits behind it. */
+function twoGoals(fx: Fixture): { one: string; two: string; request: ReviewRequest } {
+  writeCard(fx, { id: CARD, title: 'held slot' });
+  writeCard(fx, { id: 'T1-TWO', title: 'second requester' });
+  const one = goalForCards(fx, [CARD]).id;
+  const two = goalForCards(fx, ['T1-TWO']).id;
+  const request = running(fx, ownerOf(deadPid()), `${one}:${CARD}`);
+  fx.queue.enqueue(input(`${two}:T1-TWO`));
+  return { one, two, request: fx.queue.get(request.key)! };
+}
+
+test('acceptance 6: a failed write of the pool leaves the request running and its slot held, and running the command again finishes it [R2] [R3]', () => {
+  withFixture((fx) => {
+    const { one, two, request } = twoGoals(fx);
+
+    const failed = cliFailingWrite(fx, request.key, poolFile(fx));
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /injected write failure/);
+    assert.deepEqual(fx.queue.get(request.key), request);
+    assert.deepEqual(fx.queue.pool(POOL).active, [request.key]);
+
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.equal(fx.queue.get(request.key)?.state, 'cancelled');
+    assert.equal(fx.queue.get(request.key)?.lastError, REASON);
+    assert.deepEqual(fx.queue.pool(POOL).active, []);
+    assert.deepEqual(noteFields(fx, one), [[one, CARD, request.key, request.seq, REASON]]);
+    assert.deepEqual(noteFields(fx, two), [[two, 'T1-TWO', request.key, request.seq, REASON]]);
+  });
+});
+
+test('acceptance 6: a failed write of the request leaves it running, and running the command again finishes it without touching a later admission [R2] [R3]', () => {
+  withFixture((fx) => {
+    const { one, two, request } = twoGoals(fx);
+    const next = fx.queue.enqueue(input('g-next:T1-NEXT', 'next')).request;
+
+    const failed = cliFailingWrite(fx, request.key, `${shortKey(request.key)}.json`);
+    assert.notEqual(failed.status, 0);
+    assert.match(failed.stderr, /injected write failure/);
+    assert.deepEqual(fx.queue.get(request.key), request);
+
+    const admitted = fx.queue.admit(POOL, ownerOf(process.pid), AT);
+    assert.equal(admitted.status === 'admitted' && admitted.request.key, next.key, 'the freed slot is free');
+
+    const finished = cli(fx, request.key);
+    assert.equal(finished.status, 0, finished.stderr);
+    assert.equal(fx.queue.get(request.key)?.state, 'cancelled');
+    assert.equal(fx.queue.get(request.key)?.lastError, REASON);
+    assert.deepEqual(fx.queue.pool(POOL).active, [next.key]);
+    assert.equal(fx.queue.get(next.key)?.state, 'running');
+    assert.deepEqual(noteFields(fx, one), [[one, CARD, request.key, request.seq, REASON]]);
+    assert.deepEqual(noteFields(fx, two), [[two, 'T1-TWO', request.key, request.seq, REASON]]);
   });
 });
 
