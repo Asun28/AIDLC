@@ -28,7 +28,8 @@ function withTemp<T>(fn: (dir: string) => T): T {
   try {
     return fn(dir);
   } finally {
-    rmSync(dir, { recursive: true, force: true });
+    // A stand-in the hook process left running may hold its working directory for a moment after that process exits.
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
@@ -38,6 +39,13 @@ function withTemp<T>(fn: (dir: string) => T): T {
  * (R3 decision 1): `throw` makes `spawn` throw, `nostreams` makes it return a child without output streams that then
  * reports EMFILE, and `verbose-out` and `verbose-err` run, for `spawn` and `spawnSync` alike, a git stand-in that prints
  * the two refs of the working directory followed by more than 1 MiB on stdout or on stderr.
+ *
+ * R3 decision 2 adds stand-ins that print git's real answer (`REFS`) with more output: `mixed` 600 KiB on each stream,
+ * `limit` exactly 1 MiB over both streams, `over` one byte more, `linger` more than 1 MiB and then 5 s of waiting
+ * (`exitSignal` records how it ended). `kill-eperm` and `kill-enosys` print 16 MiB on each stream and fail `child.kill` as
+ * Node fails it, with an `error` event or a throw (`delivered` counts the bytes read from both streams);
+ * `nostreams-enosys` is `nostreams` with that throw (`killed` records the call). `read-error-out` and `read-error-err`
+ * run real git and fail the read of that stream.
  */
 const PROBE = `import cp from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -45,10 +53,31 @@ import fs from 'node:fs';
 import { registerHooks, syncBuiltinESMExports } from 'node:module';
 const counts = { spawn: 0, spawnSync: 0, spawnBeforeEntry: false };
 const mode = process.env.PROBE_MODE ?? '';
+const REFS = "const refs = require('node:child_process').execFileSync('git', ['rev-parse', '--git-common-dir', '--show-toplevel'], { encoding: 'utf8' });";
+const FLOOD = REFS + " process.stdout.write(refs); const block = 'x'.repeat(1024 * 1024); for (let i = 0; i < 16; i++) { process.stdout.write(block); process.stderr.write(block); }";
 const VERBOSE = {
   'verbose-out': "process.stdout.write('.git\\\\n' + process.cwd() + '\\\\n' + 'x'.repeat(1024 * 1024))",
   'verbose-err': "process.stdout.write('.git\\\\n' + process.cwd() + '\\\\n'); process.stderr.write('x'.repeat(1024 * 1024 + 1))",
+  mixed: REFS + " process.stdout.write(refs + 'x'.repeat(600 * 1024)); process.stderr.write('x'.repeat(600 * 1024));",
+  limit: REFS + " process.stdout.write(refs + 'x'.repeat(512 * 1024 - refs.length)); process.stderr.write('x'.repeat(512 * 1024));",
+  over: REFS + " process.stdout.write(refs + 'x'.repeat(512 * 1024 - refs.length)); process.stderr.write('x'.repeat(512 * 1024 + 1));",
+  linger: REFS + " process.stdout.write(refs + 'x'.repeat(1024 * 1024)); setTimeout(() => {}, 5000);",
+  'kill-eperm': FLOOD,
+  'kill-enosys': FLOOD,
 };
+const killError = (code) => Object.assign(new Error('kill ' + code), { code, syscall: 'kill' });
+/** The faults that act on a child that did start. */
+function faulted(child) {
+  if (mode === 'kill-eperm' || mode === 'kill-enosys') {
+    counts.delivered = 0;
+    for (const stream of [child.stdout, child.stderr]) stream.on('data', (d) => { counts.delivered += d.length; });
+    child.kill = mode === 'kill-eperm' ? () => { child.emit('error', killError('EPERM')); return false; } : () => { throw killError('ENOSYS'); };
+  }
+  if (mode === 'linger') child.on('exit', (code, signal) => { counts.exitSignal = signal; });
+  if (mode === 'read-error-out') child.stdout.destroy(new Error('read EIO'));
+  if (mode === 'read-error-err') child.stderr.destroy(new Error('read EIO'));
+  return child;
+}
 let seq = 0;
 let spawnedAt = 0;
 let entryAt = 0;
@@ -60,14 +89,15 @@ cp.spawn = function (cmd, args, options) {
   counts.spawn++;
   if (!spawnedAt) spawnedAt = ++seq;
   if (mode === 'throw') throw Object.assign(new Error('spawn git E2BIG'), { code: 'E2BIG' });
-  if (mode === 'nostreams') {
+  if (mode === 'nostreams' || mode === 'nostreams-enosys') {
     const child = new EventEmitter();
-    Object.assign(child, { stdout: null, stderr: null, stdin: null, kill: () => true });
+    const kill = mode === 'nostreams' ? () => true : () => { counts.killed = true; throw killError('ENOSYS'); };
+    Object.assign(child, { stdout: null, stderr: null, stdin: null, kill });
     process.nextTick(() => child.emit('error', Object.assign(new Error('spawn git EMFILE'), { code: 'EMFILE' })));
     return child;
   }
-  if (VERBOSE[mode]) return realSpawn.call(this, process.execPath, ['-e', VERBOSE[mode]], options);
-  return realSpawn.call(this, cmd, args, options);
+  if (VERBOSE[mode]) return faulted(realSpawn.call(this, process.execPath, ['-e', VERBOSE[mode]], options));
+  return faulted(realSpawn.call(this, cmd, args, options));
 };
 cp.spawnSync = function (cmd, args, options) {
   if (cmd !== 'git') return realSync.call(this, cmd, args, options);
@@ -84,6 +114,9 @@ interface Counts {
   spawn: number;
   spawnSync: number;
   spawnBeforeEntry: boolean;
+  delivered?: number;
+  exitSignal?: string | null;
+  killed?: boolean;
 }
 
 /** A git repository freezing `contracts/`, a subdirectory, a linked worktree whose own config copy freezes nothing, and a directory outside git. */
@@ -186,6 +219,96 @@ process.stdout.write(JSON.stringify(resolveRepoIdentity(${JSON.stringify(target)
       assert.deepEqual(identity(f.repo, f.repo, f.repo, mode), { identity: noRepo, spawn: 1, spawnSync: 0 }, `${mode}: prefetched`);
       assert.deepEqual(identity(f.repo, f.sub, f.repo, mode), { identity: noRepo, spawn: 1, spawnSync: 1 }, `${mode}: synchronous`);
     }
+  });
+});
+
+/** The R3 decision 2 runs: the hook entry and an identity call in a child process, each under the preload with `mode`. */
+function runs(dir: string, f: ReturnType<typeof fixture>) {
+  let n = 0;
+  const countsPath = () => path.join(dir, `decision2-${++n}.json`);
+  const hook = (processCwd: string, eventCwd: string, mode: string) => {
+    const out = countsPath();
+    const state = path.join(dir, `decision2-state-${n}`);
+    mkdirSync(state);
+    const event = { session_id: 'prefetch', hook_event_name: 'PreToolUse', tool_name: 'Edit', cwd: eventCwd, tool_input: { file_path: 'contracts/a.yaml', old_string: 'a', new_string: 'b' } };
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(f.probe).href, path.join(root, 'bin', 'aidlc-hook.js')], { cwd: processCwd, input: JSON.stringify(event), env: childEnv({ AIDLC_STATE_DIR: state, AIDLC_SESSION: 'prefetch', PROBE_OUT: out, PROBE_MODE: mode }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    const counts = JSON.parse(readFileSync(out, 'utf8')) as Counts;
+    return { seen: [r.status, r.stdout, r.stderr, counts.spawn, counts.spawnSync], counts };
+  };
+  const pathsUrl = pathToFileURL(path.join(root, 'src', 'state', 'paths.ts')).href;
+  const identity = (settle: string, mode: string) => {
+    const out = countsPath();
+    const code = `import { prefetchRepoIdentity, settleRepoIdentity, resolveRepoIdentity } from ${JSON.stringify(pathsUrl)};
+prefetchRepoIdentity(process.cwd());
+await settleRepoIdentity(${JSON.stringify(settle)});
+process.stdout.write(JSON.stringify(resolveRepoIdentity(process.cwd())));`;
+    const r = spawnSync(process.execPath, ['--import', pathToFileURL(f.probe).href, '--input-type=module', '-e', code], { cwd: f.repo, env: childEnv({ PROBE_OUT: out, PROBE_MODE: mode }), encoding: 'utf8', windowsHide: true, timeout: 60_000 });
+    assert.equal(r.status, 0, `${mode}: ${r.stderr}`);
+    const counts = JSON.parse(readFileSync(out, 'utf8')) as Counts;
+    return { seen: [JSON.parse(r.stdout) as unknown, counts.spawn, counts.spawnSync], counts };
+  };
+  return { hook, identity };
+}
+
+test('T0-HOOK-GIT-PREFETCH F3: a lookup counts stdout and stderr together against the 1 MiB of spawnSync, and over it reads as no output, on both paths [R1] [R3]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { hook, identity } = runs(dir, f);
+    const inRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: true, key: keyOf(f.repo) };
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    assert.deepEqual(identity(f.repo, 'limit').seen, [inRepo, 1, 0], 'exactly 1 MiB is an answer: prefetched');
+    assert.deepEqual(identity(f.sub, 'limit').seen, [inRepo, 1, 1], 'exactly 1 MiB is an answer: synchronous');
+    for (const mode of ['mixed', 'over']) {
+      assert.deepEqual(identity(f.repo, mode).seen, [noRepo, 1, 0], `${mode}: prefetched`);
+      assert.deepEqual(identity(f.sub, mode).seen, [noRepo, 1, 1], `${mode}: synchronous`);
+    }
+    // In the linked worktree an accepted identity reads the main checkout's config and denies; no output reads the worktree's own copy, which freezes nothing.
+    assert.deepEqual(hook(f.worktree, f.worktree, 'limit').seen, [0, DENIED, '', 1, 0], 'the guard reads an accepted identity');
+    for (const mode of ['mixed', 'over']) {
+      assert.deepEqual(hook(f.worktree, f.worktree, mode).seen, [0, '', '', 1, 0], `${mode}: the guard, prefetched`);
+      assert.deepEqual(hook(f.repo, f.worktree, mode).seen, [0, '', '', 1, 1], `${mode}: the guard, synchronous`);
+    }
+  });
+});
+
+test('T0-HOOK-GIT-PREFETCH F3: over the limit the child is ended and reading stops, so buffered output stays bounded [R1]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { identity } = runs(dir, f);
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    const linger = identity(f.repo, 'linger');
+    assert.deepEqual(linger.seen, [noRepo, 1, 0]);
+    assert.equal(linger.counts.exitSignal, 'SIGTERM', 'the child is ended with the signal spawnSync sends');
+    for (const mode of ['kill-eperm', 'kill-enosys']) {
+      const flood = identity(f.repo, mode);
+      assert.ok(flood.counts.delivered! < 2 * 1024 * 1024, `${mode}: ${flood.counts.delivered} bytes of 32 MiB read`);
+    }
+  });
+});
+
+test('T0-HOOK-GIT-PREFETCH F4: a kill that errors or throws settles the lookup as no output, with no second git and no lookup left pending [R1] [R3]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { hook, identity } = runs(dir, f);
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    for (const mode of ['kill-eperm', 'kill-enosys']) {
+      assert.deepEqual(identity(f.repo, mode).seen, [noRepo, 1, 0], `${mode}: the identity`);
+      assert.deepEqual(hook(f.worktree, f.worktree, mode).seen, [0, '', '', 1, 0], `${mode}: the guard`);
+    }
+    const noStreams = hook(f.repo, f.repo, 'nostreams-enosys');
+    assert.deepEqual(noStreams.seen, [0, DENIED, '', 1, 1], 'a child without streams is no lookup, whatever its kill does');
+    assert.equal(noStreams.counts.killed, true, 'a child without streams is ended');
+  });
+});
+
+test('T0-HOOK-GIT-PREFETCH: a failed read of a stream starts no second git; the lookup reads what spawnSync reads, the exit status and the bytes read [R1] [R3]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { identity } = runs(dir, f);
+    const inRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: true, key: keyOf(f.repo) };
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    assert.deepEqual(identity(f.repo, 'read-error-out').seen, [noRepo, 1, 0], 'stdout read nothing');
+    assert.deepEqual(identity(f.repo, 'read-error-err').seen, [inRepo, 1, 0], 'stdout read whole');
   });
 });
 
