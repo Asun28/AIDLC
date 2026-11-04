@@ -23,8 +23,8 @@ function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   return { ...env, ...extra };
 }
 
-function withTemp<T>(fn: (dir: string) => T): T {
-  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), 'aidlc-git-prefetch-')));
+function withTemp<T>(fn: (dir: string) => T, prefix = 'aidlc-git-prefetch-'): T {
+  const dir = realpathSync.native(mkdtempSync(path.join(os.tmpdir(), prefix)));
   try {
     return fn(dir);
   } finally {
@@ -284,6 +284,18 @@ test('T0-HOOK-GIT-PREFETCH F3: a lookup counts stdout and stderr together agains
       assert.deepEqual(hook(f.repo, f.worktree, mode).seen, [0, '', '', 1, 1], `${mode}: the guard, synchronous`);
     }
   });
+});
+
+test('T0-HOOK-GIT-PREFETCH-2 R3 decision 2: the limit counts bytes, so a working directory with a non-ASCII name sits on the same boundary [R1]', () => {
+  withTemp((dir) => {
+    const f = fixture(dir);
+    const { identity } = runs(dir, f);
+    assert.ok(Buffer.byteLength(f.repo, 'utf8') > f.repo.length, 'the fixture path holds a multi-byte character');
+    const inRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: true, key: keyOf(f.repo) };
+    const noRepo = { mainRoot: f.repo, worktreeRoot: f.repo, isGit: false, key: keyOf(f.repo) };
+    assert.deepEqual(identity(f.repo, 'limit').seen, [inRepo, 1, 0], 'exactly 1 MiB is an answer');
+    assert.deepEqual(identity(f.repo, 'over').seen, [noRepo, 1, 0], 'one byte more is none');
+  }, 'aidlc-git-prefetch-Jos\u00e9-');
 });
 
 test('T0-HOOK-GIT-PREFETCH F3: over the limit the child is ended and reading stops, so buffered output stays bounded [R1]', () => {
