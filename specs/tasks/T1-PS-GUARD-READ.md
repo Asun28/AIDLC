@@ -1,7 +1,7 @@
 ---
 id: T1-PS-GUARD-READ
 title: On a PowerShell event the guards read backtick continuations, script blocks, subexpressions and PowerShell write commands, and a Bash event decides as before
-status: todo
+status: merged
 branch: T1-PS-GUARD-READ
 worktree: D:\wt\AIDLC\T1-PS-GUARD-READ
 plan_ref: plans/powershell-guards.md#order-of-work
