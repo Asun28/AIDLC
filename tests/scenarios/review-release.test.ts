@@ -208,8 +208,13 @@ test('acceptance 3: every other mutation of the pool takes the same section [R1]
       resolveLost: () => fx.queue.resolveLost(request.key, { found: false }, AT),
       hold: () => fx.queue.hold(request.key, FAR, 'quota', AT),
       setPoolLimit: () => fx.queue.setPoolLimit(POOL, 2, 'two seats'),
-      savePool: () => fx.queue.savePool({ ...fx.queue.pool(POOL), maxConcurrent: 2 }),
     });
+  });
+});
+
+test('acceptance 3: the queue has no public method that takes a whole pool record [R1]', () => {
+  withFixture((fx) => {
+    assert.equal('savePool' in fx.queue, false);
   });
 });
 

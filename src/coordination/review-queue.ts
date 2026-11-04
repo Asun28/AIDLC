@@ -109,11 +109,6 @@ export class ReviewQueue {
     });
   }
 
-  /** Replaces the record with a caller's snapshot, so a snapshot read before a mutation undoes it. No source calls it: test fixtures only, until they move to `updatePool`. */
-  savePool(p: ReviewPool): void {
-    this.section(p.pool, () => this.writePool(p));
-  }
-
   private writePool(p: ReviewPool): void {
     atomicWriteJson(this.poolFile(p.pool), p);
   }
