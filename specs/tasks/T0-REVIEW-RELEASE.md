@@ -36,8 +36,8 @@ acceptance:
 depends_on: []
 budget: 300
 tdd: true
-sweep: "git grep -n 'this.queue\\.\\|queue\\.' src on main: the card runner and `run-driver.ts` call the queue; `cancel` runs inside a catch of `CardRunner.ship` since T0-SHIP-THROW-SLOT-3, and none of those callers holds the pool lock, so R1 adds no nested section. `updatePool` is the one public write of a pool record and `pool()` the read."
-forbid: [weakening or skipping a test to go green, a release of a request whose owner is alive or of another host, a change to admission order or to what `admit` returns, a nested section of the pool lock, a lock other than the one queue lock, a new journal event type, a reconcile of the operation by `review release` (`aidlc ops reconcile` stays the one way), an edit of any file under `.aidlc/`]
+sweep: "git grep -n 'this.queue\\.\\|queue\\.' src on main: the card runner and `run-driver.ts` call the queue; `cancel` runs inside a catch of `CardRunner.ship` since T0-SHIP-THROW-SLOT-3, and none of those callers holds the queue lock, so R1 adds no nested section. `updatePool` is the one public write of a pool record and `pool()` the read."
+forbid: [weakening or skipping a test to go green, a release of a request whose owner is alive or of another host, a change to admission order or to what `admit` returns, a nested section of the queue lock, a lock other than the one queue lock, a new journal event type, a reconcile of the operation by `review release` (`aidlc ops reconcile` stays the one way), an edit of any file under `.aidlc/`]
 non_goals: [a process killed while it holds the queue lock, which leaves its lock file for an operator to remove, since `updateJson` never removes another writer's lock and its `LOCKED` names the file and the process, as for every record lock, a lock over `Journal.append` (the head read and append of a goal journal are shared with every writer of that journal, as they are at main, and `src/state/journal.ts` is outside this card; the queue lock serializes the release's own appends against each other), an expiry for running requests, a process killed on another host, the `lost` state of a request, a request whose pid was reused or whose process is a zombie (`processAlive` counts it as alive, so the release refuses, which fails closed)]
 diagnosis:
   root_cause: "A running request whose process died outside any catch stays in `pool.active` for ever: `admit` keeps it, and no command settles it. On 2026-11-04 that took a one-off `ReviewQueue.cancel` the user approved, since T0-SHIP-THROW-SLOT-3 covers a throw, not a killed process. Request and pool writes take no lock, so a release checked in one step and written in another can cancel a later admission of the same key, leave a joining goal unjournaled, and let two commands both journal: R3 decisions 1 and 2 of T0-SHIP-THROW-SLOT (F1, F6, F13)."
@@ -49,7 +49,7 @@ doc_sync: CHANGELOG.md, docs/OPERATIONS.md
 # T0-REVIEW-RELEASE
 
 ## Deliverable
-A review slot held by a dead process no longer needs a one-off call. `aidlc review release` frees it, refuses while that process is alive, and journals the release, all in one lock section that every other mutation of the pool also takes.
+A review slot held by a dead process no longer needs a one-off call. `aidlc review release` frees it, refuses while that process is alive, and journals the release, all in one lock section that every other mutation of the queue also takes.
 
 ## Doc text
 OPERATIONS sentence:
