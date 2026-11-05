@@ -1,7 +1,7 @@
 ---
 id: T1-INIT-BASE-CI
 title: aidlc init names the target's default branch and adds no workflow that needs a package.json, and no workflow runs npx in a form that can fetch a package
-status: todo
+status: merged
 branch: T1-INIT-BASE-CI
 worktree: D:\wt\AIDLC\T1-INIT-BASE-CI
 plan_ref: plans/init-no-node.md#order-of-work
@@ -36,7 +36,7 @@ acceptance:
 depends_on: [T1-INIT-HOOK-PATH-2]
 budget: 490
 tdd: true
-sweep: "git grep on main 417df0a: `npx aidlc` in workflows is .github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35, docs-check.yml:32 and templates/github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35; in tests it is tests/surface/command-lines.test.ts:43 and 46, while tests/surface/hooks.test.ts:709 names `npx aidlc doctor` for another reason and stays. `aidlc-ci.yml` and `agent-evals.yml` are pinned by tests/infra/init.test.ts:27 over an empty target, which is why an empty target keeps them. OPERATIONS:13 is the pinned Setup sentence (tests/infra/init.test.ts:166), so the new text is its own paragraph. `git grep 'base:'` over tests finds no assertion on the `base` of an initialised config. R1 reads the ref files: `--short` printed `heads/develop` with a tag `develop` beside the branch, and R3 decision 1 on 340ff1d raised a repository `git.exe` and an inherited `GIT_DIR`, so init starts no process. Budget 490 for the file cases: the test file is about +390 and the source +72."
+sweep: "git grep on main 417df0a: `npx aidlc` in workflows is .github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35, docs-check.yml:32 and templates/github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35; in tests it is tests/surface/command-lines.test.ts:43 and 46, while tests/surface/hooks.test.ts:709 names `npx aidlc doctor` for another reason and stays. `aidlc-ci.yml` and `agent-evals.yml` are pinned by tests/infra/init.test.ts:27 over an empty target, which is why an empty target keeps them. OPERATIONS:13 is the pinned Setup sentence (tests/infra/init.test.ts:166), so the new text is its own paragraph. `git grep 'base:'` over tests finds no assertion on the `base` of an initialised config. R1 reads the ref files: `--short` printed `heads/develop` with a tag `develop` beside the branch, and R3 decision 1 on 340ff1d raised a repository `git.exe` and an inherited `GIT_DIR`, so init starts no process. Budget 490 for the file cases: the test file is about +390 and the source +72. The merged diff is 498 lines, 8 over; the budget was left alone because moving main at that point risked another review round."
 forbid: [weakening or skipping a test to go green, starting a process from `src/scaffold/init.ts`, editing tests/infra/init.test.ts, a change to `templates/aidlc.config.json`, any change to a workflow other than the `npx aidlc` text, an edit of any file under `.aidlc/`]
 non_goals: [generating a workflow for another language, the review commands of a target, MyInspection's own card findings, the `npx --no-install aidlc` spellings elsewhere, the rename]
 hygiene: "Prove each arm with a mutant: dropping the remote read fails the `master` case of acceptance 1 on a clone standing on another branch; dropping the name check fails the `--upload-pack=x` case; ignoring `commondir` fails the linked worktree case; treating `.git` as content fails acceptance 3; letting `force` write the workflows fails acceptance 2. The doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
