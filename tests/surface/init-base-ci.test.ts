@@ -158,13 +158,24 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
     assert.equal(baseAfterInit(target), 'main');
   });
 
-  for (const text of ['ref: refs/heads/trunk\r\n', 'ref: refs/heads/trunk', 'ref: refs/heads/trunk\n\n']) {
+  for (const text of ['ref: refs/heads/trunk\n', 'ref: refs/heads/trunk\r\n', 'ref: refs/heads/trunk']) {
     test(`acceptance 1: HEAD holding ${JSON.stringify(text)} names trunk [R1]`, () => {
       const target = repository('develop');
       put(path.join(target, '.git', 'HEAD'), text);
       assert.equal(baseAfterInit(target), 'trunk');
     });
   }
+
+  test('acceptance 1: a ref file with a second line ending counts as no result [R1]', () => {
+    for (const text of ['ref: refs/heads/trunk\n\n', 'ref: refs/heads/trunk\r\n\r\n']) {
+      const target = repository('develop');
+      put(path.join(target, '.git', 'HEAD'), text);
+      assert.equal(baseAfterInit(target), 'main', JSON.stringify(text));
+    }
+    const clone = cloneOf('master');
+    put(path.join(clone, '.git', 'refs', 'remotes', 'origin', 'HEAD'), 'ref: refs/remotes/origin/trunk\n\n');
+    assert.equal(baseAfterInit(clone), 'work');
+  });
 
   // `..`, a part starting with `.` and an empty part are no ref name git accepts; `.invalid` is what HEAD holds in a reftable repository.
   for (const name of ['', 'a..b', '../x', 'a/../b', '.invalid', 'a/.b', 'a//b', 'a/', '/a', '-a', 'a b', 'a$(x)', 'a;b', 'caf\u00e9', 'trunk\nextra']) {
@@ -195,7 +206,7 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
   });
 
   test('acceptance 1: a .git file with no usable gitdir line counts as no result [R1]', () => {
-    for (const text of ['gitdir: missing\n', 'gitdir: store\nextra\n', 'gitdir: \n', 'store\n']) {
+    for (const text of ['gitdir: missing\n', 'gitdir: store\nextra\n', 'gitdir: store\n\n', 'gitdir: \n', 'store\n']) {
       const target = tempDir();
       put(path.join(target, 'store', 'HEAD'), 'ref: refs/heads/trunk\n');
       put(path.join(target, '.git'), text);
@@ -211,7 +222,7 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
   });
 
   test('acceptance 1: a commondir that cannot be used leaves the current branch [R1]', () => {
-    for (const text of ['../missing\n', '../common\nextra\n', '']) {
+    for (const text of ['../missing\n', '../common\nextra\n', '../common\n\n', '']) {
       const target = repository('develop');
       put(path.join(target, '.git', 'commondir'), text);
       put(path.join(target, 'common', 'refs', 'remotes', 'origin', 'HEAD'), 'ref: refs/remotes/origin/trunk\n');
@@ -245,6 +256,13 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
     writeFileSync(path.join(target, 'aidlc.config.json'), held);
     initProject({ target });
     assert.equal(readFileSync(path.join(target, 'aidlc.config.json'), 'utf8'), held);
+  });
+
+  test('acceptance 1: with force an existing aidlc.config.json is written anew with the base read here [R1]', () => {
+    const target = repository('develop');
+    writeFileSync(path.join(target, 'aidlc.config.json'), '{ "base": "trunk" }\n');
+    initProject({ target, force: true });
+    assert.equal((JSON.parse(readFileSync(path.join(target, 'aidlc.config.json'), 'utf8')) as { base: unknown }).base, 'develop');
   });
 });
 
