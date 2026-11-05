@@ -3,7 +3,6 @@
  * compatible card registry). Existing files are never overwritten unless `--force`; the
  * CLAUDE.md section, .gitignore entries and .claude/settings.json hooks are merged.
  */
-import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -46,22 +45,60 @@ function holdsContent(target: string): boolean {
   }
 }
 
-/**
- * The branch a symbolic ref of the target points at, with `prefix` dropped; empty when there is no such ref, repository or
- * `git`, or the ref points outside `prefix`. It reads the full ref, because `--short` prints `heads/develop` beside a tag `develop`.
- */
-function branchOf(target: string, ref: string, prefix: string): string {
+/** A file of the target with trailing line ends and spaces removed; nothing when it cannot be read. */
+function readTrimmed(file: string): string | undefined {
   try {
-    const full = execFileSync('git', ['-C', target, 'symbolic-ref', ref], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
-    return full.startsWith(prefix) ? full.slice(prefix.length) : '';
+    return readFileSync(file, 'utf8').trimEnd();
   } catch {
-    return '';
+    return undefined;
   }
 }
 
-/** The remote default branch, else the current branch; empty on a detached HEAD with no remote default, or outside a repository. */
+/**
+ * A directory named by a `.git` or `commondir` file, resolved against `base`; empty for no value, for a second line, or
+ * for a value starting with two separators, which on Windows can name a file on another host.
+ */
+function namedDir(base: string, value: string): string {
+  return !value || /[\r\n]/.test(value) || /^[\\/]{2}/.test(value) ? '' : path.resolve(base, value);
+}
+
+/** The git directory of the target: `.git`, or the directory a `.git` file names on its `gitdir:` line. Empty when that line is unusable. */
+function gitDirOf(target: string): string {
+  const dotGit = path.join(target, '.git');
+  const pointer = readTrimmed(dotGit);
+  if (pointer === undefined) return dotGit;
+  return pointer.startsWith('gitdir: ') ? namedDir(target, pointer.slice('gitdir: '.length)) : '';
+}
+
+/** The common directory: `gitDir` itself, or the directory its `commondir` file names. Empty when that file is unusable. */
+function commonDirOf(gitDir: string): string {
+  const pointer = readTrimmed(path.join(gitDir, 'commondir'));
+  return pointer === undefined ? gitDir : namedDir(gitDir, pointer);
+}
+
+/** Whether a name read from a ref file can go into the config: `base` later reaches git arguments, so it cannot read as an option, and every part is one git accepts. */
+function isBranchName(name: string): boolean {
+  return /^[A-Za-z0-9._/-]+$/.test(name) && !name.startsWith('-') && !name.includes('..') && name.split('/').every((part) => part !== '' && !part.startsWith('.'));
+}
+
+/** The branch on the one line `ref: <prefix><name>` of a ref file; empty for any other content, or when it cannot be read. */
+function branchIn(file: string, prefix: string): string {
+  const line = readTrimmed(file);
+  if (!line?.startsWith(`ref: ${prefix}`)) return '';
+  const name = line.slice('ref: '.length + prefix.length);
+  return isBranchName(name) ? name : '';
+}
+
+/**
+ * The remote default branch, else the current branch; empty when neither file gives a name. Reads ref files and starts no
+ * process, since a `git` start can resolve to a program in the target and obeys `GIT_DIR` over its `-C` argument.
+ */
 function defaultBranch(target: string): string {
-  return branchOf(target, 'refs/remotes/origin/HEAD', 'refs/remotes/origin/') || branchOf(target, 'HEAD', 'refs/heads/');
+  const gitDir = gitDirOf(target);
+  if (!gitDir) return '';
+  const commonDir = commonDirOf(gitDir);
+  const remote = commonDir ? branchIn(path.join(commonDir, 'refs', 'remotes', 'origin', 'HEAD'), 'refs/remotes/origin/') : '';
+  return remote || branchIn(path.join(gitDir, 'HEAD'), 'refs/heads/');
 }
 
 export function initProject(options: InitOptions): InitReport {
