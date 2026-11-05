@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-RELEASE
 title: Every mutation of the review queue runs in one lock section, and `aidlc review release` frees the slot of a process that died, journaled in that same section
-status: todo
+status: merged
 branch: T0-REVIEW-RELEASE
 worktree: D:\wt\AIDLC\T0-REVIEW-RELEASE
 allow_paths:
