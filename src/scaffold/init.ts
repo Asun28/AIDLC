@@ -36,12 +36,13 @@ const MARKER = '## AI-native SDLC (aidlc)';
 /** Workflows that run `npm ci`, so they fail on every push of a repository with no `package.json`. */
 const NODE_WORKFLOWS = new Set(['.github/workflows/aidlc-ci.yml', '.github/workflows/agent-evals.yml']);
 
-/** Whether the target holds an entry other than `.git`. A target that does not exist yet, or cannot be listed, holds none. */
+/** Whether the target holds an entry other than `.git`. A target that does not exist yet holds none; any other listing failure stops init. */
 function holdsContent(target: string): boolean {
   try {
     return readdirSync(target).some((name) => name !== '.git');
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
   }
 }
 
