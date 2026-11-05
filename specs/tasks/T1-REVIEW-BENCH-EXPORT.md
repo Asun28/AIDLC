@@ -82,3 +82,11 @@ npm run typecheck && node --test tests/surface/review-bench-export.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+
+BUILD attempt 1, Windows, Node 22.23.1, on main at f842ce6, then merged with main at 04514ba.
+- RED: commit 753e716. `node --test tests/surface/review-bench-export.test.ts` exited 1 on a SyntaxError: `src/review/bench.ts` had no export `exportBenchCases`.
+- GREEN: commit 0844c5a, tidied in 5fce6ce. The DoD command with neither session variable set exits 0. `node --test tests/surface/*.test.ts`: 741 tests, 737 passed, 4 skipped, 0 failed. The new test file under WSL Ubuntu: 23 of 23. `npm run build && npm run bench -- --check`: exit 0.
+- Real ledgers, in a shared clone with `AIDLC_STATE_DIR` on this repository's state, so no ref landed here: `--clean` over every goal wrote 69 cases and skipped 2 (no `candidateSha`). `--card` over the 91 cards with formal findings drafted all 451 formal findings of 206 card runs, with no skip and no pin conflict: 365 `dim-<n>`, 85 from a class tag, 1 `unclassified`, on 142 distinct candidates. `aidlc review bench run --stage pre` loaded the 520 drafts and left all 520 out as unconfirmed.
+- Mutation check, 41 breaks of `exportBenchCases` and the command in scratch clones, each restored and none committed; each fails a test.
