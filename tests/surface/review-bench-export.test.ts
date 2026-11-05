@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -464,6 +464,25 @@ test('T1-REVIEW-BENCH-EXPORT R10: bug drafts need a card, and a missing case dir
   }
 });
 
+test('T1-REVIEW-BENCH-EXPORT acceptance 11: a case directory at or under the state directory is refused, through a link too, with no file and no ref [R8] [R10]', () => {
+  const r = repo();
+  try {
+    const state = path.join(r.dir, 'state');
+    const cards = path.join(state, 'cards');
+    mkdirSync(cards, { recursive: true });
+    symlinkSync(cards, path.join(r.root, 'link'), 'junction');
+    for (const dir of [state, cards, 'link']) assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { dir, stateDir: state })), /under the state directory/, dir);
+    assert.deepEqual(readdirSync(cards), []);
+    assert.deepEqual(benchRefs(r), []);
+    const beside = path.join(r.dir, 'state-2');
+    mkdirSync(beside);
+    assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { dir: beside, stateDir: state })).written.length, 3);
+    assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { stateDir: path.join(r.dir, 'no-state') })).written.length, 3);
+  } finally {
+    r.cleanup();
+  }
+});
+
 test('T1-REVIEW-BENCH-EXPORT R10: the line form gives one line per entry', () => {
   const r = repo();
   try {
@@ -513,6 +532,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 8: the command prints the report, writes
     assert.equal(cli().status, 1);
     assert.equal(cli('--clean', '--goal', 'g-20261021000000-cccccc').status, 1);
     assert.equal(cli('--card', CARD, '--dir', 'nowhere').status, 1);
+    assert.equal(cli('--card', CARD, '--dir', path.join(state, 'cards')).status, 1);
     assert.equal(cli('--clean', '--goal', GOAL_2).status, 0);
     for (const id of ids) rmSync(caseFile(r, id));
     git(r.root, ['update-ref', '-d', `refs/aidlc/bench/${ids[0]}`]);
