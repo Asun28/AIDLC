@@ -33,7 +33,7 @@ acceptance:
   - 4. Same file - no workflow file under `.github/workflows/` or `templates/github/workflows/` holds `npx aidlc`. [R3] [dod arm 2]
   - 5. `tests/surface/command-lines.test.ts` - T1-EVALS-NO-KEY acceptance 1 passes on the new text, and the file differs from 417df0a by those two lines. [R4] [dod arm 2]
   - 6. Same file as 1 - `docs/OPERATIONS.md` holds the OPERATIONS paragraph and `CHANGELOG.md` the Unreleased entry of the Doc text section; a test reads each exact text and fails with it removed. [R5] [R6] [dod arm 2]
-depends_on: [T1-INIT-HOOK-PATH]
+depends_on: [T1-INIT-HOOK-PATH-2]
 budget: 170
 tdd: true
 sweep: "git grep on main 417df0a: `npx aidlc` in workflows is .github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35, docs-check.yml:32 and templates/github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35; in tests it is tests/surface/command-lines.test.ts:43 and 46, while tests/surface/hooks.test.ts:709 names `npx aidlc doctor` for another reason and stays. `aidlc-ci.yml` and `agent-evals.yml` are pinned by tests/infra/init.test.ts:27 over an empty target, which is why an empty target keeps them. OPERATIONS:13 is the pinned Setup sentence (tests/infra/init.test.ts:166), so the new text is its own paragraph. `git grep 'base:'` over tests finds no assertion on the `base` of an initialised config."

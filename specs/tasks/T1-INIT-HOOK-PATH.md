@@ -2,6 +2,7 @@
 id: T1-INIT-HOOK-PATH
 title: aidlc init writes a hook command that runs on a repository with no Node package, and aidlc doctor reports a hook command that does not run
 status: todo
+superseded_by: T1-INIT-HOOK-PATH-2
 branch: T1-INIT-HOOK-PATH
 worktree: D:\wt\AIDLC\T1-INIT-HOOK-PATH
 plan_ref: plans/init-no-node.md#order-of-work
