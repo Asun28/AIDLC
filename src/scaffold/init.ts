@@ -3,6 +3,7 @@
  * compatible card registry). Existing files are never overwritten unless `--force`; the
  * CLAUDE.md section, .gitignore entries and .claude/settings.json hooks are merged.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,12 +34,39 @@ export function templatesDir(): string {
 }
 
 const MARKER = '## AI-native SDLC (aidlc)';
+/** Workflows that run `npm ci`, so they fail on every push of a repository with no `package.json`. */
+const NODE_WORKFLOWS = new Set(['.github/workflows/aidlc-ci.yml', '.github/workflows/agent-evals.yml']);
+
+/** Whether the target holds an entry other than `.git`. A target that does not exist yet, or cannot be listed, holds none. */
+function holdsContent(target: string): boolean {
+  try {
+    return readdirSync(target).some((name) => name !== '.git');
+  } catch {
+    return false;
+  }
+}
+
+/** The short name a symbolic ref of the target points at; empty when there is no such ref, repository or `git`. */
+function symbolicRef(target: string, ref: string): string {
+  try {
+    return execFileSync('git', ['-C', target, 'symbolic-ref', '--short', ref], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+  } catch {
+    return '';
+  }
+}
+
+/** The remote default branch, else the current branch; empty on a detached HEAD with no remote default, or outside a repository. */
+function defaultBranch(target: string): string {
+  return symbolicRef(target, 'refs/remotes/origin/HEAD').replace(/^origin\//, '') || symbolicRef(target, 'HEAD');
+}
 
 export function initProject(options: InitOptions): InitReport {
   const tpl = templatesDir();
   const report: InitReport = { created: [], skipped: [], merged: [], templatesDir: tpl };
   const target = path.resolve(options.target);
   const cardsDir = options.cardsDir ?? 'specs/tasks';
+  // Read before the first write, since init itself creates entries.
+  const noPackage = holdsContent(target) && !existsSync(path.join(target, 'package.json'));
   const write = (rel: string, content: string | Buffer, mode: 'create' | 'force' = 'create') => {
     const dest = path.join(target, rel);
     if (existsSync(dest) && !(options.force || mode === 'force')) {
@@ -58,6 +86,7 @@ export function initProject(options: InitOptions): InitReport {
       const src = path.join(from, name);
       const rel = path.join(toRel, name).replace(/\\/g, '/');
       if (statSync(src).isDirectory()) copyTree(path.join(fromRel, name), path.join(toRel, name));
+      else if (noPackage && NODE_WORKFLOWS.has(rel)) report.skipped.push(`${rel} (no package.json)`);
       else if (rel !== '.claude/settings.json') write(rel, readFileSync(src));
     }
   };
@@ -82,6 +111,8 @@ export function initProject(options: InitOptions): InitReport {
   if (existsSync(cfgSrc)) {
     const cfg = JSON.parse(readFileSync(cfgSrc, 'utf8')) as Record<string, unknown>;
     cfg['cardsDir'] = cardsDir;
+    const base = defaultBranch(target);
+    if (base) cfg['base'] = base;
     if (options.shipPath) cfg['shipPath'] = options.shipPath;
     write('aidlc.config.json', JSON.stringify(cfg, null, 2) + '\n');
   }
