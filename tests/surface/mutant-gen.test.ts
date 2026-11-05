@@ -893,6 +893,8 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
     assert.deepEqual(view(mutantsFor(`${bang}\r\n${next}\r\n`, [1, 2])), [ne(2, 13)], 'a \\r\\n line end');
     assert.deepEqual(view(mutantsFor(`${bang}\r${next}`, [1])), [ne(1, 33)], 'a lone \\r');
     assert.deepEqual(view(mutantsFor(`\uFEFF${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'after a byte order mark');
+    assert.deepEqual(view(mutantsFor(`\uFEFF${bang}\r\n${next}\r\n`, [1, 2])), [ne(2, 13)], 'a \\r\\n line end after a byte order mark');
+    assert.deepEqual(view(mutantsFor(`\uFEFF${bang}\r${next}`, [1])), [ne(1, 34)], 'a lone \\r after a byte order mark');
     assert.deepEqual(view(mutantsFor(bang, [1])), [], 'a file of one line with no line end');
     assert.deepEqual(view(mutantsFor("#!/bin/sh -c 'a === b' && !c;\nconst d = e === f;\n", [1, 2])), [ne(2, 13)], 'operators and a quote on the hashbang line');
     assert.deepEqual(view(mutantsFor('#!/x\n/a === b/.test(c);\n', [2])), [ds(2, 1, '/a === b/.test(c);')], 'a regex literal still opens on the next line');
@@ -930,6 +932,9 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
       ['class A { x = 1; m?(): void { if(ok) {} } }', 34],
       ['class A { a() {} m?(): void { if(ok) {} } }', 34],
       ['class A { a(b = 1) {} m?(): void { if(ok) {} } }', 39],
+      ['class A { a<T = string>(): void {} m?(): void { if(ok) {} } }', 52],
+      ['class A { @d(x = 1) m?(): void { if(ok) {} } }', 37],
+      ['class A { [k = 1]?(): void { if(ok) {} } }', 33],
       ['class A { m?<T>(): void { if(ok) {} } }', 30],
       ['const C = class { m?(): void { if(ok) {} } };', 35],
     ];
@@ -943,12 +948,27 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
       'class A { x = f(c ? (d) : void { if(ok) {} }); }',
       'const o = { m: c ? (d) : void { if(ok) {} } };',
       'const a = c ? x + (d) : void { if(ok) {} };',
+      'class A { x = f({}) ? (d) : void { if(ok) {} }; }',
+      'class A { x = {} ? (d) : void { if(ok) {} }; }',
+      'class A { x = [{}] ? (d) : void { if(ok) {} }; }',
+      'class A { x = class {} ? (d) : void { if(ok) {} }; }',
     ];
     for (const source of sources) assert.deepEqual(view(mutantsFor(source, [1])), [], source);
   });
 
   test('card limit: a property with no closing ; hides the optional method after it [R3]', () => {
     assert.deepEqual(view(mutantsFor('class A {\n  x = 1\n  m?(): void { if(ok) {} }\n}', [3])), []);
+  });
+
+  test('card limit: the block of a function expression reads as a member end [R3]', () => {
+    assert.deepEqual(view(mutantsFor('class A { x = function () {} ? (d) : void { if(ok) {} }; }', [1])), forces(48));
+  });
+
+  test('acceptance 10: a run of ! of any length is read once, with no recursion [R4]', () => {
+    assert.deepEqual(view(mutantsFor(`const a = ${'!'.repeat(200000)}\n!as;`, [2])), [ds(2, 1, '!as;'), dn(2, 1)], 'one run over two lines');
+    const run = 4000;
+    assert.deepEqual(view(mutantsFor(`const a = ${'!'.repeat(run)}b;`, [1])), Array.from({ length: run }, (_, i) => dn(1, 11 + i)), 'one line');
+    assert.deepEqual(view(mutantsFor(`a${'!'.repeat(run)};`, [1])), [ds(1, 1, `a${'!'.repeat(run)};`)], 'a postfix run');
   });
 });
 
