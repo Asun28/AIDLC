@@ -108,7 +108,7 @@ test('goal review pool reset holds a waiting card without any queue request', as
     const goal = cardGoal(fx);
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
     fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT' }));
-    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.updatePool(goal.reviewPool, (current) => ({ ...current, resetAt: addMs(fx.now(), 60_000) }), fx.now());
     let polls = 0;
     await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
     assert.equal(fx.queue.list().length, 0);
@@ -122,7 +122,7 @@ test('invalid saved review pool reset fails closed before polling', async () => 
     const goal = cardGoal(fx);
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
     fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT' }));
-    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: '2026-99-99T00:00:00.000Z' });
+    fx.queue.updatePool(goal.reviewPool, (current) => ({ ...current, resetAt: '2026-99-99T00:00:00.000Z' }), fx.now());
     const failures: string[] = [];
     let polls = 0;
     await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; }, onFailure: (reason) => failures.push(reason) });
@@ -138,7 +138,7 @@ test('an old candidate request in another pool does not block the current card',
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
     fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'new-candidate', sha: 'b', dirty: false } }));
     const pool = `${goal.reviewPool}/formal`;
-    fx.queue.savePool({ ...fx.queue.pool(pool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.updatePool(pool, (current) => ({ ...current, resetAt: addMs(fx.now(), 60_000) }), fx.now());
     fx.queue.enqueue({ pool, repository: fx.repo.key, candidateDigest: 'old-candidate', base: 'main', policyVersion: 'v1', reviewer: 'formal', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
     let polls = 0;
     await runGoal(goal.id, 1, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
@@ -165,7 +165,7 @@ test('ship-stage pool hold survives an earlier pre-review pass', async () => {
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
     fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'candidate-a', sha: 'a', dirty: false }, preReview: { rounds: [{ round: 1, cycle: 0, reviewer: 'pre', candidateDigest: 'candidate-a', requestedAt: fx.now(), outcome: 'pass' }] } }));
     const pool = `${goal.reviewPool}/formal`;
-    fx.queue.savePool({ ...fx.queue.pool(pool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.updatePool(pool, (current) => ({ ...current, resetAt: addMs(fx.now(), 60_000) }), fx.now());
     fx.queue.enqueue({ pool, repository: fx.repo.key, candidateDigest: 'candidate-a', base: 'main', policyVersion: 'v1', reviewer: 'formal', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
     let polls = 0;
     await runGoal(goal.id, 2, { controller: fx.controller, store: fx.store, queue: fx.queue, provider: new MockProvider(), cwd: fx.tmp, now: fx.now, sleep: async () => { polls++; } });
@@ -215,7 +215,7 @@ test('a held review pool stops a waiting card but does not stop unrelated planni
     const goal = cardGoal(fx);
     const run = fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-ONE');
     fx.store.saveCardRun(CardRun.parse({ ...run, state: 'WAIT', candidate: { digest: 'candidate-a', sha: 'a', dirty: false } }));
-    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool, fx.now()), resetAt: addMs(fx.now(), 60_000) });
+    fx.queue.updatePool(goal.reviewPool, (current) => ({ ...current, resetAt: addMs(fx.now(), 60_000) }), fx.now());
     fx.queue.enqueue({ pool: goal.reviewPool, repository: fx.repo.key, candidateDigest: 'candidate-a', base: 'main', policyVersion: 'v1', reviewer: 'pre', requester: `${goal.id}:T1-ONE`, deadline: addMs(fx.now(), 120_000), now: fx.now() });
     const provider = new MockProvider();
     const directive = await runGoal(goal.id, 3, { controller: fx.controller, store: fx.store, queue: fx.queue, provider, cwd: fx.tmp, now: fx.now });
