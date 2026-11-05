@@ -184,6 +184,29 @@ function refusedInSection(fx: Fixture, key: string, attempts: Record<string, () 
   assert.deepEqual(fx.queue.pool(POOL).active, []);
 }
 
+/** Runs `mutate` with a second writer racing the first read of a request; returns what the second writer met. */
+function racingFirstRead(fx: Fixture, mutate: (queue: ReviewQueue) => unknown): unknown[] {
+  const plain = fx.queue;
+  const outcomes: unknown[] = [];
+  class Racing extends ReviewQueue {
+    raced = false;
+    override get(key: string): ReviewRequest | undefined {
+      if (!this.raced) {
+        this.raced = true;
+        try {
+          plain.enqueue(input('g-race:T1-RACE', 'race', 'pool-race'));
+          outcomes.push('landed');
+        } catch (err) {
+          outcomes.push(code(err));
+        }
+      }
+      return super.get(key);
+    }
+  }
+  mutate(new Racing(fx.paths.reviewQueue));
+  return outcomes;
+}
+
 test('acceptance 3: while a release holds its section, enqueue, admit, cancel and a second release refuse with LOCKED [R1] [R2]', () => {
   withFixture((fx) => {
     const request = running(fx, ownerOf(deadPid()));
@@ -302,34 +325,100 @@ test('acceptance 3: an enqueue joining a request of another pool takes the secti
   });
 });
 
-test('acceptance 3: a request moved to another pool after the first read is released in the section of the pool now holding it [R1] [R2]', () => {
+/** A request of pool `other` in each state a mutation needs, each with its own digest. */
+function inOtherPool(fx: Fixture, digest: string, state: 'queued' | 'running' | 'lost' | 'completed' = 'queued'): string {
+  const key = fx.queue.enqueue(input(`g-other:${digest}`, digest, 'other')).request.key;
+  if (state === 'queued') return key;
+  fx.queue.setPoolLimit('other', 9, 'fixture');
+  assert.equal(fx.queue.admit('other', ownerOf(deadPid()), fx.now(), key).status, 'admitted');
+  if (state === 'lost') fx.queue.markLost(key, 'lost');
+  if (state === 'completed') fx.queue.complete(key, 'verdict', fx.now());
+  return key;
+}
+
+test('acceptance 3: while a release holds its section, every mutation of another pool refuses with LOCKED [R1] [R2]', () => {
   withFixture((fx) => {
-    const plain = fx.queue;
     const request = running(fx, ownerOf(deadPid()));
-    plain.cancel(request.key, 'cancelled', fx.now());
-    // A second process moves the request between the first read and the section: enqueue replaces a cancelled request in the pool it names.
-    class Moved extends ReviewQueue {
-      moved = false;
-      override get(key: string): ReviewRequest | undefined {
-        const stale = super.get(key);
-        if (this.moved) return stale;
-        this.moved = true;
-        const held = running(fx, ownerOf(deadPid()), `g-moved:${CARD}`, 'other', plain);
-        assert.equal(held.key, request.key);
-        return stale;
-      }
-    }
-    const reached: unknown[] = [];
-    const released = new Moved(fx.paths.reviewQueue).release(request.key, REASON, { now: AT, before: () => {
-      try {
-        plain.enqueue(input('g-join:T1-JOIN', 'held', 'other'));
-      } catch (err) {
-        reached.push(code(err));
-      }
+    const completed = inOtherPool(fx, 'completed', 'completed');
+    const lost = inOtherPool(fx, 'lost', 'lost');
+    const queued = inOtherPool(fx, 'queued');
+    const live = inOtherPool(fx, 'live', 'running');
+    refusedInSection(fx, request.key, {
+      enqueue: () => fx.queue.enqueue(input('g-new:T1-NEW', 'new', 'other')),
+      admit: () => fx.queue.admit('other', ownerOf(process.pid), AT),
+      cancel: () => fx.queue.cancel(queued, 'cancelled meanwhile', AT),
+      complete: () => fx.queue.complete(live, 'verdict', AT),
+      requeue: () => fx.queue.requeue(completed, AT),
+      markLost: () => fx.queue.markLost(live, 'lost'),
+      resolveLost: () => fx.queue.resolveLost(lost, { found: false }, AT),
+      hold: () => fx.queue.hold(live, FAR, 'quota', AT),
+      setPoolLimit: () => fx.queue.setPoolLimit('other', 2, 'two seats'),
+      updatePool: () => fx.queue.updatePool('other', (current) => ({ ...current, maxConcurrent: 2 })),
+      release: () => fx.queue.release(live, 'second', { now: AT }),
+    });
+  });
+});
+
+test('acceptance 3: one lock file exists while a section is open, whatever the pool, and none after it [R1]', () => {
+  withFixture((fx) => {
+    const request = running(fx, ownerOf(deadPid()));
+    let during: string[] = [];
+    fx.queue.release(request.key, REASON, { now: AT, before: () => {
+      during = readdirSync(fx.paths.reviewQueue).filter((name) => name.endsWith('.lock'));
     } });
-    assert.deepEqual(reached, ['LOCKED']);
-    assert.equal(released.pool, 'other');
-    assert.deepEqual(plain.pool('other').active, []);
+    assert.equal(during.length, 1);
+    assert.equal(during[0]?.startsWith('_pool-'), false);
+    assert.deepEqual(readdirSync(fx.paths.reviewQueue).filter((name) => name.endsWith('.lock')), []);
+  });
+});
+
+test('acceptance 3: the lock writes nothing, and a record under the name of its file is never read as a request [R1]', () => {
+  withFixture((fx) => {
+    const request = running(fx, ownerOf(deadPid()));
+    const names = (): string[] => readdirSync(fx.paths.reviewQueue).sort();
+    assert.equal(names().length, 2, 'one pool record, one request');
+    let lock = '';
+    fx.queue.release(request.key, REASON, { now: AT, before: () => {
+      lock = readdirSync(fx.paths.reviewQueue).find((name) => name.endsWith('.lock'))!;
+    } });
+    assert.equal(names().length, 2, 'the sections left no record');
+    const record = path.join(fx.paths.reviewQueue, lock.replace(/\.lock$/, ''));
+    writeFileSync(record, '{"not":"a request"}\n');
+    assert.deepEqual(fx.queue.list().map((r) => r.key), [request.key]);
+    assert.equal(fx.queue.cancel(request.key, 'with the record present', AT)?.state, 'cancelled');
+    assert.equal(readFileSync(record, 'utf8'), '{"not":"a request"}\n');
+  });
+});
+
+test('acceptance 3: each mutation by key makes its first read of the request inside the section [R1]', () => {
+  const held = (fx: Fixture): string => running(fx, ownerOf(deadPid())).key;
+  const lost = (fx: Fixture): string => {
+    const key = held(fx);
+    fx.queue.markLost(key, 'lost');
+    return key;
+  };
+  const cases: Array<[string, (fx: Fixture) => string, (q: ReviewQueue, key: string) => unknown]> = [
+    ['release', held, (q, key) => q.release(key, REASON, { now: AT })],
+    ['cancel', held, (q, key) => q.cancel(key, REASON, AT)],
+    ['complete', held, (q, key) => q.complete(key, 'verdict', AT)],
+    ['requeue', held, (q, key) => q.requeue(key, AT)],
+    ['markLost', held, (q, key) => q.markLost(key, 'lost')],
+    ['hold', held, (q, key) => q.hold(key, FAR, 'quota', AT)],
+    ['resolveLost', lost, (q, key) => q.resolveLost(key, { found: false }, AT)],
+  ];
+  for (const [name, setup, mutate] of cases) {
+    withFixture((fx) => {
+      const key = setup(fx);
+      assert.deepEqual(racingFirstRead(fx, (q) => mutate(q, key)), ['LOCKED'], name);
+    });
+  }
+});
+
+test('acceptance 3: an enqueue reads an absent key inside the section, so a second enqueue cannot publish it in another pool first [R1]', () => {
+  withFixture((fx) => {
+    assert.deepEqual(racingFirstRead(fx, (q) => q.enqueue(input('g-one:T1-ONE', 'absent', 'pool-one'))), ['LOCKED']);
+    assert.equal(fx.queue.list().length, 1);
+    assert.equal(fx.queue.list()[0]?.pool, 'pool-one');
   });
 });
 
@@ -569,6 +658,55 @@ test('acceptance 7: a command run while another holds the section refuses with L
     } });
     assert.deepEqual(outcomes, [[1, true, 0]]);
   });
+});
+
+/** A running request of `pool`, its owner gone, requested by one goal through `card`. */
+function deadIn(fx: Fixture, pool: string, requester: string, digest: string): ReviewRequest {
+  const key = fx.queue.enqueue(input(requester, digest, pool)).request.key;
+  assert.equal(fx.queue.admit(pool, ownerOf(deadPid()), fx.now(), key).status, 'admitted');
+  return fx.queue.get(key)!;
+}
+
+test('acceptance 7: a command releasing a key of another pool while a section is open refuses with LOCKED and journals nothing in the shared goal [R1] [R3]', () => {
+  withFixture((fx) => {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const requester = `${goal.id}:${CARD}`;
+    const one = deadIn(fx, 'pool-one', requester, 'one');
+    const two = deadIn(fx, 'pool-two', requester, 'two');
+    const outcomes: Array<[number | null, boolean, number]> = [];
+    fx.queue.release(one.key, REASON, { now: AT, before: () => {
+      const racing = cli(fx, two.key);
+      outcomes.push([racing.status, /LOCKED/.test(racing.stderr), notes(fx, goal.id).length]);
+    } });
+    assert.deepEqual(outcomes, [[1, true, 0]]);
+    assert.equal(fx.queue.get(two.key)?.state, 'running');
+  });
+});
+
+test('acceptance 7: two processes releasing keys of two pools that share a goal end with one NOTE per key and a chain that verifies [R1] [R3]', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'held slot' });
+    const goal = goalForCards(fx, [CARD]);
+    const requester = `${goal.id}:${CARD}`;
+    for (let round = 0; round < 3; round += 1) {
+      const pools = [`pool-one-${round}`, `pool-two-${round}`];
+      const requests = pools.map((pool) => deadIn(fx, pool, requester, pool));
+      const results = await Promise.all(requests.map((request) => cliAsync(fx, request.key)));
+      for (const [index, result] of results.entries()) {
+        if (result.status === 0) continue;
+        assert.match(result.stderr, /LOCKED/);
+        assert.equal(cli(fx, requests[index]!.key).status, 0);
+      }
+      for (const request of requests) assert.equal(fx.queue.get(request.key)?.state, 'cancelled');
+      assert.deepEqual(pools.flatMap((pool) => fx.queue.pool(pool).active), []);
+      for (const request of requests) assert.equal(notes(fx, goal.id).filter((e) => e.data['key'] === request.key).length, 1);
+      assert.deepEqual(Journal.forGoal(fx.paths.journal, goal.id).verify().problems, []);
+    }
+  } finally {
+    fx.cleanup();
+  }
 });
 
 const read = (file: string): string => readFileSync(new URL(`../../${file}`, import.meta.url), 'utf8').replaceAll('\r\n', '\n');
