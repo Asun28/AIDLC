@@ -7,12 +7,13 @@
  * follows persisted queue order with deadlines; retries cannot jump the queue. Waiting for
  * quota holds no active slot. A lost response must be looked up before its slot is released.
  *
- * Every mutation does its reads and its writes in one section of the pool record's lock (`section`, `sectionOf`), so against
- * every other mutation of that pool the read of a request and the writes that follow it are one step. The lock is not
+ * Every mutation does its reads and its writes in one section of the queue's single lock (`section`), whatever the pool, so
+ * against every other mutation of the queue the read of a request and the writes that follow it are one step. The lock is not
  * reentrant: only public methods open a section, and a method running in one calls private methods that open none. A
  * read-only method takes no lock.
  */
 import path from 'node:path';
+import { z } from 'zod';
 import { ActorIdentity, ReviewPool, ReviewRequest, nowIso } from '../core/types.ts';
 import { reviewRequestKey } from '../core/review-policy.ts';
 import { atomicWriteJson, listJsonFiles, processAlive, readJson, updateJson } from '../state/store.ts';
@@ -44,6 +45,9 @@ export interface ReleaseOptions {
 /** The largest pid `process.kill` accepts; above it a signal throws, which would read as a process that is gone. */
 const MAX_PID = 2 ** 31 - 1;
 
+/** The record whose lock is the queue's one lock. It holds nothing and is never written; only its `.lock` file ever exists. */
+const LOCK_RECORD = '_queue.json';
+
 export class ReviewQueue {
   readonly dir: string;
 
@@ -60,36 +64,20 @@ export class ReviewQueue {
   }
 
   /**
-   * One section of the pool record's lock around `body`, which refuses with `LOCKED` after the default wait of `updateJson`.
-   * The change returns the record it received, so the lock itself writes nothing and every write is `body`'s.
+   * One section of the queue's lock around `body`, which refuses with `LOCKED` after the default wait of `updateJson`. The
+   * change returns the record it received, so the lock itself writes nothing and every write is `body`'s.
    */
-  private section<T>(pool: string, body: () => T): T {
+  private section<T>(body: () => T): T {
     let result: T;
-    updateJson(this.poolFile(pool), ReviewPool, (current) => {
+    updateJson(path.join(this.dir, LOCK_RECORD), z.unknown(), (current) => {
       result = body();
       return current;
     });
     return result!;
   }
 
-  /**
-   * The section of the pool `home` names. `enqueue` replaces a cancelled request in the pool its caller names, so a request
-   * can change pool after an unlocked read: `home` is read again in the section, and after a move `body` runs in the section
-   * of the new pool, never under the lock of the old one.
-   */
-  private sectionOf<T>(home: () => string, body: () => T): T {
-    for (;;) {
-      const pool = home();
-      let result: { value: T } | undefined;
-      this.section(pool, () => {
-        if (home() === pool) result = { value: body() };
-      });
-      if (result) return result.value;
-    }
-  }
-
   private requestSection<T>(key: string, body: (request: ReviewRequest) => T): T {
-    return this.sectionOf(() => this.mustGet(key).pool, () => body(this.mustGet(key)));
+    return this.section(() => body(this.mustGet(key)));
   }
 
   pool(pool: string, now: string = nowIso()): ReviewPool {
@@ -102,7 +90,7 @@ export class ReviewQueue {
    * nothing. It must not call this queue's mutations: the lock is not reentrant.
    */
   updatePool(pool: string, change: (current: ReviewPool) => ReviewPool, now: string = nowIso()): ReviewPool {
-    return this.section(pool, () => {
+    return this.section(() => {
       const next = { ...change(this.pool(pool, now)), pool };
       this.writePool(next);
       return next;
@@ -115,7 +103,7 @@ export class ReviewQueue {
 
   setPoolLimit(pool: string, maxConcurrent: number, evidence: string): ReviewPool {
     if (maxConcurrent > 1 && !evidence.trim()) throw new Error('raising the pool limit above one requires provider/project evidence');
-    return this.section(pool, () => {
+    return this.section(() => {
       const p = { ...this.pool(pool), maxConcurrent, updatedAt: nowIso() };
       this.writePool(p);
       return p;
@@ -128,7 +116,7 @@ export class ReviewQueue {
 
   list(pool?: string): ReviewRequest[] {
     const all = listJsonFiles(this.dir)
-      .filter((f) => !path.basename(f).startsWith('_pool-'))
+      .filter((f) => !path.basename(f).startsWith('_'))
       .map((f) => readJson(f, ReviewRequest))
       .filter((r): r is ReviewRequest => Boolean(r));
     return (pool ? all.filter((r) => r.pool === pool) : all).sort((a, b) => a.seq - b.seq);
@@ -137,12 +125,7 @@ export class ReviewQueue {
   enqueue(input: EnqueueInput): EnqueueResult {
     const now = input.now ?? nowIso();
     const key = reviewRequestKey(input);
-    // A stored request that is not cancelled keeps its pool, which may not be the one named here.
-    const home = (): string => {
-      const stored = this.get(key);
-      return stored && stored.state !== 'cancelled' ? stored.pool : input.pool;
-    };
-    return this.sectionOf(home, () => this.enqueueInSection(input, key, now));
+    return this.section(() => this.enqueueInSection(input, key, now));
   }
 
   private enqueueInSection(input: EnqueueInput, key: string, now: string): EnqueueResult {
@@ -199,7 +182,7 @@ export class ReviewQueue {
    * queued or retry-after request carries is treated as the last request of the queue.
    */
   admit(pool: string, actor: ActorIdentity = currentActor(), now: string = nowIso(), key?: string): AdmitResult {
-    return this.section(pool, () => this.admitInSection(pool, actor, now, key));
+    return this.section(() => this.admitInSection(pool, actor, now, key));
   }
 
   private admitInSection(pool: string, actor: ActorIdentity, now: string, key: string | undefined): AdmitResult {
@@ -303,8 +286,9 @@ export class ReviewQueue {
   }
 
   cancel(key: string, reason: string, now: string = nowIso()): ReviewRequest | undefined {
-    if (!this.get(key)) return undefined;
-    return this.requestSection(key, (r) => {
+    return this.section(() => {
+      const r = this.get(key);
+      if (!r) return undefined;
       const cancelled: ReviewRequest = { ...r, state: 'cancelled', finishedAt: now, lastError: reason };
       atomicWriteJson(this.requestFile(key), cancelled);
       this.releaseSlot(r.pool, key, now);

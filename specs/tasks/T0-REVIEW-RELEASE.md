@@ -109,3 +109,13 @@ Removal of `savePool`, finishing F1, after the card amendment on main (merge fbc
 GREEN: the dod_command of the amended card before the commit: exit 0, typecheck clean, tests 297, pass 297, fail 0.
 
 Mutants: 48 on the source, all killed on one run, restored and compared with a saved diff, none committed. The 45 of the repair ran again; `savePool: no section` left the set with the method. New: `savePool` restored, `updatePool` not applying its change, `updatePool` writing nothing.
+
+Repair of R3 decision 2 (F4 and F5 cross-pool-request-race, F6 journal-append-race): one lock over the whole queue, taken on the record `_queue.json` of the queue directory, which is never written. `home()`, the pool re-read and `sectionOf` are gone; `requestSection` is a plain wrapper, `cancel` and `enqueue` make their first read in the section, `list()` skips every `_` file, and the lock file does not end in `.json`. Source diff of this repair: 19 lines added, 35 removed.
+
+RED: commit 2036aa9 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 32, pass 25, fail 7: every mutation of another pool landing during a release's section, a lock under the pool's name, the lock record read as a pool, a first read of a request outside the section (`release` and `enqueue`, the F4 and F5 windows), a CLI release of another pool landing during a section, and the two-process test failing on the chain, which reproduced F6. That commit replaced the test of a move between pools, which named the per-pool design and whose window no longer exists; the first-read tests cover it. A key that moves between pools stays covered by acceptance 5.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 303, pass 303, fail 0.
+
+Mutants: 52 on the source, all killed on one run, restored and compared with a saved diff, none committed. Removed with their code: `enqueue` locking the stored request's pool, `sectionOf` not reading the pool again. New: one lock per pool, the lock record named as a pool, the lock writing a record, `list()` reading the lock record, a first read before the section in `enqueue`, `cancel` and `requestSection`. Those of a section dropped from a method, and of `updatePool`, `setPoolLimit` and `savePool`, ran again against the new text. The doc text did not change.
+
+The two-process test of acceptance 7 depends on overlap; the test that runs the CLI for a key of another pool inside a held section is deterministic and shows the second release journals nothing until the first section closes.
