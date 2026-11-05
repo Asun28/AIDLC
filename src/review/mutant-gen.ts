@@ -338,14 +338,18 @@ function statementHead(s: Shape, n: number): { first: number; declares: boolean 
   return { first, declares };
 }
 
-/** Whether the `?` at token `q` marks an optional method: directly in a class body, with no `=` of a property initializer before it in the member. */
+/**
+ * Whether the `?` at token `q` marks an optional method: directly in a class body, with no `=` of a property initializer
+ * before it in the member. The walk skips matched groups; a `;` or the `}` of a block ends the member before.
+ */
 function marksOptionalMethod(s: Shape, q: number): boolean {
   const body = s.enclosing[q]!;
   if (s.braces.get(body) !== 'class') return false;
   for (let k = q - 1; k > body; k--) {
     const text = s.toks[k]!.text;
-    if (text === ';' || text === '}') return true;
+    if (text === ';' || (text === '}' && s.braces.get(s.match.get(k) ?? -1) === 'block')) return true;
     if (text === '=') return false;
+    k = s.match.get(k) ?? k;
   }
   return true;
 }
@@ -430,20 +434,29 @@ function startsOperand(src: string, t: Token): boolean {
 }
 
 /**
- * Whether the `!` at token `n` is unary. The operand comes first: a `!` (or a run of them) with no operand after it
- * is postfix. With an operand, a `!` after a value is postfix only on the value's line, since a non-null assertion
- * takes no line break before it and automatic semicolon insertion ends the statement there; a line break inside a
- * comment counts, as it does for the language.
+ * The tokens that are a unary `!`, each run of `!` read once from its left end. The operand comes first: a run with no
+ * operand after it is postfix. With an operand, a `!` after a value is postfix only on the value's line, since a
+ * non-null assertion takes no line break before it and automatic semicolon insertion ends the statement there; a line
+ * break inside a comment counts, as it does for the language.
  */
-function isUnaryNot(src: string, s: Shape, n: number): boolean {
-  let after = n + 1;
-  while (s.toks[after]?.text === '!') after++;
-  const operand = s.toks[after];
-  if (!operand) return false;
-  const prev = s.toks[n - 1];
-  const value = prev !== undefined && (prev.text === '!' ? !isUnaryNot(src, s, n - 1) : endsValue(s, n - 1));
-  if (!startsOperand(src, operand) && (value || !CONTEXTUAL_WORDS.has(operand.text))) return false;
-  return !value || LINE_BREAK.test(src.slice(prev!.end, s.toks[n]!.start));
+function unaryNots(src: string, s: Shape): Set<number> {
+  const { toks } = s;
+  const out = new Set<number>();
+  for (let first = 0; first < toks.length; first++) {
+    if (toks[first]!.text !== '!') continue;
+    let last = first;
+    while (toks[last + 1]?.text === '!') last++;
+    const operand = toks[last + 1];
+    let value = first > 0 && endsValue(s, first - 1);
+    for (let n = first; operand && n <= last; n++) {
+      const named = startsOperand(src, operand) || (!value && CONTEXTUAL_WORDS.has(operand.text));
+      const unary = named && (!value || LINE_BREAK.test(src.slice(toks[n - 1]!.end, toks[n]!.start)));
+      if (unary) out.add(n);
+      value = !unary;
+    }
+    first = last;
+  }
+  return out;
 }
 
 /** Whether the `if` at token `n` is a statement: not a member, and not a name directly in a list of members. */
@@ -482,13 +495,14 @@ export function mutantsFor(source: string, changedLines: readonly number[]): Mut
   }
   const toks = tokens(source, mask);
   const shape = shapeOf(toks);
+  const unary = unaryNots(source, shape);
   let line = 1;
   toks.forEach((t, n) => {
     while (t.start >= (starts[line] ?? Infinity)) line++;
     if (!wanted.has(line)) return;
     const binary = BINARY.get(t.text);
     if (binary && spaceOrEdge(source[t.start - 1]) && spaceOrEdge(source[t.end])) add(line, binary[0], t.start, t.end, binary[1]);
-    else if (t.text === '!' && isUnaryNot(source, shape, n)) add(line, 'drop-not', t.start, t.end, '');
+    else if (unary.has(n)) add(line, 'drop-not', t.start, t.end, '');
     else if ((t.text === 'true' || t.text === 'false') && !isMember(toks, n)) add(line, 'flip-boolean', t.start, t.end, t.text === 'true' ? 'false' : 'true');
     else if (t.text === 'if' && isIfStatement(shape, n)) {
       const close = shape.match.get(n + 1);
