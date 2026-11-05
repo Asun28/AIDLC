@@ -15,6 +15,9 @@ const SCANNERS = '.github/workflows/security-scanners.yml';
 const SKIP_CI = `${CI} (no package.json)`;
 const SKIP_EVALS = `${EVALS} (no package.json)`;
 
+/** Git reads its repository from `GIT_DIR`, `GIT_WORK_TREE`, `GIT_COMMON_DIR` and others; a fixture drops every `GIT_` variable, so a caller's cannot reach it. */
+const FIXTURE_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_')));
+
 const dirs: string[] = [];
 after(() => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
@@ -27,7 +30,7 @@ function tempDir(): string {
 }
 
 function git(cwd: string, ...args: string[]): void {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, env: FIXTURE_ENV, encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
 }
 
@@ -39,12 +42,30 @@ function repository(branch: string): string {
   return dir;
 }
 
-/** A clone of a repository on `branch`, moved to a branch `work`, so only the remote lookup can name `branch`. */
-function cloneOf(branch: string): string {
+/** A clone of a repository on `branch`, standing on that branch. */
+function cloneOnDefault(branch: string): string {
   const clone = path.join(tempDir(), 'clone');
   git(path.dirname(clone), 'clone', '-q', repository(branch), clone);
+  return clone;
+}
+
+/** A clone moved to a branch `work`, so only the remote read can name `branch`. */
+function cloneOf(branch: string): string {
+  const clone = cloneOnDefault(branch);
   git(clone, 'switch', '-q', '-c', 'work');
   return clone;
+}
+
+/** A linked worktree of `main`, on a new branch `wt`. */
+function linkedTo(main: string): string {
+  const linked = path.join(tempDir(), 'linked');
+  git(main, 'worktree', 'add', '-q', '-b', 'wt', linked);
+  return linked;
+}
+
+function put(file: string, text: string): void {
+  mkdirSync(path.dirname(file), { recursive: true });
+  writeFileSync(file, text);
 }
 
 function baseAfterInit(target: string): unknown {
@@ -61,6 +82,10 @@ function holdingOneFile(): string {
 describe('T1-INIT-BASE-CI: the base of a created config', () => {
   test('acceptance 1: a clone whose remote default branch is master gets master, whatever branch it is on [R1]', () => {
     assert.equal(baseAfterInit(cloneOf('master')), 'master');
+  });
+
+  test('acceptance 1: a clone standing on its remote default branch gets that branch [R1]', () => {
+    assert.equal(baseAfterInit(cloneOnDefault('master')), 'master');
   });
 
   test('acceptance 1: a remote default with a slash in its name loses only the leading origin/ [R1]', () => {
@@ -103,6 +128,115 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
 
   test('acceptance 1: a directory that is no repository gets the template value [R1]', () => {
     assert.equal(baseAfterInit(tempDir()), 'main');
+  });
+
+  test('acceptance 1: a linked worktree gives the remote default, or its own branch with no remote [R1]', () => {
+    assert.equal(baseAfterInit(linkedTo(cloneOf('master'))), 'master');
+    assert.equal(baseAfterInit(linkedTo(repository('develop'))), 'wt');
+  });
+
+  test('acceptance 1: with GIT_DIR naming another repository the result is that of the target [R1]', () => {
+    const target = repository('develop');
+    process.env['GIT_DIR'] = path.join(repository('other'), '.git');
+    try {
+      assert.equal(baseAfterInit(target), 'develop');
+    } finally {
+      delete process.env['GIT_DIR'];
+    }
+  });
+
+  test('acceptance 1: HEAD naming --upload-pack=x counts as no result [R1]', () => {
+    const target = repository('develop');
+    put(path.join(target, '.git', 'HEAD'), 'ref: refs/heads/--upload-pack=x\n');
+    assert.equal(baseAfterInit(target), 'main');
+  });
+
+  test('acceptance 1: a directory in place of HEAD counts as no result [R1]', () => {
+    const target = repository('develop');
+    rmSync(path.join(target, '.git', 'HEAD'));
+    mkdirSync(path.join(target, '.git', 'HEAD'));
+    assert.equal(baseAfterInit(target), 'main');
+  });
+
+  for (const text of ['ref: refs/heads/trunk\r\n', 'ref: refs/heads/trunk', 'ref: refs/heads/trunk\n\n']) {
+    test(`acceptance 1: HEAD holding ${JSON.stringify(text)} names trunk [R1]`, () => {
+      const target = repository('develop');
+      put(path.join(target, '.git', 'HEAD'), text);
+      assert.equal(baseAfterInit(target), 'trunk');
+    });
+  }
+
+  // `..`, a part starting with `.` and an empty part are no ref name git accepts; `.invalid` is what HEAD holds in a reftable repository.
+  for (const name of ['', 'a..b', '../x', 'a/../b', '.invalid', 'a/.b', 'a//b', 'a/', '/a', '-a', 'a b', 'a$(x)', 'a;b', 'caf\u00e9', 'trunk\nextra']) {
+    test(`acceptance 1: the name ${JSON.stringify(name)} counts as no result in HEAD and in origin/HEAD [R1]`, () => {
+      const target = cloneOf('master');
+      put(path.join(target, '.git', 'refs', 'remotes', 'origin', 'HEAD'), `ref: refs/remotes/origin/${name}\n`);
+      assert.equal(baseAfterInit(target), 'work');
+      rmSync(path.join(target, 'aidlc.config.json'));
+      put(path.join(target, '.git', 'HEAD'), `ref: refs/heads/${name}\n`);
+      assert.equal(baseAfterInit(target), 'main');
+    });
+  }
+
+  test('acceptance 1: a ref line with another prefix, or a commit id, counts as no result [R1]', () => {
+    for (const text of ['ref: refs/tags/trunk\n', 'ref: refs/remotes/origin/trunk\n', 'refs/heads/trunk\n', '0123456789abcdef0123456789abcdef01234567\n', '']) {
+      const target = repository('develop');
+      put(path.join(target, '.git', 'HEAD'), text);
+      assert.equal(baseAfterInit(target), 'main', text);
+    }
+  });
+
+  test('acceptance 1: a .git file names the git directory relative to the target [R1]', () => {
+    const parent = tempDir();
+    const target = path.join(parent, 'target');
+    put(path.join(parent, 'store', 'HEAD'), 'ref: refs/heads/trunk\n');
+    put(path.join(target, '.git'), 'gitdir: ../store\r\n');
+    assert.equal(baseAfterInit(target), 'trunk');
+  });
+
+  test('acceptance 1: a .git file with no usable gitdir line counts as no result [R1]', () => {
+    for (const text of ['gitdir: missing\n', 'gitdir: store\nextra\n', 'gitdir: \n', 'store\n']) {
+      const target = tempDir();
+      put(path.join(target, 'store', 'HEAD'), 'ref: refs/heads/trunk\n');
+      put(path.join(target, '.git'), text);
+      assert.equal(baseAfterInit(target), 'main', text);
+    }
+  });
+
+  test('acceptance 1: a commondir file is resolved against the git directory [R1]', () => {
+    const target = repository('develop');
+    put(path.join(target, '.git', 'commondir'), '../common\r\n');
+    put(path.join(target, 'common', 'refs', 'remotes', 'origin', 'HEAD'), 'ref: refs/remotes/origin/trunk\n');
+    assert.equal(baseAfterInit(target), 'trunk');
+  });
+
+  test('acceptance 1: a commondir that cannot be used leaves the current branch [R1]', () => {
+    for (const text of ['../missing\n', '../common\nextra\n', '']) {
+      const target = repository('develop');
+      put(path.join(target, '.git', 'commondir'), text);
+      put(path.join(target, 'common', 'refs', 'remotes', 'origin', 'HEAD'), 'ref: refs/remotes/origin/trunk\n');
+      assert.equal(baseAfterInit(target), 'develop', text);
+    }
+  });
+
+  test('acceptance 1: a gitdir or commondir starting with two separators counts as no result, since on Windows it can name another host [R1]', () => {
+    const store = tempDir();
+    put(path.join(store, 'HEAD'), 'ref: refs/heads/leaked\n');
+    put(path.join(store, 'refs', 'remotes', 'origin', 'HEAD'), 'ref: refs/remotes/origin/leaked\n');
+    const slashes = store.replace(/\\/g, '/');
+    const device = process.platform === 'win32' ? `//?/${slashes}` : `/${slashes}`;
+    for (const value of [device, device.replace(/\//g, '\\')]) {
+      const pointed = tempDir();
+      put(path.join(pointed, '.git'), `gitdir: ${value}\n`);
+      assert.equal(baseAfterInit(pointed), 'main', value);
+      const common = repository('develop');
+      put(path.join(common, '.git', 'commondir'), `${value}\n`);
+      assert.equal(baseAfterInit(common), 'develop', value);
+    }
+  });
+
+  test('acceptance 1: src/scaffold/init.ts imports no node:child_process [R1]', () => {
+    assert.doesNotMatch(readFileSync(path.join(root, 'src', 'scaffold', 'init.ts'), 'utf8'), /child_process/);
   });
 
   test('acceptance 1: an existing aidlc.config.json keeps its bytes [R1]', () => {
@@ -154,7 +288,7 @@ describe('T1-INIT-BASE-CI: a target with no package.json', () => {
 
   test('acceptance 2: the CLI prints each skip on its own line, and writes nothing on --dry-run [R2]', () => {
     const target = holdingOneFile();
-    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'init', target, '--dry-run'], { encoding: 'utf8', timeout: 60_000, windowsHide: true });
+    const r = spawnSync(process.execPath, [path.join(root, 'bin', 'aidlc.js'), 'init', target, '--dry-run'], { env: FIXTURE_ENV, encoding: 'utf8', timeout: 60_000, windowsHide: true });
     assert.equal(r.status, 0, r.stderr);
     const lines = r.stdout.split(/\r?\n/);
     assert.ok(lines.includes(`  = ${SKIP_CI}`), r.stdout);
