@@ -352,6 +352,17 @@ describe('T1-INIT-BASE-CI: a target that keeps both workflows', () => {
     assertBothWritten(target);
   });
 
+  test('acceptance 3: a target that is a file throws ENOTDIR and writes nothing [R2]', () => {
+    for (const dryRun of [false, true]) {
+      const dir = tempDir();
+      const target = path.join(dir, 'a-file');
+      writeFileSync(target, 'held');
+      assert.throws(() => initProject({ target, dryRun }), { code: 'ENOTDIR' });
+      assert.equal(readFileSync(target, 'utf8'), 'held');
+      assert.deepEqual(readdirSync(dir), ['a-file']);
+    }
+  });
+
   test('acceptance 3: dryRun over an empty directory reports both as created [R2]', () => {
     const target = tempDir();
     const report = initProject({ target, dryRun: true });
