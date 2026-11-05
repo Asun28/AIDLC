@@ -46,10 +46,14 @@ function holdsContent(target: string): boolean {
   }
 }
 
-/** The short name a symbolic ref of the target points at; empty when there is no such ref, repository or `git`. */
-function symbolicRef(target: string, ref: string): string {
+/**
+ * The branch a symbolic ref of the target points at, with `prefix` dropped; empty when there is no such ref, repository or
+ * `git`, or the ref points outside `prefix`. It reads the full ref, because `--short` prints `heads/develop` beside a tag `develop`.
+ */
+function branchOf(target: string, ref: string, prefix: string): string {
   try {
-    return execFileSync('git', ['-C', target, 'symbolic-ref', '--short', ref], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+    const full = execFileSync('git', ['-C', target, 'symbolic-ref', ref], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
+    return full.startsWith(prefix) ? full.slice(prefix.length) : '';
   } catch {
     return '';
   }
@@ -57,7 +61,7 @@ function symbolicRef(target: string, ref: string): string {
 
 /** The remote default branch, else the current branch; empty on a detached HEAD with no remote default, or outside a repository. */
 function defaultBranch(target: string): string {
-  return symbolicRef(target, 'refs/remotes/origin/HEAD').replace(/^origin\//, '') || symbolicRef(target, 'HEAD');
+  return branchOf(target, 'refs/remotes/origin/HEAD', 'refs/remotes/origin/') || branchOf(target, 'HEAD', 'refs/heads/');
 }
 
 export function initProject(options: InitOptions): InitReport {
