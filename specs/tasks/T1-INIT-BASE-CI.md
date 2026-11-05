@@ -20,14 +20,14 @@ allow_paths:
 dod_command: npm run typecheck && node --test tests/surface/init-base-ci.test.ts tests/surface/init-no-package.test.ts tests/infra/init.test.ts tests/surface/command-lines.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 requirements:
-  - R1. WHEN `aidlc init` creates `aidlc.config.json`, `base` shall be the remote default branch (`git symbolic-ref --short refs/remotes/origin/HEAD` with `origin/` dropped), else the current branch (`git symbolic-ref --short HEAD`), else the template value. An existing config stays unchanged.
+  - R1. WHEN `aidlc init` creates `aidlc.config.json`, `base` shall be the remote default branch (`git symbolic-ref refs/remotes/origin/HEAD` with `refs/remotes/origin/` dropped), else the current branch (`git symbolic-ref HEAD` with `refs/heads/` dropped), else the template value. An existing config stays unchanged.
   - R2. WHEN the target holds an entry other than `.git` and no `package.json`, `initProject` shall not write `.github/workflows/aidlc-ci.yml` or `.github/workflows/agent-evals.yml`, and `report.skipped` shall carry each as `<path> (no package.json)`. `--force` does not override this, and `--dry-run` reports the same. An empty target and a target with a `package.json` get both, as at 417df0a. `security-scanners.yml` is always written.
   - R3. Every `npx aidlc` in `.github/workflows/agent-evals.yml`, `.github/workflows/aidlc-ci.yml`, `.github/workflows/docs-check.yml` and their copies under `templates/github/workflows/` shall read `npx --no-install aidlc`.
   - R4. The two lines of `tests/surface/command-lines.test.ts` that name `npx aidlc evals run` (43 and 46) shall name `npx --no-install aidlc evals run`; no other line of that file changes.
   - R5. `docs/OPERATIONS.md` shall carry the OPERATIONS paragraph of the Doc text section after the paragraph starting `Agent files name a model and an effort`.
   - R6. The CHANGELOG Unreleased section shall carry the entry of the Doc text section.
 acceptance:
-  - 1. `tests/surface/init-base-ci.test.ts` - with real git repositories, `initProject` writes `base` `master` for a clone whose remote default branch is `master`, `develop` for a repository with no remote on branch `develop`, and `main` for a directory that is no repository; an existing `aidlc.config.json` keeps its bytes. [R1] [dod arm 2]
+  - 1. `tests/surface/init-base-ci.test.ts` - with real git repositories, `initProject` writes `base` `master` for a clone whose remote default branch is `master`, `develop` for a repository with no remote on branch `develop`, and `main` for a directory that is no repository; a tag named like the branch still gives the branch name; an existing `aidlc.config.json` keeps its bytes. [R1] [dod arm 2]
   - 2. Same file - over a directory holding one file and no `package.json`, neither workflow is written, `report.skipped` carries both reason strings, `security-scanners.yml` is written, and the same holds with `force` and `dryRun`. [R2] [dod arm 2]
   - 3. Same file - over an empty directory, and over a directory holding a `package.json`, both workflows are written. `.git` alone counts as empty. [R2] [dod arm 2]
   - 4. Same file - no workflow file under `.github/workflows/` or `templates/github/workflows/` holds `npx aidlc`. [R3] [dod arm 2]
@@ -36,7 +36,7 @@ acceptance:
 depends_on: [T1-INIT-HOOK-PATH-2]
 budget: 290
 tdd: true
-sweep: "git grep on main 417df0a: `npx aidlc` in workflows is .github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35, docs-check.yml:32 and templates/github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35; in tests it is tests/surface/command-lines.test.ts:43 and 46, while tests/surface/hooks.test.ts:709 names `npx aidlc doctor` for another reason and stays. `aidlc-ci.yml` and `agent-evals.yml` are pinned by tests/infra/init.test.ts:27 over an empty target, which is why an empty target keeps them. OPERATIONS:13 is the pinned Setup sentence (tests/infra/init.test.ts:166), so the new text is its own paragraph. `git grep 'base:'` over tests finds no assertion on the `base` of an initialised config."
+sweep: "git grep on main 417df0a: `npx aidlc` in workflows is .github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35, docs-check.yml:32 and templates/github/workflows/agent-evals.yml:29, aidlc-ci.yml:32 and 35; in tests it is tests/surface/command-lines.test.ts:43 and 46, while tests/surface/hooks.test.ts:709 names `npx aidlc doctor` for another reason and stays. `aidlc-ci.yml` and `agent-evals.yml` are pinned by tests/infra/init.test.ts:27 over an empty target, which is why an empty target keeps them. OPERATIONS:13 is the pinned Setup sentence (tests/infra/init.test.ts:166), so the new text is its own paragraph. `git grep 'base:'` over tests finds no assertion on the `base` of an initialised config. R1 uses full refs because `--short` printed `heads/develop` with a tag `develop` beside the branch."
 forbid: [weakening or skipping a test to go green, editing tests/infra/init.test.ts, a change to `templates/aidlc.config.json`, any change to a workflow other than the `npx aidlc` text, an edit of any file under `.aidlc/`]
 non_goals: [generating a workflow for another language, the review commands of a target, MyInspection's own card findings, the `npx --no-install aidlc` spellings elsewhere, the rename]
 hygiene: "Prove each arm with a mutant: dropping the remote lookup fails the `master` case of acceptance 1; treating `.git` as content fails acceptance 3; letting `force` write the workflows fails acceptance 2. The doc test reads the exact line (docs/LESSONS.md 2026-09-24 T1-OPUS55-MODELS)."
@@ -51,7 +51,7 @@ A config created by `aidlc init` names the target's default branch. A repository
 ## Implementation notes
 - Read the directory before any write of `initProject`, since `init` itself creates entries: `readdirSync(target).filter((n) => n !== '.git')`, and a missing target counts as empty.
 - The skip belongs in `copyTree` or a filter on its `rel`. `copyTree` already special-cases `.claude/settings.json`.
-- Use `execFileSync('git', ['-C', target, 'symbolic-ref', '--short', ...], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })` in a try. A clone sets `origin/HEAD`, and a repository with no remote fails the first call.
+- Use `execFileSync('git', ['-C', target, 'symbolic-ref', ...], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true })` in a try. A clone sets `origin/HEAD`, and a repository with no remote fails the first call.
 - Set `cfg['base']` only when the lookup returns a name, next to `cfg['cardsDir']`.
 
 ## Doc text
