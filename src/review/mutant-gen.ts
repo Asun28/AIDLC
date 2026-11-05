@@ -175,6 +175,8 @@ function scan(src: string): { mask: Uint8Array; opens: Set<number> } {
   let last = '';
   let word = '';
   let i = 0;
+  // A file read keeps its byte order mark, which TypeScript drops before it looks for a hashbang.
+  const hashbangAt = src[0] === '\ufeff' ? 1 : 0;
   while (i < src.length) {
     const c = src[i]!;
     if (template) {
@@ -188,7 +190,7 @@ function scan(src: string): { mask: Uint8Array; opens: Set<number> } {
     }
     const d = src[i + 1];
     let end = i + 1;
-    if (c === '/' && d === '/') {
+    if ((c === '/' && d === '/') || (c === '#' && d === '!' && i === hashbangAt)) {
       while (end < src.length && !LINE_BREAK.test(src[end]!)) end++;
       mask.fill(COMMENT, i, end);
     } else if (c === '/' && d === '*') {
@@ -300,6 +302,8 @@ const UNARY_WORDS = new Set([...OPERAND_WORDS, 'default']);
 const CONTROL_WORDS = new Set(['if', 'while', 'for', 'with']);
 /** Words that continue an expression, so a `!` before them has no operand. */
 const BINARY_WORDS = new Set(['in', 'instanceof', 'as', 'satisfies']);
+/** The binary words that are plain names too: with no value before the `!` they are its operand. */
+const CONTEXTUAL_WORDS = new Set(['as', 'satisfies']);
 const OPERAND_PUNCTUATORS = new Set('([{+-~<#');
 
 const isWord = (t: Token) => wordEnd(t.text, 0) > 0;
@@ -334,9 +338,22 @@ function statementHead(s: Shape, n: number): { first: number; declares: boolean 
   return { first, declares };
 }
 
-/** Whether the `(` at token `open` opens the parameters of a declaration: a name or `function` before it, not a ternary's branch. */
+/** Whether the `?` at token `q` marks an optional method: directly in a class body, with no `=` of a property initializer before it in the member. */
+function marksOptionalMethod(s: Shape, q: number): boolean {
+  const body = s.enclosing[q]!;
+  if (s.braces.get(body) !== 'class') return false;
+  for (let k = q - 1; k > body; k--) {
+    const text = s.toks[k]!.text;
+    if (text === ';' || text === '}') return true;
+    if (text === '=') return false;
+  }
+  return true;
+}
+
+/** Whether the `(` at token `open` opens the parameters of a declaration: a name, `function` or an optional method's `?` before it, not a ternary's branch. */
 function opensParameters(s: Shape, open: number): boolean {
   const name = s.toks[open - 1];
+  if (name?.text === '?') return marksOptionalMethod(s, open - 1);
   if (!name || !(isWord(name) || name.text === '>' || name.text === ']' || name.text === '')) return false;
   return s.toks[open - 2]?.text !== '?';
 }
@@ -422,11 +439,11 @@ function isUnaryNot(src: string, s: Shape, n: number): boolean {
   let after = n + 1;
   while (s.toks[after]?.text === '!') after++;
   const operand = s.toks[after];
-  if (!operand || !startsOperand(src, operand)) return false;
+  if (!operand) return false;
   const prev = s.toks[n - 1];
-  if (!prev) return true;
-  const value = prev.text === '!' ? !isUnaryNot(src, s, n - 1) : endsValue(s, n - 1);
-  return !value || LINE_BREAK.test(src.slice(prev.end, s.toks[n]!.start));
+  const value = prev !== undefined && (prev.text === '!' ? !isUnaryNot(src, s, n - 1) : endsValue(s, n - 1));
+  if (!startsOperand(src, operand) && (value || !CONTEXTUAL_WORDS.has(operand.text))) return false;
+  return !value || LINE_BREAK.test(src.slice(prev!.end, s.toks[n]!.start));
 }
 
 /** Whether the `if` at token `n` is a statement: not a member, and not a name directly in a list of members. */

@@ -892,7 +892,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
     assert.deepEqual(view(mutantsFor(`${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'a \\n line end');
     assert.deepEqual(view(mutantsFor(`${bang}\r\n${next}\r\n`, [1, 2])), [ne(2, 13)], 'a \\r\\n line end');
     assert.deepEqual(view(mutantsFor(`${bang}\r${next}`, [1])), [ne(1, 33)], 'a lone \\r');
-    assert.deepEqual(view(mutantsFor(`﻿${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'after a byte order mark');
+    assert.deepEqual(view(mutantsFor(`\uFEFF${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'after a byte order mark');
     assert.deepEqual(view(mutantsFor(bang, [1])), [], 'a file of one line with no line end');
     assert.deepEqual(view(mutantsFor("#!/bin/sh -c 'a === b' && !c;\nconst d = e === f;\n", [1, 2])), [ne(2, 13)], 'operators and a quote on the hashbang line');
     assert.deepEqual(view(mutantsFor('#!/x\n/a === b/.test(c);\n', [2])), [ds(2, 1, '/a === b/.test(c);')], 'a regex literal still opens on the next line');
@@ -901,8 +901,9 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
   test('acceptance 7: a #! anywhere else is no hashbang [R4]', () => {
     assert.deepEqual(view(mutantsFor('a;\n#!b === c;\n', [2])), [ds(2, 1, '#!b === c;'), dn(2, 2), ne(2, 5)], 'on a later line');
     assert.deepEqual(view(mutantsFor(' #!b === c;\n', [1])), [ds(1, 2, '#!b === c;'), dn(1, 3), ne(1, 6)], 'after a space');
-    assert.deepEqual(view(mutantsFor('﻿ #!b === c;\n', [1])), [ds(1, 3, '#!b === c;'), dn(1, 4), ne(1, 7)], 'after a byte order mark and a space');
-    assert.deepEqual(view(mutantsFor('﻿const a = !b;\n', [1])), [dn(1, 12)], 'a byte order mark alone changes nothing');
+    assert.deepEqual(view(mutantsFor('\uFEFF #!b === c;\n', [1])), [ds(1, 3, '#!b === c;'), dn(1, 4), ne(1, 7)], 'after a byte order mark and a space');
+    assert.deepEqual(view(mutantsFor('\uFEFFconst a = !b;\n', [1])), [dn(1, 12)], 'a byte order mark alone changes nothing');
+    assert.deepEqual(view(mutantsFor('#a === b;\n', [1])), [ds(1, 1, '#a === b;'), ne(1, 4)], 'a # with no ! after it');
   });
 
   test('acceptance 8: `as` and `satisfies` after a ! with no value before it are its operand [R3] [R4]', () => {
@@ -928,6 +929,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
       ['class A { [k]?(): void { if(ok) {} } }', 29],
       ['class A { x = 1; m?(): void { if(ok) {} } }', 34],
       ['class A { a() {} m?(): void { if(ok) {} } }', 34],
+      ['class A { a(b = 1) {} m?(): void { if(ok) {} } }', 39],
       ['class A { m?<T>(): void { if(ok) {} } }', 30],
       ['const C = class { m?(): void { if(ok) {} } };', 35],
     ];
@@ -940,6 +942,7 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
       'class A { m() { return c ? (d) : void { if(ok) {} }; } }',
       'class A { x = f(c ? (d) : void { if(ok) {} }); }',
       'const o = { m: c ? (d) : void { if(ok) {} } };',
+      'const a = c ? x + (d) : void { if(ok) {} };',
     ];
     for (const source of sources) assert.deepEqual(view(mutantsFor(source, [1])), [], source);
   });
