@@ -45,10 +45,10 @@ function holdsContent(target: string): boolean {
   }
 }
 
-/** A file of the target with trailing line ends and spaces removed; nothing when it cannot be read. */
-function readTrimmed(file: string): string | undefined {
+/** A file of the target with one terminal line ending removed, so a second one stays and fails the checks; nothing when it cannot be read. */
+function readOneLine(file: string): string | undefined {
   try {
-    return readFileSync(file, 'utf8').trimEnd();
+    return readFileSync(file, 'utf8').replace(/\r?\n$/, '');
   } catch {
     return undefined;
   }
@@ -65,14 +65,14 @@ function namedDir(base: string, value: string): string {
 /** The git directory of the target: `.git`, or the directory a `.git` file names on its `gitdir:` line. Empty when that line is unusable. */
 function gitDirOf(target: string): string {
   const dotGit = path.join(target, '.git');
-  const pointer = readTrimmed(dotGit);
+  const pointer = readOneLine(dotGit);
   if (pointer === undefined) return dotGit;
   return pointer.startsWith('gitdir: ') ? namedDir(target, pointer.slice('gitdir: '.length)) : '';
 }
 
 /** The common directory: `gitDir` itself, or the directory its `commondir` file names. Empty when that file is unusable. */
 function commonDirOf(gitDir: string): string {
-  const pointer = readTrimmed(path.join(gitDir, 'commondir'));
+  const pointer = readOneLine(path.join(gitDir, 'commondir'));
   return pointer === undefined ? gitDir : namedDir(gitDir, pointer);
 }
 
@@ -83,7 +83,7 @@ function isBranchName(name: string): boolean {
 
 /** The branch on the one line `ref: <prefix><name>` of a ref file; empty for any other content, or when it cannot be read. */
 function branchIn(file: string, prefix: string): string {
-  const line = readTrimmed(file);
+  const line = readOneLine(file);
   if (!line?.startsWith(`ref: ${prefix}`)) return '';
   const name = line.slice('ref: '.length + prefix.length);
   return isBranchName(name) ? name : '';
