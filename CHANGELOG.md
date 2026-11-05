@@ -3,6 +3,7 @@
 ## Unreleased
 
 - T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that checks the file of the wired dispatcher, starts no process, and reports `ok`, `FAILED` or `not wired`.
+
 - T0-HOOK-GIT-PREFETCH: the hook entry starts the `git rev-parse` that finds the repository root before it loads its modules, and `main` uses the answer when the event's working directory is the one git ran in, so git runs while the modules load instead of blocking the guards (about 40 ms on Windows); any other directory and every other caller ask git as before. Measured on Windows in two interleaved runs of 15: each hook event takes 25 to 30 ms less (PreToolUse Bash 174 ms to 146 ms and 173 ms to 147 ms).
 
 - T1-REVIEW-BENCH-2: the reviewer bench passes the changed lines the loop passes, so a `[pre-existing]` reason stays advisory, and building the CLI program resolves no session, so no command writes the default session token at startup. A card path that resolves outside the temporary checkout scores `error` before the bench reads it, and a cleanup step that throws no longer aborts the report.

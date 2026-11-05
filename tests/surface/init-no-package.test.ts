@@ -272,6 +272,23 @@ describe('T1-INIT-HOOK-PATH: aidlc doctor hookCommand', () => {
     assert.equal(doctorLine(wired(ABSOLUTE)), `ok: ${ABSOLUTE}`);
   });
 
+  test('acceptance 6: in a linked worktree a relative dispatcher file present only in the main checkout reports FAILED [R5]', () => {
+    const main = wired('node bin/aidlc-hook.js');
+    const git = (...args: string[]): void => {
+      const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: main, encoding: 'utf8', windowsHide: true });
+      assert.equal(r.status, 0, r.stderr);
+    };
+    git('init', '-q');
+    git('add', '.claude');
+    git('commit', '-qm', 'settings');
+    mkdirSync(path.join(main, 'bin'));
+    writeFileSync(path.join(main, 'bin', 'aidlc-hook.js'), '');
+    const linked = path.join(tempDir(), 'linked');
+    git('worktree', 'add', '-q', linked);
+    assert.equal(doctorLine(main), 'ok: node bin/aidlc-hook.js');
+    assert.equal(doctorLine(linked), 'FAILED: every guard is off until this command runs: node bin/aidlc-hook.js');
+  });
+
   test('acceptance 6: no settings file, or one that does not parse, reports not wired [R5]', () => {
     assert.equal(doctorLine(tempDir()), 'not wired');
     assert.equal(doctorLine(targetWithSettings('{ not json')), 'not wired');
