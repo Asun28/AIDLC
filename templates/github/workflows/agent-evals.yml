@@ -26,7 +26,7 @@ jobs:
       # The deterministic checks only, so the job needs no model and no credentials.
       # Run the model-backed suite locally on the Claude Code CLI login (see evals/README.md).
       - name: Run eval checks
-        run: npx aidlc evals run --skip-model --threshold 0.9 --json > evals-result.json
+        run: npx --no-install aidlc evals run --skip-model --threshold 0.9 --json > evals-result.json
       - name: Upload results
         if: always()
         uses: actions/upload-artifact@v4

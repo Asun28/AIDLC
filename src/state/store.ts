@@ -224,7 +224,7 @@ function present(file: string): boolean {
 }
 
 /** Whether a process is still running (a process this one may not signal counts as running). */
-function processAlive(pid: number): boolean {
+export function processAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

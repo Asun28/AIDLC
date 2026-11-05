@@ -54,15 +54,15 @@ their tests keep their result. Only the CLI passes it.
 - CHANGELOG.md
 
 ## Order of work
-1. T1-INIT-HOOK-PATH: absolute hook command, one dispatcher per entry, the `aidlc doctor` hook line.
+1. T1-INIT-HOOK-PATH-2 (replaces T1-INIT-HOOK-PATH): absolute hook command, one dispatcher per entry, the `aidlc doctor` hook line.
 2. T1-INIT-BASE-CI: default branch in the config, no Node workflow without a `package.json`, no fetching `npx`.
 
 ## 7. Task split (dependencies and parallel windows)
 
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
-| T1-INIT-HOOK-PATH | MUST | The hook runs on a repository with no package, and doctor shows when it does not | - | - | - |
-| T1-INIT-BASE-CI | MUST | Right base, no Node workflow, no fetching npx | T1-INIT-HOOK-PATH | - | - |
+| T1-INIT-HOOK-PATH-2 | MUST | The hook runs on a repository with no package, and doctor shows when it does not | - | - | - |
+| T1-INIT-BASE-CI | MUST | Right base, no Node workflow, no fetching npx | T1-INIT-HOOK-PATH-2 | - | - |
 
 ## Risks
 - The absolute path is per machine and `.claude/settings.json` is committed. On another machine the hook exits 1 and the guards are off. `aidlc doctor` reports it, and the plan accepts this for personal use.

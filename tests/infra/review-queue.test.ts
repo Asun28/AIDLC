@@ -263,7 +263,7 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     const { y, z } = queueYZ(q);
     assert.equal(q.admit('codex:acct', A, iso(12), y.key).status, 'admitted');
     q.hold(y.key, iso(60_000), 'HTTP 429', iso(13));
-    q.savePool({ ...q.pool('codex:acct'), resetAt: undefined });
+    q.updatePool('codex:acct', (current) => ({ ...current, resetAt: undefined }));
     const held = q.get(y.key);
     const admitted = q.admit('codex:acct', B, iso(20), z.key);
     assert.equal(admitted.status, 'admitted');
@@ -281,7 +281,7 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
       const s = q.enqueue(input({ candidateDigest: 'stale', requester: 'goal-3/T1-S', now: iso(1) })).request;
       q.admit('codex:acct', A, iso(2));
       q.complete(s.key, 'verdict:stale', iso(3));
-      q.savePool({ ...q.pool('codex:acct'), active: [s.key], updatedAt: iso(4) });
+      q.updatePool('codex:acct', (current) => ({ ...current, active: [s.key], updatedAt: iso(4) }));
     }
     order.forEach((name, i) => q.enqueue(input({ candidateDigest: name, requester: `goal-1/T1-${name}`, deadline: name.startsWith('X') ? iso(100) : iso(10_000), now: iso(10 + i) })));
     return q;
@@ -351,7 +351,7 @@ describe('coordination/review-queue (Q24 shared provider admission)', () => {
     order.forEach((name, i) => q.enqueue(input({ candidateDigest: name, requester: `goal-1/T1-${name}`, deadline: name.startsWith('X') || name === 'Zx' ? iso(100) : iso(10_000), now: iso(10 + i) })));
     if (order.includes('Zr')) {
       q.hold(keyOf(q, 'Zr'), iso(60_000), 'HTTP 429', iso(50));
-      q.savePool({ ...q.pool('codex:acct'), resetAt: undefined });
+      q.updatePool('codex:acct', (current) => ({ ...current, resetAt: undefined }));
     }
     return q;
   };

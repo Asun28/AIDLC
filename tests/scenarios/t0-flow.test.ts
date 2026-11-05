@@ -3237,7 +3237,7 @@ test('T1-REVIEW-FINDINGS-4 R3 decision 2 (findings 6, 12, 13, 14): a retained re
     const held = request('r3-hold');
     const retryAfter = addMs(fx.now(), 120_000);
     fx.queue.hold(held.key, retryAfter, 'quota', fx.now());
-    fx.queue.savePool({ ...fx.queue.pool(goal.reviewPool), active: [held.key], resetAt: undefined });
+    fx.queue.updatePool(goal.reviewPool, (current) => ({ ...current, active: [held.key], resetAt: undefined }));
     writeFileSync(path.join(reviewDir, 'T1-REC.r3.5.hold.result.json'), JSON.stringify(envelope('T1-REC.r3.5.hold', held.key, held.seq, { outcome: 'quota-hold', runStatus: 'tool_error', retryAfterMs: 120_000, holdUntil: retryAfter })), 'utf8');
     const hold = await runner.formalReview(g(), card, run);
     assert.equal(hold.classified.outcome, 'quota-hold');

@@ -29,6 +29,6 @@ jobs:
           node-version: '22'
       - run: npm ci
       - name: Task cards validate
-        run: npx aidlc cards validate
+        run: npx --no-install aidlc cards validate
       - name: Documentation statements and prose rules the tests assert
         run: node --test tests/surface/templates.test.ts tests/surface/prose.test.ts tests/scenarios/t1-plan.test.ts

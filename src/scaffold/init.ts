@@ -13,6 +13,8 @@ export interface InitOptions {
   cardsDir?: string;
   shipPath?: 'scaffold' | 'github' | 'dry-run';
   dryRun?: boolean;
+  /** Absolute path of the running CLI's `bin/aidlc-hook.js`; a target with no Node package gets a hook command that names it. */
+  hookEntry?: string;
 }
 
 export interface InitReport {
@@ -31,12 +33,82 @@ export function templatesDir(): string {
 }
 
 const MARKER = '## AI-native SDLC (aidlc)';
+/** Workflows that run `npm ci`, so they fail on every push of a repository with no `package.json`. */
+const NODE_WORKFLOWS = new Set(['.github/workflows/aidlc-ci.yml', '.github/workflows/agent-evals.yml']);
+
+/** Whether the target holds an entry other than `.git`. A target that does not exist yet holds none; any other listing failure stops init. */
+function holdsContent(target: string): boolean {
+  try {
+    return readdirSync(target).some((name) => name !== '.git');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/** A file of the target with one terminal line ending removed, so a second one stays and fails the checks; nothing when it cannot be read. */
+function readOneLine(file: string): string | undefined {
+  try {
+    return readFileSync(file, 'utf8').replace(/\r?\n$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A directory named by a `.git` or `commondir` file, resolved against `base`; empty for no value, for a second line, or
+ * for a value starting with two separators, which on Windows can name a file on another host.
+ */
+function namedDir(base: string, value: string): string {
+  return !value || /[\r\n]/.test(value) || /^[\\/]{2}/.test(value) ? '' : path.resolve(base, value);
+}
+
+/** The git directory of the target: `.git`, or the directory a `.git` file names on its `gitdir:` line. Empty when that line is unusable. */
+function gitDirOf(target: string): string {
+  const dotGit = path.join(target, '.git');
+  const pointer = readOneLine(dotGit);
+  if (pointer === undefined) return dotGit;
+  return pointer.startsWith('gitdir: ') ? namedDir(target, pointer.slice('gitdir: '.length)) : '';
+}
+
+/** The common directory: `gitDir` itself, or the directory its `commondir` file names. Empty when that file is unusable. */
+function commonDirOf(gitDir: string): string {
+  const pointer = readOneLine(path.join(gitDir, 'commondir'));
+  return pointer === undefined ? gitDir : namedDir(gitDir, pointer);
+}
+
+/** Whether a name read from a ref file can go into the config: `base` later reaches git arguments, so it cannot read as an option, and every part is one git accepts. */
+function isBranchName(name: string): boolean {
+  return /^[A-Za-z0-9._/-]+$/.test(name) && !name.startsWith('-') && !name.includes('..') && name.split('/').every((part) => part !== '' && !part.startsWith('.'));
+}
+
+/** The branch on the one line `ref: <prefix><name>` of a ref file; empty for any other content, or when it cannot be read. */
+function branchIn(file: string, prefix: string): string {
+  const line = readOneLine(file);
+  if (!line?.startsWith(`ref: ${prefix}`)) return '';
+  const name = line.slice('ref: '.length + prefix.length);
+  return isBranchName(name) ? name : '';
+}
+
+/**
+ * The remote default branch, else the current branch; empty when neither file gives a name. Reads ref files and starts no
+ * process, since a `git` start can resolve to a program in the target and obeys `GIT_DIR` over its `-C` argument.
+ */
+function defaultBranch(target: string): string {
+  const gitDir = gitDirOf(target);
+  if (!gitDir) return '';
+  const commonDir = commonDirOf(gitDir);
+  const remote = commonDir ? branchIn(path.join(commonDir, 'refs', 'remotes', 'origin', 'HEAD'), 'refs/remotes/origin/') : '';
+  return remote || branchIn(path.join(gitDir, 'HEAD'), 'refs/heads/');
+}
 
 export function initProject(options: InitOptions): InitReport {
   const tpl = templatesDir();
   const report: InitReport = { created: [], skipped: [], merged: [], templatesDir: tpl };
   const target = path.resolve(options.target);
   const cardsDir = options.cardsDir ?? 'specs/tasks';
+  // Read before the first write, since init itself creates entries.
+  const noPackage = holdsContent(target) && !existsSync(path.join(target, 'package.json'));
   const write = (rel: string, content: string | Buffer, mode: 'create' | 'force' = 'create') => {
     const dest = path.join(target, rel);
     if (existsSync(dest) && !(options.force || mode === 'force')) {
@@ -56,6 +128,7 @@ export function initProject(options: InitOptions): InitReport {
       const src = path.join(from, name);
       const rel = path.join(toRel, name).replace(/\\/g, '/');
       if (statSync(src).isDirectory()) copyTree(path.join(fromRel, name), path.join(toRel, name));
+      else if (noPackage && NODE_WORKFLOWS.has(rel)) report.skipped.push(`${rel} (no package.json)`);
       else if (rel !== '.claude/settings.json') write(rel, readFileSync(src));
     }
   };
@@ -80,6 +153,8 @@ export function initProject(options: InitOptions): InitReport {
   if (existsSync(cfgSrc)) {
     const cfg = JSON.parse(readFileSync(cfgSrc, 'utf8')) as Record<string, unknown>;
     cfg['cardsDir'] = cardsDir;
+    const base = defaultBranch(target);
+    if (base) cfg['base'] = base;
     if (options.shipPath) cfg['shipPath'] = options.shipPath;
     write('aidlc.config.json', JSON.stringify(cfg, null, 2) + '\n');
   }
@@ -121,23 +196,47 @@ const LEGACY_HOOK_COMMAND = /\baidlc hook (production-gate|protect-paths|protect
 const OLD_PRE_TOOL_MATCHER = 'Bash|Edit|Write|MultiEdit';
 /** Every spelling of the dispatcher `resolveHookCommand` can write. */
 const DISPATCHER_COMMANDS = new Set([TEMPLATE_HOOK_COMMAND, 'node node_modules/aidlc/bin/aidlc-hook.js', 'node bin/aidlc-hook.js']);
+/**
+ * The absolute spelling. An absolute path cannot be read as a Node option. The path holds no shell expansion or separator
+ * character and no NUL, which no process argument can carry; `(` and `)` stay, for `C:/Program Files (x86)`. It does not
+ * start `//` and holds no backslash, because on Windows either can name a file on another host, which even the file check of doctor would reach.
+ */
+const ABSOLUTE_DISPATCHER = /^node "(?=\/(?!\/)|[A-Za-z]:\/)[^"$`%&|<>^\\\0\r\n]*\/bin\/aidlc-hook\.js"$/;
+
+/** Whether a settings value is the aidlc dispatcher in any spelling; only such a command is replaced, or read by doctor. The value comes from a parsed file, so it may not be a string. */
+export function isDispatcherCommand(command: unknown): command is string {
+  return typeof command === 'string' && (DISPATCHER_COMMANDS.has(command) || ABSOLUTE_DISPATCHER.test(command));
+}
 
 /**
  * Fastest hook command available in the target: a direct `node` start of the hook entry (no npx
  * resolution, no CLI module graph) when the package is installed locally or the target is aidlc itself;
- * otherwise the portable `npx --no-install` form.
+ * a direct start of `hookEntry` when the target has no aidlc package at all, because the `npx` form exits 1 there
+ * and a hook that exits 1 stops nothing; otherwise the portable `npx --no-install` form.
  */
-export function resolveHookCommand(target: string): string {
+export function resolveHookCommand(target: string, hookEntry?: string): string {
   if (existsSync(path.join(target, 'node_modules', 'aidlc', 'bin', 'aidlc-hook.js'))) return 'node node_modules/aidlc/bin/aidlc-hook.js';
-  if (existsSync(path.join(target, 'bin', 'aidlc-hook.js'))) {
-    try {
-      const pkg = JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) as { name?: string };
-      if (pkg.name === 'aidlc') return 'node bin/aidlc-hook.js';
-    } catch {
-      /* not the aidlc package */
-    }
+  const pkg = readPackage(target);
+  if (pkg.name === 'aidlc') return existsSync(path.join(target, 'bin', 'aidlc-hook.js')) ? 'node bin/aidlc-hook.js' : TEMPLATE_HOOK_COMMAND;
+  if (hookEntry && !holdsAidlc(pkg.dependencies) && !holdsAidlc(pkg.devDependencies)) {
+    const direct = `node "${hookEntry.replace(/\\/g, '/')}"`;
+    if (isDispatcherCommand(direct)) return direct;
   }
   return TEMPLATE_HOOK_COMMAND;
+}
+
+/** The target's `package.json`; a file that is absent or does not parse lists nothing. */
+function readPackage(target: string): { name?: string; dependencies?: unknown; devDependencies?: unknown } {
+  try {
+    return JSON.parse(readFileSync(path.join(target, 'package.json'), 'utf8')) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/** Whether a dependency map holds the key `aidlc`, whatever its version; a value that is not an object lists nothing. */
+function holdsAidlc(map: unknown): boolean {
+  return typeof map === 'object' && map !== null && Object.hasOwn(map, 'aidlc');
 }
 
 /** Drop 0.1.0 per-guard hooks (superseded by the dispatcher) and any entry left empty by that. */
@@ -152,14 +251,39 @@ export function stripLegacyHooks(hooks: Record<string, HookEntry[]>): void {
 function moveOffOldMatcher(hooks: Record<string, HookEntry[]>): void {
   const entries = hooks['PreToolUse'];
   if (!entries) return;
-  for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !DISPATCHER_COMMANDS.has(h.command));
+  for (const entry of entries) if (entry.matcher === OLD_PRE_TOOL_MATCHER) entry.hooks = entry.hooks.filter((h) => !isDispatcherCommand(h.command));
   hooks['PreToolUse'] = entries.filter((e) => e.matcher !== OLD_PRE_TOOL_MATCHER || e.hooks.length > 0);
+}
+
+/**
+ * The hooks of one event with `entry`'s dispatcher exactly once, in an entry of its matcher, where it already stands if it
+ * does. Every other spelling and repeat comes off every entry of the event, and an entry left empty is dropped. The new
+ * matcher covers every tool a guard reads, so no guard is lost. A foreign hook stays in its place.
+ */
+function settleDispatcher(list: HookEntry[], entry: HookEntry): HookEntry[] {
+  const isHome = (e: HookEntry) => (e.matcher ?? '') === (entry.matcher ?? '');
+  for (const h of entry.hooks) {
+    let held = false;
+    for (const e of list) {
+      e.hooks = e.hooks.filter((x) => {
+        if (!isDispatcherCommand(x.command)) return true;
+        const keep = !held && isHome(e) && x.command === h.command;
+        held ||= keep;
+        return keep;
+      });
+    }
+    if (held) continue;
+    const home = list.find(isHome);
+    if (home) home.hooks.push(h);
+    else list.push({ ...entry, hooks: [h] });
+  }
+  return list.filter((e) => e.hooks.length > 0);
 }
 
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
   const dest = path.join(target, '.claude', 'settings.json');
   const incoming = JSON.parse(readFileSync(src, 'utf8')) as Settings;
-  const hookCommand = resolveHookCommand(target);
+  const hookCommand = resolveHookCommand(target, options.hookEntry);
   for (const entries of Object.values(incoming.hooks ?? {})) for (const entry of entries) for (const h of entry.hooks) if (h.command === TEMPLATE_HOOK_COMMAND) h.command = hookCommand;
   if (!existsSync(dest)) {
     if (!options.dryRun) {
@@ -176,13 +300,8 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
   stripLegacyHooks(existing.hooks);
   moveOffOldMatcher(existing.hooks);
   for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
-    const list = existing.hooks[event] ?? [];
-    for (const entry of entries) {
-      const same = list.find((e) => (e.matcher ?? '') === (entry.matcher ?? ''));
-      if (same) {
-        for (const h of entry.hooks) if (!same.hooks.some((x) => x.command === h.command)) same.hooks.push(h);
-      } else list.push(entry);
-    }
+    let list = existing.hooks[event] ?? [];
+    for (const entry of entries) list = settleDispatcher(list, entry);
     existing.hooks[event] = list;
   }
   if (!options.dryRun) writeFileSync(dest, JSON.stringify(existing, null, 2) + '\n');

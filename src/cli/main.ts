@@ -5,6 +5,7 @@
 import { Command } from 'commander';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
@@ -12,6 +13,7 @@ import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
 import { GitProbe } from '../probes/git.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
+import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
@@ -179,7 +181,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--ship-path <name>', 'scaffold | github | dry-run')
     .option('--dry-run', 'print what would be written')
     .action((dir: string | undefined, o: { force?: boolean; cardsDir: string; shipPath?: 'scaffold' | 'github' | 'dry-run'; dryRun?: boolean }) => {
-      const report = initProject({ target: dir ?? g().cwd ?? process.cwd(), force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun });
+      // The same relative path holds from src/cli/main.ts and dist/cli/main.js.
+      const hookEntry = fileURLToPath(new URL('../../bin/aidlc-hook.js', import.meta.url));
+      const report = initProject({ target: dir ?? g().cwd ?? process.cwd(), force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
       out({ json: Boolean(g().json) }, report, () => [`created: ${report.created.length}`, ...report.created.map((f) => `  + ${f}`), `merged: ${report.merged.join(', ') || '-'}`, `skipped (exists): ${report.skipped.length}`, ...report.skipped.map((f) => `  = ${f}`), `next: review aidlc.config.json, then \`aidlc doctor\``].join('\n'));
     });
 
@@ -226,6 +230,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           : '(no state dir yet; created on first goal; run under Claude Code, which exports CLAUDE_CODE_SESSION_ID, or set AIDLC_SESSION per window for multi-session coordination)',
         workingTree: doctorWorkingTree(c),
         baseSync: baseSyncReport({ isGit: c.repo.isGit, cwd: c.repo.mainRoot, base: c.config.base }),
+        hookCommand: hookWiringReport(c.repo.worktreeRoot),
       };
       out(c, checks, () => Object.entries(checks).map(([k, v]) => `${k.padEnd(12)} ${Array.isArray(v) ? v.join('\n' + ' '.repeat(13)) : v}`).join('\n'));
     });
@@ -725,6 +730,27 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const q = new ReviewQueue(c.paths.reviewQueue);
       const pool = o.pool ?? c.config.reviewPool;
       out(c, { pool: q.pool(pool), requests: q.list(pool) }, () => `pool ${pool}: active=${q.pool(pool).active.length}/${q.pool(pool).maxConcurrent} resetAt=${q.pool(pool).resetAt ?? '-'}\n${q.list(pool).map((r) => `  ${r.seq} ${r.state.padEnd(11)} ${r.candidateDigest.slice(0, 12)} ${r.requesters.join('+')}`).join('\n') || '  (empty)'}`);
+    });
+  review
+    .command('release <key>')
+    .description('free the pool slot of a running review request whose owner process is gone from this host; refuses while it is alive')
+    .requiredOption('--reason <text>', 'why the slot is released, kept on the request and in the journal')
+    .action((key: string, o: { reason: string }) => {
+      const c = ctx(g());
+      const released = new ReviewQueue(c.paths.reviewQueue).release(key, o.reason, {
+        // Inside the release's section: each goal journals before the slot is freed, once per key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
+        before: (request) => {
+          for (const requester of request.requesters) {
+            const [goalId, cardId] = requester.split(':');
+            const goal = goalId ? c.store.getGoal(goalId) : undefined;
+            if (!goal) continue;
+            const journal = Journal.forGoal(c.paths.journal, goal.id);
+            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
+            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key, pool: request.pool, seq: request.seq, reason: o.reason } });
+          }
+        },
+      });
+      out(c, released, () => `released ${key}`);
     });
   review
     .command('pre <cardId>')

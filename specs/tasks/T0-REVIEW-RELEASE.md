@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-RELEASE
-title: Every mutation of a review pool runs in one lock section, and `aidlc review release` frees the slot of a process that died, journaled in that same section
-status: todo
+title: Every mutation of the review queue runs in one lock section, and `aidlc review release` frees the slot of a process that died, journaled in that same section
+status: merged
 branch: T0-REVIEW-RELEASE
 worktree: D:\wt\AIDLC\T0-REVIEW-RELEASE
 allow_paths:
@@ -10,33 +10,35 @@ allow_paths:
   - src/cli/main.ts
   - tests/infra/review-queue.test.ts
   - tests/scenarios/review-release.test.ts
+  - tests/scenarios/run-driver.test.ts
+  - tests/scenarios/t0-flow.test.ts
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T0-REVIEW-RELEASE.md
-dod_command: npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/infra/review-queue.test.ts tests/scenarios/review-admit-foreign.test.ts tests/scenarios/review-block.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/t0-flow.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/infra/review-queue.test.ts tests/scenarios/review-admit-foreign.test.ts tests/scenarios/review-block.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/run-driver.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 requirements:
-  - R1. Every `ReviewQueue` method that writes a request or a pool record shall do its reads and its writes in one section of the pool record's lock (`updateJson`), so that against every other mutation of that pool the read of a request and the writes that follow it are one step. Sections do not nest, since the lock is not reentrant. A read-only method takes no lock.
-  - R2. `ReviewQueue.release(key, reason, options)` shall, in one such section, check the stored request, run `options.before(request)` when given, write the request `cancelled` with the reason as `lastError`, and remove it from `pool.active`. It shall throw, writing nothing, for an unknown key, for any state but `running`, for a `slotOwner` of another host or with no usable pid, and for an owner process still alive; and when `before` throws it shall write nothing and rethrow.
-  - R3. `aidlc review release <key> --reason <text>` shall pass as `before` a step that appends a `NOTE` of kind `review-slot-released` with the key, the request's `seq` and the reason to the journal of each goal among the request's requesters that holds no such `NOTE` for that key and `seq`, and shall print the released request. A refusal exits non-zero; a failed append exits non-zero with the slot still held, and running the command again finishes the release with one `NOTE` per goal.
+  - R1. Every `ReviewQueue` method that writes a request or a pool record shall do its reads and its writes in one section of the queue's single lock (`updateJson` over one record of the queue directory, whatever the pool), so that against every other mutation of the queue, in any pool, the read of a request and the writes that follow it are one step. Sections do not nest, since the lock is not reentrant. A read-only method takes no lock. `ReviewQueue` has no public method that takes a whole pool record; `updatePool(pool, change)` passes `change` the record read in the section.
+  - R2. `ReviewQueue.release(key, reason, options)` shall, in one such section, check the stored request, run `options.before(request)` when given, remove it from `pool.active`, and write the request `cancelled` with the reason as `lastError`, so a failure at either write leaves it `running`. It shall throw, writing nothing, for an unknown key, for any state but `running`, for a `slotOwner` of another host or with no usable pid, and for an owner process still alive; and when `before` throws it shall write nothing and rethrow.
+  - R3. `aidlc review release <key> --reason <text>` shall pass as `before`, so that two releases never append to a goal's journal at once, a step that appends a `NOTE` of kind `review-slot-released` with the key, the request's `pool`, its `seq` and the reason to the journal of each goal among the request's requesters that holds no such `NOTE` for that key, `pool` and `seq`, and shall print the released request. A refusal exits non-zero; a failed append exits non-zero with the slot still held, and running the command again finishes the release with one `NOTE` per goal.
   - R4. `docs/OPERATIONS.md`, as the last paragraph of the `## Ship gates (GitHub ship path)` section, shall carry the OPERATIONS sentence of the Doc text section, and the Sessions section shall not change.
   - R5. The CHANGELOG Unreleased section shall carry the entry of the Doc text section.
 acceptance:
   - 1. `tests/scenarios/review-release.test.ts`: `release` frees a running request of this host whose owner process is gone (`pool.active` empty, state `cancelled`, the reason as `lastError`). [R2] [dod arm 2]
   - 2. Same file: it throws and leaves the request and the pool unchanged for an unknown key, for a `queued`, `completed` or `cancelled` request, for a `slotOwner` naming another host, for pid 0, for an owner process that is alive, and for a `before` that throws. [R2] [dod arm 2]
-  - 3. Same file: while a `release` holds its section (reached from its `before`), `enqueue`, `admit`, `cancel` and a second `release` of the pool each refuse with `LOCKED`, so no mutation lands between its check and its write. [R1] [R2] [dod arm 2]
+  - 3. Same file: while a `release` holds its section (reached from its `before`), `enqueue`, `admit`, `cancel`, `complete`, `requeue`, `markLost`, `resolveLost`, `hold`, `setPoolLimit`, `updatePool` and a second `release` each refuse with `LOCKED`, also for a request of another pool, so no mutation lands between its check and its write. [R1] [R2] [dod arm 2]
   - 4. Same file: after a first release frees a dead owner and the same key is admitted again for a live owner at another `seq`, a second release refuses and the request stays `running` with its key in `pool.active`. [R2] [dod arm 2]
-  - 5. Same file, by spawning the CLI from the sources: on a dead owner it exits 0, prints the released request and journals one `review-slot-released` NOTE in the requester goal; on a live owner it exits non-zero and journals nothing; and the same key admitted again journals its own NOTE, by its `seq`. [R3] [dod arm 2]
-  - 6. Same file: a request of two goals whose second journal cannot be written exits non-zero with the slot held and one NOTE, and the same command run again, with the journal writable, exits 0 with one NOTE per goal and the slot free. [R3] [dod arm 2]
-  - 7. Same file: two CLI processes releasing one key at once end with one exit 0, the other refused or `LOCKED`, one NOTE per goal, and a journal whose chain verifies. [R1] [R3] [dod arm 2]
+  - 5. Same file, by spawning the CLI from the sources: on a dead owner it exits 0, prints the released request and journals one `review-slot-released` NOTE in the requester goal; on a live owner it exits non-zero and journals nothing; and the same key admitted again journals its own NOTE, by its `pool` and `seq`, the same key and `seq` in another pool included. [R3] [dod arm 2]
+  - 6. Same file: a request of two goals whose second journal cannot be written exits non-zero with the slot held and one NOTE, and the same command run again, with the journal writable, exits 0 with one NOTE per goal and the slot free; a failed write of the pool or of the request exits non-zero with the request `running`, and the same command run again exits 0 with one NOTE per goal and the slot free. [R2] [R3] [dod arm 2]
+  - 7. Same file: two CLI processes releasing keys of two pools that share a requester goal, and two releasing one key, at once, end with the release done once per key, the other refused or `LOCKED`, one NOTE per key and goal, and a journal whose chain verifies. [R1] [R3] [dod arm 2]
   - 8. Same file: `docs/OPERATIONS.md` holds the OPERATIONS sentence in Ship gates and `CHANGELOG.md` the Unreleased entry of the Doc text section; a test reads each exact text and fails with it removed. [R4] [R5] [dod arm 2]
-  - 9. Every test of the dod_command other than the new file passes with no assertion changed. [R1] [dod arm 2]
+  - 9. Every test of the dod_command other than the new file passes with no assertion changed; the nine `savePool` fixture lines move to `updatePool`. [R1] [dod arm 2]
 depends_on: []
 budget: 300
 tdd: true
-sweep: "git grep -n 'this.queue\\.\\|queue\\.' src on main: the card runner and `run-driver.ts` call the queue; `cancel` runs inside a catch of `CardRunner.ship` since T0-SHIP-THROW-SLOT-3, and none of those callers holds the pool lock, so R1 adds no nested section. `savePool` and `pool()` are the two pool record paths."
-forbid: [weakening or skipping a test to go green, a release of a request whose owner is alive or of another host, a change to admission order or to what `admit` returns, a nested section of the pool lock, a new lock file other than the pool record's own, a new journal event type, a reconcile of the operation by `review release` (`aidlc ops reconcile` stays the one way), an edit of any file under `.aidlc/`]
-non_goals: [a process killed while it holds the pool lock, which leaves `<pool>.json.lock` for an operator to remove, since `updateJson` never removes another writer's lock and its `LOCKED` names the file and the process, as for every record lock, a `cancel` of a cancelled request in pool A racing an `enqueue` that moves it to pool B (R1 covers one pool, and `release` refuses a cancelled request), an expiry for running requests, a process killed on another host, the `lost` state of a request, a request whose pid was reused or whose process is a zombie (`processAlive` counts it as alive, so the release refuses, which fails closed)]
+sweep: "git grep -n 'this.queue\\.\\|queue\\.' src on main: the card runner and `run-driver.ts` call the queue; `cancel` runs inside a catch of `CardRunner.ship` since T0-SHIP-THROW-SLOT-3, and none of those callers holds the queue lock, so R1 adds no nested section. `updatePool` is the one public write of a pool record and `pool()` the read."
+forbid: [weakening or skipping a test to go green, a release of a request whose owner is alive or of another host, a change to admission order or to what `admit` returns, a nested section of the queue lock, a lock other than the one queue lock, a new journal event type, a reconcile of the operation by `review release` (`aidlc ops reconcile` stays the one way), an edit of any file under `.aidlc/`]
+non_goals: [a process killed while it holds the queue lock, which leaves its lock file for an operator to remove, since `updateJson` never removes another writer's lock and its `LOCKED` names the file and the process, as for every record lock, a lock over `Journal.append` (the head read and append of a goal journal are shared with every writer of that journal, as they are at main, and `src/state/journal.ts` is outside this card; the queue lock serializes the release's own appends against each other), an expiry for running requests, a process killed on another host, the `lost` state of a request, a request whose pid was reused or whose process is a zombie (`processAlive` counts it as alive, so the release refuses, which fails closed)]
 diagnosis:
   root_cause: "A running request whose process died outside any catch stays in `pool.active` for ever: `admit` keeps it, and no command settles it. On 2026-11-04 that took a one-off `ReviewQueue.cancel` the user approved, since T0-SHIP-THROW-SLOT-3 covers a throw, not a killed process. Request and pool writes take no lock, so a release checked in one step and written in another can cancel a later admission of the same key, leave a joining goal unjournaled, and let two commands both journal: R3 decisions 1 and 2 of T0-SHIP-THROW-SLOT (F1, F6, F13)."
   same_class: "See the sweep: every queue mutation joins the section, so the release shares it with enqueue, admission and cancellation."
@@ -47,7 +49,7 @@ doc_sync: CHANGELOG.md, docs/OPERATIONS.md
 # T0-REVIEW-RELEASE
 
 ## Deliverable
-A review slot held by a dead process no longer needs a one-off call. `aidlc review release` frees it, refuses while that process is alive, and journals the release, all in one lock section that every other mutation of the pool also takes.
+A review slot held by a dead process no longer needs a one-off call. `aidlc review release` frees it, refuses while that process is alive, and journals the release, all in one lock section that every other mutation of the queue also takes.
 
 ## Doc text
 OPERATIONS sentence:
@@ -58,9 +60,62 @@ CHANGELOG entry:
 
 - T0-REVIEW-RELEASE: `aidlc review release <key> --reason <text>` frees the review slot of a process that died outside any catch, refusing while that process is alive or when it ran on another host, and every mutation of a review pool now runs in one lock section, so a release can never cancel a later admission of the same key.
 
+## Amendments
+- 2026-11-05, planner (session lead), after R3 decision 1 and before R3 decision 2, from its findings (classes: stale-pool-overwrite, release-note-identity-collision, release-partial-write-unretryable): R1 removes every public write of a whole pool record, R2 orders the writes so a failure leaves the request `running`, R3 and acceptance 5 add the pool to the NOTE identity, acceptance 3, 6 and 9 and the sweep follow, and the two scenario files whose fixtures called `savePool` join allow_paths.
+- 2026-11-05, planner (session lead), after R3 decision 2 and before R3 decision 3, from its findings (classes: cross-pool-request-race, journal-append-race): the lock of R1 is one lock over the whole queue, as the user's ruling on the split named it, in place of one per pool, which removes moves between pools as a case; the release's journal appends run inside it; a lock over `Journal.append` itself stays out of this card.
+
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/infra/review-queue.test.ts tests/scenarios/review-admit-foreign.test.ts tests/scenarios/review-block.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/t0-flow.test.ts tests/surface/prose.test.ts
+npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/infra/review-queue.test.ts tests/scenarios/review-admit-foreign.test.ts tests/scenarios/review-block.test.ts tests/scenarios/ci-rerun.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/run-driver.test.ts tests/surface/prose.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+Attempt 1.
+
+RED: commit 11d2fd8 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 15, pass 0, fail 15. Each failure is the missing behaviour: `release is not a function` for the queue items (acceptance 1 to 4), `unknown command 'release'` from the CLI (acceptance 5 to 7), a missing text (acceptance 8).
+
+Two tests were added during the mutation check, each killing a mutant: the NOTE matching test of acceptance 5 (key, kind, event type, a requester naming no goal) and the deterministic test of acceptance 7 (a command run inside a held section). The final file has 17 tests.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 250, pass 250, fail 0.
+
+Mutants, each applied by hand to the source, run against the tests that cover it, restored and never committed (`git diff` compared equal to its saved copy after each batch). 41 mutants, 41 killed:
+- A section dropped from each mutation (11): `savePool`, `setPoolLimit`, `enqueue`, `requeue`, `admit`, `complete`, `markLost`, `resolveLost`, `hold`, `cancel`, `release`. Each failed on its own name in acceptance 3, by `Missing expected exception` or, for `resolveLost`, by its `not lost` error in place of `LOCKED`.
+- Section structure (4): `resolveLost` calling public `complete` from its section (`LOCKED` in tests/infra/review-queue.test.ts), `enqueue` locking the pool it names instead of the pool of the stored request, `sectionOf` not reading the pool again in the section, the lock's change returning a copy so the lock writes a stale record.
+- Refusals of `release` (7): the state check, `lost` allowed, no `slotOwner`, pid 0, the pid bound, another host, a live owner.
+- Order and writes of `release` (5): `before` not called, `before` after the write, the check after `before`, the slot kept, the reason dropped.
+- CLI (11): dedupe dropped, dedupe without seq, key, kind or event type, a missing goal throwing, a NOTE without reason, seq or cardId, nothing printed, the first version's NOTEs outside the section.
+- Docs (3): the OPERATIONS sentence removed, the sentence no longer the last paragraph of Ship gates, the CHANGELOG entry removed.
+
+The mutant of the first version's NOTEs outside the section was killed in one run of acceptance 7's two-process test and survived another, since that test depends on the two commands overlapping. The deterministic test of acceptance 7 kills it on every run: the test holds the section and a command run inside it must exit with `LOCKED` and journal nothing.
+
+Callers: `src/loop/card-runner.ts`, `src/loop/run-driver.ts`, `src/loop/controller.ts` and `src/cli/main.ts` call the queue outside any section of the pool lock. Only `ReviewQueue` takes that lock and the CLI's `before` calls only the journal and the goal store. Some card-runner calls follow a card-run section; none runs inside a pool section.
+
+A request can change pool: `enqueue` replaces a cancelled request in the pool its caller names, and the key carries no pool. `sectionOf` reads the pool again in the section and moves to the new pool's section, so `release` is always in the section of the pool holding the request. Against a mutation of a cancelled request in its old pool, an `enqueue` that moves it holds only the new pool's lock: R1 covers mutations of one pool, and `release` refuses a cancelled request, so no forbid clause is reached.
+
+Repair of R3 decision 1 (F1 stale-pool-overwrite, F2 release-note-identity-collision, F3 release-partial-write-unretryable).
+
+RED: commit aa8130a holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 23, pass 17, fail 6: `updatePool` missing (3 tests), one NOTE where two are due across pools (F2), the request `cancelled` after a failed pool write, and the slot still held after a failed request write (F3). Two later tests pin that `updatePool` and `setPoolLimit` read inside the section and that a NOTE of another key does not count; the file ends at 25 tests.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 258, pass 258, fail 0.
+
+Mutants: 46 on the source, run after the repair, restored after each and compared with a saved diff, none committed. 43 were killed on the first run. Three survived (dedupe without key, kind or event type), since the seeded NOTEs carried no `pool` once the identity gained it; the seeds now carry it and a test seeds a NOTE of another key at the same pool and seq, and the three are killed. New or changed mutants: `updatePool` with no section, with its read before the section, and writing the pool its change names; `setPoolLimit` with its read before the section; `release` with the slot kept, the request written first, the request not written, the reason dropped, `before` after the slot; dedupe without pool; a NOTE without pool. The other mutants of attempt 1 ran again. The doc text did not change.
+
+Sweep. F1: `savePool` has no source caller, only test fixtures (nine lines, six outside `allow_paths`: tests/scenarios/run-driver.test.ts five, tests/scenarios/t0-flow.test.ts one). `setPoolLimit`, `hold`, `releaseSlot`, `enqueue`, `requeue` and `admit` read the pool inside their section. `pool()` outside a section is read only: `heldUntil`, `notificationOwner`, `src/cli/main.ts` (status), `src/loop/controller.ts`, `src/loop/run-driver.ts`. Nothing else writes a pool file. F2: within a pool `seq` never repeats, since `nextSeq` only grows, so key, pool and seq name one release. F3: `cancel` keeps its order, request then slot, since `admit` drops a slot whose request is no longer running and no refusal stands between it and a retry; only `release` needs a retry to find the request `running`.
+
+Removal of `savePool`, finishing F1, after the card amendment on main (merge fbcae9b): nine fixture lines moved to `updatePool` with no assertion changed (`tests/infra/review-queue.test.ts` three, `tests/scenarios/run-driver.test.ts` five, `tests/scenarios/t0-flow.test.ts` one), and the `savePool` entry left the acceptance 3 list of `tests/scenarios/review-release.test.ts`. One test was added: the queue has no `savePool` method. The file ends at 26 tests.
+
+GREEN: the dod_command of the amended card before the commit: exit 0, typecheck clean, tests 297, pass 297, fail 0.
+
+Mutants: 48 on the source, all killed on one run, restored and compared with a saved diff, none committed. The 45 of the repair ran again; `savePool: no section` left the set with the method. New: `savePool` restored, `updatePool` not applying its change, `updatePool` writing nothing.
+
+Repair of R3 decision 2 (F4 and F5 cross-pool-request-race, F6 journal-append-race): one lock over the whole queue, taken on the record `_queue.json` of the queue directory, which is never written. `home()`, the pool re-read and `sectionOf` are gone; `requestSection` is a plain wrapper, `cancel` and `enqueue` make their first read in the section, `list()` skips every `_` file, and the lock file does not end in `.json`. Source diff of this repair: 19 lines added, 35 removed.
+
+RED: commit 2036aa9 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 32, pass 25, fail 7: every mutation of another pool landing during a release's section, a lock under the pool's name, the lock record read as a pool, a first read of a request outside the section (`release` and `enqueue`, the F4 and F5 windows), a CLI release of another pool landing during a section, and the two-process test failing on the chain, which reproduced F6. That commit replaced the test of a move between pools, which named the per-pool design and whose window no longer exists; the first-read tests cover it. A key that moves between pools stays covered by acceptance 5.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 303, pass 303, fail 0.
+
+Mutants: 52 on the source, all killed on one run, restored and compared with a saved diff, none committed. Removed with their code: `enqueue` locking the stored request's pool, `sectionOf` not reading the pool again. New: one lock per pool, the lock record named as a pool, the lock writing a record, `list()` reading the lock record, a first read before the section in `enqueue`, `cancel` and `requestSection`. Those of a section dropped from a method, and of `updatePool`, `setPoolLimit` and `savePool`, ran again against the new text. The doc text did not change.
+
+The two-process test of acceptance 7 depends on overlap; the test that runs the CLI for a key of another pool inside a held section is deterministic and shows the second release journals nothing until the first section closes.
