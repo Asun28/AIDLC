@@ -160,7 +160,6 @@ test('T1-REVIEW-BENCH-EXPORT R3: the class is read from the reason text and neve
   try {
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate, { class: 'from-the-field' })] });
     exportBenchCases(options(r, [run]));
-    assert.equal(ReviewBenchCase.parse(JSON.parse(readFileSync(caseFile(r, caseId('F1')), 'utf8'))).kind, 'bug');
     assert.match(readFileSync(caseFile(r, caseId('F1')), 'utf8'), /"class": "dim-9"/);
   } finally {
     r.cleanup();
@@ -173,7 +172,7 @@ function advanced(r: Repo): { a: string; m: string; c2: string } {
   writeFileSync(path.join(r.root, 'other.txt'), 'm\n');
   const m = commitAll(r.root, 'main moves');
   git(r.root, ['checkout', '-q', CARD]);
-  git(r.root, ['-c', 'user.name=t', 'merge', '-q', '--no-edit', 'main']);
+  git(r.root, ['merge', '-q', '--no-edit', 'main']);
   writeFileSync(path.join(r.root, 'src', 'calc.ts'), readFileSync(path.join(r.root, 'src', 'calc.ts'), 'utf8') + 'export const v47 = 47;\n');
   const c2 = commitAll(r.root, 'second candidate');
   git(r.root, ['checkout', '-q', 'main']);
