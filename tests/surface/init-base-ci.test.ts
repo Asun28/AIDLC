@@ -77,6 +77,24 @@ describe('T1-INIT-BASE-CI: the base of a created config', () => {
     assert.equal(baseAfterInit(target), 'develop');
   });
 
+  test('acceptance 1: a tag named like the branch still gives the branch name [R1]', () => {
+    const target = repository('develop');
+    git(target, 'tag', 'develop');
+    assert.equal(baseAfterInit(target), 'develop');
+  });
+
+  test('acceptance 1: a local branch origin/master beside the remote default still gives master [R1]', () => {
+    const target = cloneOf('master');
+    git(target, 'branch', 'origin/master');
+    assert.equal(baseAfterInit(target), 'master');
+  });
+
+  test('acceptance 1: an origin/HEAD that points outside origin falls to the current branch [R1]', () => {
+    const target = cloneOf('master');
+    git(target, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/upstream/main');
+    assert.equal(baseAfterInit(target), 'work');
+  });
+
   test('acceptance 1: a detached HEAD with no remote gets the template value [R1]', () => {
     const target = repository('develop');
     git(target, 'checkout', '-q', '--detach');
