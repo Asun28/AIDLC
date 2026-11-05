@@ -880,6 +880,75 @@ describe('R3 decision 1 repairs (card T1-VERIFY-MUTANT-GEN-2)', () => {
   });
 });
 
+describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
+  const ds = (line: number, column: number, original: string): Row => [line, column, 'drop-statement', original, ''];
+  const dn = (line: number, column: number): Row => [line, column, 'drop-not', '!', ''];
+  const ne = (line: number, column: number): Row => [line, column, 'negate-equality', '===', '!=='];
+  const forces = (column: number): Row[] => [[1, column, 'force-true', 'ok', 'true'], [1, column, 'force-false', 'ok', 'false']];
+
+  test('acceptance 7: a hashbang at the start of the file is a comment through its line end [R4]', () => {
+    const bang = '#!/usr/bin/env node';
+    const next = 'const a = b === c;';
+    assert.deepEqual(view(mutantsFor(`${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'a \\n line end');
+    assert.deepEqual(view(mutantsFor(`${bang}\r\n${next}\r\n`, [1, 2])), [ne(2, 13)], 'a \\r\\n line end');
+    assert.deepEqual(view(mutantsFor(`${bang}\r${next}`, [1])), [ne(1, 33)], 'a lone \\r');
+    assert.deepEqual(view(mutantsFor(`﻿${bang}\n${next}\n`, [1, 2])), [ne(2, 13)], 'after a byte order mark');
+    assert.deepEqual(view(mutantsFor(bang, [1])), [], 'a file of one line with no line end');
+    assert.deepEqual(view(mutantsFor("#!/bin/sh -c 'a === b' && !c;\nconst d = e === f;\n", [1, 2])), [ne(2, 13)], 'operators and a quote on the hashbang line');
+    assert.deepEqual(view(mutantsFor('#!/x\n/a === b/.test(c);\n', [2])), [ds(2, 1, '/a === b/.test(c);')], 'a regex literal still opens on the next line');
+  });
+
+  test('acceptance 7: a #! anywhere else is no hashbang [R4]', () => {
+    assert.deepEqual(view(mutantsFor('a;\n#!b === c;\n', [2])), [ds(2, 1, '#!b === c;'), dn(2, 2), ne(2, 5)], 'on a later line');
+    assert.deepEqual(view(mutantsFor(' #!b === c;\n', [1])), [ds(1, 2, '#!b === c;'), dn(1, 3), ne(1, 6)], 'after a space');
+    assert.deepEqual(view(mutantsFor('﻿ #!b === c;\n', [1])), [ds(1, 3, '#!b === c;'), dn(1, 4), ne(1, 7)], 'after a byte order mark and a space');
+    assert.deepEqual(view(mutantsFor('﻿const a = !b;\n', [1])), [dn(1, 12)], 'a byte order mark alone changes nothing');
+  });
+
+  test('acceptance 8: `as` and `satisfies` after a ! with no value before it are its operand [R3] [R4]', () => {
+    assert.deepEqual(view(mutantsFor('const a = !as;', [1])), [dn(1, 11)]);
+    assert.deepEqual(view(mutantsFor('const b = !satisfies;', [1])), [dn(1, 11)]);
+    assert.deepEqual(view(mutantsFor('f(!as);', [1])), [ds(1, 1, 'f(!as);'), dn(1, 3)]);
+    assert.deepEqual(view(mutantsFor('const c = !!as;', [1])), [dn(1, 11), dn(1, 12)], 'a double negation');
+    assert.deepEqual(view(mutantsFor('b;\n!as;', [2])), [ds(2, 1, '!as;'), dn(2, 1)], 'after the statement before ends');
+  });
+
+  test('acceptance 8: after a value `as` and `satisfies` stay operators, and `in` and `instanceof` are never operands [R3] [R4]', () => {
+    for (const source of ['a! as T;', 'a! satisfies T;', 'a!! as T;', 'f()! as T;', 'a[0]! as T;', 'a = ! in c;', 'a = ! instanceof C;']) {
+      assert.deepEqual(view(mutantsFor(source, [1])), [ds(1, 1, source)], source);
+    }
+    assert.deepEqual(view(mutantsFor('const a = b\n! as T;', [2])), [ds(2, 1, '! as T;')], 'the line break F11 pins');
+    assert.deepEqual(view(mutantsFor('b\n!as;', [2])), [ds(2, 1, '!as;')], 'the limit the card states');
+  });
+
+  test('acceptance 9: the body of an optional method is a block, so its if is a condition [R3]', () => {
+    const sources: [string, number][] = [
+      ['class A { m?(): void { if(ok) {} } }', 27],
+      ['class A { static m?(): void { if(ok) {} } }', 34],
+      ['class A { [k]?(): void { if(ok) {} } }', 29],
+      ['class A { x = 1; m?(): void { if(ok) {} } }', 34],
+      ['class A { a() {} m?(): void { if(ok) {} } }', 34],
+      ['class A { m?<T>(): void { if(ok) {} } }', 30],
+      ['const C = class { m?(): void { if(ok) {} } };', 35],
+    ];
+    for (const [source, column] of sources) assert.deepEqual(view(mutantsFor(source, [1])), forces(column), source);
+  });
+
+  test('acceptance 9: a ternary branch with a `void` object is no optional method [R3]', () => {
+    const sources = [
+      'class A { x = c ? (d) : void { if(ok) {} }; }',
+      'class A { m() { return c ? (d) : void { if(ok) {} }; } }',
+      'class A { x = f(c ? (d) : void { if(ok) {} }); }',
+      'const o = { m: c ? (d) : void { if(ok) {} } };',
+    ];
+    for (const source of sources) assert.deepEqual(view(mutantsFor(source, [1])), [], source);
+  });
+
+  test('card limit: a property with no closing ; hides the optional method after it [R3]', () => {
+    assert.deepEqual(view(mutantsFor('class A {\n  x = 1\n  m?(): void { if(ok) {} }\n}', [3])), []);
+  });
+});
+
 describe('docs (card T1-VERIFY-MUTANT-GEN)', () => {
   const OPERATIONS = [
     '`src/review/mutant-gen.ts` (card T1-VERIFY-MUTANT-GEN) lists the mutants of the source lines a change adds; it is pure, reads no file and runs nothing, and the command that runs the mutants under a card\'s DoD arrives with card T1-VERIFY-MUTANTS.',
