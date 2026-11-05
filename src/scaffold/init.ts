@@ -33,12 +33,82 @@ export function templatesDir(): string {
 }
 
 const MARKER = '## AI-native SDLC (aidlc)';
+/** Workflows that run `npm ci`, so they fail on every push of a repository with no `package.json`. */
+const NODE_WORKFLOWS = new Set(['.github/workflows/aidlc-ci.yml', '.github/workflows/agent-evals.yml']);
+
+/** Whether the target holds an entry other than `.git`. A target that does not exist yet holds none; any other listing failure stops init. */
+function holdsContent(target: string): boolean {
+  try {
+    return readdirSync(target).some((name) => name !== '.git');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw err;
+  }
+}
+
+/** A file of the target with one terminal line ending removed, so a second one stays and fails the checks; nothing when it cannot be read. */
+function readOneLine(file: string): string | undefined {
+  try {
+    return readFileSync(file, 'utf8').replace(/\r?\n$/, '');
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * A directory named by a `.git` or `commondir` file, resolved against `base`; empty for no value, for a second line, or
+ * for a value starting with two separators, which on Windows can name a file on another host.
+ */
+function namedDir(base: string, value: string): string {
+  return !value || /[\r\n]/.test(value) || /^[\\/]{2}/.test(value) ? '' : path.resolve(base, value);
+}
+
+/** The git directory of the target: `.git`, or the directory a `.git` file names on its `gitdir:` line. Empty when that line is unusable. */
+function gitDirOf(target: string): string {
+  const dotGit = path.join(target, '.git');
+  const pointer = readOneLine(dotGit);
+  if (pointer === undefined) return dotGit;
+  return pointer.startsWith('gitdir: ') ? namedDir(target, pointer.slice('gitdir: '.length)) : '';
+}
+
+/** The common directory: `gitDir` itself, or the directory its `commondir` file names. Empty when that file is unusable. */
+function commonDirOf(gitDir: string): string {
+  const pointer = readOneLine(path.join(gitDir, 'commondir'));
+  return pointer === undefined ? gitDir : namedDir(gitDir, pointer);
+}
+
+/** Whether a name read from a ref file can go into the config: `base` later reaches git arguments, so it cannot read as an option, and every part is one git accepts. */
+function isBranchName(name: string): boolean {
+  return /^[A-Za-z0-9._/-]+$/.test(name) && !name.startsWith('-') && !name.includes('..') && name.split('/').every((part) => part !== '' && !part.startsWith('.'));
+}
+
+/** The branch on the one line `ref: <prefix><name>` of a ref file; empty for any other content, or when it cannot be read. */
+function branchIn(file: string, prefix: string): string {
+  const line = readOneLine(file);
+  if (!line?.startsWith(`ref: ${prefix}`)) return '';
+  const name = line.slice('ref: '.length + prefix.length);
+  return isBranchName(name) ? name : '';
+}
+
+/**
+ * The remote default branch, else the current branch; empty when neither file gives a name. Reads ref files and starts no
+ * process, since a `git` start can resolve to a program in the target and obeys `GIT_DIR` over its `-C` argument.
+ */
+function defaultBranch(target: string): string {
+  const gitDir = gitDirOf(target);
+  if (!gitDir) return '';
+  const commonDir = commonDirOf(gitDir);
+  const remote = commonDir ? branchIn(path.join(commonDir, 'refs', 'remotes', 'origin', 'HEAD'), 'refs/remotes/origin/') : '';
+  return remote || branchIn(path.join(gitDir, 'HEAD'), 'refs/heads/');
+}
 
 export function initProject(options: InitOptions): InitReport {
   const tpl = templatesDir();
   const report: InitReport = { created: [], skipped: [], merged: [], templatesDir: tpl };
   const target = path.resolve(options.target);
   const cardsDir = options.cardsDir ?? 'specs/tasks';
+  // Read before the first write, since init itself creates entries.
+  const noPackage = holdsContent(target) && !existsSync(path.join(target, 'package.json'));
   const write = (rel: string, content: string | Buffer, mode: 'create' | 'force' = 'create') => {
     const dest = path.join(target, rel);
     if (existsSync(dest) && !(options.force || mode === 'force')) {
@@ -58,6 +128,7 @@ export function initProject(options: InitOptions): InitReport {
       const src = path.join(from, name);
       const rel = path.join(toRel, name).replace(/\\/g, '/');
       if (statSync(src).isDirectory()) copyTree(path.join(fromRel, name), path.join(toRel, name));
+      else if (noPackage && NODE_WORKFLOWS.has(rel)) report.skipped.push(`${rel} (no package.json)`);
       else if (rel !== '.claude/settings.json') write(rel, readFileSync(src));
     }
   };
@@ -82,6 +153,8 @@ export function initProject(options: InitOptions): InitReport {
   if (existsSync(cfgSrc)) {
     const cfg = JSON.parse(readFileSync(cfgSrc, 'utf8')) as Record<string, unknown>;
     cfg['cardsDir'] = cardsDir;
+    const base = defaultBranch(target);
+    if (base) cfg['base'] = base;
     if (options.shipPath) cfg['shipPath'] = options.shipPath;
     write('aidlc.config.json', JSON.stringify(cfg, null, 2) + '\n');
   }

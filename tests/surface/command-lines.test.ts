@@ -40,10 +40,10 @@ function step(workflow: string, opening: string): string[] {
 test('T1-EVALS-NO-KEY acceptance 1: the eval job runs the deterministic checks with no key, no Claude Code install and no skip step [R1]', () => {
   const live = read('.github/workflows/agent-evals.yml');
   assert.equal(read('templates/github/workflows/agent-evals.yml'), live);
-  assert.deepEqual(step(live, 'name: Run eval checks'), ['- name: Run eval checks', 'run: npx aidlc evals run --skip-model --threshold 0.9 --json > evals-result.json']);
+  assert.deepEqual(step(live, 'name: Run eval checks'), ['- name: Run eval checks', 'run: npx --no-install aidlc evals run --skip-model --threshold 0.9 --json > evals-result.json']);
   assert.ok(!/^ {4}env:$/m.test(live), 'the evals job sets no env');
   for (const gone of ['ANTHROPIC_API_KEY', 'HAS_ANTHROPIC_KEY', 'claude-code', 'AIDLC_PROVIDER', 'Install Claude Code', 'Evals skipped']) assert.ok(!live.includes(gone), `the workflow names ${gone}`);
-  assert.equal(live.split(/\r?\n/).filter((l) => l.includes('npx aidlc evals run')).length, 1, 'one eval run');
+  assert.equal(live.split(/\r?\n/).filter((l) => l.includes('npx --no-install aidlc evals run')).length, 1, 'one eval run');
 });
 
 test('T1-EVALS-NO-KEY acceptance 2: the evals READMEs and the OPERATIONS Evals section name the CI run with no model and the local run on the Claude Code CLI login [R2]', () => {
