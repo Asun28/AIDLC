@@ -5,11 +5,12 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { mock, test } from 'node:test';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ReviewBenchCase, ReviewFinding, ReviewLedger, type CardRun } from '../../src/core/types.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { exportBenchCases, formatBenchExport, loadBenchCases, type BenchExportOptions } from '../../src/review/bench.ts';
@@ -337,7 +338,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: the absent ref is created with the zero old val
     };
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
     const report = exportBenchCases(options(r, [run], { git: racing }));
-    assert.deepEqual(calls, [['update-ref', `refs/aidlc/bench/${caseId('F1')}`, r.candidate, '0'.repeat(40)]]);
+    assert.deepEqual(calls, [['update-ref', '--no-deref', `refs/aidlc/bench/${caseId('F1')}`, r.candidate, '0'.repeat(40)]]);
     assert.equal(git(r.root, ['rev-parse', `refs/aidlc/bench/${caseId('F1')}`]), r.base);
     assert.equal(report.pinConflicts.length, 1);
   } finally {
@@ -398,9 +399,9 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-bas
   const r = repo();
   try {
     const before = git(r.root, ['for-each-ref', '--format=%(refname)']).split('\n');
-    const calls: Array<{ command: string; args: string[]; cwd?: string }> = [];
+    const calls: Array<{ command: string; args: string[]; cwd?: string; noLazyFetch?: string }> = [];
     const recorder: SyncRunner = (command, args, opts) => {
-      calls.push({ command, args, cwd: opts?.cwd });
+      calls.push({ command, args, cwd: opts?.cwd, noLazyFetch: opts?.env?.['GIT_NO_LAZY_FETCH'] });
       return runSync(command, args, opts);
     };
     exportBenchCases(options(r, [fixRun(r.candidate)], { git: recorder }));
@@ -408,12 +409,164 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-bas
     for (const c of calls) {
       assert.equal(c.command, 'git');
       assert.equal(c.cwd, r.root);
-      assert.ok(['cat-file', 'merge-base', 'rev-parse', 'update-ref'].includes(c.args[0]!), c.args.join(' '));
-      if (c.args[0] === 'update-ref') assert.ok(c.args[1]!.startsWith('refs/aidlc/bench/'), c.args.join(' '));
+      assert.equal(c.noLazyFetch, '1', c.args.join(' '));
+      assert.ok(['cat-file', 'merge-base', 'rev-parse', 'symbolic-ref', 'update-ref'].includes(c.args[0]!), c.args.join(' '));
+      if (c.args[0] === 'symbolic-ref') assert.deepEqual(c.args.slice(0, 2).concat(c.args.length), ['symbolic-ref', '-q', 3]);
+      if (c.args[0] === 'update-ref') {
+        assert.equal(c.args[1], '--no-deref');
+        assert.ok(c.args[2]!.startsWith('refs/aidlc/bench/'), c.args.join(' '));
+      }
     }
     const after = git(r.root, ['for-each-ref', '--format=%(refname)']).split('\n');
     assert.deepEqual(after.sort(), [...before, ...ids.map((id) => `refs/aidlc/bench/${id}`)].sort());
   } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 12: a symbolic pin, dangling or resolved, is a pin conflict with no file and no write through it [R7]', () => {
+  const r = repo();
+  try {
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate), finding('F2', F3, r.candidate)] });
+    const dangling = `refs/aidlc/bench/${caseId('F1')}`;
+    const resolved = `refs/aidlc/bench/${caseId('F2')}`;
+    git(r.root, ['symbolic-ref', dangling, 'refs/heads/nope']);
+    git(r.root, ['branch', 'at-candidate', r.candidate]);
+    git(r.root, ['symbolic-ref', resolved, 'refs/heads/at-candidate']);
+    const report = exportBenchCases(options(r, [run]));
+    assert.deepEqual(report.pinConflicts.map((c) => c.id), [caseId('F1'), caseId('F2')]);
+    assert.match(report.pinConflicts[0]!.detail, /is a symbolic ref to refs\/heads\/nope/);
+    assert.deepEqual(report.written, []);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.equal(git(r.root, ['symbolic-ref', dangling]), 'refs/heads/nope');
+    assert.equal(git(r.root, ['symbolic-ref', resolved]), 'refs/heads/at-candidate');
+    assert.equal(git(r.root, ['for-each-ref', 'refs/heads/nope']), '');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 12: a symbolic ref that appears after the checks fails the no-deref create, which removes the file and writes no branch [R7]', () => {
+  const r = repo();
+  try {
+    const ref = `refs/aidlc/bench/${caseId('F1')}`;
+    const late: SyncRunner = (command, args, opts) => {
+      if (args[0] === 'update-ref') git(r.root, ['symbolic-ref', ref, 'refs/heads/nope']);
+      return runSync(command, args, opts);
+    };
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    const report = exportBenchCases(options(r, [run], { git: late }));
+    assert.equal(report.pinConflicts.length, 1);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.equal(git(r.root, ['symbolic-ref', ref]), 'refs/heads/nope');
+    assert.equal(git(r.root, ['for-each-ref', 'refs/heads/nope']), '');
+  } finally {
+    r.cleanup();
+  }
+});
+
+const gitVersion = /(\d+)\.(\d+)/.exec(git(tmpdir(), ['--version']))!;
+const hasNoLazyFetch = Number(gitVersion[1]) > 2 || Number(gitVersion[2]) >= 45;
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 13: in a partial clone a blob the clone lacks is skipped and never fetched [R8]', { skip: hasNoLazyFetch ? false : 'git before 2.45 ignores GIT_NO_LAZY_FETCH' }, () => {
+  const r = repo();
+  try {
+    git(r.root, ['config', 'uploadpack.allowFilter', 'true']);
+    const clone = path.join(r.dir, 'partial');
+    git(r.dir, ['clone', '-q', '--filter=blob:none', '--no-checkout', pathToFileURL(r.root).href, clone]);
+    mkdirSync(path.join(clone, 'evals', 'review'), { recursive: true });
+    const blob = git(r.root, ['rev-parse', `${r.candidate}:specs/tasks/${CARD}.md`]);
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
+    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD });
+    assert.match(report.skipped[0]?.detail ?? '', /no card file/);
+    const stillMissing = spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env: { ...gitEnv, GIT_NO_LAZY_FETCH: '1' }, windowsHide: true });
+    assert.notEqual(stillMissing.status, 0, 'the export fetched the blob');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 14: a link retargeted during the export changes nothing, and a resolved directory replaced by a link ends the export [R10]', () => {
+  const r = repo();
+  try {
+    const state = path.join(r.dir, 'state');
+    const cases = path.join(r.dir, 'cases');
+    const link = path.join(r.root, 'link');
+    mkdirSync(state);
+    mkdirSync(cases);
+    symlinkSync(cases, link, 'junction');
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    let moved = false;
+    const retarget: SyncRunner = (command, args, opts) => {
+      if (!moved) {
+        moved = true;
+        rmSync(link);
+        symlinkSync(state, link, 'junction');
+      }
+      return runSync(command, args, opts);
+    };
+    const report = exportBenchCases(options(r, [run], { dir: 'link', stateDir: state, git: retarget }));
+    assert.deepEqual(readdirSync(state), []);
+    assert.deepEqual(report.written.map((w) => w.file), [path.join(cases, `${caseId('F1')}.json`)]);
+    assert.ok(existsSync(path.join(cases, `${caseId('F1')}.json`)));
+    git(r.root, ['update-ref', '-d', `refs/aidlc/bench/${caseId('F1')}`]);
+    rmSync(path.join(cases, `${caseId('F1')}.json`));
+    const replace: SyncRunner = (command, args, opts) => {
+      if (args[0] === 'rev-parse' && args[1] === '--verify') {
+        rmSync(cases, { recursive: true });
+        symlinkSync(state, cases, 'junction');
+      }
+      return runSync(command, args, opts);
+    };
+    assert.throws(() => exportBenchCases(options(r, [run], { dir: cases, stateDir: state, git: replace })), /no longer resolves/);
+    assert.deepEqual(readdirSync(state), []);
+    assert.deepEqual(benchRefs(r), []);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 15: a state directory that overlaps the refs directory is refused before any draft, and one beside it exports [R10]', () => {
+  const r = repo();
+  try {
+    const cases = path.join(r.dir, 'cases');
+    const gitDir = path.join(r.root, '.git');
+    mkdirSync(cases);
+    mkdirSync(path.join(gitDir, 'refs', 'aidlc'));
+    mkdirSync(path.join(gitDir, 'aidlc'));
+    for (const stateDir of [gitDir, path.join(gitDir, 'refs', 'aidlc')]) assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { dir: cases, stateDir })), /refs directory/, stateDir);
+    assert.deepEqual(readdirSync(cases), []);
+    assert.deepEqual(benchRefs(r), []);
+    const broken: SyncRunner = (command, args, opts) => (args[1] === '--git-common-dir' ? { ...runSync(command, ['--version'], opts), exitCode: 128, stderr: 'fatal: no\n' } : runSync(command, args, opts));
+    assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { dir: cases, stateDir: path.join(gitDir, 'aidlc'), git: broken })), /--git-common-dir failed: fatal: no/);
+    assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { dir: cases, stateDir: path.join(gitDir, 'aidlc') })).written.length, 3);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT acceptance 16: a write that fails partway leaves no file and no ref, the error surfaces, and the next export writes the case [R6]', () => {
+  const r = repo();
+  const real = fs.writeFileSync;
+  const partial = mock.method(fs, 'writeFileSync', (target: fs.PathOrFileDescriptor, data: string, opts?: fs.WriteFileOptions) => {
+    if (typeof target === 'number') fs.writeSync(target, data.slice(0, 10));
+    else if (String(target).startsWith(r.caseDir)) real(target, data.slice(0, 10), opts);
+    else return real(target, data, opts);
+    throw Object.assign(new Error('ENOSPC: no space left on device'), { code: 'ENOSPC' });
+  });
+  syncBuiltinESMExports();
+  try {
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    assert.throws(() => exportBenchCases(options(r, [run])), /ENOSPC/);
+    partial.mock.restore();
+    syncBuiltinESMExports();
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.deepEqual(benchRefs(r), []);
+    assert.equal(exportBenchCases(options(r, [run])).written.length, 1);
+    assert.ok(JSON.parse(readFileSync(caseFile(r, caseId('F1')), 'utf8')));
+  } finally {
+    partial.mock.restore();
+    syncBuiltinESMExports();
     r.cleanup();
   }
 });
