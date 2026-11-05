@@ -184,6 +184,12 @@ const samePath = (a: string, b: string): boolean => {
   return norm(a) === norm(b);
 };
 
+/** Whether `target`, links followed, is `dir` or lies under it; both exist. */
+function resolvesInside(dir: string, target: string): boolean {
+  const inside = path.relative(realpathSync.native(dir), realpathSync.native(target));
+  return !(inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside));
+}
+
 /** One git step whose failure the caller handles; a runner that throws counts as a step that failed, so the steps after it still run. */
 function gitStep(ctx: Pick<BenchContext, 'git' | 'root'>, args: string[]): ReturnType<SyncRunner> | undefined {
   try {
@@ -217,8 +223,7 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   const cardFile = path.join(checkout, ...ref.path.split('/'));
   if (!existsSync(cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} is absent at ${candidate}`));
   // The candidate decides what this path is, so a link out of the checkout is refused before the read.
-  const inside = path.relative(realpathSync.native(checkout), realpathSync.native(cardFile));
-  if (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return cases.map((c) => errorOf(c, `card file ${ref.path} resolves outside the checkout`));
+  if (!resolvesInside(checkout, cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} resolves outside the checkout`));
   const parsed = parseCardText(readFileSync(cardFile, 'utf8'), cardFile);
   if ('error' in parsed) return cases.map((c) => errorOf(c, `card file ${ref.path} does not parse: ${parsed.error}`));
   const card = parsed.card;
@@ -323,6 +328,8 @@ export interface BenchExportOptions {
   clean?: boolean;
   /** The case directory, resolved against `root`; default `evals/review`. */
   dir?: string;
+  /** The state directory: a case directory that resolves to it or under it is refused, since the export writes nothing there. */
+  stateDir?: string;
   /** The git runner; default `runSync`. */
   git?: SyncRunner;
 }
@@ -468,6 +475,7 @@ export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   if (o.cardId === undefined && !o.clean) throw new Error('--card is required without --clean');
   const dir = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`no case directory ${dir}`);
+  if (o.stateDir !== undefined && existsSync(o.stateDir) && resolvesInside(o.stateDir, dir)) throw new Error(`case directory ${dir} is under the state directory ${o.stateDir}`);
   const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git: o.git ?? runSync, report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
   const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
   for (const run of runs) {

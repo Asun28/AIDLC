@@ -91,3 +91,9 @@ BUILD attempt 1, Windows, Node 22.23.1, on main at f842ce6, then merged with mai
 - GREEN: commit 0844c5a, tidied in 5fce6ce. The DoD command with neither session variable set exits 0. `node --test tests/surface/*.test.ts`: 741 tests, 737 passed, 4 skipped, 0 failed. The new test file under WSL Ubuntu: 23 of 23. `npm run build && npm run bench -- --check`: exit 0.
 - Real ledgers, in a shared clone with `AIDLC_STATE_DIR` on this repository's state, so no ref landed here: `--clean` over every goal wrote 69 cases and skipped 2 (no `candidateSha`). `--card` over the 91 cards with formal findings drafted all 451 formal findings of 206 card runs, with no skip and no pin conflict: 365 `dim-<n>`, 85 from a class tag, 1 `unclassified`, on 142 distinct candidates. `aidlc review bench run --stage pre` loaded the 520 drafts and left all 520 out as unconfirmed.
 - Mutation check, 41 breaks of `exportBenchCases` and the command in scratch clones, each restored and none committed; each fails a test.
+
+Repair after R2 round 1 F1 (a `--dir` under the state directory), on 8c9241a:
+- RED: commit ec3a87d. `node --test --test-name-pattern "acceptance (8|11)" tests/surface/review-bench-export.test.ts` exited 1, 2 tests, 0 passed, 2 failed: acceptance 11 on the refusal and acceptance 8 on the exit code.
+- GREEN: the DoD command with neither session variable set exits 0, 57 tests, 57 passed. The two tests under WSL Ubuntu: 2 of 2.
+- Mutation check, 5 breaks of the refusal, each restored and none committed. Four fail a test; the fifth, which dropped the `..` and absolute-path clauses of `resolvesInside`, survived, so acceptance 11 now also exports into the parent of the state directory. A different drive stays untested on this one-drive machine.
+- R2 round 1 advisory, not taken: the case file is written before its ref, so a process killed between the two leaves an unpinned case. R7 fixes that order.

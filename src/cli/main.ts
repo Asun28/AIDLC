@@ -869,7 +869,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const goals = o.goal ? [o.goal] : c.store.listGoals().map((x) => x.id);
       const runs = goals.flatMap((id) => (o.card ? (c.store.getCardRun(id, o.card) ?? []) : c.store.listCardRuns(id)));
       if (o.card && !runs.length) fail(`no run of ${o.card} in ${o.goal ?? 'any goal'}`);
-      const report = exportBenchCases({ root: c.repo.worktreeRoot, runs, cardId: o.card, clean: o.clean, dir: o.dir });
+      const report = exportBenchCases({ root: c.repo.worktreeRoot, runs, cardId: o.card, clean: o.clean, dir: o.dir, stateDir: c.paths.root });
       out(c, report, () => formatBenchExport(report));
       if (report.pinConflicts.length) process.exitCode = 1;
     });

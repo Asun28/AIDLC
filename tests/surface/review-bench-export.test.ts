@@ -478,6 +478,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 11: a case directory at or under the sta
     mkdirSync(beside);
     assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { dir: beside, stateDir: state })).written.length, 3);
     assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { stateDir: path.join(r.dir, 'no-state') })).written.length, 3);
+    assert.equal(exportBenchCases(options(r, [fixRun(r.candidate)], { dir: r.dir, stateDir: state })).written.length, 3);
   } finally {
     r.cleanup();
   }
