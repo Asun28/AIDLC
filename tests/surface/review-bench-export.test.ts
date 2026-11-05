@@ -271,6 +271,19 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 4: an existing case keeps its bytes, get
   }
 });
 
+test('T1-REVIEW-BENCH-EXPORT R6: an existing case is listed as existing whatever its ref names and even when its finding could give no case', () => {
+  const r = repo();
+  try {
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate), finding('F2', '[standards] 9 errors @ src/calc.ts: no line -> add one', r.candidate)] });
+    for (const id of ['F1', 'F2']) writeFileSync(caseFile(r, caseId(id)), 'mine');
+    git(r.root, ['update-ref', `refs/aidlc/bench/${caseId('F1')}`, r.base]);
+    const report = exportBenchCases(options(r, [run]));
+    assert.deepEqual(report, { written: [], existing: [caseId('F1'), caseId('F2')], skipped: [], pinConflicts: [] });
+  } finally {
+    r.cleanup();
+  }
+});
+
 test('T1-REVIEW-BENCH-EXPORT R6: a file that appears after the first check keeps its bytes and gets no ref', () => {
   const r = repo();
   try {
@@ -509,6 +522,27 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 8: the command prints the report, writes
     assert.equal(conflict.status, 1);
     assert.deepEqual((JSON.parse(conflict.stdout) as { pinConflicts: Array<{ id: string }> }).pinConflicts.map((c) => c.id), [ids[0]]);
     assert.deepEqual([...filesUnder(state)], [...before]);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT R10: in a linked worktree the case directory is the one under that checkout, and the state stays in the main one', () => {
+  const r = repo();
+  try {
+    const state = path.join(r.dir, 'state');
+    mkdirSync(path.join(state, 'goals'), { recursive: true });
+    mkdirSync(path.join(state, 'cards', GOAL), { recursive: true });
+    writeFileSync(path.join(state, 'goals', `${GOAL}.json`), JSON.stringify(makeGoal(GOAL)));
+    writeFileSync(path.join(state, 'cards', GOAL, `${CARD}.json`), JSON.stringify(fixRun(r.candidate)));
+    const linked = path.join(r.dir, 'linked');
+    git(r.root, ['worktree', 'add', '-q', '--detach', linked, 'main']);
+    mkdirSync(path.join(linked, 'evals', 'review'), { recursive: true });
+    const done = spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'export', '--card', CARD, '--json'], { cwd: linked, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: state }, windowsHide: true });
+    assert.equal(done.status, 0, done.stderr);
+    assert.equal(readdirSync(path.join(linked, 'evals', 'review')).length, 3);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.equal(benchRefs(r).length, 3);
   } finally {
     r.cleanup();
   }
