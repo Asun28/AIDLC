@@ -460,7 +460,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 12: a symbolic pin, dangling or resolved
   }
 });
 
-test('T1-REVIEW-BENCH-EXPORT acceptance 12: a symbolic ref that appears after the checks fails the no-deref create, which removes the file and writes no branch [R7]', () => {
+test('T1-REVIEW-BENCH-EXPORT acceptance 12: a dangling symbolic ref that appears after the checks never writes its target branch, on any git version [R7]', () => {
   const r = repo();
   try {
     const ref = `refs/aidlc/bench/${caseId('F1')}`;
@@ -470,10 +470,17 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 12: a symbolic ref that appears after th
     };
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
     const report = exportBenchCases(options(r, [run], { git: late }));
-    assert.equal(report.pinConflicts.length, 1);
-    assert.deepEqual(readdirSync(r.caseDir), []);
-    assert.equal(git(r.root, ['symbolic-ref', ref]), 'refs/heads/nope');
     assert.equal(git(r.root, ['for-each-ref', 'refs/heads/nope']), '');
+    if (report.pinConflicts.length) {
+      // Git 2.56 refuses the create, so the case goes and the ref stays as it was.
+      assert.deepEqual(report.written, []);
+      assert.deepEqual(readdirSync(r.caseDir), []);
+      assert.equal(git(r.root, ['symbolic-ref', ref]), 'refs/heads/nope');
+    } else {
+      // Git 2.43 replaces the dangling ref, so the ref is the pin the case needs.
+      assert.deepEqual(report.written.map((w) => w.id), [caseId('F1')]);
+      assert.equal(git(r.root, ['rev-parse', ref]), r.candidate);
+    }
   } finally {
     r.cleanup();
   }
