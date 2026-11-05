@@ -381,6 +381,20 @@ test('T1-REVIEW-BENCH-EXPORT R7: an update-ref runner that throws counts as a fa
   }
 });
 
+test('T1-REVIEW-BENCH-EXPORT R7: a symbolic-ref that errors is not an absent ref: no file and no pin', () => {
+  const r = repo();
+  try {
+    const broken: SyncRunner = (command, args, opts) => (args[0] === 'symbolic-ref' ? { ...runSync(command, ['--version'], opts), exitCode: 128, stdout: '', stderr: 'fatal: bad\n' } : runSync(command, args, opts));
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    const report = exportBenchCases(options(r, [run], { git: broken }));
+    assert.match(report.pinConflicts[0]?.detail ?? '', /symbolic-ref failed: fatal: bad/);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.deepEqual(benchRefs(r), []);
+  } finally {
+    r.cleanup();
+  }
+});
+
 test('T1-REVIEW-BENCH-EXPORT R7: a rev-parse that errors is not an absent ref: no file and no pin', () => {
   const r = repo();
   try {
@@ -395,7 +409,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: a rev-parse that errors is not an absent ref: n
   }
 });
 
-test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-base, rev-parse or update-ref under refs/aidlc/bench/, and no other ref appears [R8]', () => {
+test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-base, rev-parse, symbolic-ref -q or update-ref --no-deref under refs/aidlc/bench/ with lazy fetch off, and no other ref appears [R8]', () => {
   const r = repo();
   try {
     const before = git(r.root, ['for-each-ref', '--format=%(refname)']).split('\n');
@@ -411,7 +425,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-bas
       assert.equal(c.cwd, r.root);
       assert.equal(c.noLazyFetch, '1', c.args.join(' '));
       assert.ok(['cat-file', 'merge-base', 'rev-parse', 'symbolic-ref', 'update-ref'].includes(c.args[0]!), c.args.join(' '));
-      if (c.args[0] === 'symbolic-ref') assert.deepEqual(c.args.slice(0, 2).concat(c.args.length), ['symbolic-ref', '-q', 3]);
+      if (c.args[0] === 'symbolic-ref') assert.deepEqual(c.args.slice(0, -1), ['symbolic-ref', '-q']);
       if (c.args[0] === 'update-ref') {
         assert.equal(c.args[1], '--no-deref');
         assert.ok(c.args[2]!.startsWith('refs/aidlc/bench/'), c.args.join(' '));

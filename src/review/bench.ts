@@ -10,9 +10,9 @@
  *
  * `aidlc review bench export` (card T1-REVIEW-BENCH-EXPORT) drafts unconfirmed cases from card runs that `src/cli/main.ts`
  * reads and hands to `exportBenchCases`, and pins each candidate under `refs/aidlc/bench/`. Its git calls are `cat-file`,
- * `merge-base`, `rev-parse` and `update-ref` on those refs alone.
+ * `merge-base`, `rev-parse`, `symbolic-ref` and `update-ref` on those refs alone, none of which fetches an object.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
@@ -407,7 +407,34 @@ function buildDraft(ctx: ExportContext, run: CardRun, id: string, d: DraftInput)
   return parsed.success ? parsed.data : parsed.error.issues.map((i) => `${i.path.join('.') || 'case'}: ${i.message}`).join('; ');
 }
 
-/** Write one draft unless its file exists, it gives no reviewable case, or its ref names another commit (R5 to R7). */
+/**
+ * Create a case file exclusively; false when it exists. The path is checked first, since a link swapped in during the
+ * export would carry the write elsewhere, and a write that fails removes what it created, since a later export would
+ * report a partial file as an existing case.
+ */
+function createCase(ctx: ExportContext, file: string, text: string): boolean {
+  if (realpathSync.native(ctx.dir) !== ctx.dir) throw new Error(`case directory ${ctx.dir} no longer resolves to itself`);
+  let fd: number;
+  try {
+    fd = openSync(file, 'wx');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    throw err;
+  }
+  try {
+    try {
+      writeFileSync(fd, text);
+    } finally {
+      closeSync(fd);
+    }
+  } catch (err) {
+    rmSync(file, { force: true });
+    throw err;
+  }
+  return true;
+}
+
+/** Write one draft unless its file exists, it gives no reviewable case, or its ref is symbolic or names another commit (R5 to R7). */
 function writeDraft(ctx: ExportContext, run: CardRun, d: DraftInput): void {
   const { report } = ctx;
   const id = `${run.cardId}.${run.goalId}.${d.source}`;
@@ -424,19 +451,19 @@ function writeDraft(ctx: ExportContext, run: CardRun, d: DraftInput): void {
   const { candidate, base } = draft;
   const ref = `refs/aidlc/bench/${id}`;
   const conflict = (detail: string) => void report.pinConflicts.push({ id, ref, candidate, detail });
+  const symbolic = ctx.git('git', ['symbolic-ref', '-q', ref], { cwd: ctx.root });
+  if (symbolic.exitCode === 0) return conflict(`${ref} is a symbolic ref to ${symbolic.stdout.trim()}`);
+  if (symbolic.exitCode !== 1) return conflict(`git symbolic-ref failed: ${oneLine(symbolic.stderr)}`);
   const pin = ctx.git('git', ['rev-parse', '--verify', '--quiet', ref], { cwd: ctx.root });
   if (pin.exitCode !== 0 && pin.exitCode !== 1) return conflict(`git rev-parse failed: ${oneLine(pin.stderr)}`);
   const pinned = pin.exitCode === 0 ? pin.stdout.trim() : undefined;
   if (pinned !== undefined && pinned !== candidate) return conflict(`${ref} names ${pinned}`);
-  try {
-    writeFileSync(file, JSON.stringify(draft, null, 2) + '\n', { flag: 'wx' });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+  if (!createCase(ctx, file, JSON.stringify(draft, null, 2) + '\n')) {
     report.existing.push(id);
     return;
   }
   if (pinned === undefined) {
-    const created = gitStep(ctx, ['update-ref', ref, candidate, NO_REF]);
+    const created = gitStep(ctx, ['update-ref', '--no-deref', ref, candidate, NO_REF]);
     if (created?.exitCode !== 0) {
       // A later export gives an existing file no ref, so a case kept here would stay unpinned for good.
       let detail = `git update-ref failed: ${created ? oneLine(created.stderr) : 'git did not run'}`;
@@ -470,13 +497,26 @@ function cleanDraft(run: CardRun): DraftInput | undefined {
   return { source: 'clean', candidate: first.candidateSha, origin: `${run.cardId} clean (goal ${run.goalId})`, note: `R3 decision 1 passed (${first.reviewer})` };
 }
 
+/** The export writes only case files and refs, so neither may land under the state directory. */
+function refuseStateOverlap(root: string, dir: string, stateDir: string, git: SyncRunner): void {
+  if (resolvesInside(stateDir, dir)) throw new Error(`case directory ${dir} is under the state directory ${stateDir}`);
+  const common = git('git', ['rev-parse', '--git-common-dir'], { cwd: root });
+  if (common.exitCode !== 0) throw new Error(`git rev-parse --git-common-dir failed: ${oneLine(common.stderr)}`);
+  const refs = path.resolve(root, common.stdout.trim(), 'refs');
+  if (resolvesInside(stateDir, refs) || resolvesInside(refs, stateDir)) throw new Error(`the refs directory ${refs} and the state directory ${stateDir} overlap`);
+}
+
 /** Draft cases from the card runs; throws, before any draft, on a refusal. Changes only new case files and refs under `refs/aidlc/bench/`. */
 export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   if (o.cardId === undefined && !o.clean) throw new Error('--card is required without --clean');
-  const dir = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
-  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`no case directory ${dir}`);
-  if (o.stateDir !== undefined && existsSync(o.stateDir) && resolvesInside(o.stateDir, dir)) throw new Error(`case directory ${dir} is under the state directory ${o.stateDir}`);
-  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git: o.git ?? runSync, report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
+  const named = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
+  if (!statSync(named, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`no case directory ${named}`);
+  // Everything below uses the resolved path, so a link retargeted during the export changes nothing.
+  const dir = realpathSync.native(named);
+  const runner = o.git ?? runSync;
+  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1' } });
+  if (o.stateDir !== undefined && existsSync(o.stateDir)) refuseStateOverlap(o.root, dir, o.stateDir, git);
+  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
   const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
   for (const run of runs) {
     const drafts = o.clean ? [cleanDraft(run)].filter((d) => d !== undefined) : run.findings.filter((f) => f.stage === 'formal').map((f) => bugDraft(run, f));
