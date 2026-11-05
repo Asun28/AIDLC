@@ -409,6 +409,8 @@ A merge GitHub refuses after the checks passed (card T0-SHIP-MERGE-REFUSED) is r
 
 A ship that throws frees its review slot and leaves its merge operation `UNKNOWN`, since a merge may have landed: look the outcome up and record it with `aidlc ops reconcile <opId> --status <s>`, and `card next` ships again.
 
+`aidlc review release <key> --reason <text>` frees the slot of a `running` request whose owner process is gone from this host, which is how a process killed outside any catch leaves the pool; it refuses while that process is alive or when the owner is on another host, and journals a `review-slot-released` NOTE in each requester goal before it frees the slot, so running it again finishes a release that failed part way.
+
 ## STOP reasons
 
 | Reason | Meaning | Next action |

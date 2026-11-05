@@ -732,6 +732,27 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { pool: q.pool(pool), requests: q.list(pool) }, () => `pool ${pool}: active=${q.pool(pool).active.length}/${q.pool(pool).maxConcurrent} resetAt=${q.pool(pool).resetAt ?? '-'}\n${q.list(pool).map((r) => `  ${r.seq} ${r.state.padEnd(11)} ${r.candidateDigest.slice(0, 12)} ${r.requesters.join('+')}`).join('\n') || '  (empty)'}`);
     });
   review
+    .command('release <key>')
+    .description('free the pool slot of a running review request whose owner process is gone from this host; refuses while it is alive')
+    .requiredOption('--reason <text>', 'why the slot is released, kept on the request and in the journal')
+    .action((key: string, o: { reason: string }) => {
+      const c = ctx(g());
+      const released = new ReviewQueue(c.paths.reviewQueue).release(key, o.reason, {
+        // Inside the release's section: each goal journals before the slot is freed, once per key, pool and seq (a seq is local to its pool and a cancelled key can move pools), so a run that failed part way is finished by running it again.
+        before: (request) => {
+          for (const requester of request.requesters) {
+            const [goalId, cardId] = requester.split(':');
+            const goal = goalId ? c.store.getGoal(goalId) : undefined;
+            if (!goal) continue;
+            const journal = Journal.forGoal(c.paths.journal, goal.id);
+            if (journal.readAll().some((e) => e.type === 'NOTE' && e.data['kind'] === 'review-slot-released' && e.data['key'] === key && e.data['pool'] === request.pool && e.data['seq'] === request.seq)) continue;
+            journal.append({ type: 'NOTE', goalId: goal.id, cardId, generation: goal.generation, data: { kind: 'review-slot-released', key, pool: request.pool, seq: request.seq, reason: o.reason } });
+          }
+        },
+      });
+      out(c, released, () => `released ${key}`);
+    });
+  review
     .command('pre <cardId>')
     .description('run the configured pre-reviewer (R2) on the committed candidate: pass opens the ship, block returns the card to BUILD')
     .option('--goal <id>')

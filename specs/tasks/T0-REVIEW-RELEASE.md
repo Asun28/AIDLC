@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-RELEASE
 title: Every mutation of the review queue runs in one lock section, and `aidlc review release` frees the slot of a process that died, journaled in that same section
-status: todo
+status: merged
 branch: T0-REVIEW-RELEASE
 worktree: D:\wt\AIDLC\T0-REVIEW-RELEASE
 allow_paths:
@@ -70,3 +70,52 @@ npm run typecheck && node --test tests/scenarios/review-release.test.ts tests/in
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+Attempt 1.
+
+RED: commit 11d2fd8 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 15, pass 0, fail 15. Each failure is the missing behaviour: `release is not a function` for the queue items (acceptance 1 to 4), `unknown command 'release'` from the CLI (acceptance 5 to 7), a missing text (acceptance 8).
+
+Two tests were added during the mutation check, each killing a mutant: the NOTE matching test of acceptance 5 (key, kind, event type, a requester naming no goal) and the deterministic test of acceptance 7 (a command run inside a held section). The final file has 17 tests.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 250, pass 250, fail 0.
+
+Mutants, each applied by hand to the source, run against the tests that cover it, restored and never committed (`git diff` compared equal to its saved copy after each batch). 41 mutants, 41 killed:
+- A section dropped from each mutation (11): `savePool`, `setPoolLimit`, `enqueue`, `requeue`, `admit`, `complete`, `markLost`, `resolveLost`, `hold`, `cancel`, `release`. Each failed on its own name in acceptance 3, by `Missing expected exception` or, for `resolveLost`, by its `not lost` error in place of `LOCKED`.
+- Section structure (4): `resolveLost` calling public `complete` from its section (`LOCKED` in tests/infra/review-queue.test.ts), `enqueue` locking the pool it names instead of the pool of the stored request, `sectionOf` not reading the pool again in the section, the lock's change returning a copy so the lock writes a stale record.
+- Refusals of `release` (7): the state check, `lost` allowed, no `slotOwner`, pid 0, the pid bound, another host, a live owner.
+- Order and writes of `release` (5): `before` not called, `before` after the write, the check after `before`, the slot kept, the reason dropped.
+- CLI (11): dedupe dropped, dedupe without seq, key, kind or event type, a missing goal throwing, a NOTE without reason, seq or cardId, nothing printed, the first version's NOTEs outside the section.
+- Docs (3): the OPERATIONS sentence removed, the sentence no longer the last paragraph of Ship gates, the CHANGELOG entry removed.
+
+The mutant of the first version's NOTEs outside the section was killed in one run of acceptance 7's two-process test and survived another, since that test depends on the two commands overlapping. The deterministic test of acceptance 7 kills it on every run: the test holds the section and a command run inside it must exit with `LOCKED` and journal nothing.
+
+Callers: `src/loop/card-runner.ts`, `src/loop/run-driver.ts`, `src/loop/controller.ts` and `src/cli/main.ts` call the queue outside any section of the pool lock. Only `ReviewQueue` takes that lock and the CLI's `before` calls only the journal and the goal store. Some card-runner calls follow a card-run section; none runs inside a pool section.
+
+A request can change pool: `enqueue` replaces a cancelled request in the pool its caller names, and the key carries no pool. `sectionOf` reads the pool again in the section and moves to the new pool's section, so `release` is always in the section of the pool holding the request. Against a mutation of a cancelled request in its old pool, an `enqueue` that moves it holds only the new pool's lock: R1 covers mutations of one pool, and `release` refuses a cancelled request, so no forbid clause is reached.
+
+Repair of R3 decision 1 (F1 stale-pool-overwrite, F2 release-note-identity-collision, F3 release-partial-write-unretryable).
+
+RED: commit aa8130a holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 23, pass 17, fail 6: `updatePool` missing (3 tests), one NOTE where two are due across pools (F2), the request `cancelled` after a failed pool write, and the slot still held after a failed request write (F3). Two later tests pin that `updatePool` and `setPoolLimit` read inside the section and that a NOTE of another key does not count; the file ends at 25 tests.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 258, pass 258, fail 0.
+
+Mutants: 46 on the source, run after the repair, restored after each and compared with a saved diff, none committed. 43 were killed on the first run. Three survived (dedupe without key, kind or event type), since the seeded NOTEs carried no `pool` once the identity gained it; the seeds now carry it and a test seeds a NOTE of another key at the same pool and seq, and the three are killed. New or changed mutants: `updatePool` with no section, with its read before the section, and writing the pool its change names; `setPoolLimit` with its read before the section; `release` with the slot kept, the request written first, the request not written, the reason dropped, `before` after the slot; dedupe without pool; a NOTE without pool. The other mutants of attempt 1 ran again. The doc text did not change.
+
+Sweep. F1: `savePool` has no source caller, only test fixtures (nine lines, six outside `allow_paths`: tests/scenarios/run-driver.test.ts five, tests/scenarios/t0-flow.test.ts one). `setPoolLimit`, `hold`, `releaseSlot`, `enqueue`, `requeue` and `admit` read the pool inside their section. `pool()` outside a section is read only: `heldUntil`, `notificationOwner`, `src/cli/main.ts` (status), `src/loop/controller.ts`, `src/loop/run-driver.ts`. Nothing else writes a pool file. F2: within a pool `seq` never repeats, since `nextSeq` only grows, so key, pool and seq name one release. F3: `cancel` keeps its order, request then slot, since `admit` drops a slot whose request is no longer running and no refusal stands between it and a retry; only `release` needs a retry to find the request `running`.
+
+Removal of `savePool`, finishing F1, after the card amendment on main (merge fbcae9b): nine fixture lines moved to `updatePool` with no assertion changed (`tests/infra/review-queue.test.ts` three, `tests/scenarios/run-driver.test.ts` five, `tests/scenarios/t0-flow.test.ts` one), and the `savePool` entry left the acceptance 3 list of `tests/scenarios/review-release.test.ts`. One test was added: the queue has no `savePool` method. The file ends at 26 tests.
+
+GREEN: the dod_command of the amended card before the commit: exit 0, typecheck clean, tests 297, pass 297, fail 0.
+
+Mutants: 48 on the source, all killed on one run, restored and compared with a saved diff, none committed. The 45 of the repair ran again; `savePool: no section` left the set with the method. New: `savePool` restored, `updatePool` not applying its change, `updatePool` writing nothing.
+
+Repair of R3 decision 2 (F4 and F5 cross-pool-request-race, F6 journal-append-race): one lock over the whole queue, taken on the record `_queue.json` of the queue directory, which is never written. `home()`, the pool re-read and `sectionOf` are gone; `requestSection` is a plain wrapper, `cancel` and `enqueue` make their first read in the section, `list()` skips every `_` file, and the lock file does not end in `.json`. Source diff of this repair: 19 lines added, 35 removed.
+
+RED: commit 2036aa9 holds `tests/scenarios/review-release.test.ts` alone. `node --test --test-reporter=spec tests/scenarios/review-release.test.ts` on it: exit 1, tests 32, pass 25, fail 7: every mutation of another pool landing during a release's section, a lock under the pool's name, the lock record read as a pool, a first read of a request outside the section (`release` and `enqueue`, the F4 and F5 windows), a CLI release of another pool landing during a section, and the two-process test failing on the chain, which reproduced F6. That commit replaced the test of a move between pools, which named the per-pool design and whose window no longer exists; the first-read tests cover it. A key that moves between pools stays covered by acceptance 5.
+
+GREEN: the dod_command before the commit: exit 0, typecheck clean, tests 303, pass 303, fail 0.
+
+Mutants: 52 on the source, all killed on one run, restored and compared with a saved diff, none committed. Removed with their code: `enqueue` locking the stored request's pool, `sectionOf` not reading the pool again. New: one lock per pool, the lock record named as a pool, the lock writing a record, `list()` reading the lock record, a first read before the section in `enqueue`, `cancel` and `requestSection`. Those of a section dropped from a method, and of `updatePool`, `setPoolLimit` and `savePool`, ran again against the new text. The doc text did not change.
+
+The two-process test of acceptance 7 depends on overlap; the test that runs the CLI for a key of another pool inside a held section is deterministic and shows the second release journals nothing until the first section closes.
