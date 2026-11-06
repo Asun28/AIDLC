@@ -15,7 +15,7 @@ import { GitProbe } from '../probes/git.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
-import { run, type Runner } from '../probes/exec.ts';
+import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
 import { StoreError, createExclusive } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
@@ -38,6 +38,7 @@ import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
+import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
@@ -586,6 +587,30 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         ? `completed the takeover of ${cardId}: the lease was already this session's at generation ${r.lease.generation}${from ? ` (taken from session ${from.session}@${from.host}, generation ${from.generation}, as the handoff intent records)` : ''}, the run now carries it`
         : `took over ${cardId} from session ${from?.session}@${from?.host} (generation ${from?.generation} -> ${r.lease.generation})`;
       out(c, { cardId, goalId: id, completed: r.completed, lease: { generation: r.lease.generation, owner: r.lease.owner, expiresAt: r.lease.expiresAt }, previousOwner: from, run: { state: r.run.state, ownerGeneration: r.run.ownerGeneration, stop: r.run.stop } }, () => `${headline}; state=${r.run.state}${r.run.stop ? `\n${formatStop(r.run.stop)}` : ''}\nnext: aidlc card next ${cardId} --goal ${id}`);
+    });
+  card
+    .command('mutants <cardId>')
+    .description("run the mutants of the card's committed candidate one at a time under its DoD, restore every file and write the advisory report; no gate reads it")
+    .option('--goal <id>')
+    .option('--max <n>', 'most mutants to run', String(MUTANT_MAX_DEFAULT))
+    .option('--timeout-ms <n>', 'timeout of each DoD run', String(MUTANT_TIMEOUT_DEFAULT_MS))
+    .option('--restore', 'run no mutant: write back the file an interrupted run left mutated and delete its marker')
+    .action(async (cardId: string, o: { goal?: string; max: string; timeoutMs: string; restore?: boolean }) => {
+      const c = ctx(g());
+      const parsed = cardOf(c, cardId);
+      // Read only: an existing run is read, none is created and no deadline starts.
+      const cardRun = runnerFor(c).findRun(cardId, o.goal);
+      if (!cardRun) fail(`card ${cardId} has no run${o.goal ? ` in goal ${o.goal}` : ''}`);
+      const worktree = cardRun.worktree;
+      if (!worktree || !existsSync(worktree)) fail(`card ${cardId} records no worktree that exists (${worktree ?? 'none'})`);
+      if (o.restore) {
+        const restored = restoreMutants(worktree, cardId);
+        out(c, restored, () => restored.message);
+        return;
+      }
+      const base = cardRun.base?.oid ?? c.config.base;
+      const { report, path: reportPath } = await runMutants({ card: parsed.card, worktree, base, max: Number(o.max), timeoutMs: Number(o.timeoutMs) }, { git: runSync, dod: run, now: nowIso, progress: (line) => process.stderr.write(`${line}\n`) });
+      out(c, { ...report, path: reportPath }, () => mutantSummaryText(report, reportPath));
     });
   card
     .command('fix-task [cardId]')
