@@ -416,6 +416,11 @@ export const FINDING_CLASS_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const FINDING_CLASS_MAX = 40;
 export const FindingClass = z.string().max(FINDING_CLASS_MAX).regex(FINDING_CLASS_PATTERN);
 
+/** The mutation operators of `src/review/mutant-gen.ts` (card T1-VERIFY-MUTANT-GEN), in run order. */
+export const MutationOperator = z.enum(['drop-statement', 'force-true', 'force-false', 'negate-equality', 'swap-logic', 'drop-not', 'boundary', 'flip-boolean']);
+export type MutationOperator = z.infer<typeof MutationOperator>;
+export const MUTATION_OPERATORS: readonly MutationOperator[] = MutationOperator.options;
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
