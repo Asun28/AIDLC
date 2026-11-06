@@ -26,8 +26,11 @@ import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
 import { ADVISORY_TAG, findingLocation, parseVerdict } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
-import type { Card, CoverageEntry as CoverageEntryType, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
+import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
+
+/** The bytes the survivor lines of the formal prompt fill at most (card T1-VERIFY-MUTANTS-PROMPT). */
+export const SURVIVING_MUTANTS_MAX_BYTES = 2000;
 
 export interface ReviewPromptInput {
   /** R2 (pre-review, advisory filter before R3) or R3 (the formal decision). */
@@ -48,6 +51,8 @@ export interface ReviewPromptInput {
   delta?: ReviewDelta;
   /** The latest pre-review round's advisory notes for the candidate; rendered on the formal stage only. */
   advisoryNotes?: string[];
+  /** The surviving mutants of the report for this candidate, in report order; rendered on the formal stage only, absent renders `- none`. */
+  survivingMutants?: Array<Pick<MutantResult, 'file' | 'line' | 'column' | 'operator' | 'original' | 'mutated'>>;
   /** The repository's learned invariants (the NEVER and ALWAYS lessons) under their cap; absent renders the section with `none`. */
   lessons?: ReviewLessons;
   /** A base-sync decision (T0-BASE-SYNC-REVIEW): the formal prompt says the base moved; every other prompt is unchanged. */
