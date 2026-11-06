@@ -17,7 +17,7 @@ import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
-import { StoreError } from '../state/store.ts';
+import { StoreError, createExclusive } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { runGoal } from '../loop/run-driver.ts';
 import { CardRunner } from '../loop/card-runner.ts';
@@ -869,7 +869,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const goals = o.goal ? [o.goal] : c.store.listGoals().map((x) => x.id);
       const runs = goals.flatMap((id) => (o.card ? (c.store.getCardRun(id, o.card) ?? []) : c.store.listCardRuns(id)));
       if (o.card && !runs.length) fail(`no run of ${o.card} in ${o.goal ?? 'any goal'}`);
-      const report = exportBenchCases({ root: c.repo.worktreeRoot, runs, cardId: o.card, clean: o.clean, dir: o.dir, stateDir: c.paths.root });
+      const report = exportBenchCases({ root: c.repo.worktreeRoot, runs, create: createExclusive, cardId: o.card, clean: o.clean, dir: o.dir, stateDir: c.paths.root });
       out(c, report, () => formatBenchExport(report));
       if (report.pinConflicts.length) process.exitCode = 1;
     });

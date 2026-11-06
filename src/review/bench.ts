@@ -10,14 +10,16 @@
  *
  * `aidlc review bench export` (card T1-REVIEW-BENCH-EXPORT) drafts unconfirmed cases from card runs that `src/cli/main.ts`
  * reads and hands to `exportBenchCases`, and pins each candidate under `refs/aidlc/bench/`. Its git calls are `cat-file`,
- * `merge-base`, `rev-parse`, `symbolic-ref` and `update-ref` on those refs alone, none of which fetches an object.
+ * `merge-base`, `rev-parse`, the read forms of `symbolic-ref` and `config`, and `update-ref` on those refs alone, none of
+ * which fetches an object.
  */
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
+import { nulList } from '../core/parse-guard.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
@@ -322,6 +324,8 @@ export interface BenchExportOptions {
   root: string;
   /** The card runs `src/cli/main.ts` read for the selected goals. */
   runs: CardRun[];
+  /** Create a file exclusively, false when it exists: `createExclusive`, which `src/cli/main.ts` passes in, since this module imports nothing from `src/state/`. */
+  create: (file: string, text: string) => boolean;
   /** Keep this card's runs alone; required for bug drafts, so a person exports one card's findings at a time. */
   cardId?: string;
   /** Draft clean cases and no bug case. */
@@ -359,6 +363,7 @@ interface ExportContext {
   dir: string;
   config: ProjectConfig;
   git: SyncRunner;
+  create: BenchExportOptions['create'];
   /** The `-c` options that turn every hook off for an `update-ref`. */
   noHooks: string[];
   report: BenchExportReport;
@@ -411,24 +416,15 @@ function buildDraft(ctx: ExportContext, run: CardRun, id: string, d: DraftInput)
 
 /**
  * Create a case file exclusively; false when it exists. The path is checked first, since a link swapped in during the
- * export would carry the write elsewhere, and a write that fails removes what it created, since a later export would
- * report a partial file as an existing case.
+ * export would carry the write elsewhere. The file is created empty and the text written in a second step, since `create`
+ * removes nothing when its own write fails and a later export would report a partial file as an existing case. A failure
+ * of the second step removes the file this call created; a failure of `create` removes nothing.
  */
 function createCase(ctx: ExportContext, file: string, text: string): boolean {
   if (realpathSync.native(ctx.dir) !== ctx.dir) throw new Error(`case directory ${ctx.dir} no longer resolves to itself`);
-  let fd: number;
+  if (!ctx.create(file, '')) return false;
   try {
-    fd = openSync(file, 'wx');
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
-    throw err;
-  }
-  try {
-    try {
-      writeFileSync(fd, text);
-    } finally {
-      closeSync(fd);
-    }
+    writeFileSync(file, text);
   } catch (err) {
     rmSync(file, { force: true });
     throw err;
@@ -515,7 +511,7 @@ function refuseStateOverlap(root: string, dir: string, stateDir: string, git: Sy
 function noHookOptions(root: string, git: SyncRunner): string[] {
   const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
   if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
-  const keys = named.stdout.split('\0').filter(Boolean);
+  const keys = nulList(named.stdout);
   const unnamed = keys.find((key) => key.includes('='));
   if (unnamed !== undefined) throw new Error(`git -c reads the first = as the end of the key, so it cannot disable the hook of ${unnamed}`);
   return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
@@ -533,7 +529,7 @@ export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   // a value such as `none` would allow a protocol of that name, which a remote helper can have.
   const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' } });
   if (o.stateDir !== undefined && existsSync(o.stateDir)) refuseStateOverlap(o.root, dir, o.stateDir, git);
-  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, noHooks: noHookOptions(o.root, git), report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
+  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, create: o.create, noHooks: noHookOptions(o.root, git), report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
   const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
   for (const run of runs) {
     const drafts = o.clean ? [cleanDraft(run)].filter((d) => d !== undefined) : run.findings.filter((f) => f.stage === 'formal').map((f) => bugDraft(run, f));

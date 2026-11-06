@@ -773,7 +773,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 7: --clean drafts one clean case per run
       makeCardRun(GOAL, 'T1-BENCH-D', { base: { ref: 'main' }, review: ledger(invocation('pending')) }),
       makeCardRun(GOAL, 'T1-BENCH-E', { base: { ref: 'main' }, review: ledger(invocation('pass', { candidateSha: ABSENT })) }),
     ];
-    const report = exportBenchCases({ root: r.root, runs, clean: true });
+    const report = exportBenchCases({ root: r.root, create: createExclusive, runs, clean: true });
     const base = git(r.root, ['merge-base', 'main', r.candidate]);
     assert.deepEqual(readdirSync(r.caseDir), [`${caseId('clean', GOAL, CARD_A)}.json`]);
     const text = readFileSync(caseFile(r, caseId('clean', GOAL, CARD_A)), 'utf8');
@@ -784,7 +784,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 7: --clean drafts one clean case per run
     assert.match(report.skipped[0]!.detail, /no candidateSha/);
     assert.equal(git(r.root, ['rev-parse', `refs/aidlc/bench/${caseId('clean', GOAL, CARD_A)}`]), r.candidate);
     rmSync(caseFile(r, caseId('clean', GOAL, CARD_A)));
-    const one = exportBenchCases({ root: r.root, runs, clean: true, cardId: CARD_A });
+    const one = exportBenchCases({ root: r.root, create: createExclusive, runs, clean: true, cardId: CARD_A });
     assert.deepEqual(one.written.map((w) => w.id), [caseId('clean', GOAL, CARD_A)]);
     assert.deepEqual(one.skipped, []);
   } finally {
@@ -795,7 +795,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 7: --clean drafts one clean case per run
 test('T1-REVIEW-BENCH-EXPORT R10: bug drafts need a card, and a missing case directory refuses', () => {
   const r = repo();
   try {
-    assert.throws(() => exportBenchCases({ root: r.root, runs: [] }), /--card/);
+    assert.throws(() => exportBenchCases({ root: r.root, create: createExclusive, runs: [] }), /--card/);
     assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { dir: 'nowhere' })), /no case directory/);
     writeFileSync(path.join(r.root, 'a-file'), '');
     assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { dir: 'a-file' })), /no case directory/);
