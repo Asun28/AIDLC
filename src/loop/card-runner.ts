@@ -172,6 +172,15 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   return new DryRunShipPath();
 }
 
+/** One nonempty line for whatever a failed pin threw. It never throws itself, since a failed pin never changes a review. */
+function pinFailure(thrown: unknown): string {
+  try {
+    return oneLine(thrown instanceof Error ? thrown.message : String(thrown)) || 'the pin threw an empty message';
+  } catch {
+    return 'the pin threw a value with no text';
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -235,7 +244,7 @@ export class CardRunner {
       this.git.pinCandidate(cwd, sha);
       return { candidatePinned: true };
     } catch (err) {
-      return { candidatePinned: false, pinError: oneLine((err as Error).message) };
+      return { candidatePinned: false, pinError: pinFailure(err) };
     }
   }
 
@@ -2131,7 +2140,7 @@ export class CardRunner {
             },
           };
         },
-        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash } }),
+        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash, ...pin } }),
       },
       after,
     );
@@ -2150,7 +2159,7 @@ export class CardRunner {
       }
     }
     // The owed REVIEW_DECIDED is appended after the commit, with the publication this command alone knows (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card, committed.run, { keys: [committed.owedKey], extra: { canonicalPublished: publication?.published, publicationError: publication?.error, ...pin } });
+    this.deliverOwed(goal, card, committed.run, { keys: [committed.owedKey], extra: { canonicalPublished: publication?.published, publicationError: publication?.error } });
     return { run: committed.run, ...result, reviewer };
   }
 
