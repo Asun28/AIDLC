@@ -13,6 +13,8 @@ allow_paths:
   - tests/scenarios/r3-fallback.test.ts
   - CLAUDE.md
   - docs/OPERATIONS.md
+  - docs/ARCHITECTURE.md
+  - README.md
   - .claude/skills/aidlc-loop/card-loop.md
   - templates/claude/skills/aidlc-loop/card-loop.md
   - CHANGELOG.md
@@ -24,14 +26,16 @@ requirements:
   - R2. WHEN a command reviewer's block on decision 2 or later re-raises a held finding, the policy shall return `stop-review`, with the existing detail text.
   - R3. WHEN a command reviewer's block re-raises only findings that are not held, and fewer than `MAX_R3_DECISIONS` decisions are recorded, the policy shall return `review-fix`.
   - R4. A block on decision 4, a ship-path reviewer's block and a base-sync decision shall stop exactly as they do on main.
-  - R5. The stop rule shall read the same in `CLAUDE.md`, the formal review paragraph and the `review` row of `docs/OPERATIONS.md`, both `card-loop.md` copies and the comments of `src/core/review-policy.ts` and `src/core/types.ts`, and the CHANGELOG Unreleased section shall have an entry naming this card.
+  - R5. The stop rule shall read the same in `CLAUDE.md`, `README.md`, the `core/` paragraph of `docs/ARCHITECTURE.md`, the formal review paragraph and the `review` row of `docs/OPERATIONS.md`, both `card-loop.md` copies and the comments of `src/core/review-policy.ts` and `src/core/types.ts`, and the CHANGELOG Unreleased section shall have an entry naming this card.
+  - R6. A finding the previous R3 decision raised or re-raised shall still reach the next R3 prompt after an R2 pass resolved it, as on main, and shall not be held by that alone.
 acceptance:
   - 1. `tests/core/review-policy.test.ts`: `heldFindings` over a formal finding re-raised and open, a resolved formal finding and a disputed R2 finding returns the disputed one alone; a finding disputed earlier and no longer in the disputed disposition is returned. [R1] [dod arm 2]
   - 2. `tests/core/review-policy.test.ts`: decision 2 re-raising an undisputed finding returns `review-fix` with two decisions left; decision 2 re-raising a disputed finding returns `stop-review`; a block on decision 4 returns `stop-review`. [R2] [R3] [R4] [dod arm 2]
   - 3. `tests/scenarios/t0-flow.test.ts`, the test at line 1428 passes with no change: a finding disputed twice and re-raised twice is still named as a deadlock in the STOP detail. [R1] [dod arm 2]
   - 4. `tests/scenarios/t0-flow.test.ts` 1991, 2016 and 2066 and `tests/scenarios/r3-fallback.test.ts` 190 dispute the finding before the re-raise and keep their stop assertions; 2033 asserts that an undisputed re-raise after an R2 pass returns the card to REVIEW_FIX. [R2] [R3] [dod arm 2]
   - 5. `tests/scenarios/base-sync-review.test.ts` and `tests/scenarios/review-block.test.ts` pass with no change, and the Q6 ship-path tests in `tests/core/review-policy.test.ts` keep their assertions. [R4] [dod arm 2]
-  - 6. `git grep 'previous R3 decision raised\|disputed/held'` finds nothing outside CHANGELOG.md and specs/, both `card-loop.md` copies stay within 6500 bytes and match, and the CHANGELOG entry exists. [R5] [dod arm 2]
+  - 6. `git grep 'previous R3 decision raised\|disputed/held\|disputed or held\|each block raises new'` finds nothing outside CHANGELOG.md and specs/, both `card-loop.md` copies stay within 6500 bytes and match, and the CHANGELOG entry exists. [R5] [dod arm 2]
+  - 7. `tests/scenarios/t0-flow.test.ts` 2033 keeps its assertion that the prompt names F1, and `tests/core/review-policy.test.ts` reads the prompt set of decisions 2 and 3 over the findings of acceptance 1. [R6] [dod arm 2]
 depends_on: []
 budget: 200
 tdd: true
@@ -52,6 +56,8 @@ hygiene: "Source: Anthropic, Building effective agents: an evaluator-optimizer l
 
 ## Deliverable
 `heldFindings` keeps only findings the author disputed at any point. A repair that misses a site gets another repair round. `MAX_R3_DECISIONS` remains the iteration cap, and the 3 h card deadline remains the time cap.
+
+`priorFindingsFor` (src/loop/card-runner.ts:346) also reads `held`, to send a finding that an R2 pass resolved. With the `lastByR3` arm gone, an undisputed finding of that kind would leave the next R3 prompt and R3 could not cite it, so the re-raise of acceptance 4 could not happen. The arm moves to a set the prompt alone reads, and no finding leaves the prompt.
 
 ## Why
 Measured from the journal, 2026-10-20 to 2026-11-06, 52 cards with an R3 decision:
