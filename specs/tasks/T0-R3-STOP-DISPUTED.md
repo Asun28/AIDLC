@@ -26,7 +26,7 @@ requirements:
   - R2. WHEN a command reviewer's block on decision 2 or later re-raises a held finding, the policy shall return `stop-review`, with the existing detail text.
   - R3. WHEN a command reviewer's block re-raises only findings that are not held, and fewer than `MAX_R3_DECISIONS` decisions are recorded, the policy shall return `review-fix`.
   - R4. A block on decision 4, a ship-path reviewer's block and a base-sync decision shall stop exactly as they do on main.
-  - R5. The stop rule shall read the same in `CLAUDE.md`, `README.md`, the `core/` paragraph of `docs/ARCHITECTURE.md`, the formal review paragraph and the `review` row of `docs/OPERATIONS.md`, both `card-loop.md` copies and the comments of `src/core/review-policy.ts` and `src/core/types.ts`, and the CHANGELOG Unreleased section shall have an entry naming this card.
+  - R5. The stop rule shall read the same in `README.md`, the `core/` paragraph of `docs/ARCHITECTURE.md`, the formal review paragraph and the `review` row of `docs/OPERATIONS.md`, both `card-loop.md` copies and the comments of `src/core/review-policy.ts` and `src/core/types.ts`, and the CHANGELOG Unreleased section shall have an entry naming this card.
   - R6. A finding the previous R3 decision raised or re-raised shall still reach the next R3 prompt after an R2 pass resolved it, as on main, and shall not be held by that alone.
 acceptance:
   - 1. `tests/core/review-policy.test.ts`: `heldFindings` over a formal finding re-raised and open, a resolved formal finding and a disputed R2 finding returns the disputed one alone; a finding disputed earlier and no longer in the disputed disposition is returned. [R1] [dod arm 2]
@@ -58,6 +58,8 @@ hygiene: "Source: Anthropic, Building effective agents: an evaluator-optimizer l
 `heldFindings` keeps only findings the author disputed at any point. A repair that misses a site gets another repair round. `MAX_R3_DECISIONS` remains the iteration cap, and the 3 h card deadline remains the time cap.
 
 `priorFindingsFor` (src/loop/card-runner.ts:346) also reads `held`, to send a finding that an R2 pass resolved. With the `lastByR3` arm gone, an undisputed finding of that kind would leave the next R3 prompt and R3 could not cite it, so the re-raise of acceptance 4 could not happen. The arm moves to a set the prompt alone reads, and no finding leaves the prompt.
+
+PR 204 removed the stop rule from `CLAUDE.md` and points to `docs/OPERATIONS.md`, so R5 no longer names `CLAUDE.md` and this card leaves that file as main has it.
 
 ## Why
 Measured from the journal, 2026-10-20 to 2026-11-06, 52 cards with an R3 decision:

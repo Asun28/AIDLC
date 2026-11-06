@@ -1,7 +1,7 @@
 ---
 id: T0-CLAUDE-MD-TRIM-2
 title: CLAUDE.md stays within 200 lines, held by a test, with the text that docs and skills already state removed
-status: todo
+status: merged
 branch: T0-CLAUDE-MD-TRIM-2
 worktree: D:\wt\AIDLC\T0-CLAUDE-MD-TRIM-2
 allow_paths:
