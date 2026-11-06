@@ -1820,7 +1820,7 @@ describe('the Surviving mutants section of the formal prompt (card T1-VERIFY-MUT
     assert.equal(SURVIVING_MUTANTS_MAX_BYTES, 2000);
     const half = 1000;
     const fits = entries([sized(1, half), sized(2, half)]);
-    assert.equal(fits.length, 2, 'exactly 2000 bytes fit');
+    assert.deepEqual(fits.map((line) => line.slice(0, 22)), ['- "src/gate.ts:1:5 bou', '- "src/gate.ts:2:5 bou'], 'exactly 2000 bytes fit both lines');
     const over = entries([sized(1, half), sized(2, half + 1), survivor(3, 'z')]);
     assert.equal(over.length, 2);
     assert.ok(over[0]!.startsWith('- "src/gate.ts:1:5 boundary: xxx'));
