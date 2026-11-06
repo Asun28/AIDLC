@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -30,7 +30,8 @@ import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
+import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson } from '../state/store.ts';
@@ -231,6 +232,27 @@ export class CardRunner {
   /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
   private reviewCheckout(run: CardRun): string {
     return run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+  }
+
+  /**
+   * The survivors of the mutant report of the candidate under review (card T1-VERIFY-MUTANTS-PROMPT), as evidence for the formal
+   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one past a size limit, one
+   * that cannot be read or parsed and one for another candidate all give none: the report never fails or gates a review. The
+   * limits run before the schema, whose issues per element of an array cost far more memory than the file: its two arrays are bounded.
+   */
+  private survivingMutants(checkout: string, cardId: string, candidateSha: string): MutantReport['mutants'] {
+    const file = mutantsReportPath(checkout, cardId);
+    try {
+      const stat = lstatSync(file);
+      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return [];
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      const { mutants, operators } = parsed as { mutants?: unknown; operators?: unknown };
+      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return [];
+      const report = MutantReport.safeParse(parsed);
+      return report.success && report.data.candidateSha === candidateSha ? report.data.mutants.filter((m) => m.outcome === 'survived') : [];
+    } catch {
+      return [];
+    }
   }
 
   /**
@@ -956,6 +978,10 @@ export class CardRunner {
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
     // writer applies no fence (see docs/OPERATIONS.md, Sessions): what it records lands on the stored run as it is.
     run = this.store.getCardRun(goal.id, card.id) ?? run;
+    // A marker means a source file may hold a mutant (card T1-VERIFY-MUTANTS-PROMPT), so nothing is recorded, not even an owed event.
+    // Only whether something is at the path counts: no marker is read, and a dangling link is still something there.
+    const mutantMarker = mutantsMarkerPath(this.reviewCheckout(run), card.id);
+    if (lstatSync(mutantMarker, { throwIfNoEntry: false })) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
@@ -1665,6 +1691,8 @@ export class CardRunner {
     // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const lessons = reviewLessons(this.lessonsFile());
+    // The mutant report is read with them, so a report written during the review never changes what this reviewer receives.
+    const survivingMutants = this.survivingMutants(cwd, card.id, candidateSha);
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
@@ -1759,7 +1787,7 @@ export class CardRunner {
     // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
     this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, survivingMutants, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
     let panel: PanelResult | undefined;
     // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
     // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
