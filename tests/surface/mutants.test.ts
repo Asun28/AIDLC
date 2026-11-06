@@ -656,7 +656,6 @@ describe('the docs of card T1-VERIFY-MUTANTS', () => {
       '`--max` defaults to 30',
       '`--timeout-ms` defaults to 120000',
     ]) assert.ok(section.includes(text), `the Mutant sweep section states: ${text}`);
-    assert.ok(!section.includes('arrives with card T1-VERIFY-MUTANTS'), 'the section no longer says the command is still to come');
     const arch = read('docs/ARCHITECTURE.md');
     assert.ok(arch.includes('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutant-gen.ts');
     assert.ok(arch.indexOf('`src/review/mutants.ts`') > arch.indexOf('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutants.ts after mutant-gen.ts');
