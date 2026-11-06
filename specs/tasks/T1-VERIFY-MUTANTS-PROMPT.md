@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-MUTANTS-PROMPT
 title: The R3 prompt lists the surviving mutants of the candidate under review as advisory evidence, a card ships with or without a mutant report, and card attempt refuses while a mutant run marker exists
-status: todo
+status: merged
 branch: T1-VERIFY-MUTANTS-PROMPT
 worktree: D:\wt\AIDLC\T1-VERIFY-MUTANTS-PROMPT
 plan_ref: plans/review-verification.md#order-of-work
