@@ -434,10 +434,10 @@ function startsOperand(src: string, t: Token): boolean {
 }
 
 /**
- * The tokens that are a unary `!`, each run of `!` read once from its left end. The operand comes first: a run with no
- * operand after it is postfix. With an operand, a `!` after a value is postfix only on the value's line, since a
- * non-null assertion takes no line break before it and automatic semicolon insertion ends the statement there; a line
- * break inside a comment counts, as it does for the language.
+ * The tokens that are a unary `!`, each run of `!` read once from its left end and its operand classified once. The
+ * operand comes first: a run with no operand after it is postfix. With an operand, a `!` after a value is postfix only
+ * on the value's line, since a non-null assertion takes no line break before it and automatic semicolon insertion ends
+ * the statement there; a line break inside a comment counts, as it does for the language.
  */
 function unaryNots(src: string, s: Shape): Set<number> {
   const { toks } = s;
@@ -447,9 +447,11 @@ function unaryNots(src: string, s: Shape): Set<number> {
     let last = first;
     while (toks[last + 1]?.text === '!') last++;
     const operand = toks[last + 1];
+    const starts = operand !== undefined && startsOperand(src, operand);
+    const contextual = operand !== undefined && CONTEXTUAL_WORDS.has(operand.text);
     let value = first > 0 && endsValue(s, first - 1);
-    for (let n = first; operand && n <= last; n++) {
-      const named = startsOperand(src, operand) || (!value && CONTEXTUAL_WORDS.has(operand.text));
+    for (let n = first; n <= last; n++) {
+      const named = starts || (!value && contextual);
       const unary = named && (!value || LINE_BREAK.test(src.slice(toks[n - 1]!.end, toks[n]!.start)));
       if (unary) out.add(n);
       value = !unary;

@@ -8,6 +8,8 @@
 
 - T1-VERIFY-MUTANT-GEN-3: the generator reads a hashbang at the start of a file as a comment, a `!` before `as` or `satisfies` as unary where no value comes before it, and the body of an optional method as a block, and it reads each run of `!` once, so a long run neither overflows the stack nor takes minutes. The rest of the second R3 decision of T1-VERIFY-MUTANT-GEN-2 is stated as limits on the card, by the user's ruling of 2026-11-05, since a misread adds or drops mutants and never changes a restore.
 
+- T1-VERIFY-MUTANT-GEN-4: the generator classifies the operand after a run of `!` once, so 200000 `!` before a 200000-character name take under a second, by the user's ruling of 2026-11-06 on the second R3 decision of T1-VERIFY-MUTANT-GEN-3. The walks back over a statement that stay quadratic on thousands of `void {}` groups are stated as a limit on the card.
+
 - T1-INIT-BASE-CI (bugfix): a config that `aidlc init` creates names the target's default branch, and a repository with no `package.json` gets no `aidlc-ci.yml` and no `agent-evals.yml`, each reported as skipped. Every workflow calls `npx --no-install aidlc`, so a repository with no local package cannot fetch the unrelated npm package of that name.
 
 - T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that checks the file of the wired dispatcher, starts no process, and reports `ok`, `FAILED` or `not wired`.
