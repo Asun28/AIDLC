@@ -421,6 +421,62 @@ export const MutationOperator = z.enum(['drop-statement', 'force-true', 'force-f
 export type MutationOperator = z.infer<typeof MutationOperator>;
 export const MUTATION_OPERATORS: readonly MutationOperator[] = MutationOperator.options;
 
+/** The marker of a running `aidlc card mutants` (card T1-VERIFY-MUTANTS): `applied` is present only while a mutant is on disk. */
+export const MutantPending = z.object({
+  schemaVersion: z.literal(1),
+  cardId: z.string(),
+  candidateSha: z.string(),
+  applied: z
+    .object({
+      file: z.string(),
+      originalBase64: z.string(),
+      originalSha256: z.string(),
+      mutantSha256: z.string(),
+    })
+    .optional(),
+});
+export type MutantPending = z.infer<typeof MutantPending>;
+
+export const MutantOutcome = z.enum(['killed', 'survived', 'timeout']);
+export type MutantOutcome = z.infer<typeof MutantOutcome>;
+
+export const MutantResult = z.object({
+  file: z.string(),
+  line: z.number().int().positive(),
+  column: z.number().int().positive(),
+  operator: MutationOperator,
+  original: z.string(),
+  mutated: z.string(),
+  outcome: MutantOutcome,
+  exitCode: z.number().int().nullable(),
+  durationMs: z.number().nonnegative(),
+});
+export type MutantResult = z.infer<typeof MutantResult>;
+
+/** The report of `aidlc card mutants` (card T1-VERIFY-MUTANTS), bound to the candidate commit; advisory, no gate reads it. */
+export const MutantReport = z.object({
+  schemaVersion: z.literal(1),
+  cardId: z.string(),
+  candidateSha: z.string(),
+  base: z.string(),
+  dodCommand: z.string(),
+  operators: z.array(MutationOperator),
+  max: z.number().int().positive(),
+  timeoutMs: z.number().int().positive(),
+  baselineDurationMs: z.number().nonnegative(),
+  generated: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
+  totals: z.object({
+    killed: z.number().int().nonnegative(),
+    survived: z.number().int().nonnegative(),
+    timeout: z.number().int().nonnegative(),
+  }),
+  startedAt: IsoTimestamp,
+  finishedAt: IsoTimestamp,
+  mutants: z.array(MutantResult),
+});
+export type MutantReport = z.infer<typeof MutantReport>;
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
