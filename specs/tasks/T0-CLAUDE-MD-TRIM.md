@@ -43,8 +43,10 @@ doc_sync: CHANGELOG.md
 | Removed from CLAUDE.md | Home |
 |---|---|
 | The sentence "This file provides guidance to Claude Code" | Nothing to keep: it states no fact |
+| The stage list in What this is | Artifact chain, same file |
+| The test rule stated three times ("never skip or delete a failing test", "If a test fails, fix the code") | Hard limits, same file, which keeps both clauses |
 | The per-directory `src/` layer descriptions | `docs/ARCHITECTURE.md`, Module map; a one-line layer order stays |
-| The detail of `aidlc report`, `aidlc card attempt` and "nothing else is the next step" | `.claude/skills/aidlc-loop/SKILL.md`, Contract; `docs/ARCHITECTURE.md`, Directive contract |
+| The detail of `aidlc report` and "nothing else is the next step" | `.claude/skills/aidlc-loop/SKILL.md`, Contract; `docs/ARCHITECTURE.md`, Directive contract |
 | The review allowances (block, effort episode, ruling, quota hold, malformed verdict) | `docs/OPERATIONS.md`, Pre-review (R2), which the paragraph now names |
 | The repeat of "`npm run dev -- <cmd>` always runs the sources" | The Commands block of the same file |
 | The Lessons bullet | `docs/LESSONS.md` header; the `prepare` directive narration; `docs/OPERATIONS.md`, Companion skills |
