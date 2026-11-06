@@ -177,13 +177,13 @@ describe('templates (Q14 packaging)', () => {
     assert.match(operations, /GoalStore.updateCardRun/, 'OPERATIONS.md documents the card-run lock');
   });
 
-  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@5 since T1-REVIEW-PRE-EXISTING), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
+  test('T1-REVIEW-INPUTS acceptance 4 and 5: REVIEW.md names the advisory tags, both configs carry the current policy version (REVIEW.md@6 since T0-REVIEW-IMPACT-BAR), and the docs record the cap refusal, the policy hash, the delta and the tags', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const review = readFileSync(file, 'utf8');
       assert.match(review, /\[question\][^\n]*\[suggestion\][^\n]*(advisory|never block)/i, `${file} names the tags and says they never block`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
     }
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8');
     assert.match(operations, /maxDiffBytes[^\n]*refus/i, 'OPERATIONS.md records the cap refusal');
@@ -545,15 +545,15 @@ describe('defect classes in the policy, the reviewer agent and the docs (T1-REVI
       assert.ok(reviewer.indexOf(REVIEWER_STEP) > reviewer.indexOf('8. End your turn'), `${file}: the class step follows step 8`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
     }
   });
 
-  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@5, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
+  test('acceptance 11: OPERATIONS.md carries the class paragraph whole and the current version REVIEW.md@6, ARCHITECTURE.md the finding class, and the CHANGELOG Unreleased section the entry; removing any one sentence fails the check [R21]', () => {
     const operations = readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8').replace(/\r\n/g, '\n');
     const architecture = readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8').replace(/\r\n/g, '\n');
     const changelog = readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
-    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@5` in both configs');
+    const opsHolds = (text: string) => text.includes(OPERATIONS.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs');
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(opsHolds(operations), 'OPERATIONS.md carries the class paragraph and the policy version');
     assert.ok(architecture.includes(ARCHITECTURE), 'ARCHITECTURE.md names the finding class in the persisted-state table');
@@ -648,7 +648,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
   };
   const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
 
-  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@5 [R12] [R13]', () => {
+  test('acceptance 11: both REVIEW.md copies carry the pre-existing line after the [question] and [suggestion] line of the output contract, and both configs REVIEW.md@6 [R12] [R13]', () => {
     for (const file of [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')]) {
       const contract = lf(readFileSync(file, 'utf8')).split('\n## Output contract\n')[1]?.split('\n## ')[0] ?? '';
       const lines = contract.split('\n');
@@ -657,7 +657,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
       assert.equal(lines.indexOf(REVIEW_PRE_EXISTING), tags + 1, `${file}: the pre-existing line follows it`);
     }
     for (const file of [path.join(tpl, 'aidlc.config.json'), path.join(root, 'aidlc.config.json')]) {
-      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@5', `${file} policy version`);
+      assert.equal((JSON.parse(readFileSync(file, 'utf8')) as { reviewPolicyVersion: string }).reviewPolicyVersion, 'REVIEW.md@6', `${file} policy version`);
     }
   });
 
@@ -665,7 +665,7 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
     const architecture = lf(readFileSync(path.join(root, 'docs', 'ARCHITECTURE.md'), 'utf8'));
     const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
-    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@5` in both configs');
+    const preReviewHolds = (text: string) => sectionOf(text, '## Pre-review (R2)').includes(PRE_REVIEW.join(' ')) && text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs');
     const statsHold = (text: string) => sectionOf(text, '### Review statistics').includes(STATS.join(' '));
     const changelogHolds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
     assert.ok(preReviewHolds(operations), 'OPERATIONS.md Pre-review carries the pre-existing paragraph and the policy version');
@@ -676,6 +676,68 @@ describe('the [pre-existing] tag in the policy and the docs (T1-REVIEW-PRE-EXIST
     for (const sentence of PRE_REVIEW) assert.equal(preReviewHolds(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of STATS) assert.equal(statsHold(operations.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
     for (const sentence of CHANGELOG) assert.equal(changelogHolds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
-    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@5` in both configs', '')), false, 'removing the version sentence fails');
+    assert.equal(preReviewHolds(operations.replace('`reviewPolicyVersion` is `REVIEW.md@6` in both configs', '')), false, 'removing the version sentence fails');
+  });
+});
+
+describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)', () => {
+  const copies = [path.join(tpl, 'REVIEW.md'), path.join(root, 'REVIEW.md')];
+  const BAR = [
+    '## Impact bar',
+    "Applies to Bugs and Security findings, on every dimension. A block names a path a normal run can reach: who supplies the input and what breaks for them. A finding is a `[suggestion]`, not a block, in two cases, unless the card's requirements or `forbid:` name it:",
+    '- The defect needs the person running the program, or a process of theirs, to swap, link or race their own files during the run. Concurrent runs the project supports are normal runs, so they are not this case.',
+    '- The defect can change only a report or a diagnostic, never a gate, a decision, a persisted record or user data.',
+    'A path or content that the diff, a reviewer or an external service supplies is normal-run input and stays untrusted.',
+  ];
+  const AXES = [
+    'A `spec` block on a Tier-S card stops the ship. `standards` findings are a',
+    'second opinion unless the project sets `gateRequired: true`, which makes every',
+    'block, on either axis, merge-blocking.',
+  ];
+  const CHANGELOG = [
+    "- T0-REVIEW-IMPACT-BAR: `REVIEW.md` states an impact bar: a Bugs or Security finding that needs the person running the program to swap, link or race their own files, or that can change only a report or a diagnostic, is a `[suggestion]` and not a block, unless the card's requirements or `forbid:` name it.",
+    'The axes section now says that `gateRequired: true` makes every block merge-blocking, which the code already did.',
+    '`reviewPolicyVersion` is `REVIEW.md@6` in both configs.',
+  ];
+  const lf = (text: string) => text.replace(/\r\n/g, '\n');
+  const sectionOf = (text: string, heading: string) => {
+    const start = text.indexOf(`\n${heading}\n`);
+    return start < 0 ? '' : text.slice(start, text.indexOf('\n#', start + heading.length + 2));
+  };
+  const unreleasedOf = (changelog: string) => changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+  const barHolds = (text: string) => {
+    const important = text.indexOf('\n## What Important means here\n');
+    return important >= 0 && text.indexOf(`\n\n${BAR.join('\n')}\n\n## Cap the nits\n`) > important;
+  };
+
+  test('acceptance 1: both copies hold the impact bar between the Important section and the nit cap; removing a line or moving the section fails [R1]', () => {
+    for (const file of copies) {
+      const text = lf(readFileSync(file, 'utf8'));
+      assert.ok(barHolds(text), `${file}: the impact bar`);
+      for (const line of BAR) assert.equal(barHolds(text.replace(`${line}\n`, '')), false, `${file}: removing this line still passes: ${line}`);
+      const section = `${BAR.join('\n')}\n\n`;
+      assert.equal(barHolds(text.replace(section, '').replace('## Output contract\n', `${section}## Output contract\n`)), false, `${file}: the section moved below the nit cap still passes`);
+    }
+  });
+
+  test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with the move to it, and names @5 as current nowhere [R2]', () => {
+    const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
+    assert.ok(operations.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs (card T0-REVIEW-IMPACT-BAR added the impact bar; T1-REVIEW-PRE-EXISTING moved it to `REVIEW.md@5` with the `[pre-existing]` tag;'), 'the current version and the move to it');
+    assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
+  });
+
+  test('acceptance 5: the CHANGELOG Unreleased section carries the entry; removing any sentence fails [R4]', () => {
+    const changelog = lf(readFileSync(path.join(root, 'CHANGELOG.md'), 'utf8'));
+    const holds = (text: string) => unreleasedOf(text).includes(CHANGELOG.join(' '));
+    assert.ok(holds(changelog), 'CHANGELOG.md Unreleased carries the T0-REVIEW-IMPACT-BAR entry');
+    for (const sentence of CHANGELOG) assert.equal(holds(changelog.replace(sentence, '')), false, `removing this sentence still passes: ${sentence}`);
+  });
+
+  test('acceptance 6: both copies state what gateRequired does to a standards block and drop the sentence it made false [R3]', () => {
+    for (const file of copies) {
+      const text = lf(readFileSync(file, 'utf8'));
+      assert.ok(sectionOf(text, '## Two axes, never merged').includes(AXES.join('\n')), `${file}: the axes text`);
+      assert.equal(text.includes('they never become a silent merge bar'), false, `${file}: the replaced sentence`);
+    }
   });
 });
