@@ -101,7 +101,7 @@ function survivorLines(survivors: NonNullable<ReviewPromptInput['survivingMutant
   const lines: string[] = [];
   let bytes = 0;
   for (const { file, line, column, operator, original, mutated } of survivors) {
-    const text = `- ${quoted(`${file}:${line}:${column} ${operator}: ${original} -> ${mutated || '(nothing)'}`)}`;
+    const text = `- ${JSON.stringify(`${file}:${line}:${column} ${operator}: ${original} -> ${mutated || '(nothing)'}`)}`;
     const size = Buffer.byteLength(text, 'utf8') + 1; // the line and the newline the prompt writes after it
     if (bytes + size > SURVIVING_MUTANTS_MAX_BYTES) break;
     bytes += size;

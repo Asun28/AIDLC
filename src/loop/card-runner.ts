@@ -18,7 +18,7 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
@@ -31,7 +31,7 @@ import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, less
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
-import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson } from '../state/store.ts';
@@ -236,15 +236,19 @@ export class CardRunner {
 
   /**
    * The survivors of the mutant report of the candidate under review (card T1-VERIFY-MUTANTS-PROMPT), as evidence for the formal
-   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one that cannot be read or
-   * parsed and one for another candidate all give none: the report never fails or gates a review.
+   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one past a size limit, one
+   * that cannot be read or parsed and one for another candidate all give none: the report never fails or gates a review. The
+   * limits run before the schema, whose issues per element of an array cost far more memory than the file: its two arrays are bounded.
    */
   private survivingMutants(checkout: string, cardId: string, candidateSha: string): MutantReport['mutants'] {
     const file = mutantsReportPath(checkout, cardId);
     try {
       const stat = lstatSync(file);
-      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1) return [];
-      const report = MutantReport.safeParse(JSON.parse(readFileSync(file, 'utf8')));
+      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return [];
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      const { mutants, operators } = parsed as { mutants?: unknown; operators?: unknown };
+      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return [];
+      const report = MutantReport.safeParse(parsed);
       return report.success && report.data.candidateSha === candidateSha ? report.data.mutants.filter((m) => m.outcome === 'survived') : [];
     } catch {
       return [];
