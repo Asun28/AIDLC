@@ -3,7 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -551,6 +551,158 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     assert.equal(r.read('src/a.ts'), 'export const a = true;\n');
     assertNoArtifacts(r);
     assert.equal(dod.calls.length, 2, 'no DoD ran on the edited file');
+  }));
+});
+
+describe('no read or write follows a link out of the worktree (card T1-VERIFY-MUTANTS R14)', () => {
+  /** 'junction' needs no privilege on Windows; elsewhere the type is ignored and this is a symlink. */
+  const link = (target: string, at: string) => symlinkSync(target, at, 'junction');
+  const outsideDir = (r: Repo): string => {
+    const dir = path.join(r.dir, 'outside');
+    mkdirSync(dir, { recursive: true });
+    return dir;
+  };
+  /** Moves `src` out of the worktree and leaves a link in its place, so the file under the link keeps its bytes. */
+  const swapSrc = (r: Repo): string => {
+    const moved = path.join(outsideDir(r), 'src');
+    renameSync(path.join(r.worktree, 'src'), moved);
+    link(moved, path.join(r.worktree, 'src'));
+    return path.join(moved, 'm.ts');
+  };
+  /** Replaces `.review` with a link to an empty directory outside. */
+  const swapReview = (r: Repo): string => {
+    const empty = path.join(outsideDir(r), 'review');
+    mkdirSync(empty);
+    rmSync(path.join(r.worktree, '.review'), { recursive: true, force: true });
+    link(empty, path.join(r.worktree, '.review'));
+    return empty;
+  };
+  const LINK_REFUSAL = /is not a directory/;
+
+  test('acceptance 12: a baseline DoD that swaps src for a link to identical bytes stops with the outside file unchanged and no marker [R14]', withRepo(async (r) => {
+    let outside = '';
+    const dod = scriptedDod(r, (call) => {
+      if (call === 0) outside = swapSrc(r);
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL);
+    assert.equal(readFileSync(outside, 'utf8'), SOURCE, 'no mutant was written through the link');
+    assert.equal(dod.calls.length, 1, 'no mutant ran');
+    assertNoArtifacts(r);
+  }));
+
+  test('acceptance 12: a mutant DoD that swaps src for a link stops with the mutant left outside unchanged and the marker kept [R14]', withRepo(async (r) => {
+    let outside = '';
+    let held = '';
+    const dod = scriptedDod(r, (call, source) => {
+      if (call === 1) {
+        held = source;
+        outside = swapSrc(r);
+      }
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL);
+    assert.equal(readFileSync(outside, 'utf8'), held, 'the restore did not write through the link');
+    assert.equal(MutantPending.parse(JSON.parse(readFileSync(r.marker, 'utf8'))).applied?.file, 'src/m.ts');
+    assert.equal(dod.calls.length, 2);
+  }));
+
+  test('acceptance 12: a .review link present before the run refuses before either runner [R14]', withRepo(async (r) => {
+    writeFileSync(path.join(r.worktree, '.git', 'info', 'exclude'), '.review\n');
+    const empty = swapReview(r);
+    const never = (): never => assert.fail('no runner is called');
+    await assert.rejects(runMutants(input(r), { git: never, dod: never, now: () => START }), LINK_REFUSAL);
+    assert.deepEqual(readdirSync(empty), []);
+  }));
+
+  test('acceptance 12: a .review link a baseline DoD puts there stops before the marker, with nothing written outside [R14]', withRepo(async (r) => {
+    let empty = '';
+    const dod = scriptedDod(r, (call) => {
+      if (call === 0) empty = swapReview(r);
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL);
+    assert.deepEqual(readdirSync(empty), []);
+    assert.equal(r.read(), SOURCE);
+    assert.equal(dod.calls.length, 1);
+  }));
+
+  test('acceptance 12: a .review link a mutant DoD puts there stops with the file restored and nothing written outside [R14]', withRepo(async (r) => {
+    let empty = '';
+    const dod = scriptedDod(r, (call) => {
+      if (call === 1) empty = swapReview(r);
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL);
+    assert.deepEqual(readdirSync(empty), []);
+    assert.equal(r.read(), SOURCE, 'the file went back before the marker was refused');
+  }));
+
+  test('acceptance 12: a stop keeps the first error when the marker cleanup is refused too [R14]', withRepo(async (r) => {
+    const boom = new Error('runner broke');
+    const dod = scriptedDod(r, (call) => {
+      if (call === 1) {
+        swapReview(r);
+        throw boom;
+      }
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL, 'the idle marker write stops first');
+    const dodClean = scriptedDod(r, () => ({}));
+    assert.equal(dodClean.calls.length, 0);
+  }));
+
+  test('acceptance 12: a .review link that appears before the report is written stops with nothing written outside [R14]', withRepo(async (r) => {
+    let empty = '';
+    const times = [START];
+    const dod = scriptedDod(r);
+    const clock = () => {
+      const next = times.shift();
+      if (next) return next;
+      empty = swapReview(r);
+      return FINISH;
+    };
+    await assert.rejects(runMutants(input(r), { ...deps(dod), now: clock }), LINK_REFUSAL);
+    assert.deepEqual(readdirSync(empty), []);
+    assert.equal(r.read(), SOURCE);
+  }));
+
+  test('acceptance 12: restore refuses a marker that names a file through a linked parent, outside file and marker unchanged [R14]', withRepo((r) => {
+    const held = interrupted(r);
+    const dir = outsideDir(r);
+    writeFileSync(path.join(dir, 'm.ts'), held);
+    link(dir, path.join(r.worktree, 'src', 'link'));
+    const pending = MutantPending.parse(JSON.parse(readFileSync(r.marker, 'utf8')));
+    const saved = JSON.stringify({ ...pending, applied: { ...pending.applied!, file: 'src/link/m.ts' } });
+    writeFileSync(r.marker, saved);
+    assert.throws(() => restoreMutants(r.worktree, CARD), LINK_REFUSAL);
+    assert.equal(readFileSync(path.join(dir, 'm.ts'), 'utf8'), held);
+    assert.equal(readFileSync(r.marker, 'utf8'), saved);
+  }));
+
+  test('acceptance 12: restore refuses a .review link, the outside marker unchanged [R14]', withRepo((r) => {
+    interrupted(r);
+    const dir = outsideDir(r);
+    const moved = path.join(dir, 'review');
+    renameSync(path.join(r.worktree, '.review'), moved);
+    link(moved, path.join(r.worktree, '.review'));
+    const saved = readFileSync(path.join(moved, `${CARD}.mutants.pending.json`), 'utf8');
+    assert.throws(() => restoreMutants(r.worktree, CARD), LINK_REFUSAL);
+    assert.equal(readFileSync(path.join(moved, `${CARD}.mutants.pending.json`), 'utf8'), saved);
+  }));
+
+  test('acceptance 13: every git call carries --no-optional-locks and a stale stat cache leaves the index bytes alone [R15]', withRepo(async (r) => {
+    utimesSync(path.join(r.worktree, 'src/m.ts'), new Date('2030-01-01T00:00:00.000Z'), new Date('2030-01-01T00:00:00.000Z'));
+    const index = path.join(r.worktree, '.git', 'index');
+    const saved = readFileSync(index);
+    const calls: string[][] = [];
+    await runMutants(input(r, { max: 1 }), { ...deps(killOne(r)), git: (command, args, options) => {
+      calls.push(args);
+      return runSync(command, args, options);
+    } });
+    assert.ok(calls.length >= 3, 'status, head and diff at least');
+    assert.ok(calls.every((args) => args[0] === '--no-optional-locks'), JSON.stringify(calls));
+    assert.deepEqual(readFileSync(index), saved, 'the index was not rewritten');
   }));
 });
 

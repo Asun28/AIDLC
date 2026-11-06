@@ -17,7 +17,7 @@ import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
-import { StoreError } from '../state/store.ts';
+import { StoreError, createExclusive } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { runGoal } from '../loop/run-driver.ts';
 import { CardRunner } from '../loop/card-runner.ts';
@@ -37,7 +37,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
-import { formatBenchReport, runReviewBench } from '../review/bench.ts';
+import { exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
@@ -863,9 +863,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const cards = o.card ? summaries.filter((s) => s.cardId === o.card) : summaries;
       out(c, { goalId: o.goal, cards }, () => formatReviewStats(cards));
     });
-  review
-    .command('bench')
-    .description('the reviewer bench: score a stage reviewer on the cases under evals/review (never a gate)')
+  const bench = review.command('bench').description('the reviewer bench: score a stage reviewer on the cases under evals/review (never a gate)');
+  bench
     .command('run')
     .description('review each confirmed case candidate once in a detached temporary checkout and report recall and the false-block rate')
     .requiredOption('--stage <stage>', 'pre (R2) or formal (R3)')
@@ -880,6 +879,24 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
+    });
+  bench
+    .command('export')
+    .description('draft unconfirmed cases from the review ledgers and pin each candidate under refs/aidlc/bench/ (never overwrites a case, writes no state)')
+    .option('--card <id>', 'draft one bug case per formal finding of this card; with --clean, only this card')
+    .option('--goal <id>', 'one goal (default: every goal)')
+    .option('--clean', 'draft one clean case per card run whose first R3 decision passed, and no bug case')
+    .option('--dir <path>', 'case directory, resolved against the checkout root (default evals/review)')
+    .action((o: { card?: string; goal?: string; clean?: boolean; dir?: string }) => {
+      // Nothing is written under the state directory: ctx() creates nothing and these store calls only read.
+      const c = ctx(g());
+      if (o.goal && !c.store.getGoal(o.goal)) fail(`no goal ${o.goal}`);
+      const goals = o.goal ? [o.goal] : c.store.listGoals().map((x) => x.id);
+      const runs = goals.flatMap((id) => (o.card ? (c.store.getCardRun(id, o.card) ?? []) : c.store.listCardRuns(id)));
+      if (o.card && !runs.length) fail(`no run of ${o.card} in ${o.goal ?? 'any goal'}`);
+      const report = exportBenchCases({ root: c.repo.worktreeRoot, runs, create: createExclusive, cardId: o.card, clean: o.clean, dir: o.dir, stateDir: c.paths.root });
+      out(c, report, () => formatBenchExport(report));
+      if (report.pinConflicts.length) process.exitCode = 1;
     });
   program
     .command('ci')
