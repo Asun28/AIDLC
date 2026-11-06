@@ -78,3 +78,7 @@ Those three chains account for 5 of the 14 stops since 2026-10-20. A keyword mat
 
 ## Limits
 This text lowers what R3 blocks on, so a real local race can ship as a suggestion. The concurrency sentence keeps two sessions or worktrees in scope, and the last sentence keeps a path committed in a candidate in scope.
+
+## Attempt evidence
+- RED on f706d00: `node --test tests/surface/templates.test.ts` exit 1, 9 of 38 tests fail by assertion: the five that pin the current version and the four new ones.
+- Acceptance 4: `git diff --numstat origin/main -- REVIEW.md` reports `8	1	REVIEW.md`.

@@ -14,7 +14,8 @@ Run three passes and tag each finding with its pass:
 - `spec`: does the diff do what the card closed? (dimensions 1, 6, 14)
 - `standards`: is the code sound? (everything else)
 A `spec` block on a Tier-S card stops the ship. `standards` findings are a
-second opinion; they never become a silent merge bar.
+second opinion unless the project sets `gateRequired: true`, which makes every
+block, on either axis, merge-blocking.
 
 ## Must-block dimensions (any hit blocks)
 1. Out of scope: touches paths outside `allow_paths` or beyond the card. [spec]
@@ -40,6 +41,12 @@ second opinion; they never become a silent merge bar.
 ## What Important means here
 Reserve Important for findings that would break behavior, leak data or breach
 a policy. Style and naming are nits.
+
+## Impact bar
+Applies to Bugs and Security findings, on every dimension. A block names a path a normal run can reach: who supplies the input and what breaks for them. A finding is a `[suggestion]`, not a block, in two cases, unless the card's requirements or `forbid:` name it:
+- The defect needs the person running the program, or a process of theirs, to swap, link or race their own files during the run. Concurrent runs the project supports are normal runs, so they are not this case.
+- The defect can change only a report or a diagnostic, never a gate, a decision, a persisted record or user data.
+A path or content that the diff, a reviewer or an external service supplies is normal-run input and stays untrusted.
 
 ## Cap the nits
 Report at most five nits per review; summarize the rest as a count.
