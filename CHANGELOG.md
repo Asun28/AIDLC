@@ -10,6 +10,10 @@
 
 - T1-VERIFY-MUTANT-GEN-4: the generator classifies the operand after a run of `!` once, so 200000 `!` before a 200000-character name take under a second, by the user's ruling of 2026-11-06 on the second R3 decision of T1-VERIFY-MUTANT-GEN-3. The walks back over a statement that stay quadratic on thousands of `void {}` groups are stated as a limit on the card.
 
+- T1-VERIFY-MUTANTS-2: `aidlc card mutants` runs the mutants of a card's committed candidate one at a time under the card's DoD, restores each file from the bytes it read, and writes `<worktree>/.review/<card>.mutants.json` bound to the candidate commit. It is advisory: no gate reads the report and the command exits 0 whatever survives. A run refuses a worktree with uncommitted or untracked changes and a marker left by an interrupted run; `--restore` repairs that run.
+
+- T1-VERIFY-MUTANTS-PROMPT: the formal review (R3) prompt gains a Surviving mutants section with the survivors of the `aidlc card mutants` report for the candidate under review, quoted as advisory evidence and capped at 2000 bytes; a report for another candidate, one that does not parse, one reached through a link, and one above 1 MiB or 1000 mutants count as no report, and a card ships with or without one. `aidlc card attempt` refuses while a mutant run marker exists, so an interrupted sweep cannot be recorded as an attempt while a source file may hold a mutant.
+
 - T1-INIT-BASE-CI (bugfix): a config that `aidlc init` creates names the target's default branch, and a repository with no `package.json` gets no `aidlc-ci.yml` and no `agent-evals.yml`, each reported as skipped. Every workflow calls `npx --no-install aidlc`, so a repository with no local package cannot fetch the unrelated npm package of that name.
 
 - T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that checks the file of the wired dispatcher, starts no process, and reports `ok`, `FAILED` or `not wired`.
@@ -270,6 +274,8 @@ Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before ->
 - WAIT resumption (T0-WAIT-VERIFY, bugfix): a goal polled with `aidlc next` while its cards were running parks in WAIT; once every required card closed, `nextInRun` attempted WAIT -> VERIFY_ARC, which the goal diagram forbids, so `next`, `report` and `card report` threw GoalTransitionError and the goal could never finish. It now resumes WAIT -> RUN (journaled) and then derives VERIFY_ARC. Found by the loop itself while closing T0-LOOP-SPEED.
 
 - T0-CLAUDE-MD-TRIM-2: `CLAUDE.md` goes from 215 lines to 177 and `tests/surface/claude-md-size.test.ts` holds it within 200, the target in Anthropic's Claude Code memory documentation. The removed text is text `docs/` and the skills already state: the per-directory `src/` layer descriptions, the review allowances, and the Lessons, Companion skills and Deadlines bullets. `templates/CLAUDE.aidlc.md` goes from 72 lines to 61, so `aidlc init` writes the shorter section into a repository that has none; a section a repository already has stays as it is.
+
+- T0-REVIEW-CANDIDATE-PINS: the card runner writes `refs/aidlc/candidates/<sha>` before it writes an R3 pass or block, on the command path and the ship path, so a commit the review ledger names survives a deleted branch and `git gc`. A squash merge leaves a card's commits on its branch alone, and on 2026-11-06 a gc dropped 77 recorded candidates, 8 of them for good. No hook runs for the pin, and a failed pin changes no review: `REVIEW_DECIDED` carries `candidatePinned` and, on a failure, `pinError`.
 
 ## 0.1.0 - 2026-09-11
 

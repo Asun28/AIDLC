@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -18,19 +18,20 @@ import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reope
 import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
-import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
+import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
-import { GitProbe } from '../probes/git.ts';
+import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
 import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
-import { COVERAGE_ANGLE, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
+import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
+import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson } from '../state/store.ts';
@@ -172,6 +173,15 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   return new DryRunShipPath();
 }
 
+/** One nonempty line for whatever a failed pin threw. It never throws itself, since a failed pin never changes a review. */
+function pinFailure(thrown: unknown): string {
+  try {
+    return oneLine(thrown instanceof Error ? thrown.message : String(thrown)) || 'the pin threw an empty message';
+  } catch {
+    return 'the pin threw a value with no text';
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -222,6 +232,42 @@ export class CardRunner {
   /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
   private reviewCheckout(run: CardRun): string {
     return run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+  }
+
+  /**
+   * The survivors of the mutant report of the candidate under review (card T1-VERIFY-MUTANTS-PROMPT), as evidence for the formal
+   * prompt. A path inside a checkout is chosen by the candidate, so a report reached through a link, one past a size limit, one
+   * that cannot be read or parsed and one for another candidate all give none: the report never fails or gates a review. The
+   * limits run before the schema, whose issues per element of an array cost far more memory than the file: its two arrays are bounded.
+   */
+  private survivingMutants(checkout: string, cardId: string, candidateSha: string): MutantReport['mutants'] {
+    const file = mutantsReportPath(checkout, cardId);
+    try {
+      const stat = lstatSync(file);
+      if (!lstatSync(path.dirname(file)).isDirectory() || !stat.isFile() || stat.nlink > 1 || stat.size > MUTANT_REPORT_MAX_BYTES) return [];
+      const parsed: unknown = JSON.parse(readFileSync(file, 'utf8'));
+      const { mutants, operators } = parsed as { mutants?: unknown; operators?: unknown };
+      if (!Array.isArray(mutants) || mutants.length > MUTANT_REPORT_MAX_MUTANTS || !Array.isArray(operators) || operators.length > MUTATION_OPERATORS.length) return [];
+      const report = MutantReport.safeParse(parsed);
+      return report.success && report.data.candidateSha === candidateSha ? report.data.mutants.filter((m) => m.outcome === 'survived') : [];
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Keep a commit R3 decides on before the decision is written (card T0-REVIEW-CANDIDATE-PINS): a squash merge leaves it on its
+   * branch alone, so a deleted branch and a gc would lose a commit the ledger names. A failure never changes the review; the
+   * decision's event carries it. A pass or a block is a decision here; a no-verdict and a quota hold name no decision.
+   */
+  private pinDecided(outcome: string, cwd: string, sha: string | undefined): { candidatePinned?: boolean; pinError?: string } {
+    if (!this.repo.isGit || !sha || !(outcome === 'pass' || outcome === 'block-defect' || outcome === 'block-advisory')) return {};
+    try {
+      this.git.pinCandidate(cwd, sha);
+      return { candidatePinned: true };
+    } catch (err) {
+      return { candidatePinned: false, pinError: pinFailure(err) };
+    }
   }
 
   /** The candidate a review is bound to: the pinned sha, verified against the checkout HEAD in a git repository. */
@@ -932,6 +978,10 @@ export class CardRunner {
     // The stored run, as everywhere: a caller's snapshot never writes its generation, a stop or older evidence back. This
     // writer applies no fence (see docs/OPERATIONS.md, Sessions): what it records lands on the stored run as it is.
     run = this.store.getCardRun(goal.id, card.id) ?? run;
+    // A marker means a source file may hold a mutant (card T1-VERIFY-MUTANTS-PROMPT), so nothing is recorded, not even an owed event.
+    // Only whether something is at the path counts: no marker is read, and a dangling link is still something there.
+    const mutantMarker = mutantsMarkerPath(this.reviewCheckout(run), card.id);
+    if (lstatSync(mutantMarker, { throwIfNoEntry: false })) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
@@ -1641,6 +1691,8 @@ export class CardRunner {
     // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
     const lessons = reviewLessons(this.lessonsFile());
+    // The mutant report is read with them, so a report written during the review never changes what this reviewer receives.
+    const survivingMutants = this.survivingMutants(cwd, card.id, candidateSha);
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
@@ -1735,7 +1787,7 @@ export class CardRunner {
     // R7, once the dispatch is reserved: a refused reservation cancels nothing of the other reviewer.
     this.cancelOtherReviewerRequest(goal, card, candidateDigest, cfg, now);
     const promptInArgv = cfg.command.some((a) => a.includes('{instructions}'));
-    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
+    const promptFor = () => buildReviewPrompt({ stage: 'formal', includeDiff: !promptInArgv, reviewPolicy, lessons, survivingMutants, card, base: baseRef, head: candidateSha, changedPaths, diff, priorFindings, delta, advisoryNotes, round: decisionNo, maxRounds: Math.max(maxDecisionsNo, decisionNo), ...(baseSyncDecision ? { baseSync: true } : {}) });
     let panel: PanelResult | undefined;
     // Whether the reviewer process returned: a failure after that point is a lost result (charged as a no-verdict, the
     // reviewer ran), a failure before it a dispatch that never happened (released, nothing spent).
@@ -2070,6 +2122,7 @@ export class CardRunner {
     // The decision (counters and action), the finding round and the resulting state are computed from the ledger
     // locked at completion, so a decision another completion recorded meanwhile is counted, never overwritten.
     let decision: LedgerDecision | undefined;
+    const pin = this.pinDecided(classified.outcome, this.reviewCheckout(persisted), candidateSha);
     const committed = this.commitReviewed(
       goal,
       card,
@@ -2115,7 +2168,7 @@ export class CardRunner {
             },
           };
         },
-        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash } }),
+        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash, ...pin } }),
       },
       after,
     );
@@ -2492,6 +2545,7 @@ export class CardRunner {
       let rec: ReturnType<typeof recordReviewOutcome> | undefined;
       let recorded = false;
       let found: RecordFindingsResult = { findings: run.findings, raised: [], reraised: [], resolved: [] };
+      const pin = this.pinDecided(classified.outcome, this.reviewCheckout(run), run.candidate?.sha);
       const locked = this.store.updateCardRun(goal.id, card.id, (persisted) => {
         const current = persisted ?? run;
         rec = undefined;
@@ -2513,7 +2567,7 @@ export class CardRunner {
       const standing = standingFor(review);
       // The ledger's standing decision for an artifact already recorded decides again; nothing new is recorded.
       reviewDecision = rec ? rec.decision : standing ? (standing.outcome === 'block' && classified.mergeBlocking ? ({ action: review.substantiveBlocks >= 2 ? 'stop-review' : 'review-fix', remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - review.substantiveDecisions), detail: 'second substantive block' } as LedgerDecision) : { action: 'proceed-merge' }) : undefined;
-      if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash } });
+      if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash, ...pin } });
     }
     // The queue slot and the operation are settled before the outcome is applied. Only a review-no-verdict outcome holds the
     // pool on a quota message: the receipt is the output of the whole ship command (git, gh, the CI gate log), so any other

@@ -22,6 +22,25 @@ export interface WorktreeEntry {
   prunable?: boolean;
 }
 
+/** One line of process output, for a message. */
+export const oneLine = (text: string) => text.trim().replace(/\s+/g, ' ');
+
+/**
+ * The `-c` options that turn every hook off for one command and change no config file. `core.hooksPath` covers a hooks
+ * directory; a hook defined by `hook.<name>.event` (git 2.54 and later) still runs under it, so each one is disabled by name.
+ */
+export function noHookOptions(root: string, git: SyncRunner): string[] {
+  const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
+  if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
+  const keys = nulList(named.stdout);
+  const unnamed = keys.find((key) => key.includes('='));
+  if (unnamed !== undefined) throw new Error(`git -c reads the first = as the end of the key, so it cannot disable the hook of ${unnamed}`);
+  return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
+}
+
+/** The ref that keeps a commit R3 decided on, whatever happens to its branch. */
+export const candidatePinRef = (sha: string): string => `refs/aidlc/candidates/${sha}`;
+
 export class GitProbe {
   readonly runner: SyncRunner;
 
@@ -37,6 +56,12 @@ export class GitProbe {
     const r = this.git(cwd, args);
     if (r.exitCode !== 0) throw new GitProbeError(args, r);
     return r.stdout.trim();
+  }
+
+  /** Keep `sha` with a ref named by the commit, every hook off; a second pin of the same commit changes nothing. Throws on a failure. */
+  pinCandidate(cwd: string, sha: string): void {
+    const git: SyncRunner = (command, args, options) => this.runner(command, args, { timeoutMs: 60_000, ...options });
+    this.must(cwd, [...noHookOptions(cwd, git), 'update-ref', '--no-deref', candidatePinRef(sha), sha]);
   }
 
   worktrees(cwd: string): WorktreeEntry[] {

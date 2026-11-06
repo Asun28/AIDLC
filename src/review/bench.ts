@@ -19,11 +19,11 @@ import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
-import { nulList } from '../core/parse-guard.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
+import { noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
 export type BenchOutcome = 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error';
@@ -385,7 +385,6 @@ const NO_REF = '0'.repeat(40);
 const SITE_WINDOW = 5;
 const MAX_SITE_WINDOW = 50;
 
-const oneLine = (text: string) => text.trim().replace(/\s+/g, ' ');
 
 /** The class of a draft, from the reason text alone: its `(class: <slug>)` tag, else its REVIEW.md dimension, else `unclassified`. */
 function draftClass(reason: string): string {
@@ -502,19 +501,6 @@ function refuseStateOverlap(root: string, dir: string, stateDir: string, git: Sy
   if (common.exitCode !== 0) throw new Error(`git rev-parse --git-common-dir failed: ${oneLine(common.stderr)}`);
   const refs = path.resolve(root, common.stdout.trim(), 'refs');
   if (resolvesInside(stateDir, refs) || resolvesInside(refs, stateDir)) throw new Error(`the refs directory ${refs} and the state directory ${stateDir} overlap`);
-}
-
-/**
- * The `-c` options that turn every hook off for one command and change no config file. `core.hooksPath` covers a hooks
- * directory; a hook defined by `hook.<name>.event` (git 2.54 and later) still runs under it, so each one is disabled by name.
- */
-function noHookOptions(root: string, git: SyncRunner): string[] {
-  const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
-  if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
-  const keys = nulList(named.stdout);
-  const unnamed = keys.find((key) => key.includes('='));
-  if (unnamed !== undefined) throw new Error(`git -c reads the first = as the end of the key, so it cannot disable the hook of ${unnamed}`);
-  return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
 }
 
 /** Draft cases from the card runs; throws, before any draft, on a refusal. Changes only new case files and refs under `refs/aidlc/bench/`. */
