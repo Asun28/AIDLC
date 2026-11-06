@@ -89,3 +89,26 @@ npm run typecheck && node --test tests/surface/review-bench-export.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+
+BUILD attempt 1, Windows, Node 22.23.1, on main at f842ce6, then merged with main at 04514ba.
+- RED: commit 753e716. `node --test tests/surface/review-bench-export.test.ts` exited 1 on a SyntaxError: `src/review/bench.ts` had no export `exportBenchCases`.
+- GREEN: commit 0844c5a, tidied in 5fce6ce. The DoD command with neither session variable set exits 0. `node --test tests/surface/*.test.ts`: 741 tests, 737 passed, 4 skipped, 0 failed. The new test file under WSL Ubuntu: 23 of 23. `npm run build && npm run bench -- --check`: exit 0.
+- Real ledgers, in a shared clone with `AIDLC_STATE_DIR` on this repository's state, so no ref landed here: `--clean` over every goal wrote 69 cases and skipped 2 (no `candidateSha`). `--card` over the 91 cards with formal findings drafted all 451 formal findings of 206 card runs, with no skip and no pin conflict: 365 `dim-<n>`, 85 from a class tag, 1 `unclassified`, on 142 distinct candidates. `aidlc review bench run --stage pre` loaded the 520 drafts and left all 520 out as unconfirmed.
+- Mutation check, 41 breaks of `exportBenchCases` and the command in scratch clones, each restored and none committed; each fails a test.
+
+Repair after R2 round 1 F1 (a `--dir` under the state directory), on 8c9241a:
+- RED: commit ec3a87d. `node --test --test-name-pattern "acceptance (8|11)" tests/surface/review-bench-export.test.ts` exited 1, 2 tests, 0 passed, 2 failed: acceptance 11 on the refusal and acceptance 8 on the exit code.
+- GREEN: the DoD command with neither session variable set exits 0, 57 tests, 57 passed. The two tests under WSL Ubuntu: 2 of 2.
+- Mutation check, 5 breaks of the refusal, each restored and none committed. Four fail a test; the fifth, which dropped the `..` and absolute-path clauses of `resolvesInside`, survived, so acceptance 11 now also exports into the parent of the state directory. A different drive stays untested on this one-drive machine.
+- R2 round 1 advisory, not taken: the case file is written before its ref, so a process killed between the two leaves an unpinned case. R7 fixes that order.
+
+Repair after R3 decision 1 (F2 to F6 and the re-raise of R2 F1), on 64c04a7:
+- Assertion-level RED of the feature (F2): commit 753e716 in a scratch clone, with `exportBenchCases` and `formatBenchExport` added to `src/review/bench.ts` as exports that throw `not implemented`. `node --test tests/surface/review-bench-export.test.ts` exited 1, 21 tests, 0 passed, 21 failed: 19 on `not implemented`, one on the docs and one on the exit status of the command it could not run.
+- RED of the repairs: commit 58e1811. The same command exited 1, 30 tests, 22 passed, 8 failed, every failure an assertion: the `--no-deref` argument, the git call list and environment of acceptance 6, acceptance 12 twice, 13, 14, 15 and 16.
+- GREEN: `npm run typecheck` exits 0, the DoD tests pass, and the export tests pass under WSL Ubuntu with git 2.43, where acceptance 13 is skipped because that git ignores `GIT_NO_LAZY_FETCH`. Git 2.43 replaces a dangling symbolic ref on `update-ref --no-deref` and git 2.56 refuses it; neither writes the target branch, and acceptance 12 asserts both.
+- F3: `symbolic-ref -q` runs before the write, and `update-ref --no-deref` covers a ref that appears after it. F4: every git call of the export goes through one runner that sets `GIT_NO_LAZY_FETCH=1`. F1: all writes use the directory resolved at the start, and the path is checked again before each create. F5: the state directory and the `refs` directory under `--git-common-dir` must not overlap. F6: the create is `openSync` with `wx`, and a failed write removes the file.
+- Mutation check, 16 breaks of this repair in scratch clones, each restored and none committed; each fails a test.
+
+Correction by T1-REVIEW-BENCH-EXPORT-2: the line above that git 2.43 ignores `GIT_NO_LAZY_FETCH` is wrong for Ubuntu git 2.43.0-1ubuntu7.3, which honours it; acceptance 13 was skipped there on a parsed version number.
