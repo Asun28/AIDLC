@@ -14,12 +14,12 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-REVIEW-CANDIDATE-PINS.md
-dod_command: npm run typecheck && node --test tests/scenarios/candidate-pins.test.ts tests/surface/review-bench-export.test.ts tests/surface/review-bench.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/t0-flow.test.ts tests/core/parse-guard.test.ts tests/infra/update-json.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/candidate-pins.test.ts tests/surface/review-bench-export.test.ts tests/surface/review-bench.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/journal-owed.test.ts tests/core/parse-guard.test.ts tests/infra/update-json.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 requirements:
   - R1. WHEN an R3 invocation decides `pass` or `block` for a commit, on either path (`CardRunner.formalReview`, and the ship-path reviewer's decision), the runner shall create `refs/aidlc/candidates/<sha>` naming that commit before the decision is written, so a crash between the two leaves a spare ref and never a recorded decision on an unpinned commit. A stale candidate recorded as history is pinned too, since the ledger names it.
   - R2. The pin shall run `git -c core.hooksPath=/dev/null [-c hook.<name>.enabled=false ...] update-ref --no-deref refs/aidlc/candidates/<sha> <sha>` from the run's worktree. `noHookOptions` moves from `src/review/bench.ts` to `src/probes/git.ts` with its behaviour unchanged, since only `src/cli/main.ts` may import `bench.ts`; `bench.ts` imports it from there.
-  - R3. IF the pin fails (a non-zero git exit, a hook name `noHookOptions` refuses, a throw), THEN the decision, the counters, the findings and the card state shall be what a successful pin gives, and the `REVIEW_DECIDED` event shall carry `candidatePinned` false and `pinError`, one line naming the cause. A successful pin carries `candidatePinned` true.
+  - R3. IF the pin fails (a non-zero git exit, a hook name `noHookOptions` refuses, a throw of any value), THEN the decision, the counters, the findings and the card state shall be what a successful pin gives, and the `REVIEW_DECIDED` event shall carry `candidatePinned` false and `pinError`, one nonempty line naming the cause. A successful pin carries `candidatePinned` true. On the command path both are part of the event the decision write persists, so recovery of an owed event keeps them.
   - R4. A no-verdict, a quota hold and a run with `repo.isGit` false shall pin nothing, run no git command for a pin and add neither field.
   - R5. The loop docs shall describe the pins: `### Formal review (R3) as a command` in `docs/OPERATIONS.md` gives the ref name, that the ref keeps a commit whose branch was deleted, the hook rule, the failure rule of R3, that the refs are local and not pushed, and `git update-ref -d` to drop one; `docs/ARCHITECTURE.md` lists the refs with the persisted state; the CHANGELOG Unreleased section has an entry naming this card.
 acceptance:
@@ -27,11 +27,12 @@ acceptance:
   - 2. an R3 block on C1 and a pass on the repaired C2 leave both refs, each naming its own commit. [R1] [dod arm 2]
   - 3. a ship-path reviewer's pass and block each leave the ref, with `candidatePinned` on the event. [R1] [R3] [dod arm 2]
   - 4. a git runner that reads the card run when it sees `update-ref` finds the invocation still pending, so the pin precedes the decision. [R1] [dod arm 2]
-  - 5. an `update-ref` that exits 1 and a hook name holding `=` each give the run state, counters and findings of a successful pin, with `candidatePinned` false and `pinError` naming the cause. [R3] [dod arm 2]
+  - 5. an `update-ref` that exits 1 and a hook name holding `=` each give the run state, counters and findings of a successful pin, with `candidatePinned` false and `pinError` naming the cause; a runner that throws a string, null, an empty Error or a value `String` cannot print does the same with a nonempty `pinError`, on both paths. [R3] [dod arm 2]
   - 6. a `reference-transaction` hook in `.git/hooks`, one in a directory `core.hooksPath` names and, on a git that runs one (decided by running it), one defined in config each run for a plain `git update-ref` and not for the pin; `.git/config` keeps its bytes. [R2] [dod arm 2]
   - 7. a no-verdict leaves no ref and no `update-ref` call; a run with `repo.isGit` false makes no git call for a pin and its event has neither field. [R4] [dod arm 2]
   - 8. `tests/surface/review-bench-export.test.ts`, `tests/scenarios/fault-points.test.ts`, `tests/core/parse-guard.test.ts` and `tests/infra/update-json.test.ts` pass with none of them changed. [R2] [dod arm 2]
   - 9. `docs/OPERATIONS.md` contains `refs/aidlc/candidates/` in `### Formal review (R3) as a command`, `docs/ARCHITECTURE.md` contains it, the CHANGELOG Unreleased section has a `T0-REVIEW-CANDIDATE-PINS` entry, and `tests/surface/prose.test.ts` passes. [R5] [dod arms 2, 3]
+  - 10. a `REVIEW_DECIDED` append that fails after the decision write, then the next `card next`, leaves one event holding `candidatePinned` and, for a failed pin, `pinError`. [R3] [dod arm 2]
 depends_on: []
 budget: 300
 tdd: true
@@ -47,6 +48,7 @@ non_goals:
   - deleting, expiring or pushing pins
   - setting gc.pruneExpire in `aidlc init`
   - changing branch cleanup at CLOSE
+  - making the ship path's REVIEW_DECIDED an owed event (a failed append loses that whole event, as it does today)
 hygiene: "This card closes the cause of the loss found on 2026-11-06: a squash merge leaves a card's commits on its branch alone, CLOSE deletes that branch, and an automatic `git gc` then dropped 77 of the candidates the export needs; 69 came back from GitHub and 8, on stopped runs, did not. `gc.pruneExpire=never` is set in this clone's config as the stopgap, and this card makes that setting unnecessary for a new candidate and covers every repository `aidlc init` serves. `src/loop/card-runner.ts` is covered by the skill verify-card-run-writes, so run it at SHIP; the pin is a ref write, not a store write, so its coverage record should not change. T1-VERIFY-MUTANTS-PROMPT also edits `src/loop/card-runner.ts`: whichever lands second merges the base."
 doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md
 ---
@@ -65,7 +67,7 @@ Decisions:
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/candidate-pins.test.ts tests/surface/review-bench-export.test.ts tests/surface/review-bench.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/t0-flow.test.ts tests/core/parse-guard.test.ts tests/infra/update-json.test.ts tests/surface/prose.test.ts
+npm run typecheck && node --test tests/scenarios/candidate-pins.test.ts tests/surface/review-bench-export.test.ts tests/surface/review-bench.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts tests/scenarios/r3-fallback.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/journal-owed.test.ts tests/core/parse-guard.test.ts tests/infra/update-json.test.ts tests/surface/prose.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
