@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { nulList } from '../core/parse-guard.ts';
 import { MUTATION_OPERATORS, MutantReport, MutantPending, type Card, type MutantOutcome, type MutantResult } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -110,11 +111,23 @@ function diffOf(runner: SyncRunner, worktree: string, range: string): string {
   return diff.stdout;
 }
 
+/**
+ * The regular files of the candidate's tree under `src`. The tree mode says what an entry is: `core.symlinks=false` checks a
+ * symlink out as a regular file, which `lstat` cannot tell apart. An entry reads `<mode> <type> <oid>\t<path>`, and the modes
+ * of a regular file start with 100, a symlink is 120000 and a submodule 160000.
+ */
+function regularFiles(runner: SyncRunner, worktree: string, candidate: string): Set<string> {
+  const tree = runner('git', ['ls-tree', '-r', '-z', candidate, '--', 'src'], { cwd: worktree });
+  if (tree.exitCode !== 0) throw new Error(`git ls-tree ${candidate} failed in ${worktree}: ${tree.stderr.trim() || `exit ${tree.exitCode}`}`);
+  return new Set(nulList(tree.stdout).filter((entry) => entry.startsWith('100')).map((entry) => entry.slice(entry.indexOf('\t') + 1)));
+}
+
 /** Every mutant of the changed regular source files: files in path order, each file's mutants in the generator's order. */
-function targetsOf(worktree: string, diff: string): Target[] {
+function targetsOf(worktree: string, diff: string, regular: Set<string>): Target[] {
   const targets: Target[] = [];
   const changed = changedSourceLines(diff).sort((a, b) => (a.file < b.file ? -1 : 1));
   for (const { file, lines } of changed) {
+    if (!regular.has(file)) continue;
     const full = path.join(worktree, file);
     const bytes = bytesOf(worktree, full);
     if (!bytes) continue;
@@ -146,7 +159,7 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
     throw new Error(`${worktree} has uncommitted or untracked changes: ${entries.slice(0, REFUSAL_ENTRIES).join(', ')}${more}; commit or remove them first`);
   }
   const candidate = git.head(worktree);
-  const targets = targetsOf(worktree, diffOf(read, worktree, `${base}...${candidate}`));
+  const targets = targetsOf(worktree, diffOf(read, worktree, `${base}...${candidate}`), regularFiles(read, worktree, candidate));
   const chosen = targets.slice(0, max);
   const dod = () => deps.dod(card.dod_command, [], { cwd: worktree, shell: true, timeoutMs });
 
