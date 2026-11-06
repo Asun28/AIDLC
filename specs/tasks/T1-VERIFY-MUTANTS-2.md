@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-MUTANTS-2
 title: aidlc card mutants runs the mutants of a card's committed candidate one at a time under the card's DoD, restores every file, and writes a report bound to the candidate commit
-status: todo
+status: merged
 branch: T1-VERIFY-MUTANTS-2
 worktree: D:\wt\AIDLC\T1-VERIFY-MUTANTS-2
 plan_ref: plans/review-verification.md#order-of-work
