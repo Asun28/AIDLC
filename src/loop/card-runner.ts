@@ -15,7 +15,7 @@ import { randomUUID } from 'node:crypto';
 import { selectCardState, type CardDecision, type CardEvidence } from '../core/card-machine.ts';
 import { checkAdmission } from '../core/deadlines.ts';
 import { afterShipFailure, createEpisode, finishAttempt, nextEffortAction, reopenAfterReviewBlock, repairAction, settleDisputedRepair, startAttempt, type ShipFailureStep } from '../core/effort.ts';
-import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
+import { acceptFinding, blockClasses, classRepairText, classifyVerdict, describeContested, describeDeadlock, disputeFinding, findingsOfBlock, nonAcceptanceRounds, parseVerdict, previousDecisionFindings, recordFindings, recordReviewOutcome, heldFindings, repeatedFindings, rerunAllowed, reviewRequestKey, snapshotFindings, type BlockSelector, type ClassifiedVerdict, type FindingSnapshot, type LedgerDecision, type RecordFindingsInput, type RecordFindingsResult } from '../core/review-policy.ts';
 import { classifyCiFailure, canRerun, recordRerunIntent, reconcileRerun, hasUnreconciledRerun, type RerunDecision } from '../core/ci-policy.ts';
 import { makeStop } from '../core/stop.ts';
 import { ActorIdentity, CardRun, MAX_NO_VERDICT_RETRIES, MAX_R3_DECISIONS, MAX_SUBSTANTIVE_REVIEW_DECISIONS, MUTATION_OPERATORS, MutantReport, RECONCILE_GRACE_MS, RunStatus, ShippedFacts, addMs, type BlockedReceipt, type Card, type DisputeKind, type EffortLevel, type FindingStage, type Goal, type JournalEvent, type Lease, type OperationRecord, type OwedEvent, type PrInfo, type PreReviewRound, type ReviewFinding, type ReviewEffortLevel, type ReviewInvocation, type ReviewLedger, type StopRecord, type Verdict } from '../core/types.ts';
@@ -343,10 +343,10 @@ export class CardRunner {
   }
 
   /** The run's unresolved findings as the prompt renders them: open ones to verify, disputed ones with the author's note. */
-  private priorFindingsFor(run: CardRun, held: string[] = []): PriorFinding[] {
-    // A finding R3 still holds is sent even after an R2 pass resolved it, so a re-raise can cite it (card T1-EFF-R3-PROGRESS-2).
+  private priorFindingsFor(run: CardRun, keep: string[] = []): PriorFinding[] {
+    // A finding in `keep` is sent even after an R2 pass resolved it, so a re-raise can cite it (card T1-EFF-R3-PROGRESS-2).
     return run.findings
-      .filter((f) => !f.resolvedAt || held.includes(f.id))
+      .filter((f) => !f.resolvedAt || keep.includes(f.id))
       .map((f) => ({
         id: f.id,
         reason: f.reason,
@@ -1769,8 +1769,8 @@ export class CardRunner {
         maxDecisionsNo = this.formalAllowance(current, card);
         advisoryNotes = this.advisoryNotesFor(current, candidateSha, candidateDigest);
         seen = this.findingsSnapshot(current);
-        held = heldFindings(current.findings, seen, decisionNo);
-        priorFindings = this.priorFindingsFor(current, held);
+        held = heldFindings(current.findings, seen);
+        priorFindings = this.priorFindingsFor(current, [...held, ...previousDecisionFindings(current.findings, decisionNo)]);
         const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', decision: decisionNo, held, policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
         // What the reviewer receives is retained next to its verdict, so a commit from the retained result binds the same snapshot.
         writeFileSync(path.join(reviewDir, `${fileStem}.reservation.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, requestedAt: now, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, timeoutMs: cfg.timeoutMs }, null, 2) + '\n', 'utf8');
@@ -2117,7 +2117,7 @@ export class CardRunner {
     // Only a finding that blocks under the active gate can repeat: without gateRequired a standards-only re-raise is a second
     // opinion and never stops the card for a ruling.
     const blocking = (reasons: string[]) => (this.config.gateRequired ? reasons : reasons.filter((x) => /^\s*\[spec\]/i.test(x)));
-    const repeated = (latest: CardRun): string[] | undefined => (r.baseSync ? undefined : verdict ? repeatedFindings(blocking(citedReasonsOf(verdict, r.changedPaths)), r.held ?? heldFindings(latest.findings, seen, r.decision ?? latest.review.substantiveDecisions + 1)) : []);
+    const repeated = (latest: CardRun): string[] | undefined => (r.baseSync ? undefined : verdict ? repeatedFindings(blocking(citedReasonsOf(verdict, r.changedPaths)), r.held ?? heldFindings(latest.findings, seen)) : []);
     const result = { classified, verdict, advisory, verdictRef: r.verdictRef, logRef: r.logRef, durationMs: r.durationMs, receiptSha256: r.receiptSha256 };
     // The decision (counters and action), the finding round and the resulting state are computed from the ledger
     // locked at completion, so a decision another completion recorded meanwhile is counted, never overwritten.

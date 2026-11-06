@@ -94,8 +94,8 @@ constants in `core/types.ts` enforced by `core/review-policy.ts`: a block
 returns the card to REVIEW_FIX and reopens the effort episode without
 spending a build attempt (the ladder counts DoD failures only), a later
 block stops the card for a ruling only when it re-raises a finding the
-author disputed or the previous R3 decision raised, or as the fourth
-decision (a ship-path reviewer keeps the second-block stop), a quota hold
+author disputed, or as the fourth decision (a ship-path reviewer keeps the
+second-block stop), a quota hold
 is WAIT, a missing or malformed verdict fails closed.
 
 **Every side effect is injectable.** `GoalController`, `CardRunner` and

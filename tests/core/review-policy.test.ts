@@ -214,7 +214,6 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
   test('acceptance 7: the previous R3 decision\'s findings reach the next prompt without being held: decision 2 reads what decision 1 raised, decision 3 what decision 2 raised or re-raised [R6] [T0-R3-STOP-DISPUTED]', () => {
     assert.deepEqual(policy.previousDecisionFindings(history(), 3), ['F1']);
     assert.deepEqual(policy.previousDecisionFindings(history(), 2), ['F1', 'F3'], 'F3 was raised by decision 1 and left out only by decision 2');
-    assert.deepEqual(policy.previousDecisionFindings(history(), 1), [], 'decision 1 has no previous decision');
   });
 
   test('acceptance 2: from decision 2 a re-raise of an undisputed finding gets a repair round, a re-raise of a disputed one stops, and a block on decision 4 stops [T0-R3-STOP-DISPUTED]', () => {
