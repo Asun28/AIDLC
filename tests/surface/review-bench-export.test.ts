@@ -427,7 +427,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-bas
       assert.equal(c.command, 'git');
       assert.equal(c.cwd, r.root);
       assert.equal(c.noLazyFetch, '1', c.args.join(' '));
-      assert.equal(c.protocols, 'none', c.args.join(' '));
+      assert.equal(c.protocols, '', c.args.join(' '));
       const name = subcommand(c.args)!;
       assert.ok(['cat-file', 'merge-base', 'rev-parse', 'symbolic-ref', 'config', 'update-ref'].includes(name), c.args.join(' '));
       if (name === 'symbolic-ref') assert.deepEqual(c.args.slice(0, -1), ['symbolic-ref', '-q']);
@@ -507,7 +507,7 @@ test('T1-REVIEW-BENCH-EXPORT-2 acceptance 13: in a partial clone a blob the clon
     const blob = git(r.root, ['rev-parse', `${r.candidate}:specs/tasks/${CARD}.md`]);
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
     const held = (env: NodeJS.ProcessEnv) => spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env, windowsHide: true }).status === 0;
-    const noFetch = { ...gitEnv, GIT_NO_LAZY_FETCH: '1' };
+    const noFetch = { ...withoutNoLazyFetch(gitEnv), GIT_ALLOW_PROTOCOL: '' };
     const asShipped = exportBenchCases({ root: clone, runs: [run], cardId: CARD });
     assert.match(asShipped.skipped[0]?.detail ?? '', /no card file/);
     assert.equal(held(noFetch), false, 'the export fetched the blob');
@@ -589,6 +589,44 @@ test('T1-REVIEW-BENCH-EXPORT-2 acceptance 18: a git config that fails ends the e
     assert.deepEqual(benchRefs(r), []);
     const report = exportBenchCases(options(r, [fixRun(r.candidate)], { git: answering(1, '') }));
     assert.deepEqual(report.written.map((w) => w.id), ids);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 13: a remote helper named none runs for a plain read and not for the export, whether or not git honours GIT_NO_LAZY_FETCH [R8]', () => {
+  const r = repo();
+  try {
+    git(r.root, ['config', 'uploadpack.allowFilter', 'true']);
+    const clone = path.join(r.dir, 'partial');
+    git(r.dir, ['clone', '-q', '--filter=blob:none', '--no-checkout', pathToFileURL(r.root).href, clone]);
+    mkdirSync(path.join(clone, 'evals', 'review'), { recursive: true });
+    git(clone, ['remote', 'set-url', 'origin', 'none::origin']);
+    const marker = path.join(r.dir, 'helper-ran');
+    const helpers = path.join(r.dir, 'helpers');
+    mkdirSync(helpers);
+    writeFileSync(path.join(helpers, 'git-remote-none'), `#!/bin/sh\n${mark(marker)}\nexit 1\n`, { mode: 0o755 });
+    const pathKey = Object.keys(process.env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH';
+    const onPath = { [pathKey]: `${helpers}${path.delimiter}${process.env[pathKey]}` };
+    const ignored: SyncRunner = (command, args, opts) => runSync(command, args, { ...opts, env: { ...withoutNoLazyFetch(opts?.env), ...onPath } });
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
+    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, git: ignored });
+    assert.match(report.skipped[0]?.detail ?? '', /no card file/);
+    assert.equal(existsSync(marker), false, 'the export started the helper');
+    spawnSync('git', ['cat-file', '-e', `${r.candidate}:specs/tasks/${CARD}.md`], { cwd: clone, encoding: 'utf8', env: { ...withoutNoLazyFetch(gitEnv), ...onPath }, windowsHide: true });
+    assert.equal(existsSync(marker), true, 'a plain read starts the helper, so the fixture is live');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 18: a hook name holding = ends the export before any draft, since -c would leave that hook on [R12]', () => {
+  const r = repo();
+  try {
+    git(r.root, ['config', 'hook.Bench=Hook.event', 'reference-transaction']);
+    assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)])), /hook\.Bench=Hook\.event/);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.deepEqual(benchRefs(r), []);
   } finally {
     r.cleanup();
   }
