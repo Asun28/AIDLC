@@ -1,11 +1,8 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
 ## What this is
 
 `aidlc` is a TypeScript library plus CLI that runs the AI-native SDLC loop
-(intent -> spec -> plan -> cards -> diff -> review -> release -> incident)
 with bounded autonomy. This repository runs the loop on itself: `.claude/`
 here is the live copy of what `aidlc init` installs from `templates/`, and
 this repo's own cards live in `specs/tasks/`. Node >= 22.18 is required; the
@@ -33,7 +30,6 @@ Note: `bin/aidlc.js` and `bin/aidlc-hook.js` load `dist/` only when the
 compiled entry is at least as new as every file under `src/`
 (`bin/resolve-entry.js`, links followed); a build older than any source
 file, or a source tree that cannot be fully inspected, runs the sources. `AIDLC_ENTRY_DEBUG=1` prints the choice.
-`npm run dev -- <cmd>` always runs the sources.
 
 ## Architecture
 
@@ -41,40 +37,13 @@ Module map, state diagrams and the persisted-state table: `docs/ARCHITECTURE.md`
 Operating guide (running goals, hooks, R2/R3 review, audit): `docs/OPERATIONS.md`.
 The parts that take several files to see:
 
-**One directive per call.** `aidlc next` is read-only apart from derived
-transitions and returns exactly one typed `Directive` (`src/loop/directive.ts`);
-the agent performs that move and commits the outcome with
-`aidlc report --result <ReportResult>`. Cards follow the same shape through
-`aidlc card next <id>` / `aidlc card attempt <id>`. Nothing else is ever the
-next step.
+**One directive per call.** `aidlc next` returns exactly one typed `Directive`
+(`src/loop/directive.ts`); cards follow the same shape through
+`aidlc card next <id>` / `aidlc card attempt <id>`.
 
-**Layers, inner to outer** (`src/`):
-- `core/`: pure decision engines over persisted facts, no I/O. `types.ts`
-  holds the zod schema of every persisted record and every limit constant;
-  the rest are the router, deadlines, effort, review and CI policies, and
-  the goal, card and release state machines.
-- `state/`: persistence under `<main checkout>/.aidlc/` (shared by all
-  worktrees, gitignored): atomic JSON store, hash-chained append-only
-  journal, goal store. `board.ts` renders a Markdown view, never a source
-  of truth.
-- `coordination/`: multi-session primitives. Leases with generations and
-  fencing, the shared review admission queue, the operation ledger with
-  explicit UNKNOWN.
-- `probes/`: evidence with receipts (`exec.ts` runner, git, gh).
-- `delivery/`: worktree start-or-attach and the `ShipPath` adapters
-  (`scaffold`, `github`, `dry-run`). Every adapter prints the same
-  scaffold-style sentinels so `classifyShipOutput` maps outcomes uniformly.
-- `review/pre-review.ts`: builds reviewer prompts, runs the configured
-  review commands with receipts, extracts the verdict (last stdout line of
-  JSON) and writes it next to the candidate under `<worktree>/.review/`.
-- `loop/`: the drivers. `controller.ts` drives the goal machine
-  (`next`/`report`), `card-runner.ts` the card machine, `release-runner.ts`
-  the release machine.
-- `hooks/`: the Claude Code guards, run as one process per event by
-  `bin/aidlc-hook.js` (wired in `.claude/settings.json` for PreToolUse, Stop
-  and UserPromptSubmit).
-- `cli/main.ts`: commander wiring. `scaffold/init.ts`: copies `templates/`
-  into a target repository.
+**Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
+`state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
+`cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
 
 **Card state is selected, not stored.** `selectCardState`
 (`src/core/card-machine.ts`) re-derives the state from evidence on every
@@ -87,16 +56,9 @@ evidence or the precedence, not a transition table.
 R3 formal review pass on the current candidate. Both are external commands
 configured in `aidlc.config.json` (`preReview`, `formalReview`; this repo
 uses DeepSeek for R2 and Codex gpt-6-astra for R3, with Claude Opus 5.5 as
-the fallback)
-and can be run by hand with
-`aidlc review pre <card>` / `aidlc review r3 <card>`. Allowances are
-constants in `core/types.ts` enforced by `core/review-policy.ts`: a block
-returns the card to REVIEW_FIX and reopens the effort episode without
-spending a build attempt (the ladder counts DoD failures only), a later
-block stops the card for a ruling only when it re-raises a finding the
-author disputed or the previous R3 decision raised, or as the fourth
-decision (a ship-path reviewer keeps the second-block stop), a quota hold
-is WAIT, a missing or malformed verdict fails closed.
+the fallback) and can be run by hand with `aidlc review pre <card>` /
+`aidlc review r3 <card>`. Allowances and what a block or a quota hold does:
+`docs/OPERATIONS.md`, Pre-review (R2).
 
 **Every side effect is injectable.** `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,
@@ -141,6 +103,9 @@ calls `Date.now()`.
   repo's CLAUDE.md; keep the two identical.
 - Record behaviour changes in `CHANGELOG.md` (Unreleased) and, where they
   touch the loop, in `docs/ARCHITECTURE.md` and `docs/OPERATIONS.md`.
+- This file stays within 200 lines (`tests/surface/claude-md-size.test.ts`):
+  every session loads it, and a longer file costs context and adherence, so
+  detail goes in `docs/`.
 
 ## AI-native SDLC (aidlc)
 
@@ -168,16 +133,16 @@ projection. Findings from monitoring re-enter as intent.md.
 
 ### Verifying your work
 - Test: the card's `dod_command` runs the typecheck and the card's own
-  tests, all green; never skip or delete a failing test. The full suite and
-  the build run in CI on every candidate; run them locally only when the
-  change can break them in a way the card's tests cannot show.
+  tests, all green. The full suite and the build run in CI on every
+  candidate; run them locally only when the change can break them in a way
+  the card's tests cannot show.
 - Lint: zero warnings where a lint gate exists.
-Paste the DoD output before reporting a task complete. If a test fails, fix
-the code, not the test. The card machine refuses SHIP without a DoD
-receipt; the Stop hook only reminds.
+Paste the DoD output before reporting a task complete. The card machine
+refuses SHIP without a DoD receipt; the Stop hook only reminds.
 
-### Hard limits (no exceptions)
-- Never weaken, skip or delete tests to go green; that is a failure, not a fix.
+### Hard limits
+- Never weaken, skip or delete tests to go green; if a test fails, fix the
+  code, not the test.
 - "Done" has exactly one definition: the machine gate passed (DoD, review,
   CI, integrated acceptance). Green cards alone do not deliver a goal.
 - No `--no-verify`; no force-push, reset --hard or history rewrite on shared
@@ -187,29 +152,18 @@ receipt; the Stop hook only reminds.
 - Maker/checker deadlock: after two rounds of mutual non-acceptance, stop
   for a human ruling; do not fan out reviewers or switch accounts.
 - Never echo or commit secrets; never fabricate endpoints, keys or results.
-- Deadlines (3h/card, 12h/arc) and attempt limits persist across session changes.
 
-### Lessons, docs and companion skills
-- PREPARE reads `docs/LESSONS.md` once per card; CLOSE appends at most one
-  dated line to it, only when a review block or an incident taught a rule
-  the playbook did not state. Past lines are never rewritten.
-- When adding, removing or renaming files, commands or flags, grep `docs/`
-  and `README.md` for stale references and fix them in the same commit.
-- Companion skills are advisory and called by name: `tdd` (before any
-  test), `diagnose` (T0-bugfix, the card `diagnosis:` field), `grilling`
-  (T1/T2 intake questions), `merge-conflicts` (base moved). The loop's
-  gates decide; a skill never overrides `aidlc next`.
+### Docs
+When adding, removing or renaming files, commands or flags, grep `docs/` and
+`README.md` for stale references and fix them in the same commit.
 
-### Writing density (all text, at all times)
+### Writing density
 Applies to everything written in or about this repository: chat output,
 PR titles and bodies, commit messages, code comments, docs, cards, skill
 files, changelog entries.
 
-No mannered prose. Mannered prose substitutes metaphor and flourish for a
-direct statement: "a dial worth turning" for "a parameter worth varying",
-"this point earns its keep" for "this point still matters". The phrases
-exist to display the writer, not to convey the idea, and readers can tell;
-they make the reader work harder so the writer can perform. They are also
-imprecise: a metaphor drags in connotations the writer did not choose and
-cannot control. Say what you mean. When a literal phrase is available, use
-it. Remove mannered prose wherever you find it in text you are editing.
+No mannered prose: metaphor or flourish in place of a direct statement, such
+as "a dial worth turning" for "a parameter worth varying". It makes the
+reader work harder and carries connotations the writer did not choose. When
+a literal phrase is available, use it. Remove mannered prose wherever you
+find it in text you are editing.
