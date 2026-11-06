@@ -1,7 +1,7 @@
 ---
 id: T0-R3-STOP-DISPUTED
 title: R3 stops for a ruling on a re-raise only when the author disputed the finding; an undisputed re-raise gets a repair round, and the stop at decision 4 stays
-status: todo
+status: merged
 branch: T0-R3-STOP-DISPUTED
 worktree: D:\wt\AIDLC\T0-R3-STOP-DISPUTED
 allow_paths:
