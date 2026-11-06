@@ -653,6 +653,18 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     assert.equal(r.read(), SOURCE);
   }));
 
+  test('acceptance 12: a marker cleanup that fails after the last mutant fails the run, with no report [R14]', withRepo(async (r) => {
+    const lines: string[] = [];
+    const run = runMutants(input(r), deps(scriptedDod(r), (line) => {
+      lines.push(line);
+      if (lines.length === 4) rmSync(r.marker);
+    }));
+    await assert.rejects(run, /ENOENT/);
+    assert.equal(lines.length, 4);
+    assertNoArtifacts(r);
+    assertCommitted(r);
+  }));
+
   test('acceptance 12: a .review link that appears before the report is written stops with nothing written outside [R14]', withRepo(async (r) => {
     let empty = '';
     const times = [START];
