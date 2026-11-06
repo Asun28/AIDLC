@@ -277,6 +277,8 @@ Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before ->
 
 - T0-REVIEW-CANDIDATE-PINS: the card runner writes `refs/aidlc/candidates/<sha>` before it writes an R3 pass or block, on the command path and the ship path, so a commit the review ledger names survives a deleted branch and `git gc`. A squash merge leaves a card's commits on its branch alone, and on 2026-11-06 a gc dropped 77 recorded candidates, 8 of them for good. No hook runs for the pin, and a failed pin changes no review: `REVIEW_DECIDED` carries `candidatePinned` and, on a failure, `pinError`.
 
+- T0-REVIEW-IMPACT-BAR: `REVIEW.md` states an impact bar: a Bugs or Security finding that needs the person running the program to swap, link or race their own files, or that can change only a report or a diagnostic, is a `[suggestion]` and not a block, unless the card's requirements or `forbid:` name it. The axes section now says that `gateRequired: true` makes every block merge-blocking, which the code already did. `reviewPolicyVersion` is `REVIEW.md@6` in both configs.
+
 ## 0.1.0 - 2026-09-11
 
 First implementation of the v5 aidlc-loop plan as a TypeScript library and CLI.
