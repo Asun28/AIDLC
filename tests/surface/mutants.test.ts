@@ -492,6 +492,27 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     assert.equal(readFileSync(outside, 'utf8'), 'export const flag = true;\n');
   }));
 
+  test('acceptance 11: a symlink checked out as a regular file under core.symlinks=false gets no mutant [R2]', withRepo(async (r) => {
+    git(r.worktree, 'config', 'core.symlinks', 'false');
+    write(r.worktree, 'src/link.ts', 'true');
+    const blob = git(r.worktree, 'hash-object', '-w', 'src/link.ts');
+    git(r.worktree, 'update-index', '--add', '--cacheinfo', `120000,${blob},src/link.ts`);
+    git(r.worktree, 'commit', '-q', '-m', 'symlink placeholder');
+    assert.equal(git(r.worktree, 'status', '--porcelain'), '', 'the placeholder is clean');
+    const { report } = await runMutants(input(r), deps(scriptedDod(r)));
+    assert.deepEqual([...new Set(report.mutants.map((m) => m.file))], ['src/m.ts']);
+    assert.equal(report.generated, 4);
+    assert.equal(r.read('src/link.ts'), 'true');
+  }));
+
+  test('acceptance 11: a tree git cannot list is refused naming the command; the DoD never runs [R2]', withRepo(async (r) => {
+    const dod = scriptedDod(r);
+    const failing: MutantsDeps['git'] = (command, args, options) => (args.includes('ls-tree') ? { ...runSync(command, args, options), exitCode: 128, stderr: 'fatal: broken tree' } : runSync(command, args, options));
+    await assertRefused(r, runMutants(input(r), { ...deps(dod), git: failing }), 'fatal: broken tree');
+    assert.equal(dod.calls.length, 0);
+    assertCommitted(r);
+  }));
+
   test('acceptance 11: a submodule entry under src gets no mutant [R2]', withRepo(async (r) => {
     git(r.worktree, 'update-index', '--add', '--cacheinfo', `160000,${r.candidate},src/sub.ts`);
     mkdirSync(path.join(r.worktree, 'src/sub.ts'));
@@ -770,26 +791,33 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     assert.equal(readFileSync(path.join(dir, 'keep.txt'), 'utf8'), 'kept\n');
   }));
 
-  test('acceptance 14: a marker that is a symlink to an outside file is refused without reading it [R14]', { skip: !SYMLINK_OK && 'this account cannot create symlinks' }, withRepo((r) => {
+  /** A run and a restore each refuse the marker before reading it, and neither changes either side. */
+  async function assertMarkerRefused(r: Repo, outside: string, held: string): Promise<void> {
+    const saved = readFileSync(outside);
+    const never = (): never => assert.fail('no runner is called');
+    await assert.rejects(runMutants(input(r), { git: never, dod: never, now: () => START }), NOT_REGULAR);
+    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
+    assert.deepEqual(readFileSync(outside), saved, 'the outside marker is unchanged');
+    assert.deepEqual(readFileSync(r.marker), saved, 'the marker path still reads the same bytes');
+    assert.equal(r.read(), held, 'the source stays as it is');
+  }
+
+  test('acceptance 14: a marker that is a symlink to an outside file is refused by a run and by restore without reading it [R14]', { skip: !SYMLINK_OK && 'this account cannot create symlinks' }, withRepo(async (r) => {
     const held = interrupted(r);
     const outside = path.join(outsideDir(r), 'marker.json');
     writeFileSync(outside, readFileSync(r.marker));
     rmSync(r.marker);
     symlinkSync(outside, r.marker);
-    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
-    assert.equal(r.read(), held, 'the file stays as it is');
+    await assertMarkerRefused(r, outside, held);
   }));
 
-  test('acceptance 14: a marker hard linked to an outside file is refused with both files unchanged [R14]', withRepo((r) => {
+  test('acceptance 14: a marker hard linked to an outside file is refused by a run and by restore with both files unchanged [R14]', withRepo(async (r) => {
     const held = interrupted(r);
     const outside = path.join(outsideDir(r), 'marker.json');
-    const saved = readFileSync(r.marker);
-    writeFileSync(outside, saved);
+    writeFileSync(outside, readFileSync(r.marker));
     rmSync(r.marker);
     linkSync(outside, r.marker);
-    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
-    assert.deepEqual(readFileSync(outside), saved);
-    assert.equal(r.read(), held);
+    await assertMarkerRefused(r, outside, held);
   }));
 
   test('acceptance 14: a report path hard linked to an outside file leaves that file unchanged, since the report replaces the path [R14] [R16]', withRepo(async (r) => {
@@ -946,6 +974,7 @@ describe('the docs of card T1-VERIFY-MUTANTS', () => {
       '`<worktree>/.review/<card>.mutants.pending.json`',
       '`--max` defaults to 30',
       '`--timeout-ms` defaults to 120000',
+      'A repository must git-ignore `.review/`: otherwise the first report is an untracked file and the next run refuses.',
     ]) assert.ok(section.includes(text), `the Mutant sweep section states: ${text}`);
     const arch = read('docs/ARCHITECTURE.md');
     assert.ok(arch.includes('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutant-gen.ts');
