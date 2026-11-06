@@ -516,6 +516,8 @@ function noHookOptions(root: string, git: SyncRunner): string[] {
   const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
   if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
   const keys = named.stdout.split('\0').filter(Boolean);
+  const unnamed = keys.find((key) => key.includes('='));
+  if (unnamed !== undefined) throw new Error(`git -c reads the first = as the end of the key, so it cannot disable the hook of ${unnamed}`);
   return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
 }
 
@@ -527,8 +529,9 @@ export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   // Everything below uses the resolved path, so a link retargeted during the export changes nothing.
   const dir = realpathSync.native(named);
   const runner = o.git ?? runSync;
-  // A git that ignores the first variable still tries a lazy fetch, and the second makes that fetch fail on any transport.
-  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: 'none' } });
+  // A git that ignores the first variable still tries a lazy fetch. An empty list makes it fail on every transport;
+  // a value such as `none` would allow a protocol of that name, which a remote helper can have.
+  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' } });
   if (o.stateDir !== undefined && existsSync(o.stateDir)) refuseStateOverlap(o.root, dir, o.stateDir, git);
   const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, noHooks: noHookOptions(o.root, git), report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
   const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
