@@ -82,3 +82,4 @@ This text lowers what R3 blocks on, so a real local race can ship as a suggestio
 ## Attempt evidence
 - RED on f706d00: `node --test tests/surface/templates.test.ts` exit 1, 9 of 38 tests fail by assertion: the five that pin the current version and the four new ones.
 - Acceptance 4: `git diff --numstat origin/main -- REVIEW.md` reports `8	1	REVIEW.md`.
+- R3 decision 1, re:F1: with the T1-REVIEW-CLASS-SWEEP clause removed from `docs/OPERATIONS.md`, `tests/surface/templates.test.ts` passes 38 of 38 before the repair and fails 1 after it.

@@ -720,9 +720,17 @@ describe('the impact bar and the axes text of REVIEW.md (T0-REVIEW-IMPACT-BAR)',
     }
   });
 
-  test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with the move to it, and names @5 as current nowhere [R2]', () => {
+  test('acceptance 3: OPERATIONS.md names REVIEW.md@6 as the current version with every move before it, and names @5 as current nowhere; removing a move fails [R2]', () => {
     const operations = lf(readFileSync(path.join(root, 'docs', 'OPERATIONS.md'), 'utf8'));
-    assert.ok(operations.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs (card T0-REVIEW-IMPACT-BAR added the impact bar; T1-REVIEW-PRE-EXISTING moved it to `REVIEW.md@5` with the `[pre-existing]` tag;'), 'the current version and the move to it');
+    const HISTORY = [
+      '(card T0-REVIEW-IMPACT-BAR added the impact bar;',
+      ' T1-REVIEW-PRE-EXISTING moved it to `REVIEW.md@5` with the `[pre-existing]` tag;',
+      ' T1-REVIEW-CLASS-SWEEP to `REVIEW.md@4` with the class tag,',
+      ' T1-REVIEW-INPUTS to `REVIEW.md@3`)',
+    ];
+    const holds = (text: string) => text.includes('`reviewPolicyVersion` is `REVIEW.md@6` in both configs ' + HISTORY.join(''));
+    assert.ok(holds(operations), 'the current version and every move before it');
+    for (const clause of HISTORY) assert.equal(holds(operations.replace(clause, '')), false, `removing this clause still passes: ${clause}`);
     assert.equal(operations.includes('`reviewPolicyVersion` is `REVIEW.md@5`'), false, 'the version before it is not named as current');
   });
 
