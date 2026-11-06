@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-IMPACT-BAR
 title: REVIEW.md states an impact bar, so a defect that needs the user to race their own files, or that can change only a report, is a suggestion and not a block, and states that `gateRequired` makes a `standards` block merge-blocking
-status: todo
+status: merged
 branch: T0-REVIEW-IMPACT-BAR
 worktree: D:\wt\AIDLC\T0-REVIEW-IMPACT-BAR
 allow_paths:
