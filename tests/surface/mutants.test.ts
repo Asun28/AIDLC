@@ -3,7 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -578,6 +578,16 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     return empty;
   };
   const LINK_REFUSAL = /is not a directory/;
+  const HARD_LINK = /has 2 hard links/;
+  const NOT_REGULAR = /is not a regular file with one name/;
+  /** Replaces the source with a hard link to an outside file that holds `text`, and returns the outside path. */
+  const swapHardLink = (r: Repo, text: string): string => {
+    const outside = path.join(outsideDir(r), 'm.ts');
+    writeFileSync(outside, text);
+    rmSync(path.join(r.worktree, 'src/m.ts'));
+    linkSync(outside, path.join(r.worktree, 'src/m.ts'));
+    return outside;
+  };
 
   test('acceptance 12: a baseline DoD that swaps src for a link to identical bytes stops with the outside file unchanged and no marker [R14]', withRepo(async (r) => {
     let outside = '';
@@ -702,6 +712,94 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     const saved = readFileSync(path.join(moved, `${CARD}.mutants.pending.json`), 'utf8');
     assert.throws(() => restoreMutants(r.worktree, CARD), LINK_REFUSAL);
     assert.equal(readFileSync(path.join(moved, `${CARD}.mutants.pending.json`), 'utf8'), saved);
+  }));
+
+  test('acceptance 14: a baseline DoD that swaps a source for a hard link to identical bytes outside stops with the outside file unchanged and no marker [R16]', withRepo(async (r) => {
+    let outside = '';
+    const dod = scriptedDod(r, (call) => {
+      if (call === 0) outside = swapHardLink(r, SOURCE);
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), HARD_LINK);
+    assert.equal(readFileSync(outside, 'utf8'), SOURCE, 'no mutant was written through the hard link');
+    assert.equal(dod.calls.length, 1, 'no mutant ran');
+    assertNoArtifacts(r);
+  }));
+
+  test('acceptance 14: a mutant DoD that swaps a source for a hard link stops with the mutant left outside unchanged and the marker kept [R16]', withRepo(async (r) => {
+    let outside = '';
+    let held = '';
+    const dod = scriptedDod(r, (call, source) => {
+      if (call === 1) {
+        held = source;
+        outside = swapHardLink(r, source);
+      }
+      return {};
+    });
+    await assert.rejects(runMutants(input(r), deps(dod)), HARD_LINK);
+    assert.equal(readFileSync(outside, 'utf8'), held, 'the restore did not write through the hard link');
+    assert.equal(MutantPending.parse(JSON.parse(readFileSync(r.marker, 'utf8'))).applied?.file, 'src/m.ts');
+    assert.equal(dod.calls.length, 2);
+  }));
+
+  test('acceptance 14: a source hard linked outside is refused before the first read of a run [R16]', withRepo(async (r) => {
+    const outside = swapHardLink(r, SOURCE);
+    const dod = scriptedDod(r);
+    await assert.rejects(runMutants(input(r), deps(dod)), HARD_LINK);
+    assert.equal(dod.calls.length, 0);
+    assert.equal(readFileSync(outside, 'utf8'), SOURCE);
+  }));
+
+  test('acceptance 14: restore refuses a source hard linked outside, with the outside file and the marker unchanged [R16]', withRepo((r) => {
+    const held = interrupted(r);
+    const outside = swapHardLink(r, held);
+    const saved = readFileSync(r.marker, 'utf8');
+    assert.throws(() => restoreMutants(r.worktree, CARD), HARD_LINK);
+    assert.equal(readFileSync(outside, 'utf8'), held);
+    assert.equal(readFileSync(r.marker, 'utf8'), saved);
+  }));
+
+  test('acceptance 14: a marker path that is a link is refused by a run before either runner and by restore, with both sides unchanged [R14]', withRepo((r) => {
+    const dir = outsideDir(r);
+    writeFileSync(path.join(dir, 'keep.txt'), 'kept\n');
+    mkdirSync(path.dirname(r.marker), { recursive: true });
+    link(dir, r.marker);
+    const never = (): never => assert.fail('no runner is called');
+    assert.rejects(runMutants(input(r), { git: never, dod: never, now: () => START }), NOT_REGULAR);
+    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
+    assert.equal(readFileSync(path.join(dir, 'keep.txt'), 'utf8'), 'kept\n');
+  }));
+
+  test('acceptance 14: a marker that is a symlink to an outside file is refused without reading it [R14]', { skip: !SYMLINK_OK && 'this account cannot create symlinks' }, withRepo((r) => {
+    const held = interrupted(r);
+    const outside = path.join(outsideDir(r), 'marker.json');
+    writeFileSync(outside, readFileSync(r.marker));
+    rmSync(r.marker);
+    symlinkSync(outside, r.marker);
+    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
+    assert.equal(r.read(), held, 'the file stays as it is');
+  }));
+
+  test('acceptance 14: a marker hard linked to an outside file is refused with both files unchanged [R14]', withRepo((r) => {
+    const held = interrupted(r);
+    const outside = path.join(outsideDir(r), 'marker.json');
+    const saved = readFileSync(r.marker);
+    writeFileSync(outside, saved);
+    rmSync(r.marker);
+    linkSync(outside, r.marker);
+    assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
+    assert.deepEqual(readFileSync(outside), saved);
+    assert.equal(r.read(), held);
+  }));
+
+  test('acceptance 14: a report path hard linked to an outside file leaves that file unchanged, since the report replaces the path [R14] [R16]', withRepo(async (r) => {
+    const outside = path.join(outsideDir(r), 'report.json');
+    writeFileSync(outside, 'outside\n');
+    mkdirSync(path.dirname(r.report), { recursive: true });
+    linkSync(outside, r.report);
+    await runMutants(input(r), deps(scriptedDod(r)));
+    assert.equal(readFileSync(outside, 'utf8'), 'outside\n');
+    assert.equal(reportOf(r).cardId, CARD);
   }));
 
   test('acceptance 13: every git call carries --no-optional-locks and a stale stat cache leaves the index bytes alone [R15]', withRepo(async (r) => {
@@ -854,7 +952,7 @@ describe('the docs of card T1-VERIFY-MUTANTS', () => {
     assert.ok(arch.indexOf('`src/review/mutants.ts`') > arch.indexOf('`src/review/mutant-gen.ts`'), 'ARCHITECTURE names mutants.ts after mutant-gen.ts');
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
-    const entry = unreleased.split('\n').find((line) => line.startsWith('- T1-VERIFY-MUTANTS:'));
+    const entry = unreleased.split('\n').find((line) => line.startsWith('- T1-VERIFY-MUTANTS-2:'));
     assert.ok(entry?.includes('`aidlc card mutants`'), 'the CHANGELOG entry names the command');
   });
 });
