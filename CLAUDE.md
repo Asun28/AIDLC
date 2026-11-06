@@ -63,9 +63,8 @@ evidence or the precedence, not a transition table.
 candidate, and a fresh R2 pre-review pass before it only when `preReview.command` is set.
 This repository leaves it empty, so a candidate goes from the DoD to R3. Both
 are external commands configured in `aidlc.config.json` (`preReview`,
-`formalReview`; when R2 is on, this repo uses DeepSeek for R2 and Codex
-gpt-6-astra for R3, with Claude Opus 5.5 as the fallback) and can be run by
-hand with `aidlc review pre <card>` /
+`formalReview`; this repo uses Codex gpt-6-astra for R3, with Claude Opus 5.5
+as the fallback) and can be run by hand with `aidlc review pre <card>` /
 `aidlc review r3 <card>`. Allowances are constants in `core/types.ts` enforced
 by `core/review-policy.ts`, and a missing or malformed verdict fails closed;
 what a block or a quota hold does: `docs/OPERATIONS.md`, Pre-review (R2).

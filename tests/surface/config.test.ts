@@ -137,8 +137,8 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
     ];
     for (const sentence of opsSentences) assert.ok(ops.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
     assert.ok(!ops.includes('In this repository R3 is a headless Claude Opus 5.5 with no fallback'), 'docs/OPERATIONS.md no longer names Opus 5.5 as the R3 reviewer');
-    assert.ok(flat(read('CLAUDE.md')).includes('this repo uses DeepSeek for R2 and Codex gpt-6-astra for R3, with Claude Opus 5.5 as the fallback)'), 'CLAUDE.md names the R3 reviewer');
-    assert.ok(flat(read('src', 'review', 'pre-review.ts')).includes('`deepseek` CLI for R2 and Codex `gpt-6-astra` in a read-only sandbox for R3, with a read-only headless `claude -p` (Opus 5.5) as its fallback, in this repository.'), 'the pre-review header names the R3 reviewer');
+    assert.ok(flat(read('CLAUDE.md')).includes('this repo uses Codex gpt-6-astra for R3, with Claude Opus 5.5 as the fallback)'), 'CLAUDE.md names the R3 reviewer');
+    assert.ok(flat(read('src', 'review', 'pre-review.ts')).includes('as its last line: Codex `gpt-6-astra` in a read-only sandbox for R3, with a read-only headless `claude -p` (Opus 5.5) as its fallback, in this repository.'), 'the pre-review header names the R3 reviewer');
     const changelog = read('CHANGELOG.md');
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const changelogSentences = [
@@ -468,6 +468,9 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     assert.deepEqual(raw['fallback'], SONNET);
     assert.equal(raw['rounds'], 1, 'one R2 round per R3 cycle');
     assert.equal('coverage' in raw, false, 'no coverage key, so the schema default off applies');
+    const doc = (file: string) => readFileSync(path.join(import.meta.dirname, '..', '..', file), 'utf8').replace(/\s+/g, ' ');
+    assert.ok(doc('CLAUDE.md').includes('only when `preReview.command` is set'), 'CLAUDE.md states when R2 is required');
+    assert.ok(doc('docs/OPERATIONS.md').includes('setting `"command": ["deepseek", "--model", "deepseek-v4-pro"]` restores R2'), 'docs/OPERATIONS.md states the value that restores R2');
     const parsed = ProjectConfig.parse(configOf('aidlc.config.json')).preReview;
     assert.deepEqual(parsed.command, [], 'the parsed primary command is empty, so a candidate goes from the DoD to R3');
     assert.equal(parsed.reviewer, 'deepseek-v4-pro', 'the parsed primary reviewer');
