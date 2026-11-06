@@ -46,11 +46,11 @@ cards follow the same shape through `aidlc card next <id>` /
 `state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
 `cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
 Four facts it leaves out: state lives under `<main checkout>/.aidlc/`, shared
-by all worktrees; every `ShipPath` adapter prints the same scaffold-style
-sentinels so `classifyShipOutput` maps outcomes uniformly; a review verdict is
-the last stdout line of JSON, written next to the candidate under
-`<worktree>/.review/`; and the hooks are wired in `.claude/settings.json` for
-PreToolUse, Stop and UserPromptSubmit.
+by all worktrees; every `ShipPath` adapter (`scaffold`, `github`, `dry-run`)
+prints the same scaffold-style sentinels so `classifyShipOutput` maps outcomes
+uniformly; a review verdict is the last stdout line of JSON, written next to
+the candidate under `<worktree>/.review/`; and the hooks are wired in
+`.claude/settings.json` for PreToolUse, Stop and UserPromptSubmit.
 
 **Card state is selected, not stored.** `selectCardState`
 (`src/core/card-machine.ts`) re-derives the state from evidence on every
