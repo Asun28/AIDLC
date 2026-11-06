@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-CANDIDATE-PINS
 title: Pin each candidate under refs/aidlc/candidates/ before its R3 decision is written, so a squash merge and a deleted branch cannot lose a commit the review ledger names
-status: todo
+status: merged
 branch: T0-REVIEW-CANDIDATE-PINS
 worktree: D:\wt\AIDLC\T0-REVIEW-CANDIDATE-PINS
 allow_paths:
