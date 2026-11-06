@@ -37,13 +37,20 @@ Module map, state diagrams and the persisted-state table: `docs/ARCHITECTURE.md`
 Operating guide (running goals, hooks, R2/R3 review, audit): `docs/OPERATIONS.md`.
 The parts that take several files to see:
 
-**One directive per call.** `aidlc next` returns exactly one typed `Directive`
-(`src/loop/directive.ts`); cards follow the same shape through
-`aidlc card next <id>` / `aidlc card attempt <id>`.
+**One directive per call.** `aidlc next` is read-only apart from derived
+transitions and returns exactly one typed `Directive` (`src/loop/directive.ts`);
+cards follow the same shape through `aidlc card next <id>` /
+`aidlc card attempt <id>`.
 
 **Layers, inner to outer** (`src/`): `core/` (pure decision engines, no I/O),
 `state/`, `coordination/`, `probes/`, `delivery/`, `review/`, `loop/`, `hooks/`,
 `cli/` and `scaffold/`. `docs/ARCHITECTURE.md`, Module map, describes each.
+Four facts it leaves out: state lives under `<main checkout>/.aidlc/`, shared
+by all worktrees; every `ShipPath` adapter prints the same scaffold-style
+sentinels so `classifyShipOutput` maps outcomes uniformly; a review verdict is
+the last stdout line of JSON, written next to the candidate under
+`<worktree>/.review/`; and the hooks are wired in `.claude/settings.json` for
+PreToolUse, Stop and UserPromptSubmit.
 
 **Card state is selected, not stored.** `selectCardState`
 (`src/core/card-machine.ts`) re-derives the state from evidence on every
@@ -57,8 +64,9 @@ R3 formal review pass on the current candidate. Both are external commands
 configured in `aidlc.config.json` (`preReview`, `formalReview`; this repo
 uses DeepSeek for R2 and Codex gpt-6-astra for R3, with Claude Opus 5.5 as
 the fallback) and can be run by hand with `aidlc review pre <card>` /
-`aidlc review r3 <card>`. Allowances and what a block or a quota hold does:
-`docs/OPERATIONS.md`, Pre-review (R2).
+`aidlc review r3 <card>`. Allowances are constants in `core/types.ts` enforced
+by `core/review-policy.ts`, and a missing or malformed verdict fails closed;
+what a block or a quota hold does: `docs/OPERATIONS.md`, Pre-review (R2).
 
 **Every side effect is injectable.** `GoalController`, `CardRunner` and
 `ReleaseRunner` take a deps object (`runner`, `git`, `gh`, `shipPath`, `now`,

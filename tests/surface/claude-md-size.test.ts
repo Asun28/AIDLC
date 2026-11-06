@@ -10,7 +10,7 @@ const flat = (text: string) => text.replace(/\s+/g, ' ');
 /** Anthropic's Claude Code memory documentation targets under 200 lines per CLAUDE.md: longer files use more context and reduce adherence. */
 const MAX_LINES = 200;
 const LIMIT_SENTENCE = 'This file stays within 200 lines (`tests/surface/claude-md-size.test.ts`): every session loads it, and a longer file costs context and adherence, so detail goes in `docs/`.';
-const CHANGELOG_ENTRY = "- T0-CLAUDE-MD-TRIM: `CLAUDE.md` goes from 215 lines to 169 and `tests/surface/claude-md-size.test.ts` holds it within 200, the target in Anthropic's Claude Code memory documentation. The removed text is text `docs/` and the skills already state: the per-directory `src/` layer descriptions, the review allowances, and the Lessons, Companion skills and Deadlines bullets. `templates/CLAUDE.aidlc.md` goes from 72 lines to 61, so `aidlc init` writes the shorter section into a repository that has none; a section a repository already has stays as it is.";
+const CHANGELOG_ENTRY = "- T0-CLAUDE-MD-TRIM: `CLAUDE.md` goes from 215 lines to 177 and `tests/surface/claude-md-size.test.ts` holds it within 200, the target in Anthropic's Claude Code memory documentation. The removed text is text `docs/` and the skills already state: the per-directory `src/` layer descriptions, the review allowances, and the Lessons, Companion skills and Deadlines bullets. `templates/CLAUDE.aidlc.md` goes from 72 lines to 61, so `aidlc init` writes the shorter section into a repository that has none; a section a repository already has stays as it is.";
 
 /** The lines of a text; a final newline ends the last line and adds none. */
 const lineCount = (text: string) => text.replace(/\n$/, '').split('\n').length;
