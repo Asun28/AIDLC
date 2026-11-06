@@ -150,7 +150,7 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
       deps.progress?.(`mutant ${index + 1}/${chosen.length} ${file}:${line}:${column} ${operator}: ${outcome} (exit ${receipt.exitCode}, ${receipt.durationMs} ms)`);
     }
   } finally {
-    if (!applied) rmSync(marker, { force: true });
+    if (!applied) rmSync(marker);
   }
 
   const head = git.head(worktree);

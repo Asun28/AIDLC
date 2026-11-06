@@ -192,7 +192,10 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
       return { exitCode: source.includes(KILLED_TEXT) ? 1 : 0, durationMs: call === 0 ? 7 : 11 + call };
     });
     const lines: string[] = [];
-    const out = await runMutants(input(r), deps(dod, (line) => lines.push(line)));
+    const out = await runMutants(input(r), deps(dod, (line) => {
+      lines.push(line);
+      assert.deepEqual(MutantPending.parse(JSON.parse(readFileSync(r.marker, 'utf8'))), { schemaVersion: 1, cardId: CARD, candidateSha: r.candidate }, 'the marker names no file once the file is restored');
+    }));
     const report = reportOf(r);
     assert.deepEqual(report, {
       schemaVersion: 1,
@@ -243,6 +246,21 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     assert.deepEqual(report.mutants.map((m) => m.file), ['src/Z.ts', 'src/a.ts', 'src/m.ts', 'src/m.ts', 'src/m.ts', 'src/m.ts'], 'code unit order');
     assert.deepEqual(report.totals, { killed: 1, survived: 5, timeout: 0 });
     assert.equal(report.mutants[0]!.outcome, 'killed', 'exit 0 differs from dod_exit 3');
+  }));
+
+  test('acceptance 1: a candidate with no source change runs the baseline, reports nothing and leaves no marker [R2] [R6] [R11]', withRepo(async (r) => {
+    const dod = scriptedDod(r);
+    const { report } = await runMutants(input(r, { base: r.candidate }), deps(dod));
+    assert.deepEqual([report.generated, report.skipped, report.mutants, report.totals], [0, 0, [], { killed: 0, survived: 0, timeout: 0 }]);
+    assert.equal(dod.calls.length, 1, 'the baseline alone runs');
+    assert.equal(existsSync(r.marker), false, 'the marker is gone');
+  }));
+
+  test('acceptance 1: a base git cannot read is refused naming the range; the DoD never runs [R2]', withRepo(async (r) => {
+    const dod = scriptedDod(r);
+    await assertRefused(r, runMutants(input(r, { base: 'no-such-base' }), deps(dod)), `no-such-base...${r.candidate}`);
+    assert.equal(dod.calls.length, 0);
+    assertCommitted(r);
   }));
 
   test('acceptance 2: a modified tracked file is refused naming the entry; the DoD never runs [R3]', withRepo(async (r) => {
@@ -507,6 +525,16 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     writeFileSync(path.join(r.worktree, '.git', 'info', 'attributes'), '*.ts diff=upper\n');
     const configured = await runMutants(input(r, { base }), deps(scriptedDod(r)));
     assert.deepEqual(configured.report.mutants.map((m) => [m.file, m.line, m.operator]), expected);
+  }));
+
+  test('acceptance 11: a baseline run that rewrites the first mutant\'s file stops the run naming it before any mutant, and the marker is gone [R7]', withRepo(async (r) => {
+    const dod = scriptedDod(r, (call) => {
+      if (call === 0) writeFileSync(path.join(r.worktree, 'src/m.ts'), 'edited during the baseline\n');
+      return {};
+    });
+    await assertRefused(r, runMutants(input(r), deps(dod)), 'src/m.ts');
+    assert.equal(r.read(), 'edited during the baseline\n', 'the edit is not overwritten');
+    assert.equal(dod.calls.length, 1, 'no mutant ran');
   }));
 
   test("acceptance 11: a DoD that rewrites the next mutant's file stops the run naming it, the file keeps those bytes and the marker is gone [R7]", withRepo(async (r) => {
