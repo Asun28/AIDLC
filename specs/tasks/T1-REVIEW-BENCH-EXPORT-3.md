@@ -1,7 +1,7 @@
 ---
 id: T1-REVIEW-BENCH-EXPORT-3
 title: Draft unconfirmed reviewer bench cases with `aidlc review bench export`, one bug case per formal finding of a card's runs and, with --clean, one clean case per card run whose first R3 decision passed, pinning each candidate under refs/aidlc/bench/ and never writing a card run
-status: todo
+status: merged
 branch: T1-REVIEW-BENCH-EXPORT-3
 worktree: D:\wt\AIDLC\T1-REVIEW-BENCH-EXPORT-3
 plan_ref: plans/review-verification.md#order-of-work
