@@ -759,13 +759,13 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     assert.equal(readFileSync(r.marker, 'utf8'), saved);
   }));
 
-  test('acceptance 14: a marker path that is a link is refused by a run before either runner and by restore, with both sides unchanged [R14]', withRepo((r) => {
+  test('acceptance 14: a marker path that is a link is refused by a run before either runner and by restore, with both sides unchanged [R14]', withRepo(async (r) => {
     const dir = outsideDir(r);
     writeFileSync(path.join(dir, 'keep.txt'), 'kept\n');
     mkdirSync(path.dirname(r.marker), { recursive: true });
     link(dir, r.marker);
     const never = (): never => assert.fail('no runner is called');
-    assert.rejects(runMutants(input(r), { git: never, dod: never, now: () => START }), NOT_REGULAR);
+    await assert.rejects(runMutants(input(r), { git: never, dod: never, now: () => START }), NOT_REGULAR);
     assert.throws(() => restoreMutants(r.worktree, CARD), NOT_REGULAR);
     assert.equal(readFileSync(path.join(dir, 'keep.txt'), 'utf8'), 'kept\n');
   }));

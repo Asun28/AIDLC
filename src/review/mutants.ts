@@ -85,9 +85,23 @@ function contained(worktree: string, full: string): string {
   return full;
 }
 
-/** The bytes of a regular file inside the worktree; a symlink, a directory or a missing path has none, so no read follows a link. */
+/**
+ * The bytes of a regular file inside the worktree; a symlink, a directory or a missing path has none, so no read follows a
+ * link. A file with a second hard link is refused: an in-place write would change that other name, which can be outside.
+ */
 function bytesOf(worktree: string, full: string): Buffer | undefined {
-  return lstatSync(contained(worktree, full), { throwIfNoEntry: false })?.isFile() ? readFileSync(full) : undefined;
+  const stat = lstatSync(contained(worktree, full), { throwIfNoEntry: false });
+  if (!stat?.isFile()) return undefined;
+  if (stat.nlink > 1) throw new Error(`${full} has ${stat.nlink} hard links: a write to it can change a file outside the worktree, so the sweep stops`);
+  return readFileSync(full);
+}
+
+/** The marker path, refused when anything but a regular file with one name is there, since the marker's bytes decide what a restore writes. */
+function markerOf(worktree: string, card: string): string {
+  const marker = contained(worktree, mutantsMarkerPath(worktree, card));
+  const stat = lstatSync(marker, { throwIfNoEntry: false });
+  if (stat && (!stat.isFile() || stat.nlink > 1)) throw new Error(`${marker} is not a regular file with one name, so it is not read`);
+  return marker;
 }
 
 function diffOf(runner: SyncRunner, worktree: string, range: string): string {
@@ -120,8 +134,8 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   const { card, worktree, base, max = MUTANT_MAX_DEFAULT, timeoutMs = MUTANT_TIMEOUT_DEFAULT_MS } = input;
   if (!positive(max)) throw new Error(`--max must be a positive integer, got ${max}`);
   if (!positive(timeoutMs) || timeoutMs > MAX_TIMEOUT_MS) throw new Error(`--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}, got ${timeoutMs}`);
-  const marker = mutantsMarkerPath(worktree, card.id);
-  if (existsSync(contained(worktree, marker))) throw new Error(interrupted(marker, card.id));
+  const marker = markerOf(worktree, card.id);
+  if (existsSync(marker)) throw new Error(interrupted(marker, card.id));
   const startedAt = deps.now();
   // `--no-optional-locks`: a plain `git status` refreshes the stat cache and writes the index, which this command never does.
   const read: SyncRunner = (command, args, options) => deps.git(command, ['--no-optional-locks', ...args], options);
@@ -209,7 +223,7 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
 
 /** Repair an interrupted run from its marker: write the original bytes back over the mutant, or refuse a file that holds anything else. */
 export function restoreMutants(worktree: string, card: string): MutantRestore {
-  const marker = contained(worktree, mutantsMarkerPath(worktree, card));
+  const marker = markerOf(worktree, card);
   const pending = readJson(marker, MutantPending);
   if (!pending) return { outcome: 'nothing', message: `${card}: nothing needs restoring` };
   const { applied } = pending;
