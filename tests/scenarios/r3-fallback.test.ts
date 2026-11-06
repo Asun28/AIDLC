@@ -187,7 +187,7 @@ test('the primary runs again once its hold expires; without a fallback a primary
   }
 });
 
-test('the R3 ledger is shared across reviewers: the primary re-raising the fallback block\'s unresolved finding stops the card [R5] [T1-EFF-R3-PROGRESS]', async () => {
+test('the R3 ledger is shared across reviewers: the primary re-raising the fallback block\'s disputed finding stops the card [R5] [T1-EFF-R3-PROGRESS] [T0-R3-STOP-DISPUTED]', async () => {
   const { fx, runner, card, g, primary, backup, calls, run } = await atReview();
   try {
     primary.push(HOLD_60);
@@ -203,6 +203,7 @@ test('the R3 ledger is shared across reviewers: the primary re-raising the fallb
     r = runner.next(g(), card, repaired);
     assert.equal(r.directive.kind, 'pre-review', r.directive.narration);
     repaired = (await runner.preReview(g(), card, r.run)).run;
+    repaired = runner.disputeFinding(g(), card, repaired, 'F1', 'the RED is the failing test of this card');
     fx.advance(61_000);
     r = runner.next(g(), card, repaired);
     assert.equal(reviewerOf(r.directive), 'primary');

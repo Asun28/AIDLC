@@ -1961,7 +1961,7 @@ test('T1-REVIEW-FINDINGS-2 R3 decision 1: the R3 counters and the action are com
 
 
 /** A card at R3 decision 2 on sha-2 whose decision 1 blocked on F1 (card T1-EFF-R3-PROGRESS, R3 decision 1 F1 F2). */
-async function atDecisionTwo(id: string, opts: { gateRequired?: boolean; first?: (file: string) => string } = {}) {
+async function atDecisionTwo(id: string, opts: { gateRequired?: boolean; first?: (file: string) => string; dispute?: string } = {}) {
   const fx = makeFixture({ config: { gateRequired: opts.gateRequired ?? true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   const file = `src/${id.toLowerCase()}.ts`;
   const hooks: { onDispatch?: (args: string[]) => void } = {};
@@ -1984,12 +1984,13 @@ async function atDecisionTwo(id: string, opts: { gateRequired?: boolean; first?:
   r = runner.next(s.g(), s.card, run);
   r = runner.next(s.g(), s.card, (await runner.preReview(s.g(), s.card, r.run)).run);
   assert.equal(r.directive.kind, 'review', r.directive.narration);
+  if (opts.dispute) r = { ...r, run: runner.disputeFinding(s.g(), s.card, r.run, opts.dispute, 'the RED is the failing test of this card') };
   const reraise = `{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:2: still no RED (re:F1) -> add one"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:2: still no RED (re:F1) -> add one"]},"standards":{"verdict":"pass","reasons":[]}}}\n`;
   return { fx, runner, file, hooks, r3, reraise, s, r };
 }
 
 test('T1-EFF-R3-PROGRESS, R3 decision 1 F1: a decision that re-raises a held finding stops the card even when a newer candidate supersedes its commit', async () => {
-  const a = await atDecisionTwo('T1-SR');
+  const a = await atDecisionTwo('T1-SR', { dispute: 'F1' });
   try {
     // While decision 2 runs, another window records a newer candidate: the decision is committed as history only.
     a.hooks.onDispatch = () => {
@@ -2014,11 +2015,11 @@ test('T1-EFF-R3-PROGRESS, R3 decision 1 F1: a decision that re-raises a held fin
 });
 
 test('T1-EFF-R3-PROGRESS-2 (R3 decision 2 of T1-EFF-R3-PROGRESS, F3): the findings a re-raise repeats are fixed at dispatch, so a change to the live finding history while the decision runs does not change the outcome', async () => {
-  const a = await atDecisionTwo('T1-HD');
+  const a = await atDecisionTwo('T1-HD', { dispute: 'F1' });
   try {
-    // While decision 2 runs, the live record loses R3's hold on F1 (its history now reads as an R2 finding): the reviewer received it held.
+    // While decision 2 runs, the live record loses the dispute on F1: the reviewer received it disputed.
     a.hooks.onDispatch = () => {
-      a.fx.store.updateCardRun(a.s.goal.id, 'T1-HD', (current) => ({ ...current!, findings: current!.findings.map((x) => (x.id === 'F1' ? { ...x, stage: 'pre' as const, cycle: 0, reraised: [] } : x)) }));
+      a.fx.store.updateCardRun(a.s.goal.id, 'T1-HD', (current) => ({ ...current!, findings: current!.findings.map((x) => (x.id === 'F1' ? { ...x, disposition: 'open' as const, disputes: [] } : x)) }));
     };
     a.r3.push(a.reraise);
     const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
@@ -2030,10 +2031,10 @@ test('T1-EFF-R3-PROGRESS-2 (R3 decision 2 of T1-EFF-R3-PROGRESS, F3): the findin
   }
 });
 
-test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F1): a finding R3 still holds reaches the next decision even after an R2 pass resolved it, so its re-raise is a repeat', async () => {
+test('T0-R3-STOP-DISPUTED acceptance 4: an undisputed finding R3 raised reaches the next decision even after an R2 pass resolved it, and its re-raise returns the card to REVIEW_FIX', async () => {
   const a = await atDecisionTwo('T1-HP');
   try {
-    // An R2 pass on the repaired candidate resolved F1, which R3 decision 1 raised and so still holds.
+    // An R2 pass on the repaired candidate resolved F1, which R3 decision 1 raised and nobody disputed.
     a.fx.store.updateCardRun(a.s.goal.id, 'T1-HP', (current) => ({ ...current!, findings: current!.findings.map((x) => (x.id === 'F1' ? { ...x, resolvedAt: a.fx.now() } : x)) }));
     let prompt = '';
     a.hooks.onDispatch = (args) => {
@@ -2041,8 +2042,9 @@ test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F1): a finding R3 still holds reaches 
     };
     a.r3.push(a.reraise);
     const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
-    assert.match(prompt, /- F1 \(open; R3 decision 1\)/, 'the held finding is in the prompt, so the reviewer can cite it');
-    assert.equal(f.run.state, 'STOP', 'its re-raise is a repeat');
+    assert.match(prompt, /- F1 \(open; R3 decision 1\)/, 'the finding is in the prompt, so the reviewer can cite it');
+    assert.equal(f.run.state, 'REVIEW_FIX', 'an undisputed re-raise gets a repair round');
+    assert.equal(f.run.findings.find((x) => x.id === 'F1')?.resolvedAt, undefined, 'the re-raise reopens it');
   } finally {
     a.fx.cleanup();
   }
@@ -2050,21 +2052,21 @@ test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F1): a finding R3 still holds reaches 
 
 test('T1-EFF-R3-PROGRESS-2 R3 decision 1 (F2): without gateRequired a re-raised standards-only finding never stops the card; a new spec finding gets its repair round', async () => {
   const mixed = (file: string) => `{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:1: no RED -> add one","[standards] 3 naming @ ${file}:1: unclear name -> rename"],"axes":{"spec":{"verdict":"block","reasons":["[spec] 6 tests @ ${file}:1: no RED -> add one"]},"standards":{"verdict":"block","reasons":["[standards] 3 naming @ ${file}:1: unclear name -> rename"]}}}\n`;
-  const a = await atDecisionTwo('T1-MX', { gateRequired: false, first: mixed });
+  const a = await atDecisionTwo('T1-MX', { gateRequired: false, first: mixed, dispute: 'F2' });
   try {
     const spec = `[spec] 7 edge @ ${a.file}:2: a new defect -> fix`;
     const standards = `[standards] 3 naming @ ${a.file}:1: still unclear (re:F2) -> rename`;
     a.r3.push(`{"verdict":"block","reasons":["${spec}","${standards}"],"axes":{"spec":{"verdict":"block","reasons":["${spec}"]},"standards":{"verdict":"block","reasons":["${standards}"]}}}\n`);
     const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
     assert.equal(f.classified.outcome, 'block-defect', 'the new spec finding blocks the merge');
-    assert.equal(f.run.state, 'REVIEW_FIX', 'the standards-only re-raise of F2 is a second opinion, not a repeat');
+    assert.equal(f.run.state, 'REVIEW_FIX', 'the standards-only re-raise of disputed F2 is a second opinion, not a repeat');
   } finally {
     a.fx.cleanup();
   }
 });
 
 test('T1-EFF-R3-PROGRESS, R3 decision 1 F2: repeat detection uses the decision number the reviewer was dispatched with, so a concurrent completion cannot turn a held re-raise into a repair round', async () => {
-  const a = await atDecisionTwo('T1-DN');
+  const a = await atDecisionTwo('T1-DN', { dispute: 'F1' });
   try {
     // Another window's decision lands while decision 2 runs: the completion counts it, but the reviewer saw decision 2.
     a.hooks.onDispatch = () => {
@@ -2073,7 +2075,7 @@ test('T1-EFF-R3-PROGRESS, R3 decision 1 F2: repeat detection uses the decision n
     a.r3.push(a.reraise);
     const f = await a.runner.formalReview(a.s.g(), a.s.card, a.r.run);
     assert.equal(f.run.review.substantiveDecisions, 3, 'the concurrent decision is counted');
-    assert.equal(f.run.state, 'STOP', 'decision 2 re-raised F1, held by decision 1');
+    assert.equal(f.run.state, 'STOP', 'decision 2 re-raised F1, which the author disputed');
     assert.match(f.run.stop?.detail ?? '', /re-raised unresolved finding\(s\) F1/);
   } finally {
     a.fx.cleanup();

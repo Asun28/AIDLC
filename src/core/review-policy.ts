@@ -2,11 +2,11 @@
  * Review policy (plan v5 §5 "Build, review and retries", R20-R25).
  *
  * - Substantive allowance: an initial decision plus one subsequent decision for a repaired
- *   candidate. With a command reviewer (card T1-EFF-R3-PROGRESS) a block from decision 2 on is
- *   STOP/review only when it re-raises an unresolved finding the author disputed or an earlier R3
- *   decision raised, or as the fourth decision (MAX_R3_DECISIONS); a block of new findings gets
- *   another repair round. A ship-path reviewer keeps the second-block stop. A required review
- *   beyond the allowance is STOP/review.
+ *   candidate. With a command reviewer (cards T1-EFF-R3-PROGRESS, T0-R3-STOP-DISPUTED) a block
+ *   from decision 2 on is STOP/review only when it re-raises a finding the author disputed, or as
+ *   the fourth decision (MAX_R3_DECISIONS); any other block gets another repair round. A
+ *   ship-path reviewer keeps the second-block stop. A required review beyond the allowance is
+ *   STOP/review.
  * - Missing / malformed / stale verdicts never pass. Initial dispatch plus one retry total
  *   across script and driver; the script's internal retry consumes it.
  * - Verified quota / admission holds are WAIT, not a code defect and not a decision.
@@ -179,10 +179,10 @@ function decideFromLedger(ledger: ReviewLedger, classified: ClassifiedVerdict, r
     }
     case 'block-defect': {
       if (repeated) {
-        // A command reviewer (card T1-EFF-R3-PROGRESS): from decision 2 on, a re-raised unresolved finding is the
-        // maker/checker deadlock and stops for a ruling; a block of only new findings is progress and gets another repair
-        // round, up to the fourth decision. The repeat is judged at the decision number the reviewer was dispatched with and
-        // the cap at the decisions recorded (card T1-EFF-R3-PROGRESS-2).
+        // A command reviewer (cards T1-EFF-R3-PROGRESS, T0-R3-STOP-DISPUTED): from decision 2 on, a re-raised finding the
+        // author disputed is the maker/checker deadlock and stops for a ruling; any other block gets another repair round, up
+        // to the fourth decision. The repeat is judged at the decision number the reviewer was dispatched with and the cap at
+        // the decisions recorded (card T1-EFF-R3-PROGRESS-2).
         if ((dispatched ?? ledger.substantiveDecisions) >= 2 && repeated.length) {
           return { action: 'stop-review', detail: `${ordinal(ledger.substantiveBlocks)} substantive block re-raised unresolved finding(s) ${repeated.join(', ')}` };
         }
@@ -428,22 +428,25 @@ export function recordFindings(findings: ReviewFinding[], input: RecordFindingsI
 }
 
 /**
- * The findings a re-raise by R3 `decision` repeats, fixed at dispatch from the record locked at reservation (cards
- * T1-EFF-R3-PROGRESS, T1-EFF-R3-PROGRESS-2): the findings its reviewer received that are disputed and unresolved in that
- * snapshot, or held by R3, raised or re-raised by the previous R3 decision. Re-raising one is the repeat that stops R3 for a
- * ruling, the maker/checker deadlock. A finding an earlier R3 decision left out was accepted by R3, so its return is a
- * regression with a repair round, not a repeat; an R2 finding the author never disputed and R3 never raised is not a repeat
- * either, since with one R2 round per cycle R2's findings reach R3 unrepaired. An R2 pass resolving a finding R3 holds does
- * not end R3's hold. Nothing recorded after the dispatch changes the set.
+ * The findings a re-raise repeats, fixed at dispatch from the record locked at reservation (cards T1-EFF-R3-PROGRESS-2,
+ * T0-R3-STOP-DISPUTED): the findings the reviewer received that carry a dispute in that snapshot, whatever their disposition
+ * since. Re-raising one is the repeat that stops R3 for a ruling, the maker/checker deadlock: the author said no and the
+ * reviewer said it again. An undisputed re-raise is a repair that missed a site, so it gets a repair round. Nothing recorded
+ * after the dispatch changes the set.
  */
-export function heldFindings(findings: ReviewFinding[], seen: Record<string, FindingSnapshot>, decision: number): string[] {
+export function heldFindings(findings: ReviewFinding[], seen: Record<string, FindingSnapshot>): string[] {
+  return findings.filter((f) => (seen[f.id]?.disputes ?? 0) > 0).map((f) => f.id);
+}
+
+/**
+ * The findings the R3 decision before `decision` raised or re-raised. They reach the `decision` prompt even after an R2 pass
+ * resolved them, so a re-raise can cite them (cards T1-EFF-R3-PROGRESS-2, T0-R3-STOP-DISPUTED); this alone does not hold them.
+ */
+export function previousDecisionFindings(findings: ReviewFinding[], decision: number): string[] {
   return findings
     .filter((f) => {
-      const received = seen[f.id];
-      if (!received) return false;
-      const disputed = received.disposition === 'disputed' && !received.resolved;
-      const lastByR3 = Math.max(f.stage === 'formal' ? f.round : 0, ...f.reraised.filter((r) => r.stage === 'formal').map((r) => r.round));
-      return disputed || (lastByR3 > 0 && lastByR3 >= decision - 1);
+      const last = Math.max(f.stage === 'formal' ? f.round : 0, ...f.reraised.filter((r) => r.stage === 'formal').map((r) => r.round));
+      return last > 0 && last >= decision - 1;
     })
     .map((f) => f.id);
 }

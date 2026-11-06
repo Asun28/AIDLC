@@ -181,23 +181,57 @@ describe('R3 stops on no progress (T1-EFF-R3-PROGRESS)', () => {
   const finding = (id: string, stage: 'pre' | 'formal', extra: Record<string, unknown> = {}) =>
     ReviewFinding.parse({ id, stage, round: 1, ...(stage === 'pre' ? { cycle: 0 } : {}), reason: `[spec] 6 tests @ src/gate.ts:1: finding ${id} -> fix`, raisedAt: T0, ...extra });
 
-  test('acceptance 1: heldFindings fixes at dispatch the findings a re-raise repeats, disputed and unresolved or held by the previous R3 decision, and repeatedFindings keeps the re-raised ones', () => {
-    // Decision 3: F1 was raised by decision 1 and re-raised by decision 2 (held); F2 is an R2 residual nobody disputed;
-    // F3 was raised by decision 1 and left out by decision 2 (accepted, resolved); F4 is an R2 finding the author disputes.
-    const reraisedBy2 = [{ stage: 'formal', round: 2, at: T0, reason: '[spec] 6 tests @ src/gate.ts:1: still missing (re:F1) -> fix' }];
-    const findings = [
-      finding('F1', 'formal', { reraised: reraisedBy2 }),
-      finding('F2', 'pre'),
-      finding('F3', 'formal', { resolvedAt: T0 }),
-      finding('F4', 'pre', { disposition: 'disputed', disputes: [{ at: T0, note: 'the helper is asked for by acceptance 2' }] }),
-    ];
-    const seen = policy.snapshotFindings(findings);
-    const reasons = ['F1', 'F2', 'F3', 'F4', 'F9'].map((id) => `[spec] 6 tests @ src/gate.ts:2: still missing (re:${id}) -> fix`);
-    assert.deepEqual(policy.heldFindings(findings, seen, 3), ['F1', 'F4']);
-    // decision 2: F3, raised by decision 1, is still held by R3 when decision 2 is dispatched
-    assert.deepEqual(policy.heldFindings(findings, seen, 2), ['F1', 'F3', 'F4']);
-    assert.deepEqual(policy.repeatedFindings(reasons, ['F1', 'F4']), ['F1', 'F4'], 're:F2, re:F3 and re:F9 repeat nothing held');
-    assert.deepEqual(policy.repeatedFindings(reasons.slice(1), ['F1']), [], 'a decision that does not re-raise F1 repeats nothing');
+  /**
+   * F1: raised by decision 1, re-raised by decision 2, open and undisputed. F2: an R2 residual nobody disputed. F3: raised by
+   * decision 1, left out by decision 2 (accepted, resolved). F4: an R2 finding the author disputes. F5: disputed, then the
+   * author withdrew the dispute. F6: disputed, then resolved.
+   */
+  const dispute = [{ at: T0, note: 'the helper is asked for by acceptance 2' }];
+  const history = () => [
+    finding('F1', 'formal', { reraised: [{ stage: 'formal', round: 2, at: T0, reason: '[spec] 6 tests @ src/gate.ts:1: still missing (re:F1) -> fix' }] }),
+    finding('F2', 'pre'),
+    finding('F3', 'formal', { resolvedAt: T0 }),
+    finding('F4', 'pre', { disposition: 'disputed', disputes: dispute }),
+    finding('F5', 'pre', { disposition: 'open', disputes: dispute }),
+    finding('F6', 'pre', { disposition: 'disputed', disputes: dispute, resolvedAt: T0 }),
+  ];
+
+  test('acceptance 1: heldFindings returns the findings the author disputed, in any disposition, and repeatedFindings keeps the re-raised ones [T0-R3-STOP-DISPUTED]', () => {
+    const findings = history();
+    const held = policy.heldFindings(findings, policy.snapshotFindings(findings));
+    assert.deepEqual(held, ['F4', 'F5', 'F6'], 'a finding R3 raised or re-raised is not held by that alone; a dispute holds it whatever happened after');
+    const reasons = ['F1', 'F2', 'F3', 'F4', 'F9'].map((id) => '[spec] 6 tests @ src/gate.ts:2: still missing (re:' + id + ') -> fix');
+    assert.deepEqual(policy.repeatedFindings(reasons, held), ['F4'], 're:F1, re:F2, re:F3 and re:F9 repeat nothing held');
+    assert.deepEqual(policy.repeatedFindings(reasons.slice(0, 3), held), [], 'a decision that does not re-raise F4 repeats nothing');
+  });
+
+  test('R1: the held set comes from what the reviewer received: a dispute recorded after dispatch, or on a finding it never received, holds nothing [T0-R3-STOP-DISPUTED]', () => {
+    const seen = policy.snapshotFindings([finding('F1', 'formal')]);
+    const later = [finding('F1', 'formal', { disposition: 'disputed', disputes: dispute }), finding('F2', 'formal', { disposition: 'disputed', disputes: dispute })];
+    assert.deepEqual(policy.heldFindings(later, seen), []);
+  });
+
+  test('acceptance 7: the previous R3 decision\'s findings reach the next prompt without being held: decision 2 reads what decision 1 raised, decision 3 what decision 2 raised or re-raised [R6] [T0-R3-STOP-DISPUTED]', () => {
+    assert.deepEqual(policy.previousDecisionFindings(history(), 3), ['F1']);
+    assert.deepEqual(policy.previousDecisionFindings(history(), 2), ['F1', 'F3'], 'F3 was raised by decision 1 and left out only by decision 2');
+  });
+
+  test('acceptance 2: from decision 2 a re-raise of an undisputed finding gets a repair round, a re-raise of a disputed one stops, and a block on decision 4 stops [T0-R3-STOP-DISPUTED]', () => {
+    const c = classifyVerdict(specBlock, { candidateSha: SHA, tier: 'S' });
+    const reason = ['[spec] 6 tests @ src/gate.ts:2: still missing (re:F1) -> fix'];
+    const repeated = (f: ReviewFinding) => policy.repeatedFindings(reason, policy.heldFindings([f], policy.snapshotFindings([f])));
+    const undisputed = repeated(finding('F1', 'formal'));
+    const first = recordReviewOutcome(ReviewLedger.parse({}), inv('i1'), c, specBlock, 0, undisputed);
+    const second = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, undisputed);
+    assert.deepEqual(second.decision, { action: 'review-fix', remainingDecisions: 2 }, 'decision 2 re-raised an undisputed finding');
+    const third = recordReviewOutcome(second.ledger, inv('i3'), c, specBlock, 0, undisputed);
+    assert.deepEqual(third.decision, { action: 'review-fix', remainingDecisions: 1 }, 'decision 3 re-raised it again');
+    const fourth = recordReviewOutcome(third.ledger, inv('i4'), c, specBlock, 0, undisputed);
+    assert.equal(fourth.decision.action, 'stop-review', 'the fourth decision stops whatever it re-raises');
+    const disputed = repeated(finding('F1', 'formal', { disposition: 'disputed', disputes: dispute }));
+    const stop = recordReviewOutcome(first.ledger, inv('i2'), c, specBlock, 0, disputed);
+    assert.equal(stop.decision.action, 'stop-review', 'decision 2 re-raised a finding the author disputed');
+    assert.match(stop.decision.action === 'stop-review' ? stop.decision.detail : '', /second substantive block re-raised unresolved finding\(s\) F1/, 'the detail text is unchanged');
   });
 
   test('acceptance 2: a later block of new findings returns to REVIEW_FIX; a re-raised unresolved finding from decision 2 on, or the fourth decision, stops', () => {
