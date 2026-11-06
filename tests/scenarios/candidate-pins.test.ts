@@ -310,25 +310,28 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a failed update-ref or a refused ho
 });
 
 /** Values a runner can throw that `pinError` still has to name in one nonempty line. */
-const THROWN: unknown[] = ['plain text', null, new Error(''), Object.create(null)];
+const THROWN: [unknown, RegExp][] = [['plain text', /plain text/], [null, /null/], [new Error(''), /empty message/], [Object.create(null), /no text/]];
 const throwing = (value: unknown): Options['onGit'] => (_command, args) => {
   if (args.includes('update-ref')) throw value;
   return undefined as never;
 };
-const assertOneLine = (text: unknown) => assert.match(String(text), /^\S.*$/, 'one nonempty line');
+const assertNamed = (text: unknown, cause: RegExp) => {
+  assert.match(String(text), /^\S.*$/, 'one nonempty line');
+  assert.match(String(text), cause);
+};
 
 test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a runner that throws any value leaves the review as a working pin leaves it, on the command path [R3]', async () => {
   const pinned = await blockedWith({});
-  for (const value of THROWN) {
+  for (const [value, cause] of THROWN) {
     const thrown = await blockedWith({ onGit: throwing(value) });
     assert.deepEqual(thrown.summary, pinned.summary);
     assert.equal(thrown.event['candidatePinned'], false);
-    assertOneLine(thrown.event['pinError']);
+    assertNamed(thrown.event['pinError'], cause);
   }
 });
 
 test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a runner that throws any value leaves the decision of the ship path in place [R3]', () => {
-  for (const value of THROWN) {
+  for (const [value, cause] of THROWN) {
     const fx = makeFixture();
     try {
       gitRepo(fx);
@@ -343,7 +346,7 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a runner that throws any value leav
       assert.equal(blocked.run.state, 'REVIEW_FIX');
       assert.equal(blocked.run.review.substantiveBlocks, 1);
       assert.equal(decided(fx, goalId).at(-1)?.['candidatePinned'], false);
-      assertOneLine(decided(fx, goalId).at(-1)?.['pinError']);
+      assertNamed(decided(fx, goalId).at(-1)?.['pinError'], cause);
     } finally {
       fx.cleanup();
     }
