@@ -1,7 +1,7 @@
 ---
 id: T0-R2-OFF
 title: This repository runs no R2 panel, with `preReview.command` empty and the rest of the block kept, so a candidate goes from DoD to R3 and restoring R2 is one value
-status: todo
+status: merged
 branch: T0-R2-OFF
 worktree: D:\wt\AIDLC\T0-R2-OFF
 allow_paths:
