@@ -548,9 +548,9 @@ describe('aidlc card mutants through the CLI (card T1-VERIFY-MUTANTS)', () => {
     writeCard(fx, { id: CLI_CARD, title: 'a card with a real DoD', dodCommand: 'node check.mjs' });
     writeCard(fx, { id: 'T1-MNORUN', title: 'a card with no run' });
     const goal = goalForCards(fx, [CLI_CARD, 'T1-MNORUN']);
-    const run = fx.store.saveCardRun({ ...fx.controller.ensureCardRun(goal, CLI_CARD), worktree: dir, base: { ref: 'main', oid: base } });
+    fx.store.saveCardRun({ ...fx.controller.ensureCardRun(goal, CLI_CARD), worktree: dir, base: { ref: 'main', oid: base } });
     const cli = (...args: string[]) => spawnSync(process.execPath, [MAIN, 'card', 'mutants', ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A' }, encoding: 'utf8', timeout: 120_000 });
-    return { fx, dir, base, goal, run, cli, cleanup: () => { fx.cleanup(); rmSync(dir, { recursive: true, force: true }); } };
+    return { fx, dir, base, goal, cli, cleanup: () => { fx.cleanup(); rmSync(dir, { recursive: true, force: true }); } };
   }
 
   test('acceptance 9: the command runs the real DoD through the shell, prints the report for HEAD and leaves the run and the journal unchanged [R1] [R4] [R12]', () => {
@@ -623,13 +623,13 @@ describe('aidlc card mutants through the CLI (card T1-VERIFY-MUTANTS)', () => {
       assert.ok(noRun.stderr.includes('T1-MNORUN'), noRun.stderr);
       assert.equal(existsSync(path.join(f.dir, '.review')), false);
       const gone = path.join(f.dir, 'gone');
-      f.fx.store.saveCardRun({ ...f.run, worktree: gone });
+      f.fx.store.saveCardRun({ ...f.fx.store.getCardRun(f.goal.id, CLI_CARD)!, worktree: gone });
       const missing = f.cli(CLI_CARD);
       assert.notEqual(missing.status, 0);
       assert.ok(missing.stderr.includes(CLI_CARD) && missing.stderr.includes(gone), missing.stderr);
       assert.equal(existsSync(path.join(f.dir, '.review')), false);
       assert.equal(existsSync(gone), false);
-      f.fx.store.saveCardRun({ ...f.run, worktree: undefined });
+      f.fx.store.saveCardRun({ ...f.fx.store.getCardRun(f.goal.id, CLI_CARD)!, worktree: undefined });
       const none = f.cli(CLI_CARD, '--restore');
       assert.notEqual(none.status, 0);
       assert.ok(none.stderr.includes(CLI_CARD), none.stderr);
