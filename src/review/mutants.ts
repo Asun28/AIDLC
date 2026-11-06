@@ -67,9 +67,27 @@ const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).dig
 const positive = (n: number): boolean => Number.isSafeInteger(n) && n > 0;
 const interrupted = (marker: string, card: string): string => `a mutant run was interrupted: ${marker} exists, so a source file may hold a mutant; run \`aidlc card mutants ${card} --restore\``;
 
-/** The bytes of a regular file; a symlink, a directory or a missing path has none, so no read or write follows a link. */
-function bytesOf(file: string): Buffer | undefined {
-  return lstatSync(file, { throwIfNoEntry: false })?.isFile() ? readFileSync(file) : undefined;
+/**
+ * `full`, refused when it leaves the worktree or when a parent below the worktree is anything but a real directory. A path
+ * inside a checkout is chosen by the candidate and a DoD run can put a link there at any time, so each read and write calls
+ * this in the same synchronous step, and a missing parent is one a later write creates as a directory.
+ */
+function contained(worktree: string, full: string): string {
+  const relative = path.relative(worktree, full);
+  const parts = relative.split(path.sep);
+  if (relative === '' || parts[0] === '..' || path.isAbsolute(relative)) throw new Error(`${JSON.stringify(full)} is outside the worktree ${worktree}`);
+  let at = worktree;
+  for (const part of parts.slice(0, -1)) {
+    at = path.join(at, part);
+    const stat = lstatSync(at, { throwIfNoEntry: false });
+    if (stat && !stat.isDirectory()) throw new Error(`${at} is not a directory: a link there can lead out of the worktree, so the sweep stops`);
+  }
+  return full;
+}
+
+/** The bytes of a regular file inside the worktree; a symlink, a directory or a missing path has none, so no read follows a link. */
+function bytesOf(worktree: string, full: string): Buffer | undefined {
+  return lstatSync(contained(worktree, full), { throwIfNoEntry: false })?.isFile() ? readFileSync(full) : undefined;
 }
 
 function diffOf(runner: SyncRunner, worktree: string, range: string): string {
@@ -84,7 +102,7 @@ function targetsOf(worktree: string, diff: string): Target[] {
   const changed = changedSourceLines(diff).sort((a, b) => (a.file < b.file ? -1 : 1));
   for (const { file, lines } of changed) {
     const full = path.join(worktree, file);
-    const bytes = bytesOf(full);
+    const bytes = bytesOf(worktree, full);
     if (!bytes) continue;
     const source = bytes.toString('utf8');
     for (const mutant of mutantsFor(source, lines)) targets.push({ file, full, bytes, source, mutant });
@@ -103,16 +121,18 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   if (!positive(max)) throw new Error(`--max must be a positive integer, got ${max}`);
   if (!positive(timeoutMs) || timeoutMs > MAX_TIMEOUT_MS) throw new Error(`--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}, got ${timeoutMs}`);
   const marker = mutantsMarkerPath(worktree, card.id);
-  if (existsSync(marker)) throw new Error(interrupted(marker, card.id));
+  if (existsSync(contained(worktree, marker))) throw new Error(interrupted(marker, card.id));
   const startedAt = deps.now();
-  const git = new GitProbe(deps.git);
+  // `--no-optional-locks`: a plain `git status` refreshes the stat cache and writes the index, which this command never does.
+  const read: SyncRunner = (command, args, options) => deps.git(command, ['--no-optional-locks', ...args], options);
+  const git = new GitProbe(read);
   const { entries } = git.status(worktree);
   if (entries.length > 0) {
     const more = entries.length > REFUSAL_ENTRIES ? ` and ${entries.length - REFUSAL_ENTRIES} more` : '';
     throw new Error(`${worktree} has uncommitted or untracked changes: ${entries.slice(0, REFUSAL_ENTRIES).join(', ')}${more}; commit or remove them first`);
   }
   const candidate = git.head(worktree);
-  const targets = targetsOf(worktree, diffOf(deps.git, worktree, `${base}...${candidate}`));
+  const targets = targetsOf(worktree, diffOf(read, worktree, `${base}...${candidate}`));
   const chosen = targets.slice(0, max);
   const dod = () => deps.dod(card.dod_command, [], { cwd: worktree, shell: true, timeoutMs });
 
@@ -121,16 +141,17 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   if (baseline.exitCode !== card.dod_exit) throw new Error(`the DoD ended with exit code ${baseline.exitCode} on the unmutated candidate, not ${card.dod_exit}; no mutant can be judged`);
 
   const idle: MutantPending = { schemaVersion: 1, cardId: card.id, candidateSha: candidate };
-  if (!createExclusive(marker, JSON.stringify(idle))) throw new Error(interrupted(marker, card.id));
+  if (!createExclusive(contained(worktree, marker), JSON.stringify(idle))) throw new Error(interrupted(marker, card.id));
   const mutants: MutantResult[] = [];
   // True from the marker write that names a file until its original bytes are back: the marker then outlives any stop.
   let applied = false;
+  let stop: { error: unknown } | undefined;
   try {
     for (const [index, { file, full, bytes, source, mutant }] of chosen.entries()) {
-      if (!bytesOf(full)?.equals(bytes)) throw new Error(`${file} changed during the sweep: it no longer holds the bytes this run read, so no mutant was written over it`);
+      if (!bytesOf(worktree, full)?.equals(bytes)) throw new Error(`${file} changed during the sweep: it no longer holds the bytes this run read, so no mutant was written over it`);
       const mutantBytes = Buffer.from(applyMutant(source, mutant), 'utf8');
       applied = true;
-      atomicWriteJson(marker, { ...idle, applied: { file, originalBase64: bytes.toString('base64'), originalSha256: sha256(bytes), mutantSha256: sha256(mutantBytes) } } satisfies MutantPending);
+      atomicWriteJson(contained(worktree, marker), { ...idle, applied: { file, originalBase64: bytes.toString('base64'), originalSha256: sha256(bytes), mutantSha256: sha256(mutantBytes) } } satisfies MutantPending);
       writeFileSync(full, mutantBytes);
       let receipt: ExecReceipt | undefined;
       let failure: { error: unknown } | undefined;
@@ -139,19 +160,27 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
       } catch (error) {
         failure = { error };
       }
-      if (!bytesOf(full)?.equals(mutantBytes)) throw new Error(`${file} no longer holds the mutant after its DoD run: the file and ${marker} stay as they are; compare them by hand`);
+      if (!bytesOf(worktree, full)?.equals(mutantBytes)) throw new Error(`${file} no longer holds the mutant after its DoD run: the file and ${marker} stay as they are; compare them by hand`);
       writeFileSync(full, bytes);
       applied = false;
-      atomicWriteJson(marker, idle);
       if (!receipt) throw failure?.error;
+      atomicWriteJson(contained(worktree, marker), idle);
       const outcome = outcomeOf(receipt, card.dod_exit);
       const { line, column, operator, original, mutated } = mutant;
       mutants.push({ file, line, column, operator, original, mutated, outcome, exitCode: receipt.exitCode, durationMs: receipt.durationMs });
       deps.progress?.(`mutant ${index + 1}/${chosen.length} ${file}:${line}:${column} ${operator}: ${outcome} (exit ${receipt.exitCode}, ${receipt.durationMs} ms)`);
     }
-  } finally {
-    if (!applied) rmSync(marker);
+  } catch (error) {
+    stop = { error };
   }
+  if (!applied) {
+    try {
+      rmSync(contained(worktree, marker));
+    } catch (error) {
+      stop ??= { error };
+    }
+  }
+  if (stop) throw stop.error;
 
   const head = git.head(worktree);
   if (head !== candidate) throw new Error(`the worktree HEAD moved from ${candidate} to ${head} during the sweep; no report is written`);
@@ -174,13 +203,13 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
     mutants,
   });
   const reportPath = mutantsReportPath(worktree, card.id);
-  atomicWriteJson(reportPath, report);
+  atomicWriteJson(contained(worktree, reportPath), report);
   return { report, path: reportPath };
 }
 
 /** Repair an interrupted run from its marker: write the original bytes back over the mutant, or refuse a file that holds anything else. */
 export function restoreMutants(worktree: string, card: string): MutantRestore {
-  const marker = mutantsMarkerPath(worktree, card);
+  const marker = contained(worktree, mutantsMarkerPath(worktree, card));
   const pending = readJson(marker, MutantPending);
   if (!pending) return { outcome: 'nothing', message: `${card}: nothing needs restoring` };
   const { applied } = pending;
@@ -190,11 +219,9 @@ export function restoreMutants(worktree: string, card: string): MutantRestore {
   }
   const { file } = applied;
   const full = path.resolve(worktree, file);
-  const relative = path.relative(worktree, full);
-  if (relative === '' || relative.split(path.sep)[0] === '..' || path.isAbsolute(relative)) throw new Error(`${marker} names a path outside the worktree: ${JSON.stringify(file)}`);
   const original = Buffer.from(applied.originalBase64, 'base64');
   if (sha256(original) !== applied.originalSha256) throw new Error(`the original bytes in ${marker} do not match their sha256, so ${file} is left as it is`);
-  const current = bytesOf(full);
+  const current = bytesOf(worktree, full);
   const digest = current && sha256(current);
   if (digest === applied.originalSha256) {
     rmSync(marker);

@@ -640,16 +640,17 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
 
   test('acceptance 12: a stop keeps the first error when the marker cleanup is refused too [R14]', withRepo(async (r) => {
     const boom = new Error('runner broke');
+    let empty = '';
     const dod = scriptedDod(r, (call) => {
       if (call === 1) {
-        swapReview(r);
+        empty = swapReview(r);
         throw boom;
       }
       return {};
     });
-    await assert.rejects(runMutants(input(r), deps(dod)), LINK_REFUSAL, 'the idle marker write stops first');
-    const dodClean = scriptedDod(r, () => ({}));
-    assert.equal(dodClean.calls.length, 0);
+    await assert.rejects(runMutants(input(r), deps(dod)), (err) => err === boom, 'the refused cleanup does not replace the error of the run');
+    assert.deepEqual(readdirSync(empty), [], 'the cleanup deleted nothing through the link');
+    assert.equal(r.read(), SOURCE);
   }));
 
   test('acceptance 12: a .review link that appears before the report is written stops with nothing written outside [R14]', withRepo(async (r) => {
