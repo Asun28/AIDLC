@@ -1,8 +1,9 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { applyMutant, changedSourceLines, mutantsFor, type Mutant } from '../../src/review/mutant-gen.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -969,6 +970,21 @@ describe('R3 decision 2 repairs (card T1-VERIFY-MUTANT-GEN-3)', () => {
     const run = 4000;
     assert.deepEqual(view(mutantsFor(`const a = ${'!'.repeat(run)}b;`, [1])), Array.from({ length: run }, (_, i) => dn(1, 11 + i)), 'one line');
     assert.deepEqual(view(mutantsFor(`a${'!'.repeat(run)};`, [1])), [ds(1, 1, `a${'!'.repeat(run)};`)], 'a postfix run');
+  });
+
+  test('acceptance 11: the operand after a run of ! is classified once, so a long run before a long name takes one pass [R3] [R4]', () => {
+    const run = 200000;
+    const generator = pathToFileURL(path.join(root, 'src', 'review', 'mutant-gen.ts')).href;
+    const script = `
+      import { mutantsFor } from ${JSON.stringify(generator)};
+      const ms = mutantsFor('const a = ' + '!'.repeat(${run}) + 'b'.repeat(${run}) + ';', [1]);
+      console.log(JSON.stringify([ms.length, [...new Set(ms.map((m) => m.operator))], ms.at(-1).column]));
+    `;
+    // Synchronous code cannot be interrupted in this process, so the child carries the bound: one read of the operand per `!` takes minutes.
+    const r = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8', timeout: 60000, windowsHide: true });
+    assert.equal(r.error, undefined, `no result inside the bound: ${r.error}`);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), [run, ['drop-not'], 200010]);
   });
 });
 
