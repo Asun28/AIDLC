@@ -460,16 +460,16 @@ describe('preReview.fallback (T0-R2-FALLBACK, part 2 of issue #92)', () => {
     assert.throws(withFallback({ command: ['claude'], reviewer: 'f', effort: { default: 'max', xhigh: { minChangedLines: 1 } } }), issueAt('preReview.fallback.effort.xhigh'));
     assert.doesNotThrow(withFallback({ command: ['claude', '--effort', '{effort}'], reviewer: 'claude-sonnet-5-5', effort: SONNET.effort }));
   });
-  test('this repository runs DeepSeek as the R2 primary, one round per R3 cycle with coverage off, with Claude Sonnet 5.5 as the fallback; the template has no fallback [R4] [T1-EFF-REVIEW-CONFIG R1 R2]', () => {
+  test('this repository runs no R2 panel: its primary command is empty and the rest of the block stays, one round per R3 cycle with coverage off, with Claude Sonnet 5.5 as the fallback; the template has no fallback [R4] [T1-EFF-REVIEW-CONFIG R1 R2] [T0-R2-OFF R1]', () => {
     const raw = configOf('aidlc.config.json').preReview;
-    assert.deepEqual(raw['command'], ['deepseek', '--model', 'deepseek-v4-pro']);
+    assert.deepEqual(raw['command'], []);
     assert.equal(raw['reviewer'], 'deepseek-v4-pro');
     assert.equal(raw['answerMarker'], '=== answer ===');
     assert.deepEqual(raw['fallback'], SONNET);
     assert.equal(raw['rounds'], 1, 'one R2 round per R3 cycle');
     assert.equal('coverage' in raw, false, 'no coverage key, so the schema default off applies');
     const parsed = ProjectConfig.parse(configOf('aidlc.config.json')).preReview;
-    assert.deepEqual(parsed.command, ['deepseek', '--model', 'deepseek-v4-pro'], 'the parsed primary command');
+    assert.deepEqual(parsed.command, [], 'the parsed primary command is empty, so a candidate goes from the DoD to R3');
     assert.equal(parsed.reviewer, 'deepseek-v4-pro', 'the parsed primary reviewer');
     assert.equal(parsed.answerMarker, '=== answer ===', 'the parsed primary marker');
     assert.deepEqual(parsed.fallback, SONNET, 'the parsed fallback is the configured one, nothing added');
