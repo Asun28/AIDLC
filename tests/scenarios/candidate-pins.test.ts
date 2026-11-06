@@ -167,13 +167,24 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 3: a ship-path reviewer pass and block
       const candidate = commitCandidate(fx, 1);
       const reasons = verdict === 'block' ? [`[spec] 6 tests missing @ ${FILE}:1: no test -> add one`] : [];
       const document: Verdict = { verdict, reasons, axes: { spec: { verdict, reasons }, standards: { verdict: 'pass', reasons: [] } }, sha: candidate, run_status: 'success' };
-      const { runner } = runnerFor(fx, { ship: new DryRunShipPath([outcome, outcome], document) });
-      const { goalId, run } = start(fx, runner);
+      let goalId = '';
+      const seen: number[] = [];
+      const { runner } = runnerFor(fx, {
+        ship: new DryRunShipPath([outcome, outcome], document),
+        onGit: (_command, args) => {
+          if (args.includes('update-ref')) seen.push(decided(fx, goalId).length + (fx.store.getCardRun(goalId, CARD)?.review.invocations.length ?? 0));
+          return undefined as never;
+        },
+      });
+      const opened = start(fx, runner);
+      goalId = opened.goalId;
+      const run = opened.run;
       const card = fx.card(CARD);
       const recorded = runner.recordAttempt(fx.goal(goalId), card, run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidate });
       runner.next(fx.goal(goalId), card, recorded);
       assert.equal(git(fx.tmp, ['rev-parse', pinRef(candidate)]), candidate, `the ${verdict} pinned`);
       assert.equal(decided(fx, goalId).at(-1)?.['candidatePinned'], true, `the ${verdict} reported`);
+      assert.deepEqual(seen, [0], `the ${verdict} pinned before anything recorded it`);
     } finally {
       fx.cleanup();
     }
@@ -197,6 +208,38 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 4: the pin is written while the invoca
     goalId = opened.goalId;
     await decide(fx, runner, goalId, opened.run, candidate, 1);
     assert.deepEqual(seen, ['pending']);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-REVIEW-CANDIDATE-PINS R1: an advisory block is a decision, so it pins', async () => {
+  const fx = makeFixture({ config: { ...REVIEWED_CONFIG, gateRequired: false } });
+  try {
+    gitRepo(fx);
+    const candidate = commitCandidate(fx, 1);
+    const { runner } = runnerFor(fx, { verdicts: [BLOCK] });
+    const { goalId, run } = start(fx, runner);
+    const result = await decide(fx, runner, goalId, run, candidate, 1);
+    assert.equal(result.classified.outcome, 'block-advisory');
+    assert.equal(git(fx.tmp, ['rev-parse', pinRef(candidate)]), candidate);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-REVIEW-CANDIDATE-PINS R2: a symbolic ref at the pin name is replaced and its target stays where it was', async () => {
+  const fx = makeFixture({ config: REVIEWED_CONFIG });
+  try {
+    gitRepo(fx);
+    const before = git(fx.tmp, ['rev-parse', 'main']);
+    const candidate = commitCandidate(fx, 1);
+    git(fx.tmp, ['symbolic-ref', pinRef(candidate), 'refs/heads/main']);
+    const { runner } = runnerFor(fx);
+    const { goalId, run } = start(fx, runner);
+    await decide(fx, runner, goalId, run, candidate, 1);
+    assert.equal(git(fx.tmp, ['rev-parse', 'main']), before, 'the target did not move');
+    assert.equal(git(fx.tmp, ['rev-parse', pinRef(candidate)]), candidate);
   } finally {
     fx.cleanup();
   }
@@ -227,8 +270,8 @@ async function blockedWith(o: Options, setup?: (fx: Fixture) => void) {
   const fx = makeFixture({ config: REVIEWED_CONFIG });
   try {
     gitRepo(fx);
-    setup?.(fx);
     const candidate = commitCandidate(fx, 1);
+    setup?.(fx);
     const { runner } = runnerFor(fx, { ...o, verdicts: [BLOCK] });
     const { goalId, run } = start(fx, runner);
     const result = await decide(fx, runner, goalId, run, candidate, 1);
@@ -251,7 +294,11 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a failed update-ref or a refused ho
   assert.doesNotMatch(String(failing.event['pinError']), /\n/, 'the cause is one line');
   assert.deepEqual(failing.pins, []);
 
-  const refused = await blockedWith({}, (fx) => git(fx.tmp, ['config', 'hook.Bench=Hook.event', 'reference-transaction']));
+  const refused = await blockedWith({}, (fx) => {
+    // git refuses a hook with an event and no command whenever it next looks one up, so this hook has both.
+    git(fx.tmp, ['config', 'hook.Bench=Hook.event', 'reference-transaction']);
+    git(fx.tmp, ['config', 'hook.Bench=Hook.command', 'exit 0']);
+  });
   assert.deepEqual(refused.summary, pinned.summary);
   assert.equal(refused.event['candidatePinned'], false);
   assert.match(String(refused.event['pinError']), /hook\.Bench=Hook\.event/);
@@ -370,4 +417,17 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 7: outside a git repository the review
   } finally {
     fx.cleanup();
   }
+});
+
+test('T0-REVIEW-CANDIDATE-PINS acceptance 9: the docs describe the pins [R5]', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const read = (file: string) => readFileSync(path.join(root, file), 'utf8');
+  const operations = read('docs/OPERATIONS.md');
+  const start = operations.indexOf('### Formal review (R3) as a command');
+  const section = operations.slice(start, operations.indexOf('### Review statistics', start));
+  for (const text of ['refs/aidlc/candidates/', 'core.hooksPath=/dev/null', 'candidatePinned', 'pinError', 'git update-ref -d']) assert.ok(section.includes(text), text);
+  assert.ok(read('docs/ARCHITECTURE.md').includes('refs/aidlc/candidates/'));
+  const changelog = read('CHANGELOG.md');
+  const unreleased = changelog.indexOf('## Unreleased');
+  assert.ok(changelog.slice(unreleased, changelog.indexOf('\n## ', unreleased + 1)).includes('- T0-REVIEW-CANDIDATE-PINS:'));
 });
