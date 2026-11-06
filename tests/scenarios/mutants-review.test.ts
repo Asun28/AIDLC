@@ -8,6 +8,7 @@ import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { MUTATION_OPERATORS, MutantReport, type CardRun, type MutantResult } from '../../src/core/types.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
+import { MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS } from '../../src/review/pre-review.ts';
 import { mutantsMarkerPath, mutantsReportPath } from '../../src/review/mutants.ts';
 import { T0, makeFixture, writeCard, type Fixture } from './_harness.ts';
 
@@ -126,6 +127,49 @@ describe('the survivors of the candidate reach the R3 prompt (card T1-VERIFY-MUT
         writeReport(s, text);
         const { section } = await firstDecision(s);
         assert.deepEqual(entriesOf(section), ['- none'], text);
+      })();
+    }
+  });
+
+  test('acceptance 3: the limits are 1 MiB and 1000 mutants [R1]', () => {
+    assert.deepEqual([MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS], [1048576, 1000]);
+  });
+
+  test('acceptance 3: a report of exactly the byte limit counts, and one byte more puts - none there [R1]', async () => {
+    const padded = (bytes: number) => reportText(SHA) + ' '.repeat(bytes - Buffer.byteLength(reportText(SHA), 'utf8'));
+    for (const [bytes, expected] of [[MUTANT_REPORT_MAX_BYTES, [LINE_ONE, LINE_TWO]], [MUTANT_REPORT_MAX_BYTES + 1, ['- none']]] as const) {
+      await withSetup(async (s) => {
+        writeReport(s, padded(bytes));
+        const { section } = await firstDecision(s);
+        assert.deepEqual(entriesOf(section), expected, `${bytes} bytes`);
+      })();
+    }
+  });
+
+  test('acceptance 3: a report of exactly the mutant limit counts, and one more mutant puts - none there [R1]', async () => {
+    for (const [count, expected] of [[MUTANT_REPORT_MAX_MUTANTS, [LINE_ONE]], [MUTANT_REPORT_MAX_MUTANTS + 1, ['- none']]] as const) {
+      await withSetup(async (s) => {
+        const report = JSON.parse(reportText(SHA)) as MutantReport;
+        writeReport(s, JSON.stringify({ ...report, mutants: [SURVIVED, ...Array.from({ length: count - 1 }, () => KILLED)] }));
+        const { section } = await firstDecision(s);
+        assert.deepEqual(entriesOf(section), expected, `${count} mutants`);
+      })();
+    }
+  });
+
+  test('acceptance 3: a report with more operators than exist puts - none there, though the schema accepts a repeat [R1]', withSetup(async (s) => {
+    const report = JSON.parse(reportText(SHA)) as MutantReport;
+    writeReport(s, JSON.stringify({ ...report, operators: [...MUTATION_OPERATORS, 'boundary'] }));
+    const { section } = await firstDecision(s);
+    assert.deepEqual(entriesOf(section), ['- none']);
+  }));
+
+  test('acceptance 3: a small file of 10000 empty records and a report whose arrays are missing put - none there [R1]', async () => {
+    for (const text of [JSON.stringify({ candidateSha: SHA, operators: [], mutants: Array.from({ length: 10000 }, () => ({})) }), JSON.stringify({ candidateSha: SHA }), 'null']) {
+      await withSetup(async (s) => {
+        writeReport(s, text);
+        const { section } = await firstDecision(s);
+        assert.deepEqual(entriesOf(section), ['- none'], text.slice(0, 40));
       })();
     }
   });

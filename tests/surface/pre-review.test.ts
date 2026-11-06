@@ -1816,6 +1816,10 @@ describe('the Surviving mutants section of the formal prompt (card T1-VERIFY-MUT
     assert.ok(!pre.includes('Surviving mutants'), 'the R2 prompt has no such section');
   });
 
+  test('acceptance 1: a line keeps the mutated text exactly, with no trim at its end [R2]', () => {
+    assert.deepEqual(entries([survivor(1, 'a', 'b ')]), ['- "src/gate.ts:1:5 boundary: a -> b "']);
+  });
+
   test('acceptance 2: lines that fill the cap exactly all render, one byte past it the last line goes, and the omitted count ends the section [R3]', () => {
     assert.equal(SURVIVING_MUTANTS_MAX_BYTES, 2000);
     const half = 1000;

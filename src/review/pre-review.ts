@@ -31,6 +31,9 @@ import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 
 /** The bytes the survivor lines of the formal prompt fill at most (card T1-VERIFY-MUTANTS-PROMPT). */
 export const SURVIVING_MUTANTS_MAX_BYTES = 2000;
+/** The largest mutant report a review reads, and the most mutants it holds: past either it counts as no report, before the schema runs. */
+export const MUTANT_REPORT_MAX_BYTES = 1024 * 1024;
+export const MUTANT_REPORT_MAX_MUTANTS = 1000;
 
 export interface ReviewPromptInput {
   /** R2 (pre-review, advisory filter before R3) or R3 (the formal decision). */
