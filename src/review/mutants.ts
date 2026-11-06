@@ -145,6 +145,8 @@ function targetsOf(worktree: string, diff: string, regular: Set<string>): Target
     const bytes = bytesOf(worktree, full);
     if (!bytes) continue;
     const source = bytes.toString('utf8');
+    // Text that does not round trip is not valid UTF-8, and a mutant written from it would change more than the mutant.
+    if (!Buffer.from(source, 'utf8').equals(bytes)) continue;
     for (const mutant of mutantsFor(source, lines)) targets.push({ file, full, bytes, source, mutant });
   }
   return targets;
