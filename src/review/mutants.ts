@@ -28,9 +28,12 @@ const REFUSAL_ENTRIES = 5;
  * The plain `--unified=0` text `changedSourceLines` reads, under any user git configuration: the
  * explicit prefixes answer `diff.noprefix` and `diff.mnemonicPrefix`, `--inter-hunk-context=0`
  * answers `diff.interHunkContext` (which would merge hunks with context lines the reader refuses),
- * `--find-renames` answers `diff.renames`, and `core.quotePath=false` keeps a non-ASCII path unquoted.
+ * `--find-renames` answers `diff.renames`, `core.quotePath=false` keeps a non-ASCII path unquoted,
+ * and `--text` keeps a file with a `-diff` attribute or a NUL byte in the diff.
  */
-const DIFF = ['-c', 'core.quotePath=false', 'diff', '--unified=0', '--inter-hunk-context=0', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', '--no-color', '--no-ext-diff', '--no-textconv'];
+const DIFF = ['-c', 'core.quotePath=false', 'diff', '--text', '--unified=0', '--inter-hunk-context=0', '--find-renames', '--src-prefix=a/', '--dst-prefix=b/', '--no-color', '--no-ext-diff', '--no-textconv'];
+/** Before every git command: `git status` writes no index and starts no fsmonitor program. */
+const GIT_READ_ONLY = ['--no-optional-locks', '-c', 'core.fsmonitor=false'];
 
 export const mutantsReportPath = (worktree: string, card: string): string => path.join(worktree, '.review', `${card}.mutants.json`);
 export const mutantsMarkerPath = (worktree: string, card: string): string => path.join(worktree, '.review', `${card}.mutants.pending.json`);
@@ -62,6 +65,16 @@ interface Target {
   bytes: Buffer;
   source: string;
   mutant: Mutant;
+}
+
+/**
+ * The environment of every git command. No inherited `GIT_*` variable reaches it: `GIT_DIFF_OPTS` overrides `--unified=0` and
+ * `GIT_DIR` points git at another repository. `GIT_NO_LAZY_FETCH` stops a lazy fetch on git 2.45 and later, and an empty
+ * `GIT_ALLOW_PROTOCOL` allows no transport on any version, so a missing object is an error and nothing reaches the object store.
+ */
+function gitEnv(): NodeJS.ProcessEnv {
+  const inherited = Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_'));
+  return { ...Object.fromEntries(inherited), GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' };
 }
 
 const sha256 = (bytes: Buffer): string => createHash('sha256').update(bytes).digest('hex');
@@ -147,11 +160,11 @@ export async function runMutants(input: RunMutantsInput, deps: MutantsDeps): Pro
   const { card, worktree, base, max = MUTANT_MAX_DEFAULT, timeoutMs = MUTANT_TIMEOUT_DEFAULT_MS } = input;
   if (!positive(max)) throw new Error(`--max must be a positive integer, got ${max}`);
   if (!positive(timeoutMs) || timeoutMs > MAX_TIMEOUT_MS) throw new Error(`--timeout-ms must be a positive integer of at most ${MAX_TIMEOUT_MS}, got ${timeoutMs}`);
+  if (base.startsWith('-')) throw new Error(`the base ${JSON.stringify(base)} starts with -, which git would read as an option`);
   const marker = markerOf(worktree, card.id);
   if (existsSync(marker)) throw new Error(interrupted(marker, card.id));
   const startedAt = deps.now();
-  // `--no-optional-locks`: a plain `git status` refreshes the stat cache and writes the index, which this command never does.
-  const read: SyncRunner = (command, args, options) => deps.git(command, ['--no-optional-locks', ...args], options);
+  const read: SyncRunner = (command, args, options) => deps.git(command, [...GIT_READ_ONLY, ...args], { ...options, env: gitEnv() });
   const git = new GitProbe(read);
   const { entries } = git.status(worktree);
   if (entries.length > 0) {
