@@ -102,3 +102,13 @@ npm run typecheck && node --test tests/surface/review-bench-export.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+
+Successor of T1-REVIEW-BENCH-EXPORT-2 at eeae330, by the user's ruling `fix` of 2026-11-06:
+- RED: commit 6b98610. `node --test` over the five DoD test files exited 1, 114 tests, 109 passed, 5 failed, every failure an assertion: the two repository guards, which also failed on the merge of eeae330 before any test changed, the two `create` tests of R6, and acceptance 10 on the CHANGELOG entry.
+- GREEN at baada3e: `npm run typecheck` exits 0 and the DoD tests pass, 114 of 114. `npm test` exits 0, 2144 tests, 2138 passed, 6 skipped, 0 failed, so the guards that stopped T1-REVIEW-BENCH-EXPORT-2 ran before review. `npm run build && npm run bench -- --check` exits 0.
+- WSL Ubuntu, git 2.43.0-1ubuntu7.3: the export tests give 38 tests, 37 passed, 1 skipped (the hook defined in config), 0 failed.
+- Mutation check: 15 breaks of this change in scratch clones, each restored and none committed; each fails a test.
+- Real ledgers, in a throwaway shared clone with a local `main`: `--clean` wrote 47 and skipped 25, `--card` over 203 cards wrote 301 and skipped 162 with 0 pin conflicts, the state directory kept its 11 entries, and this repository holds 0 refs under `refs/aidlc/bench/`.
+- Those counts are below the 69 and 460 of T1-REVIEW-BENCH-EXPORT-2 because candidates left the object store, not because the export changed: 77 of the 215 recorded candidates are missing, dated 2026-09-15 to 2026-09-27. 162 formal findings sit on them, and 23 clean candidates plus the 2 runs with no `candidateSha` make the 25. Two packs written at 18:31 on 2026-11-06, one with a `.mtimes` file, point to an automatic `git gc` between the two runs. R5 lists each of them under `skipped`.

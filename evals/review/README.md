@@ -21,3 +21,9 @@ The `base` is `git merge-base <base> <candidate>`, where `<base>` is the card ru
 A hand-written case pins its candidate so that git never collects it: `git update-ref refs/aidlc/bench/<id> <candidate>`.
 
 To confirm a case, check out the candidate (`git worktree add --detach <dir> <candidate>`), find the defect at the expected lines (for a clean case, check that the candidate has none), then set `confirmed` to true and `confirmedBy` to your name.
+
+## Drafting cases with the export
+
+`aidlc review bench export --card <id>` drafts one unconfirmed bug case per R3 finding of that card's runs, and `aidlc review bench export --clean` drafts one unconfirmed clean case per card run whose first R3 decision passed (docs/OPERATIONS.md, Reviewer bench). The export fills in every field above, sets `confirmed` to false and pins each candidate with a ref under `refs/aidlc/bench/`, so a drafted case needs no pin command.
+
+A draft comes from the finding's reason alone, so check it as you would a hand-written case: find the defect at the expected lines and narrow the `window` to it. Running the export again after a card gains findings is safe, since a case that exists keeps its bytes.

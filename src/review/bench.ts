@@ -7,16 +7,22 @@
  *
  * The bench stays outside the loop: it reads no goal, card run, journal or review queue, writes nothing under the state
  * directory, and nothing in the loop or in CI reads its scores.
+ *
+ * `aidlc review bench export` (card T1-REVIEW-BENCH-EXPORT) drafts unconfirmed cases from card runs that `src/cli/main.ts`
+ * reads and hands to `exportBenchCases`, and pins each candidate under `refs/aidlc/bench/`. Its git calls are `cat-file`,
+ * `merge-base`, `rev-parse`, the read forms of `symbolic-ref` and `config`, and `update-ref` on those refs alone, none of
+ * which fetches an object.
  */
-import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
+import { nulList } from '../core/parse-guard.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
-import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type RunStatus } from '../core/types.ts';
+import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
@@ -180,8 +186,14 @@ const samePath = (a: string, b: string): boolean => {
   return norm(a) === norm(b);
 };
 
-/** One git step of the cleanup; a runner that throws counts as a step that failed, so the steps after it still run. */
-function cleanupStep(ctx: BenchContext, args: string[]): ReturnType<SyncRunner> | undefined {
+/** Whether `target`, links followed, is `dir` or lies under it; both exist. */
+function resolvesInside(dir: string, target: string): boolean {
+  const inside = path.relative(realpathSync.native(dir), realpathSync.native(target));
+  return !(inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside));
+}
+
+/** One git step whose failure the caller handles; a runner that throws counts as a step that failed, so the steps after it still run. */
+function gitStep(ctx: Pick<BenchContext, 'git' | 'root'>, args: string[]): ReturnType<SyncRunner> | undefined {
   try {
     return ctx.git('git', args, { cwd: ctx.root });
   } catch {
@@ -196,14 +208,14 @@ function cleanupStep(ctx: BenchContext, args: string[]): ReturnType<SyncRunner> 
  */
 function removeCheckout(ctx: BenchContext, holder: string): void {
   const checkout = path.join(holder, 'checkout');
-  const removed = cleanupStep(ctx, ['worktree', 'remove', '--force', checkout]);
+  const removed = gitStep(ctx, ['worktree', 'remove', '--force', checkout]);
   try {
     rmSync(holder, { recursive: true, force: true });
   } catch {
     // reported below
   }
-  const pruned = removed?.exitCode === 0 || cleanupStep(ctx, ['worktree', 'prune'])?.exitCode === 0;
-  const listed = cleanupStep(ctx, ['worktree', 'list', '--porcelain']);
+  const pruned = removed?.exitCode === 0 || gitStep(ctx, ['worktree', 'prune'])?.exitCode === 0;
+  const listed = gitStep(ctx, ['worktree', 'list', '--porcelain']);
   const named = !listed || listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
   if (existsSync(holder) || !pruned || named) ctx.leftCheckouts.push(checkout);
 }
@@ -213,8 +225,7 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   const cardFile = path.join(checkout, ...ref.path.split('/'));
   if (!existsSync(cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} is absent at ${candidate}`));
   // The candidate decides what this path is, so a link out of the checkout is refused before the read.
-  const inside = path.relative(realpathSync.native(checkout), realpathSync.native(cardFile));
-  if (inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside)) return cases.map((c) => errorOf(c, `card file ${ref.path} resolves outside the checkout`));
+  if (!resolvesInside(checkout, cardFile)) return cases.map((c) => errorOf(c, `card file ${ref.path} resolves outside the checkout`));
   const parsed = parseCardText(readFileSync(cardFile, 'utf8'), cardFile);
   if ('error' in parsed) return cases.map((c) => errorOf(c, `card file ${ref.path} does not parse: ${parsed.error}`));
   const card = parsed.card;
@@ -306,6 +317,236 @@ function totalsOf(cases: BenchCaseResult[], skippedUnconfirmed: number): BenchTo
     errors: count('error'),
     skippedUnconfirmed,
   };
+}
+
+export interface BenchExportOptions {
+  /** The root of the checkout the command runs in: the case directory and `aidlc.config.json` are read here. */
+  root: string;
+  /** The card runs `src/cli/main.ts` read for the selected goals. */
+  runs: CardRun[];
+  /** Create a file exclusively, false when it exists: `createExclusive`, which `src/cli/main.ts` passes in, since this module imports nothing from `src/state/`. */
+  create: (file: string, text: string) => boolean;
+  /** Keep this card's runs alone; required for bug drafts, so a person exports one card's findings at a time. */
+  cardId?: string;
+  /** Draft clean cases and no bug case. */
+  clean?: boolean;
+  /** The case directory, resolved against `root`; default `evals/review`. */
+  dir?: string;
+  /** The state directory: a case directory that resolves to it or under it is refused, since the export writes nothing there. */
+  stateDir?: string;
+  /** The git runner; default `runSync`. */
+  git?: SyncRunner;
+}
+
+export interface BenchExportWritten {
+  id: string;
+  file: string;
+  kind: 'bug' | 'clean';
+  candidate: string;
+  base: string;
+  ref: string;
+}
+
+export interface BenchExportReport {
+  written: BenchExportWritten[];
+  /** Ids whose case file already existed: its bytes are kept and it gets no ref. */
+  existing: string[];
+  /** Findings and runs that give no reviewable case; `source` is the finding id or `clean`. */
+  skipped: Array<{ card: string; goal: string; source: string; detail: string }>;
+  /** Cases left unwritten: a ref naming another commit, or a ref step that failed. The command exits 1 when any is listed. */
+  pinConflicts: Array<{ id: string; ref: string; candidate: string; detail: string }>;
+}
+
+/** What every draft of one export shares. */
+interface ExportContext {
+  root: string;
+  dir: string;
+  config: ProjectConfig;
+  git: SyncRunner;
+  create: BenchExportOptions['create'];
+  /** The `-c` options that turn every hook off for an `update-ref`. */
+  noHooks: string[];
+  report: BenchExportReport;
+}
+
+/** One draft before its commits are checked: what the kind adds to the shared fields. */
+interface DraftInput {
+  source: string;
+  candidate: string | undefined;
+  origin: string;
+  note: string;
+  expected?: unknown[];
+  /** Why this source can give no case whatever the commits are. */
+  unusable?: string;
+}
+
+/** The old value that makes `git update-ref` create a ref and refuse one that exists. */
+const NO_REF = '0'.repeat(40);
+const SITE_WINDOW = 5;
+const MAX_SITE_WINDOW = 50;
+
+const oneLine = (text: string) => text.trim().replace(/\s+/g, ' ');
+
+/** The class of a draft, from the reason text alone: its `(class: <slug>)` tag, else its REVIEW.md dimension, else `unclassified`. */
+function draftClass(reason: string): string {
+  const tag = /\(class: ?([^)]*)\)/i.exec(reason)?.[1]?.toLowerCase();
+  if (tag !== undefined && /^[a-z0-9]+(-[a-z0-9]+)*$/.test(tag)) return tag;
+  const dimension = /\[(?:spec|standards)\]\s*(\d+)\b/i.exec(reason)?.[1];
+  return dimension === undefined ? 'unclassified' : `dim-${dimension}`;
+}
+
+/** The checks of R5 and the parse of the case; a string is the cause of a skip. */
+function buildDraft(ctx: ExportContext, run: CardRun, id: string, d: DraftInput): ReviewBenchCase | string {
+  if (d.unusable) return d.unusable;
+  const candidate = d.candidate;
+  if (!candidate) return 'no candidateSha recorded';
+  const git = (args: string[]) => ctx.git('git', args, { cwd: ctx.root });
+  if (git(['cat-file', '-e', `${candidate}^{commit}`]).exitCode !== 0) return `candidate ${candidate} is not in the object store`;
+  const from = run.base?.oid || run.base?.ref || ctx.config.base;
+  const merged = git(['merge-base', from, candidate]);
+  if (merged.exitCode !== 0) return `git merge-base ${from} ${candidate} failed: ${oneLine(merged.stderr)}`;
+  const base = merged.stdout.trim();
+  if (base === candidate) return `candidate ${candidate} is an ancestor of ${from}, so it has no diff`;
+  const cardPath = path.posix.join(ctx.config.cardsDir, `${run.cardId}.md`);
+  if (git(['cat-file', '-e', `${candidate}:${cardPath}`]).exitCode !== 0) return `no card file ${cardPath} in candidate ${candidate}`;
+  const shared = { id, candidate, base, card: { id: run.cardId, path: cardPath }, confirmed: false, origin: d.origin, note: d.note };
+  const parsed = ReviewBenchCase.safeParse(d.expected ? { kind: 'bug', ...shared, expected: d.expected } : { kind: 'clean', ...shared });
+  return parsed.success ? parsed.data : parsed.error.issues.map((i) => `${i.path.join('.') || 'case'}: ${i.message}`).join('; ');
+}
+
+/**
+ * Create a case file exclusively; false when it exists. The path is checked first, since a link swapped in during the
+ * export would carry the write elsewhere. The file is created empty and the text written in a second step, since `create`
+ * removes nothing when its own write fails and a later export would report a partial file as an existing case. A failure
+ * of the second step removes the file this call created; a failure of `create` removes nothing.
+ */
+function createCase(ctx: ExportContext, file: string, text: string): boolean {
+  if (realpathSync.native(ctx.dir) !== ctx.dir) throw new Error(`case directory ${ctx.dir} no longer resolves to itself`);
+  if (!ctx.create(file, '')) return false;
+  try {
+    writeFileSync(file, text);
+  } catch (err) {
+    rmSync(file, { force: true });
+    throw err;
+  }
+  return true;
+}
+
+/** Write one draft unless its file exists, it gives no reviewable case, or its ref is symbolic or names another commit (R5 to R7). */
+function writeDraft(ctx: ExportContext, run: CardRun, d: DraftInput): void {
+  const { report } = ctx;
+  const id = `${run.cardId}.${run.goalId}.${d.source}`;
+  const file = path.join(ctx.dir, `${id}.json`);
+  if (existsSync(file)) {
+    report.existing.push(id);
+    return;
+  }
+  const draft = buildDraft(ctx, run, id, d);
+  if (typeof draft === 'string') {
+    report.skipped.push({ card: run.cardId, goal: run.goalId, source: d.source, detail: draft });
+    return;
+  }
+  const { candidate, base } = draft;
+  const ref = `refs/aidlc/bench/${id}`;
+  const conflict = (detail: string) => void report.pinConflicts.push({ id, ref, candidate, detail });
+  const symbolic = ctx.git('git', ['symbolic-ref', '-q', ref], { cwd: ctx.root });
+  if (symbolic.exitCode === 0) return conflict(`${ref} is a symbolic ref to ${symbolic.stdout.trim()}`);
+  if (symbolic.exitCode !== 1) return conflict(`git symbolic-ref failed: ${oneLine(symbolic.stderr)}`);
+  const pin = ctx.git('git', ['rev-parse', '--verify', '--quiet', ref], { cwd: ctx.root });
+  if (pin.exitCode !== 0 && pin.exitCode !== 1) return conflict(`git rev-parse failed: ${oneLine(pin.stderr)}`);
+  const pinned = pin.exitCode === 0 ? pin.stdout.trim() : undefined;
+  if (pinned !== undefined && pinned !== candidate) return conflict(`${ref} names ${pinned}`);
+  if (!createCase(ctx, file, JSON.stringify(draft, null, 2) + '\n')) {
+    report.existing.push(id);
+    return;
+  }
+  if (pinned === undefined) {
+    const created = gitStep(ctx, [...ctx.noHooks, 'update-ref', '--no-deref', ref, candidate, NO_REF]);
+    if (created?.exitCode !== 0) {
+      // A later export gives an existing file no ref, so a case kept here would stay unpinned for good.
+      let detail = `git update-ref failed: ${created ? oneLine(created.stderr) : 'git did not run'}`;
+      try {
+        rmSync(file);
+      } catch (err) {
+        detail += `; ${file} stays unpinned: ${(err as Error).message}`;
+      }
+      return conflict(detail);
+    }
+  }
+  report.written.push({ id, file, kind: draft.kind, candidate, base, ref });
+}
+
+/** The draft of a formal finding: its site comes from the reason, the way a cited reason's site does in a run. */
+function bugDraft(run: CardRun, f: ReviewFinding): DraftInput {
+  const site = citedSite(f.reason);
+  return {
+    source: f.id,
+    candidate: f.candidateSha,
+    origin: `${run.cardId} ${f.id} (goal ${run.goalId})`,
+    note: `R3 decision ${f.round}, ${f.disposition}${f.resolvedAt ? ', resolved' : ''}: ${f.reason}`,
+    ...(site ? { expected: [{ file: site.file, line: site.from, window: Math.min(MAX_SITE_WINDOW, Math.max(SITE_WINDOW, site.to - site.from)), class: draftClass(f.reason) }] } : { unusable: 'the reason cites no :n line' }),
+  };
+}
+
+/** The draft of a run whose first decided R3 invocation passed; undefined for any other run. */
+function cleanDraft(run: CardRun): DraftInput | undefined {
+  const first = run.review.invocations.find((i) => i.outcome === 'pass' || i.outcome === 'block');
+  if (first?.outcome !== 'pass') return undefined;
+  return { source: 'clean', candidate: first.candidateSha, origin: `${run.cardId} clean (goal ${run.goalId})`, note: `R3 decision 1 passed (${first.reviewer})` };
+}
+
+/** The export writes only case files and refs, so neither may land under the state directory. */
+function refuseStateOverlap(root: string, dir: string, stateDir: string, git: SyncRunner): void {
+  if (resolvesInside(stateDir, dir)) throw new Error(`case directory ${dir} is under the state directory ${stateDir}`);
+  const common = git('git', ['rev-parse', '--git-common-dir'], { cwd: root });
+  if (common.exitCode !== 0) throw new Error(`git rev-parse --git-common-dir failed: ${oneLine(common.stderr)}`);
+  const refs = path.resolve(root, common.stdout.trim(), 'refs');
+  if (resolvesInside(stateDir, refs) || resolvesInside(refs, stateDir)) throw new Error(`the refs directory ${refs} and the state directory ${stateDir} overlap`);
+}
+
+/**
+ * The `-c` options that turn every hook off for one command and change no config file. `core.hooksPath` covers a hooks
+ * directory; a hook defined by `hook.<name>.event` (git 2.54 and later) still runs under it, so each one is disabled by name.
+ */
+function noHookOptions(root: string, git: SyncRunner): string[] {
+  const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
+  if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
+  const keys = nulList(named.stdout);
+  const unnamed = keys.find((key) => key.includes('='));
+  if (unnamed !== undefined) throw new Error(`git -c reads the first = as the end of the key, so it cannot disable the hook of ${unnamed}`);
+  return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
+}
+
+/** Draft cases from the card runs; throws, before any draft, on a refusal. Changes only new case files and refs under `refs/aidlc/bench/`. */
+export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
+  if (o.cardId === undefined && !o.clean) throw new Error('--card is required without --clean');
+  const named = path.resolve(o.root, o.dir ?? path.join('evals', 'review'));
+  if (!statSync(named, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`no case directory ${named}`);
+  // Everything below uses the resolved path, so a link retargeted during the export changes nothing.
+  const dir = realpathSync.native(named);
+  const runner = o.git ?? runSync;
+  // A git that ignores the first variable still tries a lazy fetch. An empty list makes it fail on every transport;
+  // a value such as `none` would allow a protocol of that name, which a remote helper can have.
+  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: '' } });
+  if (o.stateDir !== undefined && existsSync(o.stateDir)) refuseStateOverlap(o.root, dir, o.stateDir, git);
+  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, create: o.create, noHooks: noHookOptions(o.root, git), report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
+  const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
+  for (const run of runs) {
+    const drafts = o.clean ? [cleanDraft(run)].filter((d) => d !== undefined) : run.findings.filter((f) => f.stage === 'formal').map((f) => bugDraft(run, f));
+    for (const d of drafts) writeDraft(ctx, run, d);
+  }
+  return ctx.report;
+}
+
+/** The line form of an export: one line per entry. */
+export function formatBenchExport(r: BenchExportReport): string {
+  const lines = [
+    ...r.written.map((w) => `written ${w.id} ${w.kind} ${w.candidate} ${w.file}`),
+    ...r.existing.map((id) => `existing ${id}`),
+    ...r.skipped.map((s) => `skipped ${s.card} ${s.goal} ${s.source}: ${s.detail}`),
+    ...r.pinConflicts.map((c) => `pin conflict ${c.id}: ${c.detail}`),
+  ];
+  return lines.length ? lines.join('\n') : 'nothing to export';
 }
 
 /** The line form: one line per case and a totals line. */
