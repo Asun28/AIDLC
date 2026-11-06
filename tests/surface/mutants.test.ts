@@ -505,6 +505,18 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     assert.equal(r.read('src/link.ts'), 'true');
   }));
 
+  test('acceptance 11: a path the tree holds as a file but the disk does not gets no mutant [R2]', withRepo(async (r) => {
+    write(r.worktree, 'src/gone.ts', 'export const gone = true;\n');
+    git(r.worktree, 'add', '-A');
+    git(r.worktree, 'commit', '-q', '-m', 'a file');
+    git(r.worktree, 'update-index', '--skip-worktree', 'src/gone.ts');
+    rmSync(path.join(r.worktree, 'src/gone.ts'));
+    mkdirSync(path.join(r.worktree, 'src/gone.ts'));
+    assert.equal(git(r.worktree, 'status', '--porcelain'), '', 'the skipped entry reads as clean');
+    const { report } = await runMutants(input(r), deps(scriptedDod(r)));
+    assert.deepEqual([...new Set(report.mutants.map((m) => m.file))], ['src/m.ts']);
+  }));
+
   test('acceptance 11: a tree git cannot list is refused naming the command; the DoD never runs [R2]', withRepo(async (r) => {
     const dod = scriptedDod(r);
     const failing: MutantsDeps['git'] = (command, args, options) => (args.includes('ls-tree') ? { ...runSync(command, args, options), exitCode: 128, stderr: 'fatal: broken tree' } : runSync(command, args, options));
