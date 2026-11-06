@@ -1,7 +1,7 @@
 ---
 id: T1-VERIFY-MUTANT-GEN-4
 title: An in-house generator lists the mutants of the changed TypeScript source lines of a diff, skipping comments, strings, template literals and regex literals, with no new dependency
-status: todo
+status: merged
 branch: T1-VERIFY-MUTANT-GEN-4
 worktree: D:\wt\AIDLC\T1-VERIFY-MUTANT-GEN-4
 plan_ref: plans/review-verification.md#order-of-work
