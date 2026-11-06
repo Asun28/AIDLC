@@ -109,3 +109,10 @@ Successor of T1-REVIEW-BENCH-EXPORT at a49abef, by the user's ruling of 2026-11-
 - Mutation check: 15 breaks of this change in scratch clones, each restored and none committed; each fails a test.
 - Real ledgers, in a throwaway shared clone with a local `main`: `--clean` wrote 69 and skipped 2, `--card` over 201 cards wrote 460 with 0 skipped and 0 pin conflicts, the clone held 529 pin refs, and this repository holds none. Without a local `main` the same run skips each case with `git merge-base main` failed, which is R5.
 - Correction of the T1-REVIEW-BENCH-EXPORT evidence: Ubuntu git 2.43.0-1ubuntu7.3 honours `GIT_NO_LAZY_FETCH` (`warning: lazy fetching disabled`), so that git does not ignore it. The skip came from a parsed version number, which the lesson of 2026-10-07 forbids, and it is gone. Git 2.54 was not run: the rule for hooks defined in config is tested on 2.56 only.
+
+Repair after R3 decision 1 (classes hook-name-option-parsing, incomplete-protocol-denial, test-probe-lazy-fetch), on 950e5c3:
+- RED: commit 934d2aa. `node --test tests/surface/review-bench-export.test.ts` exited 1, 36 tests, 33 passed, 3 failed, every failure an assertion: acceptance 6 on the empty list, acceptance 13 with `the export started the helper`, and acceptance 18 on the hook name with `=`.
+- GREEN at 6c17e56: `npm run typecheck` exits 0 and the DoD tests pass, 69 of 69. On WSL Ubuntu git 2.43.0-1ubuntu7.3 the export tests give 36 tests, 35 passed, 1 skipped (the hook defined in config), 0 failed.
+- Class sweep: `GIT_ALLOW_PROTOCOL` is set in one place, the runner of `exportBenchCases`, and `git -c` carries a config key in one place, `noHookOptions`. No other value of either remains in `src`, `docs`, `tests` or `CHANGELOG.md`.
+- The observer in acceptance 13 now denies every protocol and drops `GIT_NO_LAZY_FETCH`, so it cannot fetch the blob on a git that ignores that variable; the last read stays unrestricted as the check that the fixture is live.
+- Mutation check: 18 breaks of this change in scratch clones, each restored and none committed; each fails a test.
