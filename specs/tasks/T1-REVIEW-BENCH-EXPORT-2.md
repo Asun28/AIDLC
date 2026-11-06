@@ -99,3 +99,13 @@ npm run typecheck && node --test tests/surface/review-bench-export.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+
+Successor of T1-REVIEW-BENCH-EXPORT at a49abef, by the user's ruling of 2026-11-06:
+- RED: commit c8e7e31. `node --test tests/surface/review-bench-export.test.ts` exited 1, 34 tests, 28 passed, 6 failed, every failure an assertion: the `update-ref` argument list of R7, acceptance 6, acceptance 13 with `GIT_NO_LAZY_FETCH` dropped, acceptance 17 twice and acceptance 18.
+- GREEN at ff301e4: `npm run typecheck` exits 0 and the DoD tests pass, 67 of 67. `node --test tests/surface/*.test.ts` exits 0, 752 tests, 748 passed, 4 skipped, 0 failed. `npm run build && npm run bench -- --check` exits 0.
+- WSL Ubuntu, git 2.43.0-1ubuntu7.3: the export tests give 34 tests, 33 passed, 1 skipped, 0 failed. The skip is the hook defined in config, which that git does not run. Acceptance 13 runs there now.
+- Mutation check: 15 breaks of this change in scratch clones, each restored and none committed; each fails a test.
+- Real ledgers, in a throwaway shared clone with a local `main`: `--clean` wrote 69 and skipped 2, `--card` over 201 cards wrote 460 with 0 skipped and 0 pin conflicts, the clone held 529 pin refs, and this repository holds none. Without a local `main` the same run skips each case with `git merge-base main` failed, which is R5.
+- Correction of the T1-REVIEW-BENCH-EXPORT evidence: Ubuntu git 2.43.0-1ubuntu7.3 honours `GIT_NO_LAZY_FETCH` (`warning: lazy fetching disabled`), so that git does not ignore it. The skip came from a parsed version number, which the lesson of 2026-10-07 forbids, and it is gone. Git 2.54 was not run: the rule for hooks defined in config is tested on 2.56 only.
