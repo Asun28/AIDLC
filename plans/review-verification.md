@@ -130,6 +130,7 @@ changes REVIEW.md's output contract.
 8. T1-REVIEW-PRE-EXISTING: the `[pre-existing]` tag, advisory only on a line the candidate did not change, and its count in `aidlc review stats`.
 9. T1-VERIFY-MUTANT-GEN: the in-house scanner and mutation operators over the changed source lines of a candidate.
 10. T1-VERIFY-MUTANTS: `aidlc card mutants` runs the DoD per mutant, restores each file, and writes the report bound to the candidate commit.
+10a. T1-VERIFY-MUTANTS-2 (successor of T1-VERIFY-MUTANTS, stopped by R3 decision 2): carries that branch and refuses a marker path that is not a regular file and a source with more than one hard link, with a DoD that sets out to reach outside the worktree out of scope by the user's ruling.
 11. T1-VERIFY-MUTANTS-PROMPT: R3 receives the surviving mutants of the current candidate as advisory evidence; `card attempt` refuses while a mutant run is in progress.
 
 ## 7. Task split (dependencies and parallel windows)
@@ -149,7 +150,8 @@ changes REVIEW.md's output contract.
 | T1-REVIEW-PRE-EXISTING | SHOULD | pre-existing tag with the changed-line check | T1-REVIEW-RESPONSES | W7 | - |
 | T1-VERIFY-MUTANT-GEN | SHOULD | scanner and operators over changed lines | - | W8 | - |
 | T1-VERIFY-MUTANTS | SHOULD | mutant runner, restore and report | T1-VERIFY-MUTANT-GEN | W9 | - |
-| T1-VERIFY-MUTANTS-PROMPT | SHOULD | surviving mutants in the R3 prompt | T1-VERIFY-MUTANTS | W10 | - |
+| T1-VERIFY-MUTANTS-2 | SHOULD | mutant runner, restore and report, successor | T1-VERIFY-MUTANT-GEN | W9 | - |
+| T1-VERIFY-MUTANTS-PROMPT | SHOULD | surviving mutants in the R3 prompt | T1-VERIFY-MUTANTS-2 | W10 | - |
 
 The cards share `CHANGELOG.md`, so they run one at a time in the order above.
 
