@@ -1,7 +1,7 @@
 ---
 id: T0-REVIEW-CANDIDATE-PINS
 title: Pin each candidate under refs/aidlc/candidates/ before its R3 decision is written, so a squash merge and a deleted branch cannot lose a commit the review ledger names
-status: todo
+status: merged
 branch: T0-REVIEW-CANDIDATE-PINS
 worktree: D:\wt\AIDLC\T0-REVIEW-CANDIDATE-PINS
 allow_paths:
@@ -71,3 +71,20 @@ npm run typecheck && node --test tests/scenarios/candidate-pins.test.ts tests/su
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and every listed test passes.
+
+## Attempt evidence
+
+- RED: commit ad7bd5a. `node --test tests/scenarios/candidate-pins.test.ts` exited 1, 10 tests, 2 passed, 8 failed, every failure the missing ref or an assertion on it. The two that passed are the R4 tests, which assert that nothing is pinned.
+- GREEN: `npm run typecheck` exits 0 and `npm test` exits 0, 2155 tests, 2149 passed, 6 skipped, 0 failed, at the commit before the last three tests went in. `npm run build && npm run bench -- --check` exits 0.
+- A first full run failed acceptance 5, and a rerun of that test alone failed 2 of 3 times. The cause was the fixture: git 2.56 ends with `must be configured` on a hook with `.event` and no `.command` when `git status` refreshes the index, which depends on timing. The fixture now gives the hook a command, and the test passed 6 of 6 repeats.
+- WSL Ubuntu, git 2.43.0-1ubuntu7.3: the pin and export tests give 51 tests, 49 passed, 2 skipped (the hooks defined in config, which that git does not run), 0 failed.
+- Mutation check: 20 breaks of this change in scratch clones, each restored and none committed; each fails a test. One survived the first sweep, a pin of `HEAD` in place of the reviewed commit, so the replaced-candidate test now moves `HEAD`, and that break fails it. A sweep of my own tests before the mutants added three: the pin order on the ship path, an advisory block, and a symbolic ref at the pin name.
+- verify-card-run-writes: in sync. `src/loop/card-runner.ts` changed without a change to a store write, a journal append or their order: the pin is a ref write and the event gains fields, so the coverage record and the sync commit stay. `tests/scenarios/fault-points.test.ts` passes unchanged and its fixture has `isGit` false, so that check does not reach the pin.
+
+Repair after R3 decision 1 (classes pin-error-escapes, pin-result-not-persisted), on fd79756:
+- R2 raised the first class as an advisory on fd79756. A candidate that passed cannot take a new attempt, so it went to R3 unchanged, and R3 reproduced it with a thrown string.
+- RED: commit 4d90823. `node --test tests/scenarios/candidate-pins.test.ts` exited 1, 16 tests, 13 passed, 3 failed, every failure an assertion: any thrown value on each path, and the lost `REVIEW_DECIDED` append.
+- GREEN at 5ff4a31: `npm run typecheck` exits 0 and the DoD tests pass, 370 of 370. `npm test` exits 0, 2160 tests, 2154 passed, 6 skipped, 0 failed. `npm run build && npm run bench -- --check` exits 0.
+- WSL Ubuntu, git 2.43.0-1ubuntu7.3: the pin and export tests give 54 tests, 52 passed, 2 skipped (the hooks defined in config), 0 failed.
+- Class sweep: `pinDecided` is the one catch around a pin, and the command path was the one place the result rode on `extra`. The ship path appends its `REVIEW_DECIDED` directly, as before this card, so a failed append there loses the whole event; that is a non-goal of this card. The three `(err as Error).message` sites left in `src/review/bench.ts` report errors from `JSON.parse`, the file system and git steps, and none is on the pin path.
+- Mutation check: 25 breaks in scratch clones, each restored and none committed. 24 fail a test. The other adds the pin fields to `extra` as well as the event, which changes nothing. A pin error of `undefined` for a thrown string survived the sweep, so the tests now assert the cause each value names.

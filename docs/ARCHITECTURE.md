@@ -177,6 +177,8 @@ Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all link
 | `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |
 | `session-default` | default session token shared by processes that set no `AIDLC_SESSION` and run outside Claude Code (no `CLAUDE_CODE_SESSION_ID`) | `state/journal.ts` |
 
+Two records live in git instead, as local refs: `refs/aidlc/candidates/<sha>` keeps each commit R3 decided on, written by the card runner before the decision, and `refs/aidlc/bench/<id>` keeps the candidate of a bench case.
+
 ## Evidence and audit chain
 
 1. Every controller, card runner and release runner action appends a `JournalEvent`; each event hashes its canonical JSON plus the previous hash. `Journal.verify()` detects malformed lines, sequence gaps, prev-hash mismatches and altered events. The card runner appends an attempt, R2, R3 or merge-result event only after the card-run write that commits its decision, which records the event as owed (`CardRun.journalOwed`); an append that did not land is made by the next card-run command on the card, so each such event reaches the journal once and never ahead of its record (card T0-JOURNAL-FAULT-EVENTS).

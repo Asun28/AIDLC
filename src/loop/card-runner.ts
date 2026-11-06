@@ -23,7 +23,7 @@ import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
-import { GitProbe } from '../probes/git.ts';
+import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
@@ -172,6 +172,15 @@ export function shipPathFor(config: ProjectConfig, mainRoot: string, runner: Syn
   return new DryRunShipPath();
 }
 
+/** One nonempty line for whatever a failed pin threw. It never throws itself, since a failed pin never changes a review. */
+function pinFailure(thrown: unknown): string {
+  try {
+    return oneLine(thrown instanceof Error ? thrown.message : String(thrown)) || 'the pin threw an empty message';
+  } catch {
+    return 'the pin threw a value with no text';
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -222,6 +231,21 @@ export class CardRunner {
   /** The checkout a review reads: the card worktree when it exists, else the main checkout. */
   private reviewCheckout(run: CardRun): string {
     return run.worktree && existsSync(run.worktree) ? run.worktree : this.repo.mainRoot;
+  }
+
+  /**
+   * Keep a commit R3 decides on before the decision is written (card T0-REVIEW-CANDIDATE-PINS): a squash merge leaves it on its
+   * branch alone, so a deleted branch and a gc would lose a commit the ledger names. A failure never changes the review; the
+   * decision's event carries it. A pass or a block is a decision here; a no-verdict and a quota hold name no decision.
+   */
+  private pinDecided(outcome: string, cwd: string, sha: string | undefined): { candidatePinned?: boolean; pinError?: string } {
+    if (!this.repo.isGit || !sha || !(outcome === 'pass' || outcome === 'block-defect' || outcome === 'block-advisory')) return {};
+    try {
+      this.git.pinCandidate(cwd, sha);
+      return { candidatePinned: true };
+    } catch (err) {
+      return { candidatePinned: false, pinError: pinFailure(err) };
+    }
   }
 
   /** The candidate a review is bound to: the pinned sha, verified against the checkout HEAD in a git repository. */
@@ -2070,6 +2094,7 @@ export class CardRunner {
     // The decision (counters and action), the finding round and the resulting state are computed from the ledger
     // locked at completion, so a decision another completion recorded meanwhile is counted, never overwritten.
     let decision: LedgerDecision | undefined;
+    const pin = this.pinDecided(classified.outcome, this.reviewCheckout(persisted), candidateSha);
     const committed = this.commitReviewed(
       goal,
       card,
@@ -2115,7 +2140,7 @@ export class CardRunner {
             },
           };
         },
-        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash } }),
+        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash, ...pin } }),
       },
       after,
     );
@@ -2492,6 +2517,7 @@ export class CardRunner {
       let rec: ReturnType<typeof recordReviewOutcome> | undefined;
       let recorded = false;
       let found: RecordFindingsResult = { findings: run.findings, raised: [], reraised: [], resolved: [] };
+      const pin = this.pinDecided(classified.outcome, this.reviewCheckout(run), run.candidate?.sha);
       const locked = this.store.updateCardRun(goal.id, card.id, (persisted) => {
         const current = persisted ?? run;
         rec = undefined;
@@ -2513,7 +2539,7 @@ export class CardRunner {
       const standing = standingFor(review);
       // The ledger's standing decision for an artifact already recorded decides again; nothing new is recorded.
       reviewDecision = rec ? rec.decision : standing ? (standing.outcome === 'block' && classified.mergeBlocking ? ({ action: review.substantiveBlocks >= 2 ? 'stop-review' : 'review-fix', remainingDecisions: Math.max(0, MAX_SUBSTANTIVE_REVIEW_DECISIONS - review.substantiveDecisions), detail: 'second substantive block' } as LedgerDecision) : { action: 'proceed-merge' }) : undefined;
-      if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash } });
+      if (recorded && rec) this.journal(goal.id).append({ type: 'REVIEW_DECIDED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { invocationId, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: rec.decision.action, runStatus: classified.runStatus, findings: found.raised, reraised: found.reraised, resolved: found.resolved, advisory: shipAdvisory, policyHash: shipPolicyHash, ...pin } });
     }
     // The queue slot and the operation are settled before the outcome is applied. Only a review-no-verdict outcome holds the
     // pool on a quota message: the receipt is the output of the whole ship command (git, gh, the CI gate log), so any other

@@ -271,6 +271,8 @@ Loop latency (card T0-LOOP-SPEED). Measured on Windows 11, Node 22.23, before ->
 - Card lease heartbeat (T0-LEASE-HEARTBEAT, bugfix): `CardRunner.next` renews the card lease when the acting session owns it at the run's generation, so a BUILD longer than the 10-minute TTL no longer fences the ship as STOP/ownership; a stop caused only by the owner's own expiry is revalidated on the next call. A lease held by another session still stops. Found by the loop itself while shipping T0-LOOP-SPEED.
 - WAIT resumption (T0-WAIT-VERIFY, bugfix): a goal polled with `aidlc next` while its cards were running parks in WAIT; once every required card closed, `nextInRun` attempted WAIT -> VERIFY_ARC, which the goal diagram forbids, so `next`, `report` and `card report` threw GoalTransitionError and the goal could never finish. It now resumes WAIT -> RUN (journaled) and then derives VERIFY_ARC. Found by the loop itself while closing T0-LOOP-SPEED.
 
+- T0-REVIEW-CANDIDATE-PINS: the card runner writes `refs/aidlc/candidates/<sha>` before it writes an R3 pass or block, on the command path and the ship path, so a commit the review ledger names survives a deleted branch and `git gc`. A squash merge leaves a card's commits on its branch alone, and on 2026-11-06 a gc dropped 77 recorded candidates, 8 of them for good. No hook runs for the pin, and a failed pin changes no review: `REVIEW_DECIDED` carries `candidatePinned` and, on a failure, `pinError`.
+
 ## 0.1.0 - 2026-09-11
 
 First implementation of the v5 aidlc-loop plan as a TypeScript library and CLI.
