@@ -5,7 +5,8 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
 import { makeFixture, writeCard, type Fixture } from './_harness.ts';
@@ -306,6 +307,97 @@ test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a failed update-ref or a refused ho
   assert.equal(refused.event['candidatePinned'], false);
   assert.match(String(refused.event['pinError']), /hook\.Bench=Hook\.event/);
   assert.deepEqual(refused.pins, []);
+});
+
+/** Values a runner can throw that `pinError` still has to name in one nonempty line. */
+const THROWN: unknown[] = ['plain text', null, new Error(''), Object.create(null)];
+const throwing = (value: unknown): Options['onGit'] => (_command, args) => {
+  if (args.includes('update-ref')) throw value;
+  return undefined as never;
+};
+const assertOneLine = (text: unknown) => assert.match(String(text), /^\S.*$/, 'one nonempty line');
+
+test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a runner that throws any value leaves the review as a working pin leaves it, on the command path [R3]', async () => {
+  const pinned = await blockedWith({});
+  for (const value of THROWN) {
+    const thrown = await blockedWith({ onGit: throwing(value) });
+    assert.deepEqual(thrown.summary, pinned.summary);
+    assert.equal(thrown.event['candidatePinned'], false);
+    assertOneLine(thrown.event['pinError']);
+  }
+});
+
+test('T0-REVIEW-CANDIDATE-PINS acceptance 5: a runner that throws any value leaves the decision of the ship path in place [R3]', () => {
+  for (const value of THROWN) {
+    const fx = makeFixture();
+    try {
+      gitRepo(fx);
+      const candidate = commitCandidate(fx, 1);
+      const reasons = [`[spec] 6 tests missing @ ${FILE}:1: no test -> add one`];
+      const document: Verdict = { verdict: 'block', reasons, axes: { spec: { verdict: 'block', reasons }, standards: { verdict: 'pass', reasons: [] } }, sha: candidate, run_status: 'success' };
+      const { runner } = runnerFor(fx, { ship: new DryRunShipPath(['review-blocked', 'review-blocked'], document), onGit: throwing(value) });
+      const { goalId, run } = start(fx, runner);
+      const card = fx.card(CARD);
+      const recorded = runner.recordAttempt(fx.goal(goalId), card, run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: candidate });
+      const blocked = runner.next(fx.goal(goalId), card, recorded);
+      assert.equal(blocked.run.state, 'REVIEW_FIX');
+      assert.equal(blocked.run.review.substantiveBlocks, 1);
+      assert.equal(decided(fx, goalId).at(-1)?.['candidatePinned'], false);
+      assertOneLine(decided(fx, goalId).at(-1)?.['pinError']);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+/** Run `body` with the first journal append of a REVIEW_DECIDED line failing, the failure patched on the `node:fs` export. */
+async function failingDecidedAppend(body: () => Promise<unknown>): Promise<unknown> {
+  const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
+  const real = target['appendFileSync']!;
+  let fired = false;
+  target['appendFileSync'] = (...args: unknown[]) => {
+    if (!fired && String(args[0]).endsWith('.jsonl') && String(args[1]).includes('"type":"REVIEW_DECIDED"')) {
+      fired = true;
+      throw Object.assign(new Error('EIO: injected append'), { code: 'EIO' });
+    }
+    return real(...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    await body();
+    return undefined;
+  } catch (error) {
+    return error;
+  } finally {
+    target['appendFileSync'] = real;
+    syncBuiltinESMExports();
+  }
+}
+
+test('T0-REVIEW-CANDIDATE-PINS acceptance 10: a lost REVIEW_DECIDED append is made by the next card next with the pin result [R3]', async () => {
+  for (const failed of [false, true]) {
+    const fx = makeFixture({ config: REVIEWED_CONFIG });
+    try {
+      gitRepo(fx);
+      const candidate = commitCandidate(fx, 1);
+      const onGit: Options['onGit'] = failed
+        ? (command, args, options) => (args.includes('update-ref') ? { ...runSync(command, ['--version'], options), exitCode: 1, stdout: '', stderr: 'fatal: cannot lock ref\n' } : (undefined as never))
+        : undefined;
+      const { runner } = runnerFor(fx, { onGit });
+      const { goalId, run } = start(fx, runner);
+      const error = await failingDecidedAppend(() => decide(fx, runner, goalId, run, candidate, 1));
+      assert.match(String(error), /injected append/);
+      assert.equal(decided(fx, goalId).length, 0, 'the append was lost');
+      runner.next(fx.goal(goalId), fx.card(CARD), fx.store.getCardRun(goalId, CARD)!);
+      const events = decided(fx, goalId);
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.['candidatePinned'], !failed);
+      if (failed) assert.match(String(events[0]?.['pinError']), /cannot lock ref/);
+      else assert.equal(events[0]?.['pinError'], undefined);
+    } finally {
+      fx.cleanup();
+    }
+  }
 });
 
 const mark = (marker: string) => `echo ran >> '${marker.replace(/\\/g, '/')}'`;
