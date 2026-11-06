@@ -32,6 +32,7 @@ sweep: "git grep CLAUDE on main at c93f77f over tests, src and .claude/agents: b
 forbid: [weakening or skipping a test to go green, changing an existing assertion, removing a fact that has no stated home, unwrapping lines to lower the count]
 non_goals: ["the 80-line limit, replaced by 200 in this session", "moving the environment variable sentences out of CLAUDE.md", "path-scoped .claude/rules/ files", "changing a section an existing repository already has (aidlc init leaves it)", "changes to src/, hooks, skills, REVIEW.md or docs/"]
 doc_sync: CHANGELOG.md
+superseded_by: T0-CLAUDE-MD-TRIM-2
 ---
 
 # T0-CLAUDE-MD-TRIM
