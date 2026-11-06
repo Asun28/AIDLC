@@ -1,6 +1,7 @@
 /**
  * T1-REVIEW-BENCH-EXPORT: `aidlc review bench export` drafts unconfirmed cases from the card-run ledgers and pins each
  * candidate under `refs/aidlc/bench/`, in a fixture repository with fixed commit dates and fixed ISO timestamps.
+ * T1-REVIEW-BENCH-EXPORT-2: no git version lazily fetches for it, and no hook runs for its `update-ref`.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -94,6 +95,8 @@ const ids = ['F2', 'F3', 'F4'].map((f) => caseId(f));
 const options = (r: Repo, runs: CardRun[], over: Partial<BenchExportOptions> = {}): BenchExportOptions => ({ root: r.root, runs, cardId: CARD, ...over });
 const caseFile = (r: Repo, id: string) => path.join(r.caseDir, `${id}.json`);
 const benchRefs = (r: Repo) => git(r.root, ['for-each-ref', '--format=%(refname)', 'refs/aidlc/bench/']).split('\n').filter(Boolean);
+/** The git subcommand of an argv, after any `-c <config>` options. */
+const subcommand = (args: string[]) => args.find((arg, i) => arg !== '-c' && args[i - 1] !== '-c');
 
 test('T1-REVIEW-BENCH-EXPORT acceptance 1: one bug draft per formal finding, in the schema key order, with the id, class, site and base rules [R1] [R2] [R3]', () => {
   const r = repo();
@@ -330,7 +333,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: the absent ref is created with the zero old val
   try {
     const calls: string[][] = [];
     const racing: SyncRunner = (command, args, opts) => {
-      if (args[0] === 'update-ref') {
+      if (subcommand(args) === 'update-ref') {
         calls.push(args);
         git(r.root, ['update-ref', `refs/aidlc/bench/${caseId('F1')}`, r.base]);
       }
@@ -338,7 +341,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: the absent ref is created with the zero old val
     };
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
     const report = exportBenchCases(options(r, [run], { git: racing }));
-    assert.deepEqual(calls, [['update-ref', '--no-deref', `refs/aidlc/bench/${caseId('F1')}`, r.candidate, '0'.repeat(40)]]);
+    assert.deepEqual(calls, [['-c', 'core.hooksPath=/dev/null', 'update-ref', '--no-deref', `refs/aidlc/bench/${caseId('F1')}`, r.candidate, '0'.repeat(40)]]);
     assert.equal(git(r.root, ['rev-parse', `refs/aidlc/bench/${caseId('F1')}`]), r.base);
     assert.equal(report.pinConflicts.length, 1);
   } finally {
@@ -349,7 +352,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: the absent ref is created with the zero old val
 test('T1-REVIEW-BENCH-EXPORT R7: a failed update-ref removes the file it just wrote, is listed with the git error, and a later export writes the case', () => {
   const r = repo();
   try {
-    const failing: SyncRunner = (command, args, opts) => (args[0] === 'update-ref' ? { ...runSync(command, ['--version'], opts), exitCode: 1, stderr: 'fatal: no\nlock held\n' } : runSync(command, args, opts));
+    const failing: SyncRunner = (command, args, opts) => (subcommand(args) === 'update-ref' ? { ...runSync(command, ['--version'], opts), exitCode: 1, stderr: 'fatal: no\nlock held\n' } : runSync(command, args, opts));
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
     const report = exportBenchCases(options(r, [run], { git: failing }));
     assert.deepEqual(report.written, []);
@@ -366,7 +369,7 @@ test('T1-REVIEW-BENCH-EXPORT R7: an update-ref runner that throws counts as a fa
   const r = repo();
   try {
     const throwing: SyncRunner = (command, args, opts) => {
-      if (args[0] !== 'update-ref') return runSync(command, args, opts);
+      if (subcommand(args) !== 'update-ref') return runSync(command, args, opts);
       rmSync(caseFile(r, caseId('F1')));
       mkdirSync(caseFile(r, caseId('F1')));
       throw new Error('spawn died');
@@ -409,13 +412,13 @@ test('T1-REVIEW-BENCH-EXPORT R7: a rev-parse that errors is not an absent ref: n
   }
 });
 
-test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-base, rev-parse, symbolic-ref -q or update-ref --no-deref under refs/aidlc/bench/ with lazy fetch off, and no other ref appears [R8]', () => {
+test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-base, rev-parse, symbolic-ref -q, the read form of config or update-ref --no-deref under refs/aidlc/bench/ with hooks and every fetch off, and no other ref appears [R8] [R12]', () => {
   const r = repo();
   try {
     const before = git(r.root, ['for-each-ref', '--format=%(refname)']).split('\n');
-    const calls: Array<{ command: string; args: string[]; cwd?: string; noLazyFetch?: string }> = [];
+    const calls: Array<{ command: string; args: string[]; cwd?: string; noLazyFetch?: string; protocols?: string }> = [];
     const recorder: SyncRunner = (command, args, opts) => {
-      calls.push({ command, args, cwd: opts?.cwd, noLazyFetch: opts?.env?.['GIT_NO_LAZY_FETCH'] });
+      calls.push({ command, args, cwd: opts?.cwd, noLazyFetch: opts?.env?.['GIT_NO_LAZY_FETCH'], protocols: opts?.env?.['GIT_ALLOW_PROTOCOL'] });
       return runSync(command, args, opts);
     };
     exportBenchCases(options(r, [fixRun(r.candidate)], { git: recorder }));
@@ -424,13 +427,18 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 6: every git call is cat-file, merge-bas
       assert.equal(c.command, 'git');
       assert.equal(c.cwd, r.root);
       assert.equal(c.noLazyFetch, '1', c.args.join(' '));
-      assert.ok(['cat-file', 'merge-base', 'rev-parse', 'symbolic-ref', 'update-ref'].includes(c.args[0]!), c.args.join(' '));
-      if (c.args[0] === 'symbolic-ref') assert.deepEqual(c.args.slice(0, -1), ['symbolic-ref', '-q']);
-      if (c.args[0] === 'update-ref') {
-        assert.equal(c.args[1], '--no-deref');
-        assert.ok(c.args[2]!.startsWith('refs/aidlc/bench/'), c.args.join(' '));
+      assert.equal(c.protocols, 'none', c.args.join(' '));
+      const name = subcommand(c.args)!;
+      assert.ok(['cat-file', 'merge-base', 'rev-parse', 'symbolic-ref', 'config', 'update-ref'].includes(name), c.args.join(' '));
+      if (name === 'symbolic-ref') assert.deepEqual(c.args.slice(0, -1), ['symbolic-ref', '-q']);
+      if (name === 'config') assert.deepEqual(c.args, ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$']);
+      if (name === 'update-ref') {
+        const [first, second, third, fourth, ref] = c.args;
+        assert.deepEqual([first, second, third, fourth], ['-c', 'core.hooksPath=/dev/null', 'update-ref', '--no-deref']);
+        assert.ok(ref!.startsWith('refs/aidlc/bench/'), c.args.join(' '));
       }
     }
+    assert.equal(calls.filter((c) => c.args[0] === 'config').length, 1);
     const after = git(r.root, ['for-each-ref', '--format=%(refname)']).split('\n');
     assert.deepEqual(after.sort(), [...before, ...ids.map((id) => `refs/aidlc/bench/${id}`)].sort());
   } finally {
@@ -465,7 +473,7 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 12: a dangling symbolic ref that appears
   try {
     const ref = `refs/aidlc/bench/${caseId('F1')}`;
     const late: SyncRunner = (command, args, opts) => {
-      if (args[0] === 'update-ref') git(r.root, ['symbolic-ref', ref, 'refs/heads/nope']);
+      if (subcommand(args) === 'update-ref') git(r.root, ['symbolic-ref', ref, 'refs/heads/nope']);
       return runSync(command, args, opts);
     };
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
@@ -486,10 +494,10 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 12: a dangling symbolic ref that appears
   }
 });
 
-const gitVersion = /(\d+)\.(\d+)/.exec(git(tmpdir(), ['--version']))!;
-const hasNoLazyFetch = Number(gitVersion[1]) > 2 || Number(gitVersion[2]) >= 45;
+/** An environment without GIT_NO_LAZY_FETCH in any letter case: what a git that ignores the variable sees. */
+const withoutNoLazyFetch = (env: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env).filter(([key]) => key.toUpperCase() !== 'GIT_NO_LAZY_FETCH'));
 
-test('T1-REVIEW-BENCH-EXPORT acceptance 13: in a partial clone a blob the clone lacks is skipped and never fetched [R8]', { skip: hasNoLazyFetch ? false : 'git before 2.45 ignores GIT_NO_LAZY_FETCH' }, () => {
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 13: in a partial clone a blob the clone lacks is skipped and never fetched, whether or not git honours GIT_NO_LAZY_FETCH [R8]', () => {
   const r = repo();
   try {
     git(r.root, ['config', 'uploadpack.allowFilter', 'true']);
@@ -498,10 +506,89 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 13: in a partial clone a blob the clone 
     mkdirSync(path.join(clone, 'evals', 'review'), { recursive: true });
     const blob = git(r.root, ['rev-parse', `${r.candidate}:specs/tasks/${CARD}.md`]);
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
-    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD });
+    const held = (env: NodeJS.ProcessEnv) => spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env, windowsHide: true }).status === 0;
+    const noFetch = { ...gitEnv, GIT_NO_LAZY_FETCH: '1' };
+    const asShipped = exportBenchCases({ root: clone, runs: [run], cardId: CARD });
+    assert.match(asShipped.skipped[0]?.detail ?? '', /no card file/);
+    assert.equal(held(noFetch), false, 'the export fetched the blob');
+    const ignored: SyncRunner = (command, args, opts) => runSync(command, args, { ...opts, env: withoutNoLazyFetch(opts?.env) });
+    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, git: ignored });
     assert.match(report.skipped[0]?.detail ?? '', /no card file/);
-    const stillMissing = spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env: { ...gitEnv, GIT_NO_LAZY_FETCH: '1' }, windowsHide: true });
-    assert.notEqual(stillMissing.status, 0, 'the export fetched the blob');
+    assert.equal(held(noFetch), false, 'with the variable ignored, the export fetched the blob');
+    assert.equal(held(withoutNoLazyFetch(gitEnv)), true, 'a plain read fetches the blob, so the fixture exercises lazy fetching');
+  } finally {
+    r.cleanup();
+  }
+});
+
+/** Whether a plain `git update-ref` runs the hooks now set up, leaving no ref and no marker behind. */
+function plainUpdateRunsHook(r: Repo, marker: string): boolean {
+  rmSync(marker, { force: true });
+  git(r.root, ['update-ref', 'refs/aidlc/probe', r.candidate]);
+  git(r.root, ['update-ref', '-d', 'refs/aidlc/probe']);
+  const ran = existsSync(marker);
+  rmSync(marker, { force: true });
+  return ran;
+}
+
+const mark = (marker: string) => `echo ran >> '${marker.replace(/\\/g, '/')}'`;
+
+/** The export of one finding writes its ref without running the hook the repository holds, and leaves the config file as it was. */
+function assertExportRunsNoHook(r: Repo, marker: string, id: string): void {
+  const config = path.join(r.root, '.git', 'config');
+  const before = readFileSync(config);
+  const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding(id, F2, r.candidate)] });
+  const report = exportBenchCases(options(r, [run]));
+  assert.deepEqual(report.written.map((w) => w.id), [caseId(id)]);
+  assert.equal(git(r.root, ['rev-parse', report.written[0]!.ref]), r.candidate);
+  assert.equal(existsSync(marker), false, 'the export ran the hook');
+  assert.deepEqual(readFileSync(config), before);
+}
+
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 17: a reference-transaction hook in .git/hooks or in a core.hooksPath directory runs for a plain update-ref and not for the export [R12]', () => {
+  const r = repo();
+  try {
+    const marker = path.join(r.dir, 'hook-ran');
+    const script = `#!/bin/sh\n${mark(marker)}\n`;
+    const hooks = path.join(r.root, '.git', 'hooks');
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(path.join(hooks, 'reference-transaction'), script, { mode: 0o755 });
+    assert.equal(plainUpdateRunsHook(r, marker), true, 'the hook in .git/hooks runs');
+    assertExportRunsNoHook(r, marker, 'F1');
+    rmSync(path.join(hooks, 'reference-transaction'));
+    const other = path.join(r.dir, 'other-hooks');
+    mkdirSync(other);
+    writeFileSync(path.join(other, 'reference-transaction'), script, { mode: 0o755 });
+    git(r.root, ['config', 'core.hooksPath', other.replace(/\\/g, '/')]);
+    assert.equal(plainUpdateRunsHook(r, marker), true, 'the hook in the core.hooksPath directory runs');
+    assertExportRunsNoHook(r, marker, 'F2');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 17: a hook defined in config runs for a plain update-ref and not for the export, on a git that has such hooks [R12]', (t) => {
+  const r = repo();
+  try {
+    const marker = path.join(r.dir, 'hook-ran');
+    git(r.root, ['config', 'hook.Bench.Hook.event', 'reference-transaction']);
+    git(r.root, ['config', 'hook.Bench.Hook.command', mark(marker)]);
+    if (!plainUpdateRunsHook(r, marker)) return t.skip('this git runs no hook defined in config');
+    assertExportRunsNoHook(r, marker, 'F1');
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-2 acceptance 18: a git config that fails ends the export before any draft, and one that finds no hook exports [R12]', () => {
+  const r = repo();
+  try {
+    const answering = (exitCode: number, stderr: string): SyncRunner => (command, args, opts) => (args[0] === 'config' ? { ...runSync(command, ['--version'], opts), exitCode, stdout: '', stderr } : runSync(command, args, opts));
+    assert.throws(() => exportBenchCases(options(r, [fixRun(r.candidate)], { git: answering(128, 'fatal: bad\nconfig\n') })), /git config failed: fatal: bad config/);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.deepEqual(benchRefs(r), []);
+    const report = exportBenchCases(options(r, [fixRun(r.candidate)], { git: answering(1, '') }));
+    assert.deepEqual(report.written.map((w) => w.id), ids);
   } finally {
     r.cleanup();
   }
