@@ -253,12 +253,15 @@ test('T0-REVIEW-CANDIDATE-PINS R1: a candidate the author replaced during its re
     let goalId = '';
     const { runner } = runnerFor(fx, {
       onReview: () => {
-        fx.store.updateCardRun(goalId, CARD, (current) => ({ ...current!, candidate: { ...current!.candidate!, sha: 'b'.repeat(40), digest: 'b'.repeat(64) } }));
+        // HEAD moves on, so the ref has to name the commit that was reviewed.
+        const replaced = commitCandidate(fx, 2);
+        fx.store.updateCardRun(goalId, CARD, (current) => ({ ...current!, candidate: { ...current!.candidate!, sha: replaced, digest: 'b'.repeat(64) } }));
       },
     });
     const opened = start(fx, runner);
     goalId = opened.goalId;
     await decide(fx, runner, goalId, opened.run, candidate, 1);
+    assert.notEqual(git(fx.tmp, ['rev-parse', 'HEAD']), candidate, 'the fixture moved HEAD');
     assert.equal(git(fx.tmp, ['rev-parse', pinRef(candidate)]), candidate);
   } finally {
     fx.cleanup();
