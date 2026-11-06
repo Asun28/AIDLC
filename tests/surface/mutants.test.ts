@@ -6,9 +6,9 @@ import { createHash } from 'node:crypto';
 import { cpSync, existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { MUTATION_OPERATORS, MutantPending, MutantReport, type MutantResult } from '../../src/core/types.ts';
-import { runSync, scriptedRunner, type ExecOptions, type ExecReceipt, type Runner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner, type ExecOptions, type ExecReceipt, type Runner, type SyncRunner } from '../../src/probes/exec.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, mutantsMarkerPath, mutantsReportPath, restoreMutants, runMutants, type MutantsDeps, type RunMutantsInput } from '../../src/review/mutants.ts';
 import { goalForCards, makeFixture, writeCard } from '../scenarios/_harness.ts';
 
@@ -558,6 +558,9 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     writeFileSync(path.join(r.worktree, '.git', 'info', 'attributes'), '*.ts diff=upper\n');
     const configured = await runMutants(input(r, { base }), deps(scriptedDod(r)));
     assert.deepEqual(configured.report.mutants.map((m) => [m.file, m.line, m.operator]), expected);
+    writeFileSync(path.join(r.worktree, '.git', 'info', 'attributes'), '*.ts -diff\n');
+    const binary = await runMutants(input(r, { base }), deps(scriptedDod(r)));
+    assert.deepEqual(binary.report.mutants.map((m) => [m.file, m.line, m.operator]), expected, 'a -diff attribute drops no file');
   }));
 
   test('acceptance 11: a baseline run that rewrites the first mutant\'s file stops the run naming it before any mutant, and the marker is gone [R7]', withRepo(async (r) => {
@@ -846,14 +849,55 @@ describe('no read or write follows a link out of the worktree (card T1-VERIFY-MU
     utimesSync(path.join(r.worktree, 'src/m.ts'), new Date('2030-01-01T00:00:00.000Z'), new Date('2030-01-01T00:00:00.000Z'));
     const index = path.join(r.worktree, '.git', 'index');
     const saved = readFileSync(index);
-    const calls: string[][] = [];
+    const calls: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
     await runMutants(input(r, { max: 1 }), { ...deps(killOne(r)), git: (command, args, options) => {
-      calls.push(args);
+      calls.push({ args, env: options?.env });
       return runSync(command, args, options);
     } });
-    assert.ok(calls.length >= 3, 'status, head and diff at least');
-    assert.ok(calls.every((args) => args[0] === '--no-optional-locks'), JSON.stringify(calls));
+    assert.ok(calls.length >= 4, 'status, head, diff and ls-tree at least');
+    for (const { args, env } of calls) {
+      assert.deepEqual(args.slice(0, 3), ['--no-optional-locks', '-c', 'core.fsmonitor=false'], JSON.stringify(args));
+      assert.deepEqual(Object.keys(env ?? {}).filter((name) => /^git_/i.test(name)).sort(), ['GIT_ALLOW_PROTOCOL', 'GIT_NO_LAZY_FETCH'], 'no inherited GIT_ variable');
+      assert.deepEqual([env?.['GIT_NO_LAZY_FETCH'], env?.['GIT_ALLOW_PROTOCOL']], ['1', '']);
+    }
     assert.deepEqual(readFileSync(index), saved, 'the index was not rewritten');
+  }));
+
+  test('acceptance 13: an inherited GIT_DIFF_OPTS or GIT_DIR keeps every mutant [R15]', withRepo(async (r) => {
+    for (const [name, value] of [['GIT_DIFF_OPTS', '--unified=3'], ['GIT_DIR', path.join(r.dir, 'no-such-repository')]] as const) {
+      process.env[name] = value;
+      try {
+        const { report } = await runMutants(input(r), deps(scriptedDod(r)));
+        assert.equal(report.generated, 4, `${name} changed the sweep`);
+      } finally {
+        delete process.env[name];
+      }
+    }
+  }));
+
+  test('acceptance 13: a base that starts with - is refused before the git runner [R10]', withRepo(async (r) => {
+    const never = (): never => assert.fail('the git runner is not called');
+    for (const base of ['--output=written-by-git', '-x']) await assert.rejects(runMutants(input(r, { base }), { ...deps(scriptedDod(r)), git: never }), /starts with -/);
+    assert.equal(existsSync(path.join(r.worktree, 'written-by-git')), false);
+  }));
+
+  test('acceptance 13: in a partial clone a base blob the clone lacks is refused and never fetched, whether or not git honours GIT_NO_LAZY_FETCH [R15]', withRepo(async (r) => {
+    git(r.worktree, 'config', 'uploadpack.allowFilter', 'true');
+    const clone = path.join(r.dir, 'partial');
+    git(r.dir, 'clone', '-q', '--filter=blob:none', pathToFileURL(r.worktree).href, clone);
+    const blob = git(r.worktree, 'rev-parse', `${r.base}:src/m.ts`);
+    const without = (env: NodeJS.ProcessEnv | undefined): NodeJS.ProcessEnv => Object.fromEntries(Object.entries(env ?? {}).filter(([name]) => name.toUpperCase() !== 'GIT_NO_LAZY_FETCH'));
+    const held = (env: NodeJS.ProcessEnv) => spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env, windowsHide: true }).status === 0;
+    const noFetch = { ...without(process.env), GIT_ALLOW_PROTOCOL: '' };
+    const dod = scriptedDod(r);
+    const sweep = { ...input(r), worktree: clone };
+    await assert.rejects(runMutants(sweep, deps(dod)), /git diff/);
+    assert.equal(held(noFetch), false, 'the sweep fetched the blob');
+    const ignored: SyncRunner = (command, args, options) => runSync(command, args, { ...options, env: without(options?.env) });
+    await assert.rejects(runMutants(sweep, { ...deps(dod), git: ignored }), /git diff/);
+    assert.equal(held(noFetch), false, 'with the variable ignored, the sweep fetched the blob');
+    assert.equal(dod.calls.length, 0, 'no DoD ran');
+    assert.equal(held(without(process.env)), true, 'a plain read fetches the blob, so the fixture exercises lazy fetching');
   }));
 });
 
