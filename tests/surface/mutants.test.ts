@@ -505,6 +505,23 @@ describe('runMutants (card T1-VERIFY-MUTANTS)', () => {
     assert.equal(r.read('src/link.ts'), 'true');
   }));
 
+  test('acceptance 11: a file that is not valid UTF-8 gets no mutant and keeps its bytes, and a UTF-8 file with a BOM keeps its mutants [R2] [R4]', withRepo(async (r) => {
+    const latin1 = Buffer.concat([Buffer.from('// caf'), Buffer.from([0xe9]), Buffer.from('\nexport const old = true;\n')]);
+    writeFileSync(path.join(r.worktree, 'src/latin.ts'), latin1);
+    write(r.worktree, 'src/bom.ts', '\ufeffexport const bom = true;\n');
+    git(r.worktree, 'add', '-A');
+    git(r.worktree, 'commit', '-q', '-m', 'encodings');
+    const seen: string[] = [];
+    const dod = scriptedDod(r, () => {
+      seen.push(r.read('src/bom.ts'));
+      return {};
+    });
+    const { report } = await runMutants(input(r), deps(dod));
+    assert.deepEqual([...new Set(report.mutants.map((m) => m.file))], ['src/bom.ts', 'src/m.ts']);
+    assert.ok(seen.includes('\ufeffexport const bom = false;\n'), 'the BOM survives a mutant');
+    assert.deepEqual(readFileSync(path.join(r.worktree, 'src/latin.ts')), latin1);
+  }));
+
   test('acceptance 11: a path the tree holds as a file but the disk does not gets no mutant [R2]', withRepo(async (r) => {
     write(r.worktree, 'src/gone.ts', 'export const gone = true;\n');
     git(r.worktree, 'add', '-A');
