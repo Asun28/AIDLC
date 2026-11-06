@@ -838,5 +838,5 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 10: the docs describe the export and kee
   for (const needle of ['aidlc review bench export', 'git update-ref refs/aidlc/bench/']) assert.ok(cases.includes(needle), needle);
   const changelog = read('CHANGELOG.md');
   const start = changelog.indexOf('## Unreleased');
-  assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).includes('- T1-REVIEW-BENCH-EXPORT:'));
+  assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).includes('- T1-REVIEW-BENCH-EXPORT-2:'));
 });

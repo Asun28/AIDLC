@@ -359,6 +359,8 @@ interface ExportContext {
   dir: string;
   config: ProjectConfig;
   git: SyncRunner;
+  /** The `-c` options that turn every hook off for an `update-ref`. */
+  noHooks: string[];
   report: BenchExportReport;
 }
 
@@ -463,7 +465,7 @@ function writeDraft(ctx: ExportContext, run: CardRun, d: DraftInput): void {
     return;
   }
   if (pinned === undefined) {
-    const created = gitStep(ctx, ['update-ref', '--no-deref', ref, candidate, NO_REF]);
+    const created = gitStep(ctx, [...ctx.noHooks, 'update-ref', '--no-deref', ref, candidate, NO_REF]);
     if (created?.exitCode !== 0) {
       // A later export gives an existing file no ref, so a case kept here would stay unpinned for good.
       let detail = `git update-ref failed: ${created ? oneLine(created.stderr) : 'git did not run'}`;
@@ -506,6 +508,17 @@ function refuseStateOverlap(root: string, dir: string, stateDir: string, git: Sy
   if (resolvesInside(stateDir, refs) || resolvesInside(refs, stateDir)) throw new Error(`the refs directory ${refs} and the state directory ${stateDir} overlap`);
 }
 
+/**
+ * The `-c` options that turn every hook off for one command and change no config file. `core.hooksPath` covers a hooks
+ * directory; a hook defined by `hook.<name>.event` (git 2.54 and later) still runs under it, so each one is disabled by name.
+ */
+function noHookOptions(root: string, git: SyncRunner): string[] {
+  const named = git('git', ['config', '--null', '--name-only', '--get-regexp', '^hook\\..*\\.event$'], { cwd: root });
+  if (named.exitCode !== 0 && named.exitCode !== 1) throw new Error(`git config failed: ${oneLine(named.stderr)}`);
+  const keys = named.stdout.split('\0').filter(Boolean);
+  return ['-c', 'core.hooksPath=/dev/null', ...keys.flatMap((key) => ['-c', `${key.slice(0, -'.event'.length)}.enabled=false`])];
+}
+
 /** Draft cases from the card runs; throws, before any draft, on a refusal. Changes only new case files and refs under `refs/aidlc/bench/`. */
 export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   if (o.cardId === undefined && !o.clean) throw new Error('--card is required without --clean');
@@ -514,9 +527,10 @@ export function exportBenchCases(o: BenchExportOptions): BenchExportReport {
   // Everything below uses the resolved path, so a link retargeted during the export changes nothing.
   const dir = realpathSync.native(named);
   const runner = o.git ?? runSync;
-  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1' } });
+  // A git that ignores the first variable still tries a lazy fetch, and the second makes that fetch fail on any transport.
+  const git: SyncRunner = (command, args, options) => runner(command, args, { ...options, env: { ...process.env, GIT_NO_LAZY_FETCH: '1', GIT_ALLOW_PROTOCOL: 'none' } });
   if (o.stateDir !== undefined && existsSync(o.stateDir)) refuseStateOverlap(o.root, dir, o.stateDir, git);
-  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
+  const ctx: ExportContext = { root: o.root, dir, config: loadProjectConfig(o.root).config, git, noHooks: noHookOptions(o.root, git), report: { written: [], existing: [], skipped: [], pinConflicts: [] } };
   const runs = o.runs.filter((r) => o.cardId === undefined || r.cardId === o.cardId).sort((a, b) => a.goalId.localeCompare(b.goalId) || a.cardId.localeCompare(b.cardId));
   for (const run of runs) {
     const drafts = o.clean ? [cleanDraft(run)].filter((d) => d !== undefined) : run.findings.filter((f) => f.stage === 'formal').map((f) => bugDraft(run, f));
