@@ -16,6 +16,8 @@
 
 - T0-R3-STOP-DISPUTED: R3 stops a card for a ruling on a re-raise only when the author disputed the finding, at any point. A re-raise of an undisputed finding returns the card to REVIEW_FIX for another repair round, which reverses part of T1-EFF-R3-PROGRESS. A block on decision 4, a ship-path reviewer's second block and a base-sync decision stop as before. The finding the previous R3 decision raised still reaches the next R3 prompt after an R2 pass resolved it.
 
+- T0-R2-OFF: this repository runs no R2 panel. `preReview.command` is empty in `aidlc.config.json` and the rest of the block stays, so a candidate goes from the DoD to R3 and restoring R2 is one value. R3 stays required. `docs/OPERATIONS.md` holds the numbers and the check after 15 cards.
+
 - T1-INIT-BASE-CI (bugfix): a config that `aidlc init` creates names the target's default branch, and a repository with no `package.json` gets no `aidlc-ci.yml` and no `agent-evals.yml`, each reported as skipped. Every workflow calls `npx --no-install aidlc`, so a repository with no local package cannot fetch the unrelated npm package of that name.
 
 - T1-INIT-HOOK-PATH (bugfix): `aidlc init` on a repository with no Node package writes the hook command as `node "<path>/bin/aidlc-hook.js"` with the absolute path of the running CLI, because `npx --no-install aidlc hook auto` exits 1 there and leaves every guard off. A matcher entry holds the dispatcher once, and `aidlc doctor` gains a `hookCommand` line that checks the file of the wired dispatcher, starts no process, and reports `ok`, `FAILED` or `not wired`.

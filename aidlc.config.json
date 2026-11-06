@@ -45,11 +45,7 @@
     "frozen": []
   },
   "preReview": {
-    "command": [
-      "deepseek",
-      "--model",
-      "deepseek-v4-pro"
-    ],
+    "command": [],
     "reviewer": "deepseek-v4-pro",
     "rounds": 1,
     "timeoutMs": 1200000,
