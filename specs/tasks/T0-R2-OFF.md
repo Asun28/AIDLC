@@ -10,6 +10,7 @@ allow_paths:
   - CLAUDE.md
   - docs/OPERATIONS.md
   - CHANGELOG.md
+  - src/review/pre-review.ts
   - specs/tasks/T0-R2-OFF.md
 dod_command: npm run typecheck && node --test tests/surface/config.test.ts tests/surface/command-lines.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/prose.test.ts
 dod_exit: 0
@@ -18,17 +19,18 @@ requirements:
   - R2. `CLAUDE.md` under `Review before ship` shall state that SHIP requires an R2 pass only when `preReview.command` is set, that this repository leaves it empty, and that R3 stays required.
   - R3. `docs/OPERATIONS.md` under `## Pre-review (R2)` shall state this repository's setting, the numbers under Why, the value that restores R2 and the check under Review after 15 cards.
   - R4. The CHANGELOG Unreleased section shall have an entry naming this card.
+  - R5. The header comment of `src/review/pre-review.ts` shall stop naming DeepSeek as this repository's R2 reviewer and shall keep naming the R3 reviewer and its fallback.
 acceptance:
   - 1. `tests/surface/config.test.ts`, the test at line 463, retitled: the raw and parsed `preReview.command` are empty, and reviewer, `answerMarker`, fallback, rounds and the absent coverage key are as on main. It fails on main. [R1] [dod arm 2]
-  - 2. `tests/surface/command-lines.test.ts` and the other tests of `tests/surface/config.test.ts` pass with no change. [R1] [dod arm 2]
+  - 2. `tests/surface/command-lines.test.ts` and the other tests of `tests/surface/config.test.ts` pass with no change, apart from the two assertions at lines 140 and 141 of that file, which pin the sentences R2 and R5 rewrite: each keeps pinning the R3 reviewer and its fallback and no longer pins DeepSeek. [R1] [R2] [R5] [dod arm 2]
   - 3. `CLAUDE.md` contains `only when \`preReview.command\` is set`, and `docs/OPERATIONS.md` contains the restore value `["deepseek", "--model", "deepseek-v4-pro"]` in `## Pre-review (R2)`. [R2] [R3]
   - 4. The CHANGELOG Unreleased section has a `T0-R2-OFF` entry and `tests/surface/prose.test.ts` passes. [R4] [dod arm 2]
 depends_on: []
 budget: 60
 tdd: true
-sweep: "Line numbers checked on main at 111a1c7. `preReviewEligibility` (src/loop/card-runner.ts:297) returns eligible with `pre-review not configured` on an empty command, and card-loop.md already reads `Pre-review (R2) when preReview.command is set`, so no code or skill text changes. `ProjectConfig.safeParse` accepts the config with an empty command and the fallback kept (run on 713dee1). `templates/aidlc.config.json` already ships `command: []`, so downstream repositories are unaffected. In a scratch copy with the empty command, config, command-lines, templates, mirror and init tests ran and only tests/surface/config.test.ts:463 failed, the pin of this repository's R2 primary. tests/surface/pre-review.test.ts and tests/surface/stats.test.ts were not part of that run; run them once at SHIP."
+sweep: "Line numbers checked on main at 111a1c7. `preReviewEligibility` (src/loop/card-runner.ts:297) returns eligible with `pre-review not configured` on an empty command, and card-loop.md already reads `Pre-review (R2) when preReview.command is set`, so no code or skill text changes. `ProjectConfig.safeParse` accepts the config with an empty command and the fallback kept (run on 713dee1). `templates/aidlc.config.json` already ships `command: []`, so downstream repositories are unaffected. In a scratch copy with the empty command, config, command-lines, templates, mirror and init tests ran and only tests/surface/config.test.ts:463 failed, the pin of this repository's R2 primary. tests/surface/pre-review.test.ts and tests/surface/stats.test.ts were not part of that run; run them once at SHIP. On main at 50ef58c, tests/surface/config.test.ts:140 pins the CLAUDE.md sentence naming DeepSeek for R2 and :141 pins the same claim in the header comment of src/review/pre-review.ts, so both assertions change with the text they pin. docs/PROJECT-STATE.md is a snapshot dated 2026-09-18 and stays."
 forbid:
-  - deleting or changing `src/review/pre-review.ts`, the panel, `preReview.fallback` or R2 tests
+  - deleting or changing the code of `src/review/pre-review.ts`, beyond the header comment R5 names, or the panel, `preReview.fallback` or R2 tests
   - changing R3, `formalReview`, `gateRequired` or the required checks
   - changing `templates/aidlc.config.json`
   - weakening or skipping a test to go green
