@@ -2,6 +2,7 @@
  * T1-REVIEW-BENCH-EXPORT: `aidlc review bench export` drafts unconfirmed cases from the card-run ledgers and pins each
  * candidate under `refs/aidlc/bench/`, in a fixture repository with fixed commit dates and fixed ISO timestamps.
  * T1-REVIEW-BENCH-EXPORT-2: no git version lazily fetches for it, and no hook runs for its `update-ref`.
+ * T1-REVIEW-BENCH-EXPORT-3: a case file comes from the `create` option, so the repository keeps one exclusive create.
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
@@ -15,6 +16,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { ReviewBenchCase, ReviewFinding, ReviewLedger, type CardRun } from '../../src/core/types.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { exportBenchCases, formatBenchExport, loadBenchCases, type BenchExportOptions } from '../../src/review/bench.ts';
+import { createExclusive } from '../../src/state/store.ts';
 import { makeCardRun, makeGoal } from '../infra/helpers.ts';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -92,7 +94,7 @@ const fixRun = (candidate: string, goal = GOAL): CardRun =>
 
 const caseId = (finding: string, goal = GOAL, card = CARD) => `${card}.${goal}.${finding}`;
 const ids = ['F2', 'F3', 'F4'].map((f) => caseId(f));
-const options = (r: Repo, runs: CardRun[], over: Partial<BenchExportOptions> = {}): BenchExportOptions => ({ root: r.root, runs, cardId: CARD, ...over });
+const options = (r: Repo, runs: CardRun[], over: Partial<BenchExportOptions> = {}): BenchExportOptions => ({ root: r.root, runs, cardId: CARD, create: createExclusive, ...over });
 const caseFile = (r: Repo, id: string) => path.join(r.caseDir, `${id}.json`);
 const benchRefs = (r: Repo) => git(r.root, ['for-each-ref', '--format=%(refname)', 'refs/aidlc/bench/']).split('\n').filter(Boolean);
 /** The git subcommand of an argv, after any `-c <config>` options. */
@@ -282,6 +284,46 @@ test('T1-REVIEW-BENCH-EXPORT R6: an existing case is listed as existing whatever
     git(r.root, ['update-ref', `refs/aidlc/bench/${caseId('F1')}`, r.base]);
     const report = exportBenchCases(options(r, [run]));
     assert.deepEqual(report, { written: [], existing: [caseId('F1'), caseId('F2')], skipped: [], pinConflicts: [] });
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-3 R6: the export creates each case empty through the create option, and a false lists it as existing with no file and no ref', () => {
+  const r = repo();
+  try {
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    const calls: [string, string][] = [];
+    const create = (file: string, text: string): boolean => {
+      calls.push([file, text]);
+      return false;
+    };
+    const report = exportBenchCases(options(r, [run], { create }));
+    assert.deepEqual(calls, [[caseFile(r, caseId('F1')), '']]);
+    assert.deepEqual(report.existing, [caseId('F1')]);
+    assert.deepEqual(report.written, []);
+    assert.deepEqual(readdirSync(r.caseDir), []);
+    assert.deepEqual(benchRefs(r), []);
+  } finally {
+    r.cleanup();
+  }
+});
+
+test('T1-REVIEW-BENCH-EXPORT-3 R6: a create that throws ends the export with its error and removes no file it did not make', () => {
+  const r = repo();
+  try {
+    const racing: SyncRunner = (command, args, opts) => {
+      const receipt = runSync(command, args, opts);
+      if (args[0] === 'rev-parse') writeFileSync(caseFile(r, caseId('F1')), 'theirs');
+      return receipt;
+    };
+    const create = (): boolean => {
+      throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    };
+    const run = makeCardRun(GOAL, CARD, { base: { ref: 'main' }, findings: [finding('F1', F2, r.candidate)] });
+    assert.throws(() => exportBenchCases(options(r, [run], { git: racing, create })), /EACCES/);
+    assert.equal(readFileSync(caseFile(r, caseId('F1')), 'utf8'), 'theirs');
+    assert.deepEqual(benchRefs(r), []);
   } finally {
     r.cleanup();
   }
@@ -508,11 +550,11 @@ test('T1-REVIEW-BENCH-EXPORT-2 acceptance 13: in a partial clone a blob the clon
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
     const held = (env: NodeJS.ProcessEnv) => spawnSync('git', ['cat-file', '-e', blob], { cwd: clone, encoding: 'utf8', env, windowsHide: true }).status === 0;
     const noFetch = { ...withoutNoLazyFetch(gitEnv), GIT_ALLOW_PROTOCOL: '' };
-    const asShipped = exportBenchCases({ root: clone, runs: [run], cardId: CARD });
+    const asShipped = exportBenchCases({ root: clone, runs: [run], cardId: CARD, create: createExclusive });
     assert.match(asShipped.skipped[0]?.detail ?? '', /no card file/);
     assert.equal(held(noFetch), false, 'the export fetched the blob');
     const ignored: SyncRunner = (command, args, opts) => runSync(command, args, { ...opts, env: withoutNoLazyFetch(opts?.env) });
-    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, git: ignored });
+    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, create: createExclusive, git: ignored });
     assert.match(report.skipped[0]?.detail ?? '', /no card file/);
     assert.equal(held(noFetch), false, 'with the variable ignored, the export fetched the blob');
     assert.equal(held(withoutNoLazyFetch(gitEnv)), true, 'a plain read fetches the blob, so the fixture exercises lazy fetching');
@@ -610,7 +652,7 @@ test('T1-REVIEW-BENCH-EXPORT-2 acceptance 13: a remote helper named none runs fo
     const onPath = { [pathKey]: `${helpers}${path.delimiter}${process.env[pathKey]}` };
     const ignored: SyncRunner = (command, args, opts) => runSync(command, args, { ...opts, env: { ...withoutNoLazyFetch(opts?.env), ...onPath } });
     const run = makeCardRun(GOAL, CARD, { base: { ref: 'origin/main' }, findings: [finding('F1', F2, r.candidate)] });
-    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, git: ignored });
+    const report = exportBenchCases({ root: clone, runs: [run], cardId: CARD, create: createExclusive, git: ignored });
     assert.match(report.skipped[0]?.detail ?? '', /no card file/);
     assert.equal(existsSync(marker), false, 'the export started the helper');
     spawnSync('git', ['cat-file', '-e', `${r.candidate}:specs/tasks/${CARD}.md`], { cwd: clone, encoding: 'utf8', env: { ...withoutNoLazyFetch(gitEnv), ...onPath }, windowsHide: true });
@@ -876,5 +918,5 @@ test('T1-REVIEW-BENCH-EXPORT acceptance 10: the docs describe the export and kee
   for (const needle of ['aidlc review bench export', 'git update-ref refs/aidlc/bench/']) assert.ok(cases.includes(needle), needle);
   const changelog = read('CHANGELOG.md');
   const start = changelog.indexOf('## Unreleased');
-  assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).includes('- T1-REVIEW-BENCH-EXPORT-2:'));
+  assert.ok(changelog.slice(start, changelog.indexOf('\n## ', start + 1)).includes('- T1-REVIEW-BENCH-EXPORT-3:'));
 });
