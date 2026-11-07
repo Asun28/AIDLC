@@ -50,6 +50,11 @@ hygiene: "Issue 211, with the sites its survey missed: reviewer reasons, classes
 ## Deliverable
 Outside text in a directive's narration or a stop detail is a JSON string. Closes issue 211.
 
+## Attempt evidence
+RED, commit 0600e01: `node --test tests/scenarios/narration-quote.test.ts` exits 1, tests 16, pass 1, fail 15, each because the value stands bare in the narration or the stop detail. The row that passes is acceptance 3, the stored cause, which holds on main and must keep holding.
+
+Each quote the fix adds was removed in turn, by hand, and the test file run: 28 removals, 27 failed a test. The one that passes is the `red-missing` stop when no repair is admitted (`card-runner.ts:2885`), which no state reaches. The first pass of this check left four intent sentences and five ship details without a row whose value carried the marker; those rows are in.
+
 ## Acceptance
 ```powershell
 npm run typecheck && node --test tests/scenarios/narration-quote.test.ts tests/scenarios/t0-flow.test.ts tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/pre-existing.test.ts tests/scenarios/review-block.test.ts tests/scenarios/ship-failing-line.test.ts tests/scenarios/ci-rerun.test.ts tests/core/review-policy.test.ts
