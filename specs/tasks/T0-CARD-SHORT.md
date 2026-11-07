@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-SHORT
 title: The card template asks for short cards on small changes and reviewer-checked doc text, a lesson supersedes T1-OPUS55-MODELS, and stale claims in README.md, docs/PROJECT-STATE.md and REVIEW.md are corrected
-status: todo
+status: merged
 branch: T0-CARD-SHORT
 worktree: D:\wt\AIDLC\T0-CARD-SHORT
 allow_paths:
