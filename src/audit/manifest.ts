@@ -104,8 +104,11 @@ export class EvidenceStore {
 
   /** Whether the file of the entry exists with the digest the entry records, the test `verifyAudit` applies. */
   intact(entry: ManifestEntry): boolean {
-    const file = path.join(this.dir, entry.path);
-    return existsSync(file) && fileSha256(file) === entry.sha256;
+    try {
+      return fileSha256(path.join(this.dir, entry.path)) === entry.sha256;
+    } catch {
+      return false;
+    }
   }
 
   seal(manifest: Manifest, binding: { journalHead: string; journalEvents: number; finalSha?: string; finalCandidateDigest?: string; now: string; host?: Manifest['host'] }): Manifest {

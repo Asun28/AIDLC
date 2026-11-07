@@ -3067,11 +3067,17 @@ export class CardRunner {
   private checkRetained(goal: Goal, card: Card, run: CardRun): void {
     if (this.config.shipPath === 'dry-run') return;
     const evidence = new EvidenceStore(this.paths.evidence, goal.id);
-    const entries = evidence.load(goal.id, goal.generation, goal.revision, this.clock()).entries.filter((e) => e.cardId === card.id);
-    if (entries.some((e) => evidence.intact(e))) return;
+    let state: string;
+    try {
+      const entries = evidence.load(goal.id, goal.generation, goal.revision, this.clock()).entries.filter((e) => e.cardId === card.id);
+      if (entries.some((e) => evidence.intact(e))) return;
+      state = entries.length ? `the files retained for ${card.id} are missing or altered` : `the manifest of ${goal.id} holds no file retained for ${card.id}`;
+    } catch (err) {
+      // A retain loads the same file, so it fails the same way until the file is restored.
+      state = `the manifest of ${goal.id} cannot be read, so restore it first (${oneLine((err as Error).message)})`;
+    }
     const verdict = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1)?.verdictRef;
     const file = verdict ? [verdict, path.join(evidence.dir, 'review', card.id, path.basename(verdict))].find((f) => existsSync(f)) : undefined;
-    const state = entries.length ? `the files retained for ${card.id} are missing or altered` : `the manifest of ${goal.id} holds no file retained for ${card.id}`;
     throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'}`);
   }
 
