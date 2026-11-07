@@ -30,6 +30,8 @@ const OFF = { gateRequired: true, formalReview: formal() };
 const WITH_R2 = { ...ON, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false } };
 
 const OLD_RULE = '- 2026-01-01 T1-OLD-MATCH: ALWAYS check `export const v` before the ship (source: PR 1)';
+/** The base commit's subject is `base` and it adds the card's file, so this rule matches by path alone: its text names no term of the diff. */
+const PATH_RULE = '- 2026-01-02 base: ALWAYS keep the path rule first (source: PR 1)';
 const newerRules = Array.from({ length: 30 }, (_, i) => `- 2026-02-${String((i % 28) + 1).padStart(2, '0')} T1-NEW-${i}: ALWAYS keep unrelated rule ${i} ${'z'.repeat(200)} (source: PR 2)`);
 
 function git(cwd: string, args: string[]): string {
@@ -49,7 +51,9 @@ function commitCandidate(fx: Fixture, n: number): string {
 function gitRepo(fx: Fixture): void {
   writeCard(fx, { id: CARD, title: 'review twice', allowPaths: [FILE] });
   mkdirSync(path.join(fx.tmp, 'docs'), { recursive: true });
-  writeFileSync(path.join(fx.tmp, 'docs', 'LESSONS.md'), `# Lessons\n\n${[OLD_RULE, ...newerRules].join('\n')}\n`);
+  writeFileSync(path.join(fx.tmp, 'docs', 'LESSONS.md'), `# Lessons\n\n${[OLD_RULE, PATH_RULE, ...newerRules].join('\n')}\n`);
+  mkdirSync(path.join(fx.tmp, 'src'), { recursive: true });
+  writeFileSync(path.join(fx.tmp, FILE), 'export const v = 0;\n');
   writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\n.review/\nwt/\n');
   git(fx.tmp, ['init', '-q', '-b', 'main']);
   git(fx.tmp, ['add', '-A']);
@@ -158,6 +162,7 @@ test('T1-R3-SECOND-PASS acceptance 2: the second pass holds the matched rule and
     assert.ok(!section(prompts[0]!).includes('T1-OLD-MATCH'), 'the newest rules fill the first pass');
     assert.ok(section(prompts[0]!).includes('the newest rules are above'));
     assert.ok(section(prompts[1]!).includes('T1-OLD-MATCH'), 'the matching rule reaches the second pass');
+    assert.ok(section(prompts[1]!).includes('keep the path rule first'), 'the history at the base gives a rule its paths');
     assert.ok(section(prompts[1]!).includes('the rules that best match this diff are above'));
   });
 });
@@ -214,6 +219,19 @@ test('T1-R3-SECOND-PASS acceptance 3: a blocking second pass spends a decision, 
     const repaired = await decide(fx, runner, goalId, blocked.run, commitCandidate(fx, 2), 2);
     assert.equal(next(fx, runner, goalId, repaired.run).directive.kind, 'close');
     assert.equal(prompts.length, 3, 'no third review');
+  });
+});
+
+test('T1-R3-SECOND-PASS acceptance 1: a candidate that has no decision of its own gets its first pass before any second pass [R2]', async () => {
+  await withRepo(ON, async (fx) => {
+    const { runner } = runnerFor(fx, [PASS]);
+    const { goalId, run } = start(fx, runner);
+    const first = await decide(fx, runner, goalId, run, commitCandidate(fx, 1), 1);
+    const sha = commitCandidate(fx, 2);
+    const moved = fx.store.updateCardRun(goalId, CARD, (latest) => ({ ...latest!, candidate: { ...first.run.candidate!, sha, digest: 'a-later-candidate' } }));
+    const gate = next(fx, runner, goalId, moved);
+    assert.equal(gate.directive.kind, 'review');
+    assert.doesNotMatch(String((gate.directive as { narration?: string }).narration), /second R3 pass/i);
   });
 });
 
@@ -364,11 +382,13 @@ test('T1-R3-SECOND-PASS acceptance 7: review stats count second-pass decisions a
     const passed = fx.store.getCardRun(goalId, CARD)!;
     const blocked: CardRun = { ...passed, cardId: 'T0-BLOCKED', review: { ...passed.review, invocations: passed.review.invocations.map((i) => (i.secondPass ? { ...i, outcome: 'block' as const } : i)) } };
     const none: CardRun = { ...passed, cardId: 'T0-NONE', review: { ...passed.review, invocations: passed.review.invocations.filter((i) => !i.secondPass) } };
-    const rows = summarizeReviews([passed, blocked, none], []);
+    const lost: CardRun = { ...passed, cardId: 'T0-LOST', review: { ...passed.review, invocations: passed.review.invocations.map((i) => (i.secondPass ? { ...i, outcome: 'no-verdict' as const } : i)) } };
+    const rows = summarizeReviews([passed, blocked, none, lost], []);
     const r3 = (id: string) => rows.find((r) => r.cardId === id)!.r3;
     assert.deepEqual([r3(CARD).secondPasses, r3(CARD).secondPassBlocks], [1, 0]);
     assert.deepEqual([r3('T0-BLOCKED').secondPasses, r3('T0-BLOCKED').secondPassBlocks], [1, 1]);
     assert.deepEqual([r3('T0-NONE').secondPasses, r3('T0-NONE').secondPassBlocks], [0, 0]);
+    assert.deepEqual([r3('T0-LOST').secondPasses, r3('T0-LOST').secondPassBlocks], [0, 0], 'a no-verdict decides nothing');
     const lines = formatReviewStats(rows).split('\n');
     const line = (id: string) => lines.find((l) => l.startsWith(id))!;
     assert.match(line(CARD), /second pass 1, 0 blocks/);

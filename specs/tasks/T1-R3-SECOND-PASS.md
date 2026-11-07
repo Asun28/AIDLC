@@ -68,3 +68,9 @@ npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+- RED at 2508030: 10 of 13 tests failed. Nine were assertions, and one was the refusal the allowance change removes (`the two-decision review allowance is used`). The 3 that passed state behaviour that already held: the option off, a pass spending no decision, a pass at decision 4 shipping.
+- Mutation check: 24 breaks in scratch clones, each restored and none committed. 21 failed a test. The other 3 (the candidate match, the history at the base, a no-verdict counted in stats) now have tests, and each fails when broken by hand.
+- `npm test` before the fix of the template pin: 2405 tests, 1 failed: `tests/surface/config.test.ts` pins the template's `formalReview` keys, so the card took that test into scope and its expected object gained `secondPass: false`.
+- The card dropped `shipDrift` before the first attempt: the gate admits a pass only when no second pass is due, and nothing makes one due afterwards on the same candidate.

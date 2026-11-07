@@ -151,7 +151,7 @@ describe('formalReview.fallback validation and this repository config (T0-R3-FAL
 
   test('templates/aidlc.config.json gains only formalReview.effort medium; its command and reviewer are unchanged [T1-OPUS55-R3 acceptance 5]', () => {
     const raw = JSON.parse(readFileSync(path.join(import.meta.dirname, '..', '..', 'templates', 'aidlc.config.json'), 'utf8')) as { formalReview: Record<string, unknown> };
-    assert.deepEqual(raw.formalReview, { command: [], reviewer: 'codex', timeoutMs: 1200000, effort: { default: 'medium' } });
+    assert.deepEqual(raw.formalReview, { secondPass: false, command: [], reviewer: 'codex', timeoutMs: 1200000, effort: { default: 'medium' } });
   });
 });
 
