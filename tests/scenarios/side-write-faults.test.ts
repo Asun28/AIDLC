@@ -145,3 +145,45 @@ test('T0-SIDE-WRITE-FAULTS acceptance 6: a board write that fails beside a goal 
     fx.cleanup();
   }
 });
+
+test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed diagnostic NOTE beside a failed board write still keeps the stop [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = opened(fx);
+    rmSync(fx.paths.board, { recursive: true, force: true });
+    writeFileSync(fx.paths.board, 'not a directory');
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    failing = 'NOTE';
+    let d;
+    try {
+      d = fx.controller.next(goalId);
+    } finally {
+      failing = undefined;
+    }
+    assert.equal(d.kind, 'stop', d.narration);
+    const fresh = new GoalController({ paths: fx.paths, repo: fx.repo, config: fx.config, now: fx.now, cards: fx.registry });
+    assert.equal(fresh.mustGoal(goalId).stop?.reason, 'time');
+    const events = fx.events(goalId);
+    assert.equal(events.filter((e) => e.type === 'GOAL_STOPPED').length, 1);
+    assert.equal(events.filter((e) => e.type === 'NOTE' && 'boardError' in e.data).length, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-SIDE-WRITE-FAULTS acceptance 6a: a failed GOAL_STOPPED append still propagates and stops nothing [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId } = opened(fx);
+    fx.advance(3 * HOUR_MS + MINUTE_MS);
+    failing = 'GOAL_STOPPED';
+    try {
+      assert.throws(() => fx.controller.next(goalId), /EIO/);
+    } finally {
+      failing = undefined;
+    }
+    assert.equal(fx.goal(goalId).terminal, false);
+  } finally {
+    fx.cleanup();
+  }
+});
