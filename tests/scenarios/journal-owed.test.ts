@@ -358,7 +358,10 @@ describe('T0-JOURNAL-FAULT-EVENTS: covered decision events follow their record w
 
   it('a card run without journalOwed parses unchanged, and card next on it appends only the events of its step [acceptance 6]', () => {
     const c = prepared();
+    // A legacy record: a run of this card's own saves now carries its dispatch as owed (card T0-SIDE-WRITE-FAULTS).
     const raw = JSON.parse(readFileSync(c.cardFile, 'utf8')) as Record<string, unknown>;
+    delete raw['journalOwed'];
+    writeFileSync(c.cardFile, JSON.stringify(raw));
     assert.equal('journalOwed' in raw, false);
     assert.deepEqual(CardRun.parse(raw), raw);
     const before = events(c).length;
@@ -456,7 +459,7 @@ describe('acceptance 12: a recovered attempt counts at startedAt in the terminal
     ['marked, started at the stop', [stopped(0, STOP), recovered(0, STOP)], 1],
     ['marked, started after the stop', [stopped(0, STOP), recovered(0, AFTER)], 1],
     ['generation 0, started after its stop and before the stop of generation 1', [stopped(0, STOP), resumed(1, AFTER), stopped(1, LATER_STOP), recovered(0, AFTER, LATER_STOP)], 1],
-    ['a marked CARD_DISPATCHED is not an attempt', [stopped(0, STOP), ['CARD_DISPATCHED', 0, { childRef: 'card:T1-JO', completed: true, startedAt: BEFORE }, AFTER]], 1],
+    ['a marked OPERATION_ISSUED is not a recovered event', [stopped(0, STOP), ['OPERATION_ISSUED', 0, { completed: true, startedAt: BEFORE }, AFTER]], 1],
   ];
   for (const [name, rows, expected] of cases) {
     it(`${name}: ${expected} counted`, () => assert.equal(counted(rows), expected));
