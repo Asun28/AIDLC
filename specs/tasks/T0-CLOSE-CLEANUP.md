@@ -51,7 +51,7 @@ non_goals:
   - a commit or push of the status from the CLI
   - a new status value for superseded or cancelled cards
   - removing the leftover worktrees that exist today
-hygiene: "Requested by the user on 2026-11-07: a worktree should be cleaned after a card is merged, and the status updated. The commit stays with the session because the main checkout is shared by several sessions and a downstream base can refuse a direct push; the same split as `--lesson`, which writes docs/LESSONS.md and leaves the commit."
+hygiene: "Who the steps hold against: an accident and a session in another window, through the lease fence and git refusing a dirty worktree. They do not hold against the author of the candidate, who already writes the whole worktree: a symlink at .review/ copies local files into the local, gitignored evidence tree and no further. Requested by the user on 2026-11-07: a worktree should be cleaned after a card is merged, and the status updated. The commit stays with the session because the main checkout is shared by several sessions and a downstream base can refuse a direct push; the same split as `--lesson`, which writes docs/LESSONS.md and leaves the commit."
 ---
 
 # T0-CLOSE-CLEANUP
