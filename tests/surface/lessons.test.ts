@@ -1,4 +1,4 @@
-import { describe, test, after } from 'node:test';
+import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
@@ -141,7 +141,15 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const bin = path.join(root, 'bin', 'aidlc.js');
   const repos: string[] = [];
+  // The variable `aidlc run` gives its provider is set for every run of this block, so a plain `npm test` proves the fixture removes it.
+  let earlierNoShip: string | undefined;
+  before(() => {
+    earlierNoShip = process.env['AIDLC_RUN_NO_SHIP'];
+    process.env['AIDLC_RUN_NO_SHIP'] = '1';
+  });
   after(() => {
+    if (earlierNoShip === undefined) delete process.env['AIDLC_RUN_NO_SHIP'];
+    else process.env['AIDLC_RUN_NO_SHIP'] = earlierNoShip;
     for (const d of repos) rmSync(d, { recursive: true, force: true });
   });
 
