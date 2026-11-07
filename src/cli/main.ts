@@ -3,7 +3,7 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -11,7 +11,8 @@ import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
-import { GitProbe } from '../probes/git.ts';
+import { GitProbe, oneLine } from '../probes/git.ts';
+import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
@@ -75,6 +76,26 @@ function ctx(opts: { json?: boolean; cwd?: string }): Ctx {
   const controller = new GoalController({ paths, repo, config, store, boardMirror: path.join(repo.mainRoot, '_local', 'aidlc-board.md') });
   const json = opts.json ?? !process.stdout.isTTY;
   return { root: repo.mainRoot, repo, config, configFound: found, paths, store, controller, json };
+}
+
+/** A line for the operator, written synchronously: a stderr that cannot take it fails here and reaches no caller. */
+function note(line: string): void {
+  try {
+    writeSync(2, `${line}\n`);
+  } catch {
+    /* nowhere left to say it */
+  }
+}
+
+/** The sweep after `card close` and `goal cancel`: nothing it does reaches their stdout, their error or their exit code. */
+function sweepAfter(c: Ctx): void {
+  try {
+    for (const r of sweepWorktrees({ paths: c.paths, repo: c.repo, config: c.config, store: c.store })) {
+      if (r.action !== 'skipped') note(`worktree ${r.action}: ${r.cardId}: ${r.reason}`);
+    }
+  } catch (err) {
+    note(`worktree sweep did not finish: ${oneLine((err as Error).message)}`);
+  }
 }
 
 function out(c: { json: boolean }, data: unknown, human?: () => string): void {
@@ -290,6 +311,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'cancel', data: { detail: o.detail ?? 'cancelled by user' } });
       out(c, r.directive, () => formatStop(r.goal.stop!));
+      sweepAfter(c);
     });
   goal
     .command('resume <id>')
@@ -527,6 +549,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')
     .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean; lesson?: string; skipLesson?: string }) => {
       const c = ctx(g());
+      // On exit, not in a `finally`: `fail` exits from inside the load of the card, and the sweep concerns the other cards.
+      if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c));
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const lessons = o.lesson !== undefined || o.skipLesson !== undefined ? true : undefined;
       const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup, lessons };
@@ -1156,6 +1180,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath: o.file, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
       Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
+    });
+  program
+    .command('worktree')
+    .description('card worktrees')
+    .command('reclaim')
+    .description('remove the clean worktrees of merged, superseded and cancelled cards; every branch stays')
+    .option('--dry-run', 'report the rows and copy and remove nothing')
+    .action((o: { dryRun?: boolean }) => {
+      const c = ctx(g());
+      const rows = sweepWorktrees({ paths: c.paths, repo: c.repo, config: c.config, store: c.store }, { dryRun: o.dryRun });
+      out(c, rows, () => rows.map((r) => `${r.action}: ${r.cardId}: ${r.reason}`).join('\n'));
+      if (rows.some((r) => r.action === 'failed')) process.exitCode = 1;
     });
   program
     .command('monitor')
