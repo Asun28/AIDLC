@@ -51,7 +51,7 @@ import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../mainta
 import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
-import { Goal, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
+import { Goal, OperationKind, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
 import { disputeKindOf, parseDisputeKind } from '../core/review-policy.ts';
 
 interface Ctx {
@@ -941,10 +941,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--candidate <digest>')
     .option('--timeout-ms <n>', 'timeout', '1800000')
     .action((o: { goal: string; kind: string; target: string; candidate?: string; timeoutMs: string }) => {
+      const kind = OperationKind.safeParse(o.kind);
+      if (!kind.success) throw new Error(`unsupported --kind ${JSON.stringify(o.kind)}: expected one of ${OperationKind.options.join(', ')}`);
+      const timeoutMs = Number(o.timeoutMs);
+      if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) throw new Error(`--timeout-ms must be a positive integer, got ${JSON.stringify(o.timeoutMs)}`);
       const c = ctx(g());
       const ledger = new OperationLedger(c.paths.operations);
       const goalRec = c.controller.mustGoal(o.goal);
-      const rec = ledger.recordIntent({ kind: o.kind as never, goalId: goalRec.id, target: o.target, candidateDigest: o.candidate, ownerGeneration: goalRec.generation, timeoutMs: Number(o.timeoutMs) });
+      const rec = ledger.recordIntent({ kind: kind.data, goalId: goalRec.id, target: o.target, candidateDigest: o.candidate, ownerGeneration: goalRec.generation, timeoutMs });
       Journal.forGoal(c.paths.journal, rec.goalId).append({ type: 'OPERATION_INTENT', goalId: rec.goalId, data: { operationId: rec.id, kind: rec.kind, target: rec.target } });
       out(c, rec, () => `intent ${rec.id} recorded`);
     });
