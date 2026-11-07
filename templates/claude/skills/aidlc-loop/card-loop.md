@@ -99,10 +99,10 @@ response still consumes it. Unknown => diagnose, no rerun. Same normalized
 cause twice without progress stops the branch.
 
 ## CLOSE
-Verify the feature merge on the intended base, then do only missing
+Verify the merge on the intended base, then do only missing
 steps: doc_sync, finding dispositions replayed idempotently from all
-retained verdicts, evidence retained (`aidlc evidence retain`), base
-contents; last, `card close --all` writes status (commit on main),
+retained verdicts, evidence retained (`aidlc evidence retain --card`),
+base contents; last, `card close --all` writes status (commit on main),
 removes the worktree. A reminder or exit 0 is not closure. Persistence
 failure after merge => merge_verified + STOP/audit; never repeat the
 merge. Lessons only under repository policy; no unrelated staging,

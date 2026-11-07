@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
 import { withCardStatus } from '../../src/artifacts/card.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -15,6 +16,7 @@ import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 // dry-run path of the harness; the closing runner is on a real path over a real repository, so git does the refusing.
 
 const CARD = 'T0-CLOSING';
+const MAIN = fileURLToPath(new URL('../../src/cli/main.ts', import.meta.url));
 const TRACKED = 'tracked.txt';
 
 function git(cwd: string, args: string[]): string {
@@ -314,6 +316,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 13: a card whose step removed the worktree r
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const dir = worktree(fx);
+    retained(fx, goalId, { cardId: CARD });
     const runner = closingRunner(fx, []);
     const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
     assert.equal(existsSync(dir), false);
@@ -435,6 +438,288 @@ test('T0-CLOSE-CLEANUP-2 acceptance 7: the dry-run path runs no git and writes n
     assert.equal(marked.closure.cleanup, true);
     assert.equal(calls.filter((c) => c[0] === 'git').length, 0);
     assert.equal(readFileSync(file, 'utf8'), before);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** One file retained in the goal manifest; the path returned is the stored copy. */
+function retained(fx: Fixture, goalId: string, input: { cardId?: string; kind?: string; id?: string } = {}): string {
+  const evidence = new EvidenceStore(fx.paths.evidence, goalId);
+  const id = input.id ?? 'verdict.json';
+  evidence.retain(evidence.load(goalId, 1, 1, T0), { id, kind: input.kind ?? 'review-verdict', content: '{"verdict":"pass"}\n', cardId: input.cardId });
+  return path.join(evidence.dir, id);
+}
+
+/** The message of the throw the action must make. */
+function refusal(action: () => unknown): string {
+  try {
+    action();
+  } catch (err) {
+    return (err as Error).message;
+  }
+  return assert.fail('the call throws');
+}
+
+/** Every file under the directory with its bytes, so a read-only step is checked by content. */
+function snapshot(dir: string): string[] {
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' })
+    .sort()
+    .map((name) => (statSync(path.join(dir, name)).isFile() ? name + ':' + readFileSync(path.join(dir, name), 'hex') : name));
+}
+
+/** The stored run with one passing decision that names the verdict file. */
+function withVerdict(fx: Fixture, goalId: string, verdictRef: string) {
+  const run = stored(fx, goalId);
+  return fx.store.saveCardRun({ ...run, review: { ...run.review, invocations: [{ invocationId: 'r3:one', candidateDigest: 'digest', base: 'main', policyVersion: 'REVIEW.md@2', reviewer: 'codex', requestedAt: T0, outcome: 'pass', verdictRef }] } });
+}
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 1: evidence retain stores the card of --card, and no card without it [R1]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'closes for real' });
+    const goal = goalForCards(fx, [CARD]);
+    const retain = (...args: string[]) => spawnSync(process.execPath, [MAIN, 'evidence', 'retain', '--goal', goal.id, '--kind', 'other', '--content', 'kept', ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+    const bound = retain('--id', 'bound', '--card', CARD);
+    assert.equal(bound.status, 0, bound.stderr);
+    const free = retain('--id', 'free');
+    assert.equal(free.status, 0, free.stderr);
+    const entries = new EvidenceStore(fx.paths.evidence, goal.id).load(goal.id, 1, 1, T0).entries;
+    assert.equal(entries.find((e) => e.id === 'bound')?.cardId, CARD);
+    assert.equal(entries.find((e) => e.id === 'free')?.cardId, undefined);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+for (const kind of ['review-verdict', 'other']) {
+  test('T0-CLOSE-EVIDENCE-CHECK acceptance 2: an intact entry of kind ' + kind + ' retained for the card records the flag [R2]', () => {
+    const fx = makeFixture();
+    try {
+      const { goalId, card, run } = atClose(fx);
+      repository(fx);
+      retained(fx, goalId, { cardId: CARD, kind });
+      assert.equal(closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }).closure.evidence, true);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+const nothingForTheCard: Array<[string, (fx: Fixture, goalId: string) => unknown]> = [
+  ['no manifest', () => undefined],
+  ['an entry for another card', (fx, goalId) => retained(fx, goalId, { cardId: 'T0-OTHER' })],
+  ['an entry for a card whose id has this one as a prefix', (fx, goalId) => retained(fx, goalId, { cardId: CARD + '-2' })],
+  ['an entry with no card', (fx, goalId) => retained(fx, goalId)],
+];
+
+for (const [name, arrange] of nothingForTheCard) {
+  test('T0-CLOSE-EVIDENCE-CHECK acceptance 3: ' + name + ' fails the check with the retain command [R2] [R3]', () => {
+    const fx = makeFixture();
+    try {
+      const { goalId, card, run } = atClose(fx);
+      repository(fx);
+      arrange(fx, goalId);
+      const message = refusal(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }));
+      assert.match(message, /^evidence: /);
+      assert.ok(message.includes('aidlc evidence retain --goal ' + goalId + ' --card ' + CARD), message);
+      assert.equal(stored(fx, goalId).closure.evidence, false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+const damaged: Array<[string, (file: string, manifest: string) => void, RegExp]> = [
+  ['a retained file that is gone', (file) => rmSync(file), /missing or altered/],
+  ['a retained file that changed', (file) => writeFileSync(file, 'changed\n'), /missing or altered/],
+];
+
+for (const [name, damage, expected] of damaged) {
+  test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: ' + name + ' fails the check [R2] [R3]', () => {
+    const fx = makeFixture();
+    try {
+      const { goalId, card, run } = atClose(fx);
+      repository(fx);
+      const file = retained(fx, goalId, { cardId: CARD });
+      damage(file, new EvidenceStore(fx.paths.evidence, goalId).manifestFile());
+      assert.match(refusal(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true })), expected);
+      assert.equal(stored(fx, goalId).closure.evidence, false);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: a manifest that does not parse names its cause, the restore and the retain command [R2] [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const manifest = new EvidenceStore(fx.paths.evidence, goalId);
+    mkdirSync(manifest.dir, { recursive: true });
+    writeFileSync(manifest.manifestFile(), '{');
+    const message = refusal(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }));
+    assert.match(message, /^evidence: the manifest of .* cannot be read, so restore it first \(.*JSON.*\); run aidlc evidence retain /);
+    assert.ok(message.includes('--goal ' + goalId + ' --card ' + CARD), message);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: an entry whose path cannot be read is not intact, and an intact entry beside it passes [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const unreadable = retained(fx, goalId, { cardId: CARD, id: 'first.json' });
+    rmSync(unreadable);
+    mkdirSync(unreadable);
+    const runner = closingRunner(fx, []);
+    assert.match(refusal(() => runner.markClosure(fx.goal(goalId), card, run, { evidence: true })), /missing or altered/);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+    retained(fx, goalId, { cardId: CARD, id: 'second.json' });
+    assert.equal(runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true }).closure.evidence, true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 5: a flag recorded true goes false when the retained file is lost [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const file = retained(fx, goalId, { cardId: CARD });
+    const runner = closingRunner(fx, []);
+    assert.equal(runner.markClosure(fx.goal(goalId), card, run, { evidence: true }).closure.evidence, true);
+    rmSync(file);
+    assert.match(refusal(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true })), /^evidence: /);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 6: the message names the verdict where it exists, and <file> where it does not [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    const verdict = path.join(dir, '.review', 'a.json');
+    const runner = closingRunner(fx, []);
+    const inWorktree = refusal(() => runner.markClosure(fx.goal(goalId), card, withVerdict(fx, goalId, verdict), { evidence: true }));
+    assert.ok(inWorktree.includes('--file "' + verdict + '"'), inWorktree);
+    runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { cleanup: true });
+    const copy = path.join(fx.paths.evidence, goalId, 'review', CARD, 'a.json');
+    const inEvidence = refusal(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true }));
+    assert.ok(inEvidence.includes('--file "' + copy + '"'), inEvidence);
+    rmSync(copy);
+    assert.ok(refusal(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true })).includes('--file <file>'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 7: a failed check keeps the other flags, and the same call completes once a file is retained [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const runner = closingRunner(fx, []);
+    assert.match(refusal(() => runner.markClosure(fx.goal(goalId), card, run, { evidence: true, docSync: true })), /^evidence: /);
+    assert.equal(stored(fx, goalId).closure.docSync, true);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+    retained(fx, goalId, { cardId: CARD });
+    assert.equal(runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true, docSync: true }).closure.evidence, true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 8: a failed check leaves the worktree and the recorded cleanup flag [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    const calls: string[][] = [];
+    assert.match(refusal(() => closingRunner(fx, calls).markClosure(fx.goal(goalId), card, run, { evidence: true, cleanup: true })), /^evidence: /);
+    assert.equal(existsSync(path.join(dir, TRACKED)), true);
+    assert.equal(calls.some((c) => c.includes('remove')), false, 'the removal waits for the evidence step');
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 8: a failed check leaves an earlier true cleanup flag, because the step did not run [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const runner = closingRunner(fx, []);
+    assert.equal(runner.markClosure(fx.goal(goalId), card, run, { cleanup: true }).closure.cleanup, true);
+    mkdirSync(path.join(worktreeRootOf(fx), CARD));
+    assert.match(refusal(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true, cleanup: true })), /^evidence: [^;]*; run /);
+    assert.equal(stored(fx, goalId).closure.cleanup, true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 9: the check writes nothing, passing or failing, and passes with the worktree gone [R5]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    worktree(fx);
+    const runner = closingRunner(fx, []);
+    const cleaned = runner.markClosure(fx.goal(goalId), card, run, { cleanup: true });
+    retained(fx, goalId, { cardId: 'T0-OTHER' });
+    const evidence = new EvidenceStore(fx.paths.evidence, goalId).dir;
+    const before = snapshot(evidence);
+    refusal(() => runner.markClosure(fx.goal(goalId), card, cleaned, { evidence: true }));
+    assert.deepEqual(snapshot(evidence), before, 'a failing check writes nothing');
+    retained(fx, goalId, { cardId: CARD, id: 'second.json' });
+    const held = snapshot(evidence);
+    assert.equal(runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true }).closure.evidence, true);
+    assert.deepEqual(snapshot(evidence), held, 'a passing check writes nothing');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 10: the dry-run path records the flag with no manifest [R6]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    assert.equal(closingRunner(fx, [], 'dry-run').markClosure(fx.goal(goalId), card, run, { evidence: true }).closure.evidence, true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 11: the guide, the architecture note, both card-loop copies, the close directive and the changelog state the check [R7]', () => {
+  const check = '`card close --evidence` checks that the goal manifest holds an intact file retained with `aidlc evidence retain --card <id>`, and any kind counts.';
+  for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(check), doc + ' holds the sentence');
+  assert.ok(flat('docs/OPERATIONS.md').includes('a manifest sealed before the card closes refuses a new entry, so a card with nothing retained keeps `closure.evidence` false; `aidlc goal cancel` ends the goal and the merge stands.'), 'the guide states the limit');
+  assert.equal(flat('docs/OPERATIONS.md').includes('and `--evidence` record a step done by hand'), false);
+  for (const copy of ['.claude/skills/aidlc-loop/card-loop.md', 'templates/claude/skills/aidlc-loop/card-loop.md']) {
+    const retain = flat(copy).indexOf('aidlc evidence retain --card');
+    assert.ok(retain >= 0, copy + ' names the option');
+    assert.ok(flat(copy).indexOf('card close --all') > retain, copy + ' puts the removal after the evidence step');
+    assert.ok(Buffer.byteLength(readFileSync(path.resolve(copy), 'utf8'), 'utf8') <= 6500, copy + ' stays under the cap');
+  }
+  const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
+  assert.match(unreleased ?? '', /T0-CLOSE-EVIDENCE-CHECK/);
+  const fx = makeFixture();
+  try {
+    const { goalId, run } = atClose(fx);
+    const directive = closingRunner(fx, [], 'dry-run').next(fx.goal(goalId), fx.card(CARD), run).directive;
+    assert.ok(directive.narration.includes('aidlc evidence retain --card ' + CARD), directive.narration);
   } finally {
     fx.cleanup();
   }
