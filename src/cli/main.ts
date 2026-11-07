@@ -181,10 +181,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--cards-dir <dir>', 'card registry directory', 'specs/tasks')
     .option('--ship-path <name>', 'scaffold | github | dry-run')
     .option('--dry-run', 'print what would be written')
-    .action((dir: string | undefined, o: { force?: boolean; cardsDir: string; shipPath?: 'scaffold' | 'github' | 'dry-run'; dryRun?: boolean }) => {
+    .option('--no-hooks', 'write the same files and deny list and merge no hook entry into .claude/settings.json')
+    .action((dir: string | undefined, o: { force?: boolean; cardsDir: string; shipPath?: 'scaffold' | 'github' | 'dry-run'; dryRun?: boolean; hooks: boolean }) => {
       // The same relative path holds from src/cli/main.ts and dist/cli/main.js.
       const hookEntry = fileURLToPath(new URL('../../bin/aidlc-hook.js', import.meta.url));
-      const report = initProject({ target: dir ?? g().cwd ?? process.cwd(), force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
+      const report = initProject({ target: dir ?? g().cwd ?? process.cwd(), force: o.force, cardsDir: o.cardsDir, shipPath: o.shipPath, dryRun: o.dryRun, hooks: o.hooks, hookEntry: existsSync(hookEntry) ? hookEntry : undefined });
       out({ json: Boolean(g().json) }, report, () => [`created: ${report.created.length}`, ...report.created.map((f) => `  + ${f}`), `merged: ${report.merged.join(', ') || '-'}`, `skipped (exists): ${report.skipped.length}`, ...report.skipped.map((f) => `  = ${f}`), `next: review aidlc.config.json, then \`aidlc doctor\``].join('\n'));
     });
 

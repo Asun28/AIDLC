@@ -6,11 +6,13 @@ How to run goals with the `aidlc` CLI, coordinate sessions, bind provider operat
 
 ```bash
 npm install
-node bin/aidlc.js init [dir] [--cards-dir specs/tasks] [--ship-path scaffold|github|dry-run] [--force] [--dry-run]
+node bin/aidlc.js init [dir] [--cards-dir specs/tasks] [--ship-path scaffold|github|dry-run] [--force] [--dry-run] [--no-hooks]
 node bin/aidlc.js doctor
 ```
 
 `init` copies `templates/` into the repository: `.claude/skills/aidlc-loop/*`, `.claude/skills/secure-api-review`, `.claude/skills/{tdd,diagnose,grilling,merge-conflicts}` (companion skills), `.claude/agents/*`, a merged `.claude/settings.json`, `REVIEW.md`, `bands.yaml`, `intent/`, `specs/README.md` and `specs/_SPEC-TEMPLATE.md`, `plans/`, `<cardsDir>/_TEMPLATE.md`, `evals/`, `.github/workflows/agent-evals.yml`, `aidlc-ci.yml` and `security-scanners.yml`, `docs/DELIVERY-OPS.md`, `docs/LESSONS.md`, `docs/THIRD-PARTY-NOTICES.md`, `aidlc.config.json`, `aidlc.ops.example.json`, an appended `## AI-native SDLC (aidlc)` section in `CLAUDE.md`, and `.aidlc/`, `_local/` and `.review/` in `.gitignore`. `.review/` holds what R2 and R3 write into the review checkout (the card worktree, or the main checkout for a run without one): verdicts, logs, failure markers, reservations and the verdict schema, files that would otherwise stay untracked and make the next review refuse that checkout as dirty. Existing files are skipped unless `--force`.
+
+`--no-hooks` writes the same files and the same `permissions.deny` list and merges no hook entry into `.claude/settings.json`, so no guard runs; a hook already in the file stays as it is, and `aidlc doctor` prints `not wired` on its `hookCommand` line when the file wires no dispatcher.
 
 Agent files name a model and an effort (card T1-EFF-AGENTS-DOD): the planner on `opus` at `high`, the reviewer and the release-specialist on `opus` at `medium`, the investigator and the verifier on `sonnet` at `medium`, and the implementer on the session's model (`inherit`) at `medium`. `medium` is the Opus 5.5 default and the Sonnet 5.5 starting level for agentic coding; the verifier stays above `low`, where Sonnet 5.5 can report a change done without exercising it. The coordinator starts an implementer subagent with the `run-card` directive's `effort`, so the effort ladder reaches the model. A card's `dod_command` runs the typecheck and the card's own tests; the full suite and the build run in CI on every candidate.
 
