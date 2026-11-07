@@ -2981,7 +2981,7 @@ export class CardRunner {
       try {
         work();
       } catch (err) {
-        delete recorded[step];
+        recorded[step] = false;
         failures.push(`${step}: ${(err as Error).message}`);
       }
     };
@@ -2998,8 +2998,9 @@ export class CardRunner {
 
   /**
    * The cleanup step of a closing card: the files directly under `.review/` go to their own directory of the evidence
-   * tree, outside the manifest, then git removes the worktree. Nothing at the expected path means an earlier call finished the step, so a retry after a
-   * crash succeeds; a path there that git does not list for the branch is left for the operator, not recorded as clean.
+   * tree, outside the manifest, then git removes the worktree. Nothing at the expected path means an earlier call
+   * finished the step, so a retry after a crash succeeds; a path there that git does not list for the branch is left for
+   * the operator, not recorded as clean.
    */
   private reclaimWorktree(goal: Goal, card: Card): void {
     if (this.config.shipPath === 'dry-run') return;
@@ -3015,8 +3016,11 @@ export class CardRunner {
     if (existsSync(reviewDir)) {
       const kept = path.join(this.paths.evidence, goal.id, 'review', card.id);
       mkdirSync(kept, { recursive: true });
-      for (const file of readdirSync(reviewDir, { withFileTypes: true })) {
-        if (file.isFile()) copyFileSync(path.join(reviewDir, file.name), path.join(kept, file.name));
+      const files = readdirSync(reviewDir, { withFileTypes: true }).filter((f) => f.isFile()).map((f) => f.name);
+      for (const name of files) copyFileSync(path.join(reviewDir, name), path.join(kept, name));
+      // Two names the worktree keeps apart can reach one file here, so each copy is read back before the removal.
+      for (const name of files) {
+        if (!readFileSync(path.join(reviewDir, name)).equals(readFileSync(path.join(kept, name)))) throw new Error(`the copy of .review/${name} in ${kept} differs from the file; another name may have reached it`);
       }
     }
     this.git.removeWorktree(this.repo.mainRoot, found.entry.path);

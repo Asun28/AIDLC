@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -275,11 +275,19 @@ test('T0-CLOSE-CLEANUP acceptance 9: a status key with a space before its colon 
   }
 });
 
-const caseSensitive = process.platform !== 'win32' && process.platform !== 'darwin';
+/** Whether the directory tells two names apart by case, which the mount decides and the platform does not. */
+function caseSensitive(dir: string): boolean {
+  const probe = path.join(dir, 'CaseProbe');
+  writeFileSync(probe, '');
+  const sensitive = !existsSync(path.join(dir, 'caseprobe'));
+  rmSync(probe);
+  return sensitive;
+}
 
-test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', { skip: !caseSensitive }, () => {
+test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', (t) => {
   const fx = makeFixture();
   try {
+    if (!caseSensitive(fx.tmp)) return t.skip('this filesystem folds case');
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const other = path.join(fx.tmp, 'WT', CARD);
@@ -287,6 +295,66 @@ test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the exp
     assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /expected/);
     assert.equal(stored(fx, goalId).closure.cleanup, false);
     assert.equal(existsSync(path.join(other, TRACKED)), true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 11: a step that succeeded earlier and fails now records false [R2] [R5]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const runner = closingRunner(fx, []);
+    const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true, cleanup: true });
+    assert.equal(marked.closure.metadata, true);
+    assert.equal(marked.closure.cleanup, true);
+    rmSync(path.join(fx.cardsDir, `${CARD}.md`));
+    mkdirSync(path.join(worktreeRootOf(fx), CARD));
+    assert.throws(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { metadata: true, cleanup: true }), /cleanup: [\s\S]*metadata: /);
+    assert.equal(stored(fx, goalId).closure.metadata, false);
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 12: two files whose copies reach one destination are refused, and both stay [R1] [R2]', (t) => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    const kept = path.join(fx.paths.evidence, goalId, 'review', CARD);
+    mkdirSync(kept, { recursive: true });
+    writeFileSync(path.join(kept, 'Report.json'), '');
+    try {
+      symlinkSync(path.join(kept, 'Report.json'), path.join(kept, 'report.json'));
+    } catch {
+      return t.skip('no permission to create a symbolic link');
+    }
+    writeFileSync(path.join(dir, '.review', 'Report.json'), 'first\n');
+    writeFileSync(path.join(dir, '.review', 'report.json'), 'second\n');
+    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /differs/);
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+    assert.equal(readFileSync(path.join(dir, '.review', 'Report.json'), 'utf8'), 'first\n');
+    assert.equal(readFileSync(path.join(dir, '.review', 'report.json'), 'utf8'), 'second\n');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 6: a card file with no status in its front matter fails the step and stays as it is [R5] [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const file = path.join(fx.cardsDir, `${CARD}.md`);
+    const before = `${readFileSync(file, 'utf8').replace(/^status: .*\n/m, '')}\nstatus: body text, not the key\n`;
+    writeFileSync(file, before, 'utf8');
+    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { metadata: true }), /metadata: the card has no status/);
+    assert.equal(stored(fx, goalId).closure.metadata, false);
+    assert.equal(readFileSync(file, 'utf8'), before);
   } finally {
     fx.cleanup();
   }
