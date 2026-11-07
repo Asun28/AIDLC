@@ -9,7 +9,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 
-// T0-CLOSE-CLEANUP: `aidlc card close` does the cleanup and metadata steps it records. The card reaches CLOSE on the
+// T0-CLOSE-CLEANUP-2: `aidlc card close` does the cleanup and metadata steps it records. The card reaches CLOSE on the
 // dry-run path of the harness; the closing runner is on a real path over a real repository, so git does the refusing.
 
 const CARD = 'T0-CLOSING';
@@ -96,7 +96,7 @@ function flat(file: string): string {
   return readFileSync(path.resolve(file), 'utf8').replace(/\s+/g, ' ');
 }
 
-test('T0-CLOSE-CLEANUP acceptance 1: cleanup copies .review/ into the evidence tree, then removes the worktree and leaves the branch [R1]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 1: cleanup copies .review/ into the evidence tree, then removes the worktree and leaves the branch [R1]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -119,7 +119,7 @@ for (const [kind, change, undo] of [
   ['a modified tracked file', (dir: string) => writeFileSync(path.join(dir, TRACKED), 'changed\n'), (dir: string) => git(dir, ['checkout', '--', TRACKED])],
   ['an untracked file', (dir: string) => writeFileSync(path.join(dir, 'new.txt'), 'new\n'), (dir: string) => rmSync(path.join(dir, 'new.txt'))],
 ] as const) {
-  test(`T0-CLOSE-CLEANUP acceptance 2: ${kind} refuses the removal, the other flags stay recorded, and the same call completes once it is gone [R2]`, () => {
+  test(`T0-CLOSE-CLEANUP-2 acceptance 2: ${kind} refuses the removal, the other flags stay recorded, and the same call completes once it is gone [R2]`, () => {
     const fx = makeFixture();
     try {
       const { goalId, card, run } = atClose(fx);
@@ -143,7 +143,7 @@ for (const [kind, change, undo] of [
   });
 }
 
-test('T0-CLOSE-CLEANUP acceptance 3: a copy that fails leaves the worktree, and a sealed manifest is no failure [R1] [R2]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 3: a copy that fails leaves the worktree, and a sealed manifest is no failure [R1] [R2]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -168,7 +168,7 @@ test('T0-CLOSE-CLEANUP acceptance 3: a copy that fails leaves the worktree, and 
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 4: a branch without a worktree records the step and removes nothing, twice [R3]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 4: a branch without a worktree records the step and removes nothing, twice [R3]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -183,7 +183,7 @@ test('T0-CLOSE-CLEANUP acceptance 4: a branch without a worktree records the ste
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 5: a worktree of the branch at another path is refused and stays [R4]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 5: a worktree of the branch at another path is refused and stays [R4]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -199,7 +199,7 @@ test('T0-CLOSE-CLEANUP acceptance 5: a worktree of the branch at another path is
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 6: metadata sets the status value and no other byte [R5]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 6: metadata sets the status value and no other byte [R5]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -215,7 +215,7 @@ test('T0-CLOSE-CLEANUP acceptance 6: metadata sets the status value and no other
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 6: a file already merged is not written [R5]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 6: a file already merged is not written [R5]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -231,7 +231,7 @@ test('T0-CLOSE-CLEANUP acceptance 6: a file already merged is not written [R5]',
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 6: a missing card file leaves the flag false and names the path [R5] [R2]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 6: a missing card file leaves the flag false and names the path [R5] [R2]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -245,7 +245,7 @@ test('T0-CLOSE-CLEANUP acceptance 6: a missing card file leaves the flag false a
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 9: a detached checkout at the expected path is refused, and stays [R4]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 9: a detached checkout at the expected path is refused, and stays [R4]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -260,7 +260,7 @@ test('T0-CLOSE-CLEANUP acceptance 9: a detached checkout at the expected path is
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 9: a status key with a space before its colon is written as the parser reads it [R5]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 9: a status key with a space before its colon is written as the parser reads it [R5]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -284,7 +284,7 @@ function caseSensitive(dir: string): boolean {
   return sensitive;
 }
 
-test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', (t) => {
+test('T0-CLOSE-CLEANUP-2 acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', (t) => {
   const fx = makeFixture();
   try {
     if (!caseSensitive(fx.tmp)) return t.skip('this filesystem folds case');
@@ -300,7 +300,7 @@ test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the exp
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 11: a step that succeeded earlier and fails now records false [R2] [R5]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 11: a step that succeeded earlier and fails now records false [R2] [R5]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -319,7 +319,7 @@ test('T0-CLOSE-CLEANUP acceptance 11: a step that succeeded earlier and fails no
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 12: two files whose copies reach one destination are refused, and both stay [R1] [R2]', (t) => {
+test('T0-CLOSE-CLEANUP-2 acceptance 12: two files whose copies reach one destination are refused, and both stay [R1] [R2]', (t) => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -327,24 +327,26 @@ test('T0-CLOSE-CLEANUP acceptance 12: two files whose copies reach one destinati
     const dir = worktree(fx);
     const kept = path.join(fx.paths.evidence, goalId, 'review', CARD);
     mkdirSync(kept, { recursive: true });
-    writeFileSync(path.join(kept, 'Report.json'), '');
+    writeFileSync(path.join(kept, 'first.json'), '');
     try {
-      symlinkSync(path.join(kept, 'Report.json'), path.join(kept, 'report.json'));
-    } catch {
-      return t.skip('no permission to create a symbolic link');
+      symlinkSync(path.join(kept, 'first.json'), path.join(kept, 'second.json'));
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? '';
+      if (['EPERM', 'EACCES', 'ENOTSUP', 'ENOSYS'].includes(code)) return t.skip(`no symbolic link here: ${code}`);
+      throw err;
     }
-    writeFileSync(path.join(dir, '.review', 'Report.json'), 'first\n');
-    writeFileSync(path.join(dir, '.review', 'report.json'), 'second\n');
+    writeFileSync(path.join(dir, '.review', 'first.json'), 'first\n');
+    writeFileSync(path.join(dir, '.review', 'second.json'), 'second\n');
     assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /differs/);
     assert.equal(stored(fx, goalId).closure.cleanup, false);
-    assert.equal(readFileSync(path.join(dir, '.review', 'Report.json'), 'utf8'), 'first\n');
-    assert.equal(readFileSync(path.join(dir, '.review', 'report.json'), 'utf8'), 'second\n');
+    assert.equal(readFileSync(path.join(dir, '.review', 'first.json'), 'utf8'), 'first\n');
+    assert.equal(readFileSync(path.join(dir, '.review', 'second.json'), 'utf8'), 'second\n');
   } finally {
     fx.cleanup();
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 6: a card file with no status in its front matter fails the step and stays as it is [R5] [R2]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 6: a card file with no status in its front matter fails the step and stays as it is [R5] [R2]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -360,7 +362,7 @@ test('T0-CLOSE-CLEANUP acceptance 6: a card file with no status in its front mat
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 7: the dry-run path runs no git and writes no file [R6]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 7: the dry-run path runs no git and writes no file [R6]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -377,7 +379,7 @@ test('T0-CLOSE-CLEANUP acceptance 7: the dry-run path runs no git and writes no 
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 8: the guide, the architecture note, both card-loop copies, the close directive and the changelog say what the steps do [R7]', () => {
+test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both card-loop copies, the close directive and the changelog say what the steps do [R7]', () => {
   const sentence = '`card close --cleanup` and `--metadata` do the step and record it: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes `status: merged` in the main checkout, and the session commits that file on main.';
   for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(sentence), `${doc} holds the sentence`);
   for (const copy of ['.claude/skills/aidlc-loop/card-loop.md', 'templates/claude/skills/aidlc-loop/card-loop.md']) {
@@ -385,7 +387,7 @@ test('T0-CLOSE-CLEANUP acceptance 8: the guide, the architecture note, both card
     assert.ok(Buffer.byteLength(readFileSync(path.resolve(copy), 'utf8'), 'utf8') <= 6500, `${copy} stays under the cap`);
   }
   const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
-  assert.match(unreleased ?? '', /T0-CLOSE-CLEANUP/);
+  assert.match(unreleased ?? '', /T0-CLOSE-CLEANUP-2/);
   const fx = makeFixture();
   try {
     const { goalId, run } = atClose(fx);
