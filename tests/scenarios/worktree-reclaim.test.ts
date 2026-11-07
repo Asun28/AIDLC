@@ -174,6 +174,11 @@ const notFinished: Array<[string, (fx: Fixture) => void, RegExp]> = [
     fx.advance(60_000);
     ended(fx, CARD, 'cancelled');
   }, /goal g-\S+ is not terminal/],
+  ['a live goal that projects the card and holds no run of it yet', (fx) => {
+    ended(fx, CARD, 'cancelled');
+    fx.advance(60_000);
+    goalForCards(fx, [CARD]);
+  }, /goal g-\S+ is not terminal/],
   ['a card stopped for a ruling', (fx) => {
     ended(fx, CARD, 'review');
   }, /not merged, superseded or cancelled/],
