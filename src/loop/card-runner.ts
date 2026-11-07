@@ -23,6 +23,7 @@ import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
+import { EvidenceStore } from '../audit/manifest.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
@@ -2968,10 +2969,11 @@ export class CardRunner {
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
     // The lesson step has its own flags and `--lesson` writes its line; every other step is marked by its own name, and
-    // the flags of cleanup and metadata do their step.
+    // the flags of cleanup and metadata do their step, and the evidence flag checks the manifest.
     const flagged = missing.filter((m) => m !== 'lessons');
     const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.' : '';
-    const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}` : '';
+    const checked = flagged.includes('evidence') ? ` \`--evidence\` checks that the goal manifest holds an intact file retained with \`aidlc evidence retain --card ${card.id}\`.` : '';
+    const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}${checked}` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
   }
@@ -3025,7 +3027,7 @@ export class CardRunner {
     const recorded = { ...flags };
     const lowered: Partial<CardRun['closure']> = {};
     const failures: string[] = [];
-    const perform = (step: 'cleanup' | 'metadata', work: () => void) => {
+    const perform = (step: 'evidence' | 'cleanup' | 'metadata', work: () => void) => {
       if (!flags[step]) return;
       assertLiveGoal();
       try {
@@ -3036,7 +3038,10 @@ export class CardRunner {
         failures.push(`${step}: ${(err as Error).message}`);
       }
     };
-    perform('cleanup', () => this.reclaimWorktree(goal, card));
+    perform('evidence', () => this.checkRetained(goal, card, current));
+    // The removal takes the files a retain command reads, so it waits for the evidence step and its flag keeps its last result.
+    if (lowered.evidence === false) delete recorded.cleanup;
+    else perform('cleanup', () => this.reclaimWorktree(goal, card));
     perform('metadata', () => this.writeMergedStatus(card));
     if (failures.length) data['closureFailures'] = failures;
     const closure = { ...current.closure, ...recorded };
@@ -3052,6 +3057,22 @@ export class CardRunner {
     const saved = this.save({ ...base, closure });
     if (failures.length) throw new Error(failures.join('; '));
     return saved;
+  }
+
+  /**
+   * The evidence step of a closing card: the goal manifest holds an intact file retained for the card. The manifest and
+   * the evidence tree decide it and nothing is written. A failure names the retain command, with the verdict of the last
+   * passing decision where that file still exists.
+   */
+  private checkRetained(goal: Goal, card: Card, run: CardRun): void {
+    if (this.config.shipPath === 'dry-run') return;
+    const evidence = new EvidenceStore(this.paths.evidence, goal.id);
+    const entries = evidence.load(goal.id, goal.generation, goal.revision, this.clock()).entries.filter((e) => e.cardId === card.id);
+    if (entries.some((e) => evidence.intact(e))) return;
+    const verdict = run.review.invocations.filter((i) => i.outcome === 'pass').at(-1)?.verdictRef;
+    const file = verdict ? [verdict, path.join(evidence.dir, 'review', card.id, path.basename(verdict))].find((f) => existsSync(f)) : undefined;
+    const state = entries.length ? `the files retained for ${card.id} are missing or altered` : `the manifest of ${goal.id} holds no file retained for ${card.id}`;
+    throw new Error(`${state}; run aidlc evidence retain --goal ${goal.id} --card ${card.id} --id ${card.id}.verdict --kind review-verdict --file ${file ? `"${file}"` : '<file>'}`);
   }
 
   /**

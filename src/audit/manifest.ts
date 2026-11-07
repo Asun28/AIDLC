@@ -22,6 +22,8 @@ export const ManifestEntry = z.object({
   environment: z.string().optional(),
   invocationId: z.string().optional(),
   note: z.string().optional(),
+  /** The card this file is retained for; `card close --evidence` looks for it. */
+  cardId: z.string().optional(),
 });
 export type ManifestEntry = z.infer<typeof ManifestEntry>;
 
@@ -71,7 +73,7 @@ export class EvidenceStore {
   }
 
   /** Copy an artifact into the evidence tree (kept after worktree cleanup) and record it. */
-  retain(manifest: Manifest, input: { id: string; kind: string; sourcePath?: string; content?: string; candidateDigest?: string; environment?: string; invocationId?: string; note?: string }): Manifest {
+  retain(manifest: Manifest, input: { id: string; kind: string; sourcePath?: string; content?: string; candidateDigest?: string; environment?: string; invocationId?: string; note?: string; cardId?: string }): Manifest {
     if (manifest.seal) throw new Error('manifest is sealed; open a new generation for further evidence');
     mkdirSync(this.dir, { recursive: true });
     const name = `${input.id.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
@@ -92,11 +94,18 @@ export class EvidenceStore {
       environment: input.environment,
       invocationId: input.invocationId,
       note: input.note,
+      cardId: input.cardId,
     };
     const entries = manifest.entries.filter((e) => e.id !== input.id).concat(entry);
     const next = { ...manifest, entries };
     this.save(next);
     return next;
+  }
+
+  /** Whether the file of the entry exists with the digest the entry records, the test `verifyAudit` applies. */
+  intact(entry: ManifestEntry): boolean {
+    const file = path.join(this.dir, entry.path);
+    return existsSync(file) && fileSha256(file) === entry.sha256;
   }
 
   seal(manifest: Manifest, binding: { journalHead: string; journalEvents: number; finalSha?: string; finalCandidateDigest?: string; now: string; host?: Manifest['host'] }): Manifest {
