@@ -2967,7 +2967,7 @@ export class CardRunner {
     // The lesson step has its own flags and `--lesson` writes its line; every other step is marked by its own name, and
     // the flags of cleanup and metadata do their step.
     const flagged = missing.filter((m) => m !== 'lessons');
-    const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main.' : '';
+    const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. Run `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.' : '';
     const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };

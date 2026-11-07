@@ -176,12 +176,26 @@ export function referenceCuts(frontMatter: string): ReferenceCut[] {
   return cuts;
 }
 
+/** The line `scalar` reads for `key`: group 1 ends where the raw value, group 2, starts. */
+function scalarLine(frontMatter: string, key: string): RegExpMatchArray | null {
+  return frontMatter.match(new RegExp(`^(${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*:[ \\t]*)(.*?)[ \\t\\r]*$`, 'm'));
+}
+
 /** Scalar lookup the scaffold way: first line `key: value`, comments stripped. */
 export function scalar(frontMatter: string, key: string): string | undefined {
-  const re = new RegExp(`^${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[ \\t]*:[ \\t]*(.*?)[ \\t\\r]*$`, 'm');
-  const m = frontMatter.match(re);
+  const m = scalarLine(frontMatter, key);
   if (!m) return undefined;
-  return stripComment(m[1] ?? '');
+  return stripComment(m[2] ?? '');
+}
+
+/** The offsets of the text `scalar` returns for `key`, so a writer replaces what the parser reads. */
+export function scalarRange(frontMatter: string, key: string): { start: number; end: number } | undefined {
+  const m = scalarLine(frontMatter, key);
+  if (!m) return undefined;
+  const raw = m[2] ?? '';
+  const value = stripComment(raw);
+  const start = (m.index ?? 0) + (m[1] ?? '').length + raw.indexOf(value);
+  return { start, end: start + value.length };
 }
 
 /** Block-list items under `key:` (indented `- item` lines until a non-indented line). */

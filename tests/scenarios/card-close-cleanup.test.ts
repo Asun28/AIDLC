@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
+import { withCardStatus } from '../../src/artifacts/card.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
@@ -290,7 +291,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 9: a nonbreaking space the parser trims arou
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const file = path.join(fx.cardsDir, `${CARD}.md`);
-    const before = readFileSync(file, 'utf8').replace(/^status: todo$/m, 'status:\u00a0todo\u00a0# held');
+    const before = readFileSync(file, 'utf8').replace(/^status: todo$/m, 'status:\u00a0todo\u00a0 # held');
     writeFileSync(file, before, 'utf8');
     const runner = closingRunner(fx, []);
     const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true });
@@ -395,6 +396,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 6: a card file with no status in its front m
     assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { metadata: true }), /metadata: the card has no status/);
     assert.equal(stored(fx, goalId).closure.metadata, false);
     assert.equal(readFileSync(file, 'utf8'), before);
+    assert.throws(() => withCardStatus('---\nid: x\nstatus:\n---\n', 'merged'), /no status/, 'an empty value is no status');
   } finally {
     fx.cleanup();
   }
