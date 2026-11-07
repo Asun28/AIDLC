@@ -41,7 +41,7 @@ acceptance:
   - 12. The tests of `fault-points`, `journal-owed`, `dispute-running-attempt`, `effort` and `templates` pass with no change. [R1] [R3] [dod arms 3 to 7]
   - 13. `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md`, the skill and the CHANGELOG hold the text R9 asks for. [R9] Reviewer-verified.
 depends_on: []
-budget: 500
+budget: 520
 tdd: true
 sweep: "On main at 6f1cb58. The refusal stands at `src/loop/card-runner.ts:998`. `afterShipFailure` at `src/core/effort.ts:147` already refutes a success and steps the ladder, for the ship outcomes at card-runner.ts:2691, and it is the only refuting path. `pendingRepair` has one schema at `src/core/types.ts:866`, is read at card-runner.ts:951, 953, 967, 1023 and 2994, and `clearsPendingRepair` clears any kind but `red-missing` on a success, so a new kind needs no change there. `pinnedCandidate` has three callers, 1590, 1681 and 2312, all review dispatch, so one guard covers `review pre` and `review r3`. `inFlight` at card-runner.ts:1595 is the existing test for a reservation. The review pass check for a candidate reads `review.invocations` as at lines 1020 and 1523. `verify-card-run-writes` names `recordAttempt`, which gains a refusal and no write; `withdrawCandidate` joins Not covered and gets its own fault rows in the new test file, as `disputeFinding` has none in `COVERED`. A docs sentence in `docs/OPERATIONS.md` quotes the phrase `episode already succeeded`, which R8 keeps."
 diagnosis:
