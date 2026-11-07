@@ -77,10 +77,13 @@ function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now
   if (!card) return { skip: `no card file for ${cardId}` };
   const live = goals.find((g) => !g.terminal && (g.cards.includes(cardId) || held.some((h) => h.goal.id === g.id)));
   if (live) return { skip: `goal ${live.id} is not terminal` };
-  const latest = held[0];
-  if (!latest) return { skip: `no run of ${cardId}` };
-  const finished = card.superseded_by ? `superseded by ${card.superseded_by}` : card.status === 'merged' || latest.run.state === 'DONE' ? 'merged' : latest.goal.stop?.reason === 'cancelled' ? `goal ${latest.goal.id} was cancelled` : undefined;
-  if (!finished) return { skip: `not merged, superseded or cancelled: goal ${latest.goal.id} is ${latest.goal.state}, a ruling may resume it` };
+  const first = held[0];
+  if (!first) return { skip: `no run of ${cardId}` };
+  // The newest goal that names the card decides, one that stopped before its run included.
+  const latest = goals.find((g) => g.cards.includes(cardId) || held.some((h) => h.goal.id === g.id)) ?? first.goal;
+  const run = held.find((h) => h.goal.id === latest.id)?.run;
+  const finished = card.superseded_by ? `superseded by ${card.superseded_by}` : card.status === 'merged' || run?.state === 'DONE' ? 'merged' : latest.stop?.reason === 'cancelled' ? `goal ${latest.id} was cancelled` : undefined;
+  if (!finished) return { skip: `not merged, superseded or cancelled: goal ${latest.id} is ${latest.state}, a ruling may resume it` };
   const lease = deps.leases.read(resourceKeys.card(deps.repo.key, cardId));
   const me = currentActor();
   if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(deps.now()) && !(lease.owner.session === me.session && lease.owner.host === me.host)) return { skip: `lease held by ${lease.owner.session} until ${lease.expiresAt}` };
@@ -95,7 +98,7 @@ function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now
   if (review && !review.isDirectory()) return { skip: '.review is not a directory' };
   if (review) lost.push(...readdirSync(reviewDir, { withFileTypes: true }).filter((f) => !f.isFile()).map((f) => `.review/${f.name}`));
   if (lost.length) return { skip: `ignored paths the removal would delete: ${lost.join(', ')}` };
-  return { finished, goalId: latest.goal.id };
+  return { finished, goalId: latest.id };
 }
 
 /**
