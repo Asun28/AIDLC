@@ -45,6 +45,66 @@ When stdout is not a TTY every command prints one JSON document; pass `--json` t
 
 `aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, the shipping boundary, deadlines or its step limit; it prints the pending directive on exit. Shipping requires a separate operator invocation. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
 
+## What aidlc init writes
+
+`aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.
+
+```text
+.claude/agents/implementer.md
+.claude/agents/investigator.md
+.claude/agents/planner.md
+.claude/agents/release-specialist.md
+.claude/agents/reviewer.md
+.claude/agents/verifier.md
+.claude/settings.json
+.claude/skills/aidlc-loop/SKILL.md
+.claude/skills/aidlc-loop/arc.md
+.claude/skills/aidlc-loop/card-loop.md
+.claude/skills/aidlc-loop/migrate.md
+.claude/skills/aidlc-loop/release.md
+.claude/skills/diagnose/SKILL.md
+.claude/skills/grilling/SKILL.md
+.claude/skills/merge-conflicts/SKILL.md
+.claude/skills/secure-api-review/SKILL.md
+.claude/skills/tdd/SKILL.md
+.github/workflows/agent-evals.yml
+.github/workflows/aidlc-ci.yml
+.github/workflows/security-scanners.yml
+.gitignore
+CLAUDE.md
+REVIEW.md
+aidlc.config.json
+aidlc.ops.example.json
+bands.yaml
+docs/DELIVERY-OPS.md
+docs/LESSONS.md
+docs/THIRD-PARTY-NOTICES.md
+evals/README.md
+evals/example-regression.json
+intent/README.md
+intent/_TEMPLATE.md
+plans/README.md
+plans/_TEMPLATE.md
+specs/README.md
+specs/_SPEC-TEMPLATE.md
+specs/tasks/_TEMPLATE.md
+```
+
+`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry, so no guard runs. A hook already in the file stays as it is. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.
+
+The hook entries start one process per event, which runs the guards below and returns the first block. Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).
+
+| Guard | Event | Reads | Blocks when |
+|---|---|---|---|
+| `production-gate` | `PreToolUse`: Bash, PowerShell | the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals | a command that writes matches a production pattern and the approval reference matches no recorded production authorization; with no `.aidlc/goals` directory any approval reference passes |
+| `protect-paths` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, the command, `hooks.frozenPaths` | a file path matches a frozen path, or a command that names one writes files |
+| `protect-tests` | `PreToolUse`: Edit, Write, MultiEdit | the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns` | a fix task is active and the file path matches a test pattern |
+| `secrets-guard` | `PreToolUse`: Bash, PowerShell, Edit, Write, MultiEdit | the file path, `content`, `new_string`, `command` | the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern |
+| `verify-before-done` | `Stop` | goals, card runs, leases, the git status of planning files | never: it adds a reminder of a missing DoD receipt or of uncommitted planning files |
+| `route-new-work` | `UserPromptSubmit` | the prompt, the `aidlc.config.json` error | never: it prints the routing line |
+
+While `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` deny every shell command but `aidlc doctor`, `protect-paths` denies every edit of another file, and `protect-tests` denies the same edits while a fix task is active.
+
 ## The loop
 
 Goal states (`src/core/goal-machine.ts`):

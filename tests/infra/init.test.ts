@@ -1,6 +1,6 @@
 import { test, describe, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { initProject } from '../../src/scaffold/init.ts';
 import { loadProjectConfig } from '../../src/config.ts';
 import { GitProbe } from '../../src/probes/git.ts';
+import { hookWiringReport } from '../../src/probes/hook-wiring.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).status === 0;
@@ -203,5 +204,73 @@ describe('T0-INIT-REVIEW-IGNORE: init ignores .review/', () => {
     const changelog = readFileSync(path.join(ROOT, 'CHANGELOG.md'), 'utf8').replace(/\r\n/g, '\n');
     assert.equal(hasChangelogEntry(changelog), true);
     assert.equal(hasChangelogEntry(changelog.replace(CHANGELOG_ENTRY, '')), false);
+  });
+
+  /** The CLI entry an adopter runs, on `args`; the report it prints. */
+  function initCli(...args: string[]): { created: string[]; merged: string[]; skipped: string[] } {
+    const r = spawnSync(process.execPath, [path.join(ROOT, 'bin', 'aidlc.js'), 'init', '--json', ...args], { encoding: 'utf8', windowsHide: true });
+    assert.equal(r.status, 0, r.stderr);
+    return JSON.parse(r.stdout) as { created: string[]; merged: string[]; skipped: string[] };
+  }
+
+  function tempTarget(): string {
+    const target = mkdtempSync(path.join(tmpdir(), 'aidlc-init-'));
+    dirs.push(target);
+    return target;
+  }
+
+  /** Every file under `dir`, relative and forward-slashed. */
+  function filesUnder(dir: string): string[] {
+    return readdirSync(dir, { recursive: true, withFileTypes: true })
+      .filter((e) => e.isFile())
+      .map((e) => path.relative(dir, path.join(e.parentPath, e.name)).replace(/\\/g, '/'))
+      .sort();
+  }
+
+  const settingsFile = (target: string) => path.join(target, '.claude', 'settings.json');
+  const settingsOf = (target: string) => JSON.parse(readFileSync(settingsFile(target), 'utf8')) as Record<string, unknown> & { hooks?: unknown };
+  const TEMPLATE_DENY = (JSON.parse(readFileSync(path.join(ROOT, 'templates', 'claude', 'settings.json'), 'utf8')) as { permissions: { deny: string[] } }).permissions.deny;
+
+  function seedSettings(target: string, settings: unknown): string {
+    mkdirSync(path.dirname(settingsFile(target)), { recursive: true });
+    writeFileSync(settingsFile(target), JSON.stringify(settings));
+    return target;
+  }
+
+  test('T1-INIT-SURFACE acceptance 1: --no-hooks writes the file set of init, the deny list and no hooks entry [R1]', () => {
+    const standard = tempTarget();
+    const target = tempTarget();
+    const expected = initCli(standard);
+    const report = initCli(target, '--no-hooks');
+    assert.deepEqual([...report.created].sort(), [...expected.created].sort());
+    assert.deepEqual(report.merged, expected.merged);
+    assert.deepEqual(filesUnder(target), filesUnder(standard));
+    const plain = settingsOf(standard);
+    assert.ok(Object.hasOwn(plain, 'hooks'), 'init without the flag still merges the hooks');
+    delete plain.hooks;
+    assert.deepEqual(settingsOf(target), plain, 'the file differs from the plain one by the hooks entry alone');
+    assert.deepEqual((settingsOf(target).permissions as { deny: string[] }).deny, TEMPLATE_DENY);
+    assert.equal(hookWiringReport(target), 'not wired', 'doctor names the opt-out, not a failure');
+  });
+
+  test('T1-INIT-SURFACE acceptance 1: --no-hooks leaves every hook already in the file unchanged and merges the deny list [R1]', () => {
+    const entry = (matcher: string, ...commands: string[]) => ({ matcher, hooks: commands.map((command) => ({ type: 'command', command })) });
+    const hooks = {
+      PreToolUse: [entry('Bash', 'foreign-gate', 'npx --no-install aidlc hook production-gate'), entry('Bash|Edit|Write|MultiEdit', 'npx --no-install aidlc hook auto')],
+      Stop: [entry('', 'foreign-stop')],
+    };
+    const existing = { hooks, permissions: { deny: ['Read(./private.txt)'], allow: ['Bash(git *)'] }, custom: true };
+    const plain = seedSettings(tempTarget(), existing);
+    initCli(plain);
+    assert.notDeepEqual(settingsOf(plain).hooks, hooks, 'the fixture holds hooks a plain init rewrites');
+    const target = seedSettings(tempTarget(), existing);
+    assert.ok(initCli(target, '--no-hooks').merged.includes('.claude/settings.json'));
+    assert.deepEqual(settingsOf(target), { ...existing, permissions: { deny: ['Read(./private.txt)', ...TEMPLATE_DENY], allow: ['Bash(git *)'] } });
+  });
+
+  test('T1-INIT-SURFACE acceptance 1: --no-hooks adds no hooks entry to a settings file that has none [R1]', () => {
+    const target = seedSettings(tempTarget(), { permissions: { deny: [] } });
+    initCli(target, '--no-hooks');
+    assert.deepEqual(settingsOf(target), { permissions: { deny: TEMPLATE_DENY } });
   });
 });

@@ -51,3 +51,8 @@ npm run typecheck && node --test tests/infra/init.test.ts tests/surface/hooks.te
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+- RED, before the implementation, on the four DoD test files: 81 tests, 68 pass, 9 fail, 4 skipped. The 9: `--no-hooks` refused as an unknown option (3), the README section missing (3), and the approval reference, the fix task marker and the file path printed bare (3).
+- Source budget (acceptance 5): `git diff --numstat origin/main...HEAD -- src` gives +18/-12, net +6 of the +15 allowed.
+- Plan finding F3 (acceptance 7): issue #211.

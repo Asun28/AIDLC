@@ -15,6 +15,8 @@ export interface InitOptions {
   dryRun?: boolean;
   /** Absolute path of the running CLI's `bin/aidlc-hook.js`; a target with no Node package gets a hook command that names it. */
   hookEntry?: string;
+  /** `false` (`--no-hooks`): merge no hook entry into `.claude/settings.json` and leave the hooks already there unchanged. */
+  hooks?: boolean;
 }
 
 export interface InitReport {
@@ -283,6 +285,7 @@ function settleDispatcher(list: HookEntry[], entry: HookEntry): HookEntry[] {
 function mergeSettings(target: string, src: string, report: InitReport, options: InitOptions): void {
   const dest = path.join(target, '.claude', 'settings.json');
   const incoming = JSON.parse(readFileSync(src, 'utf8')) as Settings;
+  if (options.hooks === false) delete incoming.hooks;
   const hookCommand = resolveHookCommand(target, options.hookEntry);
   for (const entries of Object.values(incoming.hooks ?? {})) for (const entry of entries) for (const h of entry.hooks) if (h.command === TEMPLATE_HOOK_COMMAND) h.command = hookCommand;
   if (!existsSync(dest)) {
@@ -296,13 +299,15 @@ function mergeSettings(target: string, src: string, report: InitReport, options:
   const existing = JSON.parse(readFileSync(dest, 'utf8')) as Settings & Record<string, unknown>;
   const deny = new Set([...(existing.permissions?.deny ?? []), ...(incoming.permissions?.deny ?? [])]);
   existing.permissions = { ...(existing.permissions ?? {}), deny: [...deny] };
-  existing.hooks = existing.hooks ?? {};
-  stripLegacyHooks(existing.hooks);
-  moveOffOldMatcher(existing.hooks);
-  for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
-    let list = existing.hooks[event] ?? [];
-    for (const entry of entries) list = settleDispatcher(list, entry);
-    existing.hooks[event] = list;
+  if (options.hooks !== false) {
+    existing.hooks = existing.hooks ?? {};
+    stripLegacyHooks(existing.hooks);
+    moveOffOldMatcher(existing.hooks);
+    for (const [event, entries] of Object.entries(incoming.hooks ?? {})) {
+      let list = existing.hooks[event] ?? [];
+      for (const entry of entries) list = settleDispatcher(list, entry);
+      existing.hooks[event] = list;
+    }
   }
   if (!options.dryRun) writeFileSync(dest, JSON.stringify(existing, null, 2) + '\n');
   report.merged.push('.claude/settings.json');
