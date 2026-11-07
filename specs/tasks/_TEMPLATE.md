@@ -22,7 +22,7 @@ acceptance:            # CLOSED numbered list the reviewer judges against; requi
 # depends_on: []       # prerequisite card ids (topological order decides what may run in parallel)
 # parallelizable_with: []   # parallel card ids; their allow_paths must not overlap (machine-checked)
 # plan_ref: plans/<slug>.md#section   # this card's plan section
-# budget: 400          # declared net changed lines (added+deleted); once declared it is a merge gate
+# budget: 400          # declared net changed lines (added+deleted); a merge gate only on the scaffold ship path, advisory on github and dry-run
 # tier: S              # acceptance tier; computed from allow_paths, may only be RAISED, never lowered
 # sweep: "<the grep you ran and the faces it found>"   # REQUIRED above five allow_paths
 # forbid: [<hard boundaries this card may not cross: network, credentials, frozen contracts>]

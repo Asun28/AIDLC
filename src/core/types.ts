@@ -863,7 +863,7 @@ export const CardRun = z.object({
   stop: StopRecord.optional(),
   blocker: z.string().optional(),
   /** A ship-side setback awaiting repair (merge conflict, rejected RED receipt); cleared by the next successful attempt (a failed repair keeps it, and with it the rejected receipt) so a resumed worker still gets the skill and the detail. */
-  pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional() }).optional(),
+  pendingRepair: z.object({ kind: z.enum(['merge-conflict', 'red-missing', 'withdrawn']), detail: z.string(), at: IsoTimestamp, rejectedReceipt: z.string().optional(), /** The candidate a `withdrawn` repair replaces: the repair's success must record another one (card T0-CANDIDATE-WITHDRAW). */ candidateDigest: z.string().optional() }).optional(),
   /** The decision events written to this run and owed to the goal journal until it holds them (card T0-JOURNAL-FAULT-EVENTS); a run written before the field has none. */
   journalOwed: z.array(OwedEvent).optional(),
   updatedAt: IsoTimestamp,

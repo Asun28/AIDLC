@@ -499,6 +499,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { effort: updated.effort, dodReceipt: updated.dodReceipt, candidate: updated.candidate }, () => `recorded ${o.outcome}; attempts=${updated.effort?.attempts.length} terminal=${updated.effort?.terminal ?? '-'}; run \`aidlc card next ${cardId}\``);
     });
   card
+    .command('withdraw <cardId>')
+    .description('withdraw the bound candidate before R3 has decided it: its success becomes a counted failure with this cause and the repair is the next attempt')
+    .option('--goal <id>')
+    .requiredOption('--cause <text>', 'the finding that refutes the candidate')
+    .action((cardId: string, o: { goal?: string; cause: string }) => {
+      const c = ctx(g());
+      const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, o.goal));
+      // The existing run only: `ensureCardRun` would start the card's deadline for a command that then refuses.
+      const run = c.store.getCardRun(goalRec.id, cardId);
+      if (!run) fail(`no run record for ${cardId} in ${goalRec.id}; nothing to withdraw`);
+      const updated = runnerFor(c).withdrawCandidate(goalRec, cardOf(c, cardId).card, run, o.cause);
+      c.controller.writeBoard(goalRec);
+      out(c, { effort: updated.effort, candidate: updated.candidate, pendingRepair: updated.pendingRepair }, () => `withdrew candidate ${updated.candidate?.sha.slice(0, 12)}; the attempt that bound it counts as failed; run \`aidlc card next ${cardId}\``);
+    });
+  card
     .command('close <cardId>')
     .description('do the cleanup and metadata steps and record the closure predicates')
     .option('--goal <id>')
