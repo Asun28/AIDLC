@@ -1,7 +1,7 @@
 ---
 id: T0-CANDIDATE-WITHDRAW
 title: A bound candidate no R3 decision has decided can be withdrawn with a recorded finding, so a defect found before R3 takes the ordinary repair path
-status: todo
+status: merged
 branch: T0-CANDIDATE-WITHDRAW
 worktree: D:\wt\AIDLC\T0-CANDIDATE-WITHDRAW
 allow_paths:
