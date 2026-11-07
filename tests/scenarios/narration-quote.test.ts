@@ -52,7 +52,7 @@ after(() => {
 const INTENT_REF = `intent/${NAME_MARK}.md`;
 
 const intentText = (questions: string[], valid: boolean) =>
-  `---\ntitle: export\n${valid ? 'status: draft\n' : ''}---\n\n## Problem\nReports cannot be exported.\n\n## Proposed outcome\nA CSV export.\n\n## Affected users and systems\nAdmins.\n\n## Constraints\nNone.\n\n## Open questions\n${questions.map((q) => `- ${q}`).join('\n')}\n`;
+  `---\ntitle: export\n${valid ? 'status: draft\n' : ''}---\n\n## Problem\nReports cannot be exported.\n\n## Proposed outcome\nA CSV export.\n\n## Affected users and systems\nAdmins.\n\n## Constraints\nNone.\n\n## Open questions\n${questions.length ? questions.map((q) => `- ${q}`).join('\n') : '- (none)'}\n`;
 
 function planNarration(fx: Fixture, intentRef: string): string {
   const goal = fx.controller.createGoal({ text: 'Add support for exporting reports as a new feature module', source: 'natural-language', affectedSurfaces: [] }, { intentRef });
