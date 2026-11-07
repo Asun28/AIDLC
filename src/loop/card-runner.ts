@@ -1039,12 +1039,11 @@ export class CardRunner {
    * The author withdraws a bound candidate no R3 decision has decided (card T0-CANDIDATE-WITHDRAW, issue 128). The finding
    * refutes the success that bound it as a failed ship does, so that attempt is a counted failure with the finding as its
    * cause and the repair is the ladder's next attempt: no review allowance pays for a withdrawal, so the ladder bounds it.
-   * Every refusal is decided on the locked record before the one write, which carries the owed event.
+   * Every refusal is decided before the one write, which carries the owed event, and writes nothing: an event an earlier
+   * command still owes waits for `card next`.
    */
   withdrawCandidate(goal: Goal, card: Card, caller: CardRun, cause: string): CardRun {
     const now = this.clock();
-    // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
-    this.deliverOwed(goal, card, this.store.getCardRun(goal.id, card.id) ?? caller);
     const finding = cause.trim();
     if (!finding) throw new Error('a withdrawal needs the finding that refutes the candidate: --cause "<finding>"');
     if ((this.store.getGoal(goal.id) ?? goal).terminal) throw new Error(`goal ${goal.id} is terminal; nothing can be withdrawn`);
