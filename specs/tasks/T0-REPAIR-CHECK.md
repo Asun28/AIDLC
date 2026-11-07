@@ -1,7 +1,7 @@
 ---
 id: T0-REPAIR-CHECK
 title: The R3 repair directive asks the repairer to try removing code first and to re-read the repair hunks, in text that reaches whoever makes the repair
-status: todo
+status: merged
 branch: T0-REPAIR-CHECK
 worktree: D:\wt\AIDLC\T0-REPAIR-CHECK
 allow_paths:
