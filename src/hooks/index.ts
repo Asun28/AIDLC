@@ -461,7 +461,7 @@ export function productionGate(event: HookEvent, env: NodeJS.ProcessEnv, config:
   }
   if (matched) return { exitCode: 0 };
   const reason = approvalRef
-    ? `Production deploys need a release authorization that matches this candidate/environment; "${approvalRef}" does not match any recorded production authorization. Record it with \`aidlc authorize production ...\` first.`
+    ? `Production deploys need a release authorization that matches this candidate/environment; ${JSON.stringify(approvalRef)} does not match any recorded production authorization. Record it with \`aidlc authorize production ...\` first.`
     : 'Production deploys need a named release authorization (RELEASE_APPROVAL=<authorization id>, or AIDLC_RELEASE_APPROVAL=<authorization id>). The agent prepares the release; the release manager authorizes it.';
   return { exitCode: 2, stderr: reason };
 }
@@ -492,7 +492,7 @@ export function protectTests(event: HookEvent, cwd: string, env: NodeJS.ProcessE
   const marker = fixTaskMarker(cwd, env);
   if (!marker) return { exitCode: 0 };
   if (config.testPathPatterns.some((p) => new RegExp(p, 'i').test(normalise(file)))) {
-    return deny('PreToolUse', `A fix task is active (${marker}); test files are locked. Fix the code, not the test. If the test itself is wrong, record the evidence and clear the fix-task marker explicitly.`);
+    return deny('PreToolUse', `A fix task is active (${JSON.stringify(marker)}); test files are locked. Fix the code, not the test. If the test itself is wrong, record the evidence and clear the fix-task marker explicitly.`);
   }
   return { exitCode: 0 };
 }
@@ -527,7 +527,7 @@ export function secretsGuard(event: HookEvent): HookResult {
   }
   const file = event.tool_input?.['file_path'];
   if (typeof file === 'string' && /(^|\/)\.env(\.(?!example$|sample$|template$)|$)|\.pem$|\.key$|id_rsa|\.secrets\//i.test(normalise(file))) {
-    return deny('PreToolUse', `Writing to ${file} is blocked: secret-bearing files are never edited by the agent. Use .env.example placeholders.`);
+    return deny('PreToolUse', `Writing to ${JSON.stringify(file)} is blocked: secret-bearing files are never edited by the agent. Use .env.example placeholders.`);
   }
   for (const t of texts) {
     for (const [re, name] of SECRET_PATTERNS) {
