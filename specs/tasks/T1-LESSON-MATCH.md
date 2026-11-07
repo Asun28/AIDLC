@@ -25,7 +25,7 @@ requirements:
   - R4. `GitProbe.commitFiles(cwd, ref)` shall list the subject and changed files of each first-parent commit reachable from `ref`, leaving out `CHANGELOG.md`, `docs/`, `specs/`, `plans/`, `intent/` and `evals/`, and shall return an empty list when git fails; the paths of a rule shall be the files of the commits whose subject names its card as a whole token.
   - R5. With `matched` set, the prompt's sentence on omitted rules shall read `- <n> other lessons omitted at the byte cap; the rules that best match this diff are above.`
   - R6. `aidlc review bench run --rules <newest|matched>` shall default to `newest`, shall refuse any other value before a review, shall select matched rules per candidate from that candidate's diff and `commitFiles` at its base, and shall name the choice as `rules` in the report.
-  - R7. `docs/OPERATIONS.md` (Learned invariants, Reviewer bench) and `CHANGELOG.md` shall state the selection and the flag.
+  - R7. `docs/OPERATIONS.md` (a new paragraph after Learned invariants, since tests pin the Reviewer bench section whole) and `CHANGELOG.md` shall state the selection and the flag.
 acceptance:
   - 1. `tests/surface/lesson-match.test.ts`: with hand-computed idf values over a small rule file, a rule matching a changed path and a rule matching a diff term outrank a newer rule matching nothing, equal scores keep newest first, and a NOTE line is never returned. [R1] [R2] [dod arm 1]
   - 2. Same file: the cap stops at the first rule that does not fit and `omitted` counts the rest; when every score is 0 the lines and `omitted` equal those of `reviewLessons`. [R1] [dod arm 1]
