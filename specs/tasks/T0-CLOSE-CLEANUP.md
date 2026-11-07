@@ -9,7 +9,6 @@ allow_paths:
   - src/cli/main.ts
   - src/probes/git.ts
   - src/artifacts/card.ts
-  - src/audit/manifest.ts
   - tests/scenarios/card-close-cleanup.test.ts
   - tests/scenarios/lesson-dup.test.ts
   - docs/OPERATIONS.md
@@ -18,29 +17,27 @@ allow_paths:
   - templates/claude/skills/aidlc-loop/card-loop.md
   - CHANGELOG.md
   - specs/tasks/T0-CLOSE-CLEANUP.md
-dod_command: npm run typecheck && node --test tests/scenarios/card-close-cleanup.test.ts tests/scenarios/lesson-dup.test.ts tests/scenarios/card-goal.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/audit.test.ts tests/surface/manifest.test.ts tests/surface/verifier.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/command-lines.test.ts tests/surface/prose.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/card-close-cleanup.test.ts tests/scenarios/lesson-dup.test.ts tests/scenarios/card-goal.test.ts tests/scenarios/fault-points.test.ts tests/surface/templates.test.ts tests/surface/mirror.test.ts tests/surface/command-lines.test.ts tests/surface/prose.test.ts
 dod_exit: 0
 requirements:
-  - R1. `aidlc card close <id>` with `--cleanup` or `--all`, on a CLOSE run with its merge verified, shall copy every regular file directly under `<worktree>/.review/` into the evidence tree of the goal, and only then remove the worktree of the card with `git worktree remove` without `--force`, leaving the branch.
-  - R1a. `EvidenceStore.retain` and `EvidenceStore.seal` shall read the manifest and write it under one exclusive lock on the manifest file, so a writer holding an older copy keeps the entries another writer recorded. `retain` shall refuse an id whose evidence path another entry holds, before it writes the file.
+  - R1. `aidlc card close <id>` with `--cleanup` or `--all`, on a CLOSE run with its merge verified, shall copy every regular file directly under `<worktree>/.review/` to `<evidence>/<goal>/review/<card>/` under its own name, and only then remove the worktree of the card with `git worktree remove` without `--force`, leaving the branch. The copies stay outside the manifest, which never held these files, so the step neither reads nor writes `manifest.json`.
   - R2. When the copy or the removal fails, `closure.cleanup` shall stay false, the worktree shall stay, the other requested flags shall be recorded, and the command shall exit nonzero with a message that names the cause; the same command run again after the cause is fixed shall complete the step.
   - R3. A card whose branch has no worktree and whose expected path does not exist shall record `closure.cleanup` true and remove nothing, so a repeat of the command, and a retry after a crash between the removal and the record, succeeds.
-  - R4. A worktree of the branch at a path other than the expected one, or a path at the expected place that git does not list for the branch, shall be refused under R2 and left in place.
+  - R4. A worktree of the branch whose real path is not the real path of the expected one, a path that differs only by case on a case-sensitive filesystem included, or a path at the expected place that git does not list for the branch, shall be refused under R2 and left in place.
   - R5. `aidlc card close <id>` with `--metadata` or `--all` shall set the `status` value of the card file in the main checkout, read as `scalar` reads the key (spaces before the colon included), to `merged` and change no other byte of the file; a file that already says `merged` is not written, and a missing file fails under R2 for `closure.metadata`. The command commits nothing.
   - R6. With `shipPath: dry-run` neither step shall run git or write a file, as PREPARE already treats that path.
   - R7. The `card close` description, the close directive, `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and both copies of `card-loop.md` shall state that these two steps are performed by the command and that the session commits the card file on main; the CHANGELOG Unreleased section shall have an entry naming this card.
 acceptance:
-  - 1. `tests/scenarios/card-close-cleanup.test.ts`, in a real temporary git repository with a linked worktree holding `.review/a.json`: `markClosure` with `cleanup` leaves no entry in `git worktree list` and no directory, the branch resolves, the evidence tree holds the bytes of `a.json` under a manifest entry with id `<card>.a.json`, and `closure.cleanup` is true. [R1] [dod arm 2]
+  - 1. `tests/scenarios/card-close-cleanup.test.ts`, in a real temporary git repository with a linked worktree holding `.review/a.json`: `markClosure` with `cleanup` leaves no entry in `git worktree list` and no directory, the branch resolves, `<evidence>/<goal>/review/<card>/a.json` holds the bytes of the file, a file in a subdirectory of `.review/` is not copied, and `closure.cleanup` is true. [R1] [dod arm 2]
   - 2. Same file: a modified tracked file and, in a second test, an untracked file: `markClosure` with `cleanup` and `docSync` throws a message holding git's refusal, `closure.cleanup` is false, `closure.docSync` is true, the file is in place, and a second call after the file is restored or removed completes. [R2] [dod arm 2]
-  - 3. Same file: a sealed manifest makes the copy fail: the worktree stays, `closure.cleanup` is false, and the message holds the seal refusal. [R1] [R2] [dod arm 2]
+  - 3. Same file: a file at the path of the copy directory makes the copy fail: the worktree stays, `closure.cleanup` is false, and a wrapped runner records no `worktree remove`. A sealed manifest does not fail the step, and `manifest.json` is unchanged by it. [R1] [R2] [dod arm 2]
   - 4. Same file: no worktree for the branch: `closure.cleanup` is true, and a wrapped runner records no `worktree remove`. A second call also succeeds. [R3] [dod arm 2]
   - 5. Same file: the branch checked out at another path: refused, the worktree in place, `closure.cleanup` false. [R4] [dod arm 2]
   - 6. Same file: a card file with CRLF line ends and a comment after the status value keeps every other byte under `metadata`; a file already `merged` keeps its mtime; a missing file leaves `closure.metadata` false and the call throws naming the path. [R5] [dod arm 2]
   - 7. Same file: `shipPath: dry-run`: a wrapped runner records no git call and the card file is unchanged; `tests/scenarios/lesson-dup.test.ts` and `tests/scenarios/card-goal.test.ts` pass with no assertion changed apart from a close directive sentence R7 changes. [R6] [R7] [dod arm 2]
   - 8. Same file: `docs/OPERATIONS.md` and `docs/ARCHITECTURE.md` hold the sentence of the Doc text section, both copies of `card-loop.md` hold `card close --all` and stay within the cap of `tests/surface/templates.test.ts`, and the CHANGELOG entry is read. [R7] [dod arm 2]
-  - 9. Same file: two files of `.review/` whose names map to one evidence path (`a b.json`, `a_b.json`) with different contents: the call throws, `closure.cleanup` is false, the worktree and both files are in place, and the copy on the evidence tree still holds the bytes of the first. [R1a] [R2] [dod arm 2]
-  - 10. Same file: two stores load one manifest and each retains from its own copy: both entries are on disk. A seal from an older copy keeps the entry recorded after that copy was read. [R1a] [dod arm 2]
-  - 11. Same file: a detached checkout at the expected path is refused, the directory in place, `closure.cleanup` false. A card file with `status : todo` becomes `status : merged`. [R4] [R5] [dod arm 2]
+  - 9. Same file: a detached checkout at the expected path is refused, the directory in place, `closure.cleanup` false. A card file with `status : todo` becomes `status : merged`. [R4] [R5] [dod arm 2]
+  - 10. Same file, on a case-sensitive filesystem and skipped elsewhere: the branch at `WT/<card>` with the root configured as `wt`: refused, the worktree in place, `closure.cleanup` false. [R4] [dod arm 2]
 depends_on: []
 budget: 500
 tdd: true
@@ -69,8 +66,7 @@ hygiene: "Who the steps hold against: an accident and a session in another windo
 
 `markClosure` keeps its checks (live goal, CLOSE run, verified merge, fenced lease) and runs the two steps before it computes the closure, in this order, so a retry after a crash finds the step done:
 
-1. `cleanup`: find the worktree with `GitProbe.findWorktree`; none means done. A mismatch fails. Copy the files of `.review/` with `EvidenceStore.retain` (kind `artifact`, id `<card>.<file name>`, so no file of `.review/` can take the path of `manifest.json`), then `git worktree remove <path>`.
-   `EvidenceStore.retain` and `seal` run under `updateJson` on `manifest.json`, the file lock the lease and card-run records use, which also covers `aidlc evidence retain` and `aidlc audit seal`. The lock timeout is its default 2 s; a timeout is a failed step under R2.
+1. `cleanup`: find the worktree with `GitProbe.findWorktree`; nothing there means done, and a path there that git does not list for the branch fails. A mismatch fails, and so does a real path other than the real path of the expected one, because `findWorktree` folds case. Copy the files of `.review/` to `<evidence>/<goal>/review/<card>/` with their names, then `git worktree remove <path>`. The copies stay outside `manifest.json`: R3 decisions 1 and 2 raised four findings on that shared file (lock, path collisions, concurrent writers), and the card needs none of what it provides.
 2. `metadata`: rewrite the status value in `<mainRoot>/<cardsDir>/<id>.md`.
 
 A failed step leaves its flag out of the closure and its message goes into the journal event; `markClosure` saves the run and then throws that message, so the other flags stay recorded and the command exits nonzero.

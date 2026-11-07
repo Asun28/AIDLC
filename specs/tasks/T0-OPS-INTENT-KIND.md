@@ -1,7 +1,7 @@
 ---
 id: T0-OPS-INTENT-KIND
 title: `aidlc ops intent` and `recordIntent` refuse a record the operation ledger cannot read, before anything is written
-status: todo
+status: merged
 branch: T0-OPS-INTENT-KIND
 worktree: D:\wt\AIDLC\T0-OPS-INTENT-KIND
 allow_paths:
