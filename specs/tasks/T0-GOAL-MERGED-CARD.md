@@ -1,7 +1,7 @@
 ---
 id: T0-GOAL-MERGED-CARD
 title: aidlc goal new refuses a request whose card is already merged, since that goal has no work to do and can close as DONE
-status: todo
+status: merged
 branch: T0-GOAL-MERGED-CARD
 worktree: D:\wt\AIDLC\T0-GOAL-MERGED-CARD
 allow_paths:
