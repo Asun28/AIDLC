@@ -53,6 +53,13 @@ hygiene: "Issues 143 and 127, grouped because each is a side write beside a save
 ## Deliverable
 A lost `CARD_DISPATCHED` append is recovered once, and a failed board write never loses a goal stop. Closes issues 143 and 127.
 
+## Attempt evidence
+RED for repair 1, commit 37791d9 (R3 decision 1 F1, F2): the corrected test with the `committedBefore` change removed and the NOTE unguarded. `node --test tests/scenarios/side-write-faults.test.ts` exits 1, tests 8, pass 6, fail 2:
+- acceptance 5: `AssertionError: committed before the stop` (expected 0, actual 1), the audit rule this card changes.
+- acceptance 6a, the failed NOTE: `Error: EIO: injected` out of `controller.next`, so the stop was not saved.
+
+The first RED, 798b184, had a test parser that read every count as 0, so acceptance 5 did not show the defect there.
+
 ## Acceptance
 ```powershell
 npm run typecheck && node --test tests/scenarios/side-write-faults.test.ts tests/scenarios/journal-owed.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/audit.test.ts tests/scenarios/deadline.test.ts

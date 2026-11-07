@@ -21,6 +21,8 @@
 
 - T0-OPS-INTENT-KIND: `aidlc ops intent` exits nonzero on a `--kind` outside `OperationKind` or a `--timeout-ms` that is not a positive integer, and `recordIntent` validates the whole record before it writes, so an invalid operation file can no longer make `aidlc next` and `aidlc card next` throw SCHEMA_VIOLATION (issue 150).
 
+- T0-SIDE-WRITE-FAULTS: `CARD_DISPATCHED` is an owed event, so a failed append is recovered once by the next `aidlc card next` or `aidlc card attempt` on the same run, and `audit verify` counts a recovered one at its `startedAt`. A failed board write beside a goal stop journals a NOTE with `boardError` and no longer loses the stop (issues 143 and 127).
+
 - T0-R2-OFF: this repository runs no R2 panel. `preReview.command` is empty in `aidlc.config.json` and the rest of the block stays, so a candidate goes from the DoD to R3 and restoring R2 is one value. R3 stays required. `docs/OPERATIONS.md` holds the numbers and the check after 15 cards.
 
 - T1-INIT-SURFACE: `aidlc init --no-hooks` writes the same files and the same `permissions.deny` list, merges no hook entry into `.claude/settings.json` and leaves a hook already in the file as it is. The README section `What aidlc init writes` lists every path init writes and, for each guard, the event, what it reads and when it blocks. `production-gate`, `protect-tests` and `secrets-guard` print the approval reference, the fix task marker and the file path as JSON strings.
