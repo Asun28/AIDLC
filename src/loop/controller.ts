@@ -682,22 +682,26 @@ export class GoalController {
     return g;
   }
 
-  /** PLAN intake for T1/T2: the grilling skill settles the open questions of the intent before the spec; a missing or unreadable file is narrated, never thrown. */
+  /**
+   * PLAN intake for T1/T2: the grilling skill settles the open questions of the intent before the spec; a missing or unreadable file is
+   * narrated, never thrown. The path, each question and a read error come from outside the loop, so each is a JSON string (card
+   * T0-NARRATION-QUOTE).
+   */
   private intakeNarration(goal: Goal): string {
     const ref = goal.intentRef;
     if (!ref) return ' Intake: settle any open questions with the grilling skill before writing the spec (record the intent with `aidlc goal new --intent <file>` to have them listed here).';
     const file = path.resolve(this.repo.mainRoot, ref);
-    if (!existsSync(file)) return ` Intake: intent file ${ref} not found under the main checkout; record the open questions before the spec and settle them with the grilling skill.`;
+    if (!existsSync(file)) return ` Intake: intent file ${JSON.stringify(ref)} not found under the main checkout; record the open questions before the spec and settle them with the grilling skill.`;
     try {
       const parsed = parseIntent(readFileSync(file, 'utf8'));
       const questions = parsed.intent?.openQuestions ?? [];
-      const listed = questions.length ? ` Open questions to settle first: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.` : '';
+      const listed = questions.length ? ` Open questions to settle first: ${questions.map((q, i) => `Q${i + 1} ${JSON.stringify(q)}`).join(' | ')}.` : '';
       // Any validation failure is narrated as such: an invalid file is never read as an empty question list.
-      if (!parsed.ok || !parsed.intent) return ` Intake: intent file ${ref} does not validate (${parsed.problems.map(sanitizeIntentProblem).join('; ')}); fix the file and settle its open questions with the grilling skill before the spec.${listed}`;
-      if (!questions.length) return ` Intake: ${ref} lists no open questions; write the spec.`;
-      return ` Intake: ${ref} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${q}`).join(' | ')}.`;
+      if (!parsed.ok || !parsed.intent) return ` Intake: intent file ${JSON.stringify(ref)} does not validate (${parsed.problems.map(sanitizeIntentProblem).join('; ')}); fix the file and settle its open questions with the grilling skill before the spec.${listed}`;
+      if (!questions.length) return ` Intake: ${JSON.stringify(ref)} lists no open questions; write the spec.`;
+      return ` Intake: ${JSON.stringify(ref)} lists ${questions.length} open question(s); settle them in rounds with the grilling skill before the spec: ${questions.map((q, i) => `Q${i + 1} ${JSON.stringify(q)}`).join(' | ')}.`;
     } catch (err) {
-      return ` Intake: intent file ${ref} is unreadable (${err instanceof Error ? err.message : String(err)}); record the open questions before the spec and settle them with the grilling skill.`;
+      return ` Intake: intent file ${JSON.stringify(ref)} is unreadable (${JSON.stringify(err instanceof Error ? err.message : String(err))}); record the open questions before the spec and settle them with the grilling skill.`;
     }
   }
 

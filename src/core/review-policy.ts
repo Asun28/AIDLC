@@ -498,14 +498,14 @@ const times = (n: number): string => (n === 1 ? 'once' : n === 2 ? 'twice' : `${
 export function describeDeadlock(findings: ReviewFinding[]): string {
   const dead = deadlockedFindings(findings);
   if (!dead.length) return '';
-  return `deadlock: ${dead.map((f) => `${f.id} (${f.reason}) disputed ${times(nonAcceptanceRounds(f))} and re-raised ${times(nonAcceptanceRounds(f))}`).join('; ')}; human ruling needed`;
+  return `deadlock: ${dead.map((f) => `${f.id} (${JSON.stringify(f.reason)}) disputed ${times(nonAcceptanceRounds(f))} and re-raised ${times(nonAcceptanceRounds(f))}`).join('; ')}; human ruling needed`;
 }
 
 /** One sentence naming the findings re-raised after a dispute, empty when there are none. */
 export function describeContested(findings: ReviewFinding[]): string {
   const contested = contestedFindings(findings);
   if (!contested.length) return '';
-  return contested.map((f) => `${f.id} re-raised after the author's dispute (${f.reason})`).join('; ');
+  return contested.map((f) => `${f.id} re-raised after the author's dispute (${JSON.stringify(f.reason)})`).join('; ');
 }
 
 /**

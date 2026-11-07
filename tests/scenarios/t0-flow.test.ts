@@ -4879,7 +4879,8 @@ test('T0-TOOL-STOP-TEXT (issue 85 item 2): an unclassified ship outcome stops wi
     assert.equal(stop.reason, 'tool');
     assert.equal(stop.nextAction, `inspect the ship output and the retained receipt; this stop is final for card T1-TOOLSHIP: fix the cause, register a replacement card that carries the candidate, then run \`aidlc goal resume ${goal.id} --reason "..." --replace '{"T1-TOOLSHIP":"<replacement>"}'\``);
     assert.ok(!stop.nextAction.includes('card next'), stop.nextAction);
-    assert.equal(stop.detail, "unclassified ship outcome (exit 1): sentinel \\[SHIP-MERGE-FAIL\\]; the ship path's resume marker, a diagnostic that does not lift this stop: aidlc card next T1-TOOLSHIP");
+    // The ship detail and the resume marker come from the ship output, so each is a JSON string (card T0-NARRATION-QUOTE).
+    assert.equal(stop.detail, `unclassified ship outcome (exit 1): ${JSON.stringify('sentinel \\[SHIP-MERGE-FAIL\\]')}; the ship path's resume marker, a diagnostic that does not lift this stop: ${JSON.stringify('aidlc card next T1-TOOLSHIP')}`);
     if (r.directive.kind === 'stop') assert.deepEqual(r.directive.stop, stop);
     const again = runner.next(fx.goal(goal.id), card, r.run);
     assert.equal(again.directive.kind, 'stop', 'card next returns the stop');
