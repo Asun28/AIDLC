@@ -53,3 +53,7 @@ The traced sample is small and no run varied effort on purpose. No gate checks t
 
 ## Review after 15 cards
 Count decision 1 blocks that went back to R3 and how many were blocked again. Baseline 70 of 113. Target under 45%. If the rate has not fallen, remove the constant.
+
+## Attempt evidence
+- RED on c65735d, with the code of main: the first acceptance 1 test fails on the count (expected 2, actual 1) and the order test on `repairText.endsWith`. The acceptance 2 test passes on main, since it pins what main does.
+- Seven hand mutants of the narration each fail a test of this file: no text, text after the class list, text before the dispute hint, text twice, no space before the text, attempt plus one, effort raised to high.

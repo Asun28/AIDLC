@@ -136,7 +136,7 @@ interface FormalResult {
 }
 
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
-const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names closes the whole class, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
+const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
 
 /** A formal result recovered from a reservation: it always names the pool request to settle. */
 type RetainedFormalResult = FormalResult & { key: string };

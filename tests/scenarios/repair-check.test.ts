@@ -6,7 +6,7 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 
 /** The directive text, as the card words it. */
-const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names closes the whole class, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
+const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
 
 const CLASS_TEXT = " Defect classes of this block: journal-before-save (F1 at src/t0-rc.ts:3). Fix every site of each class inside the card's allow_paths, not only the cited lines; leave a site outside allow_paths unchanged and dispute a re-raise that cites one.";
 
