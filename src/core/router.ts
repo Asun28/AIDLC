@@ -38,8 +38,9 @@ const GO_LIVE = /\b(?:go live|release to prod)\b/i;
 const PACKAGE_IT = /\bpackage (?:it|the app|a build)\b/i;
 // A sentence ends at a terminator, with any closing marks after it, before whitespace (a dot in `2.0` or `example.com` does
 // not); at a full-width terminator, which takes no whitespace; at a blank line; or before a list item, a line that opens with
-// marks or a short label. Any other line break is wrapping.
-const SENTENCE_END = /(?<=[\p{Sentence_Terminal};\u2026][^\p{L}\p{N}\s]*)\s+|(?<=[\u3002\uff01\uff1f\uff1b])|\n\s*\n|\n\s*(?:[^\p{L}\p{N}\s]+|\(?[\p{L}\p{N}]{1,3}[.)])\s/u;
+// marks or a short label. Any other line break is wrapping. The lookahead keeps the lookbehind to whitespace, so a long run of
+// marks is read back once, not from each of its characters.
+const SENTENCE_END = /(?=\s)(?<=[\p{Sentence_Terminal};\u2026][^\p{L}\p{N}\s]*)\s+|(?<=[\u3002\uff01\uff1f\uff1b])|\n\s*\n|\n\s*(?:[^\p{L}\p{N}\s]+|\(?[\p{L}\p{N}]{1,3}[.)])\s/u;
 const MIGRATION_OP = /\b(run the migration|apply the migration|migrate the (?:database|data)|backfill the|run (?:the |a )?data migration)\b/i;
 const OPERATIONS = /\b(page on-?call|keep watching|ongoing operations|observe production|monitor (?:it|the|this|our|production|prod))\b/i;
 const INCIDENT = /\b(alert|incident|outage|p1|p2|sev ?\d|5xx spike|error rate|latency spike|observed regression|prod(?:uction)? (?:is|error))\b/i;
