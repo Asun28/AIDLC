@@ -9,6 +9,7 @@ allow_paths:
   - src/core/types.ts
   - src/audit/verifier.ts
   - tests/scenarios/side-write-faults.test.ts
+  - tests/scenarios/journal-owed.test.ts
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-SIDE-WRITE-FAULTS.md
@@ -27,7 +28,7 @@ acceptance:
   - 4. `tests/scenarios/side-write-faults.test.ts`: after that failure, `CardRunner.recordAttempt` as the first step leaves exactly one `CARD_DISPATCHED`. [R2] [dod arm 2]
   - 5. `tests/scenarios/side-write-faults.test.ts`: a recovered `CARD_DISPATCHED` whose `startedAt` is before a `GOAL_STOPPED` gives no `WORK_AFTER_TERMINAL`, one with `startedAt` after it does, and one without `completed` does. [R3] [dod arm 2]
   - 6. `tests/scenarios/side-write-faults.test.ts`: with `paths.board` replaced by a file, `controller.next` on a goal past its deadline returns `stop`, a fresh controller reads the goal as stopped for `time`, and the journal holds one `GOAL_STOPPED` and one NOTE with the error code. [R4] [dod arm 2]
-  - 7. The existing tests of `journal-owed`, `fault-points`, `audit` and `deadline` pass with no change. [R2] [R3] [R4] [dod arms 3 to 6]
+  - 7. The existing tests of `journal-owed`, `fault-points`, `audit` and `deadline` pass with no change, apart from two rows of `tests/scenarios/journal-owed.test.ts`. The row `a marked CARD_DISPATCHED is not an attempt` pinned the type filter R3 widens, so it moves to `OPERATION_ISSUED` with the same expected count of 1. The test `a card run without journalOwed parses unchanged` read a fresh run as the legacy record, which R1 changes, so it deletes `journalOwed` from the record it reads and keeps every assertion. [R2] [R3] [R4] [dod arms 3 to 6]
   - 8. `docs/ARCHITECTURE.md` and the CHANGELOG hold the text R5 asks for. [R5] Reviewer-verified.
 depends_on: []
 budget: 170

@@ -2639,19 +2639,18 @@ export class CardRunner {
       }
       let mergeVerified = false;
       const sha = run.candidate?.sha;
-      // gh answers an unconfirmed ship only with the PR it asked for, in a known state, at a named head; any other answer counts
-      // as none (R3 decision 1 F3, F4). A merged ship reads its view as before (issue 131).
+      // gh answers a ship only with the PR it asked for, in a known state, at a named head; any other answer counts as none
+      // (T0-EXIT-ZERO-NOT-MERGED-3 R3 decision 1 F3, F4; card T0-MERGED-VIEW-CHECK for a merged ship).
       const answered = pr !== undefined && view && view.number === pr && ['OPEN', 'MERGED', 'CLOSED'].includes(view.state) && typeof view.headRefOid === 'string' && view.headRefOid !== '' ? view : undefined;
-      // The facts of an unconfirmed ship belong to the verified candidate or to nobody: only a valid view MERGED at it gives
-      // them (R3 decision 1 F4); a merged ship reads its view as before (issue 131).
-      const checked = unconfirmed ? (answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha ? answered : undefined) : view;
+      // The facts of a ship belong to the verified candidate or to nobody: only a valid view MERGED at it gives them.
+      const checked = answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha ? answered : undefined;
       // An unconfirmed ship is verified as main verified a merged one where main's evidence was sound: the dry-run path, which
       // merges nothing, and a token at the candidate, the scaffold's merge contract, whatever gh answers; otherwise a valid gh
       // answer decides (T0-EXIT-ZERO-NOT-MERGED-3).
       if (unconfirmed) mergeVerified = this.config.shipPath === 'dry-run' || (!!sha && token?.tip === sha) || (!!answered && !!sha && answered.state === 'MERGED' && answered.headRefOid === sha);
       else if (this.config.shipPath === 'dry-run') mergeVerified = true;
       else if (token?.tip && run.candidate?.sha && token.tip === run.candidate.sha) mergeVerified = true;
-      else if (view) mergeVerified = view.state === 'MERGED' && (!run.candidate?.sha || view.headRefOid === run.candidate.sha);
+      else if (answered) mergeVerified = answered.state === 'MERGED' && (!sha || answered.headRefOid === sha);
       // The facts ride in the merge's one result (card T1-AUDIT-FACTS-2), from gh and git only, never from the ship output or the
       // token: the merge commit reaches the checkout through a fetch of the base, then its tree is read. A fact that cannot be
       // read leaves the result without facts; audit verify names the card (FACT_MISSING).
@@ -2671,7 +2670,7 @@ export class CardRunner {
       }
       // The merge result is owed in `finish`'s write and appended after `markResult`, while the ledger shows it (card T0-JOURNAL-FAULT-EVENTS).
       const owedResult = this.owe(goal, 'OPERATION_RESULT', { operationId, status: mergeVerified ? 'succeeded' : 'UNKNOWN', ...facts });
-      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && (!unconfirmed || mergeVerified) ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
+      return finish((latest) => ({ state: mergeVerified ? 'CLOSE' : 'WAIT', mergeVerified, pr: pr && mergeVerified ? { number: pr, state: 'MERGED' as const, headRefOid: unconfirmed ? sha : token?.tip ?? run.candidate?.sha } : latest.pr, journalOwed: this.owedWith(goal.id, latest, owedResult) }), (next) => {
         const noSha = unconfirmed && !sha ? `; the run has no candidate sha to compare the head of PR #${pr ?? '?'} with` : '';
         this.ops.markResult(operationId, mergeVerified ? 'succeeded' : 'UNKNOWN', { evidenceRef: `ship-${operationId}`, error: mergeVerified ? undefined : `merge reported but not verified against the intended base${noSha}` });
         this.deliverOwed(goal, card, next, { keys: [owedResult.key] });

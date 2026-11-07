@@ -16,6 +16,9 @@
 
 - T0-R3-STOP-DISPUTED: R3 stops a card for a ruling on a re-raise only when the author disputed the finding, at any point. A re-raise of an undisputed finding returns the card to REVIEW_FIX for another repair round, which reverses part of T1-EFF-R3-PROGRESS. A block on decision 4, a ship-path reviewer's second block and a base-sync decision stop as before. The finding the previous R3 decision raised still reaches the next R3 prompt after an R2 pass resolved it.
 
+- T0-MERGED-VIEW-CHECK: a `merged` ship counts a PR view only when it is the requested PR, in a known state, at a named head. Any other gh answer leaves the run waiting on `merge-verify` with the operation UNKNOWN. The PR is recorded as MERGED only once the merge is verified, and merge facts come only from a counted view MERGED at the candidate (issue 131).
+- T0-PROD-GOAL-STAGES: a delivered production attempt with a succeeded `stage-verify` step passes the goal's staging stage as well as its production stage, so a production goal reaches DONE instead of waiting in CLOSE on `stage staging=pending` (issue 162).
+
 - T0-OPS-INTENT-KIND: `aidlc ops intent` exits nonzero on a `--kind` outside `OperationKind` or a `--timeout-ms` that is not a positive integer, and `recordIntent` validates the whole record before it writes, so an invalid operation file can no longer make `aidlc next` and `aidlc card next` throw SCHEMA_VIOLATION (issue 150).
 
 - T0-SIDE-WRITE-FAULTS: `CARD_DISPATCHED` is an owed event, so a failed append is recovered once by the next `aidlc card next` or `aidlc card attempt` on the same run, and `audit verify` counts a recovered one at its `startedAt`. A failed board write beside a goal stop journals a NOTE with `boardError` and no longer loses the stop (issues 143 and 127).
