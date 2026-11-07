@@ -38,7 +38,7 @@ acceptance:
   - 5. Same file: a no-verdict and a quota hold on the second pass leave it due, and the retry runs it. [R5] [dod arm 1]
   - 6. Same file: a failed `REVIEW_DECIDED` append on a second pass is made by the next `card next` with `secondPass: true`. [R3] [dod arm 1]
   - 7. Same file: `aidlc review stats` counts two second-pass decisions and one block on two runs, and a run with none shows 0. [R6] [dod arm 1]
-  - 8. `tests/scenarios/fault-points.test.ts` passes with no pin added, and `.claude/skills/verify-card-run-writes/SKILL.md` moves its sync commit under its own rules. [dod arm 2]
+  - 8. `tests/scenarios/fault-points.test.ts` passes with no pin added. At CLOSE, `.claude/skills/verify-card-run-writes/SKILL.md` moves its sync commit to the merge commit on main, since its own rules allow no branch commit. [dod arm 2]
   - 9. The docs and CHANGELOG state R1 to R6 (reviewer-verified against the diff). [R7]
 depends_on: [T1-LESSON-MATCH]
 budget: 420
