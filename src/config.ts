@@ -95,7 +95,12 @@ export const FormalReviewBaseSync = FormalReviewerConfig.extend({
   reviewer: z.string().refine((name) => name.trim().length > 0, 'formalReview.baseSync.reviewer must name the reviewer'),
   effort: ReviewEffortPolicy.default({ default: 'medium' }),
 });
-export const FormalReviewConfig = FormalReviewerConfig.extend({ fallback: FormalReviewFallback.optional(), baseSync: FormalReviewBaseSync.optional() });
+export const FormalReviewConfig = FormalReviewerConfig.extend({
+  fallback: FormalReviewFallback.optional(),
+  baseSync: FormalReviewBaseSync.optional(),
+  /** One more R3 with matched rules after the first pass of a card run (card T1-R3-SECOND-PASS); absent = off. */
+  secondPass: z.boolean().optional(),
+});
 export type FormalReviewConfig = z.infer<typeof FormalReviewConfig>;
 
 /** GitHub ship path: required check-run names, the verdict rule and the CI polling limits. */

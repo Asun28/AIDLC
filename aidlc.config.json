@@ -90,6 +90,7 @@
   },
   "gateRequired": true,
   "formalReview": {
+    "secondPass": true,
     "command": [
       "codex",
       "exec",
