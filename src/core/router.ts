@@ -27,7 +27,7 @@ const FEATURE = /\b(feature|module|epic|workflow|integrate|integration|dashboard
 const BUG = /\b(bug|defect|regression|crash|stack ?trace|exception|fails? with|broken|error:|nullpointer|npe|typeerror|500 error|does not work|doesn't work|incorrect result)\b/i;
 const CARD_TEXT_ONLY = /\b(card text|reword|rewrite the card|amend the card|update the card text|card description|acceptance list|only the card|text-only|wording)\b/i;
 const RELEASE = /\b(deploy|release|publish|ship to (?:staging|production|prod)|staging|production|go live|rollout|package (?:it|the app|a build)|installer|runnable package|build artifact)\b/i;
-// A target comes from a request to deliver, never from a word that names a place (card T0-INTAKE-TARGET, issue 222): a delivery
+// A target comes from a request to deliver, never from a word that names a place (card T0-INTAKE-TARGET-2, issue 222): a delivery
 // verb tied by `to` to the target in one sentence, a build verb tied to what it builds, or a phrase that names the operation.
 const DELIVER = /\b(?:deploy|release|ship|publish|promote|push|roll[- ]?out)\b/i;
 const BUILD = /\b(?:build|produce|make|create|cut|generate|publish)\b/i;
@@ -133,7 +133,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   // --- kind ----------------------------------------------------------------------------
   const read = detectTarget(text);
   // A request that names a card or an issue says what to change and only `--target` says where it goes, and
-  // `--target development` keeps a request to deliver out of the kind (card T0-INTAKE-TARGET).
+  // `--target development` keeps a request to deliver out of the kind (card T0-INTAKE-TARGET-2).
   const textDecides = input.explicitTarget ? input.explicitTarget !== 'development' : input.ref === undefined;
   const targetInfo = textDecides ? read : NO_TARGET;
   if (!kind) {

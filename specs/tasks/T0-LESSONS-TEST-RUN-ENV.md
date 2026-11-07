@@ -1,7 +1,7 @@
 ---
 id: T0-LESSONS-TEST-RUN-ENV
 title: tests/surface/lessons.test.ts passes when the test process has AIDLC_RUN_NO_SHIP=1
-status: todo
+status: merged
 branch: T0-LESSONS-TEST-RUN-ENV
 worktree: D:\wt\AIDLC\T0-LESSONS-TEST-RUN-ENV
 allow_paths:

@@ -3,6 +3,8 @@
  * a quota hold comes from a provider's numeric error status when it reports one, else from one word rule over the text.
  */
 export const nulList = (stdout: string): string[] => stdout.split('\u0000').filter((name) => name.length > 0);
+/** The records of a `-z` listing with an empty field between them: git prints no NUL in a subject or name, so no name can forge the double NUL. */
+export const nulRecords = (stdout: string): string[][] => stdout.split('\u0000\u0000').map(nulList).filter((record) => record.length > 0);
 
 /** A process that exited 0 wrote its answer to stdout, where its reasoning can name a quota word, so only its stderr reports a hold. */
 export const quotaOutput = (r: { exitCode: number | null; stdout: string; stderr: string }): string => (r.exitCode === 0 ? r.stderr : `${r.stdout}\n${r.stderr}`);

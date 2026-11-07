@@ -1,4 +1,4 @@
-// Card T0-INTAKE-TARGET (issue 222): a word in a request no longer sets a delivery target. A goal that names a card or an
+// Card T0-INTAKE-TARGET-2 (issue 222): a word in a request no longer sets a delivery target. A goal that names a card or an
 // issue takes its target only from the flag, and free text sets one only by asking for a delivery.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
@@ -26,15 +26,15 @@ function assertDevelopment(r: ReturnType<typeof classifyRequest>, text: string):
 }
 
 for (const text of NO_DELIVERY) {
-  test(`T0-INTAKE-TARGET acceptance 1: with a ref, "${text.slice(0, 40)}" stays a development card [R1]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 1: with a ref, "${text.slice(0, 40)}" stays a development card [R1]`, () => {
     assertDevelopment(classifyRequest({ text, source: 'card', ref: REF, explicitSize: 'T0-bugfix' }), text);
   });
-  test(`T0-INTAKE-TARGET acceptance 2: as free text, "${text.slice(0, 40)}" asks for no delivery [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 2: as free text, "${text.slice(0, 40)}" asks for no delivery [R3]`, () => {
     assertDevelopment(classifyRequest({ text }), text);
   });
 }
 
-test('T0-INTAKE-TARGET acceptance 3: a request that names a card or an issue takes its target only from the flag [R1]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 3: a request that names a card or an issue takes its target only from the flag [R1]', () => {
   for (const request of [{ source: 'card', ref: REF }, { source: 'issue', ref: '#222' }, { source: 'bug-evidence', ref: REF }] as const) {
     assertDevelopment(classifyRequest({ text: 'deploy to production', ...request }), request.source);
     const flagged = classifyRequest({ text: 'deploy to production', ...request, explicitTarget: 'staging' });
@@ -42,7 +42,7 @@ test('T0-INTAKE-TARGET acceptance 3: a request that names a card or an issue tak
   }
 });
 
-test('T0-INTAKE-TARGET acceptance 4: --target development keeps a request to deliver out of the release kind [R2]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 4: --target development keeps a request to deliver out of the release kind [R2]', () => {
   const r = classifyRequest({ text: 'deploy to production', explicitTarget: 'development' });
   assert.equal(r.target, 'development');
   assert.equal(r.kind, 'change');
@@ -121,7 +121,7 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['take over ongoing operations', 'operations'],
 ];
 for (const [text, target] of REQUESTS) {
-  test(`T0-INTAKE-TARGET acceptance 5: "${text}" asks for ${target} [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 5: "${text}" asks for ${target} [R3]`, () => {
     const r = classifyRequest({ text });
     assert.deepEqual([r.target, r.targetSource], [target, 'explicit']);
   });
@@ -166,7 +166,7 @@ const DROPPED = [
   'deploy it for online test',
 ];
 for (const text of DROPPED) {
-  test(`T0-INTAKE-TARGET acceptance 6: "${text}" reads as no target [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 6: "${text}" reads as no target [R3]`, () => {
     const r = classifyRequest({ text });
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
   });
@@ -178,49 +178,48 @@ const CLOSERS = ['', '"', "'", '\u201d', '\u2019', '\u00bb', '\u203a', ')', ']',
 for (const terminator of TERMINATORS) {
   for (const closer of CLOSERS) {
     const text = `Release the notes${terminator}${closer} The next step is to production`;
-    test(`T0-INTAKE-TARGET acceptance 6: a sentence ends at ${JSON.stringify(terminator + closer)} [R3]`, () => {
+    test(`T0-INTAKE-TARGET-2 acceptance 6: a sentence ends at ${JSON.stringify(terminator + closer)} [R3]`, () => {
       const r = classifyRequest({ text });
       assert.deepEqual([r.target, r.targetSource], ['development', 'default'], text);
     });
   }
 }
 for (const terminator of ['\u3002', '\uff01', '\uff0e', '\uff1f', '\uff1b', '\uff61']) {
-  test(`T0-INTAKE-TARGET acceptance 6: the full-width terminator ${JSON.stringify(terminator)} ends a sentence with no whitespace [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 6: the full-width terminator ${JSON.stringify(terminator)} ends a sentence with no whitespace [R3]`, () => {
     const r = classifyRequest({ text: `Release the notes${terminator}The next step is to production` });
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
   });
 }
 for (const marker of ['-', '*', '+', '\u2022', '\u2013', '>', '1.', '1)', '(1)', 'a.', 'a)', 'iv.', '10.']) {
-  test(`T0-INTAKE-TARGET acceptance 6: the list marker ${JSON.stringify(marker)} starts a new item [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 6: the list marker ${JSON.stringify(marker)} starts a new item [R3]`, () => {
     const r = classifyRequest({ text: `${marker} Release the notes\n${marker} Link it to production docs` });
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
   });
 }
 for (const text of ['Deploy example.com to staging', 'Release v2.0.1 to staging', 'deploy the build\n(all of it) to staging', 'deploy the build\nsome) to staging', 'deploy the build\n-all of it to staging', 'deploy the build\nto staging. Then tell the team']) {
-  test(`T0-INTAKE-TARGET acceptance 5: ${JSON.stringify(text)} stays one sentence [R3]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 5: ${JSON.stringify(text)} stays one sentence [R3]`, () => {
     assert.equal(classifyRequest({ text }).target, 'staging');
   });
 }
 
-test('T0-INTAKE-TARGET acceptance 5: a wrapped form has the kind the form has on one line [R3]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 5: a wrapped form has the kind the form has on one line [R3]', () => {
   assert.equal(classifyRequest({ text: 'go\nlive' }).kind, 'release');
   assert.equal(classifyRequest({ text: 'package the\napp' }).kind, 'release');
 });
 
 for (const text of ['deploy to production fails with a 500', 'the release to staging is broken', 'deploy to production fails\nwith a 500']) {
-  test(`T0-INTAKE-TARGET acceptance 7: the bug report "${text}" reads as no target [R4]`, () => {
+  test(`T0-INTAKE-TARGET-2 acceptance 7: the bug report "${text}" reads as no target [R4]`, () => {
     const r = classifyRequest({ text });
-    assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
-    assert.notEqual(r.kind, 'release');
+    assert.deepEqual([r.target, r.targetSource, r.kind], ['development', 'default', 'bugfix']);
   });
 }
 
-test('T0-INTAKE-TARGET acceptance 5: a prompt of repeated verbs and no sentence end reads as no target, in a scan that stays linear [R3]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 5: a prompt of repeated verbs and no sentence end reads as no target, in a scan that stays linear [R3]', () => {
   const r = classifyRequest({ text: 'deploy '.repeat(50_000) });
   assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
 });
 
-test('T0-INTAKE-TARGET acceptance 5: a child classifies long runs of each unit before its kill, so a scan that is not linear fails with no clock in the test [R3]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 5: a child classifies long runs of each unit before its kill, so a scan that is not linear fails with no clock in the test [R3]', () => {
   // R3 decision 3 F5: 80000 hyphens took 7 seconds when the lookbehind ran at every character, so 400000 would take minutes.
   // The size stays small enough to leave the timing tests that run beside this one alone.
   const router = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'core', 'router.ts')).href;
@@ -231,7 +230,7 @@ for (const unit of ${JSON.stringify(units)}) classifyRequest({ text: 'Add suppor
   assert.equal(r.status, 0, `killed by ${r.signal}: ${r.stderr}`);
 });
 
-test('T0-INTAKE-TARGET acceptance 8: the routing reasons name a target the text read as when it was set aside, and name none otherwise [R5]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 8: the routing reasons name a target the text read as when it was set aside, and name none otherwise [R5]', () => {
   const named = 'the text reads as target production; only --target sets the target of this request';
   assert.ok(classifyRequest({ text: 'deploy to production', source: 'card', ref: REF }).reasons.includes(named));
   assert.ok(classifyRequest({ text: 'deploy to production', explicitTarget: 'development' }).reasons.includes(named));
@@ -239,7 +238,7 @@ test('T0-INTAKE-TARGET acceptance 8: the routing reasons name a target the text 
   assert.ok(!plain.reasons.some((r) => r.startsWith('the text reads as target')), JSON.stringify(plain.reasons));
 });
 
-test('T0-INTAKE-TARGET acceptance 9: the goal of issue 162 holds no staging authorization and ends DONE with no release attempt [R6]', () => {
+test('T0-INTAKE-TARGET-2 acceptance 9: the goal of issue 162 holds no staging authorization and ends DONE with no release attempt [R6]', () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: REF, title: 'a development fix' });

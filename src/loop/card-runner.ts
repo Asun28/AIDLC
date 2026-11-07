@@ -146,6 +146,9 @@ interface FormalResult {
   seq?: number;
 }
 
+/** What the build and formal repair narrations ask for before the final DoD run (card T0-ACCEPT-TABLE). No code reads the table. */
+const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
+
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
 
@@ -766,7 +769,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running?.n ?? (episode?.attempts.length ?? 0),
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)}`,
+            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} ${ACCEPTANCE_TABLE} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)}`,
           },
         };
       }
@@ -982,8 +985,8 @@ export class CardRunner {
         attempt: attemptNo,
         skills: run.pendingRepair?.kind === 'merge-conflict' ? ['merge-conflicts', ...this.buildSkills(goal, card)] : this.buildSkills(goal, card),
         narration: card.tdd && !redReceipt
-          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`.`
-          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt.`,
+          ? `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: establish behavioural RED first (scaffold: task.ps1 -Phase red writes .review/${card.id}.red), then implement within allow_paths and run the DoD. Record the result with \`aidlc card attempt ${card.id} --outcome success|fail --cause ...\`. ${ACCEPTANCE_TABLE}`
+          : `${repairPrefix}Attempt ${attemptNo} at effort ${effort}: implement/repair within allow_paths, run \`${card.dod_command}\` and the affected checks, then record the attempt outcome (\`aidlc card attempt\`) with the DoD receipt. ${ACCEPTANCE_TABLE}`,
       },
     };
   }

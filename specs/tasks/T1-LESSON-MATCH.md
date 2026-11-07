@@ -1,12 +1,13 @@
 ---
 id: T1-LESSON-MATCH
 title: A review can take the learned rules that best match its diff instead of the newest, and `aidlc review bench run --rules matched` scores that selection
-status: todo
+status: merged
 branch: T1-LESSON-MATCH
 worktree: D:\wt\AIDLC\T1-LESSON-MATCH
 plan_ref: plans/second-r3-pass.md#order-of-work
 allow_paths:
   - src/artifacts/lessons.ts
+  - src/core/parse-guard.ts
   - src/probes/git.ts
   - src/review/pre-review.ts
   - src/review/bench.ts
@@ -22,16 +23,16 @@ requirements:
   - R1. `matchedLessons(file, input, maxBytes)` in `src/artifacts/lessons.ts` shall return the NEVER and ALWAYS lines of the file, highest score first, under the byte cap and stop rule of `reviewLessons`, in its `{ lines, omitted }` shape plus `matched: true`.
   - R2. The score of a rule shall be the sum of idf(p) over its paths the candidate changes plus the sum of idf(t) over its terms found in the diff text, where idf(x) = ln(1 + N / df(x)), N is the rule count and df(x) the rules holding x; equal scores keep newest first.
   - R3. The terms of a rule shall be its backticked spans and, outside them, the words with a capital right after a lowercase letter or digit, or with an underscore, dot or dash that is neither their first nor their last character. An all-capitals word such as `CI` is not a term, since the replay did not count one.
-  - R4. `GitProbe.commitFiles(cwd, ref)` shall list the subject and changed files of each first-parent commit reachable from `ref`, read NUL-delimited so a name git quotes is listed as the candidate diff lists it, leaving out `CHANGELOG.md`, `docs/`, `specs/`, `plans/`, `intent/` and `evals/`, and shall return an empty list when git fails; the paths of a rule shall be the files of the commits whose subject names its card as a whole token.
-  - R5. With `matched` set, the prompt's sentence on omitted rules shall read `- <n> other lessons omitted at the byte cap; the rules that best match this diff are above.`
+  - R4. `GitProbe.commitFiles(cwd, ref)` shall list the subject and changed files of each first-parent commit reachable from `ref`, read NUL-delimited so a name git quotes is listed as the candidate diff lists it and no name can pass for a commit, leaving out `CHANGELOG.md`, `docs/`, `specs/`, `plans/`, `intent/` and `evals/`, and shall return an empty list when git fails; the paths of a rule shall be the files of the commits whose subject names its card as a whole token.
+  - R5. With `matched` set, the prompt's sentence on omitted rules shall read `- <n> other lessons omitted at the byte cap; the rules that best match this diff are above.`, or `- <n> other lessons omitted at the byte cap (not even the best match fits it).` when no rule fits, since no rule is then above it.
   - R6. `aidlc review bench run --rules <newest|matched>` shall default to `newest`, shall refuse any other value before a review, shall select matched rules per candidate from that candidate's diff and `commitFiles` at its base, and shall name the choice as `rules` in the report.
   - R7. `docs/OPERATIONS.md` (a new paragraph after Learned invariants, since tests pin the Reviewer bench section whole) and `CHANGELOG.md` shall state the selection and the flag.
 acceptance:
   - 1. `tests/surface/lesson-match.test.ts`: with hand-computed idf values over a small rule file, a rule matching a changed path and a rule matching a diff term outrank a newer rule matching nothing, equal scores keep newest first, and a NOTE line is never returned. [R1] [R2] [dod arm 1]
   - 2. Same file: the cap stops at the first rule that does not fit and `omitted` counts the rest; when every score is 0 the lines and `omitted` equal those of `reviewLessons`. [R1] [dod arm 1]
   - 3. Same file: `git add -A`, `pinCandidate`, `update-ref`, `gc.pruneExpire`, `foo__bar`, `__dirname` and `parse2JSON` are terms; `Always`, `review` and `CI` are not; a term is matched case-sensitively. [R3] [dod arm 1]
-  - 4. Same file, in a real git repository: a commit reached only through a merged side branch is not listed, a file under a left-out path is dropped, a name git quotes keeps its bytes and a left-out one is still dropped, an unknown ref returns an empty list, and a rule of `T1-X` takes the files of `feat: [T1-X] (#1)` and not those of `feat: [T1-X-2] (#2)`. [R4] [dod arm 1]
-  - 5. Same file: `buildReviewPrompt` prints the exact sentence of R5 for matched rules, and the existing sentence is unchanged for the newest rules. [R5] [dod arm 1]
+  - 4. Same file, in a real git repository: a commit reached only through a merged side branch is not listed, a file under a left-out path is dropped, a name git quotes keeps its bytes and a left-out one is still dropped, two names starting with U+0001 stay names of their commit, an empty commit is listed with no files, an unknown ref returns an empty list, and a rule of `T1-X` takes the files of `feat: [T1-X] (#1)` and not those of `feat: [T1-X-2] (#2)`. [R4] [dod arm 1]
+  - 5. Same file: `buildReviewPrompt` prints the exact sentences of R5 for matched rules, and the existing sentence is unchanged for the newest rules. [R5] [dod arm 1]
   - 6. `tests/surface/review-bench.test.ts`: with a scripted reviewer `--rules matched` puts the matching rule in the prompt and `rules: 'matched'` in the report, no flag gives `rules: 'newest'` and the same prompt as before, and `--rules other` exits non-zero with no review run. [R6] [dod arm 1]
   - 7. The docs and CHANGELOG state R1 to R6 (reviewer-verified against the diff). [R7]
 depends_on: []
@@ -57,3 +58,12 @@ npm run typecheck && node --test tests/surface/lesson-match.test.ts tests/surfac
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+- Attempt 1 on 424bad7: RED at 74b5fad, 13 of 32 tests failed, every failure an assertion. DoD 115 tests, 115 passed, 0 failed. The DoD receipt recorded with this attempt says 116 tests: that count was typed before the run finished and is wrong. 27 mutants in scratch clones: 25 killed, and tests were added for the other 2.
+- R3 decision 1 blocked on two classes. `lesson-term-underrecognition`: `__dirname`, `foo__bar` and `parse2JSON` were not terms. `quoted-git-path-parsing`: git quotes a name holding a tab, quote or backslash even with `core.quotePath=false`, so such a name could not match the candidate's paths and a quoted `docs/` path escaped the filter.
+- Repair: RED at 411476c, 3 tests failed, every failure an assertion. Class sweep: `commitFiles` is the one new parse of git output, and `lessonTerms` the one term rule. The card's R3 now states what a term is, and all-capitals words stay out, as in the replay.
+- Parity: at the repair, `matchedLessons` picks the same rules in the same order as arm B of the replay on 30 of 30 cases, with the rule file and history at each case's base.
+- WSL Ubuntu, git 2.43.0: `tests/surface/lesson-match.test.ts` gives 16 tests, 16 passed, including the real quoted-name test that NTFS skips.
+- R3 decision 2 blocked on two classes. `quoted-git-path-parsing` again: a name starting with U+0001 could pass for a commit, so the framing moved to a double NUL (`nulRecords`), which no name or subject can hold. `matched-omission-sentence`: with no rule fitting, the matched sentence named rules "above" that do not exist, so the card's R5 now states both sentences, as the newest section has both. The text report now names matched rules as well, which the block did not ask for.
+- Repair: RED at 796a1b2, 2 tests failed, every failure an assertion. Class sweep: `commitFiles` is the one parser of this format, and `nulRecords` has that one caller.
