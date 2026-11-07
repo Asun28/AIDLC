@@ -26,6 +26,8 @@
 
 - T0-ACCEPT-TABLE: the `build` directive and the formal repair directive ask for a table in the card's Attempt evidence section before the final DoD run, one row per acceptance item, when `allow_paths` lists the card file. No code reads the table.
 
+- T0-GOAL-MERGED-CARD: `aidlc goal new` refuses a request whose card is already merged, naming the card and asking for a successor card, since that goal would have nothing to run and could close as done. A card-text amendment of a merged card still opens its goal.
+
 - T0-CANDIDATE-WITHDRAW: `aidlc card withdraw <id> --cause "<finding>"` withdraws a bound candidate no R3 decision has decided. The success that bound it becomes a counted failure with the finding as its cause, the episode reopens and the repair is the ladder's next attempt, so a defect found after the bind and before R3 costs neither an R3 decision nor a successor card. A success on the withdrawn candidate and a review of it are refused until another candidate is recorded.
 
 - T0-BUDGET-DOC-TRUTH: the card templates and `docs/OPERATIONS.md` say the `budget` is a merge gate only on the scaffold ship path, since only the scaffold prints a `budget-over` sentinel; on the `github` and `dry-run` paths it is advisory. No code changed.
