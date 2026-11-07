@@ -8,6 +8,7 @@ import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { classifyShipOutput, DryRunShipPath, type ShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { classifyCiFailure } from '../../src/core/ci-policy.ts';
+import { normaliseCause } from '../../src/core/effort.ts';
 import * as policy from '../../src/core/review-policy.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner, type ExecReceipt, type SyncRunner } from '../../src/probes/exec.ts';
@@ -203,6 +204,54 @@ test('T0-NARRATION-QUOTE acceptance 1: a finding reason is a JSON string in the 
   assertQuoted(policy.describeDeadlock(f), [f[0]!.reason], 'deadlock sentence');
 });
 
+test('T0-NARRATION-QUOTE acceptance 1: a finding reason is a JSON string in the deadlock sentence of the stop when R2 rounds are spent after two disputes [R1] [R2]', async () => {
+  const s = reviewed(3);
+  try {
+    const reraise = `[spec] 6 tests missing @ src/t0-nq.ts: ${MARK} (re:F1) -> add a case for it`;
+    const reraised = `${JSON.stringify({ verdict: 'block', reasons: [reraise], axes: { spec: { verdict: 'block', reasons: [reraise] }, standards: { verdict: 'pass', reasons: [] } } })}\n`;
+    assert.equal(s.next().directive.kind, 'pre-review');
+    for (const answer of [BLOCK, reraised, reraised]) {
+      if (answer !== BLOCK) {
+        s.runner.disputeFinding(s.g(), s.card, s.stored(), 'F1', 'the case is covered by tests/t0-nq.test.ts');
+        assert.equal(s.next().directive.kind, 'pre-review', 'every finding is disputed, so the round runs on the unchanged candidate');
+      }
+      s.r2.push(answer);
+      await s.runner.preReview(s.g(), s.card, s.stored());
+      if (answer === BLOCK) s.next();
+    }
+    const r = s.next();
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    const stop = s.stored().stop!;
+    assert.ok(stop.detail.includes('deadlock: F1'), stop.detail);
+    const f1 = s.stored().findings.find((x) => x.id === 'F1')!;
+    assertQuoted(stop.detail, [...s.stored().preReview.rounds.at(-1)!.reasons, f1.reason], 'deadlock stop');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+test('T0-NARRATION-QUOTE acceptance 1: a finding reason is a JSON string in the contest sentence of the stop R3 records on a re-raise of a disputed finding [R1] [R2]', async () => {
+  const s = reviewed();
+  try {
+    s.r3.push(BLOCK);
+    await s.runner.formalReview(s.g(), s.card, s.stored());
+    s.next();
+    s.runner.disputeFinding(s.g(), s.card, s.stored(), 'F1', 'the case is covered by tests/t0-nq.test.ts');
+    assert.equal(s.next().directive.kind, 'review', 'every finding is disputed, so the decision runs on the unchanged candidate');
+    const reraise = `[spec] 6 tests missing @ src/t0-nq.ts: ${MARK} (re:F1) -> add a case for it`;
+    s.r3.push(`${JSON.stringify({ verdict: 'block', reasons: [reraise], axes: { spec: { verdict: 'block', reasons: [reraise] }, standards: { verdict: 'pass', reasons: [] } } })}\n`);
+    await s.runner.formalReview(s.g(), s.card, s.stored());
+    const r = s.next();
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    const stop = s.stored().stop!;
+    assert.ok(stop.detail.includes("re-raised after the author's dispute"), stop.detail);
+    assertQuoted(stop.detail, [s.stored().findings.find((x) => x.id === 'F1')!.reason], 'contest stop');
+    assertQuoted(r.directive.narration, [s.stored().findings.find((x) => x.id === 'F1')!.reason], 'contest narration');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
 // --- ship output (src/loop/card-runner.ts) ------------------------------------------------------------------------------
 
 /** A ship whose result the real classifier reads from `lines`, as every real ship path's is. */
@@ -276,6 +325,24 @@ test('T0-NARRATION-QUOTE acceptance 1: the cause of a dod-failed ship is a JSON 
     const cause = `ship dod-failed: ${ship.last!.detail}`;
     assertQuoted(stop.detail, [cause], 'ladder stop detail');
     assertQuoted(s.out.directive.narration, [cause], 'ladder stop narration');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
+test('T0-NARRATION-QUOTE acceptance 1: the cause of a same-cause ladder stop is a JSON string, quotation marks in the failing line included [R1] [R2]', () => {
+  const lines = [`not ok 3 - " ${MARK} "`, 'DoD 未通过（退出码 1）。修绿再 ship。', '[SAGA-FAIL]'];
+  const detail = classifyShipOutput({ command: 'ship', args: [], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout: lines.join('\n'), stderr: '', startedAt: T0, finishedAt: T0, durationMs: 0, outputSha256: '' }).detail;
+  const cause = `ship dod-failed: ${detail}`;
+  assert.ok(detail.includes('"'), detail);
+  // The attempt before the ship failed with the same cause, so the refuted success is the second in a row.
+  const s = shipped(new TextShipPath(lines), [cause]);
+  try {
+    assert.equal(s.out.directive.kind, 'stop', s.out.directive.narration);
+    const stop = s.fx.store.getCardRun(s.goalId, 'T1-NQ')!.stop!;
+    assert.ok(stop.detail.includes('same-cause-stop'), stop.detail);
+    assertQuoted(stop.detail, [cause, normaliseCause(cause)], 'same-cause stop detail');
+    assertQuoted(s.out.directive.narration, [cause, normaliseCause(cause)], 'same-cause stop narration');
   } finally {
     s.fx.cleanup();
   }
