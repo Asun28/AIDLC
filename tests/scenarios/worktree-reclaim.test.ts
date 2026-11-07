@@ -57,11 +57,11 @@ function linked(fx: Fixture, card: string = CARD): string {
   return dir;
 }
 
-/** A goal holding a run of the card, ended as the test says. */
-function ended(fx: Fixture, card: string, ending: Ending): string {
+/** A goal that projects the card, with a run of it unless the test says otherwise, ended as the test says. */
+function ended(fx: Fixture, card: string, ending: Ending, withRun = true): string {
   if (!existsSync(path.join(fx.cardsDir, `${card}.md`))) writeCard(fx, { id: card, title: 'finishes' });
   const goal = goalForCards(fx, [card]);
-  fx.controller.ensureCardRun(fx.goal(goal.id), card);
+  if (withRun) fx.controller.ensureCardRun(fx.goal(goal.id), card);
   const current = fx.goal(goal.id);
   fx.store.saveGoal(ending === 'done' ? { ...current, state: 'DONE', terminal: true } : { ...current, state: 'STOP', terminal: true, stop: makeStop(ending, 'ended by the test', 'none', { at: T0 }) });
   return goal.id;
@@ -187,6 +187,11 @@ const notFinished: Array<[string, (fx: Fixture) => void, RegExp]> = [
   }, /goal g-\S+ is not terminal/],
   ['a card stopped for a ruling', (fx) => {
     ended(fx, CARD, 'review');
+  }, /not merged, superseded or cancelled/],
+  ['a newer goal that stopped for a ruling before its run, after an older cancel', (fx) => {
+    ended(fx, CARD, 'cancelled');
+    fx.advance(60_000);
+    ended(fx, CARD, 'review', false);
   }, /not merged, superseded or cancelled/],
   ['no card file', (fx) => {
     ended(fx, CARD, 'cancelled');
@@ -401,6 +406,24 @@ test('T0-WORKTREE-RECLAIM acceptance 5: a card with runs in two goals keeps its 
     linked(fx);
     assert.equal(only(sweepWorktrees(deps(fx))).action, 'removed');
     assert.equal(existsSync(path.join(fx.paths.evidence, latest, 'review', CARD, 'a.json')), true);
+    assert.equal(existsSync(path.join(fx.paths.evidence, older, 'review')), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 5: a newer cancelled goal with no run decides, and keeps the copies [R2] [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const older = ended(fx, CARD, 'review');
+    fx.advance(60_000);
+    const newer = ended(fx, CARD, 'cancelled', false);
+    repository(fx);
+    linked(fx);
+    const row = only(sweepWorktrees(deps(fx)));
+    assert.equal(row.action, 'removed', row.reason);
+    assert.match(row.reason, new RegExp(`goal ${newer} was cancelled`));
+    assert.equal(existsSync(path.join(fx.paths.evidence, newer, 'review', CARD, 'a.json')), true);
     assert.equal(existsSync(path.join(fx.paths.evidence, older, 'review')), false);
   } finally {
     fx.cleanup();
