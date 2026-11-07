@@ -709,3 +709,20 @@ test('T1-LESSON-MATCH acceptance 6: --rules other exits non-zero with no review 
     fx.cleanup();
   }
 });
+
+test('T1-LESSON-MATCH acceptance 6: the bench reads the commit history at the case base, so a rule matches by the files of its card [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeLessonsOverCap(fx);
+    // The base commit's subject is `base`, so a rule of the card `base` has src/calc.ts as a path. Its text names no term of the diff.
+    const lessons = path.join(fx.root, 'docs', 'LESSONS.md');
+    writeFileSync(lessons, readFileSync(lessons, 'utf8').replace(MATCHED_RULE, '- 2026-01-01 base: ALWAYS keep the path rule first (source: PR 1)'));
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 13, 2));
+    const calls: Call[] = [];
+    await bench(fx, reviewer(fx, calls), { rules: 'matched' });
+    assert.ok(calls[0]!.input.includes('keep the path rule first'), 'the rule is chosen by its path alone');
+  } finally {
+    fx.cleanup();
+  }
+});

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { lessonTerms, matchedLessons, reviewLessons, type ReviewLessons } from '../../src/artifacts/lessons.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
 import { GitProbe } from '../../src/probes/git.ts';
-import { runSync } from '../../src/probes/exec.ts';
+import { runSync, type ExecReceipt } from '../../src/probes/exec.ts';
 import { buildReviewPrompt, type PriorFinding } from '../../src/review/pre-review.ts';
 
 const rule = (day: number, ref: string, text: string, kind = 'ALWAYS') => `- 2026-01-${String(day).padStart(2, '0')} ${ref}: ${kind} ${text} (source: PR ${day})`;
@@ -149,6 +149,8 @@ test('T1-LESSON-MATCH acceptance 4: a failed git call returns an empty list and 
     }).commitFiles('.', 'main'),
     [],
   );
+  const failed = { command: ['git'], cwd: '.', exitCode: 128, stdout: '\x01partial\nsrc/x.ts\n', stderr: 'fatal', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
+  assert.deepEqual(new GitProbe(() => failed).commitFiles('.', 'main'), [], 'output of a failed call is not read');
 });
 
 test('T1-LESSON-MATCH acceptance 4: a rule takes the files of commits naming its card as a whole token [R4]', () => {
