@@ -33,7 +33,7 @@ acceptance:
   - 10. The tests of `router`, `goal-card-count`, `goal-close-stages` and `release` pass with no change. [R3] [dod arms 3 to 6]
   - 11. `docs/OPERATIONS.md` and the CHANGELOG hold the text R7 asks for. [R7] Reviewer-verified.
 depends_on: []
-budget: 260
+budget: 300
 tdd: true
 sweep: "On main at 48f1017. `detectTarget` at `src/core/router.ts:36` has one caller, `classifyRequest` at line 103, which runs from `GoalController.createGoal` at `src/loop/controller.ts:120` and the prompt hook at `src/hooks/index.ts:694`. The hook only prints `formatRouting`, so a narrower reading changes a printed line and no gate. `routing.target` is read at controller.ts:127, and the staging authorization at line 153 follows from it. `RELEASE` also feeds the kind at line 107, gated by `targetInfo.explicit`, so it needs no change. Every test request naming a target word is a real request: `tests/core/router.test.ts` lines 45, 92, 102, 109, 136, 162 and 229, and `tests/scenarios/goal-card-count.test.ts` lines 70 and 74. Every release example in the docs passes `--target`."
 diagnosis:
