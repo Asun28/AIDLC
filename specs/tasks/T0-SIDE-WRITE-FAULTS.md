@@ -1,7 +1,7 @@
 ---
 id: T0-SIDE-WRITE-FAULTS
 title: A failed journal append or board write beside a saved record loses neither the dispatch event nor the goal stop
-status: todo
+status: merged
 branch: T0-SIDE-WRITE-FAULTS
 worktree: D:\wt\AIDLC\T0-SIDE-WRITE-FAULTS
 allow_paths:
