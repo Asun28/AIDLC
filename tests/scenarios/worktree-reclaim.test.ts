@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { actorA, actorB, candidateShaFor, goalForCards, makeFixture, T0, writeCard, type Fixture } from './_harness.ts';
@@ -285,6 +285,54 @@ for (const [name, arrange, reason] of keptBack) {
     }
   });
 }
+
+test('T0-WORKTREE-RECLAIM acceptance 4: a tracked .review file keeps the worktree, and is no failed row [R3]', () => {
+  const fx = makeFixture();
+  try {
+    ended(fx, CARD, 'cancelled');
+    repository(fx);
+    const dir = path.join(rootOf(fx), CARD);
+    git(fx.tmp, ['worktree', 'add', '-q', dir, CARD]);
+    writeFileSync(path.join(dir, '.review'), 'a file\n');
+    git(dir, ['add', '-f', '.review']);
+    git(dir, ['commit', '-q', '-m', 'a file at the review path']);
+    const row = only(sweepWorktrees(deps(fx)));
+    assert.equal(row.action, 'skipped', row.reason);
+    assert.match(row.reason, /\.review is not a directory/);
+    assert.equal(existsSync(path.join(dir, TRACKED)), true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 4: a committed .review link keeps the worktree, and nothing it points at is copied [R3]', (t) => {
+  const fx = makeFixture();
+  try {
+    const goalId = ended(fx, CARD, 'cancelled');
+    repository(fx);
+    const outside = path.join(fx.tmp, 'outside');
+    mkdirSync(outside);
+    writeFileSync(path.join(outside, 'private.txt'), 'not evidence\n');
+    const dir = path.join(rootOf(fx), CARD);
+    git(fx.tmp, ['worktree', 'add', '-q', dir, CARD]);
+    try {
+      symlinkSync(outside, path.join(dir, '.review'), 'dir');
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? '';
+      if (['EPERM', 'EACCES', 'ENOTSUP', 'ENOSYS'].includes(code)) return t.skip(`no symbolic link here: ${code}`);
+      throw err;
+    }
+    git(dir, ['add', '-f', '.review']);
+    git(dir, ['commit', '-q', '-m', 'a link at the review path']);
+    const row = only(sweepWorktrees(deps(fx)));
+    assert.equal(row.action, 'skipped', row.reason);
+    assert.match(row.reason, /\.review is not a directory/);
+    assert.equal(existsSync(path.join(fx.paths.evidence, goalId, 'review', CARD, 'private.txt')), false);
+    assert.equal(existsSync(path.join(dir, TRACKED)), true);
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('T0-WORKTREE-RECLAIM acceptance 4: rebuilt ignored paths do not block, and go with the worktree [R3]', () => {
   const fx = makeFixture();
@@ -594,6 +642,27 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a card close that fails keeps its error 
     assert.match(out.stderr, new RegExp(`removed.*${CARD}`));
     assert.equal(existsSync(finished), false);
     assert.equal(existsSync(path.join(dir, TRACKED)), true, 'a failed check keeps the card worktree');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 8: a card close that stops at load keeps its error and exit code and still sweeps [R6]', () => {
+  const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
+  try {
+    ended(fx, CARD, 'cancelled');
+    fx.advance(60_000);
+    const { goalId } = closingAtCli(fx);
+    repository(fx, [CARD, NEXT]);
+    const finished = linked(fx);
+    rmSync(path.join(fx.cardsDir, `${NEXT}.md`));
+    cliConfig(fx);
+    const out = cli(fx, 'card', 'close', NEXT, '--goal', goalId, '--all');
+    assert.equal(out.status, 1, out.stderr);
+    assert.match(out.stderr, new RegExp(`aidlc: card ${NEXT} not found`));
+    assert.equal(out.stdout, '');
+    assert.match(out.stderr, new RegExp(`removed.*${CARD}`));
+    assert.equal(existsSync(finished), false);
   } finally {
     fx.cleanup();
   }
