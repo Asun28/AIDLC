@@ -128,6 +128,10 @@ export class GoalController {
     // A card id of the request text is the goal's card only when the router counts exactly one card (T0-GOAL-CARD-COUNT):
     // several named ids, or a T1 or T2 route, leave the list to the projection.
     const explicitCards = options.cards ?? ((routing.kind === 'card-execute' || routing.kind === 'card-amendment') && routing.cardCount === 1 ? [routing.reasons.find((r) => r.startsWith('ref='))?.slice(4) ?? ''].filter(Boolean) : []);
+    // A merged card has nothing left to run, so its goal would close with no change made (card T0-GOAL-MERGED-CARD).
+    // A card-text amendment still runs: it changes no code.
+    const mergedCards = routing.kind === 'card-amendment' ? [] : explicitCards.filter((cardId) => registry.cards.find((c) => c.card.id === cardId)?.card.status === 'merged');
+    if (mergedCards.length) throw new Error(`card ${mergedCards.join(', ')} is already merged, so this goal would have no work: put the new requirement on a successor card and pass it with --card`);
     // An explicit T1 or T2 is an arc whatever the card list says: it never gets the one-card limit.
     const arcBySize = routing.sizeSource === 'explicit' && (routing.size === 'T1' || routing.size === 'T2');
     // A text naming several cards is an arc too, whatever --card names: --card sets the cards, not the deadline (T0-GOAL-CARD-COUNT-3).

@@ -44,6 +44,8 @@ Before reading, the opened file's path must still equal the validated path. Nati
 
 The pack declares `tokenBudget: 8192` and limits the UTF-8 bytes of its entire serialized JSON string to that number, a conservative token bound for byte-based tokenizers rather than a provider-specific count. Matching lesson lines keep file order; matching uses complete literal allowed paths, their `src` module names, or routing module names at word/path boundaries. Only directory entries ending in `/` match descendants; file and module names do not. When needed, whole lessons are removed from the end first, then the plan is shortened on Unicode code-point boundaries. `truncated` records both reductions. Acceptance, paths and non-goals are never cut: a mandatory core larger than the budget raises an explicit error. The JSON output budget does not bound source-file size or reading memory. The pack owns no state file and changes neither card selection nor authorization.
 
+Intake refuses a goal on a merged card (card T0-GOAL-MERGED-CARD): when the goal's card, from `--card` or the one card the request text resolves to, has `status: merged` in the registry, `aidlc goal new` fails before it writes a goal, lease or journal record, and the message names the card and says to put the new requirement on a successor card passed with `--card`. Such a goal would have nothing to run and could close as done. A request routed as a card-text amendment (`card-amendment`) still opens its goal. A card whose PR merged but whose close has not yet written `status: merged` passes.
+
 ### T0 bugfix
 
 ```bash
