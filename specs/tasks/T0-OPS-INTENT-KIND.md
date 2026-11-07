@@ -27,6 +27,7 @@ acceptance:
 depends_on: []
 budget: 120
 tdd: true
+sweep: "`grep -rn recordIntent src tests` on bbbdb10: one CLI caller casts its kind (src/cli/main.ts:947), and the typed callers in src/loop and src/coordination pass kinds of `OperationKind` and positive timeouts, so R1 changes no valid call. tests/surface has no `ops intent` test, hence the new file."
 diagnosis:
   root_cause: "`recordIntent` builds the record by hand and writes it with `atomicWriteJson`, which takes no schema, and `src/cli/main.ts:947` casts `--kind` with `as never`, so nothing validates what is written. `OperationLedger.list` then parses every file before filtering by goal, so one invalid record makes every operation read throw SCHEMA_VIOLATION, including `aidlc next` and `aidlc card next`."
   same_class: "`--timeout-ms` reaches the same write through `Number(...)`, so NaN or 0 fail `OperationRecord.timeoutMs` the same way. `markIssued`, `markRunning`, `markResult` and `update` change only `status`, time and string fields of a record that already parsed, so they are out of scope."
