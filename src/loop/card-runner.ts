@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -35,7 +35,6 @@ import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { StoreError, atomicWriteJson, atomicWriteText } from '../state/store.ts';
-import { EvidenceStore } from '../audit/manifest.ts';
 import { withCardStatus } from '../artifacts/card.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
@@ -45,6 +44,15 @@ import { preReviewFallbackSettings, type PreReviewer } from '../config.ts';
 
 /** One formal reviewer's settings: the primary `formalReview`, its `fallback` or its `baseSync` reviewer. */
 type FormalReviewer = Omit<FormalReviewConfig, 'fallback' | 'baseSync'>;
+
+/** `findWorktree` folds case, which on a case-sensitive filesystem joins two directories; their real paths stay apart. */
+function sameDirectory(a: string, b: string): boolean {
+  try {
+    return realpathSync.native(a) === realpathSync.native(b);
+  } catch {
+    return false;
+  }
+}
 
 export interface CardRunnerDeps {
   paths: StatePaths;
@@ -2977,7 +2985,7 @@ export class CardRunner {
         failures.push(`${step}: ${(err as Error).message}`);
       }
     };
-    perform('cleanup', () => this.reclaimWorktree(goal, card, now));
+    perform('cleanup', () => this.reclaimWorktree(goal, card));
     perform('metadata', () => this.writeMergedStatus(card));
     if (failures.length) data['closureFailures'] = failures;
     const closure = { ...current.closure, ...recorded };
@@ -2989,11 +2997,11 @@ export class CardRunner {
   }
 
   /**
-   * The cleanup step of a closing card: the files directly under `.review/` go into the evidence tree of the goal, then
-   * git removes the worktree. Nothing at the expected path means an earlier call finished the step, so a retry after a
+   * The cleanup step of a closing card: the files directly under `.review/` go to their own directory of the evidence
+   * tree, outside the manifest, then git removes the worktree. Nothing at the expected path means an earlier call finished the step, so a retry after a
    * crash succeeds; a path there that git does not list for the branch is left for the operator, not recorded as clean.
    */
-  private reclaimWorktree(goal: Goal, card: Card, now: string): void {
+  private reclaimWorktree(goal: Goal, card: Card): void {
     if (this.config.shipPath === 'dry-run') return;
     const expected = path.join(resolveWorktreeRoot(this.config, this.repo.mainRoot), card.id);
     const found = this.git.findWorktree(this.repo.mainRoot, card.id, expected);
@@ -3002,12 +3010,13 @@ export class CardRunner {
       if (existsSync(expected)) throw new Error(`${expected} exists and git lists no worktree of branch ${card.id} there`);
       return;
     }
+    if (!sameDirectory(found.entry.path, expected)) throw new Error(`worktree for ${card.id} is at ${found.entry.path}, expected ${expected}`);
     const reviewDir = path.join(found.entry.path, '.review');
     if (existsSync(reviewDir)) {
-      const evidence = new EvidenceStore(this.paths.evidence, goal.id);
-      let manifest = evidence.load(goal.id, goal.generation, goal.revision, now);
+      const kept = path.join(this.paths.evidence, goal.id, 'review', card.id);
+      mkdirSync(kept, { recursive: true });
       for (const file of readdirSync(reviewDir, { withFileTypes: true })) {
-        if (file.isFile()) manifest = evidence.retain(manifest, { id: `${card.id}.${file.name}`, kind: 'artifact', sourcePath: path.join(reviewDir, file.name) });
+        if (file.isFile()) copyFileSync(path.join(reviewDir, file.name), path.join(kept, file.name));
       }
     }
     this.git.removeWorktree(this.repo.mainRoot, found.entry.path);

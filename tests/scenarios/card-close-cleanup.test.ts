@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -102,18 +102,14 @@ test('T0-CLOSE-CLEANUP acceptance 1: cleanup copies .review/ into the evidence t
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const dir = worktree(fx);
-    writeFileSync(path.join(dir, '.review', 'manifest.json'), 'not the manifest\n');
     const marked = closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true });
     assert.equal(marked.closure.cleanup, true);
     assert.equal(existsSync(dir), false, 'the directory is gone');
     assert.doesNotMatch(listed(fx), new RegExp(`refs/heads/${CARD}`), 'git lists no worktree of the branch');
     assert.ok(git(fx.tmp, ['rev-parse', '--verify', `refs/heads/${CARD}`]), 'the branch stays');
-    const evidence = new EvidenceStore(fx.paths.evidence, goalId);
-    const manifest = evidence.load(goalId, 1, 1, T0);
-    const entry = manifest.entries.find((e) => e.id === `${CARD}.a.json`);
-    assert.ok(entry, 'the manifest names the copy');
-    assert.equal(readFileSync(path.join(evidence.dir, entry.path), 'utf8'), '{"verdict":"pass"}\n');
-    assert.deepEqual(manifest.entries.map((e) => e.id).sort(), [`${CARD}.a.json`, `${CARD}.manifest.json`], 'only files directly under .review/ are copied, and none takes the path of the manifest');
+    const kept = path.join(fx.paths.evidence, goalId, 'review', CARD);
+    assert.equal(readFileSync(path.join(kept, 'a.json'), 'utf8'), '{"verdict":"pass"}\n');
+    assert.deepEqual(readdirSync(kept), ['a.json'], 'only files directly under .review/ are copied');
   } finally {
     fx.cleanup();
   }
@@ -147,7 +143,7 @@ for (const [kind, change, undo] of [
   });
 }
 
-test('T0-CLOSE-CLEANUP acceptance 3: a sealed manifest fails the copy, and the worktree stays [R1] [R2]', () => {
+test('T0-CLOSE-CLEANUP acceptance 3: a copy that fails leaves the worktree, and a sealed manifest is no failure [R1] [R2]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -155,11 +151,18 @@ test('T0-CLOSE-CLEANUP acceptance 3: a sealed manifest fails the copy, and the w
     const dir = worktree(fx);
     const evidence = new EvidenceStore(fx.paths.evidence, goalId);
     evidence.seal(evidence.load(goalId, 1, 1, T0), { journalHead: 'head', journalEvents: 1, now: T0 });
+    const sealed = readFileSync(evidence.manifestFile(), 'utf8');
+    const taken = path.join(evidence.dir, 'review');
+    writeFileSync(taken, 'a file where the copies go\n');
     const calls: string[][] = [];
-    assert.throws(() => closingRunner(fx, calls).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /sealed/);
+    const runner = closingRunner(fx, calls);
+    assert.throws(() => runner.markClosure(fx.goal(goalId), card, run, { cleanup: true }), /cleanup: /);
     assert.equal(stored(fx, goalId).closure.cleanup, false);
     assert.equal(existsSync(path.join(dir, '.review', 'a.json')), true, 'the verdict stays with its worktree');
     assert.equal(calls.some((c) => c.includes('remove')), false, 'nothing is removed before the copy holds');
+    rmSync(taken);
+    assert.equal(runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { cleanup: true }).closure.cleanup, true);
+    assert.equal(readFileSync(evidence.manifestFile(), 'utf8'), sealed, 'the step leaves the manifest alone');
   } finally {
     fx.cleanup();
   }
@@ -242,47 +245,7 @@ test('T0-CLOSE-CLEANUP acceptance 6: a missing card file leaves the flag false a
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 9: two review files that map to one evidence path are refused, and nothing is lost [R1a] [R2]', () => {
-  const fx = makeFixture();
-  try {
-    const { goalId, card, run } = atClose(fx);
-    repository(fx);
-    const dir = worktree(fx);
-    writeFileSync(path.join(dir, '.review', 'a b.json'), 'first\n');
-    writeFileSync(path.join(dir, '.review', 'a_b.json'), 'second\n');
-    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /maps to/);
-    assert.equal(stored(fx, goalId).closure.cleanup, false);
-    assert.equal(readFileSync(path.join(dir, '.review', 'a b.json'), 'utf8'), 'first\n');
-    assert.equal(readFileSync(path.join(dir, '.review', 'a_b.json'), 'utf8'), 'second\n');
-    const evidence = new EvidenceStore(fx.paths.evidence, goalId);
-    const entries = evidence.load(goalId, 1, 1, T0).entries.filter((e) => e.id.includes('a') && e.id.endsWith('b.json'));
-    assert.equal(entries.length, 1, 'the second file took no entry');
-    assert.equal(readFileSync(path.join(evidence.dir, entries[0]!.path), 'utf8'), 'first\n');
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('T0-CLOSE-CLEANUP acceptance 10: a writer holding an older manifest keeps what another writer recorded [R1a]', () => {
-  const fx = makeFixture();
-  try {
-    const evidence = new EvidenceStore(fx.paths.evidence, 'g-manifest');
-    const first = evidence.load('g-manifest', 1, 1, T0);
-    const second = new EvidenceStore(fx.paths.evidence, 'g-manifest').load('g-manifest', 1, 1, T0);
-    evidence.retain(first, { id: 'one', kind: 'artifact', content: '1' });
-    const both = evidence.retain(second, { id: 'two', kind: 'artifact', content: '2' });
-    assert.deepEqual(both.entries.map((e) => e.id), ['one', 'two']);
-    evidence.retain(first, { id: 'three', kind: 'artifact', content: '3' });
-    const sealed = evidence.seal(first, { journalHead: 'head', journalEvents: 1, now: T0 });
-    assert.deepEqual(sealed.entries.map((e) => e.id), ['one', 'two', 'three'], 'the seal covers the entries on disk');
-    assert.equal(evidence.verifySeal(evidence.load('g-manifest', 1, 1, T0)), true);
-    assert.throws(() => evidence.retain(first, { id: 'four', kind: 'artifact', content: '4' }), /sealed/, 'a copy read before the seal is refused as well');
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('T0-CLOSE-CLEANUP acceptance 11: a detached checkout at the expected path is refused, and stays [R4]', () => {
+test('T0-CLOSE-CLEANUP acceptance 9: a detached checkout at the expected path is refused, and stays [R4]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -297,7 +260,7 @@ test('T0-CLOSE-CLEANUP acceptance 11: a detached checkout at the expected path i
   }
 });
 
-test('T0-CLOSE-CLEANUP acceptance 11: a status key with a space before its colon is written as the parser reads it [R5]', () => {
+test('T0-CLOSE-CLEANUP acceptance 9: a status key with a space before its colon is written as the parser reads it [R5]', () => {
   const fx = makeFixture();
   try {
     const { goalId, card, run } = atClose(fx);
@@ -307,6 +270,23 @@ test('T0-CLOSE-CLEANUP acceptance 11: a status key with a space before its colon
     writeFileSync(file, before, 'utf8');
     closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { metadata: true });
     assert.equal(readFileSync(file, 'utf8'), before.replace('status : todo', 'status : merged'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+const caseSensitive = process.platform !== 'win32' && process.platform !== 'darwin';
+
+test('T0-CLOSE-CLEANUP acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', { skip: !caseSensitive }, () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const other = path.join(fx.tmp, 'WT', CARD);
+    git(fx.tmp, ['worktree', 'add', '-q', other, CARD]);
+    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /expected/);
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+    assert.equal(existsSync(path.join(other, TRACKED)), true);
   } finally {
     fx.cleanup();
   }
