@@ -1,7 +1,7 @@
 ---
 id: T1-LESSON-MATCH
 title: A review can take the learned rules that best match its diff instead of the newest, and `aidlc review bench run --rules matched` scores that selection
-status: todo
+status: merged
 branch: T1-LESSON-MATCH
 worktree: D:\wt\AIDLC\T1-LESSON-MATCH
 plan_ref: plans/second-r3-pass.md#order-of-work
@@ -58,3 +58,12 @@ npm run typecheck && node --test tests/surface/lesson-match.test.ts tests/surfac
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+- Attempt 1 on 424bad7: RED at 74b5fad, 13 of 32 tests failed, every failure an assertion. DoD 115 tests, 115 passed, 0 failed. The DoD receipt recorded with this attempt says 116 tests: that count was typed before the run finished and is wrong. 27 mutants in scratch clones: 25 killed, and tests were added for the other 2.
+- R3 decision 1 blocked on two classes. `lesson-term-underrecognition`: `__dirname`, `foo__bar` and `parse2JSON` were not terms. `quoted-git-path-parsing`: git quotes a name holding a tab, quote or backslash even with `core.quotePath=false`, so such a name could not match the candidate's paths and a quoted `docs/` path escaped the filter.
+- Repair: RED at 411476c, 3 tests failed, every failure an assertion. Class sweep: `commitFiles` is the one new parse of git output, and `lessonTerms` the one term rule. The card's R3 now states what a term is, and all-capitals words stay out, as in the replay.
+- Parity: at the repair, `matchedLessons` picks the same rules in the same order as arm B of the replay on 30 of 30 cases, with the rule file and history at each case's base.
+- WSL Ubuntu, git 2.43.0: `tests/surface/lesson-match.test.ts` gives 16 tests, 16 passed, including the real quoted-name test that NTFS skips.
+- R3 decision 2 blocked on two classes. `quoted-git-path-parsing` again: a name starting with U+0001 could pass for a commit, so the framing moved to a double NUL (`nulRecords`), which no name or subject can hold. `matched-omission-sentence`: with no rule fitting, the matched sentence named rules "above" that do not exist, so the card's R5 now states both sentences, as the newest section has both. The text report now names matched rules as well, which the block did not ask for.
+- Repair: RED at 796a1b2, 2 tests failed, every failure an assertion. Class sweep: `commitFiles` is the one parser of this format, and `nulRecords` has that one caller.

@@ -901,12 +901,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--dir <path>', 'case directory, resolved against the checkout root (default evals/review)')
     .option('--case <id>', 'score this case alone')
     .option('--include-unconfirmed', 'score the unconfirmed cases too')
-    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean }) => {
+    .option('--rules <rules>', 'how the learned rules are chosen: newest or matched', 'newest')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
+      if (o.rules !== 'newest' && o.rules !== 'matched') fail(`--rules must be newest or matched, not ${o.rules}`);
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
       // No ctx(): the bench reads no goal state and writes nothing under the state directory.
       const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
-      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed });
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
     });
