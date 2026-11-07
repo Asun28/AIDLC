@@ -284,6 +284,44 @@ function caseSensitive(dir: string): boolean {
   return sensitive;
 }
 
+test('T0-CLOSE-CLEANUP-2 acceptance 9: a nonbreaking space the parser trims around the value stays, and a value that says merged is not written [R5]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const file = path.join(fx.cardsDir, `${CARD}.md`);
+    const before = readFileSync(file, 'utf8').replace(/^status: todo$/m, 'status:\u00a0todo\u00a0# held');
+    writeFileSync(file, before, 'utf8');
+    const runner = closingRunner(fx, []);
+    const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true });
+    const after = before.replace('\u00a0todo', '\u00a0merged');
+    assert.equal(readFileSync(file, 'utf8'), after);
+    const old = new Date('2020-01-02T03:04:05Z');
+    utimesSync(file, old, old);
+    runner.markClosure(fx.goal(goalId), card, marked, { metadata: true });
+    assert.equal(statSync(file).mtime.toISOString(), old.toISOString());
+    assert.equal(readFileSync(file, 'utf8'), after);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP-2 acceptance 13: a card whose step removed the worktree reaches DONE [R1]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    const runner = closingRunner(fx, []);
+    const marked = runner.markClosure(fx.goal(goalId), card, run, { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true });
+    assert.equal(existsSync(dir), false);
+    const recorded = runner.markClosure(fx.goal(goalId), card, marked, { lessons: true }, { skipped: 'nothing to record' });
+    assert.equal(runner.next(fx.goal(goalId), card, recorded).directive.kind, 'done');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-CLOSE-CLEANUP-2 acceptance 10: a worktree whose path differs from the expected one by case alone is refused [R4]', (t) => {
   const fx = makeFixture();
   try {
@@ -382,8 +420,12 @@ test('T0-CLOSE-CLEANUP-2 acceptance 7: the dry-run path runs no git and writes n
 test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both card-loop copies, the close directive and the changelog say what the steps do [R7]', () => {
   const sentence = '`card close --cleanup` and `--metadata` do the step and record it: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes `status: merged` in the main checkout, and the session commits that file on main.';
   for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(sentence), `${doc} holds the sentence`);
+  const order = 'un `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.';
+  assert.ok(flat('docs/OPERATIONS.md').includes(order), 'the guide states the order');
   for (const copy of ['.claude/skills/aidlc-loop/card-loop.md', 'templates/claude/skills/aidlc-loop/card-loop.md']) {
-    assert.ok(flat(copy).includes('card close --all'), `${copy} names the command`);
+    const retain = flat(copy).indexOf('aidlc evidence retain');
+    assert.ok(retain >= 0, `${copy} names the evidence step`);
+    assert.ok(flat(copy).indexOf('card close --all') > retain, `${copy} puts the removal after the evidence step`);
     assert.ok(Buffer.byteLength(readFileSync(path.resolve(copy), 'utf8'), 'utf8') <= 6500, `${copy} stays under the cap`);
   }
   const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
@@ -393,6 +435,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both ca
     const { goalId, run } = atClose(fx);
     const directive = closingRunner(fx, [], 'dry-run').next(fx.goal(goalId), fx.card(CARD), run).directive;
     assert.match(directive.narration, /`--cleanup` and `--metadata` do their step/);
+    assert.ok(directive.narration.includes(order), 'the directive states the order');
   } finally {
     fx.cleanup();
   }
