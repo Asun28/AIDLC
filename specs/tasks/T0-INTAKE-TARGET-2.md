@@ -58,6 +58,8 @@ hygiene: "This card replaces T0-INTAKE-TARGET by the user's ruling `successor` o
 A word in a request no longer sets a delivery target. Closes issue 222.
 
 ## Attempt evidence
+RED for this card, commit 3c68f86: `node --test tests/scenarios/intake-target.test.ts` exits 1, tests 378, pass 377, fail 1: the wrapped bug report of acceptance 7, which read as kind `change`. Reading `BUG` on the collapsed text clears it, and restoring the raw read fails it again. The evidence below is from the card this one replaces, on the branch this card carries.
+
 RED, commit e31ea7e: `node --test tests/scenarios/intake-target.test.ts` exits 1, tests 50, pass 16, fail 34, all on assertions: acceptance 1 six rows, 2 six rows, 3, 4, 6 sixteen rows, 7 two rows, 8 and 9. The 16 that pass are the 15 requests of acceptance 5, which main already reads, and `ship it to prod`, which stays development on both.
 
 RED for repair 1, commit 87b1471 (R3 decision 1 F1, F2): tests 84, pass 78, fail 6: the long sentence, the two line-wrapped requests, and the three sentences that end inside a closing quote or bracket.

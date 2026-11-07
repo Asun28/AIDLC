@@ -140,7 +140,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
     if (input.source === 'incident' || INCIDENT.test(text)) kind = 'incident';
     else if (targetInfo.explicit && targetInfo.target === 'migration') kind = 'migration';
     else if (targetInfo.explicit && RELEASE.test(flat(text)) && !SYSTEM.test(text) && !FEATURE.test(text)) kind = 'release';
-    else if (input.hasBugEvidence || input.source === 'bug-evidence' || BUG.test(text)) kind = 'bugfix';
+    else if (input.hasBugEvidence || input.source === 'bug-evidence' || BUG.test(flat(text))) kind = 'bugfix';
     else if (SYSTEM.test(text)) kind = 'system';
     else if (FEATURE.test(text)) kind = 'feature';
     else kind = 'change';
