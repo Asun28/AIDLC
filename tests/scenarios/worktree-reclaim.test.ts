@@ -421,6 +421,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws changes neither the 
       writeCard(fx, { id: CARD, title: 'cancelled' });
       const goal = goalForCards(fx, [CARD]);
       repository(fx);
+      linked(fx);
       cliConfig(fx);
       arrange();
       const out = cli(fx, 'goal', 'cancel', goal.id);
@@ -435,6 +436,27 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws changes neither the 
   } finally {
     clean.cleanup();
     broken.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 8: a failed row changes neither the exit code of goal cancel nor its result [R6]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'cancelled' });
+    const goal = goalForCards(fx, [CARD]);
+    fx.controller.ensureCardRun(fx.goal(goal.id), CARD);
+    repository(fx);
+    const dir = linked(fx);
+    mkdirSync(path.join(fx.paths.evidence, goal.id), { recursive: true });
+    writeFileSync(path.join(fx.paths.evidence, goal.id, 'review'), 'a file where the copies go\n');
+    cliConfig(fx);
+    const out = cli(fx, 'goal', 'cancel', goal.id);
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal(fx.goal(goal.id).stop?.reason, 'cancelled');
+    assert.match(out.stderr, new RegExp(`worktree failed: ${CARD}`));
+    assert.equal(existsSync(path.join(dir, TRACKED)), true);
+  } finally {
+    fx.cleanup();
   }
 });
 
@@ -473,6 +495,30 @@ test('T0-WORKTREE-RECLAIM acceptance 8: card close --all removes a finished card
     assert.match(out.stderr, new RegExp(`removed.*${CARD}`));
     assert.equal(existsSync(dir), false);
     assert.equal(existsSync(finished), false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws changes neither the stdout nor the exit code of card close [R6]', () => {
+  const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
+  try {
+    const other = ended(fx, CARD, 'cancelled');
+    fx.advance(60_000);
+    const { goalId, dir } = closingAtCli(fx);
+    repository(fx, [CARD, NEXT]);
+    const bystander = linked(fx);
+    linked(fx, NEXT);
+    const evidence = new EvidenceStore(fx.paths.evidence, goalId);
+    evidence.retain(evidence.load(goalId, 1, 1, T0), { id: 'verdict.json', kind: 'review-verdict', content: VERDICT, cardId: NEXT });
+    cliConfig(fx);
+    writeFileSync(fx.store.cardFile(other, CARD), '{');
+    const out = cli(fx, 'card', 'close', NEXT, '--goal', goalId, '--all');
+    assert.equal(out.status, 0, out.stderr);
+    assert.equal((JSON.parse(out.stdout) as { cleanup: boolean }).cleanup, true);
+    assert.match(out.stderr, /worktree sweep did not finish/);
+    assert.equal(existsSync(dir), false);
+    assert.equal(existsSync(path.join(bystander, TRACKED)), true);
   } finally {
     fx.cleanup();
   }

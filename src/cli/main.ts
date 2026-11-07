@@ -11,7 +11,8 @@ import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { workingTreeReport } from '../state/claims.ts';
-import { GitProbe } from '../probes/git.ts';
+import { GitProbe, oneLine } from '../probes/git.ts';
+import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
 import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
@@ -75,6 +76,17 @@ function ctx(opts: { json?: boolean; cwd?: string }): Ctx {
   const controller = new GoalController({ paths, repo, config, store, boardMirror: path.join(repo.mainRoot, '_local', 'aidlc-board.md') });
   const json = opts.json ?? !process.stdout.isTTY;
   return { root: repo.mainRoot, repo, config, configFound: found, paths, store, controller, json };
+}
+
+/** The sweep after `card close` and `goal cancel`: nothing it does reaches their stdout or their exit code. */
+function sweepAfter(c: Ctx): void {
+  try {
+    for (const r of sweepWorktrees({ paths: c.paths, repo: c.repo, config: c.config, store: c.store })) {
+      if (r.action !== 'skipped') process.stderr.write(`worktree ${r.action}: ${r.cardId}: ${r.reason}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`worktree sweep did not finish: ${oneLine((err as Error).message)}\n`);
+  }
 }
 
 function out(c: { json: boolean }, data: unknown, human?: () => string): void {
@@ -290,6 +302,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'cancel', data: { detail: o.detail ?? 'cancelled by user' } });
       out(c, r.directive, () => formatStop(r.goal.stop!));
+      sweepAfter(c);
     });
   goal
     .command('resume <id>')
@@ -533,6 +546,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const defined = Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)) as Partial<typeof run.closure>;
       const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
       out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
+      if (defined.cleanup) sweepAfter(c);
     });
   card
     .command('ci-reconcile <cardId>')
@@ -1154,6 +1168,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath: o.file, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
       Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
+    });
+  program
+    .command('worktree')
+    .description('card worktrees')
+    .command('reclaim')
+    .description('remove the clean worktrees of merged, superseded and cancelled cards; every branch stays')
+    .option('--dry-run', 'report the rows and copy and remove nothing')
+    .action((o: { dryRun?: boolean }) => {
+      const c = ctx(g());
+      const rows = sweepWorktrees({ paths: c.paths, repo: c.repo, config: c.config, store: c.store }, { dryRun: o.dryRun });
+      out(c, rows, () => rows.map((r) => `${r.action}: ${r.cardId}: ${r.reason}`).join('\n'));
+      if (rows.some((r) => r.action === 'failed')) process.exitCode = 1;
     });
   program
     .command('monitor')

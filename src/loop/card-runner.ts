@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -24,6 +24,7 @@ import { LeaseStore, FencedError, resourceKeys } from '../coordination/lease.ts'
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
 import { EvidenceStore } from '../audit/manifest.ts';
+import { retireWorktree, sameDirectory } from './worktree-reclaim.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
@@ -45,15 +46,6 @@ import { preReviewFallbackSettings, type PreReviewer } from '../config.ts';
 
 /** One formal reviewer's settings: the primary `formalReview`, its `fallback` or its `baseSync` reviewer. */
 type FormalReviewer = Omit<FormalReviewConfig, 'fallback' | 'baseSync'>;
-
-/** `findWorktree` folds case, which on a case-sensitive filesystem joins two directories; their real paths stay apart. */
-function sameDirectory(a: string, b: string): boolean {
-  try {
-    return realpathSync.native(a) === realpathSync.native(b);
-  } catch {
-    return false;
-  }
-}
 
 export interface CardRunnerDeps {
   paths: StatePaths;
@@ -3097,18 +3089,7 @@ export class CardRunner {
       return;
     }
     if (!sameDirectory(found.entry.path, expected)) throw new Error(`worktree for ${card.id} is at ${found.entry.path}, expected ${expected}`);
-    const reviewDir = path.join(found.entry.path, '.review');
-    if (existsSync(reviewDir)) {
-      const kept = path.join(this.paths.evidence, goal.id, 'review', card.id);
-      mkdirSync(kept, { recursive: true });
-      const files = readdirSync(reviewDir, { withFileTypes: true }).filter((f) => f.isFile()).map((f) => f.name);
-      for (const name of files) copyFileSync(path.join(reviewDir, name), path.join(kept, name));
-      // Two names the worktree keeps apart can reach one file here, so each copy is read back before the removal.
-      for (const name of files) {
-        if (!readFileSync(path.join(reviewDir, name)).equals(readFileSync(path.join(kept, name)))) throw new Error(`the copy of .review/${name} in ${kept} differs from the file; another name may have reached it`);
-      }
-    }
-    this.git.removeWorktree(this.repo.mainRoot, found.entry.path);
+    retireWorktree(this.git, this.repo.mainRoot, found.entry.path, path.join(this.paths.evidence, goal.id, 'review', card.id));
   }
 
   /** The metadata step: `status: merged` in the card file of the main checkout, which the session commits. */
