@@ -27,25 +27,56 @@ const FEATURE = /\b(feature|module|epic|workflow|integrate|integration|dashboard
 const BUG = /\b(bug|defect|regression|crash|stack ?trace|exception|fails? with|broken|error:|nullpointer|npe|typeerror|500 error|does not work|doesn't work|incorrect result)\b/i;
 const CARD_TEXT_ONLY = /\b(card text|reword|rewrite the card|amend the card|update the card text|card description|acceptance list|only the card|text-only|wording)\b/i;
 const RELEASE = /\b(deploy|release|publish|ship to (?:staging|production|prod)|staging|production|go live|rollout|package (?:it|the app|a build)|installer|runnable package|build artifact)\b/i;
-const MIGRATION_OP = /\b(run the migration|apply the migration|migrate the (?:database|data)|backfill the|data migration)\b/i;
-const OPERATIONS = /\b(monitor|on-?call|alerting|keep watching|ongoing operations|maintenance window|observe production)\b/i;
+// A target comes from a request to deliver, never from a word that names a place (card T0-INTAKE-TARGET-2, issue 222): a delivery
+// verb tied by `to` to the target in one sentence, a build verb tied to what it builds, or a phrase that names the operation.
+const DELIVER = /\b(?:deploy|release|ship|publish|promote|push|roll[- ]?out)\b/i;
+const BUILD = /\b(?:build|produce|make|create|cut|generate|publish)\b/i;
+const TO_PRODUCTION = /\bto (?:the )?production\b/i;
+const TO_STAGING = /\b(?:to (?:the )?(?:staging|uat|preprod|pre-production|test environment)|for online testing)\b/i;
+const PACKAGE_NOUN = /\b(?:runnable package|installer|build artifact|distributable|apk|msi|docker image)\b/i;
+const GO_LIVE = /\b(?:go live|release to prod)\b/i;
+const PACKAGE_IT = /\bpackage (?:it|the app|a build)\b/i;
+// A sentence ends at a terminator, with any closing marks after it, before whitespace (a dot in `2.0` or `example.com` does
+// not); at a full-width terminator, which takes no whitespace; at a blank line; or before a list item, a line that opens with
+// marks or a short label. Any other line break is wrapping. The lookahead keeps the lookbehind to whitespace, so a long run of
+// marks is read back once, not from each of its characters.
+const SENTENCE_END = /(?=\s)(?<=[\p{Sentence_Terminal};\u2026][^\p{L}\p{N}\s]*)\s+|(?<=[\u3002\uff01\uff0e\uff1f\uff1b\uff61])|\n\s*\n|\n\s*(?:[^\p{L}\p{N}\s]+|\(?[\p{L}\p{N}]{1,3}[.)])\s/u;
+const MIGRATION_OP = /\b(run the migration|apply the migration|migrate the (?:database|data)|backfill the|run (?:the |a )?data migration)\b/i;
+const OPERATIONS = /\b(page on-?call|keep watching|ongoing operations|observe production|monitor (?:it|the|this|our|production|prod))\b/i;
 const INCIDENT = /\b(alert|incident|outage|p1|p2|sev ?\d|5xx spike|error rate|latency spike|observed regression|prod(?:uction)? (?:is|error))\b/i;
 const ISSUE_REF = /(?:^|\s)(?:#(\d+)|issue\s+#?(\d+)|([\w.-]+\/[\w.-]+)#(\d+))(?:\s|$)/i;
 const BARE_NUMBER = /^\s*#?(\d{1,6})\s*$/;
 
-function detectTarget(text: string): { target: DeliveryTarget; explicit: boolean; reason?: string } {
-  if (/\b(production|prod release|go live|release to prod)\b/i.test(text) && RELEASE.test(text)) {
-    return { target: 'production', explicit: true, reason: 'explicit production release request' };
-  }
-  if (/\b(staging|online test(?:ing)?|test environment|uat|preprod|pre-production)\b/i.test(text)) {
-    return { target: 'staging', explicit: true, reason: 'explicit online testing / staging request' };
-  }
-  if (/\b(runnable package|installer|build artifact|package (?:it|the app|a build)|distributable|apk|msi|docker image)\b/i.test(text)) {
-    return { target: 'package', explicit: true, reason: 'explicit package request' };
-  }
-  if (MIGRATION_OP.test(text)) return { target: 'migration', explicit: true, reason: 'explicit migration operation' };
-  if (OPERATIONS.test(text)) return { target: 'operations', explicit: true, reason: 'explicit ongoing operations request' };
-  return { target: 'development', explicit: false };
+/** A line break inside a sentence is wrapping, so a form is read with its whitespace collapsed. */
+const flat = (text: string): string => text.replace(/\s+/g, ' ');
+
+/** A verb and an object after it in one sentence. Finding the first verb and testing the rest keeps this linear in the text. */
+function tied(sentences: string[], verb: RegExp, object: RegExp): boolean {
+  return sentences.some((sentence) => {
+    const found = verb.exec(sentence);
+    return found !== null && object.test(sentence.slice(found.index + found[0].length));
+  });
+}
+
+interface TargetReading {
+  target: DeliveryTarget;
+  explicit: boolean;
+  reason?: string;
+}
+
+const NO_TARGET: TargetReading = { target: 'development', explicit: false };
+
+function detectTarget(text: string): TargetReading {
+  // A bug report that names a target describes a failure there; it asks for no delivery.
+  if (BUG.test(flat(text))) return NO_TARGET;
+  const sentences = text.split(SENTENCE_END).map(flat);
+  const holds = (form: RegExp): boolean => sentences.some((sentence) => form.test(sentence));
+  if (tied(sentences, DELIVER, TO_PRODUCTION) || holds(GO_LIVE)) return { target: 'production', explicit: true, reason: 'explicit production release request' };
+  if (tied(sentences, DELIVER, TO_STAGING)) return { target: 'staging', explicit: true, reason: 'explicit online testing / staging request' };
+  if (holds(PACKAGE_IT) || tied(sentences, BUILD, PACKAGE_NOUN)) return { target: 'package', explicit: true, reason: 'explicit package request' };
+  if (holds(MIGRATION_OP)) return { target: 'migration', explicit: true, reason: 'explicit migration operation' };
+  if (holds(OPERATIONS)) return { target: 'operations', explicit: true, reason: 'explicit ongoing operations request' };
+  return NO_TARGET;
 }
 
 export function classifyRequest(input: RouterInput): RoutingResult {
@@ -100,12 +131,16 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   }
 
   // --- kind ----------------------------------------------------------------------------
-  const targetInfo = detectTarget(text);
+  const read = detectTarget(text);
+  // A request that names a card or an issue says what to change and only `--target` says where it goes, and
+  // `--target development` keeps a request to deliver out of the kind (card T0-INTAKE-TARGET-2).
+  const textDecides = input.explicitTarget ? input.explicitTarget !== 'development' : input.ref === undefined;
+  const targetInfo = textDecides ? read : NO_TARGET;
   if (!kind) {
     if (input.source === 'incident' || INCIDENT.test(text)) kind = 'incident';
     else if (targetInfo.explicit && targetInfo.target === 'migration') kind = 'migration';
-    else if (targetInfo.explicit && RELEASE.test(text) && !SYSTEM.test(text) && !FEATURE.test(text)) kind = 'release';
-    else if (input.hasBugEvidence || input.source === 'bug-evidence' || BUG.test(text)) kind = 'bugfix';
+    else if (targetInfo.explicit && RELEASE.test(flat(text)) && !SYSTEM.test(text) && !FEATURE.test(text)) kind = 'release';
+    else if (input.hasBugEvidence || input.source === 'bug-evidence' || BUG.test(flat(text))) kind = 'bugfix';
     else if (SYSTEM.test(text)) kind = 'system';
     else if (FEATURE.test(text)) kind = 'feature';
     else kind = 'change';
@@ -164,6 +199,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
     targetSource = 'explicit';
   }
   if (targetInfo.reason) reasons.push(targetInfo.reason);
+  else if (read.explicit) reasons.push(`the text reads as target ${read.target}; only --target sets the target of this request`);
   if (target === 'development') reasons.push('target=development (default; hosting/deploy not authorised by this request)');
 
   // --- modules -------------------------------------------------------------------------
