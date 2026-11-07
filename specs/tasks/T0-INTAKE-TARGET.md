@@ -55,6 +55,13 @@ hygiene: "Issue 222, items 1, 2 and 4 of its proposal. No request main left on d
 ## Deliverable
 A word in a request no longer sets a delivery target. Closes issue 222.
 
+## Attempt evidence
+RED, commit e31ea7e: `node --test tests/scenarios/intake-target.test.ts` exits 1, tests 50, pass 16, fail 34, all on assertions: acceptance 1 six rows, 2 six rows, 3, 4, 6 sixteen rows, 7 two rows, 8 and 9. The 16 that pass are the 15 requests of acceptance 5, which main already reads, and `ship it to prod`, which stays development on both.
+
+Old and new `classifyRequest` over a generated corpus of 387845 requests, with no `ref` (verbs by objects by links by places by tails, plus the fixed phrases): 73567 route the same, 0 gain a target, 312981 go to development, and 1297 change target. Those 1297 are 1296 requests with `pre-production`, production to staging, and `observe production`, production to operations. The 312981 fall in the classes acceptance 6 and 7 name: 116970 bug reports, 41040 with a preposition other than `to`, 82609 with no delivery verb, and 72362 with a verb that is not tied by `to`, such as `prod release`.
+
+The RED cannot show that each rule of the fix is needed, since most rows of acceptance 5 pass on main, so each rule, verb and phrase was changed in turn, by hand, and the tests run: 32 changes, 30 failed a test. The two that passed, a link other than `to` before `production` and reading `online tests`, had no row. `deploy on production` and `deploy it for online tests` now hold those, and both changes fail a test.
+
 ## Acceptance
 ```powershell
 npm run typecheck && node --test tests/scenarios/intake-target.test.ts tests/core/router.test.ts tests/scenarios/goal-card-count.test.ts tests/scenarios/goal-close-stages.test.ts tests/scenarios/release.test.ts

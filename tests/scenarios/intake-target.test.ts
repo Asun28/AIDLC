@@ -51,18 +51,39 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['deploy to production', 'production'],
   ['Release version 2.0 to production', 'production'],
   ['release to prod', 'production'],
+  ['ship it to production', 'production'],
+  ['publish the build to production', 'production'],
+  ['roll out the app to production', 'production'],
   ['promote the build to the production cluster', 'production'],
   ['go live', 'production'],
   ['release to staging', 'staging'],
   ['Deploy the current build to staging for online testing', 'staging'],
   ['push the build to uat', 'staging'],
   ['deploy it for online testing', 'staging'],
+  ['release the build to the test environment', 'staging'],
+  ['deploy to preprod', 'staging'],
+  // Main read these two as production: `\bproduction\b` matches after the hyphen, and `observe production` named the word.
+  ['deploy to pre-production', 'staging'],
+  ['observe production', 'operations'],
   ['Build a runnable package for the app', 'package'],
   ['package the app', 'package'],
   ['publish the docker image', 'package'],
+  ['package it', 'package'],
+  ['package a build', 'package'],
+  ['produce an installer', 'package'],
+  ['make an apk', 'package'],
+  ['create a build artifact', 'package'],
+  ['cut a distributable', 'package'],
+  ['generate an msi', 'package'],
   ['Run the migration against the reporting database', 'migration'],
+  ['apply the migration', 'migration'],
+  ['migrate the database', 'migration'],
+  ['backfill the orders', 'migration'],
+  ['run a data migration', 'migration'],
   ['Keep watching the service and page on-call when latency spikes', 'operations'],
   ['monitor the service', 'operations'],
+  ['page on-call', 'operations'],
+  ['take over ongoing operations', 'operations'],
 ];
 for (const [text, target] of REQUESTS) {
   test(`T0-INTAKE-TARGET acceptance 5: "${text}" asks for ${target} [R3]`, () => {
@@ -75,6 +96,7 @@ for (const [text, target] of REQUESTS) {
 const DROPPED = [
   'the job runs in production',
   'deploy on staging',
+  'deploy on production',
   'the production release step',
   'the prod release step',
   'a staging deploy',
@@ -90,6 +112,7 @@ const DROPPED = [
   'the maintenance window',
   'the data migration helper',
   'ship it to prod',
+  'deploy it for online tests',
 ];
 for (const text of DROPPED) {
   test(`T0-INTAKE-TARGET acceptance 6: "${text}" reads as no target [R3]`, () => {
