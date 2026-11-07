@@ -1,7 +1,8 @@
 # Review instructions
 
-Applies to every PR. The agent that wrote the code cannot approve it; a human
-code owner approves through branch protection, informed by these findings.
+Applies to every PR. The agent that wrote the code cannot approve it. Where
+the repository's branch rules require a human approval, a code owner gives
+it, informed by these findings.
 
 ## Passes
 Run three passes and tag each finding with its pass:

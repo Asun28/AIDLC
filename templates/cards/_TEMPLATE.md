@@ -14,6 +14,8 @@ dod_command: npm test -- --run <tests>   # the card's own tests and fast static 
 dod_exit: 0
 review_gate: codex {verdict:pass}   # optional; declaring it invokes the independent reviewer
 acceptance:            # CLOSED numbered list the reviewer judges against; required once review_gate is set
+  # A change of 30 src lines or fewer gets a card of about 400 words or fewer.
+  # Doc text is proved with `(reviewer-verified against the diff)` unless a program reads that exact text.
   - 1. <one fact that means done, naming the assertion that covers it>. [dod arm 1]
   - 2. <the next one; a gap outside this list is [FOLLOW-UP], not a block>. [dod arm 2]
 # ------- Optional below. Absent is silent; no gate asks for any of these.
