@@ -16,6 +16,8 @@
 
 - T0-R3-STOP-DISPUTED: R3 stops a card for a ruling on a re-raise only when the author disputed the finding, at any point. A re-raise of an undisputed finding returns the card to REVIEW_FIX for another repair round, which reverses part of T1-EFF-R3-PROGRESS. A block on decision 4, a ship-path reviewer's second block and a base-sync decision stop as before. The finding the previous R3 decision raised still reaches the next R3 prompt after an R2 pass resolved it.
 
+- T0-REPAIR-CHECK: the `build` directive of a formal repair asks the repairer to check whether removing the code a finding names fixes the defect at every site, and to read the repair hunks again for what they newly break. The text sits before the defect class list. Effort levels, attempts and persisted records do not change, and no gate reads the text.
+
 - T0-CANDIDATE-WITHDRAW: `aidlc card withdraw <id> --cause "<finding>"` withdraws a bound candidate no R3 decision has decided. The success that bound it becomes a counted failure with the finding as its cause, the episode reopens and the repair is the ladder's next attempt, so a defect found after the bind and before R3 costs neither an R3 decision nor a successor card. A success on the withdrawn candidate and a review of it are refused until another candidate is recorded.
 
 - T0-BUDGET-DOC-TRUTH: the card templates and `docs/OPERATIONS.md` say the `budget` is a merge gate only on the scaffold ship path, since only the scaffold prints a `budget-over` sentinel; on the `github` and `dry-run` paths it is advisory. No code changed.
