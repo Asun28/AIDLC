@@ -49,3 +49,14 @@ On 2026-11-07 a session working from an old context opened goal `g-2026110707334
 
 ## Limits
 The registry status is written at card close, so a card whose PR merged and whose close has not run yet still passes the check.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/goal-merged-card.test.ts`, the two acceptance 1 tests: each checks the message, `listGoals()`, the journal and the lease directories. RED on 2d3468f: both fail with `Missing expected exception` | pass |
+| 2 | Same file, acceptance 2 test; it passes on main by design, since R3 keeps today's behaviour | pass |
+| 3 | `tests/scenarios/t1-arc.test.ts`, `tests/scenarios/card-goal.test.ts`, neither file changed | pass |
+| 4 | `docs/OPERATIONS.md`, the paragraph before the T0 bugfix heading; `CHANGELOG.md`, entry T0-GOAL-MERGED-CARD | reviewer reads the diff |
+
+Other checks: `npm test` gave 2774 tests, 2762 pass, 1 fail, 11 skipped. The failure was `tests/surface/prose.test.ts` acceptance 8, which caps the OPERATIONS Sessions section at 13701 bytes; the paragraph first sat there and took it to 14094. It now sits in Running a goal, no test changed, and `prose.test.ts` and `templates.test.ts` pass.
