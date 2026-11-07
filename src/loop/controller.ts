@@ -717,7 +717,11 @@ export class GoalController {
     try {
       this.writeBoard(next);
     } catch (err) {
-      this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { boardError: (err as NodeJS.ErrnoException).code ?? 'unknown' } });
+      try {
+        this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { boardError: (err as NodeJS.ErrnoException).code ?? 'unknown' } });
+      } catch {
+        // The NOTE is a diagnostic of the view: GOAL_STOPPED is journaled and the caller still has the stop to save.
+      }
     }
     return next;
   }
