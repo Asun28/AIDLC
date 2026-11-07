@@ -78,6 +78,8 @@ test('T1-LESSON-MATCH acceptance 2: an absent file carries no rules [R1]', () =>
 test('T1-LESSON-MATCH acceptance 3: terms are backticked spans and words with an inner capital, underscore, dot or dash [R3]', () => {
   assert.deepEqual(lessonTerms('Always run `git add -A` before pinCandidate, then update-ref and gc.pruneExpire and MAX_R3 in review'), ['git add -A', 'pinCandidate', 'update-ref', 'gc.pruneExpire', 'MAX_R3']);
   assert.deepEqual(lessonTerms('Always review the plain words.'), []);
+  assert.deepEqual(lessonTerms('use foo__bar and __dirname and parse2JSON here'), ['foo__bar', '__dirname', 'parse2JSON']);
+  assert.deepEqual(lessonTerms('the CI and PR runs of NEVER'), [], 'an all-capitals word is not a term');
   assert.deepEqual(lessonTerms('use `a` and `a` twice'), ['a'], 'a term counts once');
 });
 
@@ -136,6 +138,34 @@ test('T1-LESSON-MATCH acceptance 4: a non-ASCII path is listed as the candidate 
   });
 });
 
+test('T1-LESSON-MATCH acceptance 3: a rule naming a double underscore or digit-capital word still matches the diff [R3]', () => {
+  const lines = [rule(1, 'T1-OLD', 'do not read __dirname in a bundle'), rule(2, 'T1-NEW', 'read the card')];
+  withFile(lines, (file) => {
+    assert.deepEqual(refs(matchedLessons(file, { changedPaths: [], diff: '+const here = __dirname;\n', history: [] })), ['T1-OLD', 'T1-NEW']);
+  });
+});
+
+/** The bytes of `git log -z --format=%x01%s --name-only`, as a real run on 2 commits prints them. */
+const LOG_Z = '\x01feat: [T1-X] (#2)\0\nsrc/a"b.ts\0docs/q"uote.md\0src/tab\tname.ts\0\x01feat: [T1-Y] (#1)\0\nsrc/line\nbreak.ts\0\x01empty\0';
+
+test('T1-LESSON-MATCH acceptance 4: names git would quote keep their bytes, a left-out one is dropped, and a commit with no file is listed [R4]', () => {
+  const receipt = { command: ['git'], cwd: '.', exitCode: 0, stdout: LOG_Z, stderr: '', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
+  assert.deepEqual(new GitProbe(() => receipt).commitFiles('.', 'main'), [
+    { subject: 'feat: [T1-X] (#2)', files: ['src/a"b.ts', 'src/tab\tname.ts'] },
+    { subject: 'feat: [T1-Y] (#1)', files: ['src/line\nbreak.ts'] },
+    { subject: 'empty', files: [] },
+  ]);
+});
+
+test('T1-LESSON-MATCH acceptance 4: a real git run lists a quoted name as the candidate diff lists it [R4]', { skip: process.platform === 'win32' && 'NTFS refuses a tab or a quote in a name' }, () => {
+  repo((root, git) => {
+    put(root, 'src/tab\tname.ts', 'src/a"b.ts', 'docs/q"uote.md');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'feat: [T1-X] (#1)');
+    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'feat: [T1-X] (#1)', files: ['src/a"b.ts', 'src/tab\tname.ts'] }]);
+  });
+});
+
 test('T1-LESSON-MATCH acceptance 4: a failed git call returns an empty list and never throws [R4]', () => {
   repo((root, git) => {
     put(root, 'src/x.ts');
@@ -149,7 +179,7 @@ test('T1-LESSON-MATCH acceptance 4: a failed git call returns an empty list and 
     }).commitFiles('.', 'main'),
     [],
   );
-  const failed = { command: ['git'], cwd: '.', exitCode: 128, stdout: '\x01partial\nsrc/x.ts\n', stderr: 'fatal', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
+  const failed = { command: ['git'], cwd: '.', exitCode: 128, stdout: '\x01partial\0\nsrc/x.ts\0', stderr: 'fatal', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
   assert.deepEqual(new GitProbe(() => failed).commitFiles('.', 'main'), [], 'output of a failed call is not read');
 });
 
