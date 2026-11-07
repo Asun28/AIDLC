@@ -185,12 +185,16 @@ function fillCap(rules: readonly string[], maxBytes: number): ReviewLessons {
   return { lines, omitted: rules.length - lines.length };
 }
 
-/** The terms of a rule: its backticked spans and, outside them, the words with an inner capital, underscore, dot or dash. */
+/**
+ * The terms of a rule: its backticked spans and, outside them, the words with a capital right after a lowercase letter or
+ * digit, or with an underscore, dot or dash that is neither their first nor their last character. An all-capitals word is
+ * not a term: `CI` or `PR` names no code.
+ */
 export function lessonTerms(rule: string): string[] {
   const found = new Set<string>();
   for (const span of rule.matchAll(/`([^`]+)`/g)) found.add(span[1]!);
   for (const word of rule.replace(/`[^`]+`/g, ' ').matchAll(/[A-Za-z0-9_][A-Za-z0-9_.-]*[A-Za-z0-9_]/g)) {
-    if (/[a-z][A-Z]|[A-Za-z0-9][_.-][A-Za-z0-9]/.test(word[0])) found.add(word[0]);
+    if (/[a-z0-9][A-Z]/.test(word[0]) || /[_.-]/.test(word[0].slice(1, -1))) found.add(word[0]);
   }
   return [...found];
 }

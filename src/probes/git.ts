@@ -222,15 +222,22 @@ export class GitProbe {
    */
   commitFiles(cwd: string, ref: string): { subject: string; files: string[] }[] {
     try {
-      const r = this.git(cwd, ['-c', 'core.quotePath=false', 'log', '--first-parent', '--no-renames', '--format=%x01%s', '--name-only', ref, '--']);
+      // -z: git never quotes or escapes a name. Each commit prints \x01<subject>, then its names, the first after one newline.
+      const r = this.git(cwd, ['log', '-z', '--first-parent', '--no-renames', '--format=%x01%s', '--name-only', ref, '--']);
       if (r.exitCode !== 0) return [];
-      return r.stdout
-        .split('\x01')
-        .slice(1)
-        .map((block) => {
-          const [subject = '', ...names] = block.split(/\r?\n/);
-          return { subject, files: names.filter((name) => name && !NO_CODE_PATH.test(name)) };
-        });
+      const commits: { subject: string; files: string[] }[] = [];
+      let first = false;
+      for (const token of nulList(r.stdout)) {
+        if (token.startsWith('\x01')) {
+          commits.push({ subject: token.slice(1), files: [] });
+          first = true;
+          continue;
+        }
+        const name = first && token.startsWith('\n') ? token.slice(1) : token;
+        first = false;
+        if (!NO_CODE_PATH.test(name)) commits.at(-1)?.files.push(name);
+      }
+      return commits;
     } catch {
       return [];
     }
