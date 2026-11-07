@@ -160,7 +160,9 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
     mkdirSync(path.join(tmp, 'specs', 'tasks'), { recursive: true });
     writeFileSync(path.join(tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'dry-run', cardsDir: 'specs/tasks', worktreeRoot: path.join(tmp, 'wt') }));
     writeFileSync(path.join(tmp, 'specs', 'tasks', 'T0-LESSON.md'), CARD);
-    const env = { ...process.env, AIDLC_STATE_DIR: path.join(tmp, 'state') };
+    // Every letter case goes: Windows looks variables up case-insensitively and this copy does not.
+    const inherited = Object.entries(process.env).filter(([name]) => name.toUpperCase() !== 'AIDLC_RUN_NO_SHIP');
+    const env = { ...Object.fromEntries(inherited), AIDLC_STATE_DIR: path.join(tmp, 'state') };
     const cli = (...args: string[]) => {
       const r = spawnSync(process.execPath, [bin, ...args, '--json'], { cwd: tmp, env, encoding: 'utf8', timeout: 60_000 });
       assert.equal(r.status, 0, `${args.join(' ')}: ${r.stderr}\n${r.stdout}`);
@@ -182,7 +184,7 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
     const close = cli('card', 'next', 'T0-LESSON', '--goal', goal)['directive'];
     assert.equal(close['kind'], 'close', String(close['narration']));
     assert.deepEqual(close['missing'], ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
-    return { tmp, goal, cli };
+    return { tmp, goal, cli, env };
   }
 
   test('--all leaves the lesson step open, the close hint names --lesson and --skip-lesson, and --lesson appends one line before DONE', () => {
@@ -205,9 +207,9 @@ describe('aidlc card close --lesson / --skip-lesson / --all through the CLI (T1-
   });
 
   test('--skip-lesson records the reason and closes the step without touching the file; malformed --lesson text is refused', () => {
-    const { tmp, goal, cli } = repoAtClose();
+    const { tmp, goal, cli, env } = repoAtClose();
     cli('card', 'close', 'T0-LESSON', '--goal', goal, '--all');
-    const bad = spawnSync(process.execPath, [bin, 'card', 'close', 'T0-LESSON', '--goal', goal, '--lesson', 'do it later', '--json'], { cwd: tmp, env: { ...process.env, AIDLC_STATE_DIR: path.join(tmp, 'state') }, encoding: 'utf8', timeout: 60_000 });
+    const bad = spawnSync(process.execPath, [bin, 'card', 'close', 'T0-LESSON', '--goal', goal, '--lesson', 'do it later', '--json'], { cwd: tmp, env, encoding: 'utf8', timeout: 60_000 });
     assert.notEqual(bad.status, 0, 'malformed lesson text is refused');
     assert.ok(!existsSync(path.join(tmp, 'docs', 'LESSONS.md')), 'nothing is written for a refused lesson');
     const skipped = cli('card', 'close', 'T0-LESSON', '--goal', goal, '--skip-lesson', 'the reviews taught no new rule');
