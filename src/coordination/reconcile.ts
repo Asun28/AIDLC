@@ -52,7 +52,8 @@ export class OperationLedger {
 
   /** LC4: durably record intent BEFORE issuing. Returns the record whose id is the fencing token. */
   recordIntent(intent: OperationIntent, now: string = nowIso()): OperationRecord {
-    const record: OperationRecord = {
+    // Every read parses every file, so one invalid record would stop all of them: it never reaches the ledger.
+    const record = OperationRecord.parse({
       id: `op-${now.replace(/[-:.TZ]/g, '').slice(0, 14)}-${randomUUID().slice(0, 8)}`,
       kind: intent.kind,
       goalId: intent.goalId,
@@ -67,7 +68,7 @@ export class OperationLedger {
       timeoutMs: intent.timeoutMs,
       effects: intent.effects ?? [],
       externallyVisible: intent.externallyVisible ?? true,
-    };
+    });
     atomicWriteJson(this.file(record.id), record);
     return record;
   }
