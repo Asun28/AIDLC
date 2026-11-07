@@ -221,12 +221,13 @@ test('T0-INTAKE-TARGET acceptance 5: a prompt of repeated verbs and no sentence 
 });
 
 test('T0-INTAKE-TARGET acceptance 5: a child classifies long runs of each unit before its kill, so a scan that is not linear fails with no clock in the test [R3]', () => {
-  // R3 decision 3 F5: 80000 hyphens took 7 seconds when the lookbehind ran at every character; these sizes would take hours.
+  // R3 decision 3 F5: 80000 hyphens took 7 seconds when the lookbehind ran at every character, so 400000 would take minutes.
+  // The size stays small enough to leave the timing tests that run beside this one alone.
   const router = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'core', 'router.ts')).href;
   const units = ['-', '.', '. ', '!"', '\n-', '-\n', '\n ', 'a\n', 'deploy to ', '\u3002'];
   const script = `import { classifyRequest } from ${JSON.stringify(router)};
-for (const unit of ${JSON.stringify(units)}) classifyRequest({ text: 'Add support for this: ' + unit.repeat(1000000) });`;
-  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 60_000 });
+for (const unit of ${JSON.stringify(units)}) classifyRequest({ text: 'Add support for this: ' + unit.repeat(400000) });`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 30_000 });
   assert.equal(r.status, 0, `killed by ${r.signal}: ${r.stderr}`);
 });
 

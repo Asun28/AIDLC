@@ -64,7 +64,7 @@ RED for repair 1, commit 87b1471 (R3 decision 1 F1, F2): tests 84, pass 78, fail
 
 RED for repair 2, commit 3dbfddf (R3 decision 2 F3, F4): tests 274, pass 127, fail 147: three rows of an object inside the verb, 134 terminator and closing mark pairs, four full-width terminators and six list markers.
 
-RED for repair 3, commit 4e4d9f2 (R3 decision 3 F5): the child that classifies runs of 1000000 of each unit is killed at its 60 second limit. With the fix, 30 input shapes at 20000 to 160000 characters each take at most 126 ms and grow about in step with the size, and the child finishes before its limit.
+RED for repair 3, commit 4e4d9f2 (R3 decision 3 F5): the child that classifies runs of 1000000 of each unit is killed at its 60 second limit. With the fix, 30 input shapes at 20000 to 160000 characters each take at most 126 ms and grow about in step with the size, and the child finishes before its limit. The child then took 9 seconds of CPU beside the timing tests of `tests/infra/exec.test.ts`, one of which failed once in a full run and passed three times alone, so it now classifies runs of 400000 with a 30 second kill, and with the whitespace gate removed it is still killed.
 
 RED before R3 decision 4, commit 8b860fa, from an independent check of the candidate: tests 378, pass 366, fail 12: seven forms with a line break inside them, `for online test`, the terminators `\uff0e` and `\uff61` with no whitespace, the kind of a wrapped form, and a wrapped bug report.
 
