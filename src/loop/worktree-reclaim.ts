@@ -70,15 +70,15 @@ interface Held {
 type Decision = { skip: string } | { finished: string; goalId: string };
 
 /** The conditions of card R2, then R3, with git last because it is the slowest; the first that fails names the skip. */
-function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now'>> & ReclaimDeps, entry: WorktreeEntry, root: string, cards: Map<string, { status: string; superseded_by?: string }>, held: Held[]): Decision {
+function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now'>> & ReclaimDeps, entry: WorktreeEntry, root: string, cards: Map<string, { status: string; superseded_by?: string }>, goals: Goal[], held: Held[]): Decision {
   const cardId = entry.branch;
   if (!cardId || !sameDirectory(entry.path, path.join(root, cardId))) return { skip: `not a card worktree at ${root}` };
   const card = cards.get(cardId);
   if (!card) return { skip: `no card file for ${cardId}` };
+  const live = goals.find((g) => !g.terminal && (g.cards.includes(cardId) || held.some((h) => h.goal.id === g.id)));
+  if (live) return { skip: `goal ${live.id} is not terminal` };
   const latest = held[0];
   if (!latest) return { skip: `no run of ${cardId}` };
-  const live = held.find((h) => !h.goal.terminal);
-  if (live) return { skip: `goal ${live.goal.id} is not terminal` };
   const finished = card.superseded_by ? `superseded by ${card.superseded_by}` : card.status === 'merged' || latest.run.state === 'DONE' ? 'merged' : latest.goal.stop?.reason === 'cancelled' ? `goal ${latest.goal.id} was cancelled` : undefined;
   if (!finished) return { skip: `not merged, superseded or cancelled: goal ${latest.goal.id} is ${latest.goal.state}, a ruling may resume it` };
   const lease = deps.leases.read(resourceKeys.card(deps.repo.key, cardId));
@@ -111,15 +111,16 @@ export function sweepWorktrees(deps: ReclaimDeps, options: { dryRun?: boolean } 
   const full = { ...deps, git, leases: deps.leases ?? new LeaseStore(paths.leases), ops: deps.ops ?? new OperationLedger(paths.operations), now: deps.now ?? (() => new Date().toISOString()) };
   const root = resolveWorktreeRoot(config, repo.mainRoot);
   const cards = new Map(loadCardRegistry(path.join(repo.mainRoot, config.cardsDir), path.join(repo.mainRoot, config.archiveDir)).cards.map((p) => [p.card.id, p.card]));
+  const goals = store.listGoals();
   const held = new Map<string, Held[]>();
-  for (const goal of store.listGoals()) {
+  for (const goal of goals) {
     for (const run of store.listCardRuns(goal.id)) held.set(run.cardId, [...(held.get(run.cardId) ?? []), { goal, run }]);
   }
   return linked.map((entry) => {
     const cardId = entry.branch ?? path.basename(entry.path);
     const row = (action: ReclaimRow['action'], reason: string): ReclaimRow => ({ cardId, path: entry.path, action, reason });
     try {
-      const decision = decide(full, entry, root, cards, held.get(cardId) ?? []);
+      const decision = decide(full, entry, root, cards, goals, held.get(cardId) ?? []);
       if ('skip' in decision) return row('skipped', decision.skip);
       if (options.dryRun) return row('would remove', decision.finished);
       retireWorktree(git, repo.mainRoot, entry.path, path.join(paths.evidence, decision.goalId, 'review', cardId));
