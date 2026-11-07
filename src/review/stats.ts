@@ -338,6 +338,8 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
     for (const invocation of run.review.invocations) {
       // Every recorded block, read from the decision itself: the ledger's `substantiveBlocks` counts only the merge-blocking ones.
       if (invocation.outcome === 'block') r3.blocks += 1;
+      if (invocation.secondPass && (invocation.outcome === 'pass' || invocation.outcome === 'block')) r3.secondPasses += 1;
+      if (invocation.secondPass && invocation.outcome === 'block') r3.secondPassBlocks += 1;
       const at = decidedAt(run, invocation);
       if (at) r3.durationMs += Math.max(0, ms(at) - ms(invocation.requestedAt));
     }
@@ -397,6 +399,8 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     r3.decisions += s.r3.decisions;
     r3.blocks += s.r3.blocks;
     r3.durationMs += s.r3.durationMs;
+    r3.secondPasses += s.r3.secondPasses;
+    r3.secondPassBlocks += s.r3.secondPassBlocks;
     findings.total += s.findings.total;
     findings.pre += s.findings.pre;
     findings.formal += s.findings.formal;
@@ -470,6 +474,7 @@ function r3Text(s: R3Stats): string {
   const parts = [plural(s.decisions, 'decision')];
   if (s.blocks) parts.push(plural(s.blocks, 'block'));
   parts.push(durationText(s.durationMs));
+  if (s.secondPasses) parts.push(`second pass ${s.secondPasses}, ${plural(s.secondPassBlocks, 'block')}`);
   return `R3 ${parts.join(', ')}`;
 }
 

@@ -256,7 +256,8 @@ test('T1-R3-SECOND-PASS acceptance 5: a quota hold on the second pass waits and 
     const held = await review(fx, runner, goalId, next(fx, runner, goalId, first.run).run);
     assert.deepEqual(held.run.review.invocations.map((i) => [i.outcome, i.secondPass]), [['pass', undefined], ['quota-hold', true]]);
     assert.equal(next(fx, runner, goalId, held.run).directive.kind, 'wait');
-    fx.advance(6 * 60 * 60 * 1000);
+    const until = held.run.review.invocations.at(-1)!.holdUntil!;
+    fx.advance(Date.parse(until) - Date.parse(fx.now()) + 1000);
     const retry = next(fx, runner, goalId, fx.store.getCardRun(goalId, CARD)!);
     assert.equal(retry.directive.kind, 'review');
     const second = await review(fx, runner, goalId, retry.run);
@@ -317,8 +318,12 @@ test('T1-R3-SECOND-PASS acceptance 7: review stats count second-pass decisions a
     assert.deepEqual([r3(CARD).secondPasses, r3(CARD).secondPassBlocks], [1, 0]);
     assert.deepEqual([r3('T0-BLOCKED').secondPasses, r3('T0-BLOCKED').secondPassBlocks], [1, 1]);
     assert.deepEqual([r3('T0-NONE').secondPasses, r3('T0-NONE').secondPassBlocks], [0, 0]);
-    const text = formatReviewStats(rows);
-    assert.match(text, /second pass 2, 1 block/);
-    assert.match(text.split('\n').find((l) => l.startsWith('T0-NONE'))!, /^(?!.*second pass)/);
+    const lines = formatReviewStats(rows).split('\n');
+    const line = (id: string) => lines.find((l) => l.startsWith(id))!;
+    assert.match(line(CARD), /second pass 1, 0 blocks/);
+    assert.match(line('T0-BLOCKED'), /second pass 1, 1 block /);
+    assert.ok(!line('T0-NONE').includes('second pass'), 'a card with none prints none');
+    const family = summarizeReviews([passed, blocked], [{ id: 'T0-BLOCKED', superseded_by: CARD }, { id: CARD }]).find((r) => r.cardId === CARD)!.family!;
+    assert.deepEqual([family.totals.r3.secondPasses, family.totals.r3.secondPassBlocks], [2, 1]);
   });
 });
