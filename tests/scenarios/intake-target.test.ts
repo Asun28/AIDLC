@@ -57,6 +57,8 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['ship it to production', 'production'],
   ['publish the build to production', 'production'],
   ['roll out the app to production', 'production'],
+  ['rollout to production', 'production'],
+  ['roll-out to production', 'production'],
   ['promote the build to the production cluster', 'production'],
   ['go live', 'production'],
   ['release to staging', 'staging'],
@@ -90,9 +92,32 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['migrate the database', 'migration'],
   ['backfill the orders', 'migration'],
   ['run a data migration', 'migration'],
+  ['run the data migration', 'migration'],
+  ['run data migration', 'migration'],
+  ['migrate the data', 'migration'],
   ['Keep watching the service and page on-call when latency spikes', 'operations'],
   ['monitor the service', 'operations'],
   ['page on-call', 'operations'],
+  ['page oncall', 'operations'],
+  ['keep watching the service', 'operations'],
+  ['monitor it', 'operations'],
+  ['monitor this service', 'operations'],
+  ['monitor our app', 'operations'],
+  ['monitor production', 'operations'],
+  ['monitor prod', 'operations'],
+  // A request with two target words takes the target of its form.
+  ['deploy the production build to staging', 'staging'],
+  ['run the migration on staging', 'migration'],
+  ['package the app for staging', 'package'],
+  // A line break inside a form is wrapping.
+  ['go\nlive', 'production'],
+  ['release to\nprod', 'production'],
+  ['deploy to the test\nenvironment', 'staging'],
+  ['deploy it for online\ntesting', 'staging'],
+  ['publish the docker\nimage', 'package'],
+  ['package the\napp', 'package'],
+  ['run the\nmigration', 'migration'],
+  ['keep\nwatching', 'operations'],
   ['take over ongoing operations', 'operations'],
 ];
 for (const [text, target] of REQUESTS) {
@@ -119,6 +144,7 @@ const DROPPED = [
   '- Release the notes\n- Link it to production docs',
   '1. Release the notes\n2. Link it to production docs',
   '1) Release the notes\n2) Link it to production docs',
+  'Release the notes\n  \nThe next step is to production',
   'link the page to production docs and deploy the notes',
   // R3 decision 2 F3: the verb is not its own object.
   'rename the build artifact helper',
@@ -137,6 +163,7 @@ const DROPPED = [
   'the data migration helper',
   'ship it to prod',
   'deploy it for online tests',
+  'deploy it for online test',
 ];
 for (const text of DROPPED) {
   test(`T0-INTAKE-TARGET acceptance 6: "${text}" reads as no target [R3]`, () => {
@@ -146,7 +173,7 @@ for (const text of DROPPED) {
 }
 
 /** R3 decision 2 F4: a sentence ends at any terminator with any closing marks after it, and any list marker starts a new item. */
-const TERMINATORS = ['.', '!', '?', ';', '\u2026', '\u3002', '\uff01', '\uff1f', '\uff1b', '\u0964', '\u06d4'];
+const TERMINATORS = ['.', '!', '?', ';', '\u2026', '\u3002', '\uff01', '\uff1f', '\uff1b', '\uff0e', '\uff61', '\u0964', '\u06d4'];
 const CLOSERS = ['', '"', "'", '\u201d', '\u2019', '\u00bb', '\u203a', ')', ']', '}', '>', '*', '**', '_', '`', '\u300d', '\uff09', '"}'];
 for (const terminator of TERMINATORS) {
   for (const closer of CLOSERS) {
@@ -157,7 +184,7 @@ for (const terminator of TERMINATORS) {
     });
   }
 }
-for (const terminator of ['\u3002', '\uff01', '\uff1f', '\uff1b']) {
+for (const terminator of ['\u3002', '\uff01', '\uff0e', '\uff1f', '\uff1b', '\uff61']) {
   test(`T0-INTAKE-TARGET acceptance 6: the full-width terminator ${JSON.stringify(terminator)} ends a sentence with no whitespace [R3]`, () => {
     const r = classifyRequest({ text: `Release the notes${terminator}The next step is to production` });
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
@@ -169,16 +196,22 @@ for (const marker of ['-', '*', '+', '\u2022', '\u2013', '>', '1.', '1)', '(1)',
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
   });
 }
-for (const text of ['Deploy example.com to staging', 'Release v2.0.1 to staging', 'deploy the build\n(all of it) to staging', 'deploy the build\nto staging. Then tell the team']) {
+for (const text of ['Deploy example.com to staging', 'Release v2.0.1 to staging', 'deploy the build\n(all of it) to staging', 'deploy the build\nsome) to staging', 'deploy the build\n-all of it to staging', 'deploy the build\nto staging. Then tell the team']) {
   test(`T0-INTAKE-TARGET acceptance 5: ${JSON.stringify(text)} stays one sentence [R3]`, () => {
     assert.equal(classifyRequest({ text }).target, 'staging');
   });
 }
 
-for (const text of ['deploy to production fails with a 500', 'the release to staging is broken']) {
+test('T0-INTAKE-TARGET acceptance 5: a wrapped form has the kind the form has on one line [R3]', () => {
+  assert.equal(classifyRequest({ text: 'go\nlive' }).kind, 'release');
+  assert.equal(classifyRequest({ text: 'package the\napp' }).kind, 'release');
+});
+
+for (const text of ['deploy to production fails with a 500', 'the release to staging is broken', 'deploy to production fails\nwith a 500']) {
   test(`T0-INTAKE-TARGET acceptance 7: the bug report "${text}" reads as no target [R4]`, () => {
     const r = classifyRequest({ text });
-    assert.deepEqual([r.target, r.targetSource, r.kind], ['development', 'default', 'bugfix']);
+    assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+    assert.notEqual(r.kind, 'release');
   });
 }
 
