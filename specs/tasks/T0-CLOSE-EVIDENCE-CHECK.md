@@ -1,7 +1,7 @@
 ---
 id: T0-CLOSE-EVIDENCE-CHECK
 title: `aidlc card close --evidence` records true only when the goal manifest holds an intact file retained for the card
-status: todo
+status: merged
 branch: T0-CLOSE-EVIDENCE-CHECK
 worktree: D:\wt\AIDLC\T0-CLOSE-EVIDENCE-CHECK
 allow_paths:

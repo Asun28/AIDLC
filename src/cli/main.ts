@@ -520,7 +520,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--metadata', 'write status: merged in the card file of the main checkout; the session commits it')
     .option('--doc-sync')
     .option('--findings')
-    .option('--evidence')
+    .option('--evidence', 'check that the goal manifest holds an intact file retained with evidence retain --card')
     .option('--cleanup', 'copy .review/ into the evidence tree and remove the worktree')
     .option('--all', 'the five mechanical steps; the lesson step stays open until a disposition is recorded')
     .option('--lesson <text>', 'record the lesson: "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"')
@@ -1147,13 +1147,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--env <environment>')
     .option('--invocation <id>')
     .option('--note <text>')
-    .action((o: { goal?: string; id: string; kind: string; file?: string; content?: string; candidate?: string; env?: string; invocation?: string; note?: string }) => {
+    .option('--card <id>', 'the card this file is retained for; card close --evidence looks for it')
+    .action((o: { goal?: string; id: string; kind: string; file?: string; content?: string; candidate?: string; env?: string; invocation?: string; note?: string; card?: string }) => {
       const c = ctx(g());
       const id = latestActiveGoalId(c, o.goal);
       const goalRec = c.controller.mustGoal(id);
       const ev = new EvidenceStore(c.paths.evidence, id);
-      const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath: o.file, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note });
-      Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate } });
+      const mf = ev.retain(ev.load(id, goalRec.generation, goalRec.revision, new Date().toISOString()), { id: o.id, kind: o.kind, sourcePath: o.file, content: o.content, candidateDigest: o.candidate, environment: o.env, invocationId: o.invocation, note: o.note, cardId: o.card });
+      Journal.forGoal(c.paths.journal, id).append({ type: 'EVIDENCE_RETAINED', goalId: id, generation: goalRec.generation, data: { id: o.id, kind: o.kind, candidateDigest: o.candidate, cardId: o.card } });
       out(c, { entries: mf.entries.length }, () => `retained ${o.id} (${mf.entries.length} entries)`);
     });
   program
