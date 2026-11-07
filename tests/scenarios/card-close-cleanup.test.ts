@@ -6,6 +6,7 @@ import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, T0, type Fixture } from './_harness.ts';
 import { withCardStatus } from '../../src/artifacts/card.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
+import { Journal } from '../../src/state/journal.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
@@ -402,6 +403,26 @@ test('T0-CLOSE-CLEANUP-2 acceptance 6: a card file with no status in its front m
   }
 });
 
+test('T0-CLOSE-CLEANUP-2 acceptance 14: a failed step lowers its flag when the journal fails too, and the message names both causes [R2]', (t) => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const runner = closingRunner(fx, []);
+    assert.equal(runner.markClosure(fx.goal(goalId), card, run, { cleanup: true }).closure.cleanup, true);
+    mkdirSync(path.join(worktreeRootOf(fx), CARD));
+    const append = t.mock.method(Journal.prototype, 'append', () => {
+      throw new Error('EIO: injected');
+    });
+    assert.throws(() => runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { cleanup: true, docSync: true }), /cleanup: [\s\S]*journal: EIO: injected/);
+    append.mock.restore();
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+    assert.equal(stored(fx, goalId).closure.docSync, false, 'no flag rises without its journal event');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-CLOSE-CLEANUP-2 acceptance 7: the dry-run path runs no git and writes no file [R6]', () => {
   const fx = makeFixture();
   try {
@@ -424,6 +445,7 @@ test('T0-CLOSE-CLEANUP-2 acceptance 8: the guide, the architecture note, both ca
   for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(sentence), `${doc} holds the sentence`);
   const order = 'un `--cleanup` or `--all` after the doc_sync, findings and evidence steps, because it removes the worktree that holds `.review/`.';
   assert.ok(flat('docs/OPERATIONS.md').includes(order), 'the guide states the order');
+  assert.ok(flat('docs/OPERATIONS.md').includes('A card file in neither card directory stops `card close` at load, like every `card` command, so no step runs and the flags stay as recorded; restore the file and run the step again.'), 'the guide states the limit');
   for (const copy of ['.claude/skills/aidlc-loop/card-loop.md', 'templates/claude/skills/aidlc-loop/card-loop.md']) {
     const retain = flat(copy).indexOf('aidlc evidence retain');
     assert.ok(retain >= 0, `${copy} names the evidence step`);
