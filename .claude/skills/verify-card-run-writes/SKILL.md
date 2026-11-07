@@ -31,7 +31,7 @@ pass (ship to CLOSE) and `card next` at SHIP past the card deadline
 (STOP/time). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `94610c796c60d1f7c3f903a9e71ba6402b00e3b7`
+Sync commit: `ce1b73f0c987a7df46ad41c6f8e28ebd12e9dcc3`
 
 ## Run
 ```
@@ -116,7 +116,7 @@ A new command is added to `COVERED` with its stage and named end.
 
 ## Keeping in sync
 Tell whether a change touches covered code:
-`git diff --name-only 94610c796c60d1f7c3f903a9e71ba6402b00e3b7 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
+`git diff --name-only ce1b73f0c987a7df46ad41c6f8e28ebd12e9dcc3 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
 (the sync commit and the record's files). Then exactly one outcome:
 - **in sync**: covered files unchanged, or changed without a change to a
   write or its order, and the check passes; the sync commit may move.
