@@ -7,10 +7,11 @@ worktree: D:\wt\AIDLC\T0-MERGED-VIEW-CHECK
 allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/merge-unconfirmed.test.ts
+  - tests/scenarios/t0-flow.test.ts
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-MERGED-VIEW-CHECK.md
-dod_command: npm run typecheck && node --test tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/journal-owed.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/journal-owed.test.ts tests/scenarios/t0-flow.test.ts
 dod_exit: 0
 requirements:
   - R1. When a `merged` ship is verified through its PR view, the card runner shall count the view only when its number equals the requested PR, its state is OPEN, MERGED or CLOSED, and `headRefOid` is a non-empty string, and shall treat any other answer as gh not answering, so the run waits on `merge-verify` with the operation UNKNOWN.
@@ -25,6 +26,7 @@ acceptance:
   - 4. `tests/scenarios/merge-unconfirmed.test.ts`: a `[SAGA-DONE]` ship on a run with no candidate sha that gh reads MERGED at a named head closes the card, as on main, with no facts; the same answer without `headRefOid` waits. [R1] [R2] [dod arm 2]
   - 5. The test at `tests/scenarios/merge-unconfirmed.test.ts:294`, which pins the dry-run close, passes with no change to its dry-run rows. [R4] [dod arm 2]
   - 6. `docs/ARCHITECTURE.md` and the CHANGELOG hold the text R5 asks for. [R5] Reviewer-verified.
+  - 7. `tests/scenarios/t0-flow.test.ts`, the `byToken` row of `T1-AUDIT-FACTS-2 acceptance 1`: a token at the candidate beside gh MERGED at another head closes the card and its merge result fails `ShippedFacts`. That row pinned on main the facts headed by the other head, which is the counterexample in the comment on issue 131, so R2 reverses it on purpose. Every other row of that test stays. [R2] [dod arm 5]
 depends_on: []
 budget: 150
 tdd: true
@@ -39,7 +41,7 @@ forbid:
   - weakening or skipping a test to go green
 non_goals:
   - stopping a `merged` ship whose view is definite and not merged at the candidate: it waits as on main
-hygiene: "Issue 131 and its comment. Rule against main: a `merged` ship main verified through a gh answer stays verified only when that answer is the requested PR, a known state and a named head; every other such answer now waits with the operation UNKNOWN. Nothing main left UNKNOWN now closes. Dry-run and token verification are unchanged. Facts come only from a counted view MERGED at the candidate, so a token-verified merge whose view differs now carries no facts and audit verify names FACT_MISSING, as it does for `merge-unconfirmed`. Line numbers checked on main at bbbdb10."
+hygiene: "Issue 131 and its comment. Rule against main: a `merged` ship main verified through a gh answer stays verified only when that answer is the requested PR, a known state and a named head; every other such answer now waits with the operation UNKNOWN. Nothing main left UNKNOWN now closes. Dry-run and token verification are unchanged. Facts come only from a counted view MERGED at the candidate, so a token-verified merge whose view differs now carries no facts and audit verify names FACT_MISSING, a warning, as it does for `merge-unconfirmed`. `audit verify` re-derives `headSha` from gh and never compares it with the candidate, so a head that is not the candidate was recorded and then matched itself; that is why acceptance 7 moves the row instead of keeping it. Line numbers checked on main at bbbdb10."
 ---
 
 # T0-MERGED-VIEW-CHECK
