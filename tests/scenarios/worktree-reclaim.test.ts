@@ -13,7 +13,7 @@ import { sweepWorktrees, type ReclaimDeps, type ReclaimRow } from '../../src/loo
 import { GitProbe } from '../../src/probes/git.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
-import { hostName } from '../../src/state/paths.ts';
+import { hostName, shortKey } from '../../src/state/paths.ts';
 
 // T0-WORKTREE-RECLAIM: the sweep removes the clean worktrees of finished cards and keeps every branch. Each test runs on a
 // real temporary repository, because what is at stake is what git lists, refuses and deletes.
@@ -597,7 +597,10 @@ function closingAtCli(fx: Fixture): { goalId: string; dir: string } {
   assert.equal(r.directive.kind, 'close', r.directive.narration);
   const generation = r.run.ownerGeneration;
   assert.notEqual(generation, undefined);
-  fx.leases.heartbeat(resourceKeys.card(fx.repo.key, NEXT), generation as number, { now: '2099-01-01T00:00:00.000Z' });
+  const lease = fx.leases.heartbeat(resourceKeys.card(fx.repo.key, NEXT), generation as number, { now: '2099-01-01T00:00:00.000Z' });
+  // The CLI keys the lease by the canonical checkout path, and a short temporary path (a CI runner's RUNNER~1) gives the fixture another key.
+  const cliKey = resourceKeys.card(shortKey(realpathSync.native(fx.tmp)), NEXT);
+  if (cliKey !== lease.resourceKey) fx.leases.update(cliKey, () => ({ ...lease, resourceKey: cliKey }));
   return { goalId: goal.id, dir: path.join(rootOf(fx), NEXT) };
 }
 
