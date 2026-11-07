@@ -533,7 +533,6 @@ for (const [name, arrange] of nothingForTheCard) {
 const damaged: Array<[string, (file: string, manifest: string) => void, RegExp]> = [
   ['a retained file that is gone', (file) => rmSync(file), /missing or altered/],
   ['a retained file that changed', (file) => writeFileSync(file, 'changed\n'), /missing or altered/],
-  ['a manifest that does not parse', (_file, manifest) => writeFileSync(manifest, '{'), /^evidence: /],
 ];
 
 for (const [name, damage, expected] of damaged) {
@@ -551,6 +550,38 @@ for (const [name, damage, expected] of damaged) {
     }
   });
 }
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: a manifest that does not parse names its cause, the restore and the retain command [R2] [R3]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const manifest = new EvidenceStore(fx.paths.evidence, goalId);
+    mkdirSync(manifest.dir, { recursive: true });
+    writeFileSync(manifest.manifestFile(), '{');
+    const message = refusal(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }));
+    assert.match(message, /^evidence: the manifest of .* cannot be read, so restore it first \(.*JSON.*\); run aidlc evidence retain /);
+    assert.ok(message.includes('--goal ' + goalId + ' --card ' + CARD), message);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: an entry whose path cannot be read is not intact, and an intact entry beside it passes [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const unreadable = retained(fx, goalId, { cardId: CARD, id: 'first.json' });
+    retained(fx, goalId, { cardId: CARD, id: 'second.json' });
+    rmSync(unreadable);
+    mkdirSync(unreadable);
+    assert.equal(closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }).closure.evidence, true);
+  } finally {
+    fx.cleanup();
+  }
+});
 
 test('T0-CLOSE-EVIDENCE-CHECK acceptance 5: a flag recorded true goes false when the retained file is lost [R3]', () => {
   const fx = makeFixture();
