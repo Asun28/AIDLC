@@ -79,6 +79,7 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['produce an installer', 'package'],
   ['make an apk', 'package'],
   ['create an installer', 'package'],
+  ['create a build artifact', 'package'],
   ['cut a distributable', 'package'],
   ['generate an msi', 'package'],
   ['Run the migration against the reporting database', 'migration'],
@@ -116,6 +117,10 @@ const DROPPED = [
   '1. Release the notes\n2. Link it to production docs',
   '1) Release the notes\n2) Link it to production docs',
   'link the page to production docs and deploy the notes',
+  // R3 decision 2 F3: the verb is not its own object.
+  'rename the build artifact helper',
+  'the build artifact',
+  'build artifact',
   'Release the notes; the next step is to production',
   'uat',
   'preprod',
@@ -134,6 +139,36 @@ for (const text of DROPPED) {
   test(`T0-INTAKE-TARGET acceptance 6: "${text}" reads as no target [R3]`, () => {
     const r = classifyRequest({ text });
     assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+  });
+}
+
+/** R3 decision 2 F4: a sentence ends at any terminator with any closing marks after it, and any list marker starts a new item. */
+const TERMINATORS = ['.', '!', '?', ';', '\u2026', '\u3002', '\uff01', '\uff1f', '\uff1b'];
+const CLOSERS = ['', '"', "'", '\u201d', '\u2019', '\u00bb', '\u203a', ')', ']', '}', '>', '*', '**', '_', '`', '\u300d', '\uff09', '"}'];
+for (const terminator of TERMINATORS) {
+  for (const closer of CLOSERS) {
+    const text = `Release the notes${terminator}${closer} The next step is to production`;
+    test(`T0-INTAKE-TARGET acceptance 6: a sentence ends at ${JSON.stringify(terminator + closer)} [R3]`, () => {
+      const r = classifyRequest({ text });
+      assert.deepEqual([r.target, r.targetSource], ['development', 'default'], text);
+    });
+  }
+}
+for (const terminator of ['\u3002', '\uff01', '\uff1f', '\uff1b']) {
+  test(`T0-INTAKE-TARGET acceptance 6: the full-width terminator ${JSON.stringify(terminator)} ends a sentence with no whitespace [R3]`, () => {
+    const r = classifyRequest({ text: `Release the notes${terminator}The next step is to production` });
+    assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+  });
+}
+for (const marker of ['-', '*', '+', '\u2022', '\u2013', '>', '1.', '1)', '(1)', 'a.', 'a)', 'iv.', '10.']) {
+  test(`T0-INTAKE-TARGET acceptance 6: the list marker ${JSON.stringify(marker)} starts a new item [R3]`, () => {
+    const r = classifyRequest({ text: `${marker} Release the notes\n${marker} Link it to production docs` });
+    assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+  });
+}
+for (const text of ['Deploy example.com to staging', 'Release v2.0.1 to staging', 'deploy the build\n(all of it) to staging', 'deploy the build\nto staging. Then tell the team']) {
+  test(`T0-INTAKE-TARGET acceptance 5: ${JSON.stringify(text)} stays one sentence [R3]`, () => {
+    assert.equal(classifyRequest({ text }).target, 'staging');
   });
 }
 
