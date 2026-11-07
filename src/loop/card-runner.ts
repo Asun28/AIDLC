@@ -272,6 +272,8 @@ export class CardRunner {
 
   /** The candidate a review is bound to: the pinned sha, verified against the checkout HEAD in a git repository. */
   private pinnedCandidate(run: CardRun, cwd: string): string {
+    // Every review dispatch reads the candidate here, first and under the lock, so a dispatch racing a withdrawal refuses too.
+    if (run.pendingRepair?.kind === 'withdrawn') throw new Error(`the candidate was withdrawn (${run.pendingRepair.detail}); repair it and record the attempt, then run \`aidlc card next ${run.cardId}\``);
     const pinned = run.candidate?.sha;
     if (this.repo.isGit) {
       const head = this.git.head(cwd);
@@ -995,7 +997,7 @@ export class CardRunner {
     if (!episode.attempts.some((a) => a.outcome === 'running')) {
       // The agent skipped `card next`: open the attempt under the same bounded rules before finishing it.
       const action = nextEffortAction(episode, { harderProblem: true, limitsPermit: checkAdmission(run.deadline, now).phase === 'open' });
-      if (action.action !== 'attempt') throw new Error(action.action === 'stop' ? `no attempt may start: ${action.reason}: ${action.detail}` : 'episode already succeeded; ship the candidate instead');
+      if (action.action !== 'attempt') throw new Error(action.action === 'stop' ? `no attempt may start: ${action.reason}: ${action.detail}` : `episode already succeeded; ship the candidate instead, or, while no R3 decision has decided it, withdraw it first with \`aidlc card withdraw ${card.id} --cause "<finding>"\``);
       episode = startAttempt(episode, action.effort, now);
       owed.push(this.owe(goal, 'ATTEMPT_STARTED', { n: action.n, effort: action.effort, escalated: action.escalated, implicit: true, startedAt: now }));
     }
@@ -1013,6 +1015,8 @@ export class CardRunner {
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
+      // A withdrawn candidate takes a repair: nothing is recorded until the success brings another candidate (card T0-CANDIDATE-WITHDRAW).
+      if (run.pendingRepair?.kind === 'withdrawn' && candidate?.digest === run.pendingRepair.candidateDigest) throw new Error(`candidate ${(candidate?.sha ?? 'none').slice(0, 12)} is the withdrawn one (${run.pendingRepair.detail}); commit the repair and record the attempt again`);
       // The success that clears a merge-conflict repair records the merge of a moved base: a base-sync candidate
       // (T0-BASE-SYNC-REVIEW). So does the repair of a base-sync candidate no R3 decision has decided yet (an R2 block after
       // the merge): the base moved all the same, and the repaired merge is reviewed rather than stopped.
@@ -1029,6 +1033,49 @@ export class CardRunner {
     const saved = this.save({ ...run, effort: episode, dodReceipt: input.outcome === 'success' ? (input.dodReceipt ?? `dod:${now}`) : checksHold ? run.dodReceipt : undefined, redReceipt: input.redReceipt ?? run.redReceipt, candidate, pendingRepair: clearsPendingRepair(run.pendingRepair, input) ? undefined : run.pendingRepair, blockedReceipt: checksHold ? run.blockedReceipt : undefined, journalOwed: this.owedWith(goal.id, run, ...owed) });
     this.deliverOwed(goal, card, saved, { keys: owed.map((o) => o.key) });
     return saved;
+  }
+
+  /**
+   * The author withdraws a bound candidate no R3 decision has decided (card T0-CANDIDATE-WITHDRAW, issue 128). The finding
+   * refutes the success that bound it as a failed ship does, so that attempt is a counted failure with the finding as its
+   * cause and the repair is the ladder's next attempt: no review allowance pays for a withdrawal, so the ladder bounds it.
+   * Every refusal is decided before the one write, which carries the owed event, and writes nothing: an event an earlier
+   * command still owes waits for `card next`.
+   */
+  withdrawCandidate(goal: Goal, card: Card, caller: CardRun, cause: string): CardRun {
+    const now = this.clock();
+    const finding = cause.trim();
+    if (!finding) throw new Error('a withdrawal needs the finding that refutes the candidate: --cause "<finding>"');
+    if ((this.store.getGoal(goal.id) ?? goal).terminal) throw new Error(`goal ${goal.id} is terminal; nothing can be withdrawn`);
+    let owed: OwedEvent | undefined;
+    const saved = this.store.updateCardRun(goal.id, card.id, (persisted) => {
+      const current = persisted ?? caller;
+      const refusal = this.withdrawalRefusal(goal, card, current, now);
+      if (refusal) throw new Error(refusal);
+      const step = afterShipFailure(current.effort!, `withdrawn: ${finding}`, { harderProblem: true, limitsPermit: true });
+      if (step.action.action !== 'attempt' || !step.refuted) throw new Error(`the effort ladder admits no repair attempt, so candidate ${current.candidate!.sha.slice(0, 12)} stays bound and goes to review: ${step.action.action === 'stop' ? `${step.action.reason}: ${step.action.detail}` : 'no success to refute'}`);
+      if (current.ownerGeneration !== undefined) this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
+      owed = this.owe(goal, 'ATTEMPT_FINISHED', { n: step.refuted.n, outcome: 'fail', cause: step.refuted.cause, refutedBy: 'withdrawn' });
+      return { ...current, state: 'BUILD', effort: step.episode, dodReceipt: undefined, blockedReceipt: undefined, pendingRepair: { kind: 'withdrawn', detail: finding, at: now, candidateDigest: current.candidate!.digest }, journalOwed: this.owedWith(goal.id, current, owed) };
+    });
+    this.deliverOwed(goal, card, saved, { keys: [owed!.key] });
+    return saved;
+  }
+
+  /** Why the locked record admits no withdrawal; undefined when it admits one. */
+  private withdrawalRefusal(goal: Goal, card: Card, run: CardRun, now: string): string | undefined {
+    if (run.stop || run.state === 'STOP') return `card run is stopped (${run.stop?.reason ?? 'STOP'}); nothing can be withdrawn: ${run.stop?.nextAction ?? 'resolve the stop first'}`;
+    if (run.mergeVerified) return 'the candidate is merged; a defect in it goes to a follow-up card';
+    if (checkAdmission(run.deadline, now).phase !== 'open') return `the card deadline ${run.deadline} has passed, so no repair attempt may start`;
+    const candidate = run.candidate;
+    if (!candidate) return 'no candidate is bound to this run; nothing to withdraw';
+    if (run.effort?.terminal !== 'succeeded') return 'the effort episode is open, so no success binds the candidate; repair it and record the attempt';
+    if (run.pendingRepair) return `a ${run.pendingRepair.kind} repair is pending (${run.pendingRepair.detail}); finish it first`;
+    const flight = this.inFlight(run, 'pre') ?? this.inFlight(run, 'formal');
+    if (flight) return `${flight}; withdraw after its verdict lands`;
+    if (run.review.invocations.some((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'))) return `R3 decided candidate ${candidate.sha.slice(0, 12)}, so it cannot be withdrawn; ship it, repair a block, or take the defect to a follow-up card`;
+    const open = this.ops.list({ goalId: goal.id, cardId: card.id }).filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status)).map((o) => o.id);
+    return open.length ? `operation(s) of this card are unresolved (${open.join(', ')}); reconcile them first` : undefined;
   }
 
   private ship(goal: Goal, card: Card, run: CardRun): { run: CardRun; directive: CardDirective } {

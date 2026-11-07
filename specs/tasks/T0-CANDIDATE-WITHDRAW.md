@@ -66,6 +66,18 @@ hygiene: "Issue 128, using the shape its comments ask for: a recorded withdrawal
 ## Deliverable
 `aidlc card withdraw <id> --cause "<finding>"` reopens a bound candidate no R3 decision has decided. Closes issue 128.
 
+## Attempt evidence
+RED, commit 70b2bc1: `node --test tests/scenarios/candidate-withdraw.test.ts` exits 1, tests 25, pass 0, fail 25. Acceptance 10 fails on its assertion, since the refusal names no `aidlc card withdraw`; the others fail because the command does not exist on main, which is the defect of issue 128.
+
+That RED cannot show that each refusal test can fail, so each guard was removed in turn, by hand, and the test file run. On the first candidate 24 changes gave 23 failures. The one that passed, dropping `state: 'BUILD'`, was a weak test: the run was already BUILD. Acceptance 1 now withdraws from SHIP, and the change fails it.
+
+RED for repair 1, commit 44c43f9 (R3 decision 1 F3, F4, F5): tests 29, pass 27, fail 2.
+- Acceptance 8: `the journal is unchanged`, since a refusal delivered the owed event.
+- Acceptance 11: the output did not match `/no run/`, since `cardCtx` created a run before the refusal.
+- Acceptance 1 passes at that commit, since F3 is a gap in the test and the code kept the evidence. Replacing the evidence with the cause in `afterShipFailure`, by hand and not committed, fails it.
+
+On the repaired candidate the guards removed in turn give 23 changes and 23 failures. The change that dropped the first `deliverOwed` is gone with that line.
+
 ## Acceptance
 ```powershell
 npm run typecheck && node --test tests/scenarios/candidate-withdraw.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/journal-owed.test.ts tests/scenarios/dispute-running-attempt.test.ts tests/core/effort.test.ts tests/surface/templates.test.ts

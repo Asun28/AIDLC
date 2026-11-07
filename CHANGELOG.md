@@ -16,6 +16,8 @@
 
 - T0-R3-STOP-DISPUTED: R3 stops a card for a ruling on a re-raise only when the author disputed the finding, at any point. A re-raise of an undisputed finding returns the card to REVIEW_FIX for another repair round, which reverses part of T1-EFF-R3-PROGRESS. A block on decision 4, a ship-path reviewer's second block and a base-sync decision stop as before. The finding the previous R3 decision raised still reaches the next R3 prompt after an R2 pass resolved it.
 
+- T0-CANDIDATE-WITHDRAW: `aidlc card withdraw <id> --cause "<finding>"` withdraws a bound candidate no R3 decision has decided. The success that bound it becomes a counted failure with the finding as its cause, the episode reopens and the repair is the ladder's next attempt, so a defect found after the bind and before R3 costs neither an R3 decision nor a successor card. A success on the withdrawn candidate and a review of it are refused until another candidate is recorded.
+
 - T0-BUDGET-DOC-TRUTH: the card templates and `docs/OPERATIONS.md` say the `budget` is a merge gate only on the scaffold ship path, since only the scaffold prints a `budget-over` sentinel; on the `github` and `dry-run` paths it is advisory. No code changed.
 
 - T0-MERGED-VIEW-CHECK: a `merged` ship counts a PR view only when it is the requested PR, in a known state, at a named head. Any other gh answer leaves the run waiting on `merge-verify` with the operation UNKNOWN. The PR is recorded as MERGED only once the merge is verified, and merge facts come only from a counted view MERGED at the candidate (issue 131).
