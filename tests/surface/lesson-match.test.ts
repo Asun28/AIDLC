@@ -145,24 +145,38 @@ test('T1-LESSON-MATCH acceptance 3: a rule naming a double underscore or digit-c
   });
 });
 
-/** The bytes of `git log -z --format=%x01%s --name-only`, as a real run on 2 commits prints them. */
-const LOG_Z = '\x01feat: [T1-X] (#2)\0\nsrc/a"b.ts\0docs/q"uote.md\0src/tab\tname.ts\0\x01feat: [T1-Y] (#1)\0\nsrc/line\nbreak.ts\0\x01empty\0';
+/** The bytes of `git log -z --format=%x00S%s --name-only`, as a real run prints them. */
+const LOG_Z = '\0Sfeat: [T1-X] (#3)\0\nsrc/a"b.ts\0docs/q"uote.md\0src/tab\tname.ts\0\0Sfeat: [T1-Y] (#2)\0\n\x01a.ts\0\x01b.ts\0src/line\nbreak.ts\0\0Sempty\0\0S\0\nsrc/no-subject.ts\0';
 
 test('T1-LESSON-MATCH acceptance 4: names git would quote keep their bytes, a left-out one is dropped, and a commit with no file is listed [R4]', () => {
   const receipt = { command: ['git'], cwd: '.', exitCode: 0, stdout: LOG_Z, stderr: '', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
   assert.deepEqual(new GitProbe(() => receipt).commitFiles('.', 'main'), [
-    { subject: 'feat: [T1-X] (#2)', files: ['src/a"b.ts', 'src/tab\tname.ts'] },
-    { subject: 'feat: [T1-Y] (#1)', files: ['src/line\nbreak.ts'] },
+    { subject: 'feat: [T1-X] (#3)', files: ['src/a"b.ts', 'src/tab\tname.ts'] },
+    { subject: 'feat: [T1-Y] (#2)', files: ['\x01a.ts', '\x01b.ts', 'src/line\nbreak.ts'] },
     { subject: 'empty', files: [] },
+    { subject: '', files: ['src/no-subject.ts'] },
   ]);
 });
 
 test('T1-LESSON-MATCH acceptance 4: a real git run lists a quoted name as the candidate diff lists it [R4]', { skip: process.platform === 'win32' && 'NTFS refuses a tab or a quote in a name' }, () => {
   repo((root, git) => {
-    put(root, 'src/tab\tname.ts', 'src/a"b.ts', 'docs/q"uote.md');
+    put(root, 'src/tab\tname.ts', 'src/a"b.ts', 'docs/q"uote.md', '\x01a.ts', '\x01b.ts', 'src/z.ts');
     git('add', '-A');
     git('commit', '-q', '-m', 'feat: [T1-X] (#1)');
-    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'feat: [T1-X] (#1)', files: ['src/a"b.ts', 'src/tab\tname.ts'] }]);
+    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'feat: [T1-X] (#1)', files: ['\x01a.ts', '\x01b.ts', 'src/a"b.ts', 'src/tab\tname.ts', 'src/z.ts'] }]);
+  });
+});
+
+test('T1-LESSON-MATCH acceptance 4: an empty commit is listed with no files between two others [R4]', () => {
+  repo((root, git) => {
+    put(root, 'src/x.ts');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'first');
+    git('commit', '-q', '--allow-empty', '-m', 'empty');
+    put(root, 'src/y.ts');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'last');
+    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'last', files: ['src/y.ts'] }, { subject: 'empty', files: [] }, { subject: 'first', files: ['src/x.ts'] }]);
   });
 });
 
@@ -179,7 +193,7 @@ test('T1-LESSON-MATCH acceptance 4: a failed git call returns an empty list and 
     }).commitFiles('.', 'main'),
     [],
   );
-  const failed = { command: ['git'], cwd: '.', exitCode: 128, stdout: '\x01partial\0\nsrc/x.ts\0', stderr: 'fatal', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
+  const failed = { command: ['git'], cwd: '.', exitCode: 128, stdout: '\0Spartial\0\nsrc/x.ts\0', stderr: 'fatal', durationMs: 1, stdoutSha256: '', stderrSha256: '' } as unknown as ExecReceipt;
   assert.deepEqual(new GitProbe(() => failed).commitFiles('.', 'main'), [], 'output of a failed call is not read');
 });
 

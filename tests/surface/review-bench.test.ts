@@ -681,6 +681,7 @@ test('T1-LESSON-MATCH acceptance 6: --rules matched puts the matching rule in th
     const matched: Call[] = [];
     const report = await bench(fx, reviewer(fx, matched), { rules: 'matched' });
     assert.equal(report.rules, 'matched');
+    assert.ok(formatBenchReport(report).includes('bench-r3 (matched rules): recall'), 'the text report names the choice too');
     assert.equal(matched.length, 1);
     assert.ok(matched[0]!.input.includes('T1-OLD-MATCH'), 'the old matching rule is sent');
     assert.ok(matched[0]!.input.includes('other lessons omitted at the byte cap; the rules that best match this diff are above.'));
@@ -688,6 +689,7 @@ test('T1-LESSON-MATCH acceptance 6: --rules matched puts the matching rule in th
     const newest: Call[] = [];
     const plain = await bench(fx, reviewer(fx, newest));
     assert.equal(plain.rules, 'newest', 'newest is the default');
+    assert.ok(formatBenchReport(plain).includes('bench-r3: recall'), 'the text report of the default is unchanged');
     assert.ok(!newest[0]!.input.includes('T1-OLD-MATCH'), 'the newest rules fill the cap');
     assert.ok(newest[0]!.input.includes('older lessons omitted at the byte cap; the newest rules are above.'));
   } finally {
