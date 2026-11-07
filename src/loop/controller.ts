@@ -35,6 +35,7 @@ import {
   nowIso,
   type DeliveryTarget,
   type Lease,
+  type OwedEvent,
   type StopRecord,
 } from '../core/types.ts';
 import { finalStateForTarget } from '../core/release-machine.ts';
@@ -386,7 +387,9 @@ export class GoalController {
     const done = this.store.listReleases(goal.id).find((a) => a.generation === goal.generation && a.state === 'DONE' && a.disposition === 'delivered');
     if (done) {
       const next = transitionGoal(goal, 'CLOSE', now, { deliveryVerified: true });
-      next.stages = { ...next.stages, [goal.target]: 'pass' };
+      // A production goal requests staging too (`stagesForTarget`), and its attempt verifies staging before the CHECKPOINT.
+      const stagingVerified = done.target === 'production' && done.steps.some((s) => s.name === 'stage-verify' && s.status === 'succeeded');
+      next.stages = { ...next.stages, ...(stagingVerified ? { staging: 'pass' as const } : {}), [goal.target]: 'pass' };
       this.store.saveGoal(next);
       return this.nextInClose(next, now);
     }
@@ -646,6 +649,9 @@ export class GoalController {
     const existing = this.store.getCardRun(goal.id, cardId);
     if (existing) return existing;
     const now = this.clock();
+    const deadline = computeCardDeadline(now, goal.deadlines, this.config.userLimitMs);
+    const key = randomUUID();
+    const dispatched: OwedEvent = { key, type: 'CARD_DISPATCHED', generation: goal.generation, data: { startedAt: now, deadline, childRef: `card:${cardId}`, eventKey: key } };
     const run = CardRun.parse({
       goalId: goal.id,
       cardId,
@@ -653,14 +659,17 @@ export class GoalController {
       goalGeneration: goal.generation,
       state: 'PREPARE',
       startedAt: now,
-      deadline: computeCardDeadline(now, goal.deadlines, this.config.userLimitMs),
+      deadline,
       mode: this.config.mode,
       base: { ref: this.config.base },
+      journalOwed: [dispatched],
       updatedAt: now,
     });
-    this.store.saveCardRun(run);
-    this.journal(goal.id).append({ type: 'CARD_DISPATCHED', goalId: goal.id, cardId, generation: goal.generation, data: { startedAt: run.startedAt, deadline: run.deadline, childRef: `card:${cardId}` } });
-    return run;
+    // The event lands in the lock section of the save, so `CardRunner.deliverOwed`, which owes it to a lost append, never doubles it.
+    return this.store.saveCardRun(run, (write) => {
+      write();
+      this.journal(goal.id).append({ type: 'CARD_DISPATCHED', goalId: goal.id, cardId, generation: goal.generation, data: dispatched.data });
+    });
   }
 
   // ---------------------------------------------------------------------------------------
@@ -704,7 +713,16 @@ export class GoalController {
   private persistStopValue(goal: Goal, stop: StopRecord): Goal {
     const next = transitionGoal({ ...goal, state: goal.state }, 'STOP', this.clock(), {}, stop);
     this.journal(goal.id).append({ type: 'GOAL_STOPPED', goalId: goal.id, generation: goal.generation, data: { reason: stop.reason, detail: stop.detail, nextAction: stop.nextAction, global: stop.global } });
-    this.writeBoard(next);
+    // The board is a view, so a failed render never loses the stop its caller is about to save.
+    try {
+      this.writeBoard(next);
+    } catch (err) {
+      try {
+        this.journal(goal.id).append({ type: 'NOTE', goalId: goal.id, generation: goal.generation, data: { boardError: (err as NodeJS.ErrnoException).code ?? 'unknown' } });
+      } catch {
+        // The NOTE is a diagnostic of the view: GOAL_STOPPED is journaled and the caller still has the stop to save.
+      }
+    }
     return next;
   }
 

@@ -310,6 +310,79 @@ test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: a merged ship keeps its verification
   }
 });
 
+const SAGA_DONE = 'PR #42\n[SAGA-DONE]';
+const usableNoMore = [
+  ['an empty answer', {}],
+  ['MERGED without a head', { number: 42, state: 'MERGED', mergeCommit: { oid: MERGE_SHA } }],
+  ['another PR MERGED at the candidate', { number: 99, state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+  ['no number', { state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+  ['an unknown state', { number: 42, state: 'MERGING', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+] as const;
+
+for (const [why, answer] of usableNoMore) {
+  test(`T0-MERGED-VIEW-CHECK acceptance 1: a merged ship with ${why} from gh and no token waits with the operation UNKNOWN and no PR recorded as merged [R1] [R3]`, () => {
+    const fx = makeFixture();
+    try {
+      assertUnknown(shipped(fx, () => new ExitZero(SAGA_DONE), { repository: 'o/r', exec: ghRaw(answer) }));
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T0-MERGED-VIEW-CHECK acceptance 2: a merged ship gh reads MERGED at the candidate closes the card with the facts of that PR [R1] [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero(SAGA_DONE), { repository: 'o/r', exec: ghView('MERGED', HEAD) });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+    assert.equal(s.stored.mergeVerified, true);
+    assert.equal(s.stored.pr?.state, 'MERGED');
+    const result = fx.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+    assert.deepEqual([result?.data['headSha'], result?.data['mergeSha'], result?.data['pr']], [HEAD, MERGE_SHA, 42]);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+for (const [why, answer] of [
+  ['MERGED at another head', { number: 42, state: 'MERGED', headRefOid: OTHER, mergeCommit: { oid: MERGE_SHA } }],
+  ['another PR', { number: 99, state: 'MERGED', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+  ['OPEN with a merge commit', { number: 42, state: 'OPEN', headRefOid: HEAD, mergeCommit: { oid: MERGE_SHA } }],
+] as const) {
+  test(`T0-MERGED-VIEW-CHECK acceptance 3: a merged ship with a token at the candidate closes with no facts when gh reads ${why} [R2] [R4]`, () => {
+    const fx = makeFixture();
+    try {
+      const s = shipped(fx, () => new ExitZero(SAGA_DONE, { tip: HEAD, mergedPr: 42 }), { repository: 'o/r', exec: ghRaw(answer) });
+      assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+      assert.equal(s.op.status, 'succeeded');
+      const result = fx.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+      for (const fact of ['headSha', 'mergeSha', 'tree', 'pr']) assert.equal(result?.data[fact], undefined, `no ${fact}`);
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
+
+test('T0-MERGED-VIEW-CHECK acceptance 4: with no candidate sha a merged ship closes on a named head, as main does, with no facts, and waits on a headless answer [R1] [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const s = shipped(fx, () => new ExitZero(SAGA_DONE), { repository: 'o/r', exec: ghView('MERGED', OTHER), candidateSha: null });
+    assert.equal(s.out.directive.kind, 'close', s.out.directive.narration);
+    const result = fx.events(s.goalId).find((e) => e.type === 'OPERATION_RESULT' && e.data['operationId'] === s.op.id);
+    for (const fact of ['headSha', 'mergeSha', 'tree', 'pr']) assert.equal(result?.data[fact], undefined, `no ${fact}`);
+  } finally {
+    fx.cleanup();
+  }
+  const fy = makeFixture();
+  try {
+    const s = shipped(fy, () => new ExitZero(SAGA_DONE), { repository: 'o/r', exec: ghRaw({ number: 42, state: 'MERGED', mergeCommit: { oid: MERGE_SHA } }), candidateSha: null });
+    assert.equal(s.out.directive.kind, 'wait', s.out.directive.narration);
+    assert.equal(s.op.status, 'UNKNOWN');
+  } finally {
+    fy.cleanup();
+  }
+});
+
 test('T0-EXIT-ZERO-NOT-MERGED acceptance 4: a merge-unconfirmed ship whose candidate is replaced during the ship leaves its operation UNKNOWN, never failed [R2]', () => {
   const fx = makeFixture();
   try {

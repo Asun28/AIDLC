@@ -1,7 +1,7 @@
 ---
 id: T0-MERGED-VIEW-CHECK
 title: A `merged` ship reads its PR view under the rule a `merge-unconfirmed` ship already follows, for its verification, its PR record and its merge facts
-status: todo
+status: merged
 branch: T0-MERGED-VIEW-CHECK
 worktree: D:\wt\AIDLC\T0-MERGED-VIEW-CHECK
 allow_paths:

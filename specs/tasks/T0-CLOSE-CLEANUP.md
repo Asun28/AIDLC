@@ -2,6 +2,7 @@
 id: T0-CLOSE-CLEANUP
 title: `aidlc card close` removes the worktree of a merged card and writes its status, so the cleanup and metadata flags report work that was done
 status: todo
+superseded_by: T0-CLOSE-CLEANUP-2
 branch: T0-CLOSE-CLEANUP
 worktree: D:\wt\AIDLC\T0-CLOSE-CLEANUP
 allow_paths:

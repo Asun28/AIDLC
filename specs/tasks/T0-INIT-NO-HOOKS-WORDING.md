@@ -1,7 +1,7 @@
 ---
 id: T0-INIT-NO-HOOKS-WORDING
 title: The README and OPERATIONS text for aidlc init --no-hooks says a hook already installed keeps running, not that no guard runs
-status: todo
+status: merged
 branch: T0-INIT-NO-HOOKS-WORDING
 worktree: D:\wt\AIDLC\T0-INIT-NO-HOOKS-WORDING
 allow_paths:

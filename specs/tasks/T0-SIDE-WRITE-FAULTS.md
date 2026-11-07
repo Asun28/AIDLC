@@ -1,7 +1,7 @@
 ---
 id: T0-SIDE-WRITE-FAULTS
 title: A failed journal append or board write beside a saved record loses neither the dispatch event nor the goal stop
-status: todo
+status: merged
 branch: T0-SIDE-WRITE-FAULTS
 worktree: D:\wt\AIDLC\T0-SIDE-WRITE-FAULTS
 allow_paths:
@@ -9,6 +9,7 @@ allow_paths:
   - src/core/types.ts
   - src/audit/verifier.ts
   - tests/scenarios/side-write-faults.test.ts
+  - tests/scenarios/journal-owed.test.ts
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-SIDE-WRITE-FAULTS.md
@@ -18,7 +19,7 @@ requirements:
   - R1. `GoalController.ensureCardRun` shall persist a new card run with its `CARD_DISPATCHED` event in `journalOwed`, keyed by `eventKey`, and shall append that event inside the card-run lock section that saves the run.
   - R2. When that append fails, the saved run shall keep the owed event, and the next `aidlc card next` or `aidlc card attempt` shall append exactly one `CARD_DISPATCHED` with `completed` true through `CardRunner.deliverOwed`, on the same run.
   - R3. `verifyAudit` shall count a `CARD_DISPATCHED` with `completed` true at its `startedAt` against the last disposition of its generation, as it counts `ATTEMPT_STARTED`.
-  - R4. When `writeBoard` throws in `persistStopValue`, the controller shall return the stopped goal so its caller saves the stop, and shall journal a NOTE naming the error code.
+  - R4. When `writeBoard` throws in `persistStopValue`, the controller shall return the stopped goal so its caller saves the stop, and shall journal a NOTE naming the error code; a failure of that NOTE append shall also leave the stopped goal returned, while a failure of the `GOAL_STOPPED` append or of `saveGoal` shall still propagate.
   - R5. `docs/ARCHITECTURE.md` shall state R2 and R4, and the CHANGELOG Unreleased section shall have an entry naming this card.
 acceptance:
   - 1. `tests/scenarios/side-write-faults.test.ts`: a fault-free `ensureCardRun` journals one `CARD_DISPATCHED` that carries `eventKey` and no `completed`, and a following `card next` adds none. [R1] [dod arm 2]
@@ -27,7 +28,8 @@ acceptance:
   - 4. `tests/scenarios/side-write-faults.test.ts`: after that failure, `CardRunner.recordAttempt` as the first step leaves exactly one `CARD_DISPATCHED`. [R2] [dod arm 2]
   - 5. `tests/scenarios/side-write-faults.test.ts`: a recovered `CARD_DISPATCHED` whose `startedAt` is before a `GOAL_STOPPED` gives no `WORK_AFTER_TERMINAL`, one with `startedAt` after it does, and one without `completed` does. [R3] [dod arm 2]
   - 6. `tests/scenarios/side-write-faults.test.ts`: with `paths.board` replaced by a file, `controller.next` on a goal past its deadline returns `stop`, a fresh controller reads the goal as stopped for `time`, and the journal holds one `GOAL_STOPPED` and one NOTE with the error code. [R4] [dod arm 2]
-  - 7. The existing tests of `journal-owed`, `fault-points`, `audit` and `deadline` pass with no change. [R2] [R3] [R4] [dod arms 3 to 6]
+  - 6a. `tests/scenarios/side-write-faults.test.ts`: with `paths.board` replaced by a file and the NOTE append failing, `controller.next` still returns `stop`, a fresh controller reads the goal as stopped for `time`, and the journal holds one `GOAL_STOPPED` and no NOTE. With the `GOAL_STOPPED` append failing, `controller.next` throws and the goal is not stopped. [R4] [dod arm 2]
+  - 7. The existing tests of `journal-owed`, `fault-points`, `audit` and `deadline` pass with no change, apart from two rows of `tests/scenarios/journal-owed.test.ts`. The row `a marked CARD_DISPATCHED is not an attempt` pinned the type filter R3 widens, so it moves to `OPERATION_ISSUED` with the same expected count of 1. The test `a card run without journalOwed parses unchanged` read a fresh run as the legacy record, which R1 changes, so it deletes `journalOwed` from the record it reads and keeps every assertion. [R2] [R3] [R4] [dod arms 3 to 6]
   - 8. `docs/ARCHITECTURE.md` and the CHANGELOG hold the text R5 asks for. [R5] Reviewer-verified.
 depends_on: []
 budget: 170
@@ -50,6 +52,13 @@ hygiene: "Issues 143 and 127, grouped because each is a side write beside a save
 
 ## Deliverable
 A lost `CARD_DISPATCHED` append is recovered once, and a failed board write never loses a goal stop. Closes issues 143 and 127.
+
+## Attempt evidence
+RED for repair 1, commit 37791d9 (R3 decision 1 F1, F2): the corrected test with the `committedBefore` change removed and the NOTE unguarded. `node --test tests/scenarios/side-write-faults.test.ts` exits 1, tests 8, pass 6, fail 2:
+- acceptance 5: `AssertionError: committed before the stop` (expected 0, actual 1), the audit rule this card changes.
+- acceptance 6a, the failed NOTE: `Error: EIO: injected` out of `controller.next`, so the stop was not saved.
+
+The first RED, 798b184, had a test parser that read every count as 0, so acceptance 5 did not show the defect there.
 
 ## Acceptance
 ```powershell
