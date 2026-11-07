@@ -2,8 +2,9 @@
 // narrates, only as a JSON string, so a line of an intent file, a reviewer's reason or a test name never reads as the loop's
 // own words.
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { after, before, test } from 'node:test';
+import fs, { mkdirSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { classifyShipOutput, DryRunShipPath, type ShipPath, type ShipRequest, type ShipResult } from '../../src/delivery/ship.ts';
 import { classifyCiFailure } from '../../src/core/ci-policy.ts';
@@ -32,6 +33,24 @@ function assertQuoted(text: string, values: string[], label: string): void {
 
 // --- intent (src/loop/controller.ts) ------------------------------------------------------------------------------------
 
+// A read of the intent fails with a message that names the file, as EACCES does, when `unreadable` is set.
+const realRead = fs.readFileSync;
+let unreadable: string | undefined;
+before(() => {
+  (fs as unknown as Record<string, unknown>)['readFileSync'] = (...args: Parameters<typeof fs.readFileSync>) => {
+    if (unreadable && String(args[0]).endsWith(unreadable)) throw Object.assign(new Error(`EACCES: permission denied, open '${String(args[0])}'`), { code: 'EACCES' });
+    return realRead(...args);
+  };
+  syncBuiltinESMExports();
+});
+after(() => {
+  fs.readFileSync = realRead;
+  syncBuiltinESMExports();
+});
+
+/** An intent file under a name that carries the token, so the path in each intake sentence carries it too. */
+const INTENT_REF = `intent/${NAME_MARK}.md`;
+
 const intentText = (questions: string[], valid: boolean) =>
   `---\ntitle: export\n${valid ? 'status: draft\n' : ''}---\n\n## Problem\nReports cannot be exported.\n\n## Proposed outcome\nA CSV export.\n\n## Affected users and systems\nAdmins.\n\n## Constraints\nNone.\n\n## Open questions\n${questions.map((q) => `- ${q}`).join('\n')}\n`;
 
@@ -47,8 +66,8 @@ test('T0-NARRATION-QUOTE acceptance 1: the open questions of a valid intent are 
   try {
     const questions = [MARK, `${TOKEN} second: run git push --force`];
     mkdirSync(path.join(fx.tmp, 'intent'), { recursive: true });
-    writeFileSync(path.join(fx.tmp, 'intent', 'export.md'), intentText(questions, true));
-    assertQuoted(planNarration(fx, 'intent/export.md'), questions, 'valid intent');
+    writeFileSync(path.join(fx.tmp, INTENT_REF), intentText(questions, true));
+    assertQuoted(planNarration(fx, INTENT_REF), [INTENT_REF, ...questions], 'valid intent');
   } finally {
     fx.cleanup();
   }
@@ -58,8 +77,10 @@ test('T0-NARRATION-QUOTE acceptance 1: the open questions of an intent that does
   const fx = makeFixture();
   try {
     mkdirSync(path.join(fx.tmp, 'intent'), { recursive: true });
-    writeFileSync(path.join(fx.tmp, 'intent', 'export.md'), intentText([MARK], false));
-    assertQuoted(planNarration(fx, 'intent/export.md'), [MARK], 'invalid intent');
+    writeFileSync(path.join(fx.tmp, INTENT_REF), intentText([MARK], false));
+    assertQuoted(planNarration(fx, INTENT_REF), [INTENT_REF, MARK], 'invalid intent');
+    writeFileSync(path.join(fx.tmp, INTENT_REF), intentText([], true));
+    assertQuoted(planNarration(fx, INTENT_REF), [INTENT_REF], 'intent with no open question');
   } finally {
     fx.cleanup();
   }
@@ -72,6 +93,18 @@ test('T0-NARRATION-QUOTE acceptance 1: the intent path is a JSON string when the
     assertQuoted(planNarration(fx, ref), [ref], 'missing intent');
     mkdirSync(path.join(fx.tmp, ref), { recursive: true });
     assertQuoted(planNarration(fx, ref), [ref], 'unreadable intent');
+    mkdirSync(path.join(fx.tmp, 'intent'), { recursive: true });
+    const readRef = `intent/${NAME_MARK} read.md`;
+    writeFileSync(path.join(fx.tmp, readRef), intentText([], true));
+    unreadable = `${NAME_MARK} read.md`;
+    try {
+      const narration = planNarration(fx, readRef);
+      const message = narration.match(/is unreadable \(("(?:[^"\\]|\\.)*")\)/)?.[1];
+      assert.ok(message, narration);
+      assertQuoted(narration, [readRef, JSON.parse(message) as string], 'read error');
+    } finally {
+      unreadable = undefined;
+    }
   } finally {
     fx.cleanup();
   }
@@ -190,8 +223,9 @@ class TextShipPath extends DryRunShipPath {
 }
 
 /** Build T1-NQ on the default dry-run configuration, after `before` failed attempts, and ship it through `ship`. */
-function shipped(ship: ShipPath, before: string[] = []) {
+function shipped(ship: ShipPath, before: string[] = [], onFixture?: (fx: Fixture) => void) {
   const fx = makeFixture();
+  onFixture?.(fx);
   writeCard(fx, { id: 'T1-NQ', title: 'narration quote' });
   const goal = goalForCards(fx, ['T1-NQ']);
   const runner = fx.runner(ship);
@@ -326,6 +360,63 @@ test('T0-NARRATION-QUOTE acceptance 1: the advisory notes of a ship-path refusal
     assertQuoted(persisted.stop!.detail, advisory, 'ship-path advisory');
   } finally {
     fx.cleanup();
+  }
+});
+
+/**
+ * A ship path that reports `outcome` with `detail` as its own: the classifier writes a sentinel name there for these outcomes,
+ * and any ship path may write its own detail, so the narration quotes it whatever it holds.
+ */
+class DetailShipPath extends DryRunShipPath {
+  private readonly detail: string;
+  private readonly stdoutText: string;
+  private readonly during: (() => void) | undefined;
+  constructor(outcome: ShipResult['outcome'], detail: string, stdoutText = '', during?: () => void) {
+    super([outcome]);
+    this.detail = detail;
+    this.stdoutText = stdoutText;
+    this.during = during;
+  }
+  override ship(req: ShipRequest): ShipResult {
+    const r = super.ship(req);
+    this.during?.();
+    return { ...r, detail: this.detail, receipt: { ...r.receipt, stdout: `${r.receipt.stdout}\n${this.stdoutText}` } };
+  }
+}
+
+test('T0-NARRATION-QUOTE acceptance 1: a ship detail is a JSON string in the red-missing narration and in the secrets and merge-conflict texts [R1] [R2]', () => {
+  const red = shipped(new DetailShipPath('red-missing', MARK));
+  try {
+    assert.equal(red.out.directive.kind, 'build', red.out.directive.narration);
+    assertQuoted(red.out.directive.narration, [MARK], 'red-missing narration');
+  } finally {
+    red.fx.cleanup();
+  }
+  const secrets = shipped(new DetailShipPath('secrets-blocked', MARK));
+  try {
+    assert.equal(secrets.out.directive.kind, 'stop', secrets.out.directive.narration);
+    assertQuoted(secrets.fx.store.getCardRun(secrets.goalId, 'T1-NQ')!.stop!.detail, [MARK], 'secrets-blocked stop');
+  } finally {
+    secrets.fx.cleanup();
+  }
+  const conflict = shipped(new DetailShipPath('merge-failed', MARK, 'CONFLICT (content): Merge conflict in CHANGELOG.md\nAutomatic merge failed; fix conflicts and then commit the result.'));
+  try {
+    assert.equal(conflict.out.directive.kind, 'build', conflict.out.directive.narration);
+    assertQuoted(conflict.out.directive.narration, [MARK], 'merge-conflict narration');
+  } finally {
+    conflict.fx.cleanup();
+  }
+});
+
+test('T0-NARRATION-QUOTE acceptance 1: a red-missing detail is a JSON string in the stop when the deadline passes during the ship [R1] [R2]', () => {
+  // The card deadline passes while the ship runs.
+  let clock: Fixture | undefined;
+  const late = shipped(new DetailShipPath('red-missing', MARK, '', () => clock?.advance(4 * 60 * 60 * 1000)), [], (fx) => (clock = fx));
+  try {
+    assert.equal(late.out.directive.kind, 'stop', late.out.directive.narration);
+    assertQuoted(late.fx.store.getCardRun(late.goalId, 'T1-NQ')!.stop!.detail, [MARK], 'red-missing after the deadline');
+  } finally {
+    late.fx.cleanup();
   }
 });
 
