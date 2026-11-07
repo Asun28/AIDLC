@@ -143,7 +143,7 @@ for (const text of DROPPED) {
 }
 
 /** R3 decision 2 F4: a sentence ends at any terminator with any closing marks after it, and any list marker starts a new item. */
-const TERMINATORS = ['.', '!', '?', ';', '\u2026', '\u3002', '\uff01', '\uff1f', '\uff1b'];
+const TERMINATORS = ['.', '!', '?', ';', '\u2026', '\u3002', '\uff01', '\uff1f', '\uff1b', '\u0964', '\u06d4'];
 const CLOSERS = ['', '"', "'", '\u201d', '\u2019', '\u00bb', '\u203a', ')', ']', '}', '>', '*', '**', '_', '`', '\u300d', '\uff09', '"}'];
 for (const terminator of TERMINATORS) {
   for (const closer of CLOSERS) {
