@@ -1,7 +1,7 @@
 ---
 id: T0-INTAKE-TARGET-2
 title: Intake reads a delivery target only from the flag or from a request to deliver, never from a word in the text
-status: todo
+status: merged
 branch: T0-INTAKE-TARGET-2
 worktree: D:\wt\AIDLC\T0-INTAKE-TARGET-2
 allow_paths:
