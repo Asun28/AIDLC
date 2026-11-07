@@ -1,7 +1,7 @@
 ---
 id: T1-INIT-SURFACE
 title: aidlc init --no-hooks installs everything except the hook entries, the README lists every path init writes and what each hook reads and blocks, and a test proves the hooks emit repository content only as quoted data
-status: todo
+status: merged
 branch: T1-INIT-SURFACE
 worktree: D:\wt\AIDLC\T1-INIT-SURFACE
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#45-module-design
@@ -53,6 +53,6 @@ npm run typecheck && node --test tests/infra/init.test.ts tests/surface/hooks.te
 - Assertion: every listed test passes and the typecheck is clean.
 
 ## Attempt evidence
-- RED, before the implementation, on the four DoD test files: 81 tests, 68 pass, 9 fail, 4 skipped. The 9: `--no-hooks` refused as an unknown option (3), the README section missing (3), and the approval reference, the fix task marker and the file path printed bare (3).
+- RED, before the implementation, on the four DoD test files: 81 tests, 68 pass, 9 fail, 4 skipped. The 9: `--no-hooks` refused as an unknown option (1), a test helper missing `--json`, which failed on the text output before reaching the flag (2), the README section missing (3), and the approval reference, the fix task marker and the file path printed bare (3). Rerun after the helper fix, with the merged tests/infra/init.test.ts on the unchanged source of 1514ef5: 11 tests, 3 fail, all three on `unknown option '--no-hooks'`. The receipt recorded on the attempt keeps the earlier count of 3; this line corrects it (R3 decision 1 advisory).
 - Source budget (acceptance 5): `git diff --numstat origin/main...HEAD -- src` gives +18/-12, net +6 of the +15 allowed.
 - Plan finding F3 (acceptance 7): issue #211.
