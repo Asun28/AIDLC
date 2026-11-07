@@ -135,6 +135,9 @@ interface FormalResult {
   seq?: number;
 }
 
+/** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
+const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names closes the whole class, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
+
 /** A formal result recovered from a reservation: it always names the pool request to settle. */
 type RetainedFormalResult = FormalResult & { key: string };
 
@@ -752,7 +755,7 @@ export class CardRunner {
             effort: running?.effort ?? episode?.baseline ?? 'medium',
             attempt: running?.n ?? (episode?.attempts.length ?? 0),
             skills: this.buildSkills(goal, card),
-            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint}${this.classRepairNote(run)}`,
+            narration: `Review block to repair: ${reasons.join(' | ') || 'see verdict'}. Fix the introduced defects within scope or revert the defective change; do not defer a required fix as a nit.${attemptNote} Rerun the DoD and record \`aidlc card attempt ${card.id} --outcome success --candidate-sha <new sha> --dod-receipt ...\`; the repaired candidate ships with ${Math.max(0, this.formalAllowance(run, card) - run.review.substantiveDecisions)} substantive decision(s) left.${disputeHint} ${REPAIR_CHECK}${this.classRepairNote(run)}`,
           },
         };
       }
