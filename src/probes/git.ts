@@ -213,6 +213,10 @@ export class GitProbe {
     return nulList(r.stdout);
   }
 
+  commitFiles(_cwd: string, _ref: string): { subject: string; files: string[] }[] {
+    return [];
+  }
+
   numstat(cwd: string, baseOid: string): { added: number; deleted: number; files: number } {
     const out = this.must(cwd, ['diff', '--numstat', `${baseOid}...HEAD`]);
     let added = 0;

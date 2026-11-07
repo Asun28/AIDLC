@@ -141,6 +141,8 @@ export function readLessons(file: string, recent = 5): LessonsContext {
 export interface ReviewLessons {
   lines: string[];
   omitted: number;
+  /** Set when `matchedLessons` chose the rules, so the prompt says how they were chosen. */
+  matched?: boolean;
 }
 
 /** The cap of the learned-invariants section, counted over the lesson lines themselves (about 3 KB, a dozen rules). */
@@ -152,6 +154,21 @@ export const REVIEW_LESSONS_MAX_BYTES = 3000;
  * the prompt can state what the reviewer is not seeing. NOTE lines are process notes, not invariants, and are
  * never sent; an absent file carries no rules.
  */
+/** What `matchedLessons` scores a rule against: the candidate's changed paths and diff, and the commits `GitProbe.commitFiles` lists. */
+export interface LessonMatchInput {
+  changedPaths: readonly string[];
+  diff: string;
+  history: readonly { subject: string; files: readonly string[] }[];
+}
+
+export function lessonTerms(_rule: string): string[] {
+  return [];
+}
+
+export function matchedLessons(_file: string, _input: LessonMatchInput, _maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
+  return { lines: [], omitted: 0, matched: true };
+}
+
 export function reviewLessons(file: string, maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
   if (!existsSync(file)) return { lines: [], omitted: 0 };
   const rules: string[] = [];

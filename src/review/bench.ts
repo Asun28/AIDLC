@@ -60,9 +60,13 @@ export interface BenchTotals {
   skippedUnconfirmed: number;
 }
 
+export type BenchRules = 'newest' | 'matched';
+
 export interface ReviewBenchReport {
   stage: 'pre' | 'formal';
   reviewer: string;
+  /** How the learned rules were chosen. */
+  rules?: BenchRules;
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
@@ -80,6 +84,8 @@ export interface ReviewBenchOptions {
   dir?: string;
   caseId?: string;
   includeUnconfirmed?: boolean;
+  /** How the learned rules are chosen; default `newest`. */
+  rules?: BenchRules;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */

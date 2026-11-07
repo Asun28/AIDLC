@@ -664,3 +664,48 @@ test('T1-REVIEW-BENCH-2 acceptance 17: a cleanup step that throws counts as fail
     fx.cleanup();
   }
 });
+
+const MATCHED_RULE = '- 2026-01-01 T1-OLD-MATCH: ALWAYS check the value of `v13` against its name (source: PR 1)';
+/** A file over the cap of newer rules that match nothing, with the one rule that matches candidate c1 as its oldest. */
+function writeLessonsOverCap(fx: Fixture): void {
+  const newer = Array.from({ length: 30 }, (_, i) => `- 2026-02-${String((i % 28) + 1).padStart(2, '0')} T1-NEW-${i}: ALWAYS keep unrelated rule ${i} ${'z'.repeat(200)} (source: PR 2)`);
+  writeFileSync(path.join(fx.root, 'docs', 'LESSONS.md'), `# Lessons\n\n${[MATCHED_RULE, ...newer].join('\n')}\n`);
+}
+
+test('T1-LESSON-MATCH acceptance 6: --rules matched puts the matching rule in the prompt and names the choice in the report [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeLessonsOverCap(fx);
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 13, 2));
+    const matched: Call[] = [];
+    const report = await bench(fx, reviewer(fx, matched), { rules: 'matched' });
+    assert.equal(report.rules, 'matched');
+    assert.equal(matched.length, 1);
+    assert.ok(matched[0]!.input.includes('T1-OLD-MATCH'), 'the old matching rule is sent');
+    assert.ok(matched[0]!.input.includes('other lessons omitted at the byte cap; the rules that best match this diff are above.'));
+
+    const newest: Call[] = [];
+    const plain = await bench(fx, reviewer(fx, newest));
+    assert.equal(plain.rules, 'newest', 'newest is the default');
+    assert.ok(!newest[0]!.input.includes('T1-OLD-MATCH'), 'the newest rules fill the cap');
+    assert.ok(newest[0]!.input.includes('older lessons omitted at the byte cap; the newest rules are above.'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-LESSON-MATCH acceptance 6: --rules other exits non-zero with no review run [R6]', () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const refused = spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'run', '--stage', 'formal', '--json', '--rules', 'other'], { cwd: fx.root, encoding: 'utf8' });
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /--rules must be newest or matched, not other/);
+    assert.equal(refused.stdout, '');
+    assert.equal(existsSync(path.join(fx.root, '.review', 'bench')), false, 'no review ran');
+  } finally {
+    fx.cleanup();
+  }
+});

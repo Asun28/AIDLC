@@ -887,6 +887,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--dir <path>', 'case directory, resolved against the checkout root (default evals/review)')
     .option('--case <id>', 'score this case alone')
     .option('--include-unconfirmed', 'score the unconfirmed cases too')
+    .option('--rules <rules>', 'how the learned rules are chosen: newest or matched', 'newest')
     .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
