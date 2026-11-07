@@ -574,10 +574,13 @@ test('T0-CLOSE-EVIDENCE-CHECK acceptance 4: an entry whose path cannot be read i
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const unreadable = retained(fx, goalId, { cardId: CARD, id: 'first.json' });
-    retained(fx, goalId, { cardId: CARD, id: 'second.json' });
     rmSync(unreadable);
     mkdirSync(unreadable);
-    assert.equal(closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { evidence: true }).closure.evidence, true);
+    const runner = closingRunner(fx, []);
+    assert.match(refusal(() => runner.markClosure(fx.goal(goalId), card, run, { evidence: true })), /missing or altered/);
+    assert.equal(stored(fx, goalId).closure.evidence, false);
+    retained(fx, goalId, { cardId: CARD, id: 'second.json' });
+    assert.equal(runner.markClosure(fx.goal(goalId), card, stored(fx, goalId), { evidence: true }).closure.evidence, true);
   } finally {
     fx.cleanup();
   }
