@@ -2,6 +2,9 @@
 // issue takes its target only from the flag, and free text sets one only by asking for a delivery.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { classifyRequest } from '../../src/core/router.ts';
 import { driveCardToDone, makeFixture, writeCard } from './_harness.ts';
 
@@ -182,6 +185,16 @@ for (const text of ['deploy to production fails with a 500', 'the release to sta
 test('T0-INTAKE-TARGET acceptance 5: a prompt of repeated verbs and no sentence end reads as no target, in a scan that stays linear [R3]', () => {
   const r = classifyRequest({ text: 'deploy '.repeat(50_000) });
   assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+});
+
+test('T0-INTAKE-TARGET acceptance 5: a child classifies long runs of each unit before its kill, so a scan that is not linear fails with no clock in the test [R3]', () => {
+  // R3 decision 3 F5: 80000 hyphens took 7 seconds when the lookbehind ran at every character; these sizes would take hours.
+  const router = pathToFileURL(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'core', 'router.ts')).href;
+  const units = ['-', '.', '. ', '!"', '\n-', '-\n', '\n ', 'a\n', 'deploy to ', '\u3002'];
+  const script = `import { classifyRequest } from ${JSON.stringify(router)};
+for (const unit of ${JSON.stringify(units)}) classifyRequest({ text: 'Add support for this: ' + unit.repeat(1000000) });`;
+  const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], { encoding: 'utf8', timeout: 60_000 });
+  assert.equal(r.status, 0, `killed by ${r.signal}: ${r.stderr}`);
 });
 
 test('T0-INTAKE-TARGET acceptance 8: the routing reasons name a target the text read as when it was set aside, and name none otherwise [R5]', () => {
