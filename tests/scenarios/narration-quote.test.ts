@@ -335,14 +335,20 @@ test('T0-NARRATION-QUOTE acceptance 1: the cause of a same-cause ladder stop is 
   const detail = classifyShipOutput({ command: 'ship', args: [], cwd: '', exitCode: 1, signal: null, timedOut: false, stdout: lines.join('\n'), stderr: '', startedAt: T0, finishedAt: T0, durationMs: 0, outputSha256: '' }).detail;
   const cause = `ship dod-failed: ${detail}`;
   assert.ok(detail.includes('"'), detail);
-  // The attempt before the ship failed with the same cause, so the refuted success is the second in a row.
-  const s = shipped(new TextShipPath(lines), [cause]);
+  // Two ships fail the same way (R3 decision 2 F3): the first refutes its success and opens the repair, the repair succeeds on
+  // another sha, and the second ship refutes that success with the same cause, so the ladder stops.
+  const s = shipped(new TextShipPath(lines));
   try {
-    assert.equal(s.out.directive.kind, 'stop', s.out.directive.narration);
-    const stop = s.fx.store.getCardRun(s.goalId, 'T1-NQ')!.stop!;
+    assert.equal(s.out.directive.kind, 'build', s.out.directive.narration);
+    const repaired = s.runner.recordAttempt(s.g(), s.card, s.fx.store.getCardRun(s.goalId, 'T1-NQ')!, { outcome: 'success', dodReceipt: 'dod:2', candidateSha: 'sha-repair' });
+    const second = s.runner.next(s.g(), s.card, repaired);
+    assert.equal(second.directive.kind, 'stop', second.directive.narration);
+    const run = s.fx.store.getCardRun(s.goalId, 'T1-NQ')!;
+    assert.deepEqual(run.effort!.attempts.filter((a) => a.outcome === 'fail').map((a) => a.cause), [cause, cause], 'both ships refuted their success with the same cause');
+    const stop = run.stop!;
     assert.ok(stop.detail.includes('same-cause-stop'), stop.detail);
     assertQuoted(stop.detail, [cause, normaliseCause(cause)], 'same-cause stop detail');
-    assertQuoted(s.out.directive.narration, [cause, normaliseCause(cause)], 'same-cause stop narration');
+    assertQuoted(second.directive.narration, [cause, normaliseCause(cause)], 'same-cause stop narration');
   } finally {
     s.fx.cleanup();
   }
