@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- T1-R3-SECOND-PASS: with `formalReview.secondPass` on, the first R3 pass of a card run is followed by one more R3 on the same candidate, with `matchedLessons` rules, no delta and no advisory notes, before the ship. A pass spends no decision and a block is an R3 block; a run gets one. `aidlc review stats` reports second-pass decisions and blocks. On in this repository, off in the template.
+
 - T1-LESSON-MATCH: `matchedLessons` chooses the learned rules that best match a candidate, by the paths their cards changed and the code terms they name, under the same cap as `reviewLessons`. `GitProbe.commitFiles` lists the first-parent commits it reads. `aidlc review bench run --rules <newest|matched>` scores the selection and names it as `rules` in the report; the default is `newest`, so no loop review changes.
 
 - T1-VERIFY-MUTANT-GEN: `src/review/mutant-gen.ts` lists the mutants of the source lines a change adds, with no new dependency: `changedSourceLines` reads the added lines of `src/**/*.ts` files (not `.d.ts` or `.test.ts`) from a `git diff --unified=0` text, `mutantsFor` lists the mutants of those lines under the eight operators of `MutationOperator` (`drop-statement`, `force-true`, `force-false`, `negate-equality`, `swap-logic`, `drop-not`, `boundary`, `flip-boolean`) while an in-house scanner skips comments, strings, template literals and regex literals, and `applyMutant` writes one mutant into the source. Nothing runs the mutants yet; card T1-VERIFY-MUTANTS adds the run.

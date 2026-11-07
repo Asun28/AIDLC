@@ -1595,8 +1595,7 @@ export class CardRunner {
    * pass was decided in this run, and a decision is left for a block. A no-verdict or a quota hold decides nothing, so it stays due.
    */
   private secondPassDue(run: CardRun): boolean {
-    const formal = this.config.formalReview;
-    if (!formal.secondPass || !formal.command.length || run.review.substantiveDecisions >= MAX_R3_DECISIONS) return false;
+    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS) return false;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
     return [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest)?.outcome === 'pass';

@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import fs, { mkdirSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -59,8 +59,15 @@ function gitRepo(fx: Fixture): void {
 
 type Reply = string | { exitCode: number; stderr: string };
 
+interface Hooks {
+  /** Runs when the formal reviewer starts. */
+  onReview?: () => void;
+  /** Runs before each git call. */
+  onGit?: (args: string[]) => void;
+}
+
 /** `replies` is what `fake-r3` answers, one entry per call; the last repeats. Every prompt it receives lands in `prompts`. */
-function runnerFor(fx: Fixture, replies: Reply[]): { runner: CardRunner; prompts: string[] } {
+function runnerFor(fx: Fixture, replies: Reply[], hooks: Hooks = {}): { runner: CardRunner; prompts: string[] } {
   const prompts: string[] = [];
   const left = [...replies];
   const reviewers = scriptedRunner({
@@ -71,7 +78,11 @@ function runnerFor(fx: Fixture, replies: Reply[]): { runner: CardRunner; prompts
     },
   });
   const runner: SyncRunner = (command, args, options) => {
-    if (command === 'fake-r3') prompts.push(args[args.length - 1]!);
+    if (command === 'fake-r3') {
+      prompts.push(args[args.length - 1]!);
+      hooks.onReview?.();
+    }
+    if (command === 'git') hooks.onGit?.(args);
     return command === 'git' ? runSync(command, args, options) : reviewers(command, args, options);
   };
   const repo = { ...fx.repo, isGit: true };
@@ -203,6 +214,46 @@ test('T1-R3-SECOND-PASS acceptance 3: a blocking second pass spends a decision, 
     const repaired = await decide(fx, runner, goalId, blocked.run, commitCandidate(fx, 2), 2);
     assert.equal(next(fx, runner, goalId, repaired.run).directive.kind, 'close');
     assert.equal(prompts.length, 3, 'no third review');
+  });
+});
+
+test('T1-R3-SECOND-PASS acceptance 3: a second pass recorded by another window while this one prepares refuses, so a run gets one [R4]', async () => {
+  await withRepo(ON, async (fx) => {
+    let goalId = '';
+    let armed = false;
+    const { runner, prompts } = runnerFor(fx, [PASS], {
+      onGit: (args) => {
+        if (!armed || args[0] !== 'diff') return;
+        armed = false;
+        fx.store.updateCardRun(goalId, CARD, (latest) => ({ ...latest!, review: { ...latest!.review, invocations: [...latest!.review.invocations, { ...latest!.review.invocations[0]!, invocationId: 'r3:other-window', secondPass: true }] } }));
+      },
+    });
+    const started = start(fx, runner);
+    goalId = started.goalId;
+    const first = await decide(fx, runner, goalId, started.run, commitCandidate(fx, 1), 1);
+    const due = next(fx, runner, goalId, first.run);
+    armed = true;
+    await assert.rejects(() => review(fx, runner, goalId, due.run), /the second pass changed since the review was prepared/);
+    assert.equal(prompts.length, 1, 'no second dispatch');
+  });
+});
+
+test('T1-R3-SECOND-PASS acceptance 3: a second-pass verdict committed later from its retained result keeps secondPass [R3] [R4]', async () => {
+  await withRepo(ON, async (fx) => {
+    let hold: (() => void) | undefined;
+    const { runner, prompts } = runnerFor(fx, [PASS], { onReview: () => hold?.() });
+    const { goalId, run } = start(fx, runner);
+    const first = await decide(fx, runner, goalId, run, commitCandidate(fx, 1), 1);
+    const due = next(fx, runner, goalId, first.run);
+    const lock = `${fx.store.cardFile(goalId, CARD)}.lock`;
+    hold = () => writeFileSync(lock, `pid=${process.pid} at=now nonce=held`, 'utf8');
+    await assert.rejects(() => review(fx, runner, goalId, due.run), /locked/i);
+    rmSync(lock, { force: true });
+    hold = undefined;
+    await review(fx, runner, goalId, fx.store.getCardRun(goalId, CARD)!);
+    assert.equal(prompts.length, 2, 'the retained result is committed with no new dispatch');
+    assert.deepEqual(fx.store.getCardRun(goalId, CARD)!.review.invocations.map((i) => [i.outcome, i.secondPass]), [['pass', undefined], ['pass', true]]);
+    assert.deepEqual(decided(fx, goalId).map((d) => d['secondPass']), [undefined, true]);
   });
 });
 
