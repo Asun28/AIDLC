@@ -1,7 +1,7 @@
 ---
 id: T0-NARRATION-QUOTE
 title: Directive narration and stop details carry outside text only as JSON strings
-status: todo
+status: merged
 branch: T0-NARRATION-QUOTE
 worktree: D:\wt\AIDLC\T0-NARRATION-QUOTE
 allow_paths:
