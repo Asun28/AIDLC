@@ -13,12 +13,13 @@ allow_paths:
   - aidlc.config.json
   - templates/aidlc.config.json
   - tests/scenarios/second-pass.test.ts
+  - tests/surface/stats.test.ts
   - .claude/skills/verify-card-run-writes/SKILL.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T1-R3-SECOND-PASS.md
-dod_command: npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scenarios/fault-points.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scenarios/fault-points.test.ts tests/surface/stats.test.ts
 dod_exit: 0
 requirements:
   - R1. `formalReview.secondPass` shall default to false in `src/config.ts`, be false in `templates/aidlc.config.json` and be true in this repository's `aidlc.config.json`.
@@ -62,7 +63,7 @@ The numbers are in `specs/second-r3-pass.md`. R2 is off, so R3 is the only revie
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scenarios/fault-points.test.ts tests/surface/stats.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
