@@ -1,5 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readdirSync } from 'node:fs';
 import path from 'node:path';
 import { OperationLedger, unattendedMutationAllowed, type OperationIntent } from '../../src/coordination/reconcile.ts';
 import { cleanup, iso, tmpDir } from './helpers.ts';
@@ -147,5 +148,18 @@ describe('coordination/reconcile (Q18 operation recovery)', () => {
     assert.throws(() => ledger.markIssued('op-missing', 'x'), /unknown operation/);
     assert.throws(() => ledger.reconcile('op-missing', () => ({ status: 'failed' })), /unknown operation/);
     assert.equal(ledger.get('op-missing'), undefined);
+  });
+});
+
+describe('recordIntent refuses a record the ledger cannot read (T0-OPS-INTENT-KIND)', () => {
+  const dir = tmpDir();
+  const ledger = new OperationLedger(path.join(dir, 'operations'));
+  after(() => cleanup(dir));
+
+  it('writes no file for an unsupported kind, and the existing record stays readable', () => {
+    const kept = ledger.recordIntent(intent(), iso(0));
+    assert.throws(() => ledger.recordIntent(intent({ kind: 'cleanup' as never }), iso(1)));
+    assert.deepEqual(readdirSync(ledger.dir), [`${kept.id}.json`]);
+    assert.deepEqual(ledger.list().map((r) => r.id), [kept.id]);
   });
 });

@@ -18,7 +18,11 @@
 
 - T0-PROD-GOAL-STAGES: a delivered production attempt with a succeeded `stage-verify` step passes the goal's staging stage as well as its production stage, so a production goal reaches DONE instead of waiting in CLOSE on `stage staging=pending` (issue 162).
 
+- T0-OPS-INTENT-KIND: `aidlc ops intent` exits nonzero on a `--kind` outside `OperationKind` or a `--timeout-ms` that is not a positive integer, and `recordIntent` validates the whole record before it writes, so an invalid operation file can no longer make `aidlc next` and `aidlc card next` throw SCHEMA_VIOLATION (issue 150).
+
 - T0-R2-OFF: this repository runs no R2 panel. `preReview.command` is empty in `aidlc.config.json` and the rest of the block stays, so a candidate goes from the DoD to R3 and restoring R2 is one value. R3 stays required. `docs/OPERATIONS.md` holds the numbers and the check after 15 cards.
+
+- T1-INIT-SURFACE: `aidlc init --no-hooks` writes the same files and the same `permissions.deny` list, merges no hook entry into `.claude/settings.json` and leaves a hook already in the file as it is. The README section `What aidlc init writes` lists every path init writes and, for each guard, the event, what it reads and when it blocks. `production-gate`, `protect-tests` and `secrets-guard` print the approval reference, the fix task marker and the file path as JSON strings.
 
 - T1-INIT-BASE-CI (bugfix): a config that `aidlc init` creates names the target's default branch, and a repository with no `package.json` gets no `aidlc-ci.yml` and no `agent-evals.yml`, each reported as skipped. Every workflow calls `npx --no-install aidlc`, so a repository with no local package cannot fetch the unrelated npm package of that name.
 
