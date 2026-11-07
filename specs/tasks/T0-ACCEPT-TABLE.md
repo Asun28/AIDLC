@@ -1,7 +1,7 @@
 ---
 id: T0-ACCEPT-TABLE
 title: The build and repair directives ask for a table in the card's Attempt evidence section, one row per acceptance item, which no code reads
-status: todo
+status: merged
 branch: T0-ACCEPT-TABLE
 worktree: D:\wt\AIDLC\T0-ACCEPT-TABLE
 allow_paths:
