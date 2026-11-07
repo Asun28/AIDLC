@@ -17,7 +17,7 @@ The selection first, with `aidlc review bench run --rules matched` as its first 
 
 ## Files that change
 - T1-LESSON-MATCH: `src/artifacts/lessons.ts` (`matchedLessons`), `src/probes/git.ts` (`commitFiles`), `src/review/pre-review.ts:424` (the sentence on omitted rules), `src/review/bench.ts` and `src/cli/main.ts` (`--rules`), tests, docs.
-- T1-R3-SECOND-PASS: `src/config.ts`, `src/core/types.ts` (`ReviewInvocation.secondPass`), `src/loop/card-runner.ts` (gate, allowance, dispatch, ship re-check), `src/review/stats.ts`, both config files, tests, docs.
+- T1-R3-SECOND-PASS: `src/config.ts`, `src/core/types.ts` (`ReviewInvocation.secondPass`), `src/loop/card-runner.ts` (gate, allowance, dispatch), `src/review/stats.ts`, both config files, tests, docs.
 
 ## Order of work
 1. T1-LESSON-MATCH: the selection, reachable from the bench and from no loop path.
@@ -28,7 +28,6 @@ One worker: card 2 reads the API card 1 adds.
 ## Risks
 - The gate is the protocol the fault-point check covers. No new write kind is added: a second pass is an R3 dispatch with one more field. The fault-point test and the skill's sync step run on card 2.
 - A dispatch that adds a field to an event can lose it on recovery if the field rides on `extra` (`docs/LESSONS.md`, T0-REVIEW-CANDIDATE-PINS). `secondPass` goes in the persisted event data.
-- `shipDrift` reads only the last decision. A pass recorded by another window between the gate and the ship would admit a ship with the second pass due, so it re-checks.
 - "Review after 15 cards" in `docs/OPERATIONS.md` compares R3 findings per card with a baseline. A second pass raises that number, so the check has to read second-pass findings separately.
 - The replay measured codex on one commit. The first 15 cards with the option on are the real measure.
 
