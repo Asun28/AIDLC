@@ -1,7 +1,7 @@
 ---
 id: T0-PROD-GOAL-STAGES
 title: A delivered production attempt that passed stage-verify passes the goal's staging stage, so a production goal reaches DONE
-status: todo
+status: merged
 branch: T0-PROD-GOAL-STAGES
 worktree: D:\wt\AIDLC\T0-PROD-GOAL-STAGES
 allow_paths:

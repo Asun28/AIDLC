@@ -307,3 +307,49 @@ test('Q22: a BREACH with a real recovery pre-authorization recovers, verifies an
     fx.cleanup();
   }
 });
+
+test('T0-PROD-GOAL-STAGES acceptance 1: a production goal driven through a verified staging and a delivered attempt reaches DONE with every stage passed', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'production');
+    const runner = releaseRunner(fx, opsConfigured(), () => [signal(0.1, fx.now())]);
+    const attempt = runner.setCandidate(fx.goal(goalId), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    stagingAuth(fx, goalId, 'c1');
+    let r = runner.next(fx.goal(goalId), attempt);
+    r = runner.next(fx.goal(goalId), runner.reportStep(fx.goal(goalId), r.attempt, 'stage-verify', 'succeeded'));
+    assert.equal(r.attempt.state, 'CHECKPOINT');
+    fx.controller.report({ goalId, generation: 0, result: 'approved', data: { kind: 'production', by: 'release-manager', candidateDigest: 'c1', environment: 'production', operations: ['deploy'] } });
+    r = runner.next(fx.goal(goalId), r.attempt);
+    assert.equal(r.attempt.state, 'OBSERVE', r.directive.narration);
+    r = runner.next(fx.goal(goalId), r.attempt);
+    fx.advance(Date.parse(r.attempt.healthWindow!.to) - Date.parse(fx.now()) + MINUTE_MS);
+    r = runner.next(fx.goal(goalId), r.attempt);
+    assert.equal(r.attempt.state, 'CLOSE', r.directive.narration);
+    r = runner.next(fx.goal(goalId), r.attempt);
+    assert.equal(r.attempt.disposition, 'delivered');
+    const done = fx.controller.next(goalId);
+    assert.equal(done.kind, 'done', done.narration);
+    assert.equal(fx.goal(goalId).state, 'DONE');
+    const { development, staging, production } = fx.goal(goalId).stages;
+    assert.deepEqual({ development, staging, production }, { development: 'pass', staging: 'pass', production: 'pass' });
+  } finally {
+    fx.cleanup();
+  }
+});
+
+for (const [label, steps] of [['no stage-verify step', []], ['a failed stage-verify step', [{ name: 'stage-verify', status: 'failed' }]]] as const) {
+  test(`T0-PROD-GOAL-STAGES acceptance 2 and 3: a delivered production attempt with ${label} leaves staging pending and the goal in CLOSE`, () => {
+    const fx = makeFixture();
+    try {
+      const { goalId, attemptId } = toDeliver(fx, 'production');
+      fx.store.saveRelease(ReleaseAttempt.parse({ ...fx.store.getRelease(attemptId)!, state: 'DONE', disposition: 'delivered', steps }));
+      const d = fx.controller.next(goalId);
+      assert.equal(d.kind, 'close', d.narration);
+      if (d.kind === 'close') assert.deepEqual(d.missing, ['stage staging=pending']);
+      assert.equal(fx.goal(goalId).state, 'CLOSE');
+      assert.equal(fx.goal(goalId).stages.production, 'pass');
+    } finally {
+      fx.cleanup();
+    }
+  });
+}
