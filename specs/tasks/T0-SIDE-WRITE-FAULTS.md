@@ -19,7 +19,7 @@ requirements:
   - R1. `GoalController.ensureCardRun` shall persist a new card run with its `CARD_DISPATCHED` event in `journalOwed`, keyed by `eventKey`, and shall append that event inside the card-run lock section that saves the run.
   - R2. When that append fails, the saved run shall keep the owed event, and the next `aidlc card next` or `aidlc card attempt` shall append exactly one `CARD_DISPATCHED` with `completed` true through `CardRunner.deliverOwed`, on the same run.
   - R3. `verifyAudit` shall count a `CARD_DISPATCHED` with `completed` true at its `startedAt` against the last disposition of its generation, as it counts `ATTEMPT_STARTED`.
-  - R4. When `writeBoard` throws in `persistStopValue`, the controller shall return the stopped goal so its caller saves the stop, and shall journal a NOTE naming the error code.
+  - R4. When `writeBoard` throws in `persistStopValue`, the controller shall return the stopped goal so its caller saves the stop, and shall journal a NOTE naming the error code; a failure of that NOTE append shall also leave the stopped goal returned, while a failure of the `GOAL_STOPPED` append or of `saveGoal` shall still propagate.
   - R5. `docs/ARCHITECTURE.md` shall state R2 and R4, and the CHANGELOG Unreleased section shall have an entry naming this card.
 acceptance:
   - 1. `tests/scenarios/side-write-faults.test.ts`: a fault-free `ensureCardRun` journals one `CARD_DISPATCHED` that carries `eventKey` and no `completed`, and a following `card next` adds none. [R1] [dod arm 2]
@@ -28,6 +28,7 @@ acceptance:
   - 4. `tests/scenarios/side-write-faults.test.ts`: after that failure, `CardRunner.recordAttempt` as the first step leaves exactly one `CARD_DISPATCHED`. [R2] [dod arm 2]
   - 5. `tests/scenarios/side-write-faults.test.ts`: a recovered `CARD_DISPATCHED` whose `startedAt` is before a `GOAL_STOPPED` gives no `WORK_AFTER_TERMINAL`, one with `startedAt` after it does, and one without `completed` does. [R3] [dod arm 2]
   - 6. `tests/scenarios/side-write-faults.test.ts`: with `paths.board` replaced by a file, `controller.next` on a goal past its deadline returns `stop`, a fresh controller reads the goal as stopped for `time`, and the journal holds one `GOAL_STOPPED` and one NOTE with the error code. [R4] [dod arm 2]
+  - 6a. `tests/scenarios/side-write-faults.test.ts`: with `paths.board` replaced by a file and the NOTE append failing, `controller.next` still returns `stop`, a fresh controller reads the goal as stopped for `time`, and the journal holds one `GOAL_STOPPED` and no NOTE. With the `GOAL_STOPPED` append failing, `controller.next` throws and the goal is not stopped. [R4] [dod arm 2]
   - 7. The existing tests of `journal-owed`, `fault-points`, `audit` and `deadline` pass with no change, apart from two rows of `tests/scenarios/journal-owed.test.ts`. The row `a marked CARD_DISPATCHED is not an attempt` pinned the type filter R3 widens, so it moves to `OPERATION_ISSUED` with the same expected count of 1. The test `a card run without journalOwed parses unchanged` read a fresh run as the legacy record, which R1 changes, so it deletes `journalOwed` from the record it reads and keeps every assertion. [R2] [R3] [R4] [dod arms 3 to 6]
   - 8. `docs/ARCHITECTURE.md` and the CHANGELOG hold the text R5 asks for. [R5] Reviewer-verified.
 depends_on: []
