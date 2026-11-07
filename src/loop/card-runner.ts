@@ -28,7 +28,7 @@ import { GitProbe, oneLine } from '../probes/git.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { decideWorktree } from '../delivery/worktree.ts';
-import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
+import { appendLesson, findLesson, formatLesson, hasLesson, lessonFromText, lessonsPath, matchedLessons, parseLessonLine, readLessons, reviewLessons, type LessonsContext } from '../artifacts/lessons.ts';
 import { DryRunShipPath, ScaffoldShipPath, thrownText, type ShipPath, type ShipResult } from '../delivery/ship.ts';
 import { GitHubShipPath } from '../delivery/github-ship.ts';
 import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
@@ -117,6 +117,8 @@ interface FormalResult {
   decision?: number;
   /** The findings a re-raise repeats, fixed at dispatch (card T1-EFF-R3-PROGRESS-2); absent on reservations written before it. */
   held?: string[];
+  /** The one second pass of the run (card T1-R3-SECOND-PASS). */
+  secondPass?: boolean;
   /** sha256 of the policy text the reviewer received. */
   policyHash?: string;
   /** Paths of the delta since the candidate the stage last reviewed; absent on a first decision. */
@@ -1458,6 +1460,7 @@ export class CardRunner {
    */
   private formalAllowance(run: CardRun, card: Card): number {
     if (!this.config.formalReview.command.length) return MAX_SUBSTANTIVE_REVIEW_DECISIONS;
+    if (this.secondPassDue(run)) return MAX_R3_DECISIONS;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     const last = decided[decided.length - 1];
     return last?.outcome === 'block' && this.invocationBlocking(run, card, last) ? MAX_R3_DECISIONS : MAX_SUBSTANTIVE_REVIEW_DECISIONS;
@@ -1479,7 +1482,7 @@ export class CardRunner {
     if (last?.outcome === 'pass') {
       // The ship paths read the canonical document: a publication that did not land at commit time is repaired here.
       this.repairCanonical(goal, card, run, last);
-      return undefined;
+      if (!this.secondPassDue(run)) return undefined;
     }
     let disputedNote = '';
     if (last?.outcome === 'block') {
@@ -1524,6 +1527,9 @@ export class CardRunner {
     const decision = run.review.substantiveDecisions + 1;
     const retry = last?.outcome === 'no-verdict' ? ' (retry: the previous run produced no verdict)' : '';
     const next = this.save({ ...run, state: 'SHIP' });
+    if (this.secondPassDue(run)) {
+      return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: allowance, narration: `Second R3 pass (${cfg.reviewer}) before the ship: this candidate passed, and one more R3 runs on it with rules matched to its diff${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship and spends no decision; a merge-blocking block returns it to REVIEW_FIX.` } };
+    }
     if (baseSyncDecision) {
       return { run: next, directive: { kind: 'review', cardId: card.id, reviewer: cfg.reviewer, decision, maxDecisions: decision, narration: `Base-sync decision (R3, ${cfg.reviewer}) before the ship: both decisions are used and this candidate merges a moved base, so it gets one more decision of its own${retry}: run \`aidlc review r3 ${card.id}\`. A pass hands the candidate to the ship; a block stops the card for review.` } };
     }
@@ -1585,6 +1591,17 @@ export class CardRunner {
     if (!this.config.formalReview.baseSync || !candidate?.baseSync) return false;
     if (run.review.substantiveDecisions < MAX_SUBSTANTIVE_REVIEW_DECISIONS) return false;
     return !run.review.invocations.some((i) => i.candidateDigest === candidate.digest && (i.outcome === 'pass' || i.outcome === 'block'));
+  }
+
+  /**
+   * The one second pass of a card run is due (card T1-R3-SECOND-PASS): the last decision on the candidate is a pass, no second
+   * pass was decided in this run, and a decision is left for a block. A no-verdict or a quota hold decides nothing, so it stays due.
+   */
+  private secondPassDue(run: CardRun): boolean {
+    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS) return false;
+    const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
+    if (decided.some((i) => i.secondPass)) return false;
+    return [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest)?.outcome === 'pass';
   }
 
   /** The latest invocation on a candidate by either configured formal reviewer, whatever its outcome (pending included). */
@@ -1754,13 +1771,15 @@ export class CardRunner {
     const hash = policyHash(reviewPolicy);
     // The learned invariants are a prompt input like the policy and the diff: read here, with everything else this dispatch
     // sends, before its first mutation (T1-REVIEW-INPUTS), so a lesson written later never changes what the reviewer receives.
-    const lessons = reviewLessons(this.lessonsFile());
+    const secondPass = this.secondPassDue(persisted);
     // The mutant report is read with them, so a report written during the review never changes what this reviewer receives.
     const survivingMutants = this.survivingMutants(cwd, card.id, candidateSha);
     // The cap is checked first (R7): a candidate diff or a delta above it is refused before the hand-off, the release of a
     // failed reservation, the pool request and the reservation, so nothing records the refused review.
     const { changedPaths, diff } = collectCandidateDiff(this.runner, cwd, baseRef, cfg.maxDiffBytes, this.repo.isGit ? candidateSha : 'HEAD', capName);
     if (!diff.trim()) throw new Error(`no committed candidate diff against ${baseRef} in ${cwd}; commit the candidate first`);
+    // A second pass takes the rules that match this diff, so it follows the diff and still comes before the first mutation.
+    const lessons = secondPass ? matchedLessons(this.lessonsFile(), { changedPaths, diff, history: this.git.commitFiles(cwd, baseRef) }) : reviewLessons(this.lessonsFile());
     // The changed lines a [pre-existing] reason is judged against (card T1-REVIEW-PRE-EXISTING), from the diff the reviewer receives.
     const changedLines = changedLineRanges(diff, changedPaths);
     // The effort level is an input like the diff and is counted from the pinned --text diff collected for the review (so a
@@ -1769,12 +1788,13 @@ export class CardRunner {
     const effort: ReviewEffortLevel | undefined = cfg.command.some((a) => a.includes('{effort}')) ? selectReviewEffortFromDiff(cfg.effort, diff, changedPaths, pathAllowed) : undefined;
     // The delta since the candidate the stage last decided on (R9), collected before the lock and bound to that decision under it.
     let since = this.lastReviewedSha(persisted, 'formal');
-    let delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
+    // A second pass reads the whole diff, so it is not a follow-up to the pass before it.
+    let delta = since && !secondPass ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
     persisted = this.releaseFailedReservation(goal, card, persisted, reviewDir);
     // The release re-reads the record: a decision another window committed meanwhile moves the last reviewed candidate, and the delta follows it (under the same cap) before anything is reserved.
     if (this.lastReviewedSha(persisted, 'formal') !== since) {
       since = this.lastReviewedSha(persisted, 'formal');
-      delta = since ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
+      delta = since && !secondPass ? this.collectDelta(cwd, since, candidateSha, cfg.maxDiffBytes, capName) : undefined;
     }
     // Exhausted rounds reach R3 through the command as through the gate: the hand-off is recorded once either way, and only
     // after the last cap check, so a refused review never records it; a decision landing during its write is caught by the
@@ -1822,6 +1842,7 @@ export class CardRunner {
         this.refuseChangedCheckout(current, cwd, candidateSha);
         this.formalAdmission(current, card, candidateSha, candidateDigest, now, cfg);
         if (this.lastReviewedSha(current, 'formal') !== since) throw new Error('a formal decision was recorded since the delta was collected; run the command again');
+        if (this.secondPassDue(current) !== secondPass) throw new Error('the second pass changed since the review was prepared; run the command again');
         if (current.ownerGeneration !== undefined) {
           this.renewOwnLease(card.id, current, now);
           this.leases.fence(resourceKeys.card(this.repo.key, card.id), current.ownerGeneration, currentActor(), now);
@@ -1831,11 +1852,11 @@ export class CardRunner {
         invocationId = `r3:${fileStem}`;
         decisionNo = current.review.substantiveDecisions + 1;
         maxDecisionsNo = this.formalAllowance(current, card);
-        advisoryNotes = this.advisoryNotesFor(current, candidateSha, candidateDigest);
+        advisoryNotes = secondPass ? [] : this.advisoryNotesFor(current, candidateSha, candidateDigest);
         seen = this.findingsSnapshot(current);
         held = heldFindings(current.findings, seen);
         priorFindings = this.priorFindingsFor(current, [...held, ...previousDecisionFindings(current.findings, decisionNo)]);
-        const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', decision: decisionNo, held, policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
+        const reservation: ReviewInvocation = { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer: cfg.reviewer, requestedAt: now, outcome: 'pending', ...(secondPass ? { secondPass: true } : {}), decision: decisionNo, held, policyHash: hash, ...(effort ? { effort } : {}), ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
         // What the reviewer receives is retained next to its verdict, so a commit from the retained result binds the same snapshot.
         writeFileSync(path.join(reviewDir, `${fileStem}.reservation.json`), JSON.stringify({ invocationId, candidateSha, candidateDigest, requestedAt: now, changedPaths, seen, policyHash: hash, deltaPaths: delta?.changedPaths, timeoutMs: cfg.timeoutMs }, null, 2) + '\n', 'utf8');
         return { ...current, review: { ...current.review, invocations: [...current.review.invocations, reservation] } };
@@ -1905,7 +1926,7 @@ export class CardRunner {
     const classified = this.classifyFormal(card, candidateSha, verdict, outcome, runStatus, reasons);
     // Timed from the clock after the run: a review can outlast the hold it reports.
     const holdUntil = classified.outcome === 'quota-hold' ? addMs(after, panel?.retryAfterMs ?? 15 * 60 * 1000) : undefined;
-    const result: FormalResult = { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, decision: decisionNo, held, policyHash: hash, deltaPaths: delta?.changedPaths, requestedAt: now, at: after, verdict, classified, advisory: panel?.advisory ?? [], verdictRef: panel?.verdictRef, logRef: panel?.logRef, durationMs: panel?.durationMs ?? 0, receiptSha256: panel?.receiptSha256 ?? '', holdUntil, reviewer: cfg.reviewer, effort, ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
+    const result: FormalResult = { invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths, seen, decision: decisionNo, secondPass, held, policyHash: hash, deltaPaths: delta?.changedPaths, requestedAt: now, at: after, verdict, classified, advisory: panel?.advisory ?? [], verdictRef: panel?.verdictRef, logRef: panel?.logRef, durationMs: panel?.durationMs ?? 0, receiptSha256: panel?.receiptSha256 ?? '', holdUntil, reviewer: cfg.reviewer, effort, ...(baseSyncDecision ? { baseSync: true } : {}), timeoutMs: cfg.timeoutMs };
     // The complete result is published next to its verdict, atomically, before the pool request is settled and the decision
     // committed: a later step that does not land is redone from the envelope (`retainedFormalResult`), never from the log.
     this.publishEnvelope(result, key, admittedSeq, outcome, runStatus, reasons, panel?.retryAfterMs);
@@ -2055,7 +2076,7 @@ export class CardRunner {
       if (age <= (pending.timeoutMs ?? this.formalReviewerFor(pending.reviewer).timeoutMs) + RECONCILE_GRACE_MS) return undefined;
       const classified = this.classifyFormal(card, candidateSha, undefined, 'no-verdict', 'malformed', [existsSync(logRef) ? 'the reviewer ran but no result envelope was published' : 'no result and no receipt within the reviewer timeout and the grace']);
       const key = reviewRequestKey({ repository: goal.repository, candidateDigest, base: pending.base, policyVersion: pending.policyVersion, reviewer: pending.reviewer });
-      return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, seen: {}, decision: pending.decision, held: pending.held, policyHash: pending.policyHash, requestedAt: pending.requestedAt, at, verdict: undefined, classified, advisory: [], logRef: existsSync(logRef) ? logRef : undefined, durationMs: 0, receiptSha256: '', reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key };
+      return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, seen: {}, decision: pending.decision, secondPass: pending.secondPass, held: pending.held, policyHash: pending.policyHash, requestedAt: pending.requestedAt, at, verdict: undefined, classified, advisory: [], logRef: existsSync(logRef) ? logRef : undefined, durationMs: 0, receiptSha256: '', reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key };
     }
     // The envelope is the whole result: its outcome, status and, for a decided outcome, the verdict it was classified from.
     // The sidecar beside it is retained evidence, never read back for a decision.
@@ -2064,7 +2085,7 @@ export class CardRunner {
     const classified = this.classifyFormal(card, candidateSha, verdict, envelope.outcome, envelope.runStatus, envelope.reasons);
     // A recovered hold keeps the deadline the envelope recorded (from its completion, never from the recovery).
     const holdUntil = classified.outcome === 'quota-hold' ? (envelope.holdUntil ?? addMs(envelope.at, envelope.retryAfterMs ?? 15 * 60 * 1000)) : undefined;
-    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths: envelope.changedPaths, seen: envelope.seen, decision: pending.decision, held: pending.held, policyHash: pending.policyHash ?? envelope.policyHash, deltaPaths: envelope.deltaPaths, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory: envelope.advisory, verdictRef: existsSync(verdictFile) ? verdictFile : undefined, logRef: existsSync(logRef) ? logRef : undefined, durationMs: envelope.durationMs, receiptSha256: envelope.receiptSha256, holdUntil, reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key: envelope.key, seq: envelope.seq };
+    return { invocationId: pending.invocationId, fileStem, reviewDir, candidateSha, candidateDigest, changedPaths: envelope.changedPaths, seen: envelope.seen, decision: pending.decision, secondPass: pending.secondPass, held: pending.held, policyHash: pending.policyHash ?? envelope.policyHash, deltaPaths: envelope.deltaPaths, requestedAt: pending.requestedAt, at, verdict: classified.outcome === 'quota-hold' ? undefined : verdict, classified, advisory: envelope.advisory, verdictRef: existsSync(verdictFile) ? verdictFile : undefined, logRef: existsSync(logRef) ? logRef : undefined, durationMs: envelope.durationMs, receiptSha256: envelope.receiptSha256, holdUntil, reviewer: pending.reviewer, effort: pending.effort, baseSync: pending.baseSync, timeoutMs: pending.timeoutMs, retained: true, key: envelope.key, seq: envelope.seq };
   }
 
   /**
@@ -2198,7 +2219,7 @@ export class CardRunner {
         // Only the pending reservation is ever released: a decision already committed under this invocation stays with its counters.
         release: (latest) => ({ ...latest, review: { ...latest.review, invocations: latest.review.invocations.filter((i) => !(i.invocationId === invocationId && i.outcome === 'pending')) } }),
         decide: (latest) => {
-          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest));
+          const rec = recordReviewOutcome(dropReservation(latest), { invocationId, candidateDigest, candidateSha, base: this.config.base, policyVersion: this.config.reviewPolicyVersion, reviewer, requestedAt: r.requestedAt, ...(r.secondPass ? { secondPass: true } : {}), verdictRef: r.verdictRef, holdUntil, mergeBlocking: classified.mergeBlocking, policyHash: r.policyHash, ...(r.effort ? { effort: r.effort } : {}), ...(r.baseSync ? { baseSync: true } : {}), ...(r.timeoutMs ? { timeoutMs: r.timeoutMs } : {}), ...(r.decision ? { decision: r.decision } : {}), ...(r.held ? { held: r.held } : {}), ...(advisory.length ? { advisory } : {}) }, classified, verdict, 0, repeated(latest));
           decision = rec.decision;
           // Findings: every cited reason of a block (root or axis, advisory included) is recorded; a pass resolves the stage's open ones the reviewer received.
           // A routed skip is not a decision on the findings: it records and resolves nothing.
@@ -2232,7 +2253,7 @@ export class CardRunner {
             },
           };
         },
-        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash, ...pin } }),
+        event: (status, found) => ({ type: 'REVIEW_DECIDED', data: { invocationId, reviewer, candidateDigest, outcome: classified.outcome, mergeBlocking: classified.mergeBlocking, decision: discardedDecision(status) ?? decision?.action, runStatus: classified.runStatus, reasons: classified.reasons, advisory, findings: found.raised, reraised: found.reraised, resolved: found.resolved, verdictRef: r.verdictRef, receiptSha256: r.receiptSha256, durationMs: r.durationMs, holdUntil, retained: r.retained || undefined, policyHash: r.policyHash, secondPass: r.secondPass || undefined, ...pin } }),
       },
       after,
     );

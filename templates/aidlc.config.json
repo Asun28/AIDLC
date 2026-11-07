@@ -52,6 +52,7 @@
     "answerMarker": ""
   },
   "formalReview": {
+    "secondPass": false,
     "command": [],
     "reviewer": "codex",
     "timeoutMs": 1200000,
