@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXEC-SYNC-TREE-KILL.g-20261023145601-99e6a2.F2",
+  "candidate": "1f8115a9e0e474b50ee5413fc775d5223e6335ed",
+  "base": "4c11ddb9cec308bc3f178044948fc8c1bfb873bd",
+  "card": {
+    "id": "T0-EXEC-SYNC-TREE-KILL",
+    "path": "specs/tasks/T0-EXEC-SYNC-TREE-KILL.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-EXEC-SYNC-TREE-KILL F2 (goal g-20261023145601-99e6a2)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling (class: helper-json-output-overflow) @ src/probes/exec.ts:82: Bugs: the 256 MiB transport buffer cannot preserve all output previously supported by the 64 MiB direct runner. For example, 45 MiB of NUL stdout serializes to more than 270 MiB, causing ENOBUFS and replacing the command's exit and output with a helper error -> Size the transport for worst-case JSON expansion plus receipt overhead, or use a bounded encoding that preserves the supported output capacity; add a regression test.",
+  "expected": [
+    {
+      "file": "src/probes/exec.ts",
+      "line": 82,
+      "window": 5,
+      "class": "helper-json-output-overflow"
+    }
+  ]
+}

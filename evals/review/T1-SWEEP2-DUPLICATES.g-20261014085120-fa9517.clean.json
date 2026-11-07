@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-SWEEP2-DUPLICATES.g-20261014085120-fa9517.clean",
+  "candidate": "ce5c24348b08da03f00a5f3aeac0b0c0c1aaed10",
+  "base": "9ddb0dac7086394748374d1b7b277e5a3eab9e98",
+  "card": {
+    "id": "T1-SWEEP2-DUPLICATES",
+    "path": "specs/tasks/T1-SWEEP2-DUPLICATES.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-SWEEP2-DUPLICATES clean (goal g-20261014085120-fa9517)",
+  "note": "R3 decision 1 passed (codex)"
+}

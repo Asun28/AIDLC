@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-RENAME-PATHS.g-20260924194613-9be85e.clean",
+  "candidate": "119f1950e39d59e87a7bdb76c8df214e2447126a",
+  "base": "2d5fdff978323e32e4a4f21475487829248132ed",
+  "card": {
+    "id": "T1-RENAME-PATHS",
+    "path": "specs/tasks/T1-RENAME-PATHS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-RENAME-PATHS clean (goal g-20260924194613-9be85e)",
+  "note": "R3 decision 1 passed (claude-opus-5-5)"
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-INIT-HOOK-PATH.g-20261104211601-cd026e.F2",
+  "candidate": "f7581143da42b7c912028298d9f8c5afa6c60590",
+  "base": "5726c34b624c15795a81daed80a2ebc6f13ff125",
+  "card": {
+    "id": "T1-INIT-HOOK-PATH",
+    "path": "specs/tasks/T1-INIT-HOOK-PATH.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-INIT-HOOK-PATH F2 (goal g-20261104211601-cd026e)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: node-option-injection) @ src/scaffold/init.ts:127: Security: isDispatcherCommand accepts node \"--eval=console.log('R3_OPTION_EXECUTED')//bin/aidlc-hook.js\". Doctor passes this as a Node option at hook-wiring.ts:31, executing JavaScript instead of a dispatcher; the harmless payload was verified. -> Require an absolute filesystem path for the quoted form and pass -- before the script argument; add a rejection regression test.",
+  "expected": [
+    {
+      "file": "src/scaffold/init.ts",
+      "line": 127,
+      "window": 5,
+      "class": "node-option-injection"
+    }
+  ]
+}

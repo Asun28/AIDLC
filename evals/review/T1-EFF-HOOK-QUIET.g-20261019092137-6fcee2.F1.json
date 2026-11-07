@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-EFF-HOOK-QUIET.g-20261019092137-6fcee2.F1",
+  "candidate": "fe3484db8a8004aeebcabe71f5ccba178572e56b",
+  "base": "9747b7af0177ac593dda64ca1b2eb3a8a8de2c04",
+  "card": {
+    "id": "T1-EFF-HOOK-QUIET",
+    "path": "specs/tasks/T1-EFF-HOOK-QUIET.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-EFF-HOOK-QUIET F1 (goal g-20261019092137-6fcee2)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity @ src/hooks/index.ts:616: Bugs/Compliance: Without an explicit session argument, a Stop with an active goal but no pending runs skips clearing the fallback session's record. A reminder, receipt, Stop, receipt removal, Stop sequence then suppresses the required new reminder, violating R1/R3/R5. Confirmed with an in-memory probe. -> Resolve the acting session and reconcile an empty pending set whenever an active goal exists; cover the sequence without session_id in the existing test.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 616,
+      "window": 5,
+      "class": "dim-14"
+    }
+  ]
+}

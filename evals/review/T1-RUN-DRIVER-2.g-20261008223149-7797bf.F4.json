@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-RUN-DRIVER-2.g-20261008223149-7797bf.F4",
+  "candidate": "fb40eb53ac512783e1835fb308f220afbbbbd28c",
+  "base": "3b99624901cdd02179cf4a6530615c4e423e7ac7",
+  "card": {
+    "id": "T1-RUN-DRIVER-2",
+    "path": "specs/tasks/T1-RUN-DRIVER-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-RUN-DRIVER-2 F4 (goal g-20261008223149-7797bf)",
+  "note": "R3 decision 1, open, resolved: [standards] 10 environment leakage (Bugs) @ src/loop/controller.ts:846: Direct watchScreen/previewNext calls bypass the CLI-only session safeguard. With an uncached actor and no session variables/token, shadow.next calls currentActor(), which creates session-default in the real state directory. Intercepted filesystem calls confirmed this for both methods, violating their read-only guarantee. -> Resolve a non-persisting session identity within the shared preview boundary and test both entrypoints with an uncached, sessionless actor.",
+  "expected": [
+    {
+      "file": "src/loop/controller.ts",
+      "line": 846,
+      "window": 5,
+      "class": "dim-10"
+    }
+  ]
+}

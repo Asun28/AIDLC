@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-LAZY-2.g-20261023090928-62ec9c.F2",
+  "candidate": "f5345537b513964b82e26d726c7ec58354794944",
+  "base": "9a9b007bd34bd3049961a5da79c8183a5253db4f",
+  "card": {
+    "id": "T0-HOOK-LAZY-2",
+    "path": "specs/tasks/T0-HOOK-LAZY-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-HOOK-LAZY-2 F2 (goal g-20261023090928-62ec9c)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling (class: lazy-load-error-swallowed) @ src/hooks/index.ts:427: Bugs: a goal-store load failure is caught as an authorization mismatch. Fault injection returned exit 2, contradicting the documented stderr/exit-0 load-failure path and blocking an otherwise approved deployment. -> Distinguish module-load errors and rethrow them through the guard to the existing hook-entry handler; retain existing handling of authorization/store errors.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 427,
+      "window": 5,
+      "class": "lazy-load-error-swallowed"
+    }
+  ]
+}

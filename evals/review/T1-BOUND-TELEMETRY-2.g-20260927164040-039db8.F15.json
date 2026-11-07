@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-BOUND-TELEMETRY-2.g-20260927164040-039db8.F15",
+  "candidate": "40184854f70e4fc4ef9b6c1efbfeb4b2f2bae2ad",
+  "base": "4f9bcb96b9b13faf3e2df050b1e57bcac66dc698",
+  "card": {
+    "id": "T1-BOUND-TELEMETRY-2",
+    "path": "specs/tasks/T1-BOUND-TELEMETRY-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-BOUND-TELEMETRY-2 F15 (goal g-20260927164040-039db8)",
+  "note": "R3 decision 1, open, resolved: [standards] 12 observability (Bugs) @ src/loop/card-runner.ts:579: When a bound fires, every assessment-note append error is silently discarded, including CARD_STATE, LEASE_RENEWED and ATTEMPT_FINISHED. If BOUND_FIRED succeeded, no pending marker remains to expose or recover this lost evidence. -> Preserve failed notes for recovery or emit a durable incomplete-evidence diagnostic while still returning the saved stop.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 579,
+      "window": 5,
+      "class": "dim-12"
+    }
+  ]
+}

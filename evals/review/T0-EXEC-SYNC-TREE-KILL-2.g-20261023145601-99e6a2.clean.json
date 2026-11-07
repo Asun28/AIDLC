@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-EXEC-SYNC-TREE-KILL-2.g-20261023145601-99e6a2.clean",
+  "candidate": "b611a6d8785c3d1170c3b4b02f29c9f1dcfc5a08",
+  "base": "e4936581780ba8491990b9c6c774488cd8801d80",
+  "card": {
+    "id": "T0-EXEC-SYNC-TREE-KILL-2",
+    "path": "specs/tasks/T0-EXEC-SYNC-TREE-KILL-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-EXEC-SYNC-TREE-KILL-2 clean (goal g-20261023145601-99e6a2)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-REVIEW-BENCH-EXPORT-3.g-20261106045034-cc1c92.clean",
+  "candidate": "651309b47b9ac22880bc1347dd1b565c7ec8a1aa",
+  "base": "0af6b8f4f9cc82b8cf15f4e313e6b3d24940a8c6",
+  "card": {
+    "id": "T1-REVIEW-BENCH-EXPORT-3",
+    "path": "specs/tasks/T1-REVIEW-BENCH-EXPORT-3.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-REVIEW-BENCH-EXPORT-3 clean (goal g-20261106045034-cc1c92)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-REVIEW-RELEASE.g-20261104222914-91327d.F4",
+  "candidate": "07a4d6d33e8b6cccc003259269af44ee524450ce",
+  "base": "100bda8e1019b06250c2f0106fadebb8cc7da003",
+  "card": {
+    "id": "T0-REVIEW-RELEASE",
+    "path": "specs/tasks/T0-REVIEW-RELEASE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-REVIEW-RELEASE F4 (goal g-20261104222914-91327d)",
+  "note": "R3 decision 2, open, resolved: [standards] 2 hard boundaries (class: cross-pool-request-race) @ src/coordination/review-queue.ts:85: Security/Bugs: home() and body() read the request separately. Reproduced: the checked request is cancelled in A, then moves to running in B before body's read. Release holds A's lock while releasing B; a live re-admission in B during before succeeds and is then overwritten as cancelled. This violates the explicit live-owner prohibition. -> Make pool selection and request transition atomic across moves; bind the checked request to the body and retry under the correct lock. Add this interleaving regression test.",
+  "expected": [
+    {
+      "file": "src/coordination/review-queue.ts",
+      "line": 85,
+      "window": 5,
+      "class": "cross-pool-request-race"
+    }
+  ]
+}

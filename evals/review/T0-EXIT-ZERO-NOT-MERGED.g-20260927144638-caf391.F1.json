@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXIT-ZERO-NOT-MERGED.g-20260927144638-caf391.F1",
+  "candidate": "48ddc8331c8ee1a6e83f259fda2f82f483ad0ce9",
+  "base": "9e40449bab15d072aaa73241a60a5c44c29219ee",
+  "card": {
+    "id": "T0-EXIT-ZERO-NOT-MERGED",
+    "path": "specs/tasks/T0-EXIT-ZERO-NOT-MERGED.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-EXIT-ZERO-NOT-MERGED F1 (goal g-20260927144638-caf391)",
+  "note": "R3 decision 1, open, resolved: [spec] 1 out of scope @ src/delivery/ship.ts:219: [Compliance] Exit 0 with only [SAGA-FAIL] changes from unclassified to merge-unconfirmed, violating the non-goal preserving failure classes. Reproduced CLOSE/succeeded with a matching token despite the explicit failure. -> Exclude [SAGA-FAIL] from this fallback, preserve unclassified, and correct the new fixture expecting merge-unconfirmed.",
+  "expected": [
+    {
+      "file": "src/delivery/ship.ts",
+      "line": 219,
+      "window": 5,
+      "class": "dim-1"
+    }
+  ]
+}

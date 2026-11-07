@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-CARD-GOAL-RESOLVE.g-20260926083410-18d063.clean",
+  "candidate": "793546a1e7123e4124df665ed2b1587ecf79fcab",
+  "base": "97e4719eccca59bf99e76e38f604ae88ef9a1f85",
+  "card": {
+    "id": "T0-CARD-GOAL-RESOLVE",
+    "path": "specs/tasks/T0-CARD-GOAL-RESOLVE.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-CARD-GOAL-RESOLVE clean (goal g-20260926083410-18d063)",
+  "note": "R3 decision 1 passed (codex)"
+}

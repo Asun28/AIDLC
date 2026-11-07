@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-JOURNAL-FAULT-EVENTS.g-20261023193429-707c23.F2",
+  "candidate": "b916eabce882a1c1bf80c0712aebad0d121c7ed5",
+  "base": "9a9b007bd34bd3049961a5da79c8183a5253db4f",
+  "card": {
+    "id": "T0-JOURNAL-FAULT-EVENTS",
+    "path": "specs/tasks/T0-JOURNAL-FAULT-EVENTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-JOURNAL-FAULT-EVENTS F2 (goal g-20261023193429-707c23)",
+  "note": "R3 decision 2, open, resolved: [spec] 14 scope fidelity (class: guard-before-owed-recovery) @ src/loop/card-runner.ts:937: Compliance/Bugs: recordAttempt rejects success with checksLost before delivering an existing owed event. The probe confirmed zero delivery calls, violating R4's recovery-first requirement -> Move persisted-run lookup and delivery before this validation; test recovery on the rejected call.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 937,
+      "window": 5,
+      "class": "guard-before-owed-recovery"
+    }
+  ]
+}

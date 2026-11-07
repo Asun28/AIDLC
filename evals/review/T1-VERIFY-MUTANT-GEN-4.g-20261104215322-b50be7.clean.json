@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-VERIFY-MUTANT-GEN-4.g-20261104215322-b50be7.clean",
+  "candidate": "3cc4e92aeee4f73eecfa3bd51ea1ce07eb03a0e8",
+  "base": "4a2514ee0801e158dfabfad1d88e3fd0096aa9e9",
+  "card": {
+    "id": "T1-VERIFY-MUTANT-GEN-4",
+    "path": "specs/tasks/T1-VERIFY-MUTANT-GEN-4.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-VERIFY-MUTANT-GEN-4 clean (goal g-20261104215322-b50be7)",
+  "note": "R3 decision 1 passed (codex)"
+}

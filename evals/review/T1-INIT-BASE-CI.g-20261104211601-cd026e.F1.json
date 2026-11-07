@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-INIT-BASE-CI.g-20261104211601-cd026e.F1",
+  "candidate": "340ff1d3a137e75fb6c9819ce27a7457c8346cb7",
+  "base": "9a1c04cf13b2d103984658e46e49ea470d5dd28d",
+  "card": {
+    "id": "T1-INIT-BASE-CI",
+    "path": "specs/tasks/T1-INIT-BASE-CI.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-INIT-BASE-CI F1 (goal g-20261104211601-cd026e)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: cwd-executable-hijack) @ src/scaffold/init.ts:55: Security: on Windows, launching bare 'git' searches the working directory. Running init from a cloned repository containing git.exe therefore executes repository-controlled code, including during dryRun. -> Resolve a trusted absolute Git executable without searching the checkout; add a Windows regression covering a checkout-local git.exe.",
+  "expected": [
+    {
+      "file": "src/scaffold/init.ts",
+      "line": 55,
+      "window": 5,
+      "class": "cwd-executable-hijack"
+    }
+  ]
+}

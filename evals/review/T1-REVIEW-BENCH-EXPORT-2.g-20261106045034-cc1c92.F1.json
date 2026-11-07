@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-REVIEW-BENCH-EXPORT-2.g-20261106045034-cc1c92.F1",
+  "candidate": "950e5c3bb5b06fc257b11e582a4ebff1dd2c180c",
+  "base": "4a2514ee0801e158dfabfad1d88e3fd0096aa9e9",
+  "card": {
+    "id": "T1-REVIEW-BENCH-EXPORT-2",
+    "path": "specs/tasks/T1-REVIEW-BENCH-EXPORT-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-REVIEW-BENCH-EXPORT-2 F1 (goal g-20261106045034-cc1c92)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: hook-name-option-parsing) @ src/review/bench.ts:519: Security: a valid hook named Bench=Hook produces -c hook.Bench=Hook.enabled=false, which Git parses at the first '='. Verified that the intended hook remains enabled and appears as enabled in git hook list; update-ref can execute it despite R12. -> Reject names containing '=' before any writes, or transmit their configuration keys and values separately; add a regression.",
+  "expected": [
+    {
+      "file": "src/review/bench.ts",
+      "line": 519,
+      "window": 5,
+      "class": "hook-name-option-parsing"
+    }
+  ]
+}

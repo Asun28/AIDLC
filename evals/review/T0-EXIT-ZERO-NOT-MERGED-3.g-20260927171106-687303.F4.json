@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-EXIT-ZERO-NOT-MERGED-3.g-20260927171106-687303.F4",
+  "candidate": "cb808130afc2912c748b7f0d6dd5c099eb430168",
+  "base": "8d6ce1deca09903f49d6032a8be4e2cc598e1bd5",
+  "card": {
+    "id": "T0-EXIT-ZERO-NOT-MERGED-3",
+    "path": "specs/tasks/T0-EXIT-ZERO-NOT-MERGED-3.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-EXIT-ZERO-NOT-MERGED-3 F4 (goal g-20260927171106-687303)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data and persistence @ src/loop/card-runner.ts:2369: [Bugs] A token matching candidate A verifies the merge even when gh reports MERGED at B, but the result then records B's head, merge commit and tree as this card's shipped facts while the card records head A. An isolated execution confirmed this contradiction; audit re-derivation can validate B's facts without tying them to A. -> For merge-unconfirmed, emit gh facts only when the view is MERGED at the verified candidate; otherwise omit facts. Add a matching-token/contradictory-head regression test.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 2369,
+      "window": 5,
+      "class": "dim-13"
+    }
+  ]
+}

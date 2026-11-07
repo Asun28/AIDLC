@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-CONFIG-CLOSED-2.g-20260927143009-4be68e.F2",
+  "candidate": "f45e1faef644eda4e33bb7ae88bf57f0c9fd5eab",
+  "base": "60742302024288989a0749ddc621f54dbb3a2325",
+  "card": {
+    "id": "T0-HOOK-CONFIG-CLOSED-2",
+    "path": "specs/tasks/T0-HOOK-CONFIG-CLOSED-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-HOOK-CONFIG-CLOSED-2 F2 (goal g-20260927143009-4be68e)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries @ src/hooks/index.ts:183: [Compliance] The !cmd branch permits an empty Bash command without the exact doctor-command comparison required by R2 and forbid. The new tests explicitly preserve this extra exemption. -> Remove the empty-string exemption and assert that an empty Bash command is denied by both guards.",
+  "expected": [
+    {
+      "file": "src/hooks/index.ts",
+      "line": 183,
+      "window": 5,
+      "class": "dim-2"
+    }
+  ]
+}
