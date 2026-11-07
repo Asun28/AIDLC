@@ -74,7 +74,7 @@ export function nextEffortAction(episode: EffortEpisode, justification?: Escalat
   const last = evaluated[evaluated.length - 1];
   const prev = evaluated[evaluated.length - 2];
   if (last?.outcome === 'fail' && prev?.outcome === 'fail' && last.cause && prev.cause && normaliseCause(last.cause) === normaliseCause(prev.cause) && !last.progress && !prev.progress) {
-    return { action: 'stop', reason: 'same-cause-stop', detail: `two consecutive failures with cause "${normaliseCause(last.cause)}" and no verified progress` };
+    return { action: 'stop', reason: 'same-cause-stop', detail: `two consecutive failures with cause ${JSON.stringify(normaliseCause(last.cause))} and no verified progress` };
   }
   const counted = countedAttempts(episode).length;
   const n = nextAttemptNumber(episode);

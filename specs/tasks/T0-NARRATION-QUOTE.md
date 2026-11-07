@@ -54,7 +54,9 @@ Outside text in a directive's narration or a stop detail is a JSON string. Close
 ## Attempt evidence
 RED, commit 0600e01: `node --test tests/scenarios/narration-quote.test.ts` exits 1, tests 16, pass 1, fail 15, each because the value stands bare in the narration or the stop detail. The row that passes is acceptance 3, the stored cause, which holds on main and must keep holding.
 
-Each quote the fix adds was removed in turn, by hand, and the test file run: 28 removals, 27 failed a test. The one that passes is the `red-missing` stop when no repair is admitted (`card-runner.ts:2885`), which no state reaches. The first pass of this check left four intent sentences and five ship details without a row whose value carried the marker; those rows are in.
+RED for repair 1, commit efaca64 (R3 decision 1 F1, F2): tests 21, pass 20, fail 1: the same-cause ladder stop, whose cause stood in plain quotation marks that a quotation mark in the failing line could close. The two rows F2 asked for, the deadlock and the contest stop reached through the card runner, pass at that commit, since the sentences were already quoted and only the path through the runner was untested.
+
+Each quote the first candidate adds was removed in turn, by hand, and the test file run: 28 removals, 27 failed a test. The one that passes is the `red-missing` stop when no repair is admitted (`card-runner.ts:2885`), which no state reaches. The first pass of this check left four intent sentences and five ship details without a row whose value carried the marker; those rows are in.
 
 ## Acceptance
 ```powershell
