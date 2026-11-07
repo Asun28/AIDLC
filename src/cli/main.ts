@@ -499,6 +499,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       out(c, { effort: updated.effort, dodReceipt: updated.dodReceipt, candidate: updated.candidate }, () => `recorded ${o.outcome}; attempts=${updated.effort?.attempts.length} terminal=${updated.effort?.terminal ?? '-'}; run \`aidlc card next ${cardId}\``);
     });
   card
+    .command('withdraw <cardId>')
+    .description('withdraw the bound candidate before R3 has decided it: its success becomes a counted failure with this cause and the repair is the next attempt')
+    .option('--goal <id>')
+    .requiredOption('--cause <text>', 'the finding that refutes the candidate')
+    .action((cardId: string, o: { goal?: string; cause: string }) => {
+      const c = ctx(g());
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const updated = runnerFor(c).withdrawCandidate(goalRec, parsed.card, run, o.cause);
+      c.controller.writeBoard(goalRec);
+      out(c, { effort: updated.effort, candidate: updated.candidate, pendingRepair: updated.pendingRepair }, () => `withdrew candidate ${updated.candidate?.sha.slice(0, 12)}; the attempt that bound it counts as failed; run \`aidlc card next ${cardId}\``);
+    });
+  card
     .command('close <cardId>')
     .description('mark closure predicates as verified')
     .option('--goal <id>')

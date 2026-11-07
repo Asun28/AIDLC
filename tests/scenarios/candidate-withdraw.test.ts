@@ -56,9 +56,15 @@ function setup(preReview?: { onExhausted: 'stop' | 'ship'; rounds: number }) {
   });
   const r2: string[] = [];
   const r3: string[] = [];
+  let duringDiff: (() => void) | undefined;
   const script = scriptedRunner({
     'git diff --name-only': { stdout: 'src/t0-cw.ts\u0000' },
-    'git diff': { stdout: 'diff --git a/src/t0-cw.ts b/src/t0-cw.ts\n+export const cw = 1;\n' },
+    'git diff': () => {
+      const act = duringDiff;
+      duringDiff = undefined;
+      act?.();
+      return { stdout: 'diff --git a/src/t0-cw.ts b/src/t0-cw.ts\n+export const cw = 1;\n' };
+    },
     'fake-r2': () => ({ stdout: r2.shift() ?? PASS }),
     'fake-r3': () => ({ stdout: r3.shift() ?? PASS }),
   });
@@ -77,7 +83,7 @@ function setup(preReview?: { onExhausted: 'stop' | 'ship'; rounds: number }) {
   const next = () => runner.next(g(), card, stored());
   const patch = (change: (run: CardRun) => CardRun): CardRun => fx.store.updateCardRun(goal.id, CARD, (run) => change(run!));
   const attemptsFinished = () => fx.events(goal.id).filter((e) => e.type === 'ATTEMPT_FINISHED' && e.data['refutedBy'] === 'withdrawn');
-  return { fx, runner, card, g, goalId: goal.id, first, stored, bind, withdraw, next, patch, attemptsFinished, r2, r3 };
+  return { fx, runner, card, g, goalId: goal.id, first, stored, bind, withdraw, next, patch, attemptsFinished, r2, r3, onDiff: (act: () => void) => (duringDiff = act) };
 }
 type Setup = ReturnType<typeof setup>;
 
@@ -105,7 +111,9 @@ test('T0-CANDIDATE-WITHDRAW acceptance 1: a candidate no review has read is with
   withCard((s) => {
     const bound = s.bind('sha-a');
     assert.equal(bound.effort?.terminal, 'succeeded');
+    assert.equal(s.next().run.state, 'SHIP', 'the withdrawal starts from the ship gate');
     const digest = bound.candidate?.digest;
+    s.patch((current) => ({ ...current, blockedReceipt: { dodReceipt: 'dod:kept', candidateDigest: digest!, stage: 'pre', cycle: 0, round: 1 } }));
     const run = s.withdraw();
     const attempt = run.effort!.attempts.at(-1)!;
     assert.deepEqual([attempt.outcome, attempt.cause], ['fail', `withdrawn: ${FINDING}`]);
@@ -136,6 +144,7 @@ test('T0-CANDIDATE-WITHDRAW acceptance 2: card next after a withdrawal opens the
 const REFUSALS: Array<{ name: string; arrange: (s: Setup) => void; expected: RegExp }> = [
   { name: 'a stopped run', arrange: (s) => void s.patch((run) => ({ ...run, state: 'STOP', stop: makeStop('review', 'held', 'ask', { at: T, global: false }) })), expected: /stopped/ },
   { name: 'a merged run', arrange: (s) => void s.patch((run) => ({ ...run, mergeVerified: true })), expected: /merged/ },
+  { name: 'a card deadline that has passed', arrange: (s) => void s.patch((run) => ({ ...run, deadline: '2026-09-10T00:00:00.000Z' })), expected: /deadline/ },
   { name: 'a run with no candidate', arrange: (s) => void s.patch((run) => ({ ...run, candidate: undefined })), expected: /no candidate/ },
   { name: 'a pending repair', arrange: (s) => void s.patch((run) => ({ ...run, pendingRepair: { kind: 'red-missing', detail: 'rejected', at: T } })), expected: /red-missing/ },
   {
@@ -263,6 +272,16 @@ test('T0-CANDIDATE-WITHDRAW acceptance 6: no R2 round and no R3 decision runs on
     { onExhausted: 'stop', rounds: 3 },
   ));
 
+test('T0-CANDIDATE-WITHDRAW acceptance 6: a withdrawal landing while a review collects its diff refuses that dispatch at its reservation [R5]', () =>
+  withCard(async (s) => {
+    s.bind('sha-a');
+    s.onDiff(() => s.withdraw());
+    await assert.rejects(() => s.runner.formalReview(s.g(), s.card, s.stored()), /withdrawn/);
+    assert.equal(s.stored().pendingRepair?.kind, 'withdrawn');
+    assert.equal(s.stored().review.invocations.length, 0);
+    assert.deepEqual(s.fx.queue.list().filter((r) => r.state === 'running'), [], 'the refused dispatch holds no active slot');
+  }));
+
 test('T0-CANDIDATE-WITHDRAW acceptance 7: the repaired candidate needs its own R2 pass and its own R3 decision, though R2 passed the withdrawn one [R6]', () =>
   withCard(
     async (s) => {
@@ -296,6 +315,15 @@ test('T0-CANDIDATE-WITHDRAW acceptance 7: R2 rounds spent under onExhausted ship
     { onExhausted: 'ship', rounds: 1 },
   ));
 
+test('T0-CANDIDATE-WITHDRAW acceptance 7: the repair of a withdrawn base-sync candidate is still a base-sync candidate [R6]', () =>
+  withCard((s) => {
+    s.bind('sha-a');
+    s.patch((run) => ({ ...run, candidate: { ...run.candidate!, baseSync: true } }));
+    s.withdraw();
+    s.next();
+    assert.equal(s.bind('sha-b').candidate?.baseSync, true);
+  }));
+
 test('T0-CANDIDATE-WITHDRAW acceptance 8: a lost ATTEMPT_FINISHED append keeps the withdrawal, and the next card next journals it once [R7]', () =>
   withCard((s) => {
     s.bind('sha-a');
@@ -314,6 +342,19 @@ test('T0-CANDIDATE-WITHDRAW acceptance 8: a lost ATTEMPT_FINISHED append keeps t
     assert.equal(finished[0]?.data['completed'], true);
     s.next();
     assert.equal(s.attemptsFinished().length, 1, 'a second card next adds none');
+  }));
+
+test('T0-CANDIDATE-WITHDRAW acceptance 8: a refused withdrawal still delivers the owed event an earlier append lost [R7]', () =>
+  withCard((s) => {
+    s.bind('sha-a');
+    failingEvent = 'ATTEMPT_FINISHED';
+    try {
+      assert.throws(() => s.withdraw(), /EIO/);
+    } finally {
+      failingEvent = undefined;
+    }
+    assert.throws(() => s.withdraw(), /repair is pending|open/);
+    assert.equal(s.attemptsFinished().length, 1);
   }));
 
 test('T0-CANDIDATE-WITHDRAW acceptance 9: a failed record write leaves the run and the journal as they were, and a retry withdraws [R1]', () =>

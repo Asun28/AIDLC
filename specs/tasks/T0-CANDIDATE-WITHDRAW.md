@@ -67,6 +67,11 @@ hygiene: "Issue 128, using the shape its comments ask for: a recorded withdrawal
 ## Deliverable
 `aidlc card withdraw <id> --cause "<finding>"` reopens a bound candidate no R3 decision has decided. Closes issue 128.
 
+## Attempt evidence
+RED, commit 70b2bc1: `node --test tests/scenarios/candidate-withdraw.test.ts` exits 1, tests 25, pass 0, fail 25. Acceptance 10 fails on its assertion, since the refusal names no `aidlc card withdraw`; the others fail because the command does not exist on main, which is the defect of issue 128.
+
+That RED cannot show that each refusal test can fail, so each guard was removed in turn, by hand, on the candidate's code, and the test file run: 24 changes, 23 failed a test. The one that passed, dropping `state: 'BUILD'`, was a weak test: the run was already BUILD. Acceptance 1 now withdraws from SHIP, and the change fails it.
+
 ## Acceptance
 ```powershell
 npm run typecheck && node --test tests/scenarios/candidate-withdraw.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/journal-owed.test.ts tests/scenarios/dispute-running-attempt.test.ts tests/core/effort.test.ts tests/surface/templates.test.ts

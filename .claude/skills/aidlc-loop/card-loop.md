@@ -45,9 +45,8 @@ defect before you read the verdict, or a required gate with no reviewer
 => STOP/capability. Tier S / scaffold-core => task-loop, same admission.
 
 ## BUILD
-TDD: prove behavioral RED first (`aidlc card red <id>`; scaffold: task.ps1
--Phase red). Bugs keep a reproducing test before the fix. Non-TDD docs use
-the explicit exemption (`tdd: false`). Tests are proportionate; new units get
+TDD: prove behavioral RED first (`aidlc card red <id>`). Bugs keep a reproducing test before the fix. Non-TDD docs use
+`tdd: false`. Tests are proportionate; new units get
 new files. Never weaken or delete a test to hide a failure; a wrong test is
 corrected with evidence and re-validated. Checks = DoD + changed paths +
 risk criteria + integrated acceptance; reuse evidence only for the same
@@ -58,6 +57,7 @@ Attempts (MA2): `aidlc card attempt <id> --outcome success|fail|not-counted
 and lost, next hypothesis. Escalate once, only after the third baseline
 failure with evidenced progress and a diagnosed harder problem; a fourth
 failure ends the episode; no fifth from another session or card.
+Defect before R3 decides: `aidlc card withdraw <id> --cause "<why>"`.
 
 ## SHIP
 Verify skills: when a card changes a file that a
