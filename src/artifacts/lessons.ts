@@ -161,21 +161,19 @@ export interface LessonMatchInput {
   history: readonly { subject: string; files: readonly string[] }[];
 }
 
-export function lessonTerms(_rule: string): string[] {
-  return [];
-}
-
-export function matchedLessons(_file: string, _input: LessonMatchInput, _maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
-  return { lines: [], omitted: 0, matched: true };
-}
-
-export function reviewLessons(file: string, maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
-  if (!existsSync(file)) return { lines: [], omitted: 0 };
+/** The NEVER and ALWAYS lines of the file, newest (last written) first; an absent file carries none. */
+function ruleLines(file: string): string[] {
+  if (!existsSync(file)) return [];
   const rules: string[] = [];
   for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
     const entry = parseLessonLine(line);
     if (entry && entry.kind !== 'NOTE') rules.unshift(line);
   }
+  return rules;
+}
+
+/** The rules that fit `maxBytes` of lesson text, in the given order: stops at the first that does not fit and counts the rest. */
+function fillCap(rules: readonly string[], maxBytes: number): ReviewLessons {
   const lines: string[] = [];
   let bytes = 0;
   for (const line of rules) {
@@ -185,4 +183,54 @@ export function reviewLessons(file: string, maxBytes = REVIEW_LESSONS_MAX_BYTES)
     lines.push(line);
   }
   return { lines, omitted: rules.length - lines.length };
+}
+
+/** The terms of a rule: its backticked spans and, outside them, the words with an inner capital, underscore, dot or dash. */
+export function lessonTerms(rule: string): string[] {
+  const found = new Set<string>();
+  for (const span of rule.matchAll(/`([^`]+)`/g)) found.add(span[1]!);
+  for (const word of rule.replace(/`[^`]+`/g, ' ').matchAll(/[A-Za-z0-9_][A-Za-z0-9_.-]*[A-Za-z0-9_]/g)) {
+    if (/[a-z][A-Z]|[A-Za-z0-9][_.-][A-Za-z0-9]/.test(word[0])) found.add(word[0]);
+  }
+  return [...found];
+}
+
+/**
+ * The NEVER and ALWAYS lines that best match a candidate, highest score first, under the cap of `reviewLessons`. The
+ * score of a rule is idf(p) summed over its paths the candidate changes plus idf(t) summed over its terms found in the
+ * diff text, with idf(x) = ln(1 + rules / rules holding x). The paths of a rule are the files of the commits whose subject
+ * names its card as a whole token. Equal scores keep newest first, so a rule scoring 0 fills the cap as `reviewLessons` does.
+ */
+export function matchedLessons(file: string, input: LessonMatchInput, maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
+  const entries = ruleLines(file).map((line) => ({ line, entry: parseLessonLine(line)! }));
+  const refs = new Set(entries.map((e) => e.entry.ref));
+  const filesOf = new Map<string, Set<string>>();
+  for (const commit of input.history) {
+    for (const token of commit.subject.split(/[^A-Za-z0-9-]+/)) {
+      if (!refs.has(token)) continue;
+      const files = filesOf.get(token) ?? new Set<string>();
+      for (const f of commit.files) files.add(f);
+      filesOf.set(token, files);
+    }
+  }
+  const rules = entries.map(({ line, entry }) => ({ line, paths: [...(filesOf.get(entry.ref) ?? [])], terms: lessonTerms(entry.rule) }));
+  const held = new Map<string, number>();
+  const count = (key: string) => held.set(key, (held.get(key) ?? 0) + 1);
+  for (const rule of rules) {
+    rule.paths.forEach((p) => count(`path:${p}`));
+    rule.terms.forEach((t) => count(`term:${t}`));
+  }
+  const idf = (key: string) => Math.log(1 + rules.length / held.get(key)!);
+  const changed = new Set(input.changedPaths);
+  const scored = rules.map((rule) => {
+    const paths = rule.paths.filter((p) => changed.has(p)).reduce((sum, p) => sum + idf(`path:${p}`), 0);
+    const terms = rule.terms.filter((t) => input.diff.includes(t)).reduce((sum, t) => sum + idf(`term:${t}`), 0);
+    return { line: rule.line, score: paths + terms };
+  });
+  // Array.prototype.sort is stable, so equal scores stay newest first.
+  return { ...fillCap(scored.sort((a, b) => b.score - a.score).map((r) => r.line), maxBytes), matched: true };
+}
+
+export function reviewLessons(file: string, maxBytes = REVIEW_LESSONS_MAX_BYTES): ReviewLessons {
+  return fillCap(ruleLines(file), maxBytes);
 }

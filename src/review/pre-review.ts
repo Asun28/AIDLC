@@ -421,7 +421,10 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   const rules = i.lessons?.lines ?? [];
   lines.push(...(rules.length ? rules.map((l) => `- ${quoted(l)}`) : ['- none']));
   // The cap names what it left out, and says why nothing is listed above it when not even the newest rule fits.
-  if (i.lessons?.omitted) lines.push(`- ${i.lessons.omitted} older lessons omitted at the byte cap${rules.length ? '; the newest rules are above' : ' (not even the newest rule fits it)'}.`);
+  if (i.lessons?.omitted) {
+    const left = rules.length ? (i.lessons.matched ? '; the rules that best match this diff are above' : '; the newest rules are above') : i.lessons.matched ? ' (not even the best match fits it)' : ' (not even the newest rule fits it)';
+    lines.push(`- ${i.lessons.omitted} ${i.lessons.matched ? 'other' : 'older'} lessons omitted at the byte cap${left}.`);
+  }
   lines.push('', '## Card contract', `- id: ${c.id}`, `- title: ${c.title}`, `- tier: ${c.tier ?? 'computed from allow_paths'}`, `- allow_paths: ${c.allow_paths.join(', ')}`);
   if (c.non_goals?.length) lines.push(`- non_goals: ${c.non_goals.join('; ')}`);
   if (c.forbid?.length) lines.push(`- forbid: ${c.forbid.join('; ')}`);

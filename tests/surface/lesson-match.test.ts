@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { lessonTerms, matchedLessons, reviewLessons, type ReviewLessons } from '../../src/artifacts/lessons.ts';
 import { loadCardRegistry, renderCard } from '../../src/artifacts/card.ts';
-
 import { GitProbe } from '../../src/probes/git.ts';
 import { runSync } from '../../src/probes/exec.ts';
 import { buildReviewPrompt, type PriorFinding } from '../../src/review/pre-review.ts';
@@ -54,7 +53,7 @@ test('T1-LESSON-MATCH acceptance 1: equal scores keep newest first and a NOTE li
 
 test('T1-LESSON-MATCH acceptance 2: the cap stops at the first rule that does not fit and counts the rest [R1]', () => {
   const best = rule(1, 'T1-BEST', 'guard every `pinCandidate` call');
-  const lines = [best, rule(2, 'T1-TOO-LONG', `read ${'x'.repeat(400)}`), rule(3, 'T1-SHORT', 'read it')];
+  const lines = [best, rule(2, 'T1-SHORT', 'read it'), rule(3, 'T1-TOO-LONG', `read ${'x'.repeat(400)}`)];
   withFile(lines, (file) => {
     const size = Buffer.byteLength(best, 'utf8') + 1;
     assert.deepEqual(matchedLessons(file, { changedPaths: [], diff: 'pinCandidate', history: [] }, size + 100), { lines: [best], omitted: 2, matched: true });
@@ -124,7 +123,7 @@ test('T1-LESSON-MATCH acceptance 4: commitFiles lists first-parent commits and d
     git('commit', '-q', '-m', 'feat: [T1-SIDE] (#2)');
     git('checkout', '-q', 'main');
     git('merge', '-q', '--no-ff', '-m', 'merge side', 'side');
-    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'merge side', files: [] }, { subject: 'feat: [T1-X] (#1)', files: ['src/x.ts', 'tests/x.test.ts'] }]);
+    assert.deepEqual(new GitProbe().commitFiles(root, 'main'), [{ subject: 'merge side', files: ['src/side.ts'] }, { subject: 'feat: [T1-X] (#1)', files: ['src/x.ts', 'tests/x.test.ts'] }], 'the merge names the side file; the side commit is not listed');
   });
 });
 

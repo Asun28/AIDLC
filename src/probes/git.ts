@@ -41,6 +41,9 @@ export function noHookOptions(root: string, git: SyncRunner): string[] {
 /** The ref that keeps a commit R3 decided on, whatever happens to its branch. */
 export const candidatePinRef = (sha: string): string => `refs/aidlc/candidates/${sha}`;
 
+/** Paths `commitFiles` leaves out: what a card records about itself, which nearly every card changes. */
+const NO_CODE_PATH = /^(CHANGELOG\.md$|docs\/|specs\/|plans\/|intent\/|evals\/)/;
+
 export class GitProbe {
   readonly runner: SyncRunner;
 
@@ -213,8 +216,24 @@ export class GitProbe {
     return nulList(r.stdout);
   }
 
-  commitFiles(_cwd: string, _ref: string): { subject: string; files: string[] }[] {
-    return [];
+  /**
+   * The subject and changed files of each first-parent commit reachable from `ref`, newest first, leaving out the paths
+   * that hold no code. The list only helps to choose review rules, so a failed call returns no commits and stops no review.
+   */
+  commitFiles(cwd: string, ref: string): { subject: string; files: string[] }[] {
+    try {
+      const r = this.git(cwd, ['-c', 'core.quotePath=false', 'log', '--first-parent', '--no-renames', '--format=%x01%s', '--name-only', ref, '--']);
+      if (r.exitCode !== 0) return [];
+      return r.stdout
+        .split('\x01')
+        .slice(1)
+        .map((block) => {
+          const [subject = '', ...names] = block.split(/\r?\n/);
+          return { subject, files: names.filter((name) => name && !NO_CODE_PATH.test(name)) };
+        });
+    } catch {
+      return [];
+    }
   }
 
   numstat(cwd: string, baseOid: string): { added: number; deleted: number; files: number } {

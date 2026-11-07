@@ -17,13 +17,13 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSyn
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseCardText } from '../artifacts/card.ts';
-import { lessonsPath, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
+import { lessonsPath, matchedLessons, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
-import { noHookOptions, oneLine } from '../probes/git.ts';
+import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
 export type BenchOutcome = 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error';
@@ -66,7 +66,7 @@ export interface ReviewBenchReport {
   stage: 'pre' | 'formal';
   reviewer: string;
   /** How the learned rules were chosen. */
-  rules?: BenchRules;
+  rules: BenchRules;
   policyHash: string;
   /** Temporary checkouts the bench could not remove; the command exits 1 when any is listed. */
   leftCheckouts: string[];
@@ -123,6 +123,7 @@ interface BenchContext {
   reviewPolicy: string;
   hash: string;
   lessons: ReviewLessons;
+  rules: BenchRules;
   runner: Runner;
   git: SyncRunner;
   tmpRoot: string;
@@ -146,7 +147,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
-  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [] };
+  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [] };
   // One review per distinct candidate, base and card path, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
@@ -162,7 +163,7 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const ordered = selected.map((c) => results.get(c.id)!);
   const skipped = pool.length - selected.length;
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), cases: ordered, totals: totalsOf(ordered, skipped) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), cases: ordered, totals: totalsOf(ordered, skipped) };
 }
 
 const errorOf = (c: ReviewBenchCase, detail: string): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'error', cited: [], detail, durationMs: 0 });
@@ -246,7 +247,8 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
   };
   if (cases.every((c) => unscorable(c) !== undefined)) return cases.map((c) => errorOf(c, unscorable(c)!));
   const includeDiff = !cfg.command.some((a) => a.includes('{instructions}'));
-  const common = { reviewPolicy: ctx.reviewPolicy, lessons: ctx.lessons, card, base, head: candidate, changedPaths, diff, priorFindings: [], includeDiff, round: 1 };
+  const lessons = ctx.rules === 'matched' ? matchedLessons(lessonsPath(ctx.root), { changedPaths, diff, history: new GitProbe(ctx.git).commitFiles(checkout, base) }) : ctx.lessons;
+  const common = { reviewPolicy: ctx.reviewPolicy, lessons, card, base, head: candidate, changedPaths, diff, priorFindings: [], includeDiff, round: 1 };
   const retention = { runner: ctx.runner, command: cfg.command, cwd: checkout, timeoutMs: cfg.timeoutMs, shell: cfg.shell, reviewDir: ctx.reviewDir, fileStem: `${card.id}.bench-${ctx.stage}.${n}.${candidate.slice(0, 12)}`, head: candidate, reviewer: cfg.reviewer, changedPaths, changedLines: changedLineRanges(diff, changedPaths), policyHash: ctx.hash };
   const vars = { cwd: checkout, base, head: candidate, card: card.id };
   let panel: PanelResult;
