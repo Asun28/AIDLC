@@ -1,7 +1,7 @@
 ---
 id: T0-INTAKE-TARGET-2
 title: Intake reads a delivery target only from the flag or from a request to deliver, never from a word in the text
-status: todo
+status: merged
 branch: T0-INTAKE-TARGET-2
 worktree: D:\wt\AIDLC\T0-INTAKE-TARGET-2
 allow_paths:
@@ -56,6 +56,23 @@ hygiene: "This card replaces T0-INTAKE-TARGET by the user's ruling `successor` o
 
 ## Deliverable
 A word in a request no longer sets a delivery target. Closes issue 222.
+
+## Attempt evidence
+RED for this card, commit 3c68f86: `node --test tests/scenarios/intake-target.test.ts` exits 1, tests 378, pass 377, fail 1: the wrapped bug report of acceptance 7, which read as kind `change`. Reading `BUG` on the collapsed text clears it, and restoring the raw read fails it again. The evidence below is from the card this one replaces, on the branch this card carries.
+
+RED, commit e31ea7e: `node --test tests/scenarios/intake-target.test.ts` exits 1, tests 50, pass 16, fail 34, all on assertions: acceptance 1 six rows, 2 six rows, 3, 4, 6 sixteen rows, 7 two rows, 8 and 9. The 16 that pass are the 15 requests of acceptance 5, which main already reads, and `ship it to prod`, which stays development on both.
+
+RED for repair 1, commit 87b1471 (R3 decision 1 F1, F2): tests 84, pass 78, fail 6: the long sentence, the two line-wrapped requests, and the three sentences that end inside a closing quote or bracket.
+
+RED for repair 2, commit 3dbfddf (R3 decision 2 F3, F4): tests 274, pass 127, fail 147: three rows of an object inside the verb, 134 terminator and closing mark pairs, four full-width terminators and six list markers.
+
+RED for repair 3, commit 4e4d9f2 (R3 decision 3 F5): the child that classifies runs of 1000000 of each unit is killed at its 60 second limit. With the fix, 30 input shapes at 20000 to 160000 characters each take at most 126 ms and grow about in step with the size, and the child finishes before its limit. The child then took 9 seconds of CPU beside the timing tests of `tests/infra/exec.test.ts`, one of which failed once in a full run and passed three times alone, so it now classifies runs of 400000 with a 30 second kill, and with the whitespace gate removed it is still killed.
+
+RED before R3 decision 4, commit 8b860fa, from an independent check of the candidate: tests 378, pass 366, fail 12: seven forms with a line break inside them, `for online test`, the terminators `\uff0e` and `\uff61` with no whitespace, the kind of a wrapped form, and a wrapped bug report.
+
+Old and new `classifyRequest` over a generated one-line corpus of 391645 requests, with no `ref` (verbs by objects by links by places by tails, requests with two target words, and the fixed phrases): 75072 route the same, 0 gain a target, 314646 go to development, and 1927 change target. Each of the 1927 takes the target of the form it asks for, where main took the first branch a bare word reached: 1482 production to staging, such as `deploy to pre-production`; 255 staging to package; 102 production to package; 28 package, 20 staging and 8 production to migration; and 14 package, 10 staging, 6 production and 2 migration to operations. A line break inside a form is outside that corpus: main did not read those requests, and R3 now does.
+
+The RED cannot show that each rule of the fix is needed, since most rows of acceptance 5 pass on main, so each rule, verb, noun and phrase was changed in turn, by hand, and the tests run. On the final candidate, 93 changes gave 92 failures with the child test skipped, since it takes a minute. The one that passed removes the whitespace gate, which that child test catches: its RED is commit 4e4d9f2.
 
 ## Acceptance
 ```powershell
