@@ -9,7 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { nulList } from '../core/parse-guard.ts';
+import { nulList, nulRecords } from '../core/parse-guard.ts';
 import { runSync, type ExecReceipt, type SyncRunner } from './exec.ts';
 
 export interface WorktreeEntry {
@@ -40,6 +40,9 @@ export function noHookOptions(root: string, git: SyncRunner): string[] {
 
 /** The ref that keeps a commit R3 decided on, whatever happens to its branch. */
 export const candidatePinRef = (sha: string): string => `refs/aidlc/candidates/${sha}`;
+
+/** Paths `commitFiles` leaves out: what a card records about itself, which nearly every card changes. */
+const NO_CODE_PATH = /^(CHANGELOG\.md$|docs\/|specs\/|plans\/|intent\/|evals\/)/;
 
 export class GitProbe {
   readonly runner: SyncRunner;
@@ -211,6 +214,25 @@ export class GitProbe {
     const r = this.git(cwd, args);
     if (r.exitCode !== 0) throw new GitProbeError(args, r);
     return nulList(r.stdout);
+  }
+
+  /**
+   * The subject and changed files of each first-parent commit reachable from `ref`, newest first, leaving out the paths
+   * that hold no code. The list only helps to choose review rules, so a failed call returns no commits and stops no review.
+   */
+  commitFiles(cwd: string, ref: string): { subject: string; files: string[] }[] {
+    try {
+      // -z: git never quotes or escapes a name. %x00 frames each commit with a double NUL (nulRecords); S keeps an empty
+      // subject a field. The first name of a commit follows one newline.
+      const r = this.git(cwd, ['log', '-z', '--first-parent', '--no-renames', '--format=%x00S%s', '--name-only', ref, '--']);
+      if (r.exitCode !== 0) return [];
+      return nulRecords(r.stdout).map(([head = 'S', first, ...rest]) => {
+        const names = first === undefined ? [] : [first.startsWith('\n') ? first.slice(1) : first, ...rest];
+        return { subject: head.slice(1), files: names.filter((name) => !NO_CODE_PATH.test(name)) };
+      });
+    } catch {
+      return [];
+    }
   }
 
   numstat(cwd: string, baseOid: string): { added: number; deleted: number; files: number } {
