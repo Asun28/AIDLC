@@ -3,7 +3,7 @@
  * sweep over every linked worktree (card T0-WORKTREE-RECLAIM). The sweep writes no record. The goals, runs, leases,
  * operations and git decide what may go, and every branch stays, so `git worktree add` undoes a removal.
  */
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { loadCardRegistry } from '../artifacts/card.ts';
 import { resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
@@ -90,7 +90,10 @@ function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now
   if (deps.git.status(entry.path).dirty) return { skip: 'modified or untracked files' };
   const lost = deps.git.ignored(entry.path).filter((p) => !REPLACEABLE.has(p));
   const reviewDir = path.join(entry.path, '.review');
-  if (existsSync(reviewDir)) lost.push(...readdirSync(reviewDir, { withFileTypes: true }).filter((f) => !f.isFile()).map((f) => `.review/${f.name}`));
+  const review = lstatSync(reviewDir, { throwIfNoEntry: false });
+  // A committed link is clean to git, and the copy would follow it out of the worktree.
+  if (review && !review.isDirectory()) return { skip: '.review is not a directory' };
+  if (review) lost.push(...readdirSync(reviewDir, { withFileTypes: true }).filter((f) => !f.isFile()).map((f) => `.review/${f.name}`));
   if (lost.length) return { skip: `ignored paths the removal would delete: ${lost.join(', ')}` };
   return { finished, goalId: latest.goal.id };
 }

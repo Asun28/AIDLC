@@ -549,16 +549,14 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')
     .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean; lesson?: string; skipLesson?: string }) => {
       const c = ctx(g());
+      // On exit, not in a `finally`: `fail` exits from inside the load of the card, and the sweep concerns the other cards.
+      if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c));
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
       const lessons = o.lesson !== undefined || o.skipLesson !== undefined ? true : undefined;
       const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup, lessons };
       const defined = Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)) as Partial<typeof run.closure>;
-      try {
-        const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
-        out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
-      } finally {
-        if (defined.cleanup) sweepAfter(c);
-      }
+      const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
+      out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
     });
   card
     .command('ci-reconcile <cardId>')
