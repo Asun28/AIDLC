@@ -55,3 +55,6 @@ Cards for changes under 30 src lines have a median of 769 words, and the short h
 
 ## Limits
 Above 80 src lines longer cards did somewhat better, so the length rule stops at 30. The template reaches authors who open it; the lesson reaches the rest at PREPARE.
+
+## Attempt evidence
+R5 facts, read on 2026-11-07. `gh api repos/Asun28/AIDLC/rulesets/26745604`: name `main required checks`, enforcement `active`, ref `~DEFAULT_BRANCH`, bypass actor `RepositoryRole` 5 (admin) in `always` mode, required checks `check (ubuntu-latest, 22)`, `check (windows-latest, 22)`, `build-test` and `Gitleaks (committed history)`. `gh api repos/Asun28/AIDLC --jq .permissions.admin` prints `true` for the token in use. `git grep -e --admin -- src` finds nothing. No forced merge was run for this card.

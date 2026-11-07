@@ -1,5 +1,7 @@
 # AIDLC project state
 
+This file is a snapshot of 2026-09-18 and is not kept current. For the current state read `git log`, `specs/tasks/` and `CHANGELOG.md`.
+
 Updated: 2026-09-18 (main at `9697f06`). Working directory: `D:\Projects\AIDLC`; remote `Asun28/AIDLC`, ship path `github`.
 
 ## Current deliverable
