@@ -20,7 +20,7 @@ acceptance:
   - 1. `tests/surface/hooks.test.ts` with an injected probe that finds the file and then unlinks it, and one that finds it and then makes its directory unreachable, before `loadProjectConfig` reads; each gives the config error of R1 and the exact Bash and Edit denials, and a probe that finds the file and leaves it in place gives the config it holds. [R1] [dod arm 1]
   - 2. The same file, on the real filesystem where the platform allows each case, a link to nothing, a directory without search permission and a loop of links each give the loader result and the exact Bash denial of `production-gate` and Edit denial of `protect-paths`; a case the platform cannot make is skipped by name, not passed. [R2] [dod arm 1]
   - 3. The same file reads the sentence this card adds to the Hooks section of `docs/OPERATIONS.md` and its CHANGELOG Unreleased entry. [R3] [dod arm 1]
-depends_on: []
+depends_on: [T0-HOOK-CONFIG-CLOSED-2]
 budget: 160
 tdd: true
 diagnosis:
