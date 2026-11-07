@@ -4816,10 +4816,10 @@ test('T1-AUDIT-FACTS-2 acceptance 1: a merge verified on the GitHub ship path jo
   assert.equal(first?.results.length, 1, 'one result for the merge');
   assert.equal(first?.results[0]?.data['status'], 'succeeded');
   assert.deepEqual(ShippedFacts.safeParse(first?.results[0]?.data).data, verified.facts, JSON.stringify(first?.results[0]?.data));
-  // The token (tip = the candidate) verifies the merge; the head journaled is the one gh reports, never the candidate or the token's.
+  // The token (tip = the candidate) verifies the merge; a head gh reports that is not the candidate gives no facts (card T0-MERGED-VIEW-CHECK, issue 131).
   const byToken = shipOnGitHub(HEAD, { ghHead: '9'.repeat(40) });
   assert.equal(byToken.steps[0]?.kind, 'close', byToken.steps[0]?.narration);
-  assert.deepEqual(ShippedFacts.safeParse(byToken.steps[0]?.results[0]?.data).data, byToken.facts, JSON.stringify(byToken.steps[0]?.results[0]?.data));
+  assert.equal(ShippedFacts.safeParse(byToken.steps[0]?.results[0]?.data).success, false, JSON.stringify(byToken.steps[0]?.results[0]?.data));
   // A merge the runner cannot verify (the PR head is not the candidate) journals no facts.
   const unverified = shipOnGitHub('e'.repeat(40)).steps[0];
   assert.equal(unverified?.kind, 'wait', unverified?.narration);
