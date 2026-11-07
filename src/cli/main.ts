@@ -3,7 +3,7 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -78,14 +78,23 @@ function ctx(opts: { json?: boolean; cwd?: string }): Ctx {
   return { root: repo.mainRoot, repo, config, configFound: found, paths, store, controller, json };
 }
 
-/** The sweep after `card close` and `goal cancel`: nothing it does reaches their stdout or their exit code. */
+/** A line for the operator, written synchronously: a stderr that cannot take it fails here and reaches no caller. */
+function note(line: string): void {
+  try {
+    writeSync(2, `${line}\n`);
+  } catch {
+    /* nowhere left to say it */
+  }
+}
+
+/** The sweep after `card close` and `goal cancel`: nothing it does reaches their stdout, their error or their exit code. */
 function sweepAfter(c: Ctx): void {
   try {
     for (const r of sweepWorktrees({ paths: c.paths, repo: c.repo, config: c.config, store: c.store })) {
-      if (r.action !== 'skipped') process.stderr.write(`worktree ${r.action}: ${r.cardId}: ${r.reason}\n`);
+      if (r.action !== 'skipped') note(`worktree ${r.action}: ${r.cardId}: ${r.reason}`);
     }
   } catch (err) {
-    process.stderr.write(`worktree sweep did not finish: ${oneLine((err as Error).message)}\n`);
+    note(`worktree sweep did not finish: ${oneLine((err as Error).message)}`);
   }
 }
 
@@ -544,9 +553,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const lessons = o.lesson !== undefined || o.skipLesson !== undefined ? true : undefined;
       const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup, lessons };
       const defined = Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)) as Partial<typeof run.closure>;
-      const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
-      out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
-      if (defined.cleanup) sweepAfter(c);
+      try {
+        const updated = runnerFor(c).markClosure(goalRec, parsed.card, run, defined, { lessonText: o.lesson, skipped: o.skipLesson });
+        out(c, updated.closure, () => Object.entries(updated.closure).map(([k, v]) => `${k}=${v}`).join(' '));
+      } finally {
+        if (defined.cleanup) sweepAfter(c);
+      }
     });
   card
     .command('ci-reconcile <cardId>')

@@ -86,6 +86,7 @@ function decide(deps: Required<Pick<ReclaimDeps, 'leases' | 'ops' | 'git' | 'now
   if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(deps.now()) && !(lease.owner.session === me.session && lease.owner.host === me.host)) return { skip: `lease held by ${lease.owner.session} until ${lease.expiresAt}` };
   const open = held.flatMap((h) => deps.ops.unresolved(h.goal.id, cardId));
   if (open[0]) return { skip: `unresolved operation ${open[0].id}` };
+  if (entry.locked) return { skip: 'locked worktree' };
   if (deps.git.status(entry.path).dirty) return { skip: 'modified or untracked files' };
   const lost = deps.git.ignored(entry.path).filter((p) => !REPLACEABLE.has(p));
   const reviewDir = path.join(entry.path, '.review');

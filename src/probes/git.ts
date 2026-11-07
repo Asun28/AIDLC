@@ -127,7 +127,8 @@ export class GitProbe {
 
   /** The ignored paths of the checkout, a directory as one entry with its slash: `status` leaves them out and `worktree remove` deletes them. */
   ignored(cwd: string): string[] {
-    const out = this.must(cwd, ['status', '--porcelain=v1', '--ignored']);
+    // `--untracked-files` is explicit because `status.showUntrackedFiles=no` also hides the ignored paths.
+    const out = this.must(cwd, ['status', '--porcelain=v1', '--ignored', '--untracked-files=normal']);
     return out.split(/\r?\n/).filter((l) => l.startsWith('!! ')).map((l) => l.slice(3));
   }
 

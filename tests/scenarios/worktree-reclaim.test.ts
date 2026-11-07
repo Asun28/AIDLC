@@ -461,6 +461,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: with its stderr closed goal cancel exits
   try {
     writeCard(fx, { id: CARD, title: 'cancelled' });
     const goal = goalForCards(fx, [CARD]);
+    fx.controller.ensureCardRun(fx.goal(goal.id), CARD);
     repository(fx);
     const dir = linked(fx);
     cliConfig(fx);
