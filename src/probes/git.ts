@@ -9,7 +9,7 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { nulList } from '../core/parse-guard.ts';
+import { nulList, nulRecords } from '../core/parse-guard.ts';
 import { runSync, type ExecReceipt, type SyncRunner } from './exec.ts';
 
 export interface WorktreeEntry {
@@ -222,22 +222,14 @@ export class GitProbe {
    */
   commitFiles(cwd: string, ref: string): { subject: string; files: string[] }[] {
     try {
-      // -z: git never quotes or escapes a name. Each commit prints \x01<subject>, then its names, the first after one newline.
-      const r = this.git(cwd, ['log', '-z', '--first-parent', '--no-renames', '--format=%x01%s', '--name-only', ref, '--']);
+      // -z: git never quotes or escapes a name. %x00 frames each commit with a double NUL (nulRecords); S keeps an empty
+      // subject a field. The first name of a commit follows one newline.
+      const r = this.git(cwd, ['log', '-z', '--first-parent', '--no-renames', '--format=%x00S%s', '--name-only', ref, '--']);
       if (r.exitCode !== 0) return [];
-      const commits: { subject: string; files: string[] }[] = [];
-      let first = false;
-      for (const token of nulList(r.stdout)) {
-        if (token.startsWith('\x01')) {
-          commits.push({ subject: token.slice(1), files: [] });
-          first = true;
-          continue;
-        }
-        const name = first && token.startsWith('\n') ? token.slice(1) : token;
-        first = false;
-        if (!NO_CODE_PATH.test(name)) commits.at(-1)?.files.push(name);
-      }
-      return commits;
+      return nulRecords(r.stdout).map(([head = 'S', first, ...rest]) => {
+        const names = first === undefined ? [] : [first.startsWith('\n') ? first.slice(1) : first, ...rest];
+        return { subject: head.slice(1), files: names.filter((name) => !NO_CODE_PATH.test(name)) };
+      });
     } catch {
       return [];
     }

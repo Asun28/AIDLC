@@ -549,7 +549,7 @@ export function formatBenchReport(r: ReviewBenchReport): string {
   const t = r.totals;
   const lines = r.note ? [r.note] : [];
   lines.push(...r.cases.map((c) => `${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
-  lines.push(`${r.stage} ${r.reviewer}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
+  lines.push(`${r.stage} ${r.reviewer}${r.rules === 'matched' ? ' (matched rules)' : ''}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
   if (r.leftCheckouts.length) lines.push(`checkouts left behind: ${r.leftCheckouts.join(', ')}`);
   return lines.join('\n');
 }
