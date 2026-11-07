@@ -62,6 +62,11 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['deploy it for online testing', 'staging'],
   ['release the build to the test environment', 'staging'],
   ['deploy to preprod', 'staging'],
+  // R3 decision 1 F1: no limit on the words between the verb and the target, and a line break inside a sentence is wrapping.
+  ['deploy the approved customer reporting application build from the latest successful verification pipeline to staging', 'staging'],
+  ['deploy\nto staging', 'staging'],
+  ['deploy the build\n  to\n  production', 'production'],
+  ['Release version 2.0 to production.', 'production'],
   // Main read these two as production: `\bproduction\b` matches after the hyphen, and `observe production` named the word.
   ['deploy to pre-production', 'staging'],
   ['observe production', 'operations'],
@@ -101,6 +106,14 @@ const DROPPED = [
   'the prod release step',
   'a staging deploy',
   'Release the notes. The next step is to production',
+  // R3 decision 1 F2: a sentence can end inside a closing quote or bracket.
+  'Please write "Release the notes." The next step is to production',
+  'Please write "Build the documentation." The installer is described later',
+  '(Release the notes.) The next step is to production',
+  'Release the notes\n\nThe next step is to production',
+  '- Release the notes\n- Link it to production docs',
+  '1. Release the notes\n2. Link it to production docs',
+  'Release the notes; the next step is to production',
   'uat',
   'preprod',
   'online testing',
@@ -127,6 +140,11 @@ for (const text of ['deploy to production fails with a 500', 'the release to sta
     assert.deepEqual([r.target, r.targetSource, r.kind], ['development', 'default', 'bugfix']);
   });
 }
+
+test('T0-INTAKE-TARGET acceptance 5: a prompt of repeated verbs and no sentence end reads as no target, in a scan that stays linear [R3]', () => {
+  const r = classifyRequest({ text: 'deploy '.repeat(50_000) });
+  assert.deepEqual([r.target, r.targetSource], ['development', 'default']);
+});
 
 test('T0-INTAKE-TARGET acceptance 8: the routing reasons name a target the text read as when it was set aside, and name none otherwise [R5]', () => {
   const named = 'the text reads as target production; only --target sets the target of this request';
