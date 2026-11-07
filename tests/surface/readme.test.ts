@@ -49,12 +49,12 @@ const GUARD_CELLS: Record<HookName, [reads: string, blocks: string]> = {
 
 const README_SENTENCES = [
   '`aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.',
-  '`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry, so no guard runs. A hook already in the file stays as it is. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.',
+  '`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry. A hook already in the file stays as it is and keeps running, so a repository with no hooks wired runs no guard. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.',
   'The hook entries start one process per event, which runs the guards below and returns the first block. Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).',
   'While `aidlc.config.json` cannot be used, `production-gate` and `protect-paths` deny every shell command but `aidlc doctor`, `protect-paths` denies every edit of another file, and `protect-tests` denies the same edits while a fix task is active.',
 ];
 const SETUP_USAGE = 'node bin/aidlc.js init [dir] [--cards-dir specs/tasks] [--ship-path scaffold|github|dry-run] [--force] [--dry-run] [--no-hooks]';
-const SETUP_SENTENCE = '`--no-hooks` writes the same files and the same `permissions.deny` list and merges no hook entry into `.claude/settings.json`, so no guard runs; a hook already in the file stays as it is, and `aidlc doctor` prints `not wired` on its `hookCommand` line when the file wires no dispatcher.';
+const SETUP_SENTENCE = '`--no-hooks` writes the same files and the same `permissions.deny` list and merges no hook entry into `.claude/settings.json`; a hook already in the file stays as it is and keeps running, so a repository with no hooks wired runs no guard, and `aidlc doctor` prints `not wired` on its `hookCommand` line when the file wires no dispatcher.';
 const CHANGELOG_ENTRY = '- T1-INIT-SURFACE: `aidlc init --no-hooks` writes the same files and the same `permissions.deny` list, merges no hook entry into `.claude/settings.json` and leaves a hook already in the file as it is. The README section `What aidlc init writes` lists every path init writes and, for each guard, the event, what it reads and when it blocks. `production-gate`, `protect-tests` and `secrets-guard` print the approval reference, the fix task marker and the file path as JSON strings.';
 
 test('T1-INIT-SURFACE acceptance 2: the README lists every path aidlc init writes and no other [R2]', () => {
@@ -82,6 +82,7 @@ test('T1-INIT-SURFACE acceptance 6: the README section, OPERATIONS Setup and Unr
   const setup = read('docs/OPERATIONS.md').split('## Setup\n')[1]?.split('\n## ')[0];
   assert.ok(setup?.includes(SETUP_USAGE), SETUP_USAGE);
   assert.ok(setup?.includes(SETUP_SENTENCE), SETUP_SENTENCE);
+  assert.ok(!initSection().includes('so no guard runs') && !setup?.includes('so no guard runs'), 'a hook already in the file keeps running, so the text cannot say no guard runs');
   const unreleased = read('CHANGELOG.md').split('## Unreleased\n')[1]?.split('\n## ')[0];
   assert.ok(unreleased?.split('\n').includes(CHANGELOG_ENTRY), CHANGELOG_ENTRY);
 });

@@ -90,7 +90,7 @@ specs/_SPEC-TEMPLATE.md
 specs/tasks/_TEMPLATE.md
 ```
 
-`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry, so no guard runs. A hook already in the file stays as it is. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.
+`.claude/settings.json` holds a `permissions.deny` list and the hook entries. `aidlc init --no-hooks` writes the same files and the same deny list and merges no hook entry. A hook already in the file stays as it is and keeps running, so a repository with no hooks wired runs no guard. With no dispatcher wired, `aidlc doctor` prints `not wired` on its `hookCommand` line.
 
 The hook entries start one process per event, which runs the guards below and returns the first block. Each guard prints repository content and environment values as JSON strings, apart from an id that is one plain word (`[A-Za-z0-9._:-]+`).
 
