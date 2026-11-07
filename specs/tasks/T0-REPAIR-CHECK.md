@@ -31,7 +31,7 @@ forbid:
 non_goals:
   - raising repair effort (see Why)
   - the R2 repair narration, since this repository runs no R2
-hygiene: "`card-runner.ts` is covered by the verify-card-run-writes skill: run its check before SHIP. This card changes text only, so no write order moves."
+hygiene: "`card-runner.ts` is covered by the verify-card-run-writes skill: run its check before SHIP. This card changes text only, so no write order moves. The text avoids the word class because `tests/scenarios/review-block.test.ts` keeps it out of an untagged repair narration."
 ---
 
 # T0-REPAIR-CHECK
@@ -39,7 +39,7 @@ hygiene: "`card-runner.ts` is covered by the verify-card-run-writes skill: run i
 ## Deliverable
 One constant in `src/loop/card-runner.ts`, added to the REVIEW_FIX narration:
 
-> Before adding code, check whether removing the code the finding names closes the whole class, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.
+> Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.
 
 ## Why
 113 repairs of a decision 1 block went back to R3 and 70 were blocked again (62%). 85 of 122 locatable later findings sit on or within 8 lines of the repair hunk. Lessons T1-EFF-HOOK-QUIET-2, T0-REVIEW-RELEASE and T1-INIT-HOOK-PATH-2 each record a removal closing what repeated fixes did not.
