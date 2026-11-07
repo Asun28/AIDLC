@@ -10,7 +10,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Card, CARD_ID_REGEX, type ProjectTier } from '../core/types.ts';
-import { blockList, flowItems, hasKey, referenceCuts, renderFrontMatter, scalar, splitFrontMatter, stripComment } from './frontmatter.ts';
+import { blockList, flowItems, hasKey, referenceCuts, renderFrontMatter, scalar, scalarRange, splitFrontMatter, stripComment } from './frontmatter.ts';
 
 export interface CardFinding {
   sentinel: string;
@@ -182,6 +182,15 @@ export interface CardRegistry {
   archiveDir?: string;
   cards: ParsedCard[];
   errors: Array<{ file: string; error: string; findings: CardFinding[] }>;
+}
+
+/** The card text with the value of its front-matter `status` set; every other byte stays. */
+export function withCardStatus(text: string, status: Card['status']): string {
+  const doc = splitFrontMatter(text);
+  const head = doc ? text.slice(0, text.length - doc.body.length) : '';
+  const value = scalarRange(head, 'status');
+  if (!doc || !value || value.start === value.end) throw new Error('the card has no status in its front matter');
+  return `${head.slice(0, value.start)}${status}${head.slice(value.end)}${doc.body}`;
 }
 
 export function loadCardRegistry(dir: string, archiveDir?: string, options: CardParseOptions = {}): CardRegistry {
