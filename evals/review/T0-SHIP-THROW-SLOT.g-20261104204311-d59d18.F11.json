@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-SHIP-THROW-SLOT.g-20261104204311-d59d18.F11",
+  "candidate": "95edb2741ad82fcf77f23d081101c64043a79f8c",
+  "base": "51f540c42bb2ca99a08b5300e2bd986040f58ea7",
+  "card": {
+    "id": "T0-SHIP-THROW-SLOT",
+    "path": "specs/tasks/T0-SHIP-THROW-SLOT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-SHIP-THROW-SLOT F11 (goal g-20261104204311-d59d18)",
+  "note": "R3 decision 1, open, resolved: [standards] 13 data and persistence design (class: unrecoverable-journal-gap) @ src/loop/card-runner.ts:1149: [Compliance] A failed append after settlement permanently loses the ship-threw OPERATION_RESULT because subsequent commands never replay it. -> Persist and idempotently replay the event obligation; test append recovery.",
+  "expected": [
+    {
+      "file": "src/loop/card-runner.ts",
+      "line": 1149,
+      "window": 5,
+      "class": "unrecoverable-journal-gap"
+    }
+  ]
+}

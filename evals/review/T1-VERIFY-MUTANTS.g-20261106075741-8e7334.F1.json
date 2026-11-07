@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-VERIFY-MUTANTS.g-20261106075741-8e7334.F1",
+  "candidate": "056e609d09320e002b6a3c477fe8eaf58f2d6911",
+  "base": "01d915070bf9c12b5a42d9cc2866a57a1d058547",
+  "card": {
+    "id": "T1-VERIFY-MUTANTS",
+    "path": "specs/tasks/T1-VERIFY-MUTANTS.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-VERIFY-MUTANTS F1 (goal g-20261106075741-8e7334)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: linked-parent-escape) @ src/review/mutants.ts:129: Security: bytesOf checks only the leaf. A baseline DoD can replace a source directory with a link to an external directory containing identical original bytes; this guard passes and the sweep writes mutants and restored bytes outside the worktree. -> Validate resolved containment through every parent before source reads and writes; add a directory-link regression test.",
+  "expected": [
+    {
+      "file": "src/review/mutants.ts",
+      "line": 129,
+      "window": 5,
+      "class": "linked-parent-escape"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-REVIEW-BENCH.g-20261023072913-94f64f.F1",
+  "candidate": "671222c868c528b9d64f37aae1f80cdd7d1a5cde",
+  "base": "67a74c22df0581bccb4d69a8221ce63b5a274b0e",
+  "card": {
+    "id": "T1-REVIEW-BENCH",
+    "path": "specs/tasks/T1-REVIEW-BENCH.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-REVIEW-BENCH F1 (goal g-20261023072913-94f64f)",
+  "note": "R3 decision 1, open, resolved: [standards] 9 error handling @ src/review/bench.ts:235: [Bugs] Scoring trusts the panel outcome without checking explicit verdict sha or branch bindings. A stale formal verdict counts as pass/hit although the loop rejects it as no-verdict, corrupting benchmark rates. -> Reject mismatched bindings before scoring; test wrong sha, wrong branch and absent bindings.",
+  "expected": [
+    {
+      "file": "src/review/bench.ts",
+      "line": 235,
+      "window": 5,
+      "class": "dim-9"
+    }
+  ]
+}

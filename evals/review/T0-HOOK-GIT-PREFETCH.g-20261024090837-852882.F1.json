@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-HOOK-GIT-PREFETCH.g-20261024090837-852882.F1",
+  "candidate": "b106f5178354bd8dc70d31727a440b81d5f5601e",
+  "base": "2f7e456115a4fffb97bd872f36da3ed4b504a824",
+  "card": {
+    "id": "T0-HOOK-GIT-PREFETCH",
+    "path": "specs/tasks/T0-HOOK-GIT-PREFETCH.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-HOOK-GIT-PREFETCH F1 (goal g-20261024090837-852882)",
+  "note": "R3 decision 1, open, resolved: [standards] 2 hard boundaries (class: spawn-error-fallback) @ src/state/paths.ts:87: [Bugs/Compliance] A synchronous spawn error such as E2BIG rejects the promise instead of yielding undefined; fault injection reproduced this. The rejection can terminate startup or reach main's catch and skip all guards, violating R1 and the unchanged-decisions forbid. -> Catch synchronous spawn failures inside the executor, resolve undefined, and test that guards still run.",
+  "expected": [
+    {
+      "file": "src/state/paths.ts",
+      "line": 87,
+      "window": 5,
+      "class": "spawn-error-fallback"
+    }
+  ]
+}

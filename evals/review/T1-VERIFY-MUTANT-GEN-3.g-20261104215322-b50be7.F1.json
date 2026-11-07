@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-VERIFY-MUTANT-GEN-3.g-20261104215322-b50be7.F1",
+  "candidate": "962a103ff7da08d38ce85e5d61be3360d7c7fb5b",
+  "base": "04514ba32cc63e2733bf306ae450145016539b0e",
+  "card": {
+    "id": "T1-VERIFY-MUTANT-GEN-3",
+    "path": "specs/tasks/T1-VERIFY-MUTANT-GEN-3.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-VERIFY-MUTANT-GEN-3 F1 (goal g-20261104215322-b50be7)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: nested-group-member-boundary) @ src/review/mutant-gen.ts:347: Bugs: `class A { x = f({}) ? (d) : void { if(ok) {} }; }` incorrectly produces force-true and force-false mutants at column 39. The backward scan treats the initializer's nested `}` as a member boundary before reaching its `=`, violating the promised exclusion of this ternary's method named `if`. -> Skip matched nested groups and recognize boundaries only at class-member depth; add this regression case.",
+  "expected": [
+    {
+      "file": "src/review/mutant-gen.ts",
+      "line": 347,
+      "window": 5,
+      "class": "nested-group-member-boundary"
+    }
+  ]
+}

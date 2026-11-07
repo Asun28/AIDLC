@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-REVIEW-ADMIT-STRAND.g-20261023165444-ad6a95.clean",
+  "candidate": "6f793dcc0ea676c08260e4a74f45032ea95b04b0",
+  "base": "423bc2629beb5c53c589670a05033f659ba9c895",
+  "card": {
+    "id": "T0-REVIEW-ADMIT-STRAND",
+    "path": "specs/tasks/T0-REVIEW-ADMIT-STRAND.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-REVIEW-ADMIT-STRAND clean (goal g-20261023165444-ad6a95)",
+  "note": "R3 decision 1 passed (codex)"
+}

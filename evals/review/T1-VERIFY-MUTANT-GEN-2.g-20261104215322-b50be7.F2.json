@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T1-VERIFY-MUTANT-GEN-2.g-20261104215322-b50be7.F2",
+  "candidate": "f75022e323ec986d8ff0fa76ea6af2dbc893898d",
+  "base": "a0d6bb028d1417f8de513a08b27e13841b8b1539",
+  "card": {
+    "id": "T1-VERIFY-MUTANT-GEN-2",
+    "path": "specs/tasks/T1-VERIFY-MUTANT-GEN-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-VERIFY-MUTANT-GEN-2 F2 (goal g-20261104215322-b50be7)",
+  "note": "R3 decision 1, open, resolved: [spec] 14 scope fidelity (class: diff-path-tab-delimiter) @ src/review/mutant-gen.ts:86: Compliance: Git terminates unquoted headers containing spaces with a tab. The parser retains that delimiter, so `+++ b/src/a b.ts\\t` fails isSource and silently loses every changed line, contrary to R1. Reproduced Git's header formatting and the empty result. -> Remove Git's terminal header delimiter while preserving the filename; add a spaced-path regression test.",
+  "expected": [
+    {
+      "file": "src/review/mutant-gen.ts",
+      "line": 86,
+      "window": 5,
+      "class": "diff-path-tab-delimiter"
+    }
+  ]
+}

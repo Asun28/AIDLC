@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T1-SWEEP2-TEST-ONLY.g-20261014085120-fa9517.clean",
+  "candidate": "720a1c736fcb01f5bad35e883e05be4b09c101f7",
+  "base": "86b6542fe7af34561f5cb7b0b87907f3dbffb1c2",
+  "card": {
+    "id": "T1-SWEEP2-TEST-ONLY",
+    "path": "specs/tasks/T1-SWEEP2-TEST-ONLY.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T1-SWEEP2-TEST-ONLY clean (goal g-20261014085120-fa9517)",
+  "note": "R3 decision 1 passed (codex)"
+}

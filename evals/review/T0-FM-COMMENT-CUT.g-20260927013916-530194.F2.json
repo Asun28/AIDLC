@@ -1,0 +1,22 @@
+{
+  "kind": "bug",
+  "id": "T0-FM-COMMENT-CUT.g-20260927013916-530194.F2",
+  "candidate": "72aa08e37694924c9ca41beeda37be05d1853ea0",
+  "base": "64a8081b85fdb2b0e2d52d5efe6dbbd654aa2627",
+  "card": {
+    "id": "T0-FM-COMMENT-CUT",
+    "path": "specs/tasks/T0-FM-COMMENT-CUT.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-FM-COMMENT-CUT F2 (goal g-20260927013916-530194)",
+  "note": "R3 decision 1, open, resolved: [standards] 17 root cause @ src/artifacts/card.ts:164: Bugs: `non_goals: [\"see issue, #45\"]` still parses as [\"see issue\"] with no finding. Splitting at every comma destroys quote context before stripComment runs, defeating the promised quoted-flow-item fix. -> Split only at unquoted flow-item delimiters and test preservation of the complete item.",
+  "expected": [
+    {
+      "file": "src/artifacts/card.ts",
+      "line": 164,
+      "window": 5,
+      "class": "dim-17"
+    }
+  ]
+}

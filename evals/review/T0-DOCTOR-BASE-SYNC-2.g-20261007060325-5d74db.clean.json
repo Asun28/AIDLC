@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-DOCTOR-BASE-SYNC-2.g-20261007060325-5d74db.clean",
+  "candidate": "83f0006d897be1e6876799d0b0a6c100478f2912",
+  "base": "cc4ac3ee55491b676f0ffe3723e3720f79cdbc7f",
+  "card": {
+    "id": "T0-DOCTOR-BASE-SYNC-2",
+    "path": "specs/tasks/T0-DOCTOR-BASE-SYNC-2.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-DOCTOR-BASE-SYNC-2 clean (goal g-20261007060325-5d74db)",
+  "note": "R3 decision 1 passed (codex)"
+}

@@ -1,0 +1,14 @@
+{
+  "kind": "clean",
+  "id": "T0-SHIP-THROW-SLOT-3.g-20261104204311-d59d18.clean",
+  "candidate": "bd8ed5798b7dd9e23ed4052debf78065b7161296",
+  "base": "165037d1513d18e608276bc9049c3fb23c70c3c4",
+  "card": {
+    "id": "T0-SHIP-THROW-SLOT-3",
+    "path": "specs/tasks/T0-SHIP-THROW-SLOT-3.md"
+  },
+  "confirmed": true,
+  "confirmedBy": "asun28",
+  "origin": "T0-SHIP-THROW-SLOT-3 clean (goal g-20261104204311-d59d18)",
+  "note": "R3 decision 1 passed (codex)"
+}
