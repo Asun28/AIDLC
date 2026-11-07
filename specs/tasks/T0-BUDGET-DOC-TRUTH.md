@@ -1,7 +1,7 @@
 ---
 id: T0-BUDGET-DOC-TRUTH
 title: The card templates and the operating guide say the budget is a merge gate only on the scaffold ship path
-status: todo
+status: merged
 branch: T0-BUDGET-DOC-TRUTH
 worktree: D:\wt\AIDLC\T0-BUDGET-DOC-TRUTH
 allow_paths:
