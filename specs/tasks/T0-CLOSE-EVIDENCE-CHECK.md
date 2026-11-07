@@ -23,7 +23,7 @@ requirements:
   - R2. `aidlc card close <id>` with `--evidence` or `--all`, on a CLOSE run with its merge verified, shall record `closure.evidence` true only when the goal manifest parses and holds an entry whose `cardId` is the card and whose file under the evidence directory exists with the digest the entry records. An entry of any kind counts.
   - R3. When the check fails, `closure.evidence` shall be false, also when an earlier call recorded it true, the other requested flags shall be recorded, and the command shall exit nonzero with a message that names the cause and an `aidlc evidence retain` command holding the goal, `--card` and, when the run's last passing review decision names a verdict file that exists in the worktree or in the evidence tree, that file; the same command run again after a file is retained shall complete the step.
   - R4. In one call the evidence check shall run before the cleanup step, and a failed check shall leave the worktree in place, not run the cleanup step and leave `closure.cleanup` as recorded, because the removal takes the files a retain command reads.
-  - R5. The check shall read the manifest and the evidence tree only: it shall write no file, and it shall read nothing from the worktree.
+  - R5. The check shall decide from the manifest and the evidence tree alone and shall write no file; the worktree shall have no part in the result, and is read only for the path the R3 message names.
   - R6. With `shipPath: dry-run` the check shall not run and the flag shall be recorded, as that path treats the cleanup and metadata steps.
   - R7. The `--evidence` option description, the close directive, `docs/OPERATIONS.md`, `docs/ARCHITECTURE.md` and both copies of `card-loop.md` shall state the check, `docs/OPERATIONS.md` shall state the sealed manifest limit of the Doc text section, and the CHANGELOG Unreleased section shall have an entry naming this card.
 acceptance:
@@ -44,7 +44,7 @@ tdd: true
 sweep: "Checked on main at 48f1017. `markClosure` has one caller, `card close` in src/cli/main.ts. On a github run only acceptance 13 of card-close-cleanup.test.ts passes `evidence: true`; every other caller in tests runs on dry-run, which R6 exempts. `verifyAudit` already checks entry files (ARTIFACT_MISSING, ARTIFACT_ALTERED) and is not changed. Entry ids follow three styles in the manifests of the last eight goals (`<card>.r3.<n>.<hash>`, `<card>-r3.<n>.<hash>.json`, `<card>-r3-record`), so a name does not bind an entry to a card, and a prefix joins T0-X and T0-X-2. `--candidate` does not bind it either: `audit verify` blocks a `review-verdict` entry whose candidate is not the final one, which every card but the last of a multi-card goal would hit. Of 93 DONE runs 71 name a verdict file, 18 passed without one and 4 hold no decision, so a check on verdict bytes would leave a card with nothing to compare and no way to close. `card-loop.md` is 6499 bytes under a cap of 6500. docs/LESSONS.md, T0-CANDIDATE-WITHDRAW: `card close --all` marks evidence with nothing retained."
 forbid:
   - writing the manifest or any file from `card close` for this step
-  - reading the worktree for this step
+  - deciding this step from the worktree
   - changing `verifyAudit` or the meaning of `--candidate`
   - changing `--doc-sync` or `--findings`
   - weakening or skipping a test to go green
