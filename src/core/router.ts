@@ -31,8 +31,8 @@ const RELEASE = /\b(deploy|release|publish|ship to (?:staging|production|prod)|s
 // verb tied by `to` to the target in one sentence, a build verb tied to what it builds, or a phrase that names the operation.
 const DELIVER = /\b(?:deploy|release|ship|publish|promote|push|roll[- ]?out)\b/i;
 const BUILD = /\b(?:build|produce|make|create|cut|generate|publish)\b/i;
-const TO_PRODUCTION = /\bto\s+(?:the\s+)?production\b/i;
-const TO_STAGING = /\b(?:to\s+(?:the\s+)?(?:staging|uat|preprod|pre-production|test environment)|for\s+online\s+test(?:ing)?)\b/i;
+const TO_PRODUCTION = /\bto (?:the )?production\b/i;
+const TO_STAGING = /\b(?:to (?:the )?(?:staging|uat|preprod|pre-production|test environment)|for online testing)\b/i;
 const PACKAGE_NOUN = /\b(?:runnable package|installer|build artifact|distributable|apk|msi|docker image)\b/i;
 const GO_LIVE = /\b(?:go live|release to prod)\b/i;
 const PACKAGE_IT = /\bpackage (?:it|the app|a build)\b/i;
@@ -40,12 +40,15 @@ const PACKAGE_IT = /\bpackage (?:it|the app|a build)\b/i;
 // not); at a full-width terminator, which takes no whitespace; at a blank line; or before a list item, a line that opens with
 // marks or a short label. Any other line break is wrapping. The lookahead keeps the lookbehind to whitespace, so a long run of
 // marks is read back once, not from each of its characters.
-const SENTENCE_END = /(?=\s)(?<=[\p{Sentence_Terminal};\u2026][^\p{L}\p{N}\s]*)\s+|(?<=[\u3002\uff01\uff1f\uff1b])|\n\s*\n|\n\s*(?:[^\p{L}\p{N}\s]+|\(?[\p{L}\p{N}]{1,3}[.)])\s/u;
+const SENTENCE_END = /(?=\s)(?<=[\p{Sentence_Terminal};\u2026][^\p{L}\p{N}\s]*)\s+|(?<=[\u3002\uff01\uff0e\uff1f\uff1b\uff61])|\n\s*\n|\n\s*(?:[^\p{L}\p{N}\s]+|\(?[\p{L}\p{N}]{1,3}[.)])\s/u;
 const MIGRATION_OP = /\b(run the migration|apply the migration|migrate the (?:database|data)|backfill the|run (?:the |a )?data migration)\b/i;
 const OPERATIONS = /\b(page on-?call|keep watching|ongoing operations|observe production|monitor (?:it|the|this|our|production|prod))\b/i;
 const INCIDENT = /\b(alert|incident|outage|p1|p2|sev ?\d|5xx spike|error rate|latency spike|observed regression|prod(?:uction)? (?:is|error))\b/i;
 const ISSUE_REF = /(?:^|\s)(?:#(\d+)|issue\s+#?(\d+)|([\w.-]+\/[\w.-]+)#(\d+))(?:\s|$)/i;
 const BARE_NUMBER = /^\s*#?(\d{1,6})\s*$/;
+
+/** A line break inside a sentence is wrapping, so a form is read with its whitespace collapsed. */
+const flat = (text: string): string => text.replace(/\s+/g, ' ');
 
 /** A verb and an object after it in one sentence. Finding the first verb and testing the rest keeps this linear in the text. */
 function tied(sentences: string[], verb: RegExp, object: RegExp): boolean {
@@ -65,13 +68,14 @@ const NO_TARGET: TargetReading = { target: 'development', explicit: false };
 
 function detectTarget(text: string): TargetReading {
   // A bug report that names a target describes a failure there; it asks for no delivery.
-  if (BUG.test(text)) return NO_TARGET;
-  const sentences = text.split(SENTENCE_END);
-  if (tied(sentences, DELIVER, TO_PRODUCTION) || GO_LIVE.test(text)) return { target: 'production', explicit: true, reason: 'explicit production release request' };
+  if (BUG.test(flat(text))) return NO_TARGET;
+  const sentences = text.split(SENTENCE_END).map(flat);
+  const holds = (form: RegExp): boolean => sentences.some((sentence) => form.test(sentence));
+  if (tied(sentences, DELIVER, TO_PRODUCTION) || holds(GO_LIVE)) return { target: 'production', explicit: true, reason: 'explicit production release request' };
   if (tied(sentences, DELIVER, TO_STAGING)) return { target: 'staging', explicit: true, reason: 'explicit online testing / staging request' };
-  if (PACKAGE_IT.test(text) || tied(sentences, BUILD, PACKAGE_NOUN)) return { target: 'package', explicit: true, reason: 'explicit package request' };
-  if (MIGRATION_OP.test(text)) return { target: 'migration', explicit: true, reason: 'explicit migration operation' };
-  if (OPERATIONS.test(text)) return { target: 'operations', explicit: true, reason: 'explicit ongoing operations request' };
+  if (holds(PACKAGE_IT) || tied(sentences, BUILD, PACKAGE_NOUN)) return { target: 'package', explicit: true, reason: 'explicit package request' };
+  if (holds(MIGRATION_OP)) return { target: 'migration', explicit: true, reason: 'explicit migration operation' };
+  if (holds(OPERATIONS)) return { target: 'operations', explicit: true, reason: 'explicit ongoing operations request' };
   return NO_TARGET;
 }
 
@@ -135,7 +139,7 @@ export function classifyRequest(input: RouterInput): RoutingResult {
   if (!kind) {
     if (input.source === 'incident' || INCIDENT.test(text)) kind = 'incident';
     else if (targetInfo.explicit && targetInfo.target === 'migration') kind = 'migration';
-    else if (targetInfo.explicit && RELEASE.test(text) && !SYSTEM.test(text) && !FEATURE.test(text)) kind = 'release';
+    else if (targetInfo.explicit && RELEASE.test(flat(text)) && !SYSTEM.test(text) && !FEATURE.test(text)) kind = 'release';
     else if (input.hasBugEvidence || input.source === 'bug-evidence' || BUG.test(text)) kind = 'bugfix';
     else if (SYSTEM.test(text)) kind = 'system';
     else if (FEATURE.test(text)) kind = 'feature';
