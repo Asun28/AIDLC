@@ -31,6 +31,10 @@ export interface R3Stats {
   blocks: number;
   /** Sum of request to decision artifact over the invocations that landed one. */
   durationMs: number;
+  /** Decided second passes (card T1-R3-SECOND-PASS). */
+  secondPasses: number;
+  /** Of those, the ones that blocked. */
+  secondPassBlocks: number;
 }
 
 export interface FindingStats {
@@ -140,7 +144,7 @@ function sealR2(counters: R2Counters): R2Stats {
 }
 
 function emptyR3(): R3Stats {
-  return { decisions: 0, blocks: 0, durationMs: 0 };
+  return { decisions: 0, blocks: 0, durationMs: 0, secondPasses: 0, secondPassBlocks: 0 };
 }
 
 function emptyCoverage(): CoverageStats {

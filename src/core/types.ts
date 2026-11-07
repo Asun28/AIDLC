@@ -338,6 +338,8 @@ export const ReviewInvocation = z.object({
   stopReview: z.string().min(1).optional(),
   /** The advisory reasons the decision retained (a command or ship-path decision that retained at least one); absent otherwise and on records written before card T1-REVIEW-PRE-EXISTING. */
   advisory: z.array(z.string()).optional(),
+  /** The one second pass of a card run: this R3 ran with matched rules, no delta and no advisory notes (card T1-R3-SECOND-PASS). */
+  secondPass: z.boolean().optional(),
 });
 export type ReviewInvocation = z.infer<typeof ReviewInvocation>;
 
