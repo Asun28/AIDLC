@@ -3020,6 +3020,7 @@ export class CardRunner {
       else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
     }
     const recorded = { ...flags };
+    const lowered: Partial<CardRun['closure']> = {};
     const failures: string[] = [];
     const perform = (step: 'cleanup' | 'metadata', work: () => void) => {
       if (!flags[step]) return;
@@ -3028,6 +3029,7 @@ export class CardRunner {
         work();
       } catch (err) {
         recorded[step] = false;
+        lowered[step] = false;
         failures.push(`${step}: ${(err as Error).message}`);
       }
     };
@@ -3036,8 +3038,15 @@ export class CardRunner {
     if (failures.length) data['closureFailures'] = failures;
     const closure = { ...current.closure, ...recorded };
     assertLiveGoal();
-    this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
-    const saved = this.save({ ...current, closure });
+    // A failed step lowers its flag before the journal write, so a journal that fails too leaves no earlier true behind.
+    const base = failures.length ? this.save({ ...current, closure: { ...current.closure, ...lowered } }) : current;
+    try {
+      this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
+    } catch (err) {
+      if (!failures.length) throw err;
+      throw new Error(`${failures.join('; ')}; journal: ${(err as Error).message}`);
+    }
+    const saved = this.save({ ...base, closure });
     if (failures.length) throw new Error(failures.join('; '));
     return saved;
   }
