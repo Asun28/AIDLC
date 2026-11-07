@@ -184,6 +184,15 @@ export interface CardRegistry {
   errors: Array<{ file: string; error: string; findings: CardFinding[] }>;
 }
 
+/** The card text with the value of its front-matter `status` set; every other byte stays. */
+export function withCardStatus(text: string, status: Card['status']): string {
+  const doc = splitFrontMatter(text);
+  const head = doc ? text.slice(0, text.length - doc.body.length) : '';
+  const value = /^(status:[ \t]*)\S+/m.exec(head);
+  if (!doc || !value) throw new Error('the card has no status in its front matter');
+  return `${head.slice(0, value.index)}${value[1]}${status}${head.slice(value.index + value[0].length)}${doc.body}`;
+}
+
 export function loadCardRegistry(dir: string, archiveDir?: string, options: CardParseOptions = {}): CardRegistry {
   const cards: ParsedCard[] = [];
   const errors: CardRegistry['errors'] = [];

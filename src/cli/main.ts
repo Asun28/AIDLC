@@ -499,13 +499,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   card
     .command('close <cardId>')
-    .description('mark closure predicates as verified')
+    .description('do the cleanup and metadata steps and record the closure predicates')
     .option('--goal <id>')
-    .option('--metadata')
+    .option('--metadata', 'write status: merged in the card file of the main checkout; the session commits it')
     .option('--doc-sync')
     .option('--findings')
     .option('--evidence')
-    .option('--cleanup')
+    .option('--cleanup', 'copy .review/ into the evidence tree and remove the worktree')
     .option('--all', 'the five mechanical steps; the lesson step stays open until a disposition is recorded')
     .option('--lesson <text>', 'record the lesson: "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"')
     .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')

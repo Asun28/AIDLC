@@ -88,7 +88,7 @@ test('T0-LESSON-DUP acceptance 3: the close directive leaves the lesson step out
     if (close.directive.kind === 'close') assert.deepEqual(close.directive.missing, ['metadata', 'docSync', 'findings', 'evidence', 'cleanup', 'lessons']);
     assert.equal(
       close.directive.narration,
-      `Merge verified. Complete only the missing closure steps (metadata, docSync, findings, evidence, cleanup) through the existing approved metadata procedure, then mark them with \`aidlc card close ${CARD} --metadata\`. ${LESSON_HINT}`,
+      `Merge verified. Complete only the missing closure steps (metadata, docSync, findings, evidence, cleanup), then mark them with \`aidlc card close ${CARD} --metadata\`. \`--cleanup\` and \`--metadata\` do their step: cleanup copies \`.review/\` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main. ${LESSON_HINT}`,
     );
     const marked = runner.markClosure(fx.goal(goalId), card, close.run, FIVE);
     const open = runner.next(fx.goal(goalId), card, marked);

@@ -83,6 +83,13 @@ export class GitProbe {
     return entries;
   }
 
+  /** Remove a linked worktree, node_modules included, so it gets longer than a probe. Git refuses one with modified or untracked files; the branch stays. */
+  removeWorktree(mainRoot: string, worktree: string): void {
+    const args = ['worktree', 'remove', worktree];
+    const r = this.runner('git', args, { cwd: mainRoot, timeoutMs: 300_000 });
+    if (r.exitCode !== 0) throw new GitProbeError(args, r);
+  }
+
   /** Exact branch-ref and canonical path match; common dir must match the main checkout. */
   findWorktree(mainRoot: string, branch: string, expectedPath?: string): { entry?: WorktreeEntry; mismatch?: string } {
     const entries = this.worktrees(mainRoot);

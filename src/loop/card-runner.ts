@@ -8,7 +8,7 @@
  * back; CLOSE verifies closure predicates; DONE/STOP return. Every attempt is recorded in the
  * effort episode; every external mutation records intent first.
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -34,7 +34,9 @@ import { mutantsMarkerPath, mutantsReportPath } from '../review/mutants.ts';
 import { COVERAGE_ANGLE, MUTANT_REPORT_MAX_BYTES, MUTANT_REPORT_MAX_MUTANTS, PRE_EXISTING_TAG, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, stripAdvisoryTags, type ChangedLines, type PanelResult, type PriorFinding, type ReviewDelta } from '../review/pre-review.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { StoreError, atomicWriteJson } from '../state/store.ts';
+import { StoreError, atomicWriteJson, atomicWriteText } from '../state/store.ts';
+import { EvidenceStore } from '../audit/manifest.ts';
+import { withCardStatus } from '../artifacts/card.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { FormalReviewConfig, ProjectConfig } from '../config.ts';
@@ -2908,10 +2910,11 @@ export class CardRunner {
       this.journal(goal.id).append({ type: 'CARD_STATE', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { from: 'CLOSE', to: 'DONE' } });
       return { run: next, directive: { kind: 'done', cardId: card.id, narration: 'Closure verified; card DONE.' } };
     }
-    // The lesson step has its own flags and `--lesson` writes its line, so it is never a step done by hand; every other
-    // step is done by hand and marked by its own name.
-    const byHand = missing.filter((m) => m !== 'lessons');
-    const steps = byHand.length ? ` Complete only the missing closure steps (${byHand.join(', ')}) through the existing approved metadata procedure, then mark them with \`aidlc card close ${card.id} --${byHand[0]}\`.` : '';
+    // The lesson step has its own flags and `--lesson` writes its line; every other step is marked by its own name, and
+    // the flags of cleanup and metadata do their step.
+    const flagged = missing.filter((m) => m !== 'lessons');
+    const performed = flagged.some((m) => m === 'cleanup' || m === 'metadata') ? ' `--cleanup` and `--metadata` do their step: cleanup copies `.review/` into the evidence tree and removes the worktree, metadata writes the status, which the session commits on main.' : '';
+    const steps = flagged.length ? ` Complete only the missing closure steps (${flagged.join(', ')}), then mark them with \`aidlc card close ${card.id} --${flagged[0]}\`.${performed}` : '';
     const lessonHint = missing.includes('lessons') ? ` Record the lesson step with \`aidlc card close ${card.id} --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)"\`, which appends the line to docs/LESSONS.md itself (do not write it by hand), or \`--skip-lesson "<why>"\`; --all never records it.` : '';
     return { run: next, directive: { kind: 'close', cardId: card.id, missing, narration: `Merge verified.${steps}${lessonHint}` } };
   }
@@ -2962,10 +2965,57 @@ export class CardRunner {
       } else if (disposition.skipped?.trim()) data['lessonSkipped'] = disposition.skipped.trim();
       else throw new Error('the lessons closure step needs --lesson "<NEVER|ALWAYS|NOTE> <rule> (source: <ref>)" or --skip-lesson "<why>"');
     }
-    const closure = { ...current.closure, ...flags };
+    const recorded = { ...flags };
+    const failures: string[] = [];
+    const perform = (step: 'cleanup' | 'metadata', work: () => void) => {
+      if (!flags[step]) return;
+      assertLiveGoal();
+      try {
+        work();
+      } catch (err) {
+        delete recorded[step];
+        failures.push(`${step}: ${(err as Error).message}`);
+      }
+    };
+    perform('cleanup', () => this.reclaimWorktree(goal, card, now));
+    perform('metadata', () => this.writeMergedStatus(card));
+    if (failures.length) data['closureFailures'] = failures;
+    const closure = { ...current.closure, ...recorded };
     assertLiveGoal();
     this.journal(goal.id).append({ type: 'EVIDENCE_RETAINED', goalId: goal.id, cardId: card.id, generation: goal.generation, data: { closure, ...data } });
-    return this.save({ ...current, closure });
+    const saved = this.save({ ...current, closure });
+    if (failures.length) throw new Error(failures.join('; '));
+    return saved;
+  }
+
+  /**
+   * The cleanup step of a closing card: the files directly under `.review/` go into the evidence tree of the goal, then
+   * git removes the worktree. No worktree means an earlier call finished the step, so a retry after a crash succeeds.
+   */
+  private reclaimWorktree(goal: Goal, card: Card, now: string): void {
+    if (this.config.shipPath === 'dry-run') return;
+    const expected = path.join(resolveWorktreeRoot(this.config, this.repo.mainRoot), card.id);
+    const found = this.git.findWorktree(this.repo.mainRoot, card.id, expected);
+    if (found.mismatch) throw new Error(found.mismatch);
+    if (!found.entry) return;
+    const reviewDir = path.join(found.entry.path, '.review');
+    if (existsSync(reviewDir)) {
+      const evidence = new EvidenceStore(this.paths.evidence, goal.id);
+      let manifest = evidence.load(goal.id, goal.generation, goal.revision, now);
+      for (const file of readdirSync(reviewDir, { withFileTypes: true })) {
+        if (file.isFile()) manifest = evidence.retain(manifest, { id: `${card.id}.${file.name}`, kind: 'artifact', sourcePath: path.join(reviewDir, file.name) });
+      }
+    }
+    this.git.removeWorktree(this.repo.mainRoot, found.entry.path);
+  }
+
+  /** The metadata step: `status: merged` in the card file of the main checkout, which the session commits. */
+  private writeMergedStatus(card: Card): void {
+    if (this.config.shipPath === 'dry-run') return;
+    const file = path.join(this.repo.mainRoot, this.config.cardsDir, `${card.id}.md`);
+    const text = readFileSync(file, 'utf8');
+    const merged = withCardStatus(text, 'merged');
+    if (merged !== text) atomicWriteText(file, merged);
   }
 }
 

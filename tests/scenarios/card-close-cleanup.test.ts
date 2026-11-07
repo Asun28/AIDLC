@@ -102,6 +102,7 @@ test('T0-CLOSE-CLEANUP acceptance 1: cleanup copies .review/ into the evidence t
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const dir = worktree(fx);
+    writeFileSync(path.join(dir, '.review', 'manifest.json'), 'not the manifest\n');
     const marked = closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true });
     assert.equal(marked.closure.cleanup, true);
     assert.equal(existsSync(dir), false, 'the directory is gone');
@@ -112,7 +113,7 @@ test('T0-CLOSE-CLEANUP acceptance 1: cleanup copies .review/ into the evidence t
     const entry = manifest.entries.find((e) => e.id === `${CARD}.a.json`);
     assert.ok(entry, 'the manifest names the copy');
     assert.equal(readFileSync(path.join(evidence.dir, entry.path), 'utf8'), '{"verdict":"pass"}\n');
-    assert.equal(manifest.entries.length, 1, 'only files directly under .review/ are copied');
+    assert.deepEqual(manifest.entries.map((e) => e.id).sort(), [`${CARD}.a.json`, `${CARD}.manifest.json`], 'only files directly under .review/ are copied, and none takes the path of the manifest');
   } finally {
     fx.cleanup();
   }
@@ -201,11 +202,11 @@ test('T0-CLOSE-CLEANUP acceptance 6: metadata sets the status value and no other
     const { goalId, card, run } = atClose(fx);
     repository(fx);
     const file = path.join(fx.cardsDir, `${CARD}.md`);
-    const before = readFileSync(file, 'utf8').replace(/\r?\n/g, '\r\n').replace(/^status: todo\r$/m, 'status: todo   # todo | merged\r');
+    const before = readFileSync(file, 'utf8').replace(/\r?\n/g, '\r\n').replace(/^status: todo\r$/m, 'status:  todo   # todo | merged\r');
     writeFileSync(file, before, 'utf8');
     const marked = closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { metadata: true });
     assert.equal(marked.closure.metadata, true);
-    assert.equal(readFileSync(file, 'utf8'), before.replace('status: todo   #', 'status: merged   #'));
+    assert.equal(readFileSync(file, 'utf8'), before.replace('status:  todo   #', 'status:  merged   #'));
   } finally {
     fx.cleanup();
   }

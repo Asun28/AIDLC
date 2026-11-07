@@ -100,10 +100,10 @@ cause twice without progress stops the branch.
 
 ## CLOSE
 Verify the feature merge on the intended base, then perform only missing
-steps: status and doc_sync via the approved metadata procedure, finding
-dispositions replayed idempotently from all retained verdicts, evidence
-retained (`aidlc evidence retain`), cleanup, base contents. A reminder or
-exit 0 is not closure. Persistence failure after merge => merge_verified +
+steps: `card close --all` writes status (commit on main), removes the
+worktree; doc_sync, finding dispositions replayed idempotently from all
+retained verdicts, evidence retained (`aidlc evidence retain`), base
+contents. A reminder or exit 0 is not closure. Persistence failure after merge => merge_verified +
 STOP/audit; never repeat the merge. Lessons only under repository policy;
 no unrelated staging, sweeps or base pushes.
 
