@@ -111,7 +111,7 @@ test('T0-SIDE-WRITE-FAULTS acceptance 5: a recovered dispatch counts at its star
     const before = '2026-09-11T01:00:00.000Z';
     const later = '2026-09-11T03:00:00.000Z';
     const journal = fx.journal('g-recovered');
-    const count = (): number => Number(verifyAudit({ goalId: 'g-recovered', journal, now: fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL')?.detail.match(/^d+/)?.[0] ?? 0);
+    const count = (): number => Number(verifyAudit({ goalId: 'g-recovered', journal, now: fx.now() }).findings.find((f) => f.code === 'WORK_AFTER_TERMINAL')?.detail.match(/^[0-9]+/)?.[0] ?? 0);
     const dispatch = (data: Record<string, unknown>, ts: string) => journal.append({ type: 'CARD_DISPATCHED', goalId: 'g-recovered', cardId: CARD, generation: 0, data: { childRef: 'c', ...data }, ts });
     journal.append({ type: 'GOAL_STOPPED', goalId: 'g-recovered', generation: 0, data: {}, ts: stoppedAt });
     dispatch({ startedAt: before, completed: true }, '2026-09-11T04:00:00.000Z');

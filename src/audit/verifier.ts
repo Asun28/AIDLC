@@ -83,7 +83,7 @@ export function verifyAudit(input: VerifierInput): AuditReport {
   // generation. The chain check guarantees the events are in sequence order. A recovered attempt (`completed: true`, card
   // T0-JOURNAL-FAULT-EVENTS) counts at `startedAt`, the write that committed it, against the last disposition of its generation.
   const generationOf = (e: { generation?: number }) => e.generation ?? 0;
-  const committedBefore = (e: (typeof events)[number], at: string | undefined): boolean => e.type === 'ATTEMPT_STARTED' && e.data['completed'] === true && typeof e.data['startedAt'] === 'string' && at !== undefined && Date.parse(e.data['startedAt']) < Date.parse(at);
+  const committedBefore = (e: (typeof events)[number], at: string | undefined): boolean => (e.type === 'ATTEMPT_STARTED' || e.type === 'CARD_DISPATCHED') && e.data['completed'] === true && typeof e.data['startedAt'] === 'string' && at !== undefined && Date.parse(e.data['startedAt']) < Date.parse(at);
   let terminal: (typeof events)[number] | undefined;
   let resumedGeneration: number | undefined;
   let afterTerminal = 0;
