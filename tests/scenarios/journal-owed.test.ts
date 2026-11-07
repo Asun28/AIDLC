@@ -5,7 +5,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import fs, { mkdirSync, readFileSync } from 'node:fs';
+import fs, { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
