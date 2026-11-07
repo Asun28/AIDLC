@@ -65,6 +65,7 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   // R3 decision 1 F1: no limit on the words between the verb and the target, and a line break inside a sentence is wrapping.
   ['deploy the approved customer reporting application build from the latest successful verification pipeline to staging', 'staging'],
   ['deploy\nto staging', 'staging'],
+  ['deploy to\nstaging', 'staging'],
   ['deploy the build\n  to\n  production', 'production'],
   ['Release version 2.0 to production.', 'production'],
   // Main read these two as production: `\bproduction\b` matches after the hyphen, and `observe production` named the word.
@@ -77,7 +78,7 @@ const REQUESTS: Array<[string, 'production' | 'staging' | 'package' | 'migration
   ['package a build', 'package'],
   ['produce an installer', 'package'],
   ['make an apk', 'package'],
-  ['create a build artifact', 'package'],
+  ['create an installer', 'package'],
   ['cut a distributable', 'package'],
   ['generate an msi', 'package'],
   ['Run the migration against the reporting database', 'migration'],
@@ -113,6 +114,8 @@ const DROPPED = [
   'Release the notes\n\nThe next step is to production',
   '- Release the notes\n- Link it to production docs',
   '1. Release the notes\n2. Link it to production docs',
+  '1) Release the notes\n2) Link it to production docs',
+  'link the page to production docs and deploy the notes',
   'Release the notes; the next step is to production',
   'uat',
   'preprod',

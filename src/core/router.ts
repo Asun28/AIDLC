@@ -29,16 +29,29 @@ const CARD_TEXT_ONLY = /\b(card text|reword|rewrite the card|amend the card|upda
 const RELEASE = /\b(deploy|release|publish|ship to (?:staging|production|prod)|staging|production|go live|rollout|package (?:it|the app|a build)|installer|runnable package|build artifact)\b/i;
 // A target comes from a request to deliver, never from a word that names a place (card T0-INTAKE-TARGET, issue 222): a delivery
 // verb tied by `to` to the target in one sentence, a build verb tied to what it builds, or a phrase that names the operation.
-const SAME_SENTENCE = '(?:(?![.!?;]\\s)[^\\n]){0,80}?';
-const DELIVER = '\\b(?:deploy|release|ship|publish|promote|push|roll[- ]?out)\\b';
-const TO_PRODUCTION = new RegExp(`${DELIVER}${SAME_SENTENCE}\\bto\\s+(?:the\\s+)?production\\b|\\b(?:go live|release to prod)\\b`, 'i');
-const TO_STAGING = new RegExp(`${DELIVER}${SAME_SENTENCE}\\b(?:to\\s+(?:the\\s+)?(?:staging|uat|preprod|pre-production|test environment)|for\\s+online\\s+test(?:ing)?)\\b`, 'i');
-const TO_PACKAGE = new RegExp(`\\bpackage (?:it|the app|a build)\\b|\\b(?:build|produce|make|create|cut|generate|publish)\\b${SAME_SENTENCE}\\b(?:runnable package|installer|build artifact|distributable|apk|msi|docker image)\\b`, 'i');
+const DELIVER = /\b(?:deploy|release|ship|publish|promote|push|roll[- ]?out)\b/i;
+const BUILD = /\b(?:build|produce|make|create|cut|generate|publish)\b/i;
+const TO_PRODUCTION = /\bto\s+(?:the\s+)?production\b/i;
+const TO_STAGING = /\b(?:to\s+(?:the\s+)?(?:staging|uat|preprod|pre-production|test environment)|for\s+online\s+test(?:ing)?)\b/i;
+const PACKAGE_NOUN = /\b(?:runnable package|installer|build artifact|distributable|apk|msi|docker image)\b/i;
+const GO_LIVE = /\b(?:go live|release to prod)\b/i;
+const PACKAGE_IT = /\bpackage (?:it|the app|a build)\b/i;
+// A sentence ends at closing punctuation before whitespace (a dot in `2.0` or `example.com` does not), at a blank line or
+// before a list item; a single line break is wrapping.
+const SENTENCE_END = /(?<=[.!?;]["'\u2019\u201d)\]]*)\s+|\n\s*\n|\n\s*(?:[-*]|\d+[.)])\s/;
 const MIGRATION_OP = /\b(run the migration|apply the migration|migrate the (?:database|data)|backfill the|run (?:the |a )?data migration)\b/i;
 const OPERATIONS = /\b(page on-?call|keep watching|ongoing operations|observe production|monitor (?:it|the|this|our|production|prod))\b/i;
 const INCIDENT = /\b(alert|incident|outage|p1|p2|sev ?\d|5xx spike|error rate|latency spike|observed regression|prod(?:uction)? (?:is|error))\b/i;
 const ISSUE_REF = /(?:^|\s)(?:#(\d+)|issue\s+#?(\d+)|([\w.-]+\/[\w.-]+)#(\d+))(?:\s|$)/i;
 const BARE_NUMBER = /^\s*#?(\d{1,6})\s*$/;
+
+/** A verb and its object, in that order, in one sentence. Finding the first verb and testing the rest keeps this linear in the text. */
+function tied(sentences: string[], verb: RegExp, object: RegExp): boolean {
+  return sentences.some((sentence) => {
+    const at = sentence.search(verb);
+    return at >= 0 && object.test(sentence.slice(at));
+  });
+}
 
 interface TargetReading {
   target: DeliveryTarget;
@@ -51,9 +64,10 @@ const NO_TARGET: TargetReading = { target: 'development', explicit: false };
 function detectTarget(text: string): TargetReading {
   // A bug report that names a target describes a failure there; it asks for no delivery.
   if (BUG.test(text)) return NO_TARGET;
-  if (TO_PRODUCTION.test(text)) return { target: 'production', explicit: true, reason: 'explicit production release request' };
-  if (TO_STAGING.test(text)) return { target: 'staging', explicit: true, reason: 'explicit online testing / staging request' };
-  if (TO_PACKAGE.test(text)) return { target: 'package', explicit: true, reason: 'explicit package request' };
+  const sentences = text.split(SENTENCE_END);
+  if (tied(sentences, DELIVER, TO_PRODUCTION) || GO_LIVE.test(text)) return { target: 'production', explicit: true, reason: 'explicit production release request' };
+  if (tied(sentences, DELIVER, TO_STAGING)) return { target: 'staging', explicit: true, reason: 'explicit online testing / staging request' };
+  if (PACKAGE_IT.test(text) || tied(sentences, BUILD, PACKAGE_NOUN)) return { target: 'package', explicit: true, reason: 'explicit package request' };
   if (MIGRATION_OP.test(text)) return { target: 'migration', explicit: true, reason: 'explicit migration operation' };
   if (OPERATIONS.test(text)) return { target: 'operations', explicit: true, reason: 'explicit ongoing operations request' };
   return NO_TARGET;
