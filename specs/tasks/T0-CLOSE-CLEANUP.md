@@ -41,7 +41,7 @@ acceptance:
   - 11. Same file: `metadata` recorded true by a first call, then the card file removed: a second call with `metadata` throws and `closure.metadata` is false; the same for `cleanup` with a path at the expected place that git does not list. [R2] [R5] [dod arm 2]
   - 12. Same file, where the fixture can create a symbolic link and skipped elsewhere: two files of `.review/` with different contents whose copies land on one destination file, as `Report.json` and `report.json` do on a case-insensitive evidence directory: the call throws, the worktree and both files are in place, and `closure.cleanup` is false. [R1] [R2] [dod arm 2]
 depends_on: []
-budget: 500
+budget: 650
 tdd: true
 sweep: "Checked on main at bbbdb10. `markClosure` (src/loop/card-runner.ts) sets the flags it is given and checks none of them. `card close --all` (src/cli/main.ts) passes cleanup true. No code in src removes a card worktree. All three merged cards with a live worktree record cleanup true: T0-CI-RERUN-STRUCTURED-2, T0-R2-OFF, T0-R3-STOP-DISPUTED. `.review/` sits inside the worktree, so removing the worktree without a copy loses the verdicts and logs. `git worktree remove` refuses modified and untracked files and passes ignored ones, so `.review/` and `node_modules` do not block it. `card-loop.md` is 6481 bytes under a cap of 6500. `tests/scenarios/lesson-dup.test.ts:91` pins the whole close sentence."
 forbid:
