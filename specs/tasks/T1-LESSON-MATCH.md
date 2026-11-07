@@ -1,7 +1,7 @@
 ---
 id: T1-LESSON-MATCH
 title: A review can take the learned rules that best match its diff instead of the newest, and `aidlc review bench run --rules matched` scores that selection
-status: todo
+status: merged
 branch: T1-LESSON-MATCH
 worktree: D:\wt\AIDLC\T1-LESSON-MATCH
 plan_ref: plans/second-r3-pass.md#order-of-work
