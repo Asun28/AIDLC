@@ -386,7 +386,9 @@ export class GoalController {
     const done = this.store.listReleases(goal.id).find((a) => a.generation === goal.generation && a.state === 'DONE' && a.disposition === 'delivered');
     if (done) {
       const next = transitionGoal(goal, 'CLOSE', now, { deliveryVerified: true });
-      next.stages = { ...next.stages, [goal.target]: 'pass' };
+      // A production goal requests staging too (`stagesForTarget`), and its attempt verifies staging before the CHECKPOINT.
+      const stagingVerified = done.target === 'production' && done.steps.some((s) => s.name === 'stage-verify' && s.status === 'succeeded');
+      next.stages = { ...next.stages, ...(stagingVerified ? { staging: 'pass' as const } : {}), [goal.target]: 'pass' };
       this.store.saveGoal(next);
       return this.nextInClose(next, now);
     }
