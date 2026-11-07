@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,6 +12,7 @@ import { EvidenceStore } from '../../src/audit/manifest.ts';
 import { sweepWorktrees, type ReclaimDeps, type ReclaimRow } from '../../src/loop/worktree-reclaim.ts';
 import { GitProbe } from '../../src/probes/git.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
+import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
 
 // T0-WORKTREE-RECLAIM: the sweep removes the clean worktrees of finished cards and keeps every branch. Each test runs on a
@@ -95,9 +96,14 @@ function only(rows: ReclaimRow[], card: string = CARD): ReclaimRow {
   return row;
 }
 
-/** The config file the CLI reads, on a real ship path. */
-function cliConfig(fx: Fixture): void {
-  writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'github', worktreeRoot: rootOf(fx), cardsDir: 'specs/tasks', base: 'main' }));
+/** The config file the CLI reads, on a real ship path unless the test says otherwise. */
+function cliConfig(fx: Fixture, shipPath: 'github' | 'dry-run' = 'github'): void {
+  writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath, worktreeRoot: rootOf(fx), cardsDir: 'specs/tasks', base: 'main' }));
+}
+
+/** The output with what differs between two fixtures taken out: goal ids, times and the temporary directory. */
+function stable(fx: Fixture, text: string): string {
+  return text.split(fx.tmp).join('<tmp>').replace(/g-\d{14}-[0-9a-f]{6}/g, '<goal>').replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<time>');
 }
 
 function cli(fx: Fixture, ...args: string[]) {
@@ -237,6 +243,9 @@ const keptBack: Array<[string, (fx: Fixture, dir: string, goalId: string) => voi
   ['an unresolved operation', (fx, _dir, goalId) => {
     fx.ops.recordIntent({ kind: 'deploy', goalId, cardId: CARD, target: 'staging', ownerGeneration: 0, timeoutMs: 1000 }, T0);
   }, /unresolved operation/],
+  ['a locked worktree', (fx, dir) => {
+    git(fx.tmp, ['worktree', 'lock', dir]);
+  }, /locked/],
   ['a modified tracked file', (_fx, dir) => {
     writeFileSync(path.join(dir, TRACKED), 'changed\n');
   }, /modified or untracked/],
@@ -244,6 +253,11 @@ const keptBack: Array<[string, (fx: Fixture, dir: string, goalId: string) => voi
     writeFileSync(path.join(dir, 'new.txt'), 'new\n');
   }, /modified or untracked/],
   ['an ignored directory the removal would delete', (_fx, dir) => {
+    mkdirSync(path.join(dir, '_local'));
+    writeFileSync(path.join(dir, '_local', 'build.log'), 'log\n');
+  }, /ignored paths .*_local\//],
+  ['an ignored directory under a git setting that hides untracked files', (fx, dir) => {
+    git(fx.tmp, ['config', 'status.showUntrackedFiles', 'no']);
     mkdirSync(path.join(dir, '_local'));
     writeFileSync(path.join(dir, '_local', 'build.log'), 'log\n');
   }, /ignored paths .*_local\//],
@@ -413,29 +427,56 @@ test('T0-WORKTREE-RECLAIM acceptance 8: goal cancel removes the worktree of its 
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws changes neither the stdout nor the exit code of goal cancel [R6]', () => {
-  const clean = makeFixture();
+test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole stdout and the exit code of goal cancel [R6]', () => {
+  const plain = makeFixture();
   const broken = makeFixture();
   try {
-    const run = (fx: Fixture, arrange: () => void) => {
+    const cancel = (fx: Fixture, arrange: () => void) => {
       writeCard(fx, { id: CARD, title: 'cancelled' });
       const goal = goalForCards(fx, [CARD]);
       repository(fx);
-      linked(fx);
-      cliConfig(fx);
       arrange();
       const out = cli(fx, 'goal', 'cancel', goal.id);
-      return { status: out.status, keys: Object.keys(JSON.parse(out.stdout) as object).sort(), stderr: out.stderr };
+      return { status: out.status, stdout: stable(fx, out.stdout), stderr: out.stderr };
     };
-    const plain = run(clean, () => undefined);
-    const thrown = run(broken, () => writeFileSync(path.join(broken.paths.goals, 'g-broken.json'), '{'));
+    const without = cancel(plain, () => cliConfig(plain, 'dry-run'));
+    const thrown = cancel(broken, () => {
+      linked(broken);
+      cliConfig(broken);
+      writeFileSync(path.join(broken.paths.goals, 'g-broken.json'), '{');
+    });
     assert.equal(thrown.status, 0, thrown.stderr);
-    assert.equal(thrown.status, plain.status);
-    assert.deepEqual(thrown.keys, plain.keys);
+    assert.equal(thrown.status, without.status);
+    assert.equal(thrown.stdout, without.stdout);
+    assert.notEqual(thrown.stdout, '');
     assert.match(thrown.stderr, /worktree sweep did not finish/);
   } finally {
-    clean.cleanup();
+    plain.cleanup();
     broken.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 8: with its stderr closed goal cancel exits zero and the sweep has run [R6]', async () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'cancelled' });
+    const goal = goalForCards(fx, [CARD]);
+    repository(fx);
+    const dir = linked(fx);
+    cliConfig(fx);
+    const child = spawn(process.execPath, [MAIN, 'goal', 'cancel', goal.id, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: actorA.session }, stdio: ['ignore', 'pipe', 'pipe'] });
+    child.stderr.destroy();
+    let stdout = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    const code = await new Promise((resolve) => child.on('close', resolve));
+    assert.equal(code, 0);
+    assert.notEqual(stdout, '');
+    assert.equal(fx.goal(goal.id).stop?.reason, 'cancelled');
+    assert.equal(existsSync(dir), false);
+  } finally {
+    fx.cleanup();
   }
 });
 
@@ -500,25 +541,58 @@ test('T0-WORKTREE-RECLAIM acceptance 8: card close --all removes a finished card
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws changes neither the stdout nor the exit code of card close [R6]', () => {
+test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole stdout and the exit code of card close [R6]', () => {
+  const actor = { ...actorA, host: hostName() };
+  const plain = makeFixture({ actor });
+  const broken = makeFixture({ actor });
+  try {
+    const close = (fx: Fixture, arrange: (goalId: string) => void) => {
+      setActorForTests(actor);
+      const other = ended(fx, CARD, 'cancelled');
+      fx.advance(60_000);
+      const { goalId } = closingAtCli(fx);
+      repository(fx, [CARD, NEXT]);
+      linked(fx, NEXT);
+      const evidence = new EvidenceStore(fx.paths.evidence, goalId);
+      evidence.retain(evidence.load(goalId, 1, 1, T0), { id: 'verdict.json', kind: 'review-verdict', content: VERDICT, cardId: NEXT });
+      arrange(other);
+      const out = cli(fx, 'card', 'close', NEXT, '--goal', goalId, '--all');
+      return { status: out.status, stdout: stable(fx, out.stdout), stderr: out.stderr };
+    };
+    const without = close(plain, () => cliConfig(plain, 'dry-run'));
+    const thrown = close(broken, (other) => {
+      linked(broken);
+      cliConfig(broken);
+      writeFileSync(broken.store.cardFile(other, CARD), '{');
+    });
+    assert.equal(thrown.status, 0, thrown.stderr);
+    assert.equal(thrown.status, without.status);
+    assert.equal(thrown.stdout, without.stdout);
+    assert.deepEqual(JSON.parse(thrown.stdout), { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons: false });
+    assert.match(thrown.stderr, /worktree sweep did not finish/);
+    assert.equal(existsSync(path.join(rootOf(broken), CARD, TRACKED)), true);
+  } finally {
+    plain.cleanup();
+    broken.cleanup();
+  }
+});
+
+test('T0-WORKTREE-RECLAIM acceptance 8: a card close that fails keeps its error and exit code and still sweeps [R6]', () => {
   const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
   try {
-    const other = ended(fx, CARD, 'cancelled');
+    ended(fx, CARD, 'cancelled');
     fx.advance(60_000);
     const { goalId, dir } = closingAtCli(fx);
     repository(fx, [CARD, NEXT]);
-    const bystander = linked(fx);
+    const finished = linked(fx);
     linked(fx, NEXT);
-    const evidence = new EvidenceStore(fx.paths.evidence, goalId);
-    evidence.retain(evidence.load(goalId, 1, 1, T0), { id: 'verdict.json', kind: 'review-verdict', content: VERDICT, cardId: NEXT });
     cliConfig(fx);
-    writeFileSync(fx.store.cardFile(other, CARD), '{');
     const out = cli(fx, 'card', 'close', NEXT, '--goal', goalId, '--all');
-    assert.equal(out.status, 0, out.stderr);
-    assert.equal((JSON.parse(out.stdout) as { cleanup: boolean }).cleanup, true);
-    assert.match(out.stderr, /worktree sweep did not finish/);
-    assert.equal(existsSync(dir), false);
-    assert.equal(existsSync(path.join(bystander, TRACKED)), true);
+    assert.notEqual(out.status, 0);
+    assert.match(out.stderr, /evidence: the manifest of /);
+    assert.match(out.stderr, new RegExp(`removed.*${CARD}`));
+    assert.equal(existsSync(finished), false);
+    assert.equal(existsSync(path.join(dir, TRACKED)), true, 'a failed check keeps the card worktree');
   } finally {
     fx.cleanup();
   }
