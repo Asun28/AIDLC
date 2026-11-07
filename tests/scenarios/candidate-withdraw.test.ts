@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import fs, { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -78,7 +78,7 @@ function setup(preReview?: { onExhausted: 'stop' | 'ship'; rounds: number }) {
   const stored = () => fx.store.getCardRun(goal.id, CARD)!;
   const first = runner.next(g(), card, fx.controller.ensureCardRun(g(), CARD));
   /** Record `sha` as a successful attempt. */
-  const bind = (sha: string, input: { progress?: boolean } = {}): CardRun => runner.recordAttempt(g(), card, stored(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha, ...input });
+  const bind = (sha: string, input: { progress?: boolean; evidence?: string } = {}): CardRun => runner.recordAttempt(g(), card, stored(), { outcome: 'success', dodReceipt: `dod:${sha}`, redReceipt: 'red:1', candidateSha: sha, ...input });
   const withdraw = (cause = FINDING): CardRun => runner.withdrawCandidate(g(), card, stored(), cause);
   const next = () => runner.next(g(), card, stored());
   const patch = (change: (run: CardRun) => CardRun): CardRun => fx.store.updateCardRun(goal.id, CARD, (run) => change(run!));
@@ -109,7 +109,7 @@ function refused(s: Setup, act: () => unknown, expected: RegExp): void {
 
 test('T0-CANDIDATE-WITHDRAW acceptance 1: a candidate no review has read is withdrawn, the success that bound it counted as a failure with the finding as its cause [R1]', () =>
   withCard((s) => {
-    const bound = s.bind('sha-a');
+    const bound = s.bind('sha-a', { evidence: 'npm test: 42 pass' });
     assert.equal(bound.effort?.terminal, 'succeeded');
     assert.equal(s.next().run.state, 'SHIP', 'the withdrawal starts from the ship gate');
     const digest = bound.candidate?.digest;
@@ -117,6 +117,7 @@ test('T0-CANDIDATE-WITHDRAW acceptance 1: a candidate no review has read is with
     const run = s.withdraw();
     const attempt = run.effort!.attempts.at(-1)!;
     assert.deepEqual([attempt.outcome, attempt.cause], ['fail', `withdrawn: ${FINDING}`]);
+    assert.equal(attempt.evidence, `npm test: 42 pass; withdrawn: ${FINDING}`, 'the DoD text stays, with the finding after it');
     assert.equal(run.effort?.terminal, undefined);
     assert.equal(run.dodReceipt, undefined);
     assert.equal(run.blockedReceipt, undefined);
@@ -344,7 +345,7 @@ test('T0-CANDIDATE-WITHDRAW acceptance 8: a lost ATTEMPT_FINISHED append keeps t
     assert.equal(s.attemptsFinished().length, 1, 'a second card next adds none');
   }));
 
-test('T0-CANDIDATE-WITHDRAW acceptance 8: a refused withdrawal still delivers the owed event an earlier append lost [R7]', () =>
+test('T0-CANDIDATE-WITHDRAW acceptance 8: a refused withdrawal writes nothing with an event owed, and the next card next delivers it [R3] [R7]', () =>
   withCard((s) => {
     s.bind('sha-a');
     failingEvent = 'ATTEMPT_FINISHED';
@@ -353,7 +354,10 @@ test('T0-CANDIDATE-WITHDRAW acceptance 8: a refused withdrawal still delivers th
     } finally {
       failingEvent = undefined;
     }
-    assert.throws(() => s.withdraw(), /repair is pending|open/);
+    refused(s, () => s.withdraw(), /open/);
+    refused(s, () => s.withdraw('   '), /--cause/);
+    assert.equal(s.attemptsFinished().length, 0, 'the refusals delivered nothing');
+    s.next();
     assert.equal(s.attemptsFinished().length, 1);
   }));
 
@@ -399,6 +403,12 @@ test('T0-CANDIDATE-WITHDRAW acceptance 11: the CLI withdraws a bound candidate a
     const created = cli('goal', 'new', `implement ${CARD}`, '--card', CARD);
     const goal = typeof created['goal'] === 'string' ? (created['goal'] as string) : (created['goal']?.id as string);
     cli('report', '--goal', goal, '--result', 'cards-projected', '--cards', CARD);
+    const unstarted = raw('card', 'withdraw', CARD, '--goal', goal, '--cause', FINDING);
+    assert.notEqual(unstarted.status, 0);
+    assert.match(unstarted.stderr, /no run/);
+    assert.equal(existsSync(path.join(tmp, 'state', 'cards', goal, `${CARD}.json`)), false, 'no run was created, so no deadline started');
+    const journal = path.join(tmp, 'state', 'journal');
+    assert.ok(!readdirSync(journal).some((name) => readFileSync(path.join(journal, name), 'utf8').includes('CARD_DISPATCHED')), 'no card was dispatched');
     assert.equal(cli('card', 'next', CARD, '--goal', goal)['directive']['kind'], 'prepare');
     assert.equal(cli('card', 'next', CARD, '--goal', goal)['directive']['kind'], 'build');
     cli('card', 'attempt', CARD, '--goal', goal, '--outcome', 'success', '--dod-receipt', 'dod:cli', '--red-receipt', 'red:1', '--candidate-sha', 'sha-cli');
