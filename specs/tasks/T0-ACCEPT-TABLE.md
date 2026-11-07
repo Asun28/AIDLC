@@ -1,7 +1,7 @@
 ---
 id: T0-ACCEPT-TABLE
 title: The build and repair directives ask for a table in the card's Attempt evidence section, one row per acceptance item, which no code reads
-status: todo
+status: merged
 branch: T0-ACCEPT-TABLE
 worktree: D:\wt\AIDLC\T0-ACCEPT-TABLE
 allow_paths:
@@ -50,3 +50,16 @@ The table is self-attested. A wrong row is a real finding, and a reviewer may tr
 
 ## Review after 15 cards
 Share of R3 findings citing an acceptance item or requirement. Baseline 20%. Keep the text if the share falls below 15%; otherwise remove it.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/accept-table.test.ts`, one test per directive. RED on 139f78f: 3 of 3 failed on the count of the text (expected 2 parts, actual 1) | pass |
+| 2 | `tests/scenarios/t0-flow.test.ts`, `tests/scenarios/review-block.test.ts`, neither file changed | pass |
+| 3 | `git diff --stat origin/main...HEAD -- src` lists `src/loop/card-runner.ts` only: one constant and three interpolations | reviewer reads the diff |
+| 4 | `docs/OPERATIONS.md`, paragraph "Acceptance table"; `CHANGELOG.md`, entry T0-ACCEPT-TABLE | reviewer reads the diff |
+
+Placement: `tests/scenarios/repair-check.test.ts` pins the text on both sides of `REPAIR_CHECK`, so in the repair narration the table text sits before `Rerun the DoD`. That test passes.
+
+Other checks: `node --test tests/scenarios/fault-points.test.ts` (the verify-card-run-writes check) passes. `npm test` gave 2362 passed, 1 failed, 10 skipped: `tests/surface/templates.test.ts` slices the Unreleased section at the next `## `, and the first CHANGELOG wording held one. The entry was reworded, no test changed, and that file now passes.
