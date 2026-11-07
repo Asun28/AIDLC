@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- T1-R3-SECOND-PASS: with `formalReview.secondPass` on, the first R3 pass of a card run is followed by one more R3 on the same candidate, with `matchedLessons` rules, no delta and no advisory notes, before the ship. A pass spends no decision and a block is an R3 block; a run gets one. `aidlc review stats` reports second-pass decisions and blocks. On in this repository, off in the template.
+- T1-R3-SECOND-PASS: with `formalReview.secondPass` on, the first R3 pass of a card run is followed by one more R3 on the same candidate, with `matchedLessons` rules, no delta and no advisory notes, before the ship. A pass spends no decision and a block is an R3 block; a run gets one. `aidlc review stats` reports second-pass decisions and blocks. On in this repository, off in the template. The replay of 2026-11-07 found 9 to 10 of 20 known defects with one pass and 13 to 14 with two, and blocked 1 of 10 clean cases with one pass and 2 with two. After 15 cards with it on, turn it off if fewer than 2 of its blocks were repaired as real defects.
 
 - T1-LESSON-MATCH: `matchedLessons` chooses the learned rules that best match a candidate, by the paths their cards changed and the code terms they name, under the same cap as `reviewLessons`. `GitProbe.commitFiles` lists the first-parent commits it reads. `aidlc review bench run --rules <newest|matched>` scores the selection and names it as `rules` in the report; the default is `newest`, so no loop review changes.
 
