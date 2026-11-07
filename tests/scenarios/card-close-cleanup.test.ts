@@ -242,6 +242,76 @@ test('T0-CLOSE-CLEANUP acceptance 6: a missing card file leaves the flag false a
   }
 });
 
+test('T0-CLOSE-CLEANUP acceptance 9: two review files that map to one evidence path are refused, and nothing is lost [R1a] [R2]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    writeFileSync(path.join(dir, '.review', 'a b.json'), 'first\n');
+    writeFileSync(path.join(dir, '.review', 'a_b.json'), 'second\n');
+    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /maps to/);
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+    assert.equal(readFileSync(path.join(dir, '.review', 'a b.json'), 'utf8'), 'first\n');
+    assert.equal(readFileSync(path.join(dir, '.review', 'a_b.json'), 'utf8'), 'second\n');
+    const evidence = new EvidenceStore(fx.paths.evidence, goalId);
+    const entries = evidence.load(goalId, 1, 1, T0).entries.filter((e) => e.id.includes('a') && e.id.endsWith('b.json'));
+    assert.equal(entries.length, 1, 'the second file took no entry');
+    assert.equal(readFileSync(path.join(evidence.dir, entries[0]!.path), 'utf8'), 'first\n');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 10: a writer holding an older manifest keeps what another writer recorded [R1a]', () => {
+  const fx = makeFixture();
+  try {
+    const evidence = new EvidenceStore(fx.paths.evidence, 'g-manifest');
+    const first = evidence.load('g-manifest', 1, 1, T0);
+    const second = new EvidenceStore(fx.paths.evidence, 'g-manifest').load('g-manifest', 1, 1, T0);
+    evidence.retain(first, { id: 'one', kind: 'artifact', content: '1' });
+    const both = evidence.retain(second, { id: 'two', kind: 'artifact', content: '2' });
+    assert.deepEqual(both.entries.map((e) => e.id), ['one', 'two']);
+    evidence.retain(first, { id: 'three', kind: 'artifact', content: '3' });
+    const sealed = evidence.seal(first, { journalHead: 'head', journalEvents: 1, now: T0 });
+    assert.deepEqual(sealed.entries.map((e) => e.id), ['one', 'two', 'three'], 'the seal covers the entries on disk');
+    assert.equal(evidence.verifySeal(evidence.load('g-manifest', 1, 1, T0)), true);
+    assert.throws(() => evidence.retain(first, { id: 'four', kind: 'artifact', content: '4' }), /sealed/, 'a copy read before the seal is refused as well');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 11: a detached checkout at the expected path is refused, and stays [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const dir = worktree(fx);
+    git(dir, ['checkout', '-q', '--detach']);
+    assert.throws(() => closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { cleanup: true }), /git lists no worktree/);
+    assert.equal(stored(fx, goalId).closure.cleanup, false);
+    assert.equal(existsSync(path.join(dir, TRACKED)), true);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-CLOSE-CLEANUP acceptance 11: a status key with a space before its colon is written as the parser reads it [R5]', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, card, run } = atClose(fx);
+    repository(fx);
+    const file = path.join(fx.cardsDir, `${CARD}.md`);
+    const before = readFileSync(file, 'utf8').replace(/^status: todo$/m, 'status : todo');
+    writeFileSync(file, before, 'utf8');
+    closingRunner(fx, []).markClosure(fx.goal(goalId), card, run, { metadata: true });
+    assert.equal(readFileSync(file, 'utf8'), before.replace('status : todo', 'status : merged'));
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('T0-CLOSE-CLEANUP acceptance 7: the dry-run path runs no git and writes no file [R6]', () => {
   const fx = makeFixture();
   try {

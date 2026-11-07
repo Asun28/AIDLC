@@ -2990,14 +2990,18 @@ export class CardRunner {
 
   /**
    * The cleanup step of a closing card: the files directly under `.review/` go into the evidence tree of the goal, then
-   * git removes the worktree. No worktree means an earlier call finished the step, so a retry after a crash succeeds.
+   * git removes the worktree. Nothing at the expected path means an earlier call finished the step, so a retry after a
+   * crash succeeds; a path there that git does not list for the branch is left for the operator, not recorded as clean.
    */
   private reclaimWorktree(goal: Goal, card: Card, now: string): void {
     if (this.config.shipPath === 'dry-run') return;
     const expected = path.join(resolveWorktreeRoot(this.config, this.repo.mainRoot), card.id);
     const found = this.git.findWorktree(this.repo.mainRoot, card.id, expected);
     if (found.mismatch) throw new Error(found.mismatch);
-    if (!found.entry) return;
+    if (!found.entry) {
+      if (existsSync(expected)) throw new Error(`${expected} exists and git lists no worktree of branch ${card.id} there`);
+      return;
+    }
     const reviewDir = path.join(found.entry.path, '.review');
     if (existsSync(reviewDir)) {
       const evidence = new EvidenceStore(this.paths.evidence, goal.id);
