@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { runSync, type SyncRunner } from '../probes/exec.ts';
 import type { CompletionResult, ModelProvider, ToolCall } from '../providers/types.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
+import { type TrialRange, type TrialVerdict } from '../core/trial-compare.ts';
 
 export const EvalCheck = z.discriminatedUnion('type', [
   z.object({ type: z.literal('command'), command: z.array(z.string()).min(1), expectExit: z.number().int().default(0), cwd: z.string().optional(), timeoutMs: z.number().int().positive().default(10 * 60 * 1000) }),
@@ -363,4 +364,28 @@ export async function runSuite(cases: EvalCase[], provider: ModelProvider, optio
   const passRate = total === 0 ? 0 : passed / total;
   const threshold = options.threshold ?? 0.9;
   return { total, passed, passRate, threshold, gate: total > 0 && passRate >= threshold ? 'pass' : 'fail', results };
+}
+
+/** One side's figures over its trials (card T1-EVAL-VARIANT). */
+export interface TrialFigures {
+  passed: number;
+  trials: number;
+  passRate: TrialRange | null;
+  modelErrors: number;
+  quotaHolds: number;
+}
+
+export interface EvalTrialsReport {
+  trials: number;
+  head: string;
+  variant?: { ref: string; commit: string };
+  cases: Array<{ id: string; head: TrialFigures; variant?: TrialFigures; note?: string }>;
+  total: { head: TrialFigures; variant?: TrialFigures };
+  verdict?: TrialVerdict;
+  reason?: string;
+  checkoutError?: string;
+}
+
+export async function runTrials(_cases: EvalCase[], _provider: ModelProvider, _options: { cwd: string; trials: number; variant?: string; skipModel?: boolean; runner?: SyncRunner; dir?: string }): Promise<EvalTrialsReport> {
+  throw new Error('runTrials: not implemented');
 }
