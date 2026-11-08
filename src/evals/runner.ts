@@ -11,6 +11,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { runSync, type SyncRunner } from '../probes/exec.ts';
 import type { CompletionResult, ModelProvider, ToolCall } from '../providers/types.ts';
+import { resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
 
 export const EvalCheck = z.discriminatedUnion('type', [
   z.object({ type: z.literal('command'), command: z.array(z.string()).min(1), expectExit: z.number().int().default(0), cwd: z.string().optional(), timeoutMs: z.number().int().positive().default(10 * 60 * 1000) }),
@@ -79,15 +80,28 @@ export function resolvesInside(dir: string, target: string): boolean {
   return !(rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel));
 }
 
-/** Reads the cases of `dir`; a case file whose real path is inside one of `protectedDirs` is refused before it is read. */
+/**
+ * The directories no eval reads: the configured state directory (`AIDLC_STATE_DIR`, else the default) and the main
+ * checkout's `.aidlc`, both found from `dir` as `src/state/paths.ts` finds them; outside a git repository the main
+ * checkout is `dir` itself.
+ */
+export function protectedDirsFor(dir: string): string[] {
+  return [resolveStatePaths(dir).root, path.join(resolveRepoIdentity(dir).mainRoot, '.aidlc')];
+}
+
+/**
+ * Reads the cases of `dir`; a case file whose real path is inside one of `protectedDirs` (default: `protectedDirsFor(dir)`)
+ * is refused before it is read.
+ */
 export function loadEvals(dir: string, options: { protectedDirs?: readonly string[] } = {}): EvalCase[] {
   if (!existsSync(dir)) return [];
+  const protectedDirs = options.protectedDirs ?? protectedDirsFor(dir);
   return readdirSync(dir)
     .filter((n) => n.endsWith('.json'))
     .sort()
     .map((n) => {
       const file = path.join(dir, n);
-      const guard = options.protectedDirs?.find((p) => resolvesInside(p, file));
+      const guard = protectedDirs.find((p) => resolvesInside(p, file));
       if (guard !== undefined) throw new Error(`eval case file ${JSON.stringify(file)} is inside a protected directory ${JSON.stringify(guard)}`);
       const c = EvalCase.parse(JSON.parse(readFileSync(file, 'utf8')));
       const word = MEASUREMENT_WORD.exec(c.prompt)?.[1];

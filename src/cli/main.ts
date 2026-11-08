@@ -1121,19 +1121,21 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('evals')
     .description('continuous evals')
     .command('run')
-    .option('--dir <dir>', 'case directory, resolved against the checkout root (default evals; the agent cases are in evals/agent)')
+    .option('--dir <dir>', 'case directory, resolved against the worktree root (default evals; the agent cases are in evals/agent)')
     .option('--threshold <n>', 'pass-rate gate', '0.9')
     .option('--provider <name>', 'mock|claude-code|claude-api')
     .option('--skip-model', 'run only the deterministic checks')
     .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean }) => {
       const c = ctx(g());
-      const dir = path.resolve(c.root, o.dir ?? c.config.evalsDir);
+      // The invoking worktree is evaluated: its cases, its working tree under --skip-model and its HEAD for a model run.
+      const worktree = c.repo.worktreeRoot;
+      const dir = path.resolve(worktree, o.dir ?? c.config.evalsDir);
       // No eval reads the loop state: a case directory or case file inside the configured state directory or the main
       // checkout's .aidlc (the default state directory, src/state/paths.ts) is refused before it is read.
       const stateDirs: Array<[string, string]> = [[c.paths.root, 'the state directory'], [path.join(c.root, '.aidlc'), "the repository's .aidlc"]];
       for (const [p, name] of stateDirs) if (resolvesInside(p, dir)) fail(`evals run: --dir ${JSON.stringify(dir)} is inside ${name} ${JSON.stringify(p)}`);
       const cases = loadEvals(dir, { protectedDirs: stateDirs.map(([p]) => p) });
-      const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: c.root, threshold: Number(o.threshold), skipModel: o.skipModel });
+      const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: worktree, threshold: Number(o.threshold), skipModel: o.skipModel });
       out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}${r.detail ? ` [${r.detail}]` : ''}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
       if (suite.gate === 'fail') process.exitCode = 1;
     });
