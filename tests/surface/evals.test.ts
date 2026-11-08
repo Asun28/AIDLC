@@ -218,16 +218,12 @@ test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): loadEvals refuses
   assert.deepEqual(loadEvals(evalsDir).map((c) => c.id), ['inside'], 'relative paths inside the checkout load');
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async (t) => {
+test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async () => {
   const { cwd } = setup();
   const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-outside-'));
   writeFileSync(path.join(outside, 'secret.txt'), 'hello secret', 'utf8');
-  try {
-    symlinkSync(outside, path.join(cwd, 'out'), 'junction');
-  } catch (err) {
-    t.skip(`a directory link cannot be created here: ${(err as Error).message}`);
-    return;
-  }
+  // A junction needs no privilege on Windows and a symlink always works on Linux: a creation error fails the test.
+  symlinkSync(outside, path.join(cwd, 'out'), 'junction');
   const ran: string[][] = [];
   const counting = scriptedRunner({ 'node -e ok': (args) => (ran.push(args), { exitCode: 0 }) });
   const c = EvalCase.parse({ id: 'escape', prompt: 'do it', checks: [{ type: 'contains', file: 'out/secret.txt', text: 'hello' }, { type: 'command', command: ['node', '-e', 'ok'], cwd: 'out' }, { type: 'contains', file: 'note.txt', text: 'hello' }] });
@@ -235,5 +231,19 @@ test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd thr
   assert.deepEqual(r.checks.map((x) => x.ok), [false, false, true], JSON.stringify(r.checks));
   assert.match(r.checks[0]!.detail, /outside the working directory/);
   assert.match(r.checks[1]!.detail, /outside the working directory/);
+  assert.deepEqual(ran, [], 'the command did not run');
+});
+
+test('T1-EVAL-TRANSCRIPT R3 decision 2 (unchecked-check-path): a file or cwd through a link inside the working directory that points at its .aidlc/ is refused without reading or running', async () => {
+  const { cwd } = setup();
+  mkdirSync(path.join(cwd, '.aidlc'));
+  writeFileSync(path.join(cwd, '.aidlc', 'x'), 'hello state', 'utf8');
+  symlinkSync(path.join(cwd, '.aidlc'), path.join(cwd, 'alias'), 'junction');
+  const ran: string[][] = [];
+  const counting = scriptedRunner({ 'node -e ok': (args) => (ran.push(args), { exitCode: 0 }) });
+  const c = EvalCase.parse({ id: 'alias', prompt: 'do it', checks: [{ type: 'contains', file: 'alias/x', text: 'hello' }, { type: 'command', command: ['node', '-e', 'ok'], cwd: 'alias' }] });
+  const r = await runEval(c, new MockProvider(), { cwd, runner: counting, skipModel: true });
+  assert.deepEqual(r.checks.map((x) => x.ok), [false, false], JSON.stringify(r.checks));
+  for (const x of r.checks) assert.match(x.detail, /^refused: .*\.aidlc/, x.check);
   assert.deepEqual(ran, [], 'the command did not run');
 });
