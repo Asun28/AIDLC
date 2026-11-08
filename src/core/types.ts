@@ -479,6 +479,25 @@ export const MutantReport = z.object({
 });
 export type MutantReport = z.infer<typeof MutantReport>;
 
+/** One run of a repro argv in a temporary checkout of `sha`: its exit code (null without one) and whether the timeout ended it. */
+export const ReproRun = z.object({ sha: z.string().min(1), exitCode: z.number().int().nullable(), timedOut: z.boolean() });
+export type ReproRun = z.infer<typeof ReproRun>;
+
+/**
+ * The author's repro of a finding (`aidlc review repro`, card T1-FINDING-REPRO): the argv run at the reviewed candidate, with
+ * each of `files` taken from the current candidate, and at the current candidate. `reproduced` is true only when the run at
+ * the reviewed candidate exited non-zero and the run at the current candidate exited 0. Evidence only: no gate reads it.
+ */
+export const FindingRepro = z.object({
+  argv: z.array(z.string()).min(1),
+  files: z.array(z.string()),
+  reviewed: ReproRun,
+  current: ReproRun,
+  at: IsoTimestamp,
+  reproduced: z.boolean(),
+});
+export type FindingRepro = z.infer<typeof FindingRepro>;
+
 export const ReviewFinding = z.object({
   id: z.string().regex(/^F\d+$/),
   stage: FindingStage,
@@ -526,6 +545,8 @@ export const ReviewFinding = z.object({
   outsideDelta: z.boolean().optional(),
   /** Bumped by every change (dispute, withdrawal, re-raise, resolution); a round compares it with the revision it received. */
   revision: z.number().int().nonnegative().default(0),
+  /** The latest `aidlc review repro` of the finding; a later repro replaces it. Absent on records written before card T1-FINDING-REPRO. */
+  repro: FindingRepro.optional(),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;
 

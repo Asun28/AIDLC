@@ -94,6 +94,8 @@ function setup() {
   const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: fx.paths.root };
   delete env['CLAUDE_CODE_SESSION_ID'];
   delete env['AIDLC_SESSION'];
+  // A nested `node --test` that inherits this runner's context reports to it and exits 0 whatever its tests do.
+  delete env['NODE_TEST_CONTEXT'];
   const cli = (...args: string[]) => spawnSync(process.execPath, [MAIN, '--json', ...args], { cwd: repo.dir, env, encoding: 'utf8', timeout: 120_000, windowsHide: true });
   const worktrees = () => git(repo.dir, 'worktree', 'list', '--porcelain').split(/\r?\n/).filter((l) => l.startsWith('worktree '));
   return { fx, goal, repo, cli, worktrees };

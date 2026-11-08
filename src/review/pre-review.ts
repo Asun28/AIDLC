@@ -25,7 +25,7 @@ import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
 import { ADVISORY_TAG, findingLocation, parseVerdict } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
-import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
+import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, FindingRepro, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 
 /** The bytes the survivor lines of the formal prompt fill at most (card T1-VERIFY-MUTANTS-PROMPT). */
@@ -88,7 +88,8 @@ export interface PriorFinding {
   /** Re-raises that answered a dispute; two is a deadlock awaiting a human ruling. */
   nonAcceptanceRounds?: number;
   /** The defect class the finding records (`ReviewFinding.class`). */
-  class?: string;
+  class?: string;  /** The author's latest repro of the finding (`ReviewFinding.repro`, card T1-FINDING-REPRO). */
+  repro?: Pick<FindingRepro, 'argv' | 'reviewed' | 'current' | 'reproduced'>;
 }
 
 /** Prior reasons, author notes and re-raise reasons are quoted as one JSON string each: quotes and newlines stay inside the string. */
@@ -246,6 +247,14 @@ function history(f: PriorFinding): string {
   return parts.length ? ` Evidence: ${parts.join('; ')}.` : '';
 }
 
+/** How a repro run ended, in the words of the prompt line. */
+const reproExit = (r: { exitCode: number | null; timedOut: boolean }): string => (r.timedOut ? 'timed out' : r.exitCode === null ? 'no exit code' : `exit ${r.exitCode}`);
+
+/** The line under a finding with a repro (card T1-FINDING-REPRO, R4): the argv as one JSON string, both exits and the result. */
+function reproLine(id: string, r: NonNullable<PriorFinding['repro']>): string {
+  return `  - ${id} repro (quoted evidence): argv ${JSON.stringify(JSON.stringify(r.argv))}; ${reproExit(r.reviewed)} at the reviewed candidate, ${reproExit(r.current)} at the current candidate; ${r.reproduced ? 'reproduced' : 'not reproduced'}.`;
+}
+
 /** The `## Prior findings` lines: the reference syntax, then one line per finding with its disposition, the move it asks of the reviewer and the quoted history. */
 export function renderPriorFindings(findings: PriorFinding[]): string[] {
   if (!findings.length) return ['- none (first round of this cycle)'];
@@ -270,6 +279,7 @@ export function renderPriorFindings(findings: PriorFinding[]): string[] {
     } else {
       lines.push(`- ${f.id} (open; ${origin}): ${reason} -> verify it is resolved in this candidate; re-raise with re:${f.id} if it is not.${sweep}${history(f)}`);
     }
+    if (f.repro) lines.push(reproLine(f.id, f.repro));
   }
   return lines;
 }
