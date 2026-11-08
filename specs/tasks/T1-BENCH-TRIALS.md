@@ -72,5 +72,7 @@ npm run typecheck && node --test tests/core/trial-compare.test.ts tests/surface/
 | 4 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS acceptance 4 | pass |
 | 5 | `tests/surface/command-lines.test.ts`, T1-BENCH-TRIALS acceptance 5 | pass |
 | 6 | docs/OPERATIONS.md, docs/ARCHITECTURE.md, evals/review/README.md, CHANGELOG.md; pinned by T1-REVIEW-BENCH acceptance 9 (paragraph 4 and the new trials paragraph) | pass; reviewer-verified at R3 |
+| R3 1 F1 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 1 F1 (a quota hold stops the run; RED at 42a2fb7: 6 reviewer calls, expected 1) | pass |
+| R3 1 F2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 1 F2 (a run's saved report is accepted; partial, recall 2 and a mismatched summary exit 1; RED at 42a2fb7: partial.json exit 0, expected 1) | pass |
 
-RED receipt: 0d5e6cd:1 (trial-compare.ts missing; one review per case with `trials: 3`; no `trialResults`/`summary`; `bench compare` unknown; docs pins).
+RED receipt: 0d5e6cd:1, and 42a2fb7:1 for the R3 decision 1 repair (trial-compare.ts missing; one review per case with `trials: 3`; no `trialResults`/`summary`; `bench compare` unknown; docs pins).
