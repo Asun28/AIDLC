@@ -77,6 +77,4 @@ RED receipt: `313dfb5:1` (tests only; 8 of 26 failed: argv kept `--output-format
 | 3 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 3` (provider answers, provider throws) | pass |
 | 4 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 4` | pass |
 | 5 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 5` | pass |
-| 6 | docs/OPERATIONS.md (Evals), docs/ARCHITECTURE.md (module map), CHANGELOG.md; evals/README.md not changed, see below | partial |
-
-evals/README.md is not changed: `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) requires it to equal `templates/evals/README.md`, which is not in `allow_paths`, so the R8 text for it waits on a card amendment that adds `templates/evals/README.md`.
+| 6 | evals/README.md and its identical copy templates/evals/README.md (four tool-call checks, temporary checkout and empty state directory, word rule, `aidlc evals run --dir evals/agent --provider claude-code`); docs/OPERATIONS.md (Evals) states R1 to R8; docs/ARCHITECTURE.md (module map); CHANGELOG.md; the copies kept identical by `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) | pass (reviewer-verified against the diff) |
