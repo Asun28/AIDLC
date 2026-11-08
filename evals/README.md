@@ -24,7 +24,9 @@ checks that exit 0/1. No model-graded opinions.
   in and `AIDLC_STATE_DIR` set to a new empty temporary directory; the
   model and every check run there, and the link, the checkout and the
   state directory are removed afterwards, also when the model or a check
-  fails. A removal failure is named in the result's `detail`.
+  fails. A removal failure is named in the result's `detail`. Under
+  `--skip-model` the checks run in the checkout itself, and command checks
+  still get a new empty temporary `AIDLC_STATE_DIR`, removed afterwards.
 - A prompt must not name the measurement: `aidlc evals run` refuses a case
   whose prompt contains `eval`, `evals`, `judge`, `rubric`, `grader`,
   `benchmark`, `experiment` or `score` as a whole word in any letter case,

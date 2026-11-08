@@ -95,19 +95,24 @@ function getPath(obj: unknown, p: string): unknown {
 }
 
 /**
- * Runs one case. Under `skipModel` the checks run in `options.cwd` and no model is called. Otherwise the model and every
- * check run in a detached temporary checkout of HEAD with `AIDLC_STATE_DIR` set to a new empty directory, and both are
- * removed afterwards, also when the model or a check throws; what could not be removed is reported in `detail`.
+ * Runs one case with `AIDLC_STATE_DIR` set to a new empty temporary directory, so no eval reaches the repository's
+ * `.aidlc/`. Under `skipModel` the checks run in `options.cwd` and no model is called. Otherwise the model and every
+ * check run in a detached temporary checkout of HEAD. The state directory and the checkout are removed afterwards, also
+ * when the model, a check or the runner throws; what could not be removed is reported in `detail`.
  */
 export async function runEval(evalCase: EvalCase, provider: ModelProvider, options: { cwd: string; runner?: SyncRunner; skipModel?: boolean } = { cwd: process.cwd() }): Promise<EvalResult> {
   const started = Date.now();
   const runner = options.runner ?? runSync;
   const done = (checks: EvalResult['checks'], r?: CompletionResult): EvalResult => ({ id: evalCase.id, dimension: evalCase.dimension, passed: checks.every((c) => c.ok), checks, invocationId: r?.invocationId, model: r?.model, durationMs: Date.now() - started });
-  if (options.skipModel) return done(runChecks(evalCase, runner, options.cwd));
   const ws: Workspace = {};
   let result: EvalResult;
   try {
-    result = await runInWorkspace(ws, options.cwd);
+    if (options.skipModel) {
+      ws.stateDir = newStateDir();
+      result = done(runChecks(evalCase, runner, options.cwd, undefined, { AIDLC_STATE_DIR: ws.stateDir }));
+    } else {
+      result = await runInWorkspace(ws, options.cwd);
+    }
   } catch (err) {
     const left = closeWorkspace(ws, options.cwd);
     throw left ? new Error(`${(err as Error).message}; ${left}`, { cause: err }) : err;
@@ -265,9 +270,11 @@ const git = (args: string[], cwd: string): ReturnType<SyncRunner> | undefined =>
   }
 };
 
+const newStateDir = (): string => realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-eval-state-')));
+
 function openWorkspace(w: Workspace, root: string): void {
   // The long, canonical forms, so the path git records compares equal to the one the cleanup looks for.
-  w.stateDir = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-eval-state-')));
+  w.stateDir = newStateDir();
   w.holder = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-eval-')));
   const checkout = path.join(w.holder, 'checkout');
   const add = git(['worktree', 'add', '--detach', checkout, 'HEAD'], root);

@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,4 +123,14 @@ test('T1-BENCH-TRIALS-2 acceptance 5: the CLI declares `bench run --trials <n>` 
   assert.match(help('compare'), /^Usage: aidlc review bench compare \[options\] <before\.json> <after\.json>$/m);
   const ops = flat('docs/OPERATIONS.md');
   for (const line of ['aidlc review bench run --stage <pre|formal> --trials 3 --json', 'aidlc review bench compare <before.json> <after.json>']) assert.ok(ops.includes(line), line);
+});
+
+test('T1-EVAL-TRANSCRIPT R3 decision 3: aidlc evals run refuses a --dir inside the state directory before reading a case', () => {
+  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  mkdirSync(path.join(state, 'cases'));
+  writeFileSync(path.join(state, 'cases', 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));
+  const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', '--skip-model', '--dir', path.join(state, 'cases')], { cwd: root, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /is inside the state directory/);
+  assert.equal(r.stdout, '', 'no case was run');
 });

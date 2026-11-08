@@ -3,7 +3,7 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -1128,6 +1128,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean }) => {
       const c = ctx(g());
       const dir = path.resolve(c.root, o.dir ?? c.config.evalsDir);
+      // No eval reads the loop state: a case directory inside the state directory is refused before it is read.
+      if (existsSync(dir) && existsSync(c.paths.root)) {
+        const rel = path.relative(realpathSync.native(c.paths.root), realpathSync.native(dir));
+        if (!(rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel))) fail(`evals run: --dir ${JSON.stringify(dir)} is inside the state directory`);
+      }
       const cases = loadEvals(dir);
       const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: c.root, threshold: Number(o.threshold), skipModel: o.skipModel });
       out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}${r.detail ? ` [${r.detail}]` : ''}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
