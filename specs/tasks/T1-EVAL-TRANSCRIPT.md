@@ -77,4 +77,5 @@ RED receipt: `313dfb5:1` (tests only; 8 of 26 failed: argv kept `--output-format
 | 3 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 3` (provider answers, provider throws) | pass |
 | 4 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 4` | pass |
 | 5 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 5` | pass |
+| R3-1 | unchecked-check-path (R3 decision 1, `runner.ts` command `cwd` and contains `file`): `tests/surface/evals.test.ts`, the two `T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path)` tests; RED `724ff94:1` | pass |
 | 6 | evals/README.md and its identical copy templates/evals/README.md (four tool-call checks, temporary checkout and empty state directory, word rule, `aidlc evals run --dir evals/agent --provider claude-code`); docs/OPERATIONS.md (Evals) states R1 to R8; docs/ARCHITECTURE.md (module map); CHANGELOG.md; the copies kept identical by `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) | pass (reviewer-verified against the diff) |

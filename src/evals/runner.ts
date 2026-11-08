@@ -81,6 +81,11 @@ export function loadEvals(dir: string): EvalCase[] {
       const c = EvalCase.parse(JSON.parse(readFileSync(path.join(dir, n), 'utf8')));
       const word = MEASUREMENT_WORD.exec(c.prompt)?.[1];
       if (word !== undefined) throw new Error(`eval case ${c.id}: the prompt contains the word "${word}", which names the measurement`);
+      for (const check of c.checks) {
+        const [field, value] = check.type === 'command' ? ['cwd', check.cwd] : check.type === 'contains' || check.type === 'not-contains' ? ['file', check.file] : [];
+        const rule = value === undefined ? undefined : casePathRule(value);
+        if (rule) throw new Error(`eval case ${c.id}: the \`${field}\` ${JSON.stringify(value)} ${rule}`);
+      }
       return c;
     });
 }
@@ -132,6 +137,38 @@ const samePath = (a: string, b: string): boolean => {
 
 const stringField = (call: ToolCall, key: string): string | undefined => (typeof call.input[key] === 'string' ? (call.input[key] as string) : undefined);
 
+/** Why a case-supplied `cwd` or `file` is refused before anything runs: it is absolute, has a `..` segment, or starts with `.aidlc`. */
+function casePathRule(p: string): string | undefined {
+  if (path.posix.isAbsolute(p) || path.win32.isAbsolute(p)) return 'is absolute';
+  const segments = p.split(/[\\/]/).filter((s) => s !== '' && s !== '.');
+  if (segments.includes('..')) return 'has a `..` segment';
+  const first = segments[0];
+  if (first !== undefined && (process.platform === 'win32' ? first.toLowerCase() : first) === '.aidlc') return 'has `.aidlc` as its first segment';
+  return undefined;
+}
+
+/**
+ * Why `rel`, resolved against `workdir`, may not be read or run in: the rule of `casePathRule`, or a real path (of the
+ * target, else of its nearest existing parent) outside the real path of `workdir`, as a link that leaves it gives.
+ */
+function refusedPath(workdir: string, field: string, rel: string): string | undefined {
+  const rule = casePathRule(rel);
+  if (rule) return `\`${field}\` ${rule}`;
+  try {
+    let probe = path.resolve(workdir, rel);
+    const rest: string[] = [];
+    while (!existsSync(probe) && path.dirname(probe) !== probe) {
+      rest.unshift(path.basename(probe));
+      probe = path.dirname(probe);
+    }
+    const inside = path.relative(realpathSync.native(workdir), path.join(realpathSync.native(probe), ...rest));
+    if (!(inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside))) return undefined;
+  } catch {
+    // a path whose real path cannot be read is refused
+  }
+  return `\`${field}\` resolves outside the working directory`;
+}
+
 /** The checks of one case against the working directory and, when the model ran, its result. */
 function runChecks(evalCase: EvalCase, runner: SyncRunner, workdir: string, r?: CompletionResult, env?: Record<string, string>): EvalResult['checks'] {
   const checks: EvalResult['checks'] = [];
@@ -140,12 +177,22 @@ function runChecks(evalCase: EvalCase, runner: SyncRunner, workdir: string, r?: 
     switch (check.type) {
       case 'command': {
         const [cmd, ...args] = check.command;
+        const refused = check.cwd === undefined ? undefined : refusedPath(workdir, 'cwd', check.cwd);
+        if (refused) {
+          checks.push({ check: `command ${check.command.join(' ')}`, ok: false, detail: `refused: ${refused}` });
+          break;
+        }
         const rec = runner(cmd!, args, { cwd: path.resolve(workdir, check.cwd ?? '.'), timeoutMs: check.timeoutMs, killTree: true, ...(env ? { env: { ...process.env, ...env } } : {}) });
         checks.push({ check: `command ${check.command.join(' ')}`, ok: rec.exitCode === check.expectExit && !rec.timedOut, detail: `exit ${rec.exitCode}${rec.timedOut ? ' (timeout)' : ''}` });
         break;
       }
       case 'contains':
       case 'not-contains': {
+        const refused = refusedPath(workdir, 'file', check.file);
+        if (refused) {
+          checks.push({ check: `${check.type} ${check.file}`, ok: false, detail: `refused: ${refused}` });
+          break;
+        }
         const file = path.resolve(workdir, check.file);
         const content = existsSync(file) ? readFileSync(file, 'utf8') : '';
         const has = content.includes(check.text);
