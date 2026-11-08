@@ -2,6 +2,7 @@
 id: T1-FINDING-REPRO
 title: "`aidlc review repro` runs the author's repro of a finding on the reviewed candidate and on the current one, records both exits on the finding, and the next R3 prompt and `review stats` show it"
 status: todo
+superseded_by: T1-FINDING-REPRO-2
 branch: T1-FINDING-REPRO
 worktree: D:\wt\AIDLC\T1-FINDING-REPRO
 plan_ref: plans/pstack-study.md#order-of-work
