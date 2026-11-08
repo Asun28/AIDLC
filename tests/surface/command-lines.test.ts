@@ -147,3 +147,27 @@ test("T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run refuses --dir .aidlc wh
   assert.ok(r.stderr.includes('.aidlc'), 'the refusal names the path');
   assert.equal(r.stdout, '', 'no case was run');
 });
+
+test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run from a linked worktree reads its cases from the worktree, runs --skip-model checks there and checks out its HEAD for a model-backed case', () => {
+  const main = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-main-'));
+  const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  writeFileSync(path.join(main, 'base.txt'), 'base');
+  git(main, 'init', '-q');
+  git(main, 'add', '.');
+  git(main, 'commit', '-q', '-m', 'main');
+  const wt = path.join(mkdtempSync(path.join(tmpdir(), 'aidlc-evals-wt-')), 'wt');
+  assert.equal(git(main, 'worktree', 'add', '-q', '-b', 'wt', wt).status, 0);
+  mkdirSync(path.join(wt, 'evals'));
+  writeFileSync(path.join(wt, 'only-in-wt.txt'), 'wt');
+  const probe = ['node', '-e', "process.exit(require('fs').existsSync('only-in-wt.txt') ? 0 : 1)"];
+  writeFileSync(path.join(wt, 'evals', 'a.json'), JSON.stringify({ id: 'wt-head', prompt: 'do it', checks: [{ type: 'command', command: probe }] }));
+  git(wt, 'add', '.');
+  git(wt, 'commit', '-q', '-m', 'worktree only');
+  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  for (const mode of [['--skip-model'], ['--provider', 'mock']]) {
+    const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', ...mode], { cwd: wt, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+    assert.equal(r.status, 0, `${mode.join(' ')}: ${r.stdout}${r.stderr}`);
+    const suite = JSON.parse(r.stdout) as { total: number; passed: number };
+    assert.deepEqual([suite.total, suite.passed], [1, 1], `${mode.join(' ')}: the worktree case ran and saw the worktree's file`);
+  }
+});

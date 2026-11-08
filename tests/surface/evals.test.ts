@@ -314,4 +314,5 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 9: loadEvals refuses a case file that is a
     symlinkSync(path.join(state, 'goals'), link, 'junction');
   }
   assert.throws(() => loadEvals(evalsDir, { protectedDirs: [state] }), (err: Error) => err.message.includes(JSON.stringify(link)) && /inside a protected directory/.test(err.message), 'refused naming the quoted path, before any read');
+  assert.throws(() => loadEvals(evalsDir), (err: Error) => err.message.includes(JSON.stringify(link)) && /inside a protected directory/.test(err.message), "with no options loadEvals derives the repository's .aidlc itself");
 });
