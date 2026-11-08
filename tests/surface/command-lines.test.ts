@@ -125,7 +125,7 @@ test('T1-BENCH-TRIALS-2 acceptance 5: the CLI declares `bench run --trials <n>` 
   for (const line of ['aidlc review bench run --stage <pre|formal> --trials 3 --json', 'aidlc review bench compare <before.json> <after.json>']) assert.ok(ops.includes(line), line);
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 3: aidlc evals run refuses a --dir inside the state directory before reading a case', () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run refuses a --dir inside the state directory before reading a case [R10]', () => {
   const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
   mkdirSync(path.join(state, 'cases'));
   writeFileSync(path.join(state, 'cases', 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));

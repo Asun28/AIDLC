@@ -72,13 +72,24 @@ export const EVAL_SYSTEM_PROMPT = 'Complete the task exactly as instructed.';
 
 const TOOL_CALL_CHECKS: ReadonlySet<EvalCheck['type']> = new Set(['read-file', 'ran-command', 'not-ran-command', 'not-wrote-path']);
 
-export function loadEvals(dir: string): EvalCase[] {
+/** Whether `target`, links followed, is `dir` or lies under it; false when either does not exist. */
+export function resolvesInside(dir: string, target: string): boolean {
+  if (!existsSync(dir) || !existsSync(target)) return false;
+  const rel = path.relative(realpathSync.native(dir), realpathSync.native(target));
+  return !(rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel));
+}
+
+/** Reads the cases of `dir`; a case file whose real path is inside one of `protectedDirs` is refused before it is read. */
+export function loadEvals(dir: string, options: { protectedDirs?: readonly string[] } = {}): EvalCase[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir)
     .filter((n) => n.endsWith('.json'))
     .sort()
     .map((n) => {
-      const c = EvalCase.parse(JSON.parse(readFileSync(path.join(dir, n), 'utf8')));
+      const file = path.join(dir, n);
+      const guard = options.protectedDirs?.find((p) => resolvesInside(p, file));
+      if (guard !== undefined) throw new Error(`eval case file ${JSON.stringify(file)} is inside a protected directory ${JSON.stringify(guard)}`);
+      const c = EvalCase.parse(JSON.parse(readFileSync(file, 'utf8')));
       const word = MEASUREMENT_WORD.exec(c.prompt)?.[1];
       if (word !== undefined) throw new Error(`eval case ${c.id}: the prompt contains the word "${word}", which names the measurement`);
       for (const check of c.checks) {

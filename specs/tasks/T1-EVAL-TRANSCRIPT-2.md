@@ -72,3 +72,22 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/provi
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `6ca91b3:1` (acceptance 9: `--dir .aidlc` with another `AIDLC_STATE_DIR` ran the case with no refusal on stderr; a case file linked into `.aidlc` was read, not refused).
+
+History, carried from T1-EVAL-TRANSCRIPT (same branch line, aafe85d): RED `313dfb5:1` (acceptance 1 to 5), `724ff94:1` (R3 decision 1, path rules), `0e2d986:1` (R3 decision 2, link into `.aidlc`, no skipped test), `0e9e1b4:1` (R3 decision 3, skip-model state directory).
+
+| # | Proving test or command | Result |
+|---|---|---|
+| 1 | `tests/surface/providers.test.ts`: the three `T1-EVAL-TRANSCRIPT-2 acceptance 1` tests | pass |
+| 2 | `tests/surface/evals.test.ts`: both `T1-EVAL-TRANSCRIPT-2 acceptance 2` tests | pass |
+| 3 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT-2 acceptance 3` (provider answers, provider throws) | pass |
+| 4 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT-2 acceptance 4` | pass |
+| 5 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT-2 acceptance 5` | pass |
+| 6 | evals/README.md and its byte-identical copy templates/evals/README.md, docs/OPERATIONS.md (Evals), docs/ARCHITECTURE.md (module map), CHANGELOG.md state R1 to R10 and the two non-goal limits; the copies kept identical by `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) | pass (reviewer-verified against the diff) |
+| 7 | `tests/surface/evals.test.ts`: both `T1-EVAL-TRANSCRIPT-2 acceptance 7` tests (runner answers, runner throws) | pass |
+| 8 | `tests/surface/evals.test.ts`: the four `T1-EVAL-TRANSCRIPT-2 acceptance 8` tests (load-time refusals; link out of the working directory, no skip; link into `.aidlc`; `realPathRule` on `linux` and `win32`) | pass |
+| 9 | `tests/surface/command-lines.test.ts`: both `T1-EVAL-TRANSCRIPT-2 acceptance 9` tests (`--dir` inside the state directory; `--dir .aidlc` with another `AIDLC_STATE_DIR`); `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT-2 acceptance 9` (case file linked into `.aidlc`) | pass |
+
+DoD: `npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/providers.test.ts tests/surface/command-lines.test.ts`, exit 0, 42 tests, 0 skipped. `node bin/aidlc.js evals run --skip-model --threshold 0.9` from the worktree: gate pass, 1/1.

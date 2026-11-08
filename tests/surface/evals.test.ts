@@ -96,7 +96,7 @@ test('skipModel runs checks without calling the provider; model failures fail th
 /** A provider that answers every request with `toolCalls`. */
 const withCalls = (toolCalls: ToolCall[]) => new MockProvider({ implementer: [{ text: 'done', toolCalls }] });
 
-test('T1-EVAL-TRANSCRIPT acceptance 2: each tool-call check passes on tool calls that satisfy it and fails on calls that do not; the request asks for tool calls [R3] [R4]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 2: each tool-call check passes on tool calls that satisfy it and fails on calls that do not; the request asks for tool calls [R3] [R4]', async () => {
   const { cwd } = setup();
   const cases: Array<[EvalCase['checks'][number], ToolCall[], ToolCall[]]> = [
     [{ type: 'read-file', path: '.claude/skills/tdd/SKILL.md' }, [{ name: 'Read', input: { file_path: '.claude/skills/tdd/SKILL.md' } }], [{ name: 'Grep', input: { pattern: 'x', path: '.claude/skills/tdd/SKILL.md' } }, { name: 'Bash', input: { command: 'cat .claude/skills/tdd/SKILL.md' } }]],
@@ -118,7 +118,7 @@ test('T1-EVAL-TRANSCRIPT acceptance 2: each tool-call check passes on tool calls
   assert.equal(plain.calls[0]?.recordToolCalls, undefined, 'a case with no tool-call check does not ask for tool calls');
 });
 
-test('T1-EVAL-TRANSCRIPT acceptance 2: under skipModel each tool-call check fails with the detail no model run [R3]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 2: under skipModel each tool-call check fails with the detail no model run [R3]', async () => {
   const { cwd } = setup();
   const checks = [{ type: 'read-file', path: 'note.txt' }, { type: 'ran-command', pattern: 'x' }, { type: 'not-ran-command', pattern: 'x' }, { type: 'not-wrote-path', pattern: 'x' }];
   const r = await runEval(EvalCase.parse({ id: 'skip', prompt: 'do it', checks }), new MockProvider(), { cwd, runner, skipModel: true });
@@ -152,7 +152,7 @@ function observingProvider(then: 'answer' | 'throw') {
 }
 
 for (const then of ['answer', 'throw'] as const) {
-  test(`T1-EVAL-TRANSCRIPT acceptance 3: a model-backed case runs in a temporary checkout with an empty state directory, both removed after the run (provider ${then === 'answer' ? 'answers' : 'throws'}) [R5]`, async () => {
+  test(`T1-EVAL-TRANSCRIPT-2 acceptance 3: a model-backed case runs in a temporary checkout with an empty state directory, both removed after the run (provider ${then === 'answer' ? 'answers' : 'throws'}) [R5]`, async () => {
     const { cwd } = setup();
     mkdirSync(path.join(cwd, 'node_modules'));
     writeFileSync(path.join(cwd, 'node_modules', 'marker.txt'), 'm');
@@ -177,7 +177,7 @@ for (const then of ['answer', 'throw'] as const) {
   });
 }
 
-test('T1-EVAL-TRANSCRIPT acceptance 4: a prompt with a measurement word is refused naming the case and the word; whole words only; the system prompt names none [R4] [R6]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 4: a prompt with a measurement word is refused naming the case and the word; whole words only; the system prompt names none [R4] [R6]', async () => {
   const { evalsDir, cwd } = setup();
   mkdirSync(evalsDir, { recursive: true });
   writeFileSync(path.join(evalsDir, 'a.json'), JSON.stringify({ id: 'case-r', prompt: 'Follow the Rubric and fix the bug.', checks: [{ type: 'output-matches', pattern: 'x' }] }));
@@ -190,7 +190,7 @@ test('T1-EVAL-TRANSCRIPT acceptance 4: a prompt with a measurement word is refus
   assert.doesNotMatch(provider.calls[0]!.system, /\b(eval|evals|judge|rubric|grader|benchmark|experiment|score)\b/i);
 });
 
-test('T1-EVAL-TRANSCRIPT acceptance 5: every case under evals/agent parses, has a tool-call check and an origin naming CLAUDE.md, and loadEvals of evals/ reads none of them [R7]', () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 5: every case under evals/agent parses, has a tool-call check and an origin naming CLAUDE.md, and loadEvals of evals/ reads none of them [R7]', () => {
   const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
   const agent = loadEvals(path.join(root, 'evals', 'agent'));
   assert.ok(agent.length >= 3, `${agent.length} agent cases`);
@@ -202,7 +202,7 @@ test('T1-EVAL-TRANSCRIPT acceptance 5: every case under evals/agent parses, has 
   for (const c of agent) assert.equal(top.includes(c.id), false, `${c.id} is not read from evals/`);
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): loadEvals refuses an absolute cwd, a ../ file and an .aidlc/ file, naming the case and the field', () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 8: loadEvals refuses an absolute cwd, a ../ file and an .aidlc/ file, naming the case and the field', () => {
   const { evalsDir } = setup();
   mkdirSync(evalsDir, { recursive: true });
   const refused: Array<[string, Record<string, unknown>, string]> = [
@@ -218,7 +218,7 @@ test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): loadEvals refuses
   assert.deepEqual(loadEvals(evalsDir).map((c) => c.id), ['inside'], 'relative paths inside the checkout load');
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 8: a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async () => {
   const { cwd } = setup();
   const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-outside-'));
   writeFileSync(path.join(outside, 'secret.txt'), 'hello secret', 'utf8');
@@ -234,7 +234,7 @@ test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd thr
   assert.deepEqual(ran, [], 'the command did not run');
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 2 (unchecked-check-path): a file or cwd through a link inside the working directory that points at its .aidlc/ is refused without reading or running', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 8: a file or cwd through a link inside the working directory that points at its .aidlc/ is refused without reading or running', async () => {
   const { cwd } = setup();
   mkdirSync(path.join(cwd, '.aidlc'));
   writeFileSync(path.join(cwd, '.aidlc', 'x'), 'hello state', 'utf8');
@@ -248,7 +248,7 @@ test('T1-EVAL-TRANSCRIPT R3 decision 2 (unchecked-check-path): a file or cwd thr
   assert.deepEqual(ran, [], 'the command did not run');
 });
 
-test('T1-EVAL-TRANSCRIPT R3 decision 2: realPathRule refuses a real target outside the working directory or with .aidlc as its first segment below it, on both path rules', () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 8: realPathRule refuses a real target outside the working directory or with .aidlc as its first segment below it, on both path rules', () => {
   const outside = 'resolves outside the working directory';
   const state = 'resolves into the `.aidlc` of the working directory';
   const posix: Array<[string, string | undefined]> = [
@@ -275,7 +275,7 @@ test('T1-EVAL-TRANSCRIPT R3 decision 2: realPathRule refuses a real target outsi
 });
 
 for (const then of ['answer', 'throw'] as const) {
-  test(`T1-EVAL-TRANSCRIPT R3 decision 3 (unisolated-skip-model-state): under skipModel a command check sees AIDLC_STATE_DIR naming a new empty directory, removed after the run (runner ${then === 'answer' ? 'answers' : 'throws'})`, async () => {
+  test(`T1-EVAL-TRANSCRIPT-2 acceptance 7: under skipModel a command check sees AIDLC_STATE_DIR naming a new empty directory, removed after the run (runner ${then === 'answer' ? 'answers' : 'throws'})`, async () => {
     const { cwd } = setup();
     mkdirSync(path.join(cwd, '.aidlc'));
     const seen: { cwd?: string; stateDir?: string; entries?: string[] } = {};
@@ -313,5 +313,5 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 9: loadEvals refuses a case file that is a
     // A file symlink needs a privilege on Windows; a directory junction named like a case file is a link into .aidlc too.
     symlinkSync(path.join(state, 'goals'), link, 'junction');
   }
-  assert.throws(() => loadEvals(evalsDir, { protectedDirs: [state] }), (err: Error) => err.message.includes(link) && /inside a protected directory/.test(err.message), 'refused naming the path, before any read');
+  assert.throws(() => loadEvals(evalsDir, { protectedDirs: [state] }), (err: Error) => err.message.includes(JSON.stringify(link)) && /inside a protected directory/.test(err.message), 'refused naming the quoted path, before any read');
 });

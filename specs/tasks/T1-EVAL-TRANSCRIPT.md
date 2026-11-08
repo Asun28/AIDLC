@@ -67,18 +67,3 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/provi
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
-
-## Attempt evidence
-RED receipt: `313dfb5:1` (tests only; 8 of 26 failed: argv kept `--output-format json`, a 429 is_error stream read as ok, the four check types refused by the schema, no word refusal, the model ran in the repository root, no agent cases).
-
-| # | Proving test or command | Result |
-|---|---|---|
-| 1 | `tests/surface/providers.test.ts`: the three `T1-EVAL-TRANSCRIPT acceptance 1` tests | pass |
-| 2 | `tests/surface/evals.test.ts`: both `T1-EVAL-TRANSCRIPT acceptance 2` tests | pass |
-| 3 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 3` (provider answers, provider throws) | pass |
-| 4 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 4` | pass |
-| 5 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 5` | pass |
-| R3-1 | unchecked-check-path (R3 decision 1, `runner.ts` command `cwd` and contains `file`): `tests/surface/evals.test.ts`, the two `T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path)` tests; RED `724ff94:1` | pass |
-| R3-2 | unchecked-check-path through a link into `.aidlc` and boundary-test-skipped (R3 decision 2): `tests/surface/evals.test.ts`, `T1-EVAL-TRANSCRIPT R3 decision 2 (unchecked-check-path)` (link `alias` to `.aidlc`), `T1-EVAL-TRANSCRIPT R3 decision 2: realPathRule ...` (linux and win32 rules, no link), and the decision 1 link test with no skip; RED `0e2d986:1`; DoD 37 tests, 0 skipped | pass |
-| R3-3 | unisolated-skip-model-state (R3 decision 3): `tests/surface/evals.test.ts`, the two `T1-EVAL-TRANSCRIPT R3 decision 3 (unisolated-skip-model-state)` tests (runner answers, runner throws); `tests/surface/command-lines.test.ts`, `T1-EVAL-TRANSCRIPT R3 decision 3: aidlc evals run refuses a --dir inside the state directory`; RED `0e9e1b4:1`; `node bin/aidlc.js evals run --skip-model --threshold 0.9` from the worktree | pass |
-| 6 | evals/README.md and its identical copy templates/evals/README.md (four tool-call checks, temporary checkout and empty state directory, word rule, `aidlc evals run --dir evals/agent --provider claude-code`); docs/OPERATIONS.md (Evals) states R1 to R8; docs/ARCHITECTURE.md (module map); CHANGELOG.md; the copies kept identical by `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) | pass (reviewer-verified against the diff) |

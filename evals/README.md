@@ -32,6 +32,21 @@ checks that exit 0/1. No model-graded opinions.
   `benchmark`, `experiment` or `score` as a whole word in any letter case,
   naming the case id and the word. The id, file name and `origin` are not
   checked.
+- Case paths: a `command` check's `cwd` or a `contains` / `not-contains`
+  check's `file` that is absolute, has a `..` segment or starts with
+  `.aidlc` is refused when the cases load, naming the case id and the
+  field. When a check runs, a target whose real path (or that of its
+  nearest existing parent) is outside the working directory or under its
+  `.aidlc` fails the check, and nothing is read or run.
+- `aidlc evals run` refuses a `--dir` whose real path is inside the
+  configured state directory or the repository's `.aidlc/`, and a case
+  file whose real path is inside either of them is refused before it is
+  read; each refusal names the path.
+- Limits: the runner does not sandbox a case's own `command` argv, which
+  can name any absolute path, since a case file is code in the repository
+  and is reviewed like code. It does not block a model tool call that
+  reads outside its checkout by an absolute path; Claude Code limits writes
+  to its working directory, and `not-wrote-path` checks the writes.
 - Agent cases live in `evals/agent/`, each with a tool-call check and an
   `origin` naming the CLAUDE.md rule it tests. They call a model, so CI
   never runs them; run them with

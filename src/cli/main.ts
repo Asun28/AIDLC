@@ -3,7 +3,7 @@
  * `--json` (default when stdout is not a TTY) so an agent can consume it as the only next move.
  */
 import { Command } from 'commander';
-import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
@@ -40,7 +40,7 @@ import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { compareBenchReports, exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
-import { loadEvals, runSuite } from '../evals/runner.ts';
+import { loadEvals, resolvesInside, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
 import { ClaudeCodeProvider } from '../providers/claude-code.ts';
@@ -1128,12 +1128,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean }) => {
       const c = ctx(g());
       const dir = path.resolve(c.root, o.dir ?? c.config.evalsDir);
-      // No eval reads the loop state: a case directory inside the state directory is refused before it is read.
-      if (existsSync(dir) && existsSync(c.paths.root)) {
-        const rel = path.relative(realpathSync.native(c.paths.root), realpathSync.native(dir));
-        if (!(rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel))) fail(`evals run: --dir ${JSON.stringify(dir)} is inside the state directory`);
-      }
-      const cases = loadEvals(dir);
+      // No eval reads the loop state: a case directory or case file inside the configured state directory or the main
+      // checkout's .aidlc (the default state directory, src/state/paths.ts) is refused before it is read.
+      const stateDirs: Array<[string, string]> = [[c.paths.root, 'the state directory'], [path.join(c.root, '.aidlc'), "the repository's .aidlc"]];
+      for (const [p, name] of stateDirs) if (resolvesInside(p, dir)) fail(`evals run: --dir ${JSON.stringify(dir)} is inside ${name} ${JSON.stringify(p)}`);
+      const cases = loadEvals(dir, { protectedDirs: stateDirs.map(([p]) => p) });
       const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: c.root, threshold: Number(o.threshold), skipModel: o.skipModel });
       out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}${r.detail ? ` [${r.detail}]` : ''}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
       if (suite.gate === 'fail') process.exitCode = 1;

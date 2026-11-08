@@ -229,7 +229,7 @@ const STREAM_LINES = [
 ];
 const streamOf = (lines: ReadonlyArray<string | Record<string, unknown>>): string => lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n');
 
-test('T1-EVAL-TRANSCRIPT acceptance 1: recordToolCalls runs stream-json --verbose and returns the tool calls in order with the result text [R1]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 1: recordToolCalls runs stream-json --verbose and returns the tool calls in order with the result text [R1]', async () => {
   const { runner, calls } = scripted(() => ({ stdout: streamOf(STREAM_LINES) }));
   const r = await new ClaudeCodeProvider({ runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', recordToolCalls: true });
   assert.deepEqual(calls[0], ['claude', '-p', 'p', '--output-format', 'stream-json', '--verbose']);
@@ -244,7 +244,7 @@ test('T1-EVAL-TRANSCRIPT acceptance 1: recordToolCalls runs stream-json --verbos
   ]);
 });
 
-test('T1-EVAL-TRANSCRIPT acceptance 1: without recordToolCalls the argv is the json one and the result carries no tool calls [R1]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 1: without recordToolCalls the argv is the json one and the result carries no tool calls [R1]', async () => {
   for (const recordToolCalls of [undefined, false]) {
     const { runner, calls } = scripted(() => ({ stdout: JSON.stringify({ result: 'done', session_id: 's' }) }));
     const r = await new ClaudeCodeProvider({ runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', ...(recordToolCalls === undefined ? {} : { recordToolCalls }) });
@@ -254,7 +254,7 @@ test('T1-EVAL-TRANSCRIPT acceptance 1: without recordToolCalls the argv is the j
   }
 });
 
-test('T1-EVAL-TRANSCRIPT acceptance 1: a stream whose result event is is_error with status 429 is a quota outcome; a stream with no result event is an error [R2]', async () => {
+test('T1-EVAL-TRANSCRIPT-2 acceptance 1: a stream whose result event is is_error with status 429 is a quota outcome; a stream with no result event is an error [R2]', async () => {
   const streamRun = async (lines: ReadonlyArray<string | Record<string, unknown>>, exitCode: number) => new ClaudeCodeProvider({ runner: scripted(() => ({ exitCode, stdout: streamOf(lines) })).runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', recordToolCalls: true });
   for (const exitCode of [0, 1]) {
     const quota = await streamRun([STREAM_LINES[0]!, { type: 'result', is_error: true, api_error_status: 429, result: 'API Error: 429' }], exitCode);
