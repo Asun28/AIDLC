@@ -6,6 +6,8 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
 import { rmSync, writeFileSync } from 'node:fs';
+// Card T1-FINDING-REPRO-2 R6: every formal REVIEW_FIX narration ends with this sentence.
+import { REPRO_REQUEST } from '../../src/review/repro.ts';
 
 const BLOCK: Verdict = {
   verdict: 'block',
@@ -898,10 +900,10 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 5: on the ship path a block with two tagg
   const tagged = shipPathClassRun(true);
   const text = classText(['src/hello.ts', 'src/greet.ts']);
   assert.equal(tagged.blocked.kind, 'review-fix');
-  assert.equal(tagged.blocked.narration, SHIP_FIX_NARRATION + text, 'the class text is appended to the narration main returns');
+  assert.equal(tagged.blocked.narration, `${SHIP_FIX_NARRATION}${text} ${REPRO_REQUEST}`, 'the class text is appended to the narration main returns');
   assert.equal(tagged.repair.kind, 'build');
   assert.ok(tagged.repair.narration.startsWith('Review block to repair: '), tagged.repair.narration);
-  assert.ok(tagged.repair.narration.endsWith(text), `the REVIEW_FIX build directive carries the same class list: ${tagged.repair.narration}`);
+  assert.ok(tagged.repair.narration.endsWith(`${text} ${REPRO_REQUEST}`), `the REVIEW_FIX build directive carries the same class list: ${tagged.repair.narration}`);
   assert.equal(tagged.repair.narration.split('Defect classes of this block').length, 2, 'once');
 });
 
@@ -909,7 +911,7 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 6: on the command path an R3 block with t
   const tagged = await commandPathClassRun(true);
   assert.equal(tagged.summary.outcome, 'block-defect');
   assert.equal(tagged.repair.kind, 'build');
-  assert.ok(tagged.repair.narration.endsWith(classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])), `the REVIEW_FIX build directive carries the class list: ${tagged.repair.narration}`);
+  assert.ok(tagged.repair.narration.endsWith(`${classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])} ${REPRO_REQUEST}`), `the REVIEW_FIX build directive carries the class list: ${tagged.repair.narration}`);
   assert.ok(tagged.priorF1.startsWith('- F1 (open; class journal-before-save; R3 decision 1): '), `the decision-2 prompt names the class on F1: ${tagged.priorF1}`);
   assert.ok(tagged.priorF1.includes('Check every site of class journal-before-save in this candidate and re-raise with re:F1 once per remaining site, each cited with file:line.'), tagged.priorF1);
 });
@@ -917,7 +919,7 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 6: on the command path an R3 block with t
 test('T1-REVIEW-CLASS-SWEEP acceptance 7: untagged blocks leave both narrations without a class sentence (the ship-path narration as on main) and end with the same state, counters, remaining decisions and directive kinds as the tagged runs [R10] [R11]', async () => {
   const shipTagged = shipPathClassRun(true);
   const shipPlain = shipPathClassRun(false);
-  assert.equal(shipPlain.blocked.narration, SHIP_FIX_NARRATION);
+  assert.equal(shipPlain.blocked.narration, `${SHIP_FIX_NARRATION} ${REPRO_REQUEST}`);
   assert.ok(!shipPlain.repair.narration.includes('Defect classes'), shipPlain.repair.narration);
   assert.ok(!shipPlain.repair.narration.includes('class'), 'no class word at all in the untagged repair narration');
   // Each end-state field pinned at its value on both runs: one ship-path decision spent of two, one left, also in the build narration.
@@ -938,7 +940,7 @@ test('T1-REVIEW-CLASS-SWEEP acceptance 5: the pending-block review-fix of the fo
   const tagged = await commandPathClassRun(true, true);
   assert.equal(tagged.repair.kind, 'review-fix', tagged.repair.narration);
   assert.ok(tagged.repair.narration.startsWith('Formal review block still pending on candidate sha-1: '), tagged.repair.narration);
-  assert.ok(tagged.repair.narration.endsWith(classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])), `the pending-block narration carries the class list: ${tagged.repair.narration}`);
+  assert.ok(tagged.repair.narration.endsWith(`${classText(['src/t1-cls.ts', 'src/t1-cls2.ts'])} ${REPRO_REQUEST}`), `the pending-block narration carries the class list: ${tagged.repair.narration}`);
   const plain = await commandPathClassRun(false, true);
   assert.equal(plain.repair.kind, 'review-fix', plain.repair.narration);
   assert.ok(!plain.repair.narration.includes('Defect classes'), plain.repair.narration);

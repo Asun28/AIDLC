@@ -1,7 +1,7 @@
 ---
 id: T1-FINDING-REPRO-2
 title: "`aidlc review repro` runs the author's repro of a finding on the reviewed candidate and on the current one, records both exits on the finding, and the next R3 prompt and `review stats` show it"
-status: todo
+status: merged
 branch: T1-FINDING-REPRO-2
 worktree: D:\wt\AIDLC\T1-FINDING-REPRO-2
 plan_ref: plans/pstack-study.md#order-of-work
@@ -74,3 +74,19 @@ npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check covers or records the new write.
+
+## Attempt evidence
+History (predecessor card T1-FINDING-REPRO, carried here by the user's ruling on the Gitleaks stop): attempt 1 (effort medium), RED receipt `8c145dd:1`; attempt 2 (repair of R3 decision 1, F1 and F2, effort medium), RED receipt `316c377:1`; R3 decision 2 and the second pass passed at `1b5e75b`. This card: attempt 1 (effort medium), the rename to T1-FINDING-REPRO-2 with no behaviour change, no new RED. DoD: `npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/surface/stats.test.ts tests/surface/command-lines.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts tests/scenarios/repair-check.test.ts`.
+
+| # | Requirement | Implementation | Test |
+|---|---|---|---|
+| 1 | R2 R3 | `src/review/repro.ts` `runRepro`, `runAt`, `closeWorkspace`; `src/core/types.ts` `FindingRepro` | `tests/scenarios/finding-repro.test.ts` "acceptance 1" |
+| 2 | R1 R7 | `src/review/repro.ts` `parseReproArgv`, `parseReproFiles`, `checkFiles`, the refusals in `runRepro` | `tests/scenarios/finding-repro.test.ts` "acceptance 2 and 10"; "R3 decision 1 F1" (goal resolved by `resolveCardGoal` in `findRun`) |
+| 3 | R4 | `src/review/pre-review.ts` `reproLine`; `src/loop/card-runner.ts` `priorFindingsFor` | `tests/scenarios/finding-repro.test.ts` "acceptance 3"; "R3 decision 1 F2" (both quoted shas, and the clause when the second run did not test the candidate under review, `head` passed from `buildReviewPrompt` for R2 and R3) |
+| 4 | R6 | `REPRO_REQUEST` in `src/review/repro.ts`, at the three formal REVIEW_FIX narrations in `src/loop/card-runner.ts` | `tests/scenarios/finding-repro.test.ts` "acceptance 4"; `tests/scenarios/review-block.test.ts` T1-REVIEW-CLASS-SWEEP acceptance 5 (two tests), 6, 7; `tests/scenarios/repair-check.test.ts` T0-REPAIR-CHECK acceptance 1 (the class list and the repro sentence follow the repair check) |
+| 5 | R7 | `runRepro` writes only the finding's `repro` under `GoalStore.updateCardRun`, no revision bump, no journal | `tests/scenarios/finding-repro.test.ts` "acceptance 5" |
+| 6 | R5 | `src/review/stats.ts` `ReproStats`, `countRepro`, `totalsOf`, `reproText` | `tests/surface/stats.test.ts` "acceptance 6" (two tests) |
+| 7 | R1 | `src/cli/main.ts` `review repro` | `tests/surface/command-lines.test.ts` "T1-FINDING-REPRO-2 acceptance 7" |
+| 8 | R7 | not covered: recorded under Not covered in `.claude/skills/verify-card-run-writes/SKILL.md` (one `updateCardRun` write, no journal append); the sync commit moves at CLOSE on main | `tests/scenarios/fault-points.test.ts` passes unchanged |
+| 9 | R3 R5 | `docs/OPERATIONS.md` (Findings and dispositions: Repros; Review statistics: Repros), `docs/ARCHITECTURE.md` module map, `CHANGELOG.md` Unreleased | reviewer-verified |
+| 10 | R1 R2 | `runAt` (new `AIDLC_STATE_DIR` per run, removed in `finally`), `parseReproFiles` (`.aidlc`), `checkFiles` (mode 120000) | `tests/scenarios/finding-repro.test.ts` "acceptance 10" and "acceptance 2 and 10" |

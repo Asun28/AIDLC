@@ -31,7 +31,7 @@ pass (ship to CLOSE) and `card next` at SHIP past the card deadline
 (STOP/time). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `a439ff437689066543d530bcef365a7a35ed9b60`
+Sync commit: `333635fba8cf1b9c8c4effba45337c9d1b19413e`
 
 ## Run
 ```
@@ -59,7 +59,11 @@ runs it, so CI runs it on every push.
 - Card-run commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), failed and
+  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
+  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
+  `GoalStore.updateCardRun` write of the finding's `repro` after both runs
+  and no journal append, so a failed write throws, exits 1 and leaves the
+  run and the journal as they were), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next`.
 - A confirmed violation the current code shows is not a pass: it is
@@ -118,7 +122,7 @@ A new command is added to `COVERED` with its stage and named end.
 
 ## Keeping in sync
 Tell whether a change touches covered code:
-`git diff --name-only a439ff437689066543d530bcef365a7a35ed9b60 -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
+`git diff --name-only 333635fba8cf1b9c8c4effba45337c9d1b19413e -- tests/scenarios/fault-points.test.ts src/loop/card-runner.ts src/state/goal-store.ts src/state/store.ts src/state/journal.ts`
 (the sync commit and the record's files). Then exactly one outcome:
 - **in sync**: covered files unchanged, or changed without a change to a
   write or its order, and the check passes; the sync commit may move.

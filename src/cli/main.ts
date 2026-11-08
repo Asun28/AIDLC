@@ -39,6 +39,7 @@ import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { compareBenchReports, exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
+import { runRepro } from '../review/repro.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
 import { loadEvals, resolvesInside, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
@@ -874,6 +875,27 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const f = next.findings.find((x) => x.id === findingId.toUpperCase())!;
       const shipPathNote = f.stage === 'formal' && !c.config.formalReview.command.length ? '\nnote: the ship-path reviewer re-reads a verdict file and receives no notes; the dispute is recorded for the human adjudicator, and the candidate ships again only once it changes' : '';
       out(c, { cardId, finding: f }, () => `${findingLine(f)}${shipPathNote}\nnext: dispute or repair the other open findings, then \`aidlc card next ${cardId}\``);
+    });
+  review
+    .command('repro <cardId> <findingId>')
+    .description("run the author's repro of a finding at its reviewed candidate (with --files taken from the current candidate) and at the current candidate, each in a temporary checkout, and record both exits on the finding; evidence only, no gate reads it")
+    .requiredOption('--argv <json>', 'the command as a JSON array of strings, run without a shell')
+    .option('--files <paths>', 'comma-separated repository-relative paths taken from the current candidate into the reviewed checkout')
+    .option('--goal <id>')
+    .action(async (cardId: string, findingId: string, o: { argv: string; files?: string; goal?: string }) => {
+      const c = ctx(g());
+      let r: Awaited<ReturnType<typeof runRepro>>;
+      try {
+        r = await runRepro({ root: c.root, store: c.store, cardId, findingId, goalId: o.goal, argv: o.argv, files: o.files });
+      } catch (err) {
+        return fail(oneLine((err as Error).message));
+      }
+      const exit = (x: { exitCode: number | null; timedOut: boolean }) => (x.timedOut ? 'timed out' : x.exitCode === null ? 'no exit code' : `exit ${x.exitCode}`);
+      out(c, r, () => `${r.findingId} repro ${JSON.stringify(JSON.stringify(r.repro.argv))}: ${exit(r.repro.reviewed)} at the reviewed candidate, ${exit(r.repro.current)} at the current candidate; ${r.repro.reproduced ? 'reproduced' : 'not reproduced'}`);
+      if (r.leftOver.length) {
+        note(`aidlc: the repro was recorded, but the cleanup left ${r.leftOver.map((x) => JSON.stringify(x)).join(', ')}`);
+        process.exitCode = 1;
+      }
     });
   review
     .command('accept <cardId> <findingId>')

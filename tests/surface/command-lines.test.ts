@@ -171,3 +171,15 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run from a linked worktree 
     assert.deepEqual([suite.total, suite.passed], [1, 1], `${mode.join(' ')}: the worktree case ran and saw the worktree's file`);
   }
 });
+
+test('T1-FINDING-REPRO-2 acceptance 7: the CLI declares `review repro <cardId> <findingId>` with a required --argv <json>, --files <paths> and --goal <id>, and OPERATIONS.md documents that command line [R1]', () => {
+  const main = path.join(root, 'src', 'cli', 'main.ts');
+  const help = spawnSync(process.execPath, [main, 'review', 'repro', '--help'], { cwd: root, encoding: 'utf8', windowsHide: true });
+  assert.equal(help.status, 0, help.stderr);
+  const text = help.stdout.replace(/\s+/g, ' ');
+  for (const needle of ['Usage: aidlc review repro [options] <cardId> <findingId>', '--argv <json>', '--files <paths>', '--goal <id>']) assert.ok(text.includes(needle), `help names ${needle}: ${text}`);
+  const missing = spawnSync(process.execPath, [main, 'review', 'repro', 'T1-X', 'F1'], { cwd: root, encoding: 'utf8', windowsHide: true });
+  assert.notEqual(missing.status, 0, 'a missing --argv is refused');
+  assert.match(missing.stderr, /--argv <json>/);
+  assert.ok(flat('docs/OPERATIONS.md').includes('aidlc review repro <cardId> <findingId> --argv <json> [--files <paths>] [--goal <id>]'), 'OPERATIONS.md documents the command line');
+});

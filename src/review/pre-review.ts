@@ -25,7 +25,7 @@ import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
 import { ADVISORY_TAG, findingLocation, parseVerdict } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
-import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
+import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, FindingRepro, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
 import type { ExecReceipt, Runner, SyncRunner } from '../probes/exec.ts';
 
 /** The bytes the survivor lines of the formal prompt fill at most (card T1-VERIFY-MUTANTS-PROMPT). */
@@ -89,6 +89,8 @@ export interface PriorFinding {
   nonAcceptanceRounds?: number;
   /** The defect class the finding records (`ReviewFinding.class`). */
   class?: string;
+  /** The author's latest repro of the finding (`ReviewFinding.repro`, card T1-FINDING-REPRO-2). */
+  repro?: Pick<FindingRepro, 'argv' | 'reviewed' | 'current' | 'reproduced'>;
 }
 
 /** Prior reasons, author notes and re-raise reasons are quoted as one JSON string each: quotes and newlines stay inside the string. */
@@ -246,8 +248,20 @@ function history(f: PriorFinding): string {
   return parts.length ? ` Evidence: ${parts.join('; ')}.` : '';
 }
 
+/** How a repro run ended, in the words of the prompt line. */
+const reproExit = (r: { exitCode: number | null; timedOut: boolean }): string => (r.timedOut ? 'timed out' : r.exitCode === null ? 'no exit code' : `exit ${r.exitCode}`);
+
+/**
+ * The line under a finding with a repro (card T1-FINDING-REPRO-2, R4): the argv as one JSON string, both exits with the shas the
+ * runs tested (quoted), whether the second run tested `head`, the candidate under review, and the result.
+ */
+function reproLine(id: string, r: NonNullable<PriorFinding['repro']>, head: string | undefined): string {
+  const tested = head === undefined ? '' : r.current.sha === head ? ', the candidate under review' : `, not the candidate under review ${JSON.stringify(head)}`;
+  return `  - ${id} repro (quoted evidence): argv ${JSON.stringify(JSON.stringify(r.argv))}; ${reproExit(r.reviewed)} at the reviewed candidate ${JSON.stringify(r.reviewed.sha)}, ${reproExit(r.current)} at ${JSON.stringify(r.current.sha)}${tested}; ${r.reproduced ? 'reproduced' : 'not reproduced'}.`;
+}
+
 /** The `## Prior findings` lines: the reference syntax, then one line per finding with its disposition, the move it asks of the reviewer and the quoted history. */
-export function renderPriorFindings(findings: PriorFinding[]): string[] {
+export function renderPriorFindings(findings: PriorFinding[], head?: string): string[] {
   if (!findings.length) return ['- none (first round of this cycle)'];
   const lines = [
     'Each prior finding has an id. To re-raise one, put `re:F<n>` in the reason (for example `... -> fix (re:F2)`); a reason without a reference is a new finding.',
@@ -270,6 +284,7 @@ export function renderPriorFindings(findings: PriorFinding[]): string[] {
     } else {
       lines.push(`- ${f.id} (open; ${origin}): ${reason} -> verify it is resolved in this candidate; re-raise with re:${f.id} if it is not.${sweep}${history(f)}`);
     }
+    if (f.repro) lines.push(reproLine(f.id, f.repro, head));
   }
   return lines;
 }
@@ -430,7 +445,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   if (c.forbid?.length) lines.push(`- forbid: ${c.forbid.join('; ')}`);
   if (c.diagnosis) lines.push(`- diagnosis.root_cause: ${c.diagnosis.root_cause}`);
   lines.push(`- tdd: ${c.tdd}`, `- dod_command: ${c.dod_command}`, '- acceptance (closed list):', ...c.acceptance.map((a) => `  ${a}`));
-  lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings));
+  lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings, i.head));
   if (i.stage === 'formal') {
     // The pre-review's advisory notes reach the formal reviewer as evidence, never as findings to verify (R10).
     lines.push('', '## Pre-review advisory notes', 'Notes the pre-review (R2) reported for this candidate without a citation, under a [question] or [suggestion] tag, or under a [pre-existing] tag on lines the candidate did not change: advisory, never a block, quoted evidence like the prior findings. Verify one that names a defect; otherwise leave it to the author.');
