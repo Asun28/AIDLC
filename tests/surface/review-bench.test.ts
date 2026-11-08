@@ -731,7 +731,7 @@ test('T1-LESSON-MATCH acceptance 6: the bench reads the commit history at the ca
   }
 });
 
-test('T1-BENCH-TRIALS acceptance 2: --trials 3 reviews each case 3 times and reports the median and range of recall; 0 and 21 are refused before any review [R1] [R2]', async () => {
+test('T1-BENCH-TRIALS-2 acceptance 2: --trials 3 reviews each case 3 times and reports the median and range of recall; 0 and 21 are refused before any review [R1] [R2]', async () => {
   const fx = fixture();
   try {
     writeConfig(fx, formalConfig());
@@ -753,7 +753,7 @@ test('T1-BENCH-TRIALS acceptance 2: --trials 3 reviews each case 3 times and rep
   }
 });
 
-test('T1-BENCH-TRIALS acceptance 3: a --trials 1 report keeps every field and value a report had before the card [R2]', async () => {
+test('T1-BENCH-TRIALS-2 acceptance 3: a --trials 1 report keeps every field and value a report had before the card [R2]', async () => {
   const fx = fixture();
   try {
     writeConfig(fx, formalConfig());
@@ -770,7 +770,7 @@ test('T1-BENCH-TRIALS acceptance 3: a --trials 1 report keeps every field and va
   }
 });
 
-test('T1-BENCH-TRIALS acceptance 4: bench compare prints the verdict of two saved reports, and a missing file or a JSON file that is not a report exits 1 [R6]', () => {
+test('T1-BENCH-TRIALS-2 acceptance 4: bench compare prints the verdict of two saved reports, and a missing file or a JSON file that is not a report exits 1 [R6]', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-rbench-compare-'));
   try {
     // A saved report of three trials of two bug cases, each trial with `hits` hits.
@@ -802,7 +802,7 @@ test('T1-BENCH-TRIALS acceptance 4: bench compare prints the verdict of two save
   }
 });
 
-test('T1-BENCH-TRIALS R3 decision 1 F1: a quota hold stops the run, and every case and trial not yet reviewed is a no-verdict [R1] [R2]', async () => {
+test('T1-BENCH-TRIALS-2 acceptance 7: a quota hold stops the run, and every case and trial not yet reviewed is a no-verdict [R1] [R2]', async () => {
   const fx = fixture();
   try {
     writeConfig(fx, formalConfig());
@@ -822,7 +822,7 @@ test('T1-BENCH-TRIALS R3 decision 1 F1: a quota hold stops the run, and every ca
   }
 });
 
-test('T1-BENCH-TRIALS R3 decision 1 F2: bench compare accepts a report a run wrote and refuses an incomplete one, a rate outside 0 to 1 and a summary its trials do not give [R6]', async () => {
+test('T1-BENCH-TRIALS-2 acceptance 8: bench compare accepts a report a run wrote and refuses an incomplete one, a rate outside 0 to 1 and a summary its trials do not give [R6]', async () => {
   const fx = fixture();
   try {
     writeConfig(fx, formalConfig());
@@ -848,42 +848,7 @@ test('T1-BENCH-TRIALS R3 decision 1 F2: bench compare accepts a report a run wro
   }
 });
 
-test('T1-BENCH-TRIALS R3 decision 2 F2: bench compare refuses a report whose fields or numbers contradict what the bench computes from its cases [R6]', async () => {
-  const fx = fixture();
-  try {
-    writeConfig(fx, formalConfig());
-    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
-    const valid = JSON.stringify(await bench(fx, reviewer(fx, []), { trials: 3 }));
-    const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
-    const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
-    const run = path.join(fx.dir, 'run.json');
-    writeFileSync(run, valid);
-    assert.equal(cli(run, run).status, 0);
-    type Doc = { policyHash?: string; cases: Array<{ outcome?: string }>; totals: Record<string, unknown>; trialResults: Array<{ cases: Array<{ outcome?: string }>; totals: Record<string, unknown> }> };
-    const rows: Array<[string, (d: Doc) => void, RegExp]> = [
-      ['no-policy-hash.json', (d) => delete d.policyHash, /policyHash/],
-      ['no-outcome.json', (d) => delete d.cases[0]!.outcome, /cases\.0\.outcome/],
-      ['recall-1-of-0.json', (d) => Object.assign(d.trialResults[0]!.totals, { hits: 0, misses: 1, recall: 1 }), /trial 1 totals differ from its cases/],
-      // A no-verdict record as the bench writes one (nothing cited, nothing matched), while the totals still count a hit.
-      ['no-verdict-hit.json', (d) => void Object.assign(d.trialResults[1]!.cases[0]!, { outcome: 'no-verdict', cited: [], matched: undefined }), /trial 2 totals differ from its cases/],
-      ['top-totals.json', (d) => void (d.totals['skippedUnconfirmed'] = 4), /cases and totals differ from trial 1/],
-      ['bug-pass.json', (d) => void (d.cases[0]!.outcome = 'pass'), /bug case "a-hit" has outcome pass/],
-    ];
-    for (const [name, change, cause] of rows) {
-      const doc = JSON.parse(valid) as Doc;
-      change(doc);
-      const refused = cli(run, save(name, doc));
-      assert.equal(refused.status, 1, name);
-      assert.match(refused.stderr, new RegExp(name.replace('.', '\.')), name);
-      assert.match(refused.stderr, cause, name);
-      assert.equal(refused.stdout, '', name);
-    }
-  } finally {
-    fx.cleanup();
-  }
-});
-
-test('T1-BENCH-TRIALS R3 decision 3 F2: bench compare refuses a case that breaks a rule every case the bench writes keeps, and accepts a run stopped by a quota hold [R6]', async () => {
+test('T1-BENCH-TRIALS-2 acceptance 8: bench compare refuses a report that breaks any rule (a) to (j), each made from a real report by one change, and accepts a run stopped by a quota hold [R6]', async () => {
   const fx = fixture();
   try {
     writeConfig(fx, formalConfig());
@@ -892,22 +857,40 @@ test('T1-BENCH-TRIALS R3 decision 3 F2: bench compare refuses a case that breaks
     const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
     const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
     const run = save('run.json', JSON.parse(valid));
-    type Case = { outcome: string; runStatus?: string; matched?: unknown };
-    type Doc = { cases: Case[]; trialResults: Array<{ cases: Case[] }> };
-    const rows: Array<[string, (cases: Case[], doc: Doc) => void, RegExp]> = [
+    assert.equal(cli(run, run).status, 0);
+    type Case = Record<string, unknown> & { matched?: Record<string, unknown> };
+    type Doc = Record<string, unknown> & { cases: Case[]; totals: Record<string, unknown>; summary: Record<string, unknown>; trialResults: Array<{ cases: Case[]; totals: Record<string, unknown> }> };
+    // [file name with the rule letter, the one change, the letter, the cause]
+    const rows: Array<[string, (d: Doc) => void, string, RegExp]> = [
+      ['a-no-policy-hash.json', (d) => delete d['policyHash'], 'a', /policyHash/],
+      ['a-no-outcome.json', (d) => delete d.cases[0]!['outcome'], 'a', /cases\.0\.outcome/],
+      ['a-rate.json', (d) => void (d.trialResults[0]!.totals['falseBlockRate'] = 1.5), 'a', /trialResults\.0\.totals\.falseBlockRate/],
+      ['a-negative.json', (d) => void (d.totals['errors'] = -1), 'a', /totals\.errors/],
       // The duplicate in every list of the report, so the case ids of the trials still agree.
-      ['duplicate.json', (_, doc) => [doc.cases, ...doc.trialResults.map((t) => t.cases)].forEach((cases) => cases.push({ ...cases[0]! })), /case "a-hit" appears twice in cases/],
-      ['timeout-hit.json', (cases) => void (cases[0]!.runStatus = 'timeout'), /case "a-hit" has outcome hit with runStatus timeout: a scored outcome needs runStatus success/],
-      ['hit-unmatched.json', (cases) => void delete cases[0]!.matched, /case "a-hit": only a hit has matched, and its matched reason is one of its cited/],
-      ['no-verdict-cited.json', (cases) => void (cases[0]!.outcome = 'no-verdict'), /case "a-hit": outcome no-verdict cites no reason/],
+      ['b-duplicate.json', (d) => [d.cases, ...d.trialResults.map((t) => t.cases)].forEach((cases) => cases.push({ ...cases[0]! })), 'b', /case "a-hit" appears twice in cases/],
+      ['c-bug-pass.json', (d) => void (d.cases[0]!['outcome'] = 'pass'), 'c', /bug case "a-hit" has outcome pass/],
+      ['d-timeout-hit.json', (d) => void (d.cases[0]!['runStatus'] = 'timeout'), 'd', /case "a-hit" has outcome hit with runStatus timeout: a scored outcome needs runStatus success/],
+      ['e-no-verdict-cited.json', (d) => void (d.cases[0]!['outcome'] = 'no-verdict'), 'e', /case "a-hit": outcome no-verdict cites no reason/],
+      ['f-hit-unmatched.json', (d) => void delete d.cases[0]!.matched, 'f', /case "a-hit": only a hit has matched, and its matched reason is one of its cited/],
+      ['f-matched-file.json', (d) => void (d.cases[0]!.matched!['file'] = 'src/other.ts'), 'f', /case "a-hit": its matched reason cites src\/calc\.ts, not its matched file src\/other\.ts/],
+      ['g-confirmed.json', (d) => void (d.trialResults[1]!.cases[0]!['confirmed'] = false), 'g', /trial 2 gives case "a-hit" another kind or confirmed than cases/],
+      // A clean pass as the bench writes one, in place of the bug hit in trial 2.
+      ['g-kind.json', (d) => void Object.assign(d.trialResults[1]!.cases[0]!, { kind: 'clean', outcome: 'pass', cited: [], matched: undefined }), 'g', /trial 2 gives case "a-hit" another kind or confirmed than cases/],
+      ['h-recall-1-of-0.json', (d) => void Object.assign(d.trialResults[0]!.totals, { hits: 0, misses: 1, recall: 1 }), 'h', /trial 1 totals differ from its cases/],
+      // A no-verdict record as the bench writes one (nothing cited, nothing matched), while the totals still count a hit.
+      ['h-no-verdict-hit.json', (d) => void Object.assign(d.trialResults[1]!.cases[0]!, { outcome: 'no-verdict', cited: [], matched: undefined }), 'h', /trial 2 totals differ from its cases/],
+      ['i-top-totals.json', (d) => void (d.totals['skippedUnconfirmed'] = 4), 'i', /cases and totals differ from trial 1/],
+      ['j-summary.json', (d) => void (d.summary['noVerdict'] = 1), 'j', /the summary differs from the one its trialResults give/],
     ];
-    for (const [name, change, rule] of rows) {
+    assert.deepEqual([...new Set(rows.map((r) => r[2]))], ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j'], 'one row or more per rule');
+    for (const [name, change, letter, cause] of rows) {
       const doc = JSON.parse(valid) as Doc;
-      change(doc.cases, doc);
+      change(doc);
       const refused = cli(run, save(name, doc));
       assert.equal(refused.status, 1, name);
-      assert.match(refused.stderr, new RegExp(name.replace('.', '\.')), name);
-      assert.match(refused.stderr, rule, name);
+      assert.ok(refused.stderr.includes(`${name}: rule (${letter}): `), `${name}: ${refused.stderr}`);
+      assert.match(refused.stderr, cause, name);
+      assert.equal(refused.stdout, '', name);
     }
 
     writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));

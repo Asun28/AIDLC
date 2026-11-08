@@ -116,7 +116,7 @@ test('T1-SWEEP2-FLAGS acceptance 5: no doc says CLAUDE_SESSION_ID is read, OPERA
   );
 });
 
-test('T1-BENCH-TRIALS acceptance 5: the CLI declares `bench run --trials <n>` and `bench compare <before.json> <after.json>`, and OPERATIONS names both [R1] [R6]', () => {
+test('T1-BENCH-TRIALS-2 acceptance 5: the CLI declares `bench run --trials <n>` and `bench compare <before.json> <after.json>`, and OPERATIONS names both [R1] [R6]', () => {
   const help = (...args: string[]) => spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'review', 'bench', ...args, '--help'], { encoding: 'utf8', windowsHide: true }).stdout;
   assert.match(help('run'), /--trials <n>/);
   assert.match(help('compare'), /^Usage: aidlc review bench compare \[options\] <before\.json> <after\.json>$/m);

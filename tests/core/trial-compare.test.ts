@@ -1,4 +1,4 @@
-// Card T1-BENCH-TRIALS: the median and range over trials, and the four-way verdict on two summaries.
+// Card T1-BENCH-TRIALS-2: the median and range over trials, and the four-way verdict on two summaries.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { compareTrials, trialRange, type TrialSummary } from '../../src/core/trial-compare.ts';
@@ -8,13 +8,13 @@ const summary = (extra: Partial<TrialSummary> = {}): TrialSummary => ({ trials: 
 const ids = ['a', 'b'];
 const side = (extra: Partial<TrialSummary> = {}, caseIds = ids) => ({ summary: summary(extra), caseIds });
 
-test('T1-BENCH-TRIALS acceptance 1: the median of an odd and an even trial count, and a null trial makes the range null [R3]', () => {
+test('T1-BENCH-TRIALS-2 acceptance 1: the median of an odd and an even trial count, and a null trial makes the range null [R3]', () => {
   assert.deepEqual(trialRange([0.5, 1, 0]), { median: 0.5, min: 0, max: 1 });
   assert.deepEqual(trialRange([0.25, 1, 0, 0.5]), { median: 0.375, min: 0, max: 1 });
   assert.equal(trialRange([0.5, null, 1]), null);
 });
 
-test('T1-BENCH-TRIALS acceptance 1: each of the four verdicts on built summaries [R3] [R5]', () => {
+test('T1-BENCH-TRIALS-2 acceptance 1: each of the four verdicts on built summaries [R3] [R5]', () => {
   const v = (before: ReturnType<typeof side>, after: ReturnType<typeof side>) => compareTrials(before, after).verdict;
   assert.equal(v(side(), side({ recall: range(0.7, 0.9) })), 'better');
   assert.equal(v(side(), side({ recall: range(0.2, 0.4) })), 'worse');
@@ -28,7 +28,7 @@ test('T1-BENCH-TRIALS acceptance 1: each of the four verdicts on built summaries
   assert.match(compareTrials(side(), side({ recall: range(0.7, 0.9) })).reason, /^recall 0\.70 to 0\.90 after, 0\.50 to 0\.60 before/);
 });
 
-test('T1-BENCH-TRIALS acceptance 1: inconclusive names each cause in a one-line reason [R4]', () => {
+test('T1-BENCH-TRIALS-2 acceptance 1: inconclusive names each cause in a one-line reason [R4]', () => {
   const r = (before: ReturnType<typeof side>, after: ReturnType<typeof side>) => compareTrials(before, after);
   const better = { recall: range(0.9, 1) };
   const cases = r(side(), side(better, ['a', 'c"']));
