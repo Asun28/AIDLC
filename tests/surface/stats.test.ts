@@ -585,3 +585,54 @@ describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-
     assert.equal((JSON.parse(json.stdout) as { cards: stats.CardReviewStats[] }).cards[0]?.findings.preExistingAdvisory, 3);
   });
 });
+
+describe('repro records in the review statistics (T1-FINDING-REPRO)', () => {
+  const rec = (reviewedExit: number | null, currentExit: number | null, reproduced: boolean, timedOut = false) => ({
+    argv: ['node', '--test', 'tests/x.test.ts'],
+    files: ['tests/x.test.ts'],
+    reviewed: { sha: 'sha1', exitCode: reviewedExit, timedOut },
+    current: { sha: 'sha2', exitCode: currentExit, timedOut: false },
+    at: at(30 * MIN),
+    reproduced,
+  });
+  /**
+   * F1 fixed, reproduced; F2 fixed, not reproduced (fails on both); F3 fixed without a repro;
+   * F4 `wrong` (no kind), repro exited 0 at the reviewed candidate -> counted; F5 `wrong`, exited 1 there -> not counted;
+   * F6 `wrong`, timed out there -> not counted; F7 `intentional`, exited 0 there -> not counted (not a wrong dispute).
+   */
+  function reproRun(over: Record<string, unknown> = {}): CardRun {
+    const finding = (id: string, o: Record<string, unknown>) => ({ id, stage: 'formal', round: 1, reason: `[spec] 1 @ src/a.ts:${id.slice(1)}: wrong -> fix`, raisedAt: at(MIN), disposition: 'open', ...o });
+    const dispute = (kind?: string) => ({ at: at(5 * MIN), note: 'the author answers', afterReraises: 0, ...(kind ? { kind } : {}) });
+    return run({
+      cardId: 'T1-RP',
+      findings: [
+        finding('F1', { resolvedAt: at(40 * MIN), repro: rec(1, 0, true) }),
+        finding('F2', { resolvedAt: at(40 * MIN), repro: rec(1, 1, false) }),
+        finding('F3', { resolvedAt: at(40 * MIN) }),
+        finding('F4', { disposition: 'disputed', disputes: [dispute()], repro: rec(0, 0, false) }),
+        finding('F5', { disposition: 'disputed', disputes: [dispute('wrong')], repro: rec(1, 0, true) }),
+        finding('F6', { disposition: 'disputed', disputes: [dispute('wrong')], repro: rec(null, 0, false, true) }),
+        finding('F7', { disposition: 'disputed', disputes: [dispute('intentional')], repro: rec(0, 0, false) }),
+      ],
+      ...over,
+    });
+  }
+
+  test('acceptance 6: two fixed findings with a repro, one reproduced, and one wrong finding whose repro exited 0 at the reviewed sha give the R5 counts; a run with none shows 0 [R5]', () => {
+    const summary = stats.summarizeReviews([reproRun()], [])[0];
+    assert.deepEqual(summary?.repro, { fixed: 2, fixedReproduced: 1, wrongPassedAtReviewed: 1 });
+    const quiet = stats.summarizeReviews([run({ cardId: 'T1-QUIET' })], [])[0];
+    assert.deepEqual(quiet?.repro, { fixed: 0, fixedReproduced: 0, wrongPassedAtReviewed: 0 });
+    const line = stats.formatReviewStats([summary!]);
+    assert.ok(line.includes('; repro: 2 fixed, 1 reproduced, 1 wrong passed at the reviewed candidate |'), line);
+    assert.ok(!stats.formatReviewStats([quiet!]).includes('repro'), 'a run with no repro prints no repro segment');
+  });
+
+  test('acceptance 6: the family totals add the repro counts of every member [R5]', () => {
+    const registry = [{ id: 'T1-RP', superseded_by: 'T1-RP-2' }, { id: 'T1-RP-2' }];
+    const summaries = stats.summarizeReviews([reproRun(), reproRun({ cardId: 'T1-RP-2' })], registry);
+    const family = summaries.find((s) => s.cardId === 'T1-RP-2')?.family;
+    assert.deepEqual(family?.totals.repro, { fixed: 4, fixedReproduced: 2, wrongPassedAtReviewed: 2 });
+    assert.ok(stats.formatReviewStats(summaries).includes('family total (2 cards)'), 'the family line is printed');
+  });
+});
