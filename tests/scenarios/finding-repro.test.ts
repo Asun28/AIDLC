@@ -181,6 +181,30 @@ test('acceptance 2 and 10: each refusal of R1 exits 1 before any run and writes 
   }
 });
 
+test('R3 decision 1 F1: with no --goal the goal is the one the card commands resolve; an active goal that projects the card with no run is refused and an older terminal goal\'s run is left alone [R1] [R7]', async () => {
+  const { fx, goal, repo } = setup();
+  try {
+    fx.store.saveGoal({ ...fx.goal(goal.id), state: 'DONE', terminal: true });
+    fx.advance(60_000);
+    const active = goalForCards(fx, ['T1-REPRO']);
+    assert.notEqual(active.id, goal.id);
+    const before = fx.store.getCardRun(goal.id, 'T1-REPRO');
+    const argv = JSON.stringify([process.execPath, '-e', 'process.exit(0)']);
+    await assert.rejects(repro.runRepro({ root: repo.dir, store: fx.store, cardId: 'T1-REPRO', findingId: 'F1', argv, timeoutMs: 4_000 }), /no current candidate/);
+    assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-REPRO'), before, 'the terminal goal\'s run is unchanged');
+    assert.equal(fx.store.getCardRun(active.id, 'T1-REPRO'), undefined, 'no run is created');
+
+    // Both goals hold a run: the active goal's is chosen, with no ambiguity refusal.
+    seedRun(fx, active.id, 'T1-REPRO', repo);
+    const result = await repro.runRepro({ root: repo.dir, store: fx.store, cardId: 'T1-REPRO', findingId: 'F1', argv, timeoutMs: 4_000 });
+    assert.equal(result.goalId, active.id);
+    assert.ok(fx.store.getCardRun(active.id, 'T1-REPRO')?.findings.find((f) => f.id === 'F1')?.repro, 'the active goal\'s finding carries the repro');
+    assert.deepEqual(fx.store.getCardRun(goal.id, 'T1-REPRO'), before, 'the terminal goal\'s run is still unchanged');
+  } finally {
+    fx.cleanup();
+  }
+});
+
 test('acceptance 10: each run sees AIDLC_STATE_DIR naming a new empty directory that is gone after the repro, also when the argv fails or times out [R2]', async () => {
   const { fx, goal, repo, worktrees } = setup();
   try {
@@ -238,7 +262,12 @@ test('acceptance 5: the run\'s state, substantiveDecisions, attempts and receipt
   }
 });
 
-test('acceptance 3: the next formal prompt holds the repro line inside ## Prior findings with the argv quoted, and a finding without a repro has no such line [R4]', async () => {
+/**
+ * The Prior findings lines of R3 decision 2 after decision 1 blocked sha-1 with F1 and F2 and the repair recorded sha-2.
+ * The repro of F1 is written after the repair attempt (its second run tested sha-2, the candidate under review) or, with
+ * `beforeRepair`, before it (its second run tested sha-1, the candidate of that moment).
+ */
+async function promptAfterRepro(beforeRepair: boolean): Promise<string[]> {
   const fx = makeFixture({ config: { gateRequired: true, preReview: { command: ['fake-r2'], reviewer: 'fake-r2', rounds: 3, timeoutMs: 1000, onExhausted: 'stop', shell: false }, formalReview: { command: ['fake-r3', '--schema', '{schema}', '{instructions}'], reviewer: 'fake-r3', timeoutMs: 1000, shell: false } } });
   try {
     const PASS = '{"verdict":"pass","reasons":[],"axes":{"spec":{"verdict":"pass","reasons":[]},"standards":{"verdict":"pass","reasons":[]}}}\n';
@@ -265,11 +294,13 @@ test('acceptance 3: the next formal prompt holds the repro line inside ## Prior 
     r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
     const block = await runner.formalReview(g(), card, r.run);
     assert.deepEqual(block.run.findings.map((f) => f.id), ['F1', 'F2']);
-    const repair = runner.next(g(), card, block.run);
-    run = runner.recordAttempt(g(), card, repair.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
     // The record `review repro` writes, with an argv carrying a quote and a newline.
     const argv = ['node', '--test', 'tests/a "b".test.ts', 'x\ny'];
-    fx.store.updateCardRun(goal.id, 'T1-RP', (current) => ({ ...current!, findings: current!.findings.map((f) => (f.id === 'F1' ? { ...f, repro: { argv, files: ['tests/a "b".test.ts'], reviewed: { sha: 'sha-1', exitCode: 1, timedOut: false }, current: { sha: 'sha-2', exitCode: 0, timedOut: false }, at: fx.now(), reproduced: true } } : f)) }));
+    const writeRepro = (tested: string) => fx.store.updateCardRun(goal.id, 'T1-RP', (current) => ({ ...current!, findings: current!.findings.map((f) => (f.id === 'F1' ? { ...f, repro: { argv, files: ['tests/a "b".test.ts'], reviewed: { sha: 'sha-1', exitCode: 1, timedOut: false }, current: { sha: tested, exitCode: 0, timedOut: false }, at: fx.now(), reproduced: true } } : f)) }));
+    if (beforeRepair) writeRepro('sha-1');
+    const repair = runner.next(g(), card, fx.store.getCardRun(goal.id, 'T1-RP')!);
+    run = runner.recordAttempt(g(), card, repair.run, { outcome: 'success', dodReceipt: 'dod:2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    if (!beforeRepair) writeRepro('sha-2');
     run = fx.store.getCardRun(goal.id, 'T1-RP')!;
     r = runner.next(g(), card, run);
     r = runner.next(g(), card, (await runner.preReview(g(), card, r.run)).run);
@@ -277,15 +308,29 @@ test('acceptance 3: the next formal prompt holds the repro line inside ## Prior 
     const prompt2 = prompts[1] ?? '';
     const section = prompt2.slice(prompt2.indexOf('## Prior findings'));
     const body = section.slice(0, section.indexOf('\n## ', 3) === -1 ? undefined : section.indexOf('\n## ', 3));
-    const lines = body.split('\n');
-    const expected = '  - F1 repro (quoted evidence): argv "[\\"node\\",\\"--test\\",\\"tests/a \\\\\\"b\\\\\\".test.ts\\",\\"x\\\\ny\\"]"; exit 1 at the reviewed candidate, exit 0 at the current candidate; reproduced.';
-    assert.ok(lines.includes(expected), `the repro line is in Prior findings:\n${body}`);
-    assert.equal(lines.filter((l) => l.includes(' repro (quoted evidence)')).length, 1, 'F2 has no repro line');
-    assert.ok(!lines.some((l) => l.startsWith('  - F2 repro')));
-    assert.ok(lines.findIndex((l) => l === expected) > lines.findIndex((l) => l.startsWith('- F1 (')), 'the line follows F1');
+    return body.split('\n');
   } finally {
     fx.cleanup();
   }
+}
+
+const ARGV_QUOTED = '"[\\"node\\",\\"--test\\",\\"tests/a \\\\\\"b\\\\\\".test.ts\\",\\"x\\\\ny\\"]"';
+
+test('acceptance 3: the next formal prompt holds the repro line inside ## Prior findings with the argv and both shas quoted, and a finding without a repro has no such line [R4]', async () => {
+  const lines = await promptAfterRepro(false);
+  const expected = `  - F1 repro (quoted evidence): argv ${ARGV_QUOTED}; exit 1 at the reviewed candidate "sha-1", exit 0 at "sha-2", the candidate under review; reproduced.`;
+  assert.ok(lines.includes(expected), `the repro line is in Prior findings:\n${lines.join('\n')}`);
+  assert.equal(lines.filter((l) => l.includes(' repro (quoted evidence)')).length, 1, 'F2 has no repro line');
+  assert.ok(!lines.some((l) => l.startsWith('  - F2 repro')));
+  assert.ok(!lines.some((l) => l.includes('not the candidate under review')), 'no stale clause when the tested sha is the candidate under review');
+  assert.ok(lines.findIndex((l) => l === expected) > lines.findIndex((l) => l.startsWith('- F1 (')), 'the line follows F1');
+});
+
+test('R3 decision 1 F2: a repro whose second run tested another candidate than the one under review names both shas and says so [R4]', async () => {
+  const lines = await promptAfterRepro(true);
+  const expected = `  - F1 repro (quoted evidence): argv ${ARGV_QUOTED}; exit 1 at the reviewed candidate "sha-1", exit 0 at "sha-1", not the candidate under review "sha-2"; reproduced.`;
+  assert.ok(lines.includes(expected), `the stale repro line says what it tested:\n${lines.join('\n')}`);
+  assert.ok(!lines.some((l) => l.includes(', the candidate under review;')));
 });
 
 test('acceptance 4: the review-fix directive after a formal block and the REVIEW_FIX build directive after it end with the R6 sentence [R6]', () => {
