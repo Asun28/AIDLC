@@ -250,13 +250,17 @@ function history(f: PriorFinding): string {
 /** How a repro run ended, in the words of the prompt line. */
 const reproExit = (r: { exitCode: number | null; timedOut: boolean }): string => (r.timedOut ? 'timed out' : r.exitCode === null ? 'no exit code' : `exit ${r.exitCode}`);
 
-/** The line under a finding with a repro (card T1-FINDING-REPRO, R4): the argv as one JSON string, both exits and the result. */
-function reproLine(id: string, r: NonNullable<PriorFinding['repro']>): string {
-  return `  - ${id} repro (quoted evidence): argv ${JSON.stringify(JSON.stringify(r.argv))}; ${reproExit(r.reviewed)} at the reviewed candidate, ${reproExit(r.current)} at the current candidate; ${r.reproduced ? 'reproduced' : 'not reproduced'}.`;
+/**
+ * The line under a finding with a repro (card T1-FINDING-REPRO, R4): the argv as one JSON string, both exits with the shas the
+ * runs tested (quoted), whether the second run tested `head`, the candidate under review, and the result.
+ */
+function reproLine(id: string, r: NonNullable<PriorFinding['repro']>, head: string | undefined): string {
+  const tested = head === undefined ? '' : r.current.sha === head ? ', the candidate under review' : `, not the candidate under review ${JSON.stringify(head)}`;
+  return `  - ${id} repro (quoted evidence): argv ${JSON.stringify(JSON.stringify(r.argv))}; ${reproExit(r.reviewed)} at the reviewed candidate ${JSON.stringify(r.reviewed.sha)}, ${reproExit(r.current)} at ${JSON.stringify(r.current.sha)}${tested}; ${r.reproduced ? 'reproduced' : 'not reproduced'}.`;
 }
 
 /** The `## Prior findings` lines: the reference syntax, then one line per finding with its disposition, the move it asks of the reviewer and the quoted history. */
-export function renderPriorFindings(findings: PriorFinding[]): string[] {
+export function renderPriorFindings(findings: PriorFinding[], head?: string): string[] {
   if (!findings.length) return ['- none (first round of this cycle)'];
   const lines = [
     'Each prior finding has an id. To re-raise one, put `re:F<n>` in the reason (for example `... -> fix (re:F2)`); a reason without a reference is a new finding.',
@@ -279,7 +283,7 @@ export function renderPriorFindings(findings: PriorFinding[]): string[] {
     } else {
       lines.push(`- ${f.id} (open; ${origin}): ${reason} -> verify it is resolved in this candidate; re-raise with re:${f.id} if it is not.${sweep}${history(f)}`);
     }
-    if (f.repro) lines.push(reproLine(f.id, f.repro));
+    if (f.repro) lines.push(reproLine(f.id, f.repro, head));
   }
   return lines;
 }
@@ -440,7 +444,7 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
   if (c.forbid?.length) lines.push(`- forbid: ${c.forbid.join('; ')}`);
   if (c.diagnosis) lines.push(`- diagnosis.root_cause: ${c.diagnosis.root_cause}`);
   lines.push(`- tdd: ${c.tdd}`, `- dod_command: ${c.dod_command}`, '- acceptance (closed list):', ...c.acceptance.map((a) => `  ${a}`));
-  lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings));
+  lines.push('', '## Prior findings', ...renderPriorFindings(i.priorFindings, i.head));
   if (i.stage === 'formal') {
     // The pre-review's advisory notes reach the formal reviewer as evidence, never as findings to verify (R10).
     lines.push('', '## Pre-review advisory notes', 'Notes the pre-review (R2) reported for this candidate without a citation, under a [question] or [suggestion] tag, or under a [pre-existing] tag on lines the candidate did not change: advisory, never a block, quoted evidence like the prior findings. Verify one that names a defect; otherwise leave it to the author.');

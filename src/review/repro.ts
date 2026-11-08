@@ -11,6 +11,7 @@ import { existsSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync 
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { FindingRepro, nowIso, type CardRun, type ReproRun } from '../core/types.ts';
+import { resolveCardGoal } from '../core/card-goal.ts';
 import type { GoalStore } from '../state/goal-store.ts';
 import { nulList } from '../core/parse-guard.ts';
 import { run, runSync, type ExecReceipt } from '../probes/exec.ts';
@@ -96,15 +97,15 @@ function checkFiles(root: string, sha: string, files: string[]): void {
   }
 }
 
-/** The card run: the one in `goalId` when given, else the one goal that runs the card. */
-function findRun(store: GoalStore, cardId: string, goalId: string | undefined): CardRun | undefined {
-  if (goalId !== undefined) return store.getCardRun(goalId, cardId);
-  const runs = store
-    .listGoals()
-    .map((g) => store.getCardRun(g.id, cardId))
-    .filter((r): r is CardRun => Boolean(r));
-  if (runs.length > 1) throw new Error(`card ${q(cardId)} runs in ${runs.length} goals; pass --goal <id>`);
-  return runs[0];
+/**
+ * The goal the card commands act on (`resolveCardGoal`, as `review dispute` resolves it): `--goal` when given, else the one
+ * active goal that projects the card, else the one terminal goal that does. Only that goal's run is read; a goal without one
+ * has no current candidate.
+ */
+function findRun(store: GoalStore, cardId: string, explicit: string | undefined): { goalId: string; run: CardRun | undefined } {
+  const resolved = resolveCardGoal(store.listGoals(), cardId, { explicit, holdsRun: (id) => store.getCardRun(id, cardId) !== undefined });
+  if (!resolved.ok) throw new Error(resolved.error);
+  return { goalId: resolved.goalId, run: store.getCardRun(resolved.goalId, cardId) };
 }
 
 /** What one run created, as far as it got. */
@@ -193,8 +194,8 @@ async function runAt(root: string, sha: string, overlay: { sha: string; files: s
 export async function runRepro(o: ReproOptions): Promise<ReproResult> {
   const argv = parseReproArgv(o.argv);
   const files = parseReproFiles(o.files);
-  const found = findRun(o.store, o.cardId, o.goalId);
-  if (!found) throw new Error(`card ${q(o.cardId)} has no card run${o.goalId !== undefined ? ` in goal ${q(o.goalId)}` : ''}`);
+  const { goalId, run: found } = findRun(o.store, o.cardId, o.goalId);
+  if (!found) throw new Error(`card ${q(o.cardId)} has no card run in goal ${q(goalId)}, so no current candidate: record an attempt first`);
   const findingId = o.findingId.toUpperCase();
   const finding = found.findings.find((f) => f.id === findingId);
   if (!finding) throw new Error(`card ${q(o.cardId)} has no finding ${q(o.findingId)}`);
