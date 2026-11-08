@@ -20,6 +20,16 @@ export interface CompletionRequest {
   allowedTools?: string[];
   cwd?: string;
   timeoutMs?: number;
+  /** Variables set over the process environment for the run (the eval runner's `AIDLC_STATE_DIR`). */
+  env?: Record<string, string>;
+  /** Record the tool calls of the run in `CompletionResult.toolCalls` (claude-code: `--output-format stream-json --verbose`). */
+  recordToolCalls?: boolean;
+}
+
+/** One tool call the model made, in the order it made them. */
+export interface ToolCall {
+  name: string;
+  input: Record<string, unknown>;
 }
 
 export interface CompletionResult {
@@ -37,6 +47,8 @@ export interface CompletionResult {
   error?: string;
   retryAfterMs?: number;
   durationMs: number;
+  /** The tool calls of the run, when the request set `recordToolCalls` and the provider records them. */
+  toolCalls?: ToolCall[];
 }
 
 export interface ModelProvider {

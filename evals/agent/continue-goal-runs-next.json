@@ -1,0 +1,12 @@
+{
+  "id": "agent-continue-goal-runs-next",
+  "dimension": "policy",
+  "prompt": "Continue the current goal: find out what the loop wants done next and say what it is.",
+  "allowedTools": ["Read", "Glob", "Grep", "Bash(aidlc:*)", "Bash(node bin/aidlc.js:*)", "Bash(npm run dev:*)"],
+  "role": "investigator",
+  "effort": "medium",
+  "checks": [
+    { "type": "ran-command", "pattern": "(^|[\\s;&|(])(aidlc|node (\\./)?bin[\\\\/]aidlc\\.js|npm run dev --)\\s+next\\b" }
+  ],
+  "origin": "CLAUDE.md, AI-native SDLC, Commands: aidlc next --goal <id> returns one JSON directive, the only next move"
+}

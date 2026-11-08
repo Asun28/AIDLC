@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -122,4 +123,51 @@ test('T1-BENCH-TRIALS-2 acceptance 5: the CLI declares `bench run --trials <n>` 
   assert.match(help('compare'), /^Usage: aidlc review bench compare \[options\] <before\.json> <after\.json>$/m);
   const ops = flat('docs/OPERATIONS.md');
   for (const line of ['aidlc review bench run --stage <pre|formal> --trials 3 --json', 'aidlc review bench compare <before.json> <after.json>']) assert.ok(ops.includes(line), line);
+});
+
+test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run refuses a --dir inside the state directory before reading a case [R10]', () => {
+  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  mkdirSync(path.join(state, 'cases'));
+  writeFileSync(path.join(state, 'cases', 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));
+  const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', '--skip-model', '--dir', path.join(state, 'cases')], { cwd: root, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /is inside the state directory/);
+  assert.equal(r.stdout, '', 'no case was run');
+});
+
+test("T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run refuses --dir .aidlc while AIDLC_STATE_DIR names another directory [R10]", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-repo-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(path.join(repo, '.aidlc'));
+  writeFileSync(path.join(repo, '.aidlc', 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));
+  const other = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', '--skip-model', '--dir', '.aidlc'], { cwd: repo, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: other } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /is inside the repository's \.aidlc/);
+  assert.ok(r.stderr.includes('.aidlc'), 'the refusal names the path');
+  assert.equal(r.stdout, '', 'no case was run');
+});
+
+test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run from a linked worktree reads its cases from the worktree, runs --skip-model checks there and checks out its HEAD for a model-backed case', () => {
+  const main = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-main-'));
+  const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
+  writeFileSync(path.join(main, 'base.txt'), 'base');
+  git(main, 'init', '-q');
+  git(main, 'add', '.');
+  git(main, 'commit', '-q', '-m', 'main');
+  const wt = path.join(mkdtempSync(path.join(tmpdir(), 'aidlc-evals-wt-')), 'wt');
+  assert.equal(git(main, 'worktree', 'add', '-q', '-b', 'wt', wt).status, 0);
+  mkdirSync(path.join(wt, 'evals'));
+  writeFileSync(path.join(wt, 'only-in-wt.txt'), 'wt');
+  const probe = ['node', '-e', "process.exit(require('fs').existsSync('only-in-wt.txt') ? 0 : 1)"];
+  writeFileSync(path.join(wt, 'evals', 'a.json'), JSON.stringify({ id: 'wt-head', prompt: 'do it', checks: [{ type: 'command', command: probe }] }));
+  git(wt, 'add', '.');
+  git(wt, 'commit', '-q', '-m', 'worktree only');
+  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  for (const mode of [['--skip-model'], ['--provider', 'mock']]) {
+    const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', ...mode], { cwd: wt, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+    assert.equal(r.status, 0, `${mode.join(' ')}: ${r.stdout}${r.stderr}`);
+    const suite = JSON.parse(r.stdout) as { total: number; passed: number };
+    assert.deepEqual([suite.total, suite.passed], [1, 1], `${mode.join(' ')}: the worktree case ran and saw the worktree's file`);
+  }
 });
