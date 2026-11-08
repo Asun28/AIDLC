@@ -13,6 +13,7 @@ allow_paths:
   - tests/core/trial-compare.test.ts
   - tests/surface/command-lines.test.ts
   - evals/README.md
+  - templates/evals/README.md
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
@@ -26,7 +27,7 @@ requirements:
   - R4. The report shall carry one verdict from the pure function of T1-BENCH-TRIALS-2, with the pass rate in the place of recall and no second metric: `better` or `worse` for the variant when the two pass-rate ranges do not overlap, `no-measurable-difference` when they do, and `inconclusive` when either side has fewer than 3 trials or a model error or quota hold in any trial.
   - R5. Without `--variant`, `--trials` shall run HEAD alone n times and report the figures of requirement R3 with no verdict; without either option, the output and the gate shall be what they are before this card.
   - R6. The exit code with `--variant` shall be 0 for any verdict and 1 when a checkout cannot be created; the threshold gate shall not apply to a variant run.
-  - R7. `evals/README.md` and `docs/OPERATIONS.md` shall state the commands and that a change to `.claude/**`, CLAUDE.md or REVIEW.md is kept when the variant run on the agent cases gives `better` or `no-measurable-difference`, as a documented practice and not a gate.
+  - R7. `evals/README.md` (and its copy `templates/evals/README.md`, which T1-EVALS-NO-KEY acceptance 2 keeps identical) and `docs/OPERATIONS.md` shall state the commands and that a change to `.claude/**`, CLAUDE.md or REVIEW.md is kept when the variant run on the agent cases gives `better` or `no-measurable-difference`, as a documented practice and not a gate.
 acceptance:
   - 1. `tests/surface/evals.test.ts`: on a fixture repository with two commits whose case passes on one and fails on the other under a scripted provider, `--variant <other> --trials 3` reports pass rates 3/3 and 0/3 and the verdict `worse` or `better` by side; the scripted provider saw the sides alternate. [R2] [R3] [R4] [dod arm 1]
   - 2. Same file: one model error on either side makes the verdict `inconclusive` naming it; `--trials 2` is `inconclusive` naming the trial count. [R4] [dod arm 1]
@@ -36,7 +37,7 @@ acceptance:
   - 6. `tests/surface/command-lines.test.ts` pins the options. [R1] [dod arm 3]
   - 7. The docs state R1 to R7 (reviewer-verified against the diff). [R7]
 depends_on: [T1-BENCH-TRIALS-2, T1-EVAL-TRANSCRIPT-2]
-budget: 300
+budget: 450
 sweep: "Sites on main after T1-BENCH-TRIALS-2 and T1-EVAL-TRANSCRIPT-2 merge: `runSuite` and `runEval` in src/evals/runner.ts, the temporary checkout T1-EVAL-TRANSCRIPT-2 adds, the verdict function in src/core/trial-compare.ts, and the `evals run` command in src/cli/main.ts. Read their lines at PREPARE."
 forbid: [weakening or skipping a test to go green, a model call in a test, a gate on the variant verdict in CI or in the loop, a judge model, running a side in the main checkout, editing .aidlc state by hand]
 non_goals: [more than two sides, a statistical test beyond range overlap, a variant run for the reviewer bench (T1-BENCH-TRIALS-2 covers it), running variant evals in CI, writing the report to a file (stdout as JSON, as today)]
