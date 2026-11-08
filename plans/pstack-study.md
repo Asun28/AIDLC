@@ -43,13 +43,13 @@ contract are frozen.
 ## Files that change
 - T1-BENCH-TRIALS-2: `src/core/trial-compare.ts` (new), `src/review/bench.ts`, `src/cli/main.ts`, `tests/core/trial-compare.test.ts` (new), `tests/surface/review-bench.test.ts`, docs.
 - T1-FINDING-REPRO: `src/review/repro.ts` (new), `src/core/types.ts` (`ReviewFinding.repro`), `src/review/pre-review.ts` (prior findings section), `src/review/stats.ts`, `src/loop/card-runner.ts` (REVIEW_FIX narration), `src/cli/main.ts`, `tests/scenarios/finding-repro.test.ts` (new), `tests/surface/stats.test.ts`, docs.
-- T1-EVAL-TRANSCRIPT: `src/providers/claude-code.ts`, `src/providers/types.ts`, `src/evals/runner.ts`, `src/cli/main.ts`, `evals/agent/*.json` (new), `evals/README.md`, `tests/surface/evals.test.ts`, `tests/surface/providers.test.ts`, docs.
+- T1-EVAL-TRANSCRIPT-2: `src/providers/claude-code.ts`, `src/providers/types.ts`, `src/evals/runner.ts`, `src/cli/main.ts`, `evals/agent/*.json` (new), `evals/README.md`, `tests/surface/evals.test.ts`, `tests/surface/providers.test.ts`, docs.
 - T1-EVAL-VARIANT: `src/evals/runner.ts`, `src/cli/main.ts`, `tests/surface/evals.test.ts`, `evals/README.md`, docs.
 - Every card: `CHANGELOG.md`, `docs/OPERATIONS.md`, its own card file.
 
 ## Order of work
 1. T1-BENCH-TRIALS-2: `--trials` on the bench and `aidlc review bench compare` with the pure verdict. T1-BENCH-TRIALS-2 replaces T1-BENCH-TRIALS (goal revision 2): R3 blocked its four decisions, three on `bench compare` accepting hand-built reports, and the successor states the closed list of rules compare checks.
-2. T1-EVAL-TRANSCRIPT: tool calls from the provider, the four tool-call checks, the temporary checkout, the prompt word check, and the first agent evals under `evals/agent/`. Second because a model-backed eval runs in the main checkout today, with the repository's `.aidlc/` in reach.
+2. T1-EVAL-TRANSCRIPT-2: tool calls from the provider, the four tool-call checks, the temporary checkout, the prompt word check, and the first agent evals under `evals/agent/`. Second because a model-backed eval runs in the main checkout today, with the repository's `.aidlc/` in reach. T1-EVAL-TRANSCRIPT-2 replaces T1-EVAL-TRANSCRIPT (goal revision 3): R3 blocked its four decisions on reading the forbid rule on `.aidlc/` as a sandbox, and the successor states the rules the runner enforces.
 3. T1-FINDING-REPRO: `aidlc review repro`, the record on the finding, the R3 prompt line, the stats counts, the REVIEW_FIX narration.
 4. T1-EVAL-VARIANT: `--variant <ref> --trials <n>` with the verdict from card 1. Depends on 1 and 2. With three agent cases it detects only a change that fails a case in every trial.
 
@@ -60,9 +60,9 @@ One worker: every card edits `CHANGELOG.md`.
 | Card | Priority | Output | depends_on | Parallel window | Freeze point |
 |---|---|---|---|---|---|
 | T1-BENCH-TRIALS-2 | MUST | bench trials and the compare verdict | - | W1 | - |
-| T1-EVAL-TRANSCRIPT | MUST | tool-call checks, temporary checkout, prompt word check, first agent evals | - | W2 | - |
+| T1-EVAL-TRANSCRIPT-2 | MUST | tool-call checks, temporary checkout, prompt word check, first agent evals | - | W2 | - |
 | T1-FINDING-REPRO | MUST | repro record per finding, in the R3 prompt and stats | - | W3 | - |
-| T1-EVAL-VARIANT | SHOULD | A/B variant eval run with the verdict | T1-BENCH-TRIALS-2, T1-EVAL-TRANSCRIPT | W4 | - |
+| T1-EVAL-VARIANT | SHOULD | A/B variant eval run with the verdict | T1-BENCH-TRIALS-2, T1-EVAL-TRANSCRIPT-2 | W4 | - |
 
 ## Risks
 - A repro argv is run by the loop on the author's say-so. It runs in a temporary checkout with the same process environment as the DoD, never in the main checkout, and its output is data in the R3 prompt.
