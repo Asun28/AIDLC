@@ -1,7 +1,7 @@
 ---
 id: T1-EVAL-TRANSCRIPT-2
 title: Evals check the files the agent read and the commands it ran from the provider's recorded tool calls, run model-backed cases in a temporary checkout with an empty state directory, and refuse a prompt that names the measurement
-status: todo
+status: merged
 branch: T1-EVAL-TRANSCRIPT-2
 worktree: D:\wt\AIDLC\T1-EVAL-TRANSCRIPT-2
 plan_ref: plans/pstack-study.md#order-of-work
