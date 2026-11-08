@@ -90,6 +90,17 @@ export interface CoverageStats {
   r3SpecFindingsAfterIncomplete: number;
 }
 
+/**
+ * The author's repros (card T1-FINDING-REPRO-2, R5), read off `ReviewFinding.repro`. `fixed`: findings whose response is
+ * `fixed` (see `ResponseStats`) that carry a repro; `fixedReproduced`: of those, the ones whose repro reproduced;
+ * `wrongPassedAtReviewed`: findings whose response is `wrong` with a repro whose run at the reviewed candidate exited 0.
+ */
+export interface ReproStats {
+  fixed: number;
+  fixedReproduced: number;
+  wrongPassedAtReviewed: number;
+}
+
 export interface CardReviewStats {
   cardId: string;
   /** The goal that ran the card; absent when several goals ran it, whose runs the numbers below cover together. */
@@ -98,6 +109,7 @@ export interface CardReviewStats {
   r3: R3Stats;
   findings: FindingStats;
   coverage: CoverageStats;
+  repro: ReproStats;
   /**
    * First review request to the last pass, or to the last review when none passed, each review measured
    * to the completion its artifact records. A pass is a recorded pass of either stage: an advisory block
@@ -112,7 +124,7 @@ export interface FamilyStats {
   /** The predecessors this card supersedes, oldest first. */
   members: CardReviewStats[];
   /** The members and this card together. */
-  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number };
+  totals: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; repro: ReproStats; wallMs: number };
 }
 
 /** The registry fields the family chain needs. */
@@ -258,6 +270,20 @@ function countCoverage(runs: readonly CardRun[], into: CoverageStats): CoverageS
   return into;
 }
 
+function countRepro(findings: readonly ReviewFinding[], into: ReproStats): ReproStats {
+  for (const f of findings) {
+    if (!f.repro) continue;
+    // The same response rule as `countFindings`: a disputed disposition by its latest dispute's kind, else fixed when resolved.
+    if (f.disposition === 'disputed') {
+      if (disputeKindOf(f.disputes.at(-1)) === 'wrong' && f.repro.reviewed.exitCode === 0 && !f.repro.reviewed.timedOut) into.wrongPassedAtReviewed += 1;
+    } else if (f.resolvedAt) {
+      into.fixed += 1;
+      if (f.repro.reproduced) into.fixedReproduced += 1;
+    }
+  }
+  return into;
+}
+
 function countFindings(findings: readonly ReviewFinding[], into: FindingStats): FindingStats {
   for (const f of findings) {
     into.total += 1;
@@ -328,11 +354,13 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
   const r3 = emptyR3();
   const findings = emptyFindings();
   const coverage = emptyCoverage();
+  const repro: ReproStats = { fixed: 0, fixedReproduced: 0, wrongPassedAtReviewed: 0 };
   const events: ReviewEvent[] = [];
   countCoverage(runs, coverage);
   for (const run of runs) {
     countR2(run.preReview.rounds, r2);
     countFindings(run.findings, findings);
+    countRepro(run.findings, repro);
     findings.preExistingAdvisory += countPreExisting(run);
     r3.decisions += run.review.substantiveDecisions;
     for (const invocation of run.review.invocations) {
@@ -346,7 +374,7 @@ function statsFor(cardId: string, runs: readonly CardRun[]): CardReviewStats {
     events.push(...eventsOf(run));
   }
   const goals = [...new Set(runs.map((r) => r.goalId))];
-  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, coverage, wallMs: wallOf(events) };
+  return { cardId, ...(goals.length === 1 ? { goalId: goals[0] } : {}), r2: sealR2(r2), r3, findings, coverage, repro, wallMs: wallOf(events) };
 }
 
 /** Predecessors of every card: the reverse of the registry's `superseded_by` links. */
@@ -388,6 +416,7 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
   const r3 = emptyR3();
   const findings = emptyFindings();
   const coverage = emptyCoverage();
+  const repro: ReproStats = { fixed: 0, fixedReproduced: 0, wrongPassedAtReviewed: 0 };
   let wallMs = 0;
   for (const s of summaries) {
     r2.rounds += s.r2.rounds;
@@ -417,9 +446,12 @@ function totalsOf(summaries: readonly CardReviewStats[]): FamilyStats['totals'] 
     coverage.conflicted += s.coverage.conflicted;
     coverage.inconsistent += s.coverage.inconsistent;
     coverage.r3SpecFindingsAfterIncomplete += s.coverage.r3SpecFindingsAfterIncomplete;
+    repro.fixed += s.repro.fixed;
+    repro.fixedReproduced += s.repro.fixedReproduced;
+    repro.wrongPassedAtReviewed += s.repro.wrongPassedAtReviewed;
     wallMs += s.wallMs;
   }
-  return { r2: sealR2(r2), r3, findings, coverage, wallMs };
+  return { r2: sealR2(r2), r3, findings, coverage, repro, wallMs };
 }
 
 /**
@@ -497,8 +529,13 @@ function coverageText(s: CoverageStats): string {
   return `coverage: ${s.roundsComplete}/${s.roundsRequested} complete, unaccounted ${s.unaccounted}, conflicted ${s.conflicted}, inconsistent ${s.inconsistent}, r3 spec findings after incomplete ${s.r3SpecFindingsAfterIncomplete}`;
 }
 
-function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; wallMs: number }): string {
-  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)} | ${coverageText(s.coverage)} | wall ${durationText(s.wallMs)}`;
+/** The repro segment the findings segment ends with; empty when every count is 0. */
+function reproText(s: ReproStats): string {
+  return s.fixed || s.wrongPassedAtReviewed ? `; repro: ${s.fixed} fixed, ${s.fixedReproduced} reproduced, ${s.wrongPassedAtReviewed} wrong passed at the reviewed candidate` : '';
+}
+
+function statsLine(label: string, s: { r2: R2Stats; r3: R3Stats; findings: FindingStats; coverage: CoverageStats; repro: ReproStats; wallMs: number }): string {
+  return `${label}  ${r2Text(s.r2)} | ${r3Text(s.r3)} | ${findingsText(s.findings)}${reproText(s.repro)} | ${coverageText(s.coverage)} | wall ${durationText(s.wallMs)}`;
 }
 
 /** One line per card, each family member under the card that supersedes it, then the family total. */

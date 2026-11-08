@@ -59,7 +59,11 @@ runs it, so CI runs it on every push.
 - Card-run commands the check does not drive: `CardRunner.takeover`,
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.withdrawCandidate` (its own fault rows are in
-  `tests/scenarios/candidate-withdraw.test.ts`), failed and
+  `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
+  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
+  `GoalStore.updateCardRun` write of the finding's `repro` after both runs
+  and no journal append, so a failed write throws, exits 1 and leaves the
+  run and the journal as they were), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
   BUILD and CLOSE steps of `card next`.
 - A confirmed violation the current code shows is not a pass: it is
