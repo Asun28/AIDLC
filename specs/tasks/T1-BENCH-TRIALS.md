@@ -62,3 +62,15 @@ npm run typecheck && node --test tests/core/trial-compare.test.ts tests/surface/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/trial-compare.test.ts`, three T1-BENCH-TRIALS acceptance 1 tests | pass |
+| 2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS acceptance 2 | pass |
+| 3 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS acceptance 3 | pass |
+| 4 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS acceptance 4 | pass |
+| 5 | `tests/surface/command-lines.test.ts`, T1-BENCH-TRIALS acceptance 5 | pass |
+| 6 | docs/OPERATIONS.md, docs/ARCHITECTURE.md, evals/review/README.md, CHANGELOG.md; pinned by T1-REVIEW-BENCH acceptance 9 (paragraph 4 and the new trials paragraph) | pass; reviewer-verified at R3 |
+
+RED receipt: 0d5e6cd:1 (trial-compare.ts missing; one review per case with `trials: 3`; no `trialResults`/`summary`; `bench compare` unknown; docs pins).

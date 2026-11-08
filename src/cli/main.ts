@@ -38,7 +38,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
-import { exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
+import { compareBenchReports, exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
 import { loadEvals, runSuite } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
@@ -912,15 +912,29 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--case <id>', 'score this case alone')
     .option('--include-unconfirmed', 'score the unconfirmed cases too')
     .option('--rules <rules>', 'how the learned rules are chosen: newest or matched', 'newest')
-    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string }) => {
+    .option('--trials <n>', 'review every selected case n times (1 to 20) and report the median and range', '1')
+    .action(async (o: { stage: string; dir?: string; case?: string; includeUnconfirmed?: boolean; rules: string; trials: string }) => {
       if (o.stage !== 'pre' && o.stage !== 'formal') fail(`--stage must be pre or formal, not ${o.stage}`);
       if (o.rules !== 'newest' && o.rules !== 'matched') fail(`--rules must be newest or matched, not ${o.rules}`);
+      if (!/^[0-9]+$/.test(o.trials)) fail(`--trials must be an integer from 1 to 20, not ${JSON.stringify(o.trials)}`);
       // The checkout this command runs in, not the main one: a card worktree scores its own policy, prompts and config.
       // No ctx(): the bench reads no goal state and writes nothing under the state directory.
       const root = resolveRepoIdentity(g().cwd ?? process.cwd()).worktreeRoot;
-      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules });
+      const report = await runReviewBench({ root, stage: o.stage, dir: o.dir, caseId: o.case, includeUnconfirmed: o.includeUnconfirmed, rules: o.rules, trials: Number(o.trials) });
       out({ json: g().json ?? !process.stdout.isTTY }, report, () => formatBenchReport(report));
       if (report.leftCheckouts.length) process.exitCode = 1;
+    });
+  bench
+    .command('compare <before.json> <after.json>')
+    .description('the verdict on two saved bench reports: better, worse, no-measurable-difference or inconclusive (never a gate)')
+    .action((before: string, after: string) => {
+      let result: ReturnType<typeof compareBenchReports>;
+      try {
+        result = compareBenchReports(before, after);
+      } catch (err) {
+        return fail((err as Error).message);
+      }
+      out({ json: g().json ?? !process.stdout.isTTY }, result, () => `${result.verdict}: ${result.reason}`);
     });
   bench
     .command('export')

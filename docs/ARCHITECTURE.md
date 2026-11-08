@@ -29,6 +29,8 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 `src/review/bench.ts` is the reviewer bench (`aidlc review bench run` and `aidlc review bench export`): the run scores a stage's primary reviewer on the confirmed cases under `evals/review/`, each candidate reviewed once in a detached temporary checkout through the loop's own prompt and panel functions, the export drafts unconfirmed cases from the card runs `src/cli/main.ts` hands it and pins each candidate under `refs/aidlc/bench/`, and the module imports nothing from `src/state/`, `src/coordination/` or `src/loop/` (docs/OPERATIONS.md, Reviewer bench).
 
+`src/core/trial-compare.ts` is the pure verdict of `aidlc review bench compare`: `trialRange` gives the median, minimum and maximum over trials, and `compareTrials` returns `better`, `worse`, `no-measurable-difference` or `inconclusive` with a one-line reason, deciding by recall, then by the false-block rate, only when the two ranges do not overlap. `src/review/bench.ts` builds the `summary` it reads with `--trials <n>`.
+
 `bench/` (outside `src/` and never shipped) holds the loop benchmark: `npm run bench` counts the modules, fs calls, child processes and output of each hook event and the CLI start, and compares them with the ceilings in `bench/baseline.json` (docs/OPERATIONS.md, Loop benchmark).
 
 `src/audit/` provides the evidence manifest with sealing (`manifest.ts`) and the independent verifier (`verifier.ts`).

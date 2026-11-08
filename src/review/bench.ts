@@ -16,11 +16,13 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { z } from 'zod';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, matchedLessons, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
+import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
 import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
@@ -72,8 +74,12 @@ export interface ReviewBenchReport {
   leftCheckouts: string[];
   /** Present only when the run selected no case, so an empty report never reads as a scored run. */
   note?: string;
+  /** The cases and totals of the first trial. */
   cases: BenchCaseResult[];
   totals: BenchTotals;
+  /** The cases and totals of every trial, the first included. */
+  trialResults: Array<{ cases: BenchCaseResult[]; totals: BenchTotals }>;
+  summary: TrialSummary;
 }
 
 export interface ReviewBenchOptions {
@@ -86,6 +92,8 @@ export interface ReviewBenchOptions {
   includeUnconfirmed?: boolean;
   /** How the learned rules are chosen; default `newest`. */
   rules?: BenchRules;
+  /** How many times each selected case is reviewed, 1 to 20; default 1. */
+  trials?: number;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */
@@ -133,6 +141,8 @@ interface BenchContext {
 
 /** Score the stage's primary reviewer on the selected cases; throws, before any review, on a refusal. */
 export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBenchReport> {
+  const trials = o.trials ?? 1;
+  if (!Number.isInteger(trials) || trials < 1 || trials > 20) throw new Error(`--trials must be an integer from 1 to 20, not ${trials}`);
   const policyFile = path.join(o.root, 'REVIEW.md');
   if (!existsSync(policyFile)) throw new Error(`no REVIEW.md in ${o.root}: the reviewer bench reviews with this checkout's policy`);
   const { config } = loadProjectConfig(o.root);
@@ -148,22 +158,30 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
   const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [] };
-  // One review per distinct candidate, base and card path, one after another, scoring every case of it.
+  // One review per distinct candidate, base and card path and trial, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
     const key = `${c.candidate} ${c.base} ${c.card.path}`;
     groups.set(key, [...(groups.get(key) ?? []), c]);
   }
-  const results = new Map<string, BenchCaseResult>();
+  const results = Array.from({ length: trials }, () => new Map<string, BenchCaseResult>());
   let n = 0;
   for (const cases of groups.values()) {
-    n += 1;
-    for (const r of await reviewGroup(ctx, cases, n)) results.set(r.id, r);
+    for (const trial of results) {
+      n += 1;
+      for (const r of await reviewGroup(ctx, cases, n)) trial.set(r.id, r);
+    }
   }
-  const ordered = selected.map((c) => results.get(c.id)!);
   const skipped = pool.length - selected.length;
+  const trialResults = results.map((trial) => {
+    const ordered = selected.map((c) => trial.get(c.id)!);
+    return { cases: ordered, totals: totalsOf(ordered, skipped) };
+  });
+  const totals = trialResults.map((t) => t.totals);
+  const sum = (k: 'noVerdict' | 'errors') => totals.reduce((a, t) => a + t[k], 0);
+  const summary = { trials, recall: trialRange(totals.map((t) => t.recall)), falseBlockRate: trialRange(totals.map((t) => t.falseBlockRate)), noVerdict: sum('noVerdict'), errors: sum('errors') };
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), cases: ordered, totals: totalsOf(ordered, skipped) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary };
 }
 
 const errorOf = (c: ReviewBenchCase, detail: string): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'error', cited: [], detail, durationMs: 0 });
@@ -543,13 +561,38 @@ export function formatBenchExport(r: BenchExportReport): string {
   return lines.length ? lines.join('\n') : 'nothing to export';
 }
 
-/** The line form: one line per case and a totals line. */
+/** The line form: one line per case and a totals line, for each trial, and a summary line when there are several trials. */
 export function formatBenchReport(r: ReviewBenchReport): string {
   const rate = (x: number | null) => (x === null ? '-' : x.toFixed(2));
-  const t = r.totals;
   const lines = r.note ? [r.note] : [];
-  lines.push(...r.cases.map((c) => `${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
-  lines.push(`${r.stage} ${r.reviewer}${r.rules === 'matched' ? ' (matched rules)' : ''}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
+  const several = r.trialResults.length > 1;
+  r.trialResults.forEach(({ cases, totals: t }, i) => {
+    const at = several ? `trial ${i + 1} ` : '';
+    lines.push(...cases.map((c) => `${at}${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
+    lines.push(`${at}${r.stage} ${r.reviewer}${r.rules === 'matched' ? ' (matched rules)' : ''}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
+  });
+  const s = r.summary;
+  const range = (x: TrialSummary['recall']) => (x ? `median ${rate(x.median)} (${rate(x.min)} to ${rate(x.max)})` : '-');
+  if (several) lines.push(`${s.trials} trials: recall ${range(s.recall)}, false-block rate ${range(s.falseBlockRate)}, no verdict ${s.noVerdict}, errors ${s.errors}`);
   if (r.leftCheckouts.length) lines.push(`checkouts left behind: ${r.leftCheckouts.join(', ')}`);
   return lines.join('\n');
+}
+
+/** A saved report's summary and case ids; throws naming the file when it is missing or is not a bench report. */
+function savedReport(file: string): { summary: TrialSummary; caseIds: string[] } {
+  if (!existsSync(file)) throw new Error(`${file}: no such file`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`${file}: not JSON (${(err as Error).message})`);
+  }
+  const parsed = z.object({ cases: z.array(z.object({ id: z.string() })), summary: TrialSummary }).safeParse(raw);
+  if (!parsed.success) throw new Error(`${file}: not a bench report with a summary (aidlc review bench run --json)`);
+  return { summary: parsed.data.summary, caseIds: parsed.data.cases.map((c) => c.id) };
+}
+
+/** The verdict of `aidlc review bench compare` on two saved reports (`compareTrials`). */
+export function compareBenchReports(beforeFile: string, afterFile: string): { verdict: TrialVerdict; reason: string } {
+  return compareTrials(savedReport(beforeFile), savedReport(afterFile));
 }

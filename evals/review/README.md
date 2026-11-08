@@ -2,6 +2,8 @@
 
 `aidlc review bench run --stage pre|formal` scores a stage's configured reviewer on the confirmed cases in this directory (docs/OPERATIONS.md, Reviewer bench). Each case is one JSON file named `<id>.json`, and `aidlc evals run` never reads it. Every case file of the directory is loaded and checked on each run, `--case` included, so one file that does not load refuses the run.
 
+`--trials <n>` reviews every selected case n times and adds the median and range of recall and of the false-block rate; `aidlc review bench compare <before.json> <after.json>` says whether a change to the review made the scores `better`, `worse`, `no-measurable-difference` or `inconclusive` (docs/OPERATIONS.md, Reviewer bench).
+
 Fields (`ReviewBenchCase` in `src/core/types.ts`; an unknown key is refused):
 - `kind`: `bug` (the candidate has a defect at the expected sites) or `clean` (the candidate is correct and a review should pass it).
 - `id`: the file name without `.json`; letters, digits, dot, underscore and dash.
