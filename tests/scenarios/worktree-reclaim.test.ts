@@ -15,7 +15,7 @@ import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName, shortKey } from '../../src/state/paths.ts';
 
-// T0-WORKTREE-RECLAIM: the sweep removes the clean worktrees of finished cards and keeps every branch. Each test runs on a
+// T0-WORKTREE-RECLAIM-2: the sweep removes the clean worktrees of finished cards and keeps every branch. Each test runs on a
 // real temporary repository, because what is at stake is what git lists, refuses and deletes.
 
 const CARD = 'T0-FINISHED';
@@ -110,7 +110,7 @@ function cli(fx: Fixture, ...args: string[]) {
   return spawnSync(process.execPath, [MAIN, ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: actorA.session }, encoding: 'utf8', timeout: 120_000 });
 }
 
-test('T0-WORKTREE-RECLAIM acceptance 1: a superseded card loses its worktree and keeps its branch and its verdicts [R1] [R2] [R4]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 1: a superseded card loses its worktree and keeps its branch and its verdicts [R1] [R2] [R4]', () => {
   const fx = makeFixture();
   try {
     const goalId = ended(fx, CARD, 'review');
@@ -147,7 +147,7 @@ const finishedWays: Array<[string, (fx: Fixture) => void]> = [
 ];
 
 for (const [name, finish] of finishedWays) {
-  test(`T0-WORKTREE-RECLAIM acceptance 2: ${name} is finished [R2]`, () => {
+  test(`T0-WORKTREE-RECLAIM-2 acceptance 2: ${name} is finished [R2]`, () => {
     const fx = makeFixture();
     try {
       finish(fx);
@@ -203,7 +203,7 @@ const notFinished: Array<[string, (fx: Fixture) => void, RegExp]> = [
 ];
 
 for (const [name, arrange, reason] of notFinished) {
-  test(`T0-WORKTREE-RECLAIM acceptance 3: ${name} is skipped and stays [R1] [R2]`, () => {
+  test(`T0-WORKTREE-RECLAIM-2 acceptance 3: ${name} is skipped and stays [R1] [R2]`, () => {
     const fx = makeFixture();
     try {
       arrange(fx);
@@ -220,7 +220,7 @@ for (const [name, arrange, reason] of notFinished) {
   });
 }
 
-test('T0-WORKTREE-RECLAIM acceptance 3: a detached worktree is not a card worktree, and stays [R1] [R2]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 3: a detached worktree is not a card worktree, and stays [R1] [R2]', () => {
   const fx = makeFixture();
   try {
     repository(fx, []);
@@ -236,7 +236,7 @@ test('T0-WORKTREE-RECLAIM acceptance 3: a detached worktree is not a card worktr
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 3: a card branch at another path is skipped, and stays [R2]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 3: a card branch at another path is skipped, and stays [R2]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'cancelled');
@@ -284,7 +284,7 @@ const keptBack: Array<[string, (fx: Fixture, dir: string, goalId: string) => voi
 ];
 
 for (const [name, arrange, reason] of keptBack) {
-  test(`T0-WORKTREE-RECLAIM acceptance 4: ${name} keeps the worktree [R3]`, () => {
+  test(`T0-WORKTREE-RECLAIM-2 acceptance 4: ${name} keeps the worktree [R3]`, () => {
     const fx = makeFixture();
     try {
       const goalId = ended(fx, CARD, 'cancelled');
@@ -302,7 +302,7 @@ for (const [name, arrange, reason] of keptBack) {
   });
 }
 
-test('T0-WORKTREE-RECLAIM acceptance 4: a tracked .review file keeps the worktree, and is no failed row [R3]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 4: a tracked .review file keeps the worktree, and is no failed row [R3]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'cancelled');
@@ -321,7 +321,7 @@ test('T0-WORKTREE-RECLAIM acceptance 4: a tracked .review file keeps the worktre
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 4: a committed .review link keeps the worktree, and nothing it points at is copied [R3]', (t) => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 4: a committed .review link keeps the worktree, and nothing it points at is copied [R3]', (t) => {
   const fx = makeFixture();
   try {
     const goalId = ended(fx, CARD, 'cancelled');
@@ -350,7 +350,7 @@ test('T0-WORKTREE-RECLAIM acceptance 4: a committed .review link keeps the workt
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 4: rebuilt ignored paths do not block, and go with the worktree [R3]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 4: rebuilt ignored paths do not block, and go with the worktree [R3]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'cancelled');
@@ -382,7 +382,7 @@ const openLeases: Array<[string, (fx: Fixture) => void]> = [
 ];
 
 for (const [name, arrange] of openLeases) {
-  test(`T0-WORKTREE-RECLAIM acceptance 4: ${name} does not block [R3]`, () => {
+  test(`T0-WORKTREE-RECLAIM-2 acceptance 4: ${name} does not block [R3]`, () => {
     const fx = makeFixture();
     try {
       ended(fx, CARD, 'cancelled');
@@ -396,7 +396,7 @@ for (const [name, arrange] of openLeases) {
   });
 }
 
-test('T0-WORKTREE-RECLAIM acceptance 5: a card with runs in two goals keeps its copies under the latest goal [R4]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 5: a card with runs in two goals keeps its copies under the latest goal [R4]', () => {
   const fx = makeFixture();
   try {
     const older = ended(fx, CARD, 'cancelled');
@@ -412,7 +412,7 @@ test('T0-WORKTREE-RECLAIM acceptance 5: a card with runs in two goals keeps its 
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 5: a newer cancelled goal with no run decides, and keeps the copies [R2] [R4]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 5: a newer cancelled goal with no run decides, and keeps the copies [R2] [R4]', () => {
   const fx = makeFixture();
   try {
     const older = ended(fx, CARD, 'review');
@@ -430,7 +430,7 @@ test('T0-WORKTREE-RECLAIM acceptance 5: a newer cancelled goal with no run decid
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 6: --dry-run prints what would go and changes nothing [R1]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 6: --dry-run prints what would go and changes nothing [R1]', () => {
   const fx = makeFixture();
   try {
     const goalId = ended(fx, CARD, 'cancelled');
@@ -450,7 +450,7 @@ test('T0-WORKTREE-RECLAIM acceptance 6: --dry-run prints what would go and chang
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 7: a failed worktree is a row, the next one goes, and the command exits nonzero [R5]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 7: a failed worktree is a row, the next one goes, and the command exits nonzero [R5]', () => {
   const fx = makeFixture();
   try {
     const failing = ended(fx, CARD, 'cancelled');
@@ -475,7 +475,7 @@ test('T0-WORKTREE-RECLAIM acceptance 7: a failed worktree is a row, the next one
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 7: rows that are only skipped exit zero [R5]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 7: rows that are only skipped exit zero [R5]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'review');
@@ -490,7 +490,7 @@ test('T0-WORKTREE-RECLAIM acceptance 7: rows that are only skipped exit zero [R5
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: goal cancel removes the worktree of its card and says so on stderr [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: goal cancel removes the worktree of its card and says so on stderr [R6]', () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: CARD, title: 'cancelled' });
@@ -509,7 +509,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: goal cancel removes the worktree of its 
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole stdout and the exit code of goal cancel [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: a sweep that throws leaves the whole stdout and the exit code of goal cancel [R6]', () => {
   const plain = makeFixture();
   const broken = makeFixture();
   try {
@@ -538,7 +538,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole std
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: with its stderr closed goal cancel exits zero and the sweep has run [R6]', async () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: with its stderr closed goal cancel exits zero and the sweep has run [R6]', async () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: CARD, title: 'cancelled' });
@@ -563,7 +563,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: with its stderr closed goal cancel exits
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a failed row changes neither the exit code of goal cancel nor its result [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: a failed row changes neither the exit code of goal cancel nor its result [R6]', () => {
   const fx = makeFixture();
   try {
     writeCard(fx, { id: CARD, title: 'cancelled' });
@@ -604,7 +604,7 @@ function closingAtCli(fx: Fixture): { goalId: string; dir: string } {
   return { goalId: goal.id, dir: path.join(rootOf(fx), NEXT) };
 }
 
-test('T0-WORKTREE-RECLAIM acceptance 8: card close --all removes a finished card beside its own [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: card close --all removes a finished card beside its own [R6]', () => {
   const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
   try {
     ended(fx, CARD, 'cancelled');
@@ -627,7 +627,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: card close --all removes a finished card
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole stdout and the exit code of card close [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: a sweep that throws leaves the whole stdout and the exit code of card close [R6]', () => {
   const actor = { ...actorA, host: hostName() };
   const plain = makeFixture({ actor });
   const broken = makeFixture({ actor });
@@ -663,7 +663,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a sweep that throws leaves the whole std
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a card close that fails keeps its error and exit code and still sweeps [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: a card close that fails keeps its error and exit code and still sweeps [R6]', () => {
   const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
   try {
     ended(fx, CARD, 'cancelled');
@@ -684,7 +684,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a card close that fails keeps its error 
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 8: a card close that stops at load keeps its error and exit code and still sweeps [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 8: a card close that stops at load keeps its error and exit code and still sweeps [R6]', () => {
   const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
   try {
     ended(fx, CARD, 'cancelled');
@@ -705,7 +705,7 @@ test('T0-WORKTREE-RECLAIM acceptance 8: a card close that stops at load keeps it
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 9: card close without the cleanup step runs no sweep [R6]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 9: card close without the cleanup step runs no sweep [R6]', () => {
   const fx = makeFixture({ actor: { ...actorA, host: hostName() } });
   try {
     ended(fx, CARD, 'cancelled');
@@ -722,7 +722,7 @@ test('T0-WORKTREE-RECLAIM acceptance 9: card close without the cleanup step runs
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 10: the dry-run path and a repository that is not git run no git and report no row [R7]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 10: the dry-run path and a repository that is not git run no git and report no row [R7]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'cancelled');
@@ -738,7 +738,7 @@ test('T0-WORKTREE-RECLAIM acceptance 10: the dry-run path and a repository that 
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 11: after a removal PREPARE starts the worktree again on the branch, which keeps its commit [R4]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 11: after a removal PREPARE starts the worktree again on the branch, which keeps its commit [R4]', () => {
   const fx = makeFixture();
   try {
     ended(fx, CARD, 'cancelled');
@@ -758,13 +758,13 @@ test('T0-WORKTREE-RECLAIM acceptance 11: after a removal PREPARE starts the work
   }
 });
 
-test('T0-WORKTREE-RECLAIM acceptance 12: the guide, the architecture note and the changelog state the sweep [R8]', () => {
+test('T0-WORKTREE-RECLAIM-2 acceptance 12: the guide, the architecture note and the changelog state the sweep [R8]', () => {
   const flat = (file: string) => readFileSync(path.resolve(file), 'utf8').replace(/\s+/g, ' ');
   const sentence = '`aidlc worktree reclaim` removes the clean worktrees of merged, superseded and cancelled cards, and `card close --cleanup`, `card close --all` and `goal cancel` run it; the branch stays and `.review/` goes to the evidence tree.';
   for (const doc of ['docs/OPERATIONS.md', 'docs/ARCHITECTURE.md']) assert.ok(flat(doc).includes(sentence), `${doc} holds the sentence`);
   assert.ok(flat('docs/OPERATIONS.md').includes('no lock spans the check and the removal, so a `goal resume` and `card next` in another session in that window can lose a clean worktree, and `card next` then starts it again on the branch.'), 'the guide states the limit');
   assert.ok(flat('docs/OPERATIONS.md').includes('ignored path'), 'the guide states the rule on ignored paths');
   const unreleased = readFileSync(path.resolve('CHANGELOG.md'), 'utf8').split(/^## /m).find((s) => s.startsWith('[Unreleased]') || s.startsWith('Unreleased'));
-  assert.match(unreleased ?? '', /T0-WORKTREE-RECLAIM/);
+  assert.match(unreleased ?? '', /T0-WORKTREE-RECLAIM-2/);
   assert.deepEqual(readdirSync(path.resolve('tests/scenarios')).filter((f) => f === 'worktree-reclaim.test.ts'), ['worktree-reclaim.test.ts']);
 });

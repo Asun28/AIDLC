@@ -1,6 +1,6 @@
 /**
  * Removing card worktrees: the copy of `.review/` and `git worktree remove` the cleanup step of `card close` uses, and the
- * sweep over every linked worktree (card T0-WORKTREE-RECLAIM). The sweep writes no record. The goals, runs, leases,
+ * sweep over every linked worktree (card T0-WORKTREE-RECLAIM-2). The sweep writes no record. The goals, runs, leases,
  * operations and git decide what may go, and every branch stays, so `git worktree add` undoes a removal.
  */
 import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
