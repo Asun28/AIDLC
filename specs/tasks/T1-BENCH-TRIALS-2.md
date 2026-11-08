@@ -1,7 +1,7 @@
 ---
 id: T1-BENCH-TRIALS-2
 title: The reviewer bench runs each case `--trials <n>` times and reports median and range, and `aidlc review bench compare` gives one verdict on two reports
-status: todo
+status: merged
 branch: T1-BENCH-TRIALS-2
 worktree: D:\wt\AIDLC\T1-BENCH-TRIALS-2
 plan_ref: plans/pstack-study.md#order-of-work
