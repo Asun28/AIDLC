@@ -1,4 +1,4 @@
-// Card T1-FINDING-REPRO: `aidlc review repro` runs the author's repro of a finding at the reviewed candidate and at the
+// Card T1-FINDING-REPRO-2: `aidlc review repro` runs the author's repro of a finding at the reviewed candidate and at the
 // current one, in temporary checkouts with a new empty state directory, and records both exits on the finding.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';

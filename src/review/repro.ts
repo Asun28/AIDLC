@@ -1,5 +1,5 @@
 /**
- * `aidlc review repro` (card T1-FINDING-REPRO): run the author's repro argv of a finding twice, each in a temporary
+ * `aidlc review repro` (card T1-FINDING-REPRO-2): run the author's repro argv of a finding twice, each in a temporary
  * detached checkout under the OS temp directory, once at the finding's `candidateSha` with each `--files` path taken from
  * the current candidate and once at the current candidate, and record both exits on the finding.
  *
@@ -17,7 +17,7 @@ import { nulList } from '../core/parse-guard.ts';
 import { run, runSync, type ExecReceipt } from '../probes/exec.ts';
 import { MUTANT_TIMEOUT_DEFAULT_MS } from './mutants.ts';
 
-/** The sentence each formal REVIEW_FIX narration ends with (card T1-FINDING-REPRO, R6); it contains no `class`. */
+/** The sentence each formal REVIEW_FIX narration ends with (card T1-FINDING-REPRO-2, R6); it contains no `class`. */
 export const REPRO_REQUEST =
   'For each fixed finding of the Bugs or Security pass, record `aidlc review repro <cardId> <findingId> --argv \'<JSON array>\' --files <paths>` with the test that catches it, and attach one to a `wrong` dispute; a repro is evidence for the next decision and changes no gate.';
 

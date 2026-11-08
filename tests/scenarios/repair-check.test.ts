@@ -4,7 +4,7 @@ import { makeFixture, writeCard } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
-// Card T1-FINDING-REPRO R6: the formal REVIEW_FIX narrations end with this sentence.
+// Card T1-FINDING-REPRO-2 R6: the formal REVIEW_FIX narrations end with this sentence.
 import { REPRO_REQUEST } from '../../src/review/repro.ts';
 
 /** The directive text, as the card words it. */

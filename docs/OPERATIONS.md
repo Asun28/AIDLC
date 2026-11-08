@@ -310,7 +310,7 @@ aidlc review dispute <card> <id> --note "<why>" [--kind <kind>]  # the author an
 aidlc review accept <card> <id>                      # withdraw a dispute; the finding is open again
 ```
 
-Repros (card T1-FINDING-REPRO). `aidlc review repro <cardId> <findingId> --argv <json> [--files <paths>] [--goal <id>]` runs the author's check of a finding and records it on the finding as evidence; no state, decision, counter, allowance or gate of the card run reads it or changes with it.
+Repros (card T1-FINDING-REPRO-2). `aidlc review repro <cardId> <findingId> --argv <json> [--files <paths>] [--goal <id>]` runs the author's check of a finding and records it on the finding as evidence; no state, decision, counter, allowance or gate of the card run reads it or changes with it.
 
 ```bash
 aidlc review repro <card> F2 --argv '["node","--test","tests/x.test.ts"]' --files tests/x.test.ts
@@ -374,7 +374,7 @@ Responses (card T1-REVIEW-RESPONSES). `findings.responses` reports every finding
 
 Pre-existing advisory (card T1-REVIEW-PRE-EXISTING). `findings.preExistingAdvisory` counts, per card, per family member and in the family totals, every advisory reason that carries the `[pre-existing]` tag (`PRE_EXISTING_TAG`) over the `advisory` of every decided R2 round (a pass or a block) and of every decided R3 invocation (a pass or a block, `ReviewInvocation.advisory`; a no-verdict, held or pending record adds nothing), whatever made each reason advisory (the changed-line rule, a missing citation, or a pass that carried it as a note), and it is counted outside `total`. A decision recorded before this card carries no `advisory` and adds nothing. The line form ends the findings segment with `; pre-existing advisory <n>` after the responses and leaves it out when the count is zero.
 
-Repros (card T1-FINDING-REPRO). `repro` reports, per card, per family member and in the family totals: `fixed`, the findings whose response is `fixed` that carry a repro; `fixedReproduced`, of those, the ones whose repro reproduced; and `wrongPassedAtReviewed`, the findings whose response is `wrong` with a repro whose run at the reviewed candidate exited 0 (not by a timeout). Nothing is decided from them. The line form ends the findings segment with `; repro: <n> fixed, <n> reproduced, <n> wrong passed at the reviewed candidate` when `fixed` or `wrongPassedAtReviewed` is not zero.
+Repros (card T1-FINDING-REPRO-2). `repro` reports, per card, per family member and in the family totals: `fixed`, the findings whose response is `fixed` that carry a repro; `fixedReproduced`, of those, the ones whose repro reproduced; and `wrongPassedAtReviewed`, the findings whose response is `wrong` with a repro whose run at the reviewed candidate exited 0 (not by a timeout). Nothing is decided from them. The line form ends the findings segment with `; repro: <n> fixed, <n> reproduced, <n> wrong passed at the reviewed candidate` when `fixed` or `wrongPassedAtReviewed` is not zero.
 
 ### Mutant sweep
 

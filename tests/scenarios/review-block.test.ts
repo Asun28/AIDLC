@@ -6,7 +6,7 @@ import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath, type ShipOutcomeClass } from '../../src/delivery/ship.ts';
 import { CardRun, type Verdict } from '../../src/core/types.ts';
 import { rmSync, writeFileSync } from 'node:fs';
-// Card T1-FINDING-REPRO R6: every formal REVIEW_FIX narration ends with this sentence.
+// Card T1-FINDING-REPRO-2 R6: every formal REVIEW_FIX narration ends with this sentence.
 import { REPRO_REQUEST } from '../../src/review/repro.ts';
 
 const BLOCK: Verdict = {

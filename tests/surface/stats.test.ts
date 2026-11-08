@@ -586,7 +586,7 @@ describe('pre-existing advisory reasons in the review statistics (T1-REVIEW-PRE-
   });
 });
 
-describe('repro records in the review statistics (T1-FINDING-REPRO)', () => {
+describe('repro records in the review statistics (T1-FINDING-REPRO-2)', () => {
   const rec = (reviewedExit: number | null, currentExit: number | null, reproduced: boolean, timedOut = false) => ({
     argv: ['node', '--test', 'tests/x.test.ts'],
     files: ['tests/x.test.ts'],

@@ -484,7 +484,7 @@ export const ReproRun = z.object({ sha: z.string().min(1), exitCode: z.number().
 export type ReproRun = z.infer<typeof ReproRun>;
 
 /**
- * The author's repro of a finding (`aidlc review repro`, card T1-FINDING-REPRO): the argv run at the reviewed candidate, with
+ * The author's repro of a finding (`aidlc review repro`, card T1-FINDING-REPRO-2): the argv run at the reviewed candidate, with
  * each of `files` taken from the current candidate, and at the current candidate. `reproduced` is true only when the run at
  * the reviewed candidate exited non-zero and the run at the current candidate exited 0. Evidence only: no gate reads it.
  */
@@ -545,7 +545,7 @@ export const ReviewFinding = z.object({
   outsideDelta: z.boolean().optional(),
   /** Bumped by every change (dispute, withdrawal, re-raise, resolution); a round compares it with the revision it received. */
   revision: z.number().int().nonnegative().default(0),
-  /** The latest `aidlc review repro` of the finding; a later repro replaces it. Absent on records written before card T1-FINDING-REPRO. */
+  /** The latest `aidlc review repro` of the finding; a later repro replaces it. Absent on records written before card T1-FINDING-REPRO-2. */
   repro: FindingRepro.optional(),
 });
 export type ReviewFinding = z.infer<typeof ReviewFinding>;

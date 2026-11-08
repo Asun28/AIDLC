@@ -172,7 +172,7 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run from a linked worktree 
   }
 });
 
-test('T1-FINDING-REPRO acceptance 7: the CLI declares `review repro <cardId> <findingId>` with a required --argv <json>, --files <paths> and --goal <id>, and OPERATIONS.md documents that command line [R1]', () => {
+test('T1-FINDING-REPRO-2 acceptance 7: the CLI declares `review repro <cardId> <findingId>` with a required --argv <json>, --files <paths> and --goal <id>, and OPERATIONS.md documents that command line [R1]', () => {
   const main = path.join(root, 'src', 'cli', 'main.ts');
   const help = spawnSync(process.execPath, [main, 'review', 'repro', '--help'], { cwd: root, encoding: 'utf8', windowsHide: true });
   assert.equal(help.status, 0, help.stderr);

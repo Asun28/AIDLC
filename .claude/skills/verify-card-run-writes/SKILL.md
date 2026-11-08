@@ -60,7 +60,7 @@ runs it, so CI runs it on every push.
   `CardRunner.disputeFinding`, `CardRunner.acceptFinding`,
   `CardRunner.withdrawCandidate` (its own fault rows are in
   `tests/scenarios/candidate-withdraw.test.ts`), `aidlc review repro`
-  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO: one
+  (`runRepro` in `src/review/repro.ts`, card T1-FINDING-REPRO-2: one
   `GoalStore.updateCardRun` write of the finding's `repro` after both runs
   and no journal append, so a failed write throws, exits 1 and leaves the
   run and the journal as they were), failed and

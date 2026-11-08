@@ -88,7 +88,8 @@ export interface PriorFinding {
   /** Re-raises that answered a dispute; two is a deadlock awaiting a human ruling. */
   nonAcceptanceRounds?: number;
   /** The defect class the finding records (`ReviewFinding.class`). */
-  class?: string;  /** The author's latest repro of the finding (`ReviewFinding.repro`, card T1-FINDING-REPRO). */
+  class?: string;
+  /** The author's latest repro of the finding (`ReviewFinding.repro`, card T1-FINDING-REPRO-2). */
   repro?: Pick<FindingRepro, 'argv' | 'reviewed' | 'current' | 'reproduced'>;
 }
 
@@ -251,7 +252,7 @@ function history(f: PriorFinding): string {
 const reproExit = (r: { exitCode: number | null; timedOut: boolean }): string => (r.timedOut ? 'timed out' : r.exitCode === null ? 'no exit code' : `exit ${r.exitCode}`);
 
 /**
- * The line under a finding with a repro (card T1-FINDING-REPRO, R4): the argv as one JSON string, both exits with the shas the
+ * The line under a finding with a repro (card T1-FINDING-REPRO-2, R4): the argv as one JSON string, both exits with the shas the
  * runs tested (quoted), whether the second run tested `head`, the candidate under review, and the result.
  */
 function reproLine(id: string, r: NonNullable<PriorFinding['repro']>, head: string | undefined): string {

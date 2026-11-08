@@ -91,7 +91,7 @@ export interface CoverageStats {
 }
 
 /**
- * The author's repros (card T1-FINDING-REPRO, R5), read off `ReviewFinding.repro`. `fixed`: findings whose response is
+ * The author's repros (card T1-FINDING-REPRO-2, R5), read off `ReviewFinding.repro`. `fixed`: findings whose response is
  * `fixed` (see `ResponseStats`) that carry a repro; `fixedReproduced`: of those, the ones whose repro reproduced;
  * `wrongPassedAtReviewed`: findings whose response is `wrong` with a repro whose run at the reviewed candidate exited 0.
  */
