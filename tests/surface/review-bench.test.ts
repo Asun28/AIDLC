@@ -903,3 +903,26 @@ test('T1-BENCH-TRIALS-2 acceptance 8: bench compare refuses a report that breaks
     fx.cleanup();
   }
 });
+
+test('T1-BENCH-TRIALS-2 acceptance 8: case order is no rule, so a report with the cases of a trial or of the report reordered compares with exit 0 [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const valid = JSON.stringify(await bench(fx, reviewer(fx, []), { trials: 3 }));
+    const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
+    const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
+    const run = save('run.json', JSON.parse(valid));
+    type Doc = { cases: unknown[]; trialResults: Array<{ cases: unknown[] }> };
+    for (const [name, reorder] of [['trial-2-reordered.json', (d: Doc) => d.trialResults[1]!.cases.reverse()], ['cases-reordered.json', (d: Doc) => d.cases.reverse()]] as const) {
+      const doc = JSON.parse(valid) as Doc;
+      reorder(doc);
+      const ok = cli(run, save(name, doc));
+      assert.equal(ok.status, 0, `${name}: ${ok.stderr}`);
+      assert.equal(JSON.parse(ok.stdout).verdict, 'no-measurable-difference', name);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
