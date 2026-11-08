@@ -12,6 +12,7 @@ allow_paths:
   - src/cli/main.ts
   - evals/agent/
   - evals/README.md
+  - templates/evals/README.md
   - tests/surface/evals.test.ts
   - tests/surface/providers.test.ts
   - tests/surface/command-lines.test.ts
@@ -29,7 +30,7 @@ requirements:
   - R5. WHEN `runEval` calls the model, it shall create a detached checkout of HEAD under the OS temp directory, link the main checkout's `node_modules` into it when that exists, run the model and every check of the case with that checkout as the working directory and with `AIDLC_STATE_DIR` set to a new empty temporary directory, and remove the link, the checkout (pruning on failure) and the state directory afterwards, also when the model or a check fails. A removal failure is reported in the result's detail.
   - R6. `loadEvals` shall refuse a case whose prompt contains `eval`, `evals`, `judge`, `rubric`, `grader`, `benchmark`, `experiment` or `score` as a whole word in any letter case, naming the case id and the word.
   - R7. `evals/agent/` shall hold at least three cases, each with a tool-call check (R3) and an `origin` naming the CLAUDE.md rule it tests: a request to add a test reads `.claude/skills/tdd/SKILL.md`; a request to continue a goal runs `aidlc next` (any of `aidlc`, `node bin/aidlc.js` or `npm run dev --`); a request about a stuck card writes no path under `.aidlc/`. `aidlc evals run` without `--dir` shall still read only `evals/*.json`.
-  - R8. `evals/README.md` and `docs/OPERATIONS.md` shall state the check types, the temporary checkout and state directory, the word rule, and the command that runs the agent cases: `aidlc evals run --dir evals/agent --provider claude-code`.
+  - R8. `evals/README.md` (and its copy `templates/evals/README.md`, which T1-EVALS-NO-KEY acceptance 2 keeps identical) and `docs/OPERATIONS.md` shall state the check types, the temporary checkout and state directory, the word rule, and the command that runs the agent cases: `aidlc evals run --dir evals/agent --provider claude-code`.
 acceptance:
   - 1. `tests/surface/providers.test.ts`: with a scripted runner, `recordToolCalls` sends `--output-format stream-json --verbose` and returns three tool calls in order and the result text; without it the argv is unchanged; a stream with an `is_error` result and a 429 status is a quota outcome; a stream with no result event is an error. [R1] [R2] [dod arm 2]
   - 2. `tests/surface/evals.test.ts`: each tool-call check (R3) passes on a scripted provider whose tool calls satisfy it and fails on one whose calls do not; under `skipModel` each fails with `no model run`. [R3] [R4] [dod arm 1]
@@ -38,7 +39,7 @@ acceptance:
   - 5. Same file: every case under `evals/agent/` parses, has a tool-call check (R3), and is not read by `loadEvals` of `evals/`. [R7] [dod arm 1]
   - 6. The docs state R1 to R8 (reviewer-verified against the diff). [R8]
 depends_on: []
-budget: 420
+budget: 540
 sweep: "Sites on main at 01dd308: `ClaudeCodeProvider.complete` src/providers/claude-code.ts:34 (argv :36, payload parse :46 to :67); `CompletionRequest` and `CompletionResult` src/providers/types.ts:10 and :25; `EvalCheck` src/evals/runner.ts:14 and `EvalCase` :23; `loadEvals` :55; `runEval` :67 with the system prompt `You are running a deterministic eval.` :75; the `evals run` command src/cli/main.ts:1085. Not sites: `runProviderFor` src/cli/main.ts:151 (`aidlc run`), which never sets `recordToolCalls`; the reviewer bench, which runs no provider."
 forbid: [weakening or skipping a test to go green, a model call in a test, an agent case in `evals/*.json` (it would reach the CI threshold), running a model-backed case in the main checkout, an eval reading or writing the repository's `.aidlc/`, editing .aidlc state by hand]
 non_goals: [a judge model, grading the model's text against a rubric, the A/B variant run (T1-EVAL-VARIANT), a provider other than claude-code recording tool calls, running the agent cases in CI]
