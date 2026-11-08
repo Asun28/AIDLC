@@ -639,14 +639,17 @@ function savedReport(file: string): { summary: TrialSummary; caseIds: string[] }
     const broken = cases.map(brokenRule).find((rule) => rule !== undefined);
     if (broken) refuse(broken);
   }
+  // Case order is no rule: lists are compared by id, and rule (b) has ruled out a duplicate id.
   const ids = r.cases.map((c) => c.id);
+  const byId = new Map(r.cases.map((c) => [c.id, c]));
   r.trialResults.forEach((t, i) => {
-    if (!isDeepStrictEqual(t.cases.map((c) => c.id), ids)) refuse(`rule (g): trial ${i + 1} case ids differ from the report's cases`);
-    const other = t.cases.find((c, k) => c.kind !== r.cases[k]!.kind || c.confirmed !== r.cases[k]!.confirmed);
+    if (t.cases.length !== ids.length || t.cases.some((c) => !byId.has(c.id))) refuse(`rule (g): trial ${i + 1} case ids differ from the report's cases`);
+    const other = t.cases.find((c) => c.kind !== byId.get(c.id)!.kind || c.confirmed !== byId.get(c.id)!.confirmed);
     if (other) refuse(`rule (g): trial ${i + 1} gives case ${JSON.stringify(other.id)} another kind or confirmed than cases`);
     if (!isDeepStrictEqual(t.totals, totalsOf(t.cases, t.totals.skippedUnconfirmed))) refuse(`rule (h): trial ${i + 1} totals differ from its cases`);
   });
-  if (!isDeepStrictEqual({ cases: r.cases, totals: r.totals }, r.trialResults[0])) refuse('rule (i): the cases and totals differ from trial 1');
+  const first = r.trialResults[0]!;
+  if (!isDeepStrictEqual(r.totals, first.totals) || first.cases.some((c) => !isDeepStrictEqual(c, byId.get(c.id)))) refuse('rule (i): the cases and totals differ from trial 1');
   if (!isDeepStrictEqual(r.summary, summaryOf(r.trialResults.map((t) => t.totals)))) refuse('rule (j): the summary differs from the one its trialResults give');
   return { summary: r.summary, caseIds: ids };
 }
