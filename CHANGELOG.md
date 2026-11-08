@@ -22,9 +22,13 @@
 
 - T0-REPAIR-CHECK: the `build` directive of a formal repair asks the repairer to check whether removing the code a finding names fixes the defect at every site, and to read the repair hunks again for what they newly break. The text sits before the defect class list. Effort levels, attempts and persisted records do not change, and no gate reads the text.
 
+- T0-NARRATION-QUOTE (bugfix): text the loop read from outside appears in a directive's narration and in a stop detail only as a JSON string: an intent's path, open questions and read error, reviewer reasons and advisory notes, the ship detail and resume marker, CI evidence, the head gh reports for a PR and a pending repair detail. A line in any of them can no longer read as the loop's own instruction. The stored records keep the value as it is.
+
 - T0-INTAKE-TARGET-2 (bugfix): a word in a request no longer sets a delivery target. A goal with `--card` or `--issue` takes its target only from `--target`, `--target development` keeps a request to deliver out of the `release` kind, and free text sets a target only by asking for a delivery, so a development goal can no longer gain a staging authorization or need a release to finish. A one-line request that stayed on development before still does. A request with more than one target word now takes the target of the form it asks for, where the first bare word used to decide: `deploy to pre-production` and `deploy the production build to staging` route to staging instead of a production release, and `run the migration on staging` routes to migration instead of staging, with no staging authorization.
 
 - T0-ACCEPT-TABLE: the `build` directive and the formal repair directive ask for a table in the card's Attempt evidence section before the final DoD run, one row per acceptance item, when `allow_paths` lists the card file. No code reads the table.
+
+- T0-GOAL-MERGED-CARD: `aidlc goal new` refuses a request whose card is already merged, naming the card and asking for a successor card, since that goal would have nothing to run and could close as done. A card-text amendment of a merged card still opens its goal.
 
 - T0-CANDIDATE-WITHDRAW: `aidlc card withdraw <id> --cause "<finding>"` withdraws a bound candidate no R3 decision has decided. The success that bound it becomes a counted failure with the finding as its cause, the episode reopens and the repair is the ladder's next attempt, so a defect found after the bind and before R3 costs neither an R3 decision nor a successor card. A success on the withdrawn candidate and a review of it are refused until another candidate is recorded.
 

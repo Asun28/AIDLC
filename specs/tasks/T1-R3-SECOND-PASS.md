@@ -1,7 +1,7 @@
 ---
 id: T1-R3-SECOND-PASS
 title: After the first R3 pass of a card run, `formalReview.secondPass` runs one more R3 on the same candidate with matched rules, and a block from it is an R3 block
-status: todo
+status: merged
 branch: T1-R3-SECOND-PASS
 worktree: D:\wt\AIDLC\T1-R3-SECOND-PASS
 plan_ref: plans/second-r3-pass.md#order-of-work
