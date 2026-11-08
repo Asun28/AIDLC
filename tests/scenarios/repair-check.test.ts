@@ -4,6 +4,8 @@ import { makeFixture, writeCard } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+// Card T1-FINDING-REPRO R6: the formal REVIEW_FIX narrations end with this sentence.
+import { REPRO_REQUEST } from '../../src/review/repro.ts';
 
 /** The directive text, as the card words it. */
 const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
@@ -46,13 +48,13 @@ test('T0-REPAIR-CHECK acceptance 1: after an R3 block the build directive starts
   }
 });
 
-test('T0-REPAIR-CHECK acceptance 1: the repair check follows the whole repair text, the dispute hint included, and only the class list follows it [R1]', async () => {
+test('T0-REPAIR-CHECK acceptance 1: the repair check follows the whole repair text, the dispute hint included, and only the class list and the repro sentence follow it [R1]', async () => {
   const { fx, directive } = await repairAfterBlock('[standards] 9 error handling (class: journal-before-save) @ src/t0-rc.ts:3: the event is appended before the save -> save first');
   try {
     const [repairText, tail] = directive.narration.split(REPAIR_CHECK);
     assert.ok(repairText?.includes(' Open finding(s): F1;'), directive.narration);
     assert.ok(repairText?.endsWith('once every finding of the block is disputed. '), directive.narration);
-    assert.equal(tail, CLASS_TEXT);
+    assert.equal(tail, `${CLASS_TEXT} ${REPRO_REQUEST}`);
   } finally {
     fx.cleanup();
   }
