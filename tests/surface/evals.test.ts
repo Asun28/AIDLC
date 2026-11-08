@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -200,4 +200,40 @@ test('T1-EVAL-TRANSCRIPT acceptance 5: every case under evals/agent parses, has 
   }
   const top = loadEvals(path.join(root, 'evals')).map((c) => c.id);
   for (const c of agent) assert.equal(top.includes(c.id), false, `${c.id} is not read from evals/`);
+});
+
+test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): loadEvals refuses an absolute cwd, a ../ file and an .aidlc/ file, naming the case and the field', () => {
+  const { evalsDir } = setup();
+  mkdirSync(evalsDir, { recursive: true });
+  const refused: Array<[string, Record<string, unknown>, string]> = [
+    ['abs-cwd', { type: 'command', command: ['node', '-e', 'ok'], cwd: path.resolve(tmpdir()) }, 'cwd'],
+    ['up-file', { type: 'contains', file: '../note.txt', text: 'x' }, 'file'],
+    ['state-file', { type: 'not-contains', file: '.aidlc/x', text: 'x' }, 'file'],
+  ];
+  for (const [id, check, field] of refused) {
+    writeFileSync(path.join(evalsDir, 'a.json'), JSON.stringify({ id, prompt: 'do it', checks: [check] }));
+    assert.throws(() => loadEvals(evalsDir), (err: Error) => err.message.includes(id) && err.message.includes(`\`${field}\``), `${id} is refused naming the case and \`${field}\``);
+  }
+  writeFileSync(path.join(evalsDir, 'a.json'), JSON.stringify({ id: 'inside', prompt: 'do it', checks: [{ type: 'contains', file: 'sub/note.txt', text: 'x' }, { type: 'command', command: ['node', '-e', 'ok'], cwd: 'sub' }] }));
+  assert.deepEqual(loadEvals(evalsDir).map((c) => c.id), ['inside'], 'relative paths inside the checkout load');
+});
+
+test('T1-EVAL-TRANSCRIPT R3 decision 1 (unchecked-check-path): a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async (t) => {
+  const { cwd } = setup();
+  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-outside-'));
+  writeFileSync(path.join(outside, 'secret.txt'), 'hello secret', 'utf8');
+  try {
+    symlinkSync(outside, path.join(cwd, 'out'), 'junction');
+  } catch (err) {
+    t.skip(`a directory link cannot be created here: ${(err as Error).message}`);
+    return;
+  }
+  const ran: string[][] = [];
+  const counting = scriptedRunner({ 'node -e ok': (args) => (ran.push(args), { exitCode: 0 }) });
+  const c = EvalCase.parse({ id: 'escape', prompt: 'do it', checks: [{ type: 'contains', file: 'out/secret.txt', text: 'hello' }, { type: 'command', command: ['node', '-e', 'ok'], cwd: 'out' }, { type: 'contains', file: 'note.txt', text: 'hello' }] });
+  const r = await runEval(c, new MockProvider(), { cwd, runner: counting, skipModel: true });
+  assert.deepEqual(r.checks.map((x) => x.ok), [false, false, true], JSON.stringify(r.checks));
+  assert.match(r.checks[0]!.detail, /outside the working directory/);
+  assert.match(r.checks[1]!.detail, /outside the working directory/);
+  assert.deepEqual(ran, [], 'the command did not run');
 });
