@@ -796,3 +796,49 @@ test('T1-BENCH-TRIALS acceptance 4: bench compare prints the verdict of two save
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('T1-BENCH-TRIALS R3 decision 1 F1: a quota hold stops the run, and every case and trial not yet reviewed is a no-verdict [R1] [R2]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    let calls = 0;
+    const held: Runner = async (command, args, options) => (++calls, scriptedRunner({ [command]: { exitCode: 1, stderr: 'usage limit reached\n' } })(command, args, options));
+    const report = await bench(fx, held, { trials: 3 });
+    assert.equal(calls, 1, 'no review after the hold');
+    assert.deepEqual(report.trialResults.map((t) => t.cases.map((c) => [c.id, c.outcome])), Array.from({ length: 3 }, () => [['a-hit', 'no-verdict'], ['c-pass', 'no-verdict']]));
+    const stopped = report.trialResults.flatMap((t) => t.cases).filter((c) => c.detail === 'not reviewed: a quota hold stopped the run');
+    assert.equal(stopped.length, 5, 'the five pairs after the held review');
+    assert.equal(report.summary.noVerdict, 6);
+    assertNoCheckoutLeft(fx);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T1-BENCH-TRIALS R3 decision 1 F2: bench compare accepts a report a run wrote and refuses an incomplete one, a rate outside 0 to 1 and a summary its trials do not give [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    const report = await bench(fx, reviewer(fx, []), { trials: 3 });
+    const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
+    const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
+    const run = save('run.json', report);
+    const ok = cli(run, run);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(JSON.parse(ok.stdout).verdict, 'no-measurable-difference');
+    const { trialResults: _t, ...partial } = report;
+    const recall2 = { ...report, summary: { ...report.summary, recall: { median: 2, min: 2, max: 2 } }, trialResults: report.trialResults.map((t) => ({ ...t, totals: { ...t.totals, recall: 2 } })) };
+    const mismatch = { ...report, summary: { ...report.summary, recall: { median: 0.5, min: 0.5, max: 0.5 } } };
+    for (const [name, doc] of [['partial.json', partial], ['recall2.json', recall2], ['mismatch.json', mismatch]] as const) {
+      const refused = cli(run, save(name, doc));
+      assert.equal(refused.status, 1, name);
+      assert.match(refused.stderr, new RegExp(name.replace('.', '\.')), name);
+      assert.equal(refused.stdout, '', name);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
