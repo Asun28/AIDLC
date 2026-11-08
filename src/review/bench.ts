@@ -24,12 +24,13 @@ import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
 import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
-import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
+import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
-export type BenchOutcome = 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error';
+const BenchOutcome = z.enum(['hit', 'miss', 'pass', 'false-block', 'no-verdict', 'error']);
+export type BenchOutcome = z.infer<typeof BenchOutcome>;
 
 export interface BenchCaseResult {
   id: string;
@@ -590,11 +591,15 @@ export function formatBenchReport(r: ReviewBenchReport): string {
 const Rate = z.number().min(0).max(1).nullable();
 const Count = z.number().int().min(0);
 const SavedTotals = z.object({ bugCases: Count, hits: Count, misses: Count, recall: Rate, cleanCases: Count, cleanPasses: Count, falseBlocks: Count, falseBlockRate: Rate, noVerdict: Count, errors: Count, skippedUnconfirmed: Count });
-const SavedCases = z.array(z.object({ id: z.string() }));
-/** The fields `bench compare` reads and checks of a saved `ReviewBenchReport`. */
-const SavedReport = z.object({ stage: z.enum(['pre', 'formal']), reviewer: z.string(), cases: SavedCases, totals: SavedTotals, trialResults: z.array(z.object({ cases: SavedCases, totals: SavedTotals })).min(1).max(20), summary: TrialSummary });
+const SavedCases = z.array(
+  z.object({ id: z.string(), kind: z.enum(['bug', 'clean']), confirmed: z.boolean(), outcome: BenchOutcome, runStatus: RunStatus.optional(), cited: z.array(z.string()), matched: z.object({ reason: z.string(), file: z.string(), line: z.number() }).optional(), detail: z.string().optional(), verdictRef: z.string().optional(), logRef: z.string().optional(), durationMs: z.number().min(0) }),
+);
+/** The outcomes a case of each kind can have. */
+const KIND_OUTCOMES = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };
+/** The fields of a saved `ReviewBenchReport` that `bench compare` checks. */
+const SavedReport = z.object({ stage: z.enum(['pre', 'formal']), reviewer: z.string(), rules: z.enum(['newest', 'matched']), policyHash: z.string(), leftCheckouts: z.array(z.string()), cases: SavedCases, totals: SavedTotals, trialResults: z.array(z.object({ cases: SavedCases, totals: SavedTotals })).min(1).max(20), summary: TrialSummary });
 
-/** A saved report's summary and case ids; throws naming the file when it is missing or is not a bench report. */
+/** A saved report's summary and case ids; throws naming the file when it is missing or is not a bench report, or when a number in it is not the one the bench computes from its cases. */
 function savedReport(file: string): { summary: TrialSummary; caseIds: string[] } {
   if (!existsSync(file)) throw new Error(`${file}: no such file`);
   let raw: unknown;
@@ -606,8 +611,14 @@ function savedReport(file: string): { summary: TrialSummary; caseIds: string[] }
   const parsed = SavedReport.safeParse(raw);
   if (!parsed.success) throw new Error(`${file}: not a bench report with a summary (aidlc review bench run --json): ${parsed.error.issues.map((i) => `${i.path.join('.') || 'report'}: ${i.message}`).join('; ')}`);
   const r = parsed.data;
+  const wrong = [...r.cases, ...r.trialResults.flatMap((t) => t.cases)].find((c) => !KIND_OUTCOMES[c.kind].includes(c.outcome));
+  if (wrong) throw new Error(`${file}: ${wrong.kind} case ${JSON.stringify(wrong.id)} has outcome ${wrong.outcome}`);
   const ids = r.cases.map((c) => c.id);
-  if (r.trialResults.some((t) => !isDeepStrictEqual(t.cases.map((c) => c.id), ids))) throw new Error(`${file}: a trial's case ids differ from the report's cases`);
+  r.trialResults.forEach((t, i) => {
+    if (!isDeepStrictEqual(t.cases.map((c) => c.id), ids)) throw new Error(`${file}: trial ${i + 1} case ids differ from the report's cases`);
+    if (!isDeepStrictEqual(t.totals, totalsOf(t.cases, t.totals.skippedUnconfirmed))) throw new Error(`${file}: trial ${i + 1} totals differ from its cases`);
+  });
+  if (!isDeepStrictEqual({ cases: r.cases, totals: r.totals }, r.trialResults[0])) throw new Error(`${file}: the report's cases and totals differ from trial 1`);
   if (!isDeepStrictEqual(r.summary, summaryOf(r.trialResults.map((t) => t.totals)))) throw new Error(`${file}: the summary differs from the one its trialResults give`);
   return { summary: r.summary, caseIds: ids };
 }
