@@ -1,7 +1,7 @@
 ---
 id: T0-WORKTREE-RECLAIM-2
 title: `aidlc worktree reclaim` removes the clean worktrees of finished cards, and `card close` and `goal cancel` run it
-status: todo
+status: merged
 branch: T0-WORKTREE-RECLAIM-2
 worktree: D:\wt\AIDLC\T0-WORKTREE-RECLAIM-2
 allow_paths:
