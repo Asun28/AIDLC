@@ -846,3 +846,37 @@ test('T1-BENCH-TRIALS R3 decision 1 F2: bench compare accepts a report a run wro
     fx.cleanup();
   }
 });
+
+test('T1-BENCH-TRIALS R3 decision 2 F2: bench compare refuses a report whose fields or numbers contradict what the bench computes from its cases [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    const valid = JSON.stringify(await bench(fx, reviewer(fx, []), { trials: 3 }));
+    const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
+    const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
+    const run = path.join(fx.dir, 'run.json');
+    writeFileSync(run, valid);
+    assert.equal(cli(run, run).status, 0);
+    type Doc = { policyHash?: string; cases: Array<{ outcome?: string }>; totals: Record<string, unknown>; trialResults: Array<{ cases: Array<{ outcome?: string }>; totals: Record<string, unknown> }> };
+    const rows: Array<[string, (d: Doc) => void, RegExp]> = [
+      ['no-policy-hash.json', (d) => delete d.policyHash, /policyHash/],
+      ['no-outcome.json', (d) => delete d.cases[0]!.outcome, /cases\.0\.outcome/],
+      ['recall-1-of-0.json', (d) => Object.assign(d.trialResults[0]!.totals, { hits: 0, misses: 1, recall: 1 }), /trial 1 totals differ from its cases/],
+      ['no-verdict-hit.json', (d) => void (d.trialResults[1]!.cases[0]!.outcome = 'no-verdict'), /trial 2 totals differ from its cases/],
+      ['top-totals.json', (d) => void (d.totals['skippedUnconfirmed'] = 4), /cases and totals differ from trial 1/],
+      ['bug-pass.json', (d) => void (d.cases[0]!.outcome = 'pass'), /bug case "a-hit" has outcome pass/],
+    ];
+    for (const [name, change, cause] of rows) {
+      const doc = JSON.parse(valid) as Doc;
+      change(doc);
+      const refused = cli(run, save(name, doc));
+      assert.equal(refused.status, 1, name);
+      assert.match(refused.stderr, new RegExp(name.replace('.', '\.')), name);
+      assert.match(refused.stderr, cause, name);
+      assert.equal(refused.stdout, '', name);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
