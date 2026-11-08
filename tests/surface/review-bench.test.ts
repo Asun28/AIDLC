@@ -880,3 +880,41 @@ test('T1-BENCH-TRIALS R3 decision 2 F2: bench compare refuses a report whose fie
     fx.cleanup();
   }
 });
+
+test('T1-BENCH-TRIALS R3 decision 3 F2: bench compare refuses a case that breaks a rule every case the bench writes keeps, and accepts a run stopped by a quota hold [R6]', async () => {
+  const fx = fixture();
+  try {
+    writeConfig(fx, formalConfig());
+    writeCase(fx, 'evals/review', bugCase(fx, 'a-hit', fx.heads.c1, 12, 2));
+    const valid = JSON.stringify(await bench(fx, reviewer(fx, []), { trials: 3 }));
+    const save = (name: string, doc: unknown) => (writeFileSync(path.join(fx.dir, name), JSON.stringify(doc)), path.join(fx.dir, name));
+    const cli = (a: string, b: string) => spawnSync(process.execPath, [path.join(repoRoot, 'src', 'cli', 'main.ts'), 'review', 'bench', 'compare', a, b, '--json'], { cwd: fx.dir, encoding: 'utf8', windowsHide: true });
+    const run = save('run.json', JSON.parse(valid));
+    type Case = { outcome: string; runStatus?: string; matched?: unknown };
+    type Doc = { cases: Case[]; trialResults: Array<{ cases: Case[] }> };
+    const rows: Array<[string, (cases: Case[], doc: Doc) => void, RegExp]> = [
+      // The duplicate in every list of the report, so the case ids of the trials still agree.
+      ['duplicate.json', (_, doc) => [doc.cases, ...doc.trialResults.map((t) => t.cases)].forEach((cases) => cases.push({ ...cases[0]! })), /case "a-hit" appears twice in cases/],
+      ['timeout-hit.json', (cases) => void (cases[0]!.runStatus = 'timeout'), /case "a-hit" has outcome hit with runStatus timeout: a scored outcome needs runStatus success/],
+      ['hit-unmatched.json', (cases) => void delete cases[0]!.matched, /case "a-hit": only a hit has matched, and its matched reason is one of its cited/],
+      ['no-verdict-cited.json', (cases) => void (cases[0]!.outcome = 'no-verdict'), /case "a-hit": outcome no-verdict cites no reason/],
+    ];
+    for (const [name, change, rule] of rows) {
+      const doc = JSON.parse(valid) as Doc;
+      change(doc.cases, doc);
+      const refused = cli(run, save(name, doc));
+      assert.equal(refused.status, 1, name);
+      assert.match(refused.stderr, new RegExp(name.replace('.', '\.')), name);
+      assert.match(refused.stderr, rule, name);
+    }
+
+    writeCase(fx, 'evals/review', cleanCase(fx, 'c-pass', fx.heads.c2));
+    const held: Runner = async (command, args, options) => scriptedRunner({ [command]: { exitCode: 1, stderr: 'usage limit reached\n' } })(command, args, options);
+    const stopped = save('held.json', await bench(fx, held, { trials: 3 }));
+    const ok = cli(stopped, stopped);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.equal(JSON.parse(ok.stdout).verdict, 'inconclusive');
+  } finally {
+    fx.cleanup();
+  }
+});
