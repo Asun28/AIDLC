@@ -14,6 +14,7 @@ allow_paths:
   - src/loop/card-runner.ts
   - src/cli/main.ts
   - tests/scenarios/finding-repro.test.ts
+  - tests/scenarios/review-block.test.ts
   - tests/surface/stats.test.ts
   - tests/surface/command-lines.test.ts
   - tests/scenarios/fault-points.test.ts
@@ -22,7 +23,7 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T1-FINDING-REPRO.md
-dod_command: npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/surface/stats.test.ts tests/surface/command-lines.test.ts tests/scenarios/fault-points.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/surface/stats.test.ts tests/surface/command-lines.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts
 dod_exit: 0
 requirements:
   - R1. `aidlc review repro <cardId> <findingId> --argv <json> [--files <paths>] [--goal <id>]` shall accept a JSON array of strings as the argv (never a shell string) and a comma-separated list of repository-relative paths, and refuse before any run a finding that does not exist, a finding with no `candidateSha`, a card run with no current candidate, an argv that is not a non-empty string array, a path that is absolute, contains `..`, has `.aidlc` as its first segment, or is missing from the current candidate, and a path that is a symbolic link in the current candidate.
@@ -30,13 +31,13 @@ requirements:
   - R3. The finding shall gain an optional `repro` record: argv, files, the two shas, the two exit codes (a timeout recorded as such), the time, and `reproduced`, true only when the run at the reviewed candidate exits non-zero and the run at the current candidate exits 0. A later repro of the same finding replaces it. Records written before this card parse unchanged.
   - R4. The `## Prior findings` section of the R2 and R3 prompts shall add, for a finding with a repro, one line naming the argv as a JSON string, both exits and whether it reproduced, as quoted evidence.
   - R5. `aidlc review stats` shall count per card and in the totals: fixed findings with a repro, of them reproduced, and findings answered `wrong` with a repro whose run at the reviewed candidate exited 0.
-  - R6. The REVIEW_FIX narration of a formal block shall end with one sentence asking the author to record `aidlc review repro` for each fixed finding of the Bugs or Security pass, and to attach one to a `wrong` dispute, as evidence that changes no gate.
+  - R6. Each REVIEW_FIX narration of a formal block (the REVIEW_FIX build directive, the review-fix of a pending block and the review-fix the ship path returns) shall end with one sentence, which does not contain the word `class`, asking the author to record `aidlc review repro` for each fixed finding of the Bugs or Security pass, and to attach one to a `wrong` dispute, as evidence that changes no gate.
   - R7. A repro shall change no state, decision, counter, allowance or gate of the card run; a failed write of the finding shall be reported with exit 1 and nothing else changed.
 acceptance:
   - 1. `tests/scenarios/finding-repro.test.ts`: on a fixture repository with a reviewed candidate holding a bug and a repair commit adding a test file that catches it, `review repro` with `--files` naming that test records exit non-zero at the reviewed sha, 0 at the repair, `reproduced: true`, and leaves no temporary checkout listed by `git worktree list`. [R2] [R3] [dod arm 1]
   - 2. Same file: each refusal of R1 exits 1 and writes nothing to the card run. [R1] [R7] [dod arm 1]
   - 3. Same file: the next formal prompt holds the repro line inside `## Prior findings`, with the argv quoted, and a finding without a repro has no such line. [R4] [dod arm 1]
-  - 4. Same file: the REVIEW_FIX directive after a formal block ends with the R6 sentence. [R6] [dod arm 1]
+  - 4. Same file: the REVIEW_FIX directive after a formal block ends with the R6 sentence; `tests/scenarios/review-block.test.ts` expects each of the three formal REVIEW_FIX narrations to be its text before this card followed by the R6 sentence, with every assertion still exact. [R6] [dod arms 1 and 5]
   - 5. Same file: the run's state, `substantiveDecisions`, attempts and receipts are equal before and after a repro. [R7] [dod arm 1]
   - 6. `tests/surface/stats.test.ts`: two fixed findings, one reproduced, and one `wrong` finding whose repro exited 0 at the reviewed sha give the R5 counts; a run with none shows 0. [R5] [dod arm 2]
   - 7. `tests/surface/command-lines.test.ts` pins the command. [R1] [dod arm 3]
@@ -44,8 +45,8 @@ acceptance:
   - 9. The docs and CHANGELOG state R1 to R7 (reviewer-verified against the diff). [R3] [R5]
   - 10. `tests/scenarios/finding-repro.test.ts`: each run of the argv sees `AIDLC_STATE_DIR` naming an empty directory that no longer exists after the repro, also when the argv fails or times out; a `--files` path that starts with `.aidlc` or is a symbolic link in the current candidate is refused before any run. [R1] [R2] [dod arm 1]
 depends_on: []
-budget: 480
-sweep: "Sites on main at 01dd308: the temporary checkout in src/review/bench.ts:180 (`worktree add --detach`, reused or moved to src/review/repro.ts); `ReviewFinding` src/core/types.ts:482; `renderPriorFindings` src/review/pre-review.ts:250 and the section :433; the responses in src/review/stats.ts:50 to :69 and the empty record :155; the formal REVIEW_FIX narrations src/loop/card-runner.ts:1499 and :2816, both ending with `classRepairNote`; the `dispute` command src/cli/main.ts:838. Not sites: the R2 REVIEW_FIX narration :1428 (R2 is off in this repository; it gets the sentence only if it shares the helper)."
+budget: 500
+sweep: "Sites on main at 01dd308: the temporary checkout in src/review/bench.ts:180 (`worktree add --detach`, reused or moved to src/review/repro.ts); `ReviewFinding` src/core/types.ts:482; `renderPriorFindings` src/review/pre-review.ts:250 and the section :433; the responses in src/review/stats.ts:50 to :69 and the empty record :155; the formal REVIEW_FIX narrations, at f0b58e6 src/loop/card-runner.ts:766 (the REVIEW_FIX build directive), :1491 (a pending block) and :2808 (the ship path), all ending with `classRepairNote`; tests/scenarios/review-block.test.ts pins them at :901, :904, :912, :920 and :941, and :922 asserts that an untagged repair narration does not contain the word class; the `dispute` command src/cli/main.ts:838. Not sites: the R2 REVIEW_FIX narration :1428 (R2 is off in this repository; it gets the sentence only if it shares the helper)."
 forbid: [weakening or skipping a test to go green, a gate or decision on a repro result, running the argv through a shell, running the argv with the main checkout or the card worktree as its working directory, editing .aidlc state by hand]
 non_goals: [the reviewer writing or running a repro, a repro on an R2 finding (allowed by the command, not asked by the narration), checking that the repro tests what the finding says, a repro for findings answered intentional or not-worth-fixing, sandboxing the argv (it is the author's own command, trusted as the DoD command is; it can name any absolute path, and it is reviewed with the repair)]
 hygiene: "Line numbers are from main at 01dd308; read them again at PREPARE. The argv, the paths and the output are outside text: in a narration, a stop detail or a prompt they appear as JSON strings (T0-NARRATION-QUOTE). The finding write goes through the card-run store with the same lock as `review dispute`, so read docs/LESSONS.md on read-then-write windows (T0-CARD-TAKEOVER-2) before the first candidate. This card writes a card-run record from a new command, so run the verify-card-run-writes skill before SHIP and at CLOSE."
@@ -68,7 +69,7 @@ pstack's `interrogate` keeps a finding only when a run proves it, `blast-radius`
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/surface/stats.test.ts tests/surface/command-lines.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/scenarios/finding-repro.test.ts tests/surface/stats.test.ts tests/surface/command-lines.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/review-block.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check covers or records the new write.
