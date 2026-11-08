@@ -596,6 +596,19 @@ const SavedCases = z.array(
 );
 /** The outcomes a case of each kind can have. */
 const KIND_OUTCOMES = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };
+
+/**
+ * The rule a saved case breaks among those every case the bench writes keeps (`score`, `errorOf`, the quota stop, and the
+ * `success` status `runReviewPanel` gives every pass and block); undefined when it keeps them all.
+ */
+function brokenRule(c: BenchCaseResult): string | undefined {
+  const q = JSON.stringify(c.id);
+  if (!KIND_OUTCOMES[c.kind].includes(c.outcome)) return `${c.kind} case ${q} has outcome ${c.outcome}`;
+  if (['hit', 'miss', 'pass', 'false-block'].includes(c.outcome) && c.runStatus !== 'success') return `case ${q} has outcome ${c.outcome} with runStatus ${c.runStatus ?? 'none'}: a scored outcome needs runStatus success`;
+  if (['pass', 'no-verdict', 'error'].includes(c.outcome) && c.cited.length) return `case ${q}: outcome ${c.outcome} cites no reason`;
+  if ((c.outcome === 'hit') !== (c.matched !== undefined) || (c.matched && !c.cited.includes(c.matched.reason))) return `case ${q}: only a hit has matched, and its matched reason is one of its cited`;
+  return undefined;
+}
 /** The fields of a saved `ReviewBenchReport` that `bench compare` checks. */
 const SavedReport = z.object({ stage: z.enum(['pre', 'formal']), reviewer: z.string(), rules: z.enum(['newest', 'matched']), policyHash: z.string(), leftCheckouts: z.array(z.string()), cases: SavedCases, totals: SavedTotals, trialResults: z.array(z.object({ cases: SavedCases, totals: SavedTotals })).min(1).max(20), summary: TrialSummary });
 
@@ -611,8 +624,12 @@ function savedReport(file: string): { summary: TrialSummary; caseIds: string[] }
   const parsed = SavedReport.safeParse(raw);
   if (!parsed.success) throw new Error(`${file}: not a bench report with a summary (aidlc review bench run --json): ${parsed.error.issues.map((i) => `${i.path.join('.') || 'report'}: ${i.message}`).join('; ')}`);
   const r = parsed.data;
-  const wrong = [...r.cases, ...r.trialResults.flatMap((t) => t.cases)].find((c) => !KIND_OUTCOMES[c.kind].includes(c.outcome));
-  if (wrong) throw new Error(`${file}: ${wrong.kind} case ${JSON.stringify(wrong.id)} has outcome ${wrong.outcome}`);
+  for (const [where, cases] of [['cases', r.cases], ...r.trialResults.map((t, i) => [`trial ${i + 1}`, t.cases] as const)] as const) {
+    const twice = cases.find((c, i) => cases.findIndex((d) => d.id === c.id) !== i);
+    if (twice) throw new Error(`${file}: case ${JSON.stringify(twice.id)} appears twice in ${where}`);
+    const broken = cases.map(brokenRule).find((rule) => rule !== undefined);
+    if (broken) throw new Error(`${file}: ${broken}`);
+  }
   const ids = r.cases.map((c) => c.id);
   r.trialResults.forEach((t, i) => {
     if (!isDeepStrictEqual(t.cases.map((c) => c.id), ids)) throw new Error(`${file}: trial ${i + 1} case ids differ from the report's cases`);

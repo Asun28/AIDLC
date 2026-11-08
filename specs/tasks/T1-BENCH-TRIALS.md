@@ -75,5 +75,6 @@ npm run typecheck && node --test tests/core/trial-compare.test.ts tests/surface/
 | R3 1 F1 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 1 F1 (a quota hold stops the run; RED at 42a2fb7: 6 reviewer calls, expected 1) | pass |
 | R3 1 F2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 1 F2 (a run's saved report is accepted; partial, recall 2 and a mismatched summary exit 1; RED at 42a2fb7: partial.json exit 0, expected 1) | pass |
 | R3 2 F2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 2 F2 (six contradictory reports each exit 1, the run's report exits 0; RED at 41b43fb: no-policy-hash.json exit 0, expected 1) | pass |
+| R3 3 F2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS R3 decision 3 F2 (a duplicate id, a timed-out hit, a hit without matched and a no-verdict that cites each exit 1 naming the rule; a run stopped by a quota hold compares with exit 0, inconclusive; RED at af54e41: duplicate.json refused for another cause) | pass |
 
-RED receipt: 0d5e6cd:1, 42a2fb7:1 for the R3 decision 1 repair and 41b43fb:1 for the R3 decision 2 repair (trial-compare.ts missing; one review per case with `trials: 3`; no `trialResults`/`summary`; `bench compare` unknown; docs pins).
+RED receipt: 0d5e6cd:1, 42a2fb7:1 for the R3 decision 1 repair, 41b43fb:1 for the R3 decision 2 repair and af54e41:1 for the R3 decision 3 repair (trial-compare.ts missing; one review per case with `trials: 3`; no `trialResults`/`summary`; `bench compare` unknown; docs pins).
