@@ -148,12 +148,26 @@ function casePathRule(p: string): string | undefined {
 }
 
 /**
- * Why `rel`, resolved against `workdir`, may not be read or run in: the rule of `casePathRule`, or a real path (of the
- * target, else of its nearest existing parent) outside the real path of `workdir`, as a link that leaves it gives.
+ * The rule for a check target, given the real path of the working directory and of the target: refused when the target
+ * is outside the working directory, or when its first segment below it is `.aidlc` (letter case ignored on Windows).
+ */
+export function realPathRule(realWorkdir: string, realTarget: string, platform: NodeJS.Platform = process.platform): string | undefined {
+  const p = platform === 'win32' ? path.win32 : path.posix;
+  const rel = p.relative(realWorkdir, realTarget);
+  if (rel === '..' || rel.startsWith(`..${p.sep}`) || p.isAbsolute(rel)) return 'resolves outside the working directory';
+  const first = rel.split(p.sep)[0]!;
+  if ((platform === 'win32' ? first.toLowerCase() : first) === '.aidlc') return 'resolves into the `.aidlc` of the working directory';
+  return undefined;
+}
+
+/**
+ * Why `rel`, resolved against `workdir`, may not be read or run in: the rule of `casePathRule`, or `realPathRule` on the
+ * real path of the target (else of its nearest existing parent), so a link cannot lead out of it or into its `.aidlc`.
  */
 function refusedPath(workdir: string, field: string, rel: string): string | undefined {
   const rule = casePathRule(rel);
   if (rule) return `\`${field}\` ${rule}`;
+  let reason: string | undefined;
   try {
     let probe = path.resolve(workdir, rel);
     const rest: string[] = [];
@@ -161,12 +175,12 @@ function refusedPath(workdir: string, field: string, rel: string): string | unde
       rest.unshift(path.basename(probe));
       probe = path.dirname(probe);
     }
-    const inside = path.relative(realpathSync.native(workdir), path.join(realpathSync.native(probe), ...rest));
-    if (!(inside === '..' || inside.startsWith(`..${path.sep}`) || path.isAbsolute(inside))) return undefined;
+    reason = realPathRule(realpathSync.native(workdir), path.join(realpathSync.native(probe), ...rest));
+    if (reason === undefined) return undefined;
   } catch {
     // a path whose real path cannot be read is refused
   }
-  return `\`${field}\` resolves outside the working directory`;
+  return `\`${field}\` ${reason ?? 'resolves outside the working directory'}`;
 }
 
 /** The checks of one case against the working directory and, when the model ran, its result. */

@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkS
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EvalCase, loadEvals, runEval, runSuite } from '../../src/evals/runner.ts';
+import { EvalCase, loadEvals, realPathRule, runEval, runSuite } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { scriptedRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
@@ -246,4 +246,30 @@ test('T1-EVAL-TRANSCRIPT R3 decision 2 (unchecked-check-path): a file or cwd thr
   assert.deepEqual(r.checks.map((x) => x.ok), [false, false], JSON.stringify(r.checks));
   for (const x of r.checks) assert.match(x.detail, /^refused: .*\.aidlc/, x.check);
   assert.deepEqual(ran, [], 'the command did not run');
+});
+
+test('T1-EVAL-TRANSCRIPT R3 decision 2: realPathRule refuses a real target outside the working directory or with .aidlc as its first segment below it, on both path rules', () => {
+  const outside = 'resolves outside the working directory';
+  const state = 'resolves into the `.aidlc` of the working directory';
+  const posix: Array<[string, string | undefined]> = [
+    ['/w', undefined],
+    ['/w/note.txt', undefined],
+    ['/w/.aidlc', state],
+    ['/w/.aidlc/x', state],
+    ['/w/x/.aidlc', undefined],
+    ['/w/.AIDLC', undefined],
+    ['/w/..aidlc', undefined],
+    ['/', outside],
+    ['/other/w', outside],
+  ];
+  for (const [target, want] of posix) assert.equal(realPathRule('/w', target, 'linux'), want, `linux ${target}`);
+  const win32: Array<[string, string | undefined]> = [
+    ['C:\\w\\note.txt', undefined],
+    ['C:\\w\\.AIDLC', state],
+    ['c:\\W\\.aidlc\\x', state],
+    ['C:\\w\\x\\.aidlc', undefined],
+    ['C:\\', outside],
+    ['D:\\w\\note.txt', outside],
+  ];
+  for (const [target, want] of win32) assert.equal(realPathRule('C:\\w', target, 'win32'), want, `win32 ${target}`);
 });
