@@ -297,3 +297,21 @@ for (const then of ['answer', 'throw'] as const) {
     assert.deepEqual(readdirSync(path.join(cwd, '.aidlc')), [], "the repository's .aidlc is untouched");
   });
 }
+
+test('T1-EVAL-TRANSCRIPT-2 acceptance 9: loadEvals refuses a case file that is a link into a protected directory before reading it; a case file in a normal directory loads [R10]', () => {
+  const { cwd, evalsDir } = setup();
+  const state = path.join(cwd, '.aidlc');
+  mkdirSync(path.join(state, 'goals'), { recursive: true });
+  writeFileSync(path.join(state, 'x.json'), 'not json: reading it would throw a parse error', 'utf8');
+  mkdirSync(evalsDir);
+  writeFileSync(path.join(evalsDir, 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));
+  assert.deepEqual(loadEvals(evalsDir, { protectedDirs: [state] }).map((c) => c.id), ['a'], 'a case file in a normal directory loads');
+  const link = path.join(evalsDir, 'x.json');
+  try {
+    symlinkSync(path.join(state, 'x.json'), link, 'file');
+  } catch {
+    // A file symlink needs a privilege on Windows; a directory junction named like a case file is a link into .aidlc too.
+    symlinkSync(path.join(state, 'goals'), link, 'junction');
+  }
+  assert.throws(() => loadEvals(evalsDir, { protectedDirs: [state] }), (err: Error) => err.message.includes(link) && /inside a protected directory/.test(err.message), 'refused naming the path, before any read');
+});

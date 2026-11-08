@@ -134,3 +134,16 @@ test('T1-EVAL-TRANSCRIPT R3 decision 3: aidlc evals run refuses a --dir inside t
   assert.match(r.stderr, /is inside the state directory/);
   assert.equal(r.stdout, '', 'no case was run');
 });
+
+test("T1-EVAL-TRANSCRIPT-2 acceptance 9: aidlc evals run refuses --dir .aidlc while AIDLC_STATE_DIR names another directory [R10]", () => {
+  const repo = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-repo-'));
+  spawnSync('git', ['init', '-q'], { cwd: repo });
+  mkdirSync(path.join(repo, '.aidlc'));
+  writeFileSync(path.join(repo, '.aidlc', 'a.json'), JSON.stringify({ id: 'a', prompt: 'do it', checks: [{ type: 'output-matches', pattern: 'x' }] }));
+  const other = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  const r = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', '--skip-model', '--dir', '.aidlc'], { cwd: repo, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: other } });
+  assert.equal(r.status, 1, r.stderr);
+  assert.match(r.stderr, /is inside the repository's \.aidlc/);
+  assert.ok(r.stderr.includes('.aidlc'), 'the refusal names the path');
+  assert.equal(r.stdout, '', 'no case was run');
+});
