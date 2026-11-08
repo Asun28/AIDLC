@@ -598,21 +598,27 @@ const SavedCases = z.array(
 const KIND_OUTCOMES = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };
 
 /**
- * The rule a saved case breaks among those every case the bench writes keeps (`score`, `errorOf`, the quota stop, and the
- * `success` status `runReviewPanel` gives every pass and block); undefined when it keeps them all.
+ * The rule of R6 (c) to (f) a saved case breaks, as `rule (x): ...`; undefined when it keeps them all. Every case the bench
+ * writes keeps them: `score`, `errorOf`, the quota stop, and the `success` status `runReviewPanel` gives a pass or a block.
  */
 function brokenRule(c: BenchCaseResult): string | undefined {
   const q = JSON.stringify(c.id);
-  if (!KIND_OUTCOMES[c.kind].includes(c.outcome)) return `${c.kind} case ${q} has outcome ${c.outcome}`;
-  if (['hit', 'miss', 'pass', 'false-block'].includes(c.outcome) && c.runStatus !== 'success') return `case ${q} has outcome ${c.outcome} with runStatus ${c.runStatus ?? 'none'}: a scored outcome needs runStatus success`;
-  if (['pass', 'no-verdict', 'error'].includes(c.outcome) && c.cited.length) return `case ${q}: outcome ${c.outcome} cites no reason`;
-  if ((c.outcome === 'hit') !== (c.matched !== undefined) || (c.matched && !c.cited.includes(c.matched.reason))) return `case ${q}: only a hit has matched, and its matched reason is one of its cited`;
+  if (!KIND_OUTCOMES[c.kind].includes(c.outcome)) return `rule (c): ${c.kind} case ${q} has outcome ${c.outcome}`;
+  if (['hit', 'miss', 'pass', 'false-block'].includes(c.outcome) && c.runStatus !== 'success') return `rule (d): case ${q} has outcome ${c.outcome} with runStatus ${c.runStatus ?? 'none'}: a scored outcome needs runStatus success`;
+  if (['pass', 'no-verdict', 'error'].includes(c.outcome) && c.cited.length) return `rule (e): case ${q}: outcome ${c.outcome} cites no reason`;
+  if ((c.outcome === 'hit') !== (c.matched !== undefined) || (c.matched && !c.cited.includes(c.matched.reason))) return `rule (f): case ${q}: only a hit has matched, and its matched reason is one of its cited`;
+  const cites = c.matched && citedSite(c.matched.reason)?.file;
+  if (c.matched && cites !== c.matched.file) return `rule (f): case ${q}: its matched reason cites ${cites ?? 'no file and line'}, not its matched file ${c.matched.file}`;
   return undefined;
 }
 /** The fields of a saved `ReviewBenchReport` that `bench compare` checks. */
 const SavedReport = z.object({ stage: z.enum(['pre', 'formal']), reviewer: z.string(), rules: z.enum(['newest', 'matched']), policyHash: z.string(), leftCheckouts: z.array(z.string()), cases: SavedCases, totals: SavedTotals, trialResults: z.array(z.object({ cases: SavedCases, totals: SavedTotals })).min(1).max(20), summary: TrialSummary });
 
-/** A saved report's summary and case ids; throws naming the file when it is missing or is not a bench report, or when a number in it is not the one the bench computes from its cases. */
+/**
+ * A saved report's summary and case ids. Throws naming the file and the rule when the file is missing or not JSON, or when
+ * the report breaks a rule (a) to (j) of R6 (docs/OPERATIONS.md, Reviewer bench). The rules show that a report is complete
+ * and consistent with its own cases; they do not authenticate it.
+ */
 function savedReport(file: string): { summary: TrialSummary; caseIds: string[] } {
   if (!existsSync(file)) throw new Error(`${file}: no such file`);
   let raw: unknown;
@@ -621,22 +627,27 @@ function savedReport(file: string): { summary: TrialSummary; caseIds: string[] }
   } catch (err) {
     throw new Error(`${file}: not JSON (${(err as Error).message})`);
   }
+  const refuse = (rule: string): never => {
+    throw new Error(`${file}: ${rule}`);
+  };
   const parsed = SavedReport.safeParse(raw);
-  if (!parsed.success) throw new Error(`${file}: not a bench report with a summary (aidlc review bench run --json): ${parsed.error.issues.map((i) => `${i.path.join('.') || 'report'}: ${i.message}`).join('; ')}`);
-  const r = parsed.data;
+  if (!parsed.success) refuse(`rule (a): not a bench report (aidlc review bench run --json): ${parsed.error.issues.map((i) => `${i.path.join('.') || 'report'}: ${i.message}`).join('; ')}`);
+  const r = parsed.data!;
   for (const [where, cases] of [['cases', r.cases], ...r.trialResults.map((t, i) => [`trial ${i + 1}`, t.cases] as const)] as const) {
     const twice = cases.find((c, i) => cases.findIndex((d) => d.id === c.id) !== i);
-    if (twice) throw new Error(`${file}: case ${JSON.stringify(twice.id)} appears twice in ${where}`);
+    if (twice) refuse(`rule (b): case ${JSON.stringify(twice.id)} appears twice in ${where}`);
     const broken = cases.map(brokenRule).find((rule) => rule !== undefined);
-    if (broken) throw new Error(`${file}: ${broken}`);
+    if (broken) refuse(broken);
   }
   const ids = r.cases.map((c) => c.id);
   r.trialResults.forEach((t, i) => {
-    if (!isDeepStrictEqual(t.cases.map((c) => c.id), ids)) throw new Error(`${file}: trial ${i + 1} case ids differ from the report's cases`);
-    if (!isDeepStrictEqual(t.totals, totalsOf(t.cases, t.totals.skippedUnconfirmed))) throw new Error(`${file}: trial ${i + 1} totals differ from its cases`);
+    if (!isDeepStrictEqual(t.cases.map((c) => c.id), ids)) refuse(`rule (g): trial ${i + 1} case ids differ from the report's cases`);
+    const other = t.cases.find((c, k) => c.kind !== r.cases[k]!.kind || c.confirmed !== r.cases[k]!.confirmed);
+    if (other) refuse(`rule (g): trial ${i + 1} gives case ${JSON.stringify(other.id)} another kind or confirmed than cases`);
+    if (!isDeepStrictEqual(t.totals, totalsOf(t.cases, t.totals.skippedUnconfirmed))) refuse(`rule (h): trial ${i + 1} totals differ from its cases`);
   });
-  if (!isDeepStrictEqual({ cases: r.cases, totals: r.totals }, r.trialResults[0])) throw new Error(`${file}: the report's cases and totals differ from trial 1`);
-  if (!isDeepStrictEqual(r.summary, summaryOf(r.trialResults.map((t) => t.totals)))) throw new Error(`${file}: the summary differs from the one its trialResults give`);
+  if (!isDeepStrictEqual({ cases: r.cases, totals: r.totals }, r.trialResults[0])) refuse('rule (i): the cases and totals differ from trial 1');
+  if (!isDeepStrictEqual(r.summary, summaryOf(r.trialResults.map((t) => t.totals)))) refuse('rule (j): the summary differs from the one its trialResults give');
   return { summary: r.summary, caseIds: ids };
 }
 

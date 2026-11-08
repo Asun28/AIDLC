@@ -66,3 +66,19 @@ npm run typecheck && node --test tests/core/trial-compare.test.ts tests/surface/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/trial-compare.test.ts`, three T1-BENCH-TRIALS-2 acceptance 1 tests | pass |
+| 2 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS-2 acceptance 2 | pass |
+| 3 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS-2 acceptance 3 | pass |
+| 4 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS-2 acceptance 4 | pass |
+| 5 | `tests/surface/command-lines.test.ts`, T1-BENCH-TRIALS-2 acceptance 5 | pass |
+| 6 | docs/OPERATIONS.md (Reviewer bench: the trials paragraph with the R6 rules (a) to (j) and the R7 sentence, the R8 quota stop, the keep rule), docs/ARCHITECTURE.md, evals/review/README.md, CHANGELOG.md; pinned by T1-REVIEW-BENCH acceptance 9 | pass; reviewer-verified at R3 |
+| 7 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS-2 acceptance 7 (a quota hold on the first review: one reviewer call, five stopped pairs, `summary.noVerdict` 6) | pass |
+| 8 | `tests/surface/review-bench.test.ts`, T1-BENCH-TRIALS-2 acceptance 8: the refusal table, rows `a-*` to `j-*`, each exits 1 with `rule (x)` in stderr, and a quota-held run compares with exit 0, `inconclusive`; and the acceptance 8 test that accepts a run's saved report and refuses a partial report, recall 2 and a mismatched summary | pass |
+
+RED receipt: ad503c0:1 (the refusal table names no rule letter, and rules (f) file and (g) kind and confirmed are unchecked).
+
+History (T1-BENCH-TRIALS, branch T1-BENCH-TRIALS): 0d5e6cd:1 (attempt 1), 42a2fb7:1 (R3 decision 1 repair), 41b43fb:1 (R3 decision 2 repair), af54e41:1 (R3 decision 3 repair); its last candidate 4d78243 was blocked by R3 decision 4.

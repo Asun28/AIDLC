@@ -1,11 +1,13 @@
 /**
- * Median and range over trials, and the four-way verdict on two summaries (card T1-BENCH-TRIALS). Pure: the reviewer
+ * Median and range over trials, and the four-way verdict on two summaries (card T1-BENCH-TRIALS-2). Pure: the reviewer
  * bench passes recall and the false-block rate; another caller can pass any rate where higher is better and one where
  * lower is better. A difference counts only when the two ranges (minimum to maximum) do not overlap.
  */
 import { z } from 'zod';
 
-export const TrialRange = z.object({ median: z.number(), min: z.number(), max: z.number() });
+/** A rate over trials, each value from 0 to 1. */
+const Rate = z.number().min(0).max(1);
+export const TrialRange = z.object({ median: Rate, min: Rate, max: Rate });
 export type TrialRange = z.infer<typeof TrialRange>;
 
 /** `recall` is higher-is-better and `falseBlockRate` lower-is-better; each is null when any trial had none. */
