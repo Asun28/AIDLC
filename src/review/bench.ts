@@ -16,17 +16,21 @@
 import { existsSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import { z } from 'zod';
 import { parseCardText } from '../artifacts/card.ts';
 import { lessonsPath, matchedLessons, reviewLessons, type ReviewLessons } from '../artifacts/lessons.ts';
 import { loadProjectConfig, type ProjectConfig } from '../config.ts';
 import { selectReviewEffortFromDiff } from '../core/review-effort.ts';
 import { FINDING_LOCATION, classifyVerdict, findingLocation } from '../core/review-policy.ts';
-import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, type CardRun, type ReviewFinding, type RunStatus } from '../core/types.ts';
+import { TrialSummary, compareTrials, trialRange, type TrialVerdict } from '../core/trial-compare.ts';
+import { MAX_SUBSTANTIVE_REVIEW_DECISIONS, ReviewBenchCase, RunStatus, type CardRun, type ReviewFinding } from '../core/types.ts';
 import { run, runSync, type Runner, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe, noHookOptions, oneLine } from '../probes/git.ts';
 import { COVERAGE_ANGLE, buildReviewPrompt, changedLineRanges, citedReasonsOf, collectCandidateDiff, materialiseVerdictSchema, pathAllowed, policyHash, runReviewPanel, type PanelResult } from './pre-review.ts';
 
-export type BenchOutcome = 'hit' | 'miss' | 'pass' | 'false-block' | 'no-verdict' | 'error';
+const BenchOutcome = z.enum(['hit', 'miss', 'pass', 'false-block', 'no-verdict', 'error']);
+export type BenchOutcome = z.infer<typeof BenchOutcome>;
 
 export interface BenchCaseResult {
   id: string;
@@ -72,8 +76,12 @@ export interface ReviewBenchReport {
   leftCheckouts: string[];
   /** Present only when the run selected no case, so an empty report never reads as a scored run. */
   note?: string;
+  /** The cases and totals of the first trial. */
   cases: BenchCaseResult[];
   totals: BenchTotals;
+  /** The cases and totals of every trial, the first included. */
+  trialResults: Array<{ cases: BenchCaseResult[]; totals: BenchTotals }>;
+  summary: TrialSummary;
 }
 
 export interface ReviewBenchOptions {
@@ -86,6 +94,8 @@ export interface ReviewBenchOptions {
   includeUnconfirmed?: boolean;
   /** How the learned rules are chosen; default `newest`. */
   rules?: BenchRules;
+  /** How many times each selected case is reviewed, 1 to 20; default 1. */
+  trials?: number;
   /** The reviewer runner; default `run`. */
   runner?: Runner;
   /** The git runner; default `runSync`. */
@@ -129,10 +139,14 @@ interface BenchContext {
   tmpRoot: string;
   reviewDir: string;
   leftCheckouts: string[];
+  /** Set when a review ended on a quota hold: no later review runs. */
+  held: boolean;
 }
 
 /** Score the stage's primary reviewer on the selected cases; throws, before any review, on a refusal. */
 export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBenchReport> {
+  const trials = o.trials ?? 1;
+  if (!Number.isInteger(trials) || trials < 1 || trials > 20) throw new Error(`--trials must be an integer from 1 to 20, not ${trials}`);
   const policyFile = path.join(o.root, 'REVIEW.md');
   if (!existsSync(policyFile)) throw new Error(`no REVIEW.md in ${o.root}: the reviewer bench reviews with this checkout's policy`);
   const { config } = loadProjectConfig(o.root);
@@ -147,23 +161,36 @@ export async function runReviewBench(o: ReviewBenchOptions): Promise<ReviewBench
   if (o.caseId !== undefined && !o.includeUnconfirmed && !pool[0]!.confirmed) throw new Error(`case ${o.caseId} is not confirmed: confirm it (evals/review/README.md) or pass --include-unconfirmed`);
   const selected = pool.filter((c) => o.includeUnconfirmed || c.confirmed);
   const reviewPolicy = readFileSync(policyFile, 'utf8');
-  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [] };
-  // One review per distinct candidate, base and card path, one after another, scoring every case of it.
+  const ctx: BenchContext = { root: o.root, stage: o.stage, config, reviewPolicy, hash: policyHash(reviewPolicy), lessons: reviewLessons(lessonsPath(o.root)), rules: o.rules ?? 'newest', runner: o.runner ?? run, git: o.git ?? runSync, tmpRoot: o.tmpRoot ?? tmpdir(), reviewDir: path.join(o.root, '.review', 'bench'), leftCheckouts: [], held: false };
+  // One review per distinct candidate, base and card path and trial, one after another, scoring every case of it.
   const groups = new Map<string, ReviewBenchCase[]>();
   for (const c of selected) {
     const key = `${c.candidate} ${c.base} ${c.card.path}`;
     groups.set(key, [...(groups.get(key) ?? []), c]);
   }
-  const results = new Map<string, BenchCaseResult>();
+  const results = Array.from({ length: trials }, () => new Map<string, BenchCaseResult>());
   let n = 0;
   for (const cases of groups.values()) {
-    n += 1;
-    for (const r of await reviewGroup(ctx, cases, n)) results.set(r.id, r);
+    for (const trial of results) {
+      n += 1;
+      const stopped = (c: ReviewBenchCase): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'no-verdict', cited: [], detail: 'not reviewed: a quota hold stopped the run', durationMs: 0 });
+      for (const r of ctx.held ? cases.map(stopped) : await reviewGroup(ctx, cases, n)) trial.set(r.id, r);
+    }
   }
-  const ordered = selected.map((c) => results.get(c.id)!);
   const skipped = pool.length - selected.length;
+  const trialResults = results.map((trial) => {
+    const ordered = selected.map((c) => trial.get(c.id)!);
+    return { cases: ordered, totals: totalsOf(ordered, skipped) };
+  });
+  const summary = summaryOf(trialResults.map((t) => t.totals));
   const note = selected.length ? undefined : `no case selected: the case directory holds no ${o.includeUnconfirmed ? '' : 'confirmed '}case${skipped ? ` (${skipped} unconfirmed left out; --include-unconfirmed scores them)` : ''}; nothing was scored`;
-  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), cases: ordered, totals: totalsOf(ordered, skipped) };
+  return { stage: o.stage, reviewer: reviewer.reviewer, rules: ctx.rules, policyHash: ctx.hash, leftCheckouts: ctx.leftCheckouts, ...(note ? { note } : {}), ...trialResults[0]!, trialResults, summary };
+}
+
+/** The summary over the totals of every trial; `aidlc review bench compare` checks a saved report against it. */
+function summaryOf(totals: Array<Pick<BenchTotals, 'recall' | 'falseBlockRate' | 'noVerdict' | 'errors'>>): TrialSummary {
+  const sum = (k: 'noVerdict' | 'errors') => totals.reduce((a, t) => a + t[k], 0);
+  return { trials: totals.length, recall: trialRange(totals.map((t) => t.recall)), falseBlockRate: trialRange(totals.map((t) => t.falseBlockRate)), noVerdict: sum('noVerdict'), errors: sum('errors') };
 }
 
 const errorOf = (c: ReviewBenchCase, detail: string): BenchCaseResult => ({ id: c.id, kind: c.kind, confirmed: c.confirmed, outcome: 'error', cited: [], detail, durationMs: 0 });
@@ -264,6 +291,7 @@ async function reviewIn(ctx: BenchContext, cases: ReviewBenchCase[], checkout: s
     const promptFor = () => buildReviewPrompt({ ...common, stage: 'formal', advisoryNotes: [], maxRounds: Math.max(MAX_SUBSTANTIVE_REVIEW_DECISIONS, 1) });
     panel = await runReviewPanel({ ...retention, perspectives: [], promptFor, vars: { ...vars, schema, ...(effort ? { effort } : {}) } });
   }
+  if (panel.outcome === 'quota-hold') ctx.held = true;
   const bound = ctx.stage === 'formal' ? bindToCandidate(panel, candidate, card.id) : panel;
   return cases.map((c) => {
     const reason = unscorable(c);
@@ -543,13 +571,90 @@ export function formatBenchExport(r: BenchExportReport): string {
   return lines.length ? lines.join('\n') : 'nothing to export';
 }
 
-/** The line form: one line per case and a totals line. */
+/** The line form: one line per case and a totals line, for each trial, and a summary line when there are several trials. */
 export function formatBenchReport(r: ReviewBenchReport): string {
   const rate = (x: number | null) => (x === null ? '-' : x.toFixed(2));
-  const t = r.totals;
   const lines = r.note ? [r.note] : [];
-  lines.push(...r.cases.map((c) => `${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
-  lines.push(`${r.stage} ${r.reviewer}${r.rules === 'matched' ? ' (matched rules)' : ''}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
+  const several = r.trialResults.length > 1;
+  r.trialResults.forEach(({ cases, totals: t }, i) => {
+    const at = several ? `trial ${i + 1} ` : '';
+    lines.push(...cases.map((c) => `${at}${c.id} ${c.kind} ${c.outcome}${c.runStatus ? ` (${c.runStatus})` : ''}${c.matched ? ` at ${c.matched.file}:${c.matched.line}` : ''}${c.detail ? `: ${c.detail}` : ''}`));
+    lines.push(`${at}${r.stage} ${r.reviewer}${r.rules === 'matched' ? ' (matched rules)' : ''}: recall ${rate(t.recall)} (${t.hits}/${t.hits + t.misses}), false-block rate ${rate(t.falseBlockRate)} (${t.falseBlocks}/${t.cleanPasses + t.falseBlocks}), no verdict ${t.noVerdict}, errors ${t.errors}, unconfirmed skipped ${t.skippedUnconfirmed}`);
+  });
+  const s = r.summary;
+  const range = (x: TrialSummary['recall']) => (x ? `median ${rate(x.median)} (${rate(x.min)} to ${rate(x.max)})` : '-');
+  if (several) lines.push(`${s.trials} trials: recall ${range(s.recall)}, false-block rate ${range(s.falseBlockRate)}, no verdict ${s.noVerdict}, errors ${s.errors}`);
   if (r.leftCheckouts.length) lines.push(`checkouts left behind: ${r.leftCheckouts.join(', ')}`);
   return lines.join('\n');
+}
+
+const Rate = z.number().min(0).max(1).nullable();
+const Count = z.number().int().min(0);
+const SavedTotals = z.object({ bugCases: Count, hits: Count, misses: Count, recall: Rate, cleanCases: Count, cleanPasses: Count, falseBlocks: Count, falseBlockRate: Rate, noVerdict: Count, errors: Count, skippedUnconfirmed: Count });
+const SavedCases = z.array(
+  z.object({ id: z.string(), kind: z.enum(['bug', 'clean']), confirmed: z.boolean(), outcome: BenchOutcome, runStatus: RunStatus.optional(), cited: z.array(z.string()), matched: z.object({ reason: z.string(), file: z.string(), line: z.number() }).optional(), detail: z.string().optional(), verdictRef: z.string().optional(), logRef: z.string().optional(), durationMs: z.number().min(0) }),
+);
+/** The outcomes a case of each kind can have. */
+const KIND_OUTCOMES = { bug: ['hit', 'miss', 'no-verdict', 'error'], clean: ['pass', 'false-block', 'no-verdict', 'error'] };
+
+/**
+ * The rule of R6 (c) to (f) a saved case breaks, as `rule (x): ...`; undefined when it keeps them all. Every case the bench
+ * writes keeps them: `score`, `errorOf`, the quota stop, and the `success` status `runReviewPanel` gives a pass or a block.
+ */
+function brokenRule(c: BenchCaseResult): string | undefined {
+  const q = JSON.stringify(c.id);
+  if (!KIND_OUTCOMES[c.kind].includes(c.outcome)) return `rule (c): ${c.kind} case ${q} has outcome ${c.outcome}`;
+  if (['hit', 'miss', 'pass', 'false-block'].includes(c.outcome) && c.runStatus !== 'success') return `rule (d): case ${q} has outcome ${c.outcome} with runStatus ${c.runStatus ?? 'none'}: a scored outcome needs runStatus success`;
+  if (['pass', 'no-verdict', 'error'].includes(c.outcome) && c.cited.length) return `rule (e): case ${q}: outcome ${c.outcome} cites no reason`;
+  if ((c.outcome === 'hit') !== (c.matched !== undefined) || (c.matched && !c.cited.includes(c.matched.reason))) return `rule (f): case ${q}: only a hit has matched, and its matched reason is one of its cited`;
+  const cites = c.matched && citedSite(c.matched.reason)?.file;
+  if (c.matched && cites !== c.matched.file) return `rule (f): case ${q}: its matched reason cites ${cites ?? 'no file and line'}, not its matched file ${c.matched.file}`;
+  return undefined;
+}
+/** The fields of a saved `ReviewBenchReport` that `bench compare` checks. */
+const SavedReport = z.object({ stage: z.enum(['pre', 'formal']), reviewer: z.string(), rules: z.enum(['newest', 'matched']), policyHash: z.string(), leftCheckouts: z.array(z.string()), cases: SavedCases, totals: SavedTotals, trialResults: z.array(z.object({ cases: SavedCases, totals: SavedTotals })).min(1).max(20), summary: TrialSummary });
+
+/**
+ * A saved report's summary and case ids. Throws naming the file and the rule when the file is missing or not JSON, or when
+ * the report breaks a rule (a) to (j) of R6 (docs/OPERATIONS.md, Reviewer bench). The rules show that a report is complete
+ * and consistent with its own cases; they do not authenticate it.
+ */
+function savedReport(file: string): { summary: TrialSummary; caseIds: string[] } {
+  if (!existsSync(file)) throw new Error(`${file}: no such file`);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(readFileSync(file, 'utf8'));
+  } catch (err) {
+    throw new Error(`${file}: not JSON (${(err as Error).message})`);
+  }
+  const refuse = (rule: string): never => {
+    throw new Error(`${file}: ${rule}`);
+  };
+  const parsed = SavedReport.safeParse(raw);
+  if (!parsed.success) refuse(`rule (a): not a bench report (aidlc review bench run --json): ${parsed.error.issues.map((i) => `${i.path.join('.') || 'report'}: ${i.message}`).join('; ')}`);
+  const r = parsed.data!;
+  for (const [where, cases] of [['cases', r.cases], ...r.trialResults.map((t, i) => [`trial ${i + 1}`, t.cases] as const)] as const) {
+    const twice = cases.find((c, i) => cases.findIndex((d) => d.id === c.id) !== i);
+    if (twice) refuse(`rule (b): case ${JSON.stringify(twice.id)} appears twice in ${where}`);
+    const broken = cases.map(brokenRule).find((rule) => rule !== undefined);
+    if (broken) refuse(broken);
+  }
+  // Case order is no rule: lists are compared by id, and rule (b) has ruled out a duplicate id.
+  const ids = r.cases.map((c) => c.id);
+  const byId = new Map(r.cases.map((c) => [c.id, c]));
+  r.trialResults.forEach((t, i) => {
+    if (t.cases.length !== ids.length || t.cases.some((c) => !byId.has(c.id))) refuse(`rule (g): trial ${i + 1} case ids differ from the report's cases`);
+    const other = t.cases.find((c) => c.kind !== byId.get(c.id)!.kind || c.confirmed !== byId.get(c.id)!.confirmed);
+    if (other) refuse(`rule (g): trial ${i + 1} gives case ${JSON.stringify(other.id)} another kind or confirmed than cases`);
+    if (!isDeepStrictEqual(t.totals, totalsOf(t.cases, t.totals.skippedUnconfirmed))) refuse(`rule (h): trial ${i + 1} totals differ from its cases`);
+  });
+  const first = r.trialResults[0]!;
+  if (!isDeepStrictEqual(r.totals, first.totals) || first.cases.some((c) => !isDeepStrictEqual(c, byId.get(c.id)))) refuse('rule (i): the cases and totals differ from trial 1');
+  if (!isDeepStrictEqual(r.summary, summaryOf(r.trialResults.map((t) => t.totals)))) refuse('rule (j): the summary differs from the one its trialResults give');
+  return { summary: r.summary, caseIds: ids };
+}
+
+/** The verdict of `aidlc review bench compare` on two saved reports (`compareTrials`). */
+export function compareBenchReports(beforeFile: string, afterFile: string): { verdict: TrialVerdict; reason: string } {
+  return compareTrials(savedReport(beforeFile), savedReport(afterFile));
 }

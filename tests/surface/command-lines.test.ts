@@ -1,6 +1,7 @@
 // Cards T1-SWEEP-FLAGS-2 (successor of T1-SWEEP-FLAGS) and T1-EVALS-NO-KEY: the eval workflow, the shipped command lines and the env var docs match what the CLI declares and reads.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,4 +114,12 @@ test('T1-SWEEP2-FLAGS acceptance 5: no doc says CLAUDE_SESSION_ID is read, OPERA
     ),
     'the CHANGELOG Unreleased section names the card, the dropped fallback with AIDLC_SESSION as the override, the three counters, the security check detail and the deny text',
   );
+});
+
+test('T1-BENCH-TRIALS-2 acceptance 5: the CLI declares `bench run --trials <n>` and `bench compare <before.json> <after.json>`, and OPERATIONS names both [R1] [R6]', () => {
+  const help = (...args: string[]) => spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'review', 'bench', ...args, '--help'], { encoding: 'utf8', windowsHide: true }).stdout;
+  assert.match(help('run'), /--trials <n>/);
+  assert.match(help('compare'), /^Usage: aidlc review bench compare \[options\] <before\.json> <after\.json>$/m);
+  const ops = flat('docs/OPERATIONS.md');
+  for (const line of ['aidlc review bench run --stage <pre|formal> --trials 3 --json', 'aidlc review bench compare <before.json> <after.json>']) assert.ok(ops.includes(line), line);
 });
