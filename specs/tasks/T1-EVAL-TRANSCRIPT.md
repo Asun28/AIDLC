@@ -65,3 +65,17 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/provi
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `313dfb5:1` (tests only; 8 of 26 failed: argv kept `--output-format json`, a 429 is_error stream read as ok, the four check types refused by the schema, no word refusal, the model ran in the repository root, no agent cases).
+
+| # | Proving test or command | Result |
+|---|---|---|
+| 1 | `tests/surface/providers.test.ts`: the three `T1-EVAL-TRANSCRIPT acceptance 1` tests | pass |
+| 2 | `tests/surface/evals.test.ts`: both `T1-EVAL-TRANSCRIPT acceptance 2` tests | pass |
+| 3 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 3` (provider answers, provider throws) | pass |
+| 4 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 4` | pass |
+| 5 | `tests/surface/evals.test.ts`: `T1-EVAL-TRANSCRIPT acceptance 5` | pass |
+| 6 | docs/OPERATIONS.md (Evals), docs/ARCHITECTURE.md (module map), CHANGELOG.md; evals/README.md not changed, see below | partial |
+
+evals/README.md is not changed: `tests/surface/command-lines.test.ts` (T1-EVALS-NO-KEY acceptance 2) requires it to equal `templates/evals/README.md`, which is not in `allow_paths`, so the R8 text for it waits on a card amendment that adds `templates/evals/README.md`.

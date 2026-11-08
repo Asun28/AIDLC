@@ -1,11 +1,11 @@
 /**
- * Non-interactive Claude Code provider (`claude -p ... --output-format json`), the shape the
+ * Non-interactive Claude Code provider (`claude -p ... --output-format json`, or `stream-json --verbose` when the request records tool calls), the shape the
  * playbook uses in CI ("Continuous evals", "CI/CD integration"). Tools are restricted with
  * `--allowedTools`; execution stays inside the caller's sandbox and permissions.
  */
 import { detectQuotaHold } from '../core/parse-guard.ts';
 import { run, type Runner } from '../probes/exec.ts';
-import type { CompletionRequest, CompletionResult, ModelProvider } from './types.ts';
+import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from './types.ts';
 import { extractJson, newInvocationId } from './types.ts';
 
 export interface ClaudeCodeOptions {
@@ -33,31 +33,41 @@ export class ClaudeCodeProvider implements ModelProvider {
 
   async complete(request: CompletionRequest): Promise<CompletionResult> {
     const started = Date.now();
-    const args = ['-p', request.prompt, '--output-format', 'json'];
+    const stream = request.recordToolCalls === true;
+    const args = ['-p', request.prompt, '--output-format', stream ? 'stream-json' : 'json'];
+    if (stream) args.push('--verbose');
     if (request.system) args.push('--append-system-prompt', request.system);
     const model = request.model ?? this.opts.defaultModel;
     if (model) args.push('--model', model);
     if (request.allowedTools?.length) args.push('--allowedTools', request.allowedTools.join(','));
     if (this.opts.extraArgs?.length) args.push(...this.opts.extraArgs);
-    const r = await this.runner(this.opts.binary ?? 'claude', args, { cwd: request.cwd, timeoutMs: request.timeoutMs ?? 30 * 60 * 1000 });
+    const r = await this.runner(this.opts.binary ?? 'claude', args, { cwd: request.cwd, timeoutMs: request.timeoutMs ?? 30 * 60 * 1000, ...(request.env ? { env: { ...process.env, ...request.env } } : {}) });
     const invocationId = newInvocationId('claude-code');
     const durationMs = Date.now() - started;
-    if (r.timedOut) return { invocationId, provider: this.name, model: model ?? 'claude', text: r.stdout, outcome: 'error', error: 'timeout', durationMs };
-    let payload: Record<string, unknown> | undefined;
-    try {
-      payload = JSON.parse(r.stdout) as Record<string, unknown>;
-    } catch {
-      payload = undefined;
+    const read = stream ? readStream(r.stdout) : undefined;
+    const recorded = read ? { toolCalls: read.toolCalls } : {};
+    if (r.timedOut) return { invocationId, provider: this.name, model: model ?? 'claude', text: r.stdout, outcome: 'error', error: 'timeout', durationMs, ...recorded };
+    if (read && !read.result) return { invocationId, provider: this.name, model: model ?? 'claude', text: '', outcome: 'error', error: 'no result event in the stream', durationMs, ...recorded };
+    // In a stream the result event is the payload: the JSON document `--output-format json` prints.
+    let payload: Record<string, unknown> | undefined = read?.result;
+    if (!read) {
+      try {
+        payload = JSON.parse(r.stdout) as Record<string, unknown>;
+      } catch {
+        payload = undefined;
+      }
     }
-    const text = typeof payload?.['result'] === 'string' ? (payload['result'] as string) : r.stdout;
+    const raw = read ? JSON.stringify(read.result) : r.stdout;
+    const text = typeof payload?.['result'] === 'string' ? (payload['result'] as string) : read ? '' : r.stdout;
     // An `is_error` payload is a failed run whatever the exit code; its `api_error_status` decides a quota hold before any text.
     if (r.exitCode !== 0 || payload?.['is_error'] === true) {
       const status = payload?.['is_error'] === true && typeof payload['api_error_status'] === 'number' ? payload['api_error_status'] : undefined;
-      const quota = detectQuotaHold(`${r.stdout}\n${r.stderr}`, status).hold;
-      return { invocationId, provider: this.name, model: model ?? 'claude', text, outcome: quota ? 'quota' : 'error', error: r.stderr.trim() || (r.exitCode === 0 ? `is_error: ${text}` : `exit ${r.exitCode}`), durationMs };
+      const quota = detectQuotaHold(`${raw}\n${r.stderr}`, status).hold;
+      return { invocationId, provider: this.name, model: model ?? 'claude', text, outcome: quota ? 'quota' : 'error', error: r.stderr.trim() || (r.exitCode === 0 ? `is_error: ${text}` : `exit ${r.exitCode}`), durationMs, ...recorded };
     }
     const usage = payload && typeof payload['usage'] === 'object' && payload['usage'] ? (payload['usage'] as Record<string, number>) : undefined;
     return {
+      ...recorded,
       invocationId: typeof payload?.['session_id'] === 'string' ? `claude-code:${payload['session_id']}` : invocationId,
       provider: this.name,
       model: model ?? 'claude',
@@ -68,4 +78,33 @@ export class ClaudeCodeProvider implements ModelProvider {
       durationMs,
     };
   }
+}
+
+/**
+ * Reads `--output-format stream-json` output: one JSON object per line; a line that does not parse is skipped. The
+ * `tool_use` blocks of the assistant events are the tool calls, in order; the last `result` event is the payload.
+ */
+function readStream(stdout: string): { toolCalls: ToolCall[]; result?: Record<string, unknown> } {
+  const toolCalls: ToolCall[] = [];
+  let result: Record<string, unknown> | undefined;
+  for (const line of stdout.split(/\r?\n/)) {
+    let event: unknown;
+    try {
+      event = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
+    const e = event as Record<string, unknown>;
+    if (e['type'] === 'result') result = e;
+    if (e['type'] !== 'assistant') continue;
+    const content = (e['message'] as { content?: unknown } | undefined)?.content;
+    if (!Array.isArray(content)) continue;
+    for (const block of content as Array<Record<string, unknown> | null>) {
+      if (block?.['type'] !== 'tool_use') continue;
+      const input = block['input'];
+      toolCalls.push({ name: String(block['name']), input: input && typeof input === 'object' && !Array.isArray(input) ? (input as Record<string, unknown>) : {} });
+    }
+  }
+  return { toolCalls, result };
 }

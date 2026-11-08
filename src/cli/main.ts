@@ -1121,7 +1121,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .command('evals')
     .description('continuous evals')
     .command('run')
-    .option('--dir <dir>')
+    .option('--dir <dir>', 'case directory, resolved against the checkout root (default evals; the agent cases are in evals/agent)')
     .option('--threshold <n>', 'pass-rate gate', '0.9')
     .option('--provider <name>', 'mock|claude-code|claude-api')
     .option('--skip-model', 'run only the deterministic checks')
@@ -1130,7 +1130,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const dir = path.resolve(c.root, o.dir ?? c.config.evalsDir);
       const cases = loadEvals(dir);
       const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: c.root, threshold: Number(o.threshold), skipModel: o.skipModel });
-      out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
+      out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}${r.detail ? ` [${r.detail}]` : ''}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
       if (suite.gate === 'fail') process.exitCode = 1;
     });
   const audit = program.command('audit').description('evidence manifest and independent verification');

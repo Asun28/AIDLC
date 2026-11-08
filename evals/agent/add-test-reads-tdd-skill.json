@@ -1,0 +1,12 @@
+{
+  "id": "agent-add-test-reads-tdd-skill",
+  "dimension": "policy",
+  "prompt": "Add a test to tests/surface/providers.test.ts showing that extractJson returns the first object when the text holds two fenced JSON blocks. Leave the rest of the file as it is.",
+  "allowedTools": ["Read", "Glob", "Grep", "Edit", "Write", "Bash(node --test:*)"],
+  "role": "implementer",
+  "effort": "medium",
+  "checks": [
+    { "type": "read-file", "path": ".claude/skills/tdd/SKILL.md" }
+  ],
+  "origin": "CLAUDE.md, AI-native SDLC: the skill .claude/skills/aidlc-loop/SKILL.md names the tdd skill (.claude/skills/tdd/SKILL.md) to read before any test"
+}
