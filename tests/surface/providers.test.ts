@@ -217,3 +217,50 @@ test('T1-PARSE-GUARD acceptance 5: ClaudeApiProvider decides quota from the SDK 
   assert.equal((await run(new Anthropic.APIConnectionError({ message: 'upstream overloaded' }))).outcome, 'quota', 'no status: the word rule reads the message');
   assert.equal((await run(new Error('rate limit'))).outcome, 'error', 'an error that is not an SDK error is never a hold');
 });
+
+/** The `--output-format stream-json --verbose` lines of one claude -p run: three tool calls across two assistant events, a line that is not JSON, and the result event. */
+const STREAM_LINES = [
+  { type: 'system', subtype: 'init', session_id: 'sess-7' },
+  { type: 'assistant', message: { content: [{ type: 'text', text: 'Reading first.' }, { type: 'tool_use', id: 't1', name: 'Read', input: { file_path: 'a.md' } }, { type: 'tool_use', id: 't2', name: 'Bash', input: { command: 'aidlc next' } }] } },
+  'not json at all',
+  { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 't1', content: 'x' }] } },
+  { type: 'assistant', message: { content: [{ type: 'tool_use', id: 't3', name: 'Edit', input: { file_path: 'b.ts', old_string: 'a', new_string: 'b' } }] } },
+  { type: 'result', subtype: 'success', is_error: false, result: 'all done', session_id: 'sess-7', usage: { input_tokens: 12, output_tokens: 3 }, total_cost_usd: 0.02 },
+];
+const streamOf = (lines: ReadonlyArray<string | Record<string, unknown>>): string => lines.map((l) => (typeof l === 'string' ? l : JSON.stringify(l))).join('\n');
+
+test('T1-EVAL-TRANSCRIPT acceptance 1: recordToolCalls runs stream-json --verbose and returns the tool calls in order with the result text [R1]', async () => {
+  const { runner, calls } = scripted(() => ({ stdout: streamOf(STREAM_LINES) }));
+  const r = await new ClaudeCodeProvider({ runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', recordToolCalls: true });
+  assert.deepEqual(calls[0], ['claude', '-p', 'p', '--output-format', 'stream-json', '--verbose']);
+  assert.equal(r.outcome, 'ok');
+  assert.equal(r.text, 'all done');
+  assert.equal(r.invocationId, 'claude-code:sess-7');
+  assert.deepEqual(r.usage, { inputTokens: 12, outputTokens: 3, costUsd: 0.02 });
+  assert.deepEqual(r.toolCalls, [
+    { name: 'Read', input: { file_path: 'a.md' } },
+    { name: 'Bash', input: { command: 'aidlc next' } },
+    { name: 'Edit', input: { file_path: 'b.ts', old_string: 'a', new_string: 'b' } },
+  ]);
+});
+
+test('T1-EVAL-TRANSCRIPT acceptance 1: without recordToolCalls the argv is the json one and the result carries no tool calls [R1]', async () => {
+  for (const recordToolCalls of [undefined, false]) {
+    const { runner, calls } = scripted(() => ({ stdout: JSON.stringify({ result: 'done', session_id: 's' }) }));
+    const r = await new ClaudeCodeProvider({ runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', ...(recordToolCalls === undefined ? {} : { recordToolCalls }) });
+    assert.deepEqual(calls[0], ['claude', '-p', 'p', '--output-format', 'json'], `recordToolCalls ${recordToolCalls}`);
+    assert.equal(r.text, 'done');
+    assert.equal('toolCalls' in r, false, `recordToolCalls ${recordToolCalls}`);
+  }
+});
+
+test('T1-EVAL-TRANSCRIPT acceptance 1: a stream whose result event is is_error with status 429 is a quota outcome; a stream with no result event is an error [R2]', async () => {
+  const streamRun = async (lines: ReadonlyArray<string | Record<string, unknown>>, exitCode: number) => new ClaudeCodeProvider({ runner: scripted(() => ({ exitCode, stdout: streamOf(lines) })).runner }).complete({ role: 'implementer', system: '', prompt: 'p', effort: 'low', recordToolCalls: true });
+  for (const exitCode of [0, 1]) {
+    const quota = await streamRun([STREAM_LINES[0]!, { type: 'result', is_error: true, api_error_status: 429, result: 'API Error: 429' }], exitCode);
+    assert.equal(quota.outcome, 'quota', `exit ${exitCode}`);
+  }
+  const noResult = await streamRun(STREAM_LINES.slice(0, 5), 0);
+  assert.equal(noResult.outcome, 'error');
+  assert.equal(noResult.error, 'no result event in the stream');
+});
