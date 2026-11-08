@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EvalCase, loadEvals, realPathRule, runEval, runSuite } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
@@ -273,3 +273,27 @@ test('T1-EVAL-TRANSCRIPT R3 decision 2: realPathRule refuses a real target outsi
   ];
   for (const [target, want] of win32) assert.equal(realPathRule('C:\\w', target, 'win32'), want, `win32 ${target}`);
 });
+
+for (const then of ['answer', 'throw'] as const) {
+  test(`T1-EVAL-TRANSCRIPT R3 decision 3 (unisolated-skip-model-state): under skipModel a command check sees AIDLC_STATE_DIR naming a new empty directory, removed after the run (runner ${then === 'answer' ? 'answers' : 'throws'})`, async () => {
+    const { cwd } = setup();
+    mkdirSync(path.join(cwd, '.aidlc'));
+    const seen: { cwd?: string; stateDir?: string; entries?: string[] } = {};
+    const observing: SyncRunner = (command, args, options = {}) => {
+      seen.cwd = options.cwd;
+      seen.stateDir = options.env?.['AIDLC_STATE_DIR'];
+      seen.entries = seen.stateDir ? readdirSync(seen.stateDir) : undefined;
+      if (then === 'throw') throw new Error('runner failed');
+      return { command, args, cwd: options.cwd ?? '', exitCode: 0, signal: null, timedOut: false, stdout: '', stderr: '', startedAt: '2026-11-08T00:00:00.000Z', finishedAt: '2026-11-08T00:00:01.000Z', durationMs: 1000, outputSha256: '' };
+    };
+    const c = EvalCase.parse({ id: 'state', prompt: 'do it', checks: [{ type: 'command', command: ['node', 'bin/aidlc.js', 'board'] }] });
+    if (then === 'throw') await assert.rejects(runEval(c, new MockProvider(), { cwd, runner: observing, skipModel: true }), /runner failed/);
+    else assert.equal((await runEval(c, new MockProvider(), { cwd, runner: observing, skipModel: true })).passed, true);
+    assert.ok(seen.cwd && samePath(seen.cwd, cwd), 'the check still runs in options.cwd');
+    assert.ok(seen.stateDir, 'AIDLC_STATE_DIR is set');
+    assert.deepEqual(seen.entries, [], 'AIDLC_STATE_DIR names an empty directory');
+    assert.equal(samePath(seen.stateDir, path.join(cwd, '.aidlc')), false, "not the repository's .aidlc");
+    assert.equal(existsSync(seen.stateDir), false, 'the state directory is removed');
+    assert.deepEqual(readdirSync(path.join(cwd, '.aidlc')), [], "the repository's .aidlc is untouched");
+  });
+}
