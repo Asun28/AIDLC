@@ -334,8 +334,11 @@ export class GoalController {
       this.journal(goal.id).append({ type: 'GOAL_STATE', goalId: goal.id, generation: goal.generation, data: { from: goal.state, to: 'VERIFY_ARC' } });
       return this.nextInVerifyArc(next, now);
     }
+    // The wait and the stop name only runs of projected cards, the set the arc decided on: a revision keeps the run of a
+    // card it removed or superseded as evidence, and that run is not work this goal waits on or stops for.
+    const projected = runs.filter((r) => goal.cards.includes(r.cardId));
     if (arc.verdict === 'stop') {
-      const stopped = runs.filter((r) => r.state === 'STOP');
+      const stopped = projected.filter((r) => r.state === 'STOP');
       const reason: StopReason = stopped.length ? (stopped[0]!.stop?.reason ?? 'card') : 'card';
       const g = this.persistStop(goal, makeStop(reason, `no admissible work: ${arc.reasons.join('; ')}`, stopped.length ? `resolve ${stopped.map((s) => s.cardId).join(',')} (${stopped.map((s) => s.stop?.nextAction ?? '').join(' | ')})` : 'inspect the board and the dependency graph', { at: now, global: false }));
       return Directive.parse({ kind: 'stop', ...this.baseOf(g), stop: g.stop, narration: 'Empty ready set with required gaps is never DONE.' });
@@ -345,7 +348,7 @@ export class GoalController {
         const next = transitionGoal(goal, 'WAIT', now);
         this.store.saveGoal(next);
       }
-      const running = runs.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state)).map((r) => `${r.cardId}:${r.state}`);
+      const running = projected.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state)).map((r) => `${r.cardId}:${r.state}`);
       return Directive.parse({ kind: 'wait', ...base, goalState: 'WAIT', on: running.join(',') || 'dependencies', pollSeconds: 90, narration: `Waiting on ${running.join(', ') || 'dependency closure'}; ${arc.reasons.join('; ')}` });
     }
     if (goal.state === 'WAIT') {

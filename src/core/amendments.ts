@@ -6,7 +6,7 @@
  * immutable: a successor implements the new requirement. A card-text-only request does not
  * authorise code execution. Stale generation/revision dispatches require revalidation.
  */
-import type { Card, CardRun } from './types.ts';
+import type { Card, CardRun, Goal } from './types.ts';
 
 export type AmendmentRoute =
   | { route: 'amend-in-place'; detail: string }
@@ -52,6 +52,16 @@ export interface RevisionMapping {
   supersededCards: Record<string, string>;
   removedCards: string[];
   retainedEvidenceFor: string[];
+}
+
+/**
+ * The cards a revision of the goal removed or superseded and the current projection does not list again. A goal without
+ * revisions that drop a card gives an empty set, so a caller that skips these cards skips nothing for it.
+ */
+export function droppedCards(goal: Pick<Goal, 'cards' | 'revisions'>): Set<string> {
+  const dropped = new Set(goal.revisions.flatMap((r) => [...r.removedCards, ...Object.keys(r.supersededCards)]));
+  for (const id of goal.cards) dropped.delete(id);
+  return dropped;
 }
 
 /** Map superseded cards to replacements or authorized removals; unaffected evidence is retained. */
