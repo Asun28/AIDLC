@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { makeFixture, writeCard, goalForCards } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, T0 } from './_harness.ts';
+import type { CardRun } from '../../src/core/types.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { driveCardToDone } from './_harness.ts';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -235,6 +236,57 @@ test('R2: a revision that leaves a listed card without its prerequisite is refus
     assert.throws(() => fx.controller.report({ goalId: goal.id, generation: 0, result: 'resume', data: { reason: 'replace a', text: 'a again', replacements: { 'T1-A': 'T1-A2' } } }), /T1-B depends on T1-A/, 'the replacement leaves b without its prerequisite');
     assert.equal(fx.events(goal.id).length, eventsBefore, 'a refused resume journals nothing');
     assert.equal(fx.goal(goal.id).generation, 0);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** A goal of T1-A and T1-B with a run for each, then a revision that keeps `kept` only; returns the goal id. */
+function dropOneCard(fx: ReturnType<typeof makeFixture>, kept: 'T1-A' | 'T1-B', state: (id: string) => Partial<CardRun>): string {
+  writeCard(fx, { id: 'T1-A', title: 'a', allowPaths: ['src/a.ts'] });
+  writeCard(fx, { id: 'T1-B', title: 'b', allowPaths: ['src/b.ts'] });
+  const goal = goalForCards(fx, ['T1-A', 'T1-B'], { size: 'T1' });
+  for (const id of ['T1-A', 'T1-B']) fx.store.saveCardRun({ ...fx.controller.ensureCardRun(fx.goal(goal.id), id), ...state(id) });
+  fx.controller.report({ goalId: goal.id, generation: 0, result: 'revision', data: { text: `${kept} only`, cards: [kept], reason: 'one card dropped' } });
+  assert.deepEqual(fx.goal(goal.id).revisions[1]!.removedCards, [kept === 'T1-A' ? 'T1-B' : 'T1-A']);
+  return goal.id;
+}
+
+test('T0-REMOVED-CARD-RUNS acceptance 1 and 3: after a revision drops T1-B, the wait names the projected run only and the removed run keeps its record [R1] [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const goalId = dropOneCard(fx, 'T1-A', () => ({ state: 'BUILD' }));
+    const removedBefore = fx.store.getCardRun(goalId, 'T1-B');
+    assert.equal(removedBefore?.state, 'BUILD');
+    const projected = fx.controller.report({ goalId, generation: 0, result: 'cards-projected', data: { cards: ['T1-A'] } }).directive;
+    for (const d of [projected, fx.controller.next(goalId)]) {
+      assert.equal(d.kind, 'wait', d.narration);
+      if (d.kind === 'wait') assert.equal(d.on, 'T1-A:BUILD');
+      assert.ok(!d.narration.includes('T1-B'), d.narration);
+    }
+    assert.deepEqual(fx.store.getCardRun(goalId, 'T1-B'), removedBefore, 'the removed run is not written');
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('T0-REMOVED-CARD-RUNS acceptance 2 and 3: the goal stop takes its reason and next action from the projected STOP run, not a removed one the store lists first [R2] [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const stops: Record<string, Partial<CardRun>> = {
+      'T1-A': { state: 'STOP', stop: makeStop('card', 'removed card stopped', 'removed-card action', { at: T0, global: false }) },
+      'T1-B': { state: 'STOP', stop: makeStop('review', 'second substantive block', 'adjudicate', { at: T0, global: false }) },
+    };
+    const goalId = dropOneCard(fx, 'T1-B', (id) => stops[id]!);
+    assert.equal(fx.store.listCardRuns(goalId)[0]!.cardId, 'T1-A', 'the store lists the removed run first');
+    const removedBefore = fx.store.getCardRun(goalId, 'T1-A');
+    const d = fx.controller.report({ goalId, generation: 0, result: 'cards-projected', data: { cards: ['T1-B'] } }).directive;
+    assert.equal(d.kind, 'stop', d.narration);
+    const stop = fx.goal(goalId).stop!;
+    assert.equal(stop.reason, 'review');
+    assert.ok(stop.nextAction.includes('T1-B') && stop.nextAction.includes('adjudicate'), stop.nextAction);
+    assert.ok(!stop.nextAction.includes('T1-A') && !stop.nextAction.includes('removed-card'), stop.nextAction);
+    assert.deepEqual(fx.store.getCardRun(goalId, 'T1-A'), removedBefore, 'the removed run is not written');
   } finally {
     fx.cleanup();
   }
