@@ -1,7 +1,7 @@
 ---
 id: T0-REMOVED-CARD-RUNS
 title: "The goal's wait and arc-stop directives and the Stop-hook DoD reminder skip the run of a card that a goal revision removed or superseded"
-status: todo
+status: merged
 branch: T0-REMOVED-CARD-RUNS
 worktree: D:\wt\AIDLC\T0-REMOVED-CARD-RUNS
 allow_paths:
@@ -45,6 +45,18 @@ doc_sync: docs/OPERATIONS.md, CHANGELOG.md
 
 ## Deliverable
 After `aidlc goal amend` drops a card whose run is in progress, `aidlc next` waits on and stops for the projected cards only, and the Stop hook stops reminding about the dropped card's DoD. The dropped run stays on record as evidence.
+
+## Attempt evidence
+RED, commit efdc536: the DoD test files give tests 66, pass 59, fail 3, skipped 4. Acceptance 1 fails with `on` = `T1-A:BUILD,T1-B:BUILD`; acceptance 2 with reason `card` (the removed run's) for `review`; acceptance 4 with `T1-OLD` and `T1-SUP` listed beside `T1-NEW`. The 4 skips are skipped on main too.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/amendment.test.ts`, "acceptance 1 and 3": `on` is `T1-A:BUILD` and the narration has no `T1-B`, for the directive of `cards-projected` and for a second `next` | pass; failed at efdc536 |
+| 2 | same file, "acceptance 2 and 3": the store lists removed T1-A first; the goal stop reason is `review` and its next action names T1-B and `adjudicate`, not T1-A | pass; failed at efdc536 |
+| 3 | both tests above: the removed run is deep-equal before `cards-projected` and after the `next` calls | pass |
+| 4 | `tests/surface/hooks.test.ts`, "acceptance 4": Stop lists `T1-NEW` only; after revision 2 lists T1-OLD again, `T1-NEW` and `T1-OLD` | pass; failed at efdc536 |
+| 5 | `tests/surface/hooks.test.ts` and `tests/surface/hook-lazy.test.ts`: the diff only appends one test to hooks.test.ts and does not touch hook-lazy.test.ts | pass |
+| 6 | `docs/OPERATIONS.md` (`goal amend` sentence under T2, `verify-before-done` row) and the CHANGELOG Unreleased entry state R1 to R4 | done, reviewer-verified |
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
