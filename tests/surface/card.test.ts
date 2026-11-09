@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { computeTier, loadCardRegistry, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
+import { computeTier, loadCardRegistry, MAX_CODE_CARD_BUDGET, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
 
 function templateCard(overrides: Partial<Record<string, string>> = {}, extraFm = ''): string {
   const fm: Record<string, string> = {
@@ -356,5 +356,76 @@ describe('[CARD-FM-COMMENT-CUT] (T0-FM-COMMENT-CUT, issue 97)', () => {
     const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
     const entry = '- Card front matter comments, card T0-FM-COMMENT-CUT-2 (issue 97): the card readers and `aidlc cards validate` read comments, flow-list items and block-scalar bodies with the yaml package\'s lexer, so a hash inside a quoted value, a quoted flow-list item or a block scalar is kept and an inline list splits only at its top-level commas; `aidlc cards validate` reports as `[CARD-FM-COMMENT-CUT]` every comment at a hash directly followed by text (an issue or a PR number) that cuts a key or list-item value, with the raw and the kept text, blocking on a card that is neither merged nor superseded; T1-PARSE-GUARD acceptance 7 and T1-STORE-CAS-2 acceptance 14 and 15 had reached R2 and R3 cut this way.';
     assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+  });
+});
+
+describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const sized = (r: ReturnType<typeof parseCardText>) => ('error' in r ? r.findings : r.findings).filter((f) => f.sentinel === '[CARD-SIZE]');
+  const card = (budget: string | undefined, overrides: Partial<Record<string, string>> = {}, extra = '') =>
+    parseCardText(templateCard({ allow_paths: '\n  - src/foo.ts\n  - tests/foo.test.ts', ...overrides }, [budget === undefined ? '' : `budget: ${budget}`, extra].filter(Boolean).join('\n')), 'T1-FOO.md');
+
+  test('a todo card that changes src/ with budget 251 gets one blocking finding naming the budget, the limit and the remedy; 250, no budget and a card without src/ get none [R1] [R2]', () => {
+    const over = card('251');
+    assert.ok(!('error' in over));
+    assert.equal(sized(over).length, 1);
+    const [finding] = sized(over);
+    assert.equal(finding!.severity, 'block');
+    for (const part of ['251', '250', 'split', 'size_exception']) assert.ok(finding!.message.includes(part), `message names ${part}: ${finding!.message}`);
+    assert.deepEqual(sized(card('250')), [], 'budget 250');
+    assert.deepEqual(sized(card(undefined)), [], 'no budget');
+    assert.deepEqual(sized(card('900', { allow_paths: '\n  - docs/foo.md\n  - tests/foo.test.ts' })), [], 'no src/ path');
+    const rendered = parseCardText(renderCard({ id: 'T1-FOO', title: 'foo', allowPaths: ['src/foo.ts'], dodCommand: 'node --test tests/foo.test.ts', acceptance: ['1. foo holds. [dod arm 1]'], worktreeRoot: 'C:\\wt', deliverable: 'foo' }), 'T1-FOO.md');
+    assert.ok(!('error' in rendered));
+    assert.equal(rendered.card.budget, MAX_CODE_CARD_BUDGET, 'renderCard defaults the budget to the limit');
+    assert.deepEqual(sized(rendered), [], 'a rendered src/ card with the default budget');
+  });
+
+  test('merged, superseded or a non-blank size_exception makes it a warning; a blank size_exception keeps the block; src\\ and ./src/ paths count [R1] [R2] [R3]', () => {
+    const severities = (r: ReturnType<typeof parseCardText>) => sized(r).map((f) => f.severity);
+    assert.deepEqual(severities(card('251', { status: 'merged' })), ['warn'], 'merged');
+    assert.deepEqual(severities(card('251', {}, 'superseded_by: T1-BAR')), ['warn'], 'superseded');
+    const excepted = card('251', {}, 'size_exception: "approved"');
+    assert.ok(!('error' in excepted));
+    assert.equal(excepted.card.size_exception, 'approved');
+    assert.deepEqual(severities(excepted), ['warn'], 'size_exception');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: ""')), ['block'], 'empty size_exception');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: "   "')), ['block'], 'blank size_exception');
+    // R3 decision 1, F1 (blank-size-exception-bypass): the YAML value decides, not the raw line text.
+    assert.deepEqual(severities(card('251', {}, 'size_exception: # approval pending')), ['block'], 'a comment only');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: |')), ['block'], 'an empty literal block scalar');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: "\\t"')), ['block'], 'an escaped tab');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: 42')), ['block'], 'a number is not a reason');
+    // R3 decision 2, F2 (size-exception-conversion-throws): a node that is not a scalar is none, and reading it never throws.
+    assert.deepEqual(severities(card('251', {}, 'size_exception: *approval')), ['block'], 'an alias');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: [*approval]')), ['block'], 'a flow sequence holding an alias');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: {a: b}')), ['block'], 'a flow mapping');
+    assert.deepEqual(severities(card('251', { allow_paths: '\n  - src\\foo.ts' })), ['block'], 'src\\foo.ts');
+    assert.deepEqual(severities(card('251', { allow_paths: '\n  - ./src/foo.ts' })), ['block'], './src/foo.ts');
+  });
+
+  test('this repository loads with no blocking [CARD-SIZE], and the two dropped cards are superseded [R4]', () => {
+    const registry = loadCardRegistry(path.join(root, 'specs', 'tasks'));
+    const blocking = registry.cards.flatMap((c) => c.findings.filter((f) => f.sentinel === '[CARD-SIZE]' && f.severity === 'block').map((f) => `${c.card.id} ${f.message}`));
+    assert.deepEqual(blocking, []);
+    const supersededBy = (id: string) => registry.cards.find((c) => c.card.id === id)?.card.superseded_by;
+    assert.equal(supersededBy('T1-BOUND-TELEMETRY-6'), 'T1-BOUND-STATS');
+    assert.equal(supersededBy('T1-RUN-DRIVER-3'), 'T1-BOARD-WATCH');
+  });
+
+  test('docs/OPERATIONS.md, the CHANGELOG Unreleased section and both card templates carry the rule [R5]', () => {
+    const read = (rel: string) => readFileSync(path.join(root, rel), 'utf8').replace(/\r\n/g, '\n');
+    const paragraph = 'Card size (card T0-CARD-SIZE). `aidlc cards validate` reports `[CARD-SIZE]` for a card whose `allow_paths` holds an entry under `src/` (backslashes read as slashes, a leading `./` removed) and whose `budget` is above 250 (`MAX_CODE_CARD_BUDGET` in `src/artifacts/card.ts`): blocking on a card that is neither `merged` nor superseded and has no non-blank `size_exception`, a warning otherwise. `size_exception` is a front-matter line that records who approved the larger card and why, read from its own line as a YAML scalar (quote it): a value that does not parse alone or is not a non-blank string, such as a bare comment, an empty block scalar or a number, is no exception. Split the card instead where you can; the draft cards that `aidlc cards project` renders get `budget: 250` when none is given. On the records of 2026-11-10, code cards with a budget of 250 or less stopped on R3 review in 10 to 15 percent of runs and those above 250 in 44 to 60 percent. A card with no `src/` entry or no `budget` is not checked, and the ship paths read `budget` as before.';
+    assert.ok(read('docs/OPERATIONS.md').split('\n').includes(paragraph), `docs/OPERATIONS.md holds: ${paragraph}`);
+    const changelog = read('CHANGELOG.md');
+    const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
+    const entry = '- T0-CARD-SIZE: `aidlc cards validate` reports `[CARD-SIZE]` for a card that changes a `src/` path with a `budget` above 250, blocking unless the card is merged, superseded or carries a non-blank `size_exception`, where it is a warning; on the records of 2026-11-10, code cards above that budget stopped on R3 review in 44 to 60 percent of runs against 10 to 15 percent at or below it. T1-BOUND-TELEMETRY-6 and T1-RUN-DRIVER-3 are marked superseded by T1-BOUND-STATS and T1-BOARD-WATCH, and T1-BOARD-WATCH, T0-CARD-TERMINAL-GOAL-2 and T0-CARD-LEASE-HEARTBEAT carry a `size_exception`.';
+    assert.ok(unreleased.includes(entry), `CHANGELOG.md Unreleased states: ${entry}`);
+    const line = '# size_exception: "<who approved, why>"   # [CARD-SIZE] blocks a card that changes src/ with a budget over 250 unless this records the approval; split the card instead where you can';
+    for (const rel of ['specs/tasks/_TEMPLATE.md', 'templates/cards/_TEMPLATE.md']) {
+      const lines = read(rel).split('\n');
+      const at = lines.findIndex((l) => l.startsWith('# budget: '));
+      assert.equal(lines[at + 1], line, `${rel}: the size_exception line follows the budget line`);
+    }
   });
 });
