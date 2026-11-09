@@ -1,7 +1,7 @@
 ---
 id: T1-EVAL-VARIANT
 title: "`aidlc evals run --variant <ref> --trials <n>` runs the same cases on HEAD and on a checkout of the ref and gives the trial verdict on their pass rates"
-status: todo
+status: merged
 branch: T1-EVAL-VARIANT
 worktree: D:\wt\AIDLC\T1-EVAL-VARIANT
 plan_ref: plans/pstack-study.md#order-of-work
