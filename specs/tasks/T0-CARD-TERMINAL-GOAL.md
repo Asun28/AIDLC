@@ -2,6 +2,7 @@
 id: T0-CARD-TERMINAL-GOAL
 title: "Card commands that do card work refuse a stopped or done goal before any card run is read or written, so no dispatch, attempt or ship lands after GOAL_STOPPED"
 status: todo
+superseded_by: T0-CARD-TERMINAL-GOAL-2
 branch: T0-CARD-TERMINAL-GOAL
 worktree: D:\wt\AIDLC\T0-CARD-TERMINAL-GOAL
 allow_paths:
