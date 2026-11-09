@@ -162,3 +162,24 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 8: a session scans the leases at most o
     assert.equal(existsSync(absent), false, 'an absent state root is not created');
   });
 });
+
+test('T0-CARD-LEASE-HEARTBEAT acceptance 8: an event at the marker time does not scan, and one exactly 60 seconds after it does [R3]', () => {
+  withState(({ cwd, env, leases }) => {
+    dispatchHook(bash, { cwd, env, now: NOW });
+    leaseOf(leases, 'T1-DUE', S, 6 * MINUTE_MS);
+    const before = bytes(leases, 'T1-DUE');
+    dispatchHook(bash, { cwd, env, now: NOW });
+    assert.equal(bytes(leases, 'T1-DUE'), before, 'an event at the time of the last scan does not scan');
+    dispatchHook(bash, { cwd, env, now: addMs(NOW, 60_000) });
+    assert.equal(leases.read(key('T1-DUE'))?.expiresAt, addMs(NOW, 60_000 + DEFAULT_LEASE_TTL_MS), 'an event 60 s after the last scan scans');
+  });
+});
+
+test('T0-CARD-LEASE-HEARTBEAT R1: a Stop event of session S leaves its due lease unwritten [R1]', () => {
+  withState(({ cwd, env, leases }) => {
+    leaseOf(leases, 'T1-DUE', S, 6 * MINUTE_MS);
+    const before = bytes(leases, 'T1-DUE');
+    dispatchHook({ hook_event_name: 'Stop', session_id: 'sess-S' }, { cwd, env, now: NOW });
+    assert.equal(bytes(leases, 'T1-DUE'), before);
+  });
+});

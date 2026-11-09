@@ -86,3 +86,9 @@ same_class readers:
 Not changed: the OPERATIONS.md Sessions sentence "the goal-level `aidlc next` run between the card's stop and the takeover stops the goal on that stop" now holds only once the card lease has expired (the brief keeps the Sessions section from growing; the `ownership` row states the wait).
 
 Budget: raised from 280 to 420 by the coordinator at b2cd824. The diff is +416/-8: source about 101 lines, the two new test files about 285, docs and this card about 38. The excess comes from the coordinator's pre-review amendment (the 60-second scan throttle, acceptance 8 and the unreadable-lease case) and from the test files, not from source outside the requirements.
+
+Mutation sweep on 4444322 (`.review/T0-CARD-LEASE-HEARTBEAT.mutants.json`), 5 survivors. Three closed with tests only, no source change, in `tests/surface/lease-heartbeat.test.ts`; each was checked by hand: the mutant applied, the named test run and seen failing, the mutant reverted, `git diff --stat -- src/` empty afterwards.
+- `src/hooks/entry.ts:59` force-true: "R1: a Stop event of session S leaves its due lease unwritten" fails under it (the lease is renewed).
+- `src/hooks/index.ts:579` `>=` to `>`: "acceptance 8: an event at the marker time does not scan, and one exactly 60 seconds after it does" fails under it ("an event at the time of the last scan does not scan").
+- `src/hooks/index.ts:579` `<` to `<=`: the same test fails under it ("an event 60 s after the last scan scans").
+- `src/hooks/index.ts:592` drop-statement and force-false of the `.json` filter: equivalent mutants. A file that is not a lease record fails `JSON.parse` or the field checks and is skipped either way, so no observable behaviour changes.
