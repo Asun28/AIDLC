@@ -9,6 +9,8 @@ allow_paths:
   - src/hooks/index.ts
   - src/hooks/lazy.ts
   - src/loop/controller.ts
+  - src/coordination/lease.ts
+  - tests/infra/lease.test.ts
   - tests/surface/lease-heartbeat.test.ts
   - tests/scenarios/ownership-wait.test.ts
   - bench/baseline.json
@@ -16,12 +18,12 @@ allow_paths:
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
   - specs/tasks/T0-CARD-LEASE-HEARTBEAT.md
-dod_command: npm run typecheck && node --test tests/surface/lease-heartbeat.test.ts tests/scenarios/ownership-wait.test.ts tests/surface/hooks.test.ts tests/surface/hook-lazy.test.ts
+dod_command: npm run typecheck && node --test tests/surface/lease-heartbeat.test.ts tests/scenarios/ownership-wait.test.ts tests/surface/hooks.test.ts tests/surface/hook-lazy.test.ts tests/infra/lease.test.ts
 dod_exit: 0
 requirements:
-  - R1. WHEN the hook process handles a `PreToolUse` or `UserPromptSubmit` event, it shall renew every card lease that is unreleased, names the event's session and this host as owner, and has less than half of `DEFAULT_LEASE_TTL_MS` left (expired included), through `LeaseStore.heartbeat` at the lease's own generation; a lease of another session, a released lease and a lease with half or more of its TTL left are not written.
+  - R1. WHEN the hook process receives a `PreToolUse` or `UserPromptSubmit` event, whichever guards apply to it, it shall renew every card lease that is unreleased, names the event's session and this host as owner, and has less than half of `DEFAULT_LEASE_TTL_MS` left (expired included), through `LeaseStore.heartbeat` at the lease's own generation; a lease of another session, a released lease and a lease with half or more of its TTL left are not written. `LeaseStore.heartbeat` refuses a released lease under its lock.
   - R2. The renewal of R1 shall never change the hook's decision or exit code and shall print nothing: a lease that cannot be read, a fenced heartbeat (another session took the lease over) or a lock held by another process skips that lease. It journals nothing.
-  - R3. A `PreToolUse` or `UserPromptSubmit` event whose state directory holds no lease naming the event's session shall not load the goal store, the lease store or zod for R1; at most one directory listing and the reads of the lease files are added, and `npm run bench -- --check` passes; and a session scans the lease files at most once per 60 seconds: a per-session marker under the state root, checked with one stat, is rewritten after each scan; an event whose state has no leases directory writes nothing.
+  - R3. A `PreToolUse` or `UserPromptSubmit` event whose state directory holds no lease naming the event's session shall not load the goal store, the lease store or zod for R1; at most one directory listing and the reads of the lease files are added, and `npm run bench -- --check` passes; and a session scans the lease files at most once per UTC minute window (floor(now / 60 000 ms)), reserved by an exclusive create of a per-session window file under `<state>/heartbeat/`; an event whose reservation exists does no scan; an event whose state has no leases directory creates nothing.
   - R4. WHEN the goal dispatch (`aidlc next`, `nextInRun`) finds a projected card run in STOP with stop reason `ownership` whose card lease is unreleased and not expired, it shall count that card as running: the goal waits on it (directive `wait`) and is not stopped. A run stopped for ownership whose card lease is expired, released or absent keeps today's outcome (the goal stops naming `card takeover`), and so does a stop for any other reason.
   - R5. `docs/OPERATIONS.md` (STOP reasons, the `ownership` row, and Hooks), `docs/ARCHITECTURE.md` (the hooks paragraph) and the CHANGELOG Unreleased section shall state R1, R2 and R4 under this card id.
 acceptance:
@@ -32,7 +34,10 @@ acceptance:
   - 5. Same file: the incident sequence: owner session A's lease is renewed by a PreToolUse event at the moment it would have expired, session B's `card next` saves an ownership stop on the run, B's `controller.next` waits, and A's next `card next` clears the stop (LEASE_RENEWED revalidated) and the goal continues; `verifyAudit` on the journal reports no `WORK_AFTER_TERMINAL`. [R1] [R4] [dod arm 1]
   - 6. `tests/surface/hooks.test.ts` and `tests/surface/hook-lazy.test.ts` pass unchanged, and `npm run bench -- --check` passes after `npm run build` (output in the attempt evidence; a ceiling raised by hand is named in the PR body with its reason). [R3] [dod arm 1]
   - 7. The docs and CHANGELOG state R1, R2 and R4 (reviewer-verified against the diff). [R5]
-  - 8. `tests/surface/lease-heartbeat.test.ts`: a second PreToolUse within 60 s (fixed clock) renews nothing, even a due lease, and one 61 s later renews it; with no leases directory, no marker or directory is created. [R3] [dod arm 1]
+  - 8. `tests/surface/lease-heartbeat.test.ts`: a second PreToolUse in the same UTC minute window (fixed clock) renews nothing, even a due lease, and one in the next window renews it and leaves only that window's reservation; with no leases directory, no heartbeat directory or file is created. [R3] [dod arm 1]
+  - 9. `tests/surface/lease-heartbeat.test.ts`: a lease released between the hook's scan and its heartbeat stays released with its old `expiresAt`; `tests/infra/lease.test.ts`: `heartbeat` on a released lease throws `FencedError` (`lease released`) and leaves the record byte-identical. [R1] [R2] [dod arm 1]
+  - 10. `tests/surface/lease-heartbeat.test.ts`: a `PreToolUse` `Read` event, which no guard handles, renews the session's due lease through `dispatchHook`. [R1] [dod arm 1]
+  - 11. `tests/surface/lease-heartbeat.test.ts`: two overlapping events of one session in one window give one scan, and an event whose window is already reserved does not scan. [R3] [dod arm 1]
 depends_on: [T0-CARD-TERMINAL-GOAL-2]
 budget: 420
 tdd: true
@@ -42,7 +47,7 @@ diagnosis:
   same_class: "The goal lease has the same 10-minute TTL and is renewed only by `aidlc next`; this card leaves it alone (non_goals). Other readers of card-run STOP for ownership: `src/state/board.ts` outcomeOf (the board view) and the Stop hook's ownership check; list each in the attempt evidence as changed by R4 or not affected."
 sweep: "grep -n \"DEFAULT_LEASE_TTL_MS\\|heartbeat(\\|outcomeOf\\|arc.verdict === 'stop'\" src/coordination/lease.ts src/loop/controller.ts src/state/board.ts src/hooks/*.ts. Lines are from main at 338ae27; read them again at PREPARE."
 forbid: [weakening or skipping a test to go green, editing .aidlc state by hand, a hook that blocks or fails a tool call because of a lease, renewing a lease of another session or a released one, lengthening DEFAULT_LEASE_TTL_MS, changing card takeover or its refusals, journaling from the hook]
-non_goals: [the goal lease heartbeat, a heartbeat inside a long blocking card command (a ship's CI wait is covered by the running-operation precedence of the card machine), changing what a non-owner's `card next` saves on the run, the record of goal g-20261107095106-c08940]
+non_goals: ["tool calls the `.claude/settings.json` PreToolUse matcher does not send to the hook (in this repository Read, Grep, Glob and MCP tools): they renew nothing, so a session that only reads files for 5 minutes can still let its lease run low", the goal lease heartbeat, a heartbeat inside a long blocking card command (a ship's CI wait is covered by the running-operation precedence of the card machine), changing what a non-owner's `card next` saves on the run, the record of goal g-20261107095106-c08940]
 hygiene: "PreToolUse fires for subagent tool calls under the parent session (the fix-task marker already relies on it for the implementer); state that in the attempt evidence with the test that shows the event's session_id is used. Run `npm run bench -- --check` after `npm run build` before the first review (docs/OPERATIONS.md, Loop benchmark). The full suite runs locally before SHIP. Pass --goal on every card and review command."
 doc_sync: docs/OPERATIONS.md (STOP reasons, Hooks), docs/ARCHITECTURE.md (hooks), CHANGELOG.md
 ---
@@ -92,3 +97,17 @@ Mutation sweep on 4444322 (`.review/T0-CARD-LEASE-HEARTBEAT.mutants.json`), 5 su
 - `src/hooks/index.ts:579` `>=` to `>`: "acceptance 8: an event at the marker time does not scan, and one exactly 60 seconds after it does" fails under it ("an event at the time of the last scan does not scan").
 - `src/hooks/index.ts:579` `<` to `<=`: the same test fails under it ("an event 60 s after the last scan scans").
 - `src/hooks/index.ts:592` drop-statement and force-false of the `.json` filter: equivalent mutants. A file that is not a lease record fails `JSON.parse` or the field checks and is skipped either way, so no observable behaviour changes.
+
+### Attempt 3 (REVIEW_FIX after R3 decision 1 on a1b3a05)
+
+RED 7d62ac3: acceptance 8 window edges (the next-window event did not renew: `12:04` vs `12:11`), 9 (a lease released meanwhile got `expiresAt` `12:10`), 10 (a `Read` event renewed nothing), 11 (a pre-reserved window still scanned), and `tests/infra/lease.test.ts` "heartbeat refuses a released lease" (missing expected exception). Card amended: allow_paths and dod_command gain `src/coordination/lease.ts` and `tests/infra/lease.test.ts`; R1, R3, acceptance 8 reworded; acceptance 9 to 11 and one non_goal added.
+
+| Finding | Class closed | Fix | Proof |
+|---|---|---|---|
+| F1 heartbeat-after-release | every heartbeat caller, not only the hook: the check is in `LeaseStore.heartbeat` under the lease lock | a released lease throws `FencedError` (`lease released`) | acceptance 9 (hook, release injected between scan and heartbeat through `openLeases`) and `lease.test.ts` (store, byte-identical record) |
+| F2 heartbeat-skips-unguarded-tools | every PreToolUse and UserPromptSubmit event, whatever guards apply | the renewal runs before the no-guards return in `dispatchHook`; `main` also awaits the git prefetch for those events, so an unguarded event never asks git synchronously | acceptance 10 (`Read` event) |
+| F3 non-atomic-heartbeat-throttle | every overlapping pair of hooks of one session | reservation by `openSync(<state>/heartbeat/<hash16>.<floor(now/60000)>, 'wx')`; EEXIST means no scan; `leases/` checked with one stat before anything is created; older windows of the session removed best effort; the mtime marker removed | acceptance 8 (window edges, older reservation removed, no `leases/` creates nothing) and 11 (two events in one window: one heartbeat call; a reserved window is not scanned) |
+
+Steady-state cost of an event inside a reserved window: one stat of `leases/` and one failed exclusive create.
+
+Bench after `npm run build`: `npm run bench -- --check` reports every count within its ceiling (6 journeys); fsCalls hook.pre-bash 8/7, hook.pre-edit 9/8, hook.prompt 8/7 (the one stat of the absent `leases/`), no ceiling raised. DoD: 79 tests, 75 pass, 0 fail, 4 platform skips.

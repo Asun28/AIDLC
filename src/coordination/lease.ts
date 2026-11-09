@@ -106,6 +106,7 @@ export class LeaseStore {
     const now = options.now ?? nowIso();
     return this.update(resourceKey, (existing) => {
       if (!existing) throw new FencedError(resourceKey, generation, 'lease missing');
+      if (existing.released) throw new FencedError(resourceKey, generation, 'lease released');
       if (existing.generation !== generation || !this.sameOwner(existing.owner, actor)) throw new FencedError(resourceKey, generation, `current generation ${existing.generation} owned by ${existing.owner.session}`);
       return { ...existing, heartbeatAt: now, expiresAt: addMs(now, options.ttlMs ?? DEFAULT_LEASE_TTL_MS) };
     })!;

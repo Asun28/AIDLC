@@ -47,16 +47,16 @@ export function hookNamesFor(event: HookEvent): HookName[] {
 }
 
 /**
- * `now` and `openLeases` replace the clock and the lease store of the card lease heartbeat (tests). A `PreToolUse` or
- * `UserPromptSubmit` event first renews the expiring card leases of its session (card T0-CARD-LEASE-HEARTBEAT,
- * `renewSessionCardLeases`), which never changes the result.
+ * `now` and `openLeases` replace the clock and the lease store of the card lease heartbeat (tests). Every `PreToolUse`
+ * or `UserPromptSubmit` event, whichever guards apply, first renews the expiring card leases of its session (card
+ * T0-CARD-LEASE-HEARTBEAT, `renewSessionCardLeases`), which never changes the result.
  */
 export function dispatchHook(event: HookEvent, options: { cwd?: string; env?: NodeJS.ProcessEnv; now?: string; openLeases?: (dir: string) => LeaseStore } = {}): HookResult {
-  const names = hookNamesFor(event);
-  if (!names.length) return { exitCode: 0 };
   const cwd = options.cwd ?? event.cwd ?? process.cwd();
   const env = options.env ?? process.env;
   if (event.hook_event_name === 'PreToolUse' || event.hook_event_name === 'UserPromptSubmit') renewSessionCardLeases(event, cwd, env, options.now, options.openLeases);
+  const names = hookNamesFor(event);
+  if (!names.length) return { exitCode: 0 };
   const config = loadHookConfig(cwd);
   let advisory: HookResult | undefined;
   for (const name of names) {
@@ -89,8 +89,9 @@ export async function main(): Promise<void> {
   let result: HookResult;
   try {
     const event = readStdinJson(await readStdin());
-    // The repository lookup the bin entry started (card T0-HOOK-GIT-PREFETCH); an event no guard handles never waits for it.
-    if (hookNamesFor(event).length) {
+    // The repository lookup the bin entry started (card T0-HOOK-GIT-PREFETCH); an event no guard handles and no lease
+    // heartbeat reads (card T0-CARD-LEASE-HEARTBEAT) never waits for it.
+    if (hookNamesFor(event).length || event.hook_event_name === 'PreToolUse' || event.hook_event_name === 'UserPromptSubmit') {
       try {
         await settleRepoIdentity(event.cwd ?? process.cwd());
       } catch {

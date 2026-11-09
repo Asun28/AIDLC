@@ -26,7 +26,7 @@
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { droppedCards } from '../core/amendments.ts';
@@ -553,17 +553,19 @@ export function hookSession(event: HookEvent, env: NodeJS.ProcessEnv): string | 
 const LEASE_TTL_MS = 10 * 60 * 1000;
 /** How long a heartbeat waits for a lease lock another process holds before it skips that lease. */
 const HEARTBEAT_LOCK_MS = 50;
-/** A session scans the lease files at most once per this interval: a scan of a few hundred files costs about as much as loading zod. */
-const HEARTBEAT_SCAN_MS = 60 * 1000;
+/** A session scans the lease files at most once per UTC window of this length: a scan of a few hundred files costs about as much as loading zod. */
+const HEARTBEAT_WINDOW_MS = 60 * 1000;
 
 /**
  * Card T0-CARD-LEASE-HEARTBEAT, R1 to R3: renew every card lease of the event's session on this host that is unreleased
  * and has less than half of its TTL left (expired included), through `LeaseStore.heartbeat` at the lease's own
  * generation, so a session that is making tool calls keeps its card lease live. The scan reads the lease files with
- * node:fs and JSON.parse; the lease store loads only when a lease qualifies. A session scans at most once per
- * `HEARTBEAT_SCAN_MS`: its marker under `<state>/heartbeat/` carries the time of its last scan as its mtime, checked with
- * one stat; a state without a leases directory gets no marker. A lease that cannot be read, a fenced
- * heartbeat (another session took the lease over) or a lock held elsewhere skips that lease. Nothing is printed,
+ * node:fs and JSON.parse; the lease store loads only when a lease qualifies. A session scans at most once per minute
+ * window (floor(now / `HEARTBEAT_WINDOW_MS`)): the scan is reserved by an exclusive create of
+ * `<state>/heartbeat/<sha256(session) first 16 hex>.<window>`, so of two overlapping hooks of one session only one scans,
+ * and the reservations of older windows are then removed. A state without a leases directory gets nothing created.
+ * A lease that cannot be read, a released lease, a fenced heartbeat (another session took the lease over) or a lock
+ * held elsewhere skips that lease. Nothing is printed,
  * returned or journaled, and no error leaves this function.
  */
 export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, now: string = nowIso(), openLeases?: (dir: string) => LeaseStore): void {
@@ -572,20 +574,26 @@ export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJ
     if (!session) return;
     const paths = resolveStatePaths(cwd, env);
     const dir = paths.leases;
-    const marker = path.join(paths.root, 'heartbeat', createHash('sha256').update(session).digest('hex').slice(0, 16));
     const nowMs = Date.parse(now);
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+    const hbDir = path.join(paths.root, 'heartbeat');
+    const prefix = `${createHash('sha256').update(session).digest('hex').slice(0, 16)}.`;
+    const window = Math.floor(nowMs / HEARTBEAT_WINDOW_MS);
+    const reserve = (): void => closeSync(openSync(path.join(hbDir, `${prefix}${window}`), 'wx'));
     try {
-      const since = nowMs - statSync(marker).mtimeMs;
-      if (since >= 0 && since < HEARTBEAT_SCAN_MS) return;
-    } catch {
-      /* no marker: scan */
+      reserve();
+    } catch (err) {
+      // EEXIST: another hook of this session holds this window. Any other failure but a missing directory: no scan.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return;
+      mkdirSync(hbDir, { recursive: true });
+      reserve();
     }
-    let names: string[];
     try {
-      names = readdirSync(dir);
+      for (const name of readdirSync(hbDir)) if (name.startsWith(prefix) && Number(name.slice(prefix.length)) < window) unlinkSync(path.join(hbDir, name));
     } catch {
-      return;
+      /* best effort */
     }
+    const names = readdirSync(dir);
     const host = hostName();
     const due: { resourceKey: string; generation: number; owner: ActorIdentity }[] = [];
     for (const name of names) {
@@ -599,16 +607,13 @@ export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJ
         /* unreadable: skipped */
       }
     }
-    mkdirSync(path.dirname(marker), { recursive: true });
-    writeFileSync(marker, now);
-    utimesSync(marker, new Date(nowMs), new Date(nowMs));
     if (!due.length) return;
     const leases = openLeases ? openLeases(dir) : new (lazy.lease().LeaseStore)(dir, { timeoutMs: HEARTBEAT_LOCK_MS });
     for (const lease of due) {
       try {
         leases.heartbeat(lease.resourceKey, lease.generation, { actor: lease.owner, now, ttlMs: LEASE_TTL_MS });
       } catch {
-        /* malformed, fenced or locked: skipped */
+        /* malformed, released, fenced or locked: skipped */
       }
     }
   } catch {
