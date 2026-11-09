@@ -396,6 +396,10 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
     assert.deepEqual(severities(card('251', {}, 'size_exception: |')), ['block'], 'an empty literal block scalar');
     assert.deepEqual(severities(card('251', {}, 'size_exception: "\\t"')), ['block'], 'an escaped tab');
     assert.deepEqual(severities(card('251', {}, 'size_exception: 42')), ['block'], 'a number is not a reason');
+    // R3 decision 2, F2 (size-exception-conversion-throws): a node that is not a scalar is none, and reading it never throws.
+    assert.deepEqual(severities(card('251', {}, 'size_exception: *approval')), ['block'], 'an alias');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: [*approval]')), ['block'], 'a flow sequence holding an alias');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: {a: b}')), ['block'], 'a flow mapping');
     assert.deepEqual(severities(card('251', { allow_paths: '\n  - src\\foo.ts' })), ['block'], 'src\\foo.ts');
     assert.deepEqual(severities(card('251', { allow_paths: '\n  - ./src/foo.ts' })), ['block'], './src/foo.ts');
   });
