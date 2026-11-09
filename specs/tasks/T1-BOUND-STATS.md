@@ -74,10 +74,11 @@ npm run typecheck && node --test tests/infra/bounds.test.ts tests/surface/bounds
 
 ## Attempt evidence
 Attempt 1. RED commit `6e6c160` (tests only): the DoD exited 2 there, `tsc` TS2307 for the missing `src/state/bounds.ts` and the CLI test failing on `unknown command 'bounds'`.
+Attempt 2 repairs R3 decision 1: F1 adds the ci STOP whose only rerun is cancelled (fires once) and one whose rerun is for another candidate (does not fire); F2 adds the no-snapshot statement of R6 to the README Limits paragraph and the `docs/ARCHITECTURE.md` module map.
 
 | Acceptance | Proved by | Result |
 |---|---|---|
-| 1 | `tests/infra/bounds.test.ts`, suite "Derivation rows": one test per row, the STOP case and, where the row has one, the reached case, each asserting the full set of fired bounds | pass |
+| 1 | `tests/infra/bounds.test.ts`, suite "Derivation rows": one test per row, the STOP case and, where the row has one, the reached case, each asserting the full set of fired bounds; the Transient CI rerun STOP case also alone (only a cancelled rerun) and with a rerun for another candidate | pass |
 | 2 | same file, suite "STOPs that are not a bound": the card time STOP copied to the goal, both orders; ci STOP with no rerun, R2 exhaustion, ownership STOP, checkpoint STOP with a `planRef` | pass |
 | 3 | same file, suite "outcomes": DONE, STOP/cancelled and open goals; a run of a card absent from `goal.cards`; one card with runs in two goals | pass |
 | 4 | same file, suite "the line": exact line in Limits order, `Bounds: none fired`, `Extensions:` counts, an extension-lifted time STOP not counted, the effective deadline after an extension, escaped ids | pass |

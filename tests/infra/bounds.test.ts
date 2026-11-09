@@ -54,6 +54,10 @@ describe('Derivation rows: one fixture each, counted once under its bound (accep
     assert.deepEqual(one([g1()], [r1({ candidate, ci: { reruns: [rerun('success')] } })]), { 'Transient CI rerun': 1 });
     assert.deepEqual(one([g1()], [r1({ candidate, ci: { reruns: [rerun('failure')] }, stop: stop('ci') })]), { 'Transient CI rerun': 1 });
     assert.deepEqual(one([g1()], [r1({ candidate, ci: { reruns: [rerun('cancelled')] } })]), {}, 'a cancelled rerun alone is not a firing');
+    // The STOP arm on its own: the only rerun is cancelled, so the reached arm cannot fire.
+    assert.deepEqual(one([g1()], [r1({ candidate, ci: { reruns: [rerun('cancelled')] }, stop: stop('ci') })]), { 'Transient CI rerun': 1 }, 'a ci STOP with a cancelled rerun for the candidate fires');
+    const other = { ...rerun('cancelled'), candidate: 'd0' };
+    assert.deepEqual(one([g1()], [r1({ candidate, ci: { reruns: [other] }, stop: stop('ci') })]), {}, 'a ci STOP whose only rerun is for another candidate does not fire');
   });
   test('Implementation attempts: escalation used, and a card STOP with a terminal effort outcome', () => {
     assert.deepEqual(one([g1()], [r1({ effort: effort({ escalationUsed: true }) })]), { 'Implementation attempts': 1 });
