@@ -177,7 +177,7 @@ Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all link
 | `releases/<attemptId>.json` | ReleaseAttempt: target, environment, candidate, steps, operations, health window/result, disposition | `loop/release-runner.ts` |
 | `incidents/incidents.json` | breach identity ledger with disposition | `maintain/incident.ts` |
 | `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |
-| `heartbeat/<hash>.<window>` | an empty file per session and UTC minute window (floor(now / 60 000 ms)), created exclusively to reserve that window's card lease scan; older windows' files are removed after a reservation (card T0-CARD-LEASE-HEARTBEAT) | `hooks/index.ts` |
+| `heartbeat/<hash>.<window>` | a file per session and UTC minute window (floor(now / 60 000 ms)) holding the reservation time, created exclusively (`createExclusive`, `state/store.ts`) to reserve that window's card lease scan; older windows' files are removed after a reservation (card T0-CARD-LEASE-HEARTBEAT) | `hooks/index.ts` |
 | `session-default` | default session token shared by processes that set no `AIDLC_SESSION` and run outside Claude Code (no `CLAUDE_CODE_SESSION_ID`) | `state/journal.ts` |
 
 Two records live in git instead, as local refs: `refs/aidlc/candidates/<sha>` keeps each commit R3 decided on, written by the card runner before the decision, and `refs/aidlc/bench/<id>` keeps the candidate of a bench case.

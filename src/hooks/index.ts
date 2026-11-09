@@ -26,14 +26,14 @@
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
-import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { droppedCards } from '../core/amendments.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, nowIso, type ActorIdentity, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
-import { StoreError } from '../state/store.ts';
+import { StoreError, createExclusive } from '../state/store.ts';
 import type { LeaseStore } from '../coordination/lease.ts';
 import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -579,15 +579,8 @@ export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJ
     const hbDir = path.join(paths.root, 'heartbeat');
     const prefix = `${createHash('sha256').update(session).digest('hex').slice(0, 16)}.`;
     const window = Math.floor(nowMs / HEARTBEAT_WINDOW_MS);
-    const reserve = (): void => closeSync(openSync(path.join(hbDir, `${prefix}${window}`), 'wx'));
-    try {
-      reserve();
-    } catch (err) {
-      // EEXIST: another hook of this session holds this window. Any other failure but a missing directory: no scan.
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return;
-      mkdirSync(hbDir, { recursive: true });
-      reserve();
-    }
+    // The store's one exclusive-create primitive: false when another hook of this session holds this window.
+    if (!createExclusive(path.join(hbDir, `${prefix}${window}`), now)) return;
     try {
       for (const name of readdirSync(hbDir)) if (name.startsWith(prefix) && Number(name.slice(prefix.length)) < window) unlinkSync(path.join(hbDir, name));
     } catch {
