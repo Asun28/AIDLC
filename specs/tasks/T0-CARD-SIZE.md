@@ -23,12 +23,12 @@ dod_exit: 0
 requirements:
   - R1. WHEN a card's `allow_paths` holds an entry under `src/` (backslashes read as slashes, a leading `./` removed) and its `budget` is above `MAX_CODE_CARD_BUDGET` (250, exported from `src/artifacts/card.ts`), `parseCardText` shall add one `[CARD-SIZE]` finding naming the budget, the limit and the remedy (split the card, or record the approval as `size_exception`); a card with no `src/` entry, with no `budget`, or with a budget of 250 or less gets none. `renderCard` (the drafts of `aidlc cards project`) shall default `budget` to `MAX_CODE_CARD_BUDGET`, so a rendered card passes.
   - R2. The finding shall be blocking on a card that is neither `merged` nor superseded and has no non-blank `size_exception`, and a warning otherwise.
-  - R3. The `Card` schema and the card reader shall accept an optional `size_exception` string, read from its own front-matter line as a YAML scalar; a value that does not parse alone or is not a string is no exception (R3 decision 1, F1).
+  - R3. The `Card` schema and the card reader shall accept an optional `size_exception` string, read from its own front-matter line as a YAML scalar; a value that does not parse alone or is not a scalar node holding a string is no exception, and reading it never throws (R3 decisions 1 and 2, F1 and F2).
   - R4. In the registry, T1-BOUND-TELEMETRY-6 shall carry `superseded_by: T1-BOUND-STATS` and T1-RUN-DRIVER-3 `superseded_by: T1-BOARD-WATCH` (user rulings of 2026-10-09, plan section 2026-11-09 follow-up cards), and T1-BOARD-WATCH, T0-CARD-TERMINAL-GOAL-2 and T0-CARD-LEASE-HEARTBEAT a `size_exception` stating that their budget predates this rule; the repository then loads with no blocking `[CARD-SIZE]`.
   - R5. `docs/OPERATIONS.md` (a paragraph after the card front matter paragraph) and the CHANGELOG Unreleased section shall each state R1 and R2 under this card id, and each of the two card templates shall carry a commented `size_exception` line after the budget line, which stays byte-identical.
 acceptance:
   - 1. `tests/surface/card.test.ts`: a todo card with `src/foo.ts` and budget 251 has exactly one `[CARD-SIZE]`, blocking, whose message names 251, 250, split and `size_exception`; budget 250, no budget, and budget 900 with only `docs/` and `tests/` paths give none, and a `renderCard` card with a `src/` path and no budget gets budget 250 and none. Fails before the fix. [R1] [R2] [dod arm 1]
-  - 2. Same file: the budget-251 card gets a warning instead when merged, when superseded and with `size_exception: "approved"`; `size_exception: ""`, `"   "`, a bare comment, an empty `|`, `"	"` and `42` keep the block; `src\foo.ts` and `./src/foo.ts` count as `src/` paths. [R1] [R2] [R3] [dod arm 1]
+  - 2. Same file: the budget-251 card gets a warning instead when merged, when superseded and with `size_exception: "approved"`; `size_exception: ""`, `"   "`, a bare comment, an empty `|`, `"	"`, `42`, an alias, a flow sequence and a flow mapping keep the block without throwing; `src\foo.ts` and `./src/foo.ts` count as `src/` paths. [R1] [R2] [R3] [dod arm 1]
   - 3. Same file: this repository's registry has no blocking `[CARD-SIZE]`, and the two cards of R4 carry their `superseded_by`. [R4] [dod arm 1]
   - 4. `tests/surface/budget-doc.test.ts` passes unchanged. [R5] [dod arm 1]
   - 5. `tests/surface/card.test.ts` reads the exact sentence the card adds to `docs/OPERATIONS.md` and to the CHANGELOG Unreleased section, and the `size_exception` line in each template; that the sentence states R1 and R2 is reviewer-verified against the diff. [R5] [dod arm 1]
@@ -58,14 +58,15 @@ npm run typecheck && node --test tests/surface/card.test.ts tests/surface/budget
 ## Attempt evidence
 
 Attempt 1 (RED 577557e, fix cbce2f7): R3 decision 1 blocked on F1 (blank-size-exception-bypass), and the full suite failed 70 scenario tests because renderCard's default budget 400 blocked every harness card.
-Attempt 2 (RED bf77662: the F1 forms and the renderCard default failed before the repair): size_exception is decoded from its own line as a YAML scalar; renderCard defaults budget to MAX_CODE_CARD_BUDGET.
+Attempt 2 (RED bf77662: the F1 forms and the renderCard default failed before the repair): size_exception is decoded from its own line as a YAML scalar; renderCard defaults budget to MAX_CODE_CARD_BUDGET. R3 decision 2 blocked on F2 (an alias size_exception threw in toJS and aborted the registry load).
+Attempt 3 (RED 2939fba: the alias form threw before the repair): only a scalar node holding a string is read, with no conversion.
 
 | Item | Proof | Result |
 |---|---|---|
 | 1 | tests/surface/card.test.ts, "a todo card that changes src/ with budget 251 gets one blocking finding ..." (incl. the renderCard card) | pass |
-| 2 | same file, "merged, superseded or a non-blank size_exception makes it a warning ..." (incl. the F1 forms and 42) | pass |
+| 2 | same file, "merged, superseded or a non-blank size_exception makes it a warning ..." (incl. the F1 forms, 42 and the F2 alias and collection forms) | pass |
 | 3 | same file, "this repository loads with no blocking [CARD-SIZE] ..." (reads the worktree registry; `aidlc cards validate` reads the main checkout's until the merge) | pass |
 | 4 | tests/surface/budget-doc.test.ts, unchanged | pass |
 | 5 | same card.test.ts file, "docs/OPERATIONS.md, the CHANGELOG Unreleased section and both card templates carry the rule" | pass |
 
-DoD and full suite: see the attempt 2 receipt.
+DoD and full suite: see the attempt 3 receipt.

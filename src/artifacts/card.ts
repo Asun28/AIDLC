@@ -34,15 +34,16 @@ export const MAX_CODE_CARD_BUDGET = 250;
 
 /**
  * The `size_exception` value of its own line, decoded as a YAML scalar, so a comment, an empty block scalar or an escaped
- * blank is no reason (R3 decision 1, F1). A value that does not parse alone, or is not a string, is none; the whole front
+ * blank is no reason (R3 decision 1, F1). A value that does not parse alone, or is not a scalar node holding a string, is
+ * none; the node is read without conversion, so an alias or a collection never throws (R3 decision 2, F2). The whole front
  * matter is not parsed, because many cards are not valid YAML as a document.
  */
 function sizeExceptionOf(fm: string): string | undefined {
   const raw = scalar(fm, 'size_exception');
   if (raw === undefined) return undefined;
   const doc = YAML.parseDocument(raw, { logLevel: 'silent' });
-  const value: unknown = doc.errors.length === 0 ? doc.toJS() : undefined;
-  return typeof value === 'string' ? value : undefined;
+  if (doc.errors.length > 0 || !YAML.isScalar(doc.contents)) return undefined;
+  return typeof doc.contents.value === 'string' ? doc.contents.value : undefined;
 }
 
 export const CARD_RULES = {
