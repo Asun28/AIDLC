@@ -1,7 +1,7 @@
 ---
 id: T1-BOUND-STATS
 title: "`aidlc bounds [--goal <id>]` counts each loop bound that fired and the goal outcome after it, read only from the goal and card-run records"
-status: todo
+status: merged
 branch: T1-BOUND-STATS
 worktree: D:\wt\AIDLC\T1-BOUND-STATS
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#2026-11-09-follow-up-cards
