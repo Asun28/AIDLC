@@ -45,6 +45,8 @@ When stdout is not a TTY every command prints one JSON document; pass `--json` t
 
 `aidlc run` uses the configured `claude-code` provider to execute existing goal and card commands. It stops at human gates, review blocks, review quota holds, the shipping boundary, deadlines or its step limit; it prints the pending directive on exit. Shipping requires a separate operator invocation. See [Running a goal](docs/OPERATIONS.md#running-a-goal).
 
+`aidlc board --watch` re-renders a read-only screen of one goal (state, card states, live leases) every few seconds and writes nothing; its output contract and exit codes are in [Watching a goal](docs/OPERATIONS.md#watching-a-goal).
+
 ## What aidlc init writes
 
 `aidlc init` writes these paths into the repository, with the default `--cards-dir`. It skips a file that exists unless `--force` is set, and it merges `.claude/settings.json`, `.gitignore` and the `CLAUDE.md` section into a file that exists. In a repository with content and no `package.json` it skips `.github/workflows/aidlc-ci.yml` and `.github/workflows/agent-evals.yml`.
