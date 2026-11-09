@@ -51,13 +51,13 @@ spend another wave's 12 h arc.
 | 1 | v5.1 wave 1 | T1-PARSE-GUARD (merged, PR #78), T1-STORE-CAS (stopped), replaced by T1-STORE-CAS-2 (merged under a ruling, PR #100) | plan approved |
 | 2 | v5.1 wave 2 | T1-AUDIT-FACTS (stopped), replaced by T1-AUDIT-FACTS-2 (simple design, merged under a ruling of aidlc-37, PR #113), then T1-BOUND-TELEMETRY (stopped on R3 decision 2), replaced by T1-BOUND-TELEMETRY-2 (outbox design, ruling of aidlc-37) | wave 1 DONE |
 | 3 | v5.1 wave 3 | T1-INIT-SURFACE, T1-README-SCOPE, T1-RUN-DRIVER | wave 2 DONE |
-| deferred | none | T1-BASELINE-HARNESS, T1-BASELINE-REPORT | a later decision to run the eval |
+| follow-up (2026-11-09) | one card-execute goal per card | T1-BOUND-STATS, T1-BOARD-WATCH, T1-BASELINE-HARNESS, T1-BASELINE-REPORT | the user opens each goal |
 
 W0 is two cards, not one: 72 agent runs cannot finish inside the 3 h card
 deadline, so the harness and the report are cards and the runs between them
-are an operator step bounded by a spend cap. Both are deferred: they stay in
-the registry with the design below, and running them later needs the
-decisions D1-D3 again.
+are an operator step bounded by a spend cap. Both were deferred on
+2026-09-26 and released on 2026-11-09, when the user decided D1-D3 again
+(section 2026-11-09 follow-up cards).
 
 ## 3. Tech stack
 none this version (no new dependency)
@@ -243,7 +243,9 @@ deleted), tests excluded, stated in every card's close-out.
 | T1-INIT-SURFACE | W6 | at most +15 | own |
 | T1-README-SCOPE | W7 | 0 | no src/ change |
 | T1-RUN-DRIVER | W5 | +400 minus W2 and W4 actual (at most +158 after W2 +96 and W4 +146; its rule to stop and ask which part to drop may trigger, and that question goes to the user) | shared +400 |
-| T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 (deferred) | 0 | no src/ change |
+| T1-BASELINE-HARNESS, T1-BASELINE-REPORT | W0 | 0 | no src/ change |
+| T1-BOUND-STATS | W4 (redesign) | at most +130 | shared ceiling of the 2026-11-09 section |
+| T1-BOARD-WATCH | W5 (b) | at most +110 | shared ceiling of the 2026-11-09 section |
 
 The card `budget:` field is the churn cap (added plus deleted, all files),
 a different measure; each card sets both.
@@ -325,8 +327,10 @@ a different measure; each card sets both.
 | T1-INIT-SURFACE | SHOULD | init --no-hooks, README init section, hook data test | T1-BOUND-TELEMETRY | W5 | - |
 | T1-README-SCOPE | SHOULD | README first paragraph names what aidlc is and is not | T1-INIT-SURFACE | W6 | - |
 | T1-RUN-DRIVER | SHOULD | aidlc run, board --watch, per-card context pack | T1-README-SCOPE, T1-BOUND-TELEMETRY | W7 | - |
-| T1-BASELINE-HARNESS | COULD | deferred: W0 harness, task list, analysis, one-task pilot per arm | - | - | - |
-| T1-BASELINE-REPORT | COULD | deferred: REPORT.md with paired differences and the MDE | T1-BASELINE-HARNESS | - | - |
+| T1-BASELINE-HARNESS | COULD | W0 harness, task list, analysis, one-task pilot per arm (released 2026-11-09) | - | - | - |
+| T1-BASELINE-REPORT | COULD | REPORT.md with paired differences and the MDE (released 2026-11-09) | T1-BASELINE-HARNESS | - | - |
+| T1-BOUND-STATS | SHOULD | W4 redesign: `aidlc bounds`, firings derived read-only from goal and card-run records | - | - | - |
+| T1-BOARD-WATCH | SHOULD | W5 (b): read-only `aidlc board --watch` under a stated output contract | - | - | - |
 
 The depends_on chain orders the shared files (CHANGELOG.md,
 docs/OPERATIONS.md, README.md); only T1-RUN-DRIVER carries a real
@@ -408,9 +412,10 @@ New findings from running the waves are appended here by the card that meetsthem
 
 ## Decisions
 - D1-D3 (W0 task repository, arm B sandbox repository, eval spend caps):
-  withdrawn with W0. Running W0 later needs all three decided again; the
-  earlier recommendations were `Asun28/MyInspection`, a private sandbox
-  repository for the arm B PRs, and a per-run and total spend cap.
+  withdrawn with W0 on 2026-09-26, decided again by the user on 2026-11-09:
+  D1 `Asun28/MyInspection`; D2 a new private sandbox repository,
+  `Asun28/aidlc-baseline-sandbox`, which the user creates before the pilot;
+  D3 $10 per run and $500 in total.
 - D4 (W3 primitive): accepted as designed, the O_EXCL locked update, not
   `git update-ref`, for the reasons in 4.5.
 - D5 (W5 overlap), met. `T0-UNATTENDED-RUNS` merged in PR #61 (b7898d8):
@@ -480,3 +485,15 @@ The pending R2 reservation also records its issuing goal generation so a retaine
 2026-10-09 user ruling: the `aidlc board --watch` view (R2 of T1-RUN-DRIVER) is deferred after six consecutive blocking R3 decisions across T1-RUN-DRIVER, T1-RUN-DRIVER-2 and T1-RUN-DRIVER-3. The last asked for a terminal-output safety policy and a coded intake error on the plan directive, a directive-contract change. A new planned card takes the watch view with an explicit output contract, starting from local branch T1-RUN-DRIVER-3 (7e3c56d). W5 so far: context pack +140 (PR 146) and run driver core +143 (PR 148); the watch view adds 0 until that card merges.
 
 2026-10-05 the user approved linked T1-BOUND-TELEMETRY-6 after -5 stopped for an exhausted effort episode. Preserve -5's unverified clean repair commit 3f426fe and all four counted failure receipts, old reviews and STOP evidence. -6 has exactly one new full-validation attempt and the single remaining formal R3 decision, with no counter reset. The approved three-hour extension runs to 2026-10-05T11:28:01Z and is recorded separately through the supported goal CLI. Merge-only integrate the latest verified remote main in an isolated worktree before validating; retain its run-driver feature. Caps remain 6500 total changed lines, +1100 net source and shared W2+W4+W5 +1350 against the new verified base. If feature gates pass, reviewed feature PR, CI and verified merge precede a separate generation-aware evidence-retention card/PR and metadata closure.
+
+## 2026-11-09 follow-up cards
+
+On 2026-11-09 the user asked for cards, before any run, for the three lines this plan left open: bound telemetry (W4), the watch view (W5 part b) and the comparison against plain Claude Code (W0). No goal is open for them. Each runs later under its own card-execute goal, one at a time, because all four edit CHANGELOG.md and the first two also edit `src/cli/main.ts` and `docs/OPERATIONS.md`.
+
+**W4, T1-BOUND-STATS.** Replaces the outbox design with a read-only derivation. `aidlc bounds [--goal <id>]` reads the goal records and every card run and counts each Limits-table bound that fired, from fields the loop already persists: a STOP whose reason and counters match the bound, or a counter that shows the bound was reached without a STOP (`substantiveDecisions`, `noVerdictRetriesUsed`, `ci.reruns`, `effort.escalationUsed`, `planningInvocations`, `integrationRepairCycles`). The card holds the derivation table. The outcome of a firing is the goal's current outcome (DONE, STOP/<reason>, open), not the first terminal event after the firing, which would need journal order. No journal event, write, config key or lock is added, and `types.ts`, `card-runner.ts`, `controller.ts` and `journal.ts` do not change. Two items of 4.5 are dropped and the docs say so: a time STOP that `goal extend` later lifted (the goal's extension count is reported instead), and the `Bounds:` board line, because the board is rewritten on every report and an all-goals read there would make every write command depend on every record. Estimate: +105 to +120 src lines.
+
+**W5 (b), T1-BOARD-WATCH.** `aidlc board --watch [--interval s]` as a strictly read-only view with its output contract written in the card. It reads the goal, its card runs, the goal and card leases and the card registry, and never calls `aidlc next`, `writeBoard`, the session identity or the journal, because each of those writes. The screen therefore shows `Next: not computed (view only); run aidlc next --goal <id>` in place of the next directive, a change from 4.5 (b). Record text appears only as enum values, card ids, integers and timestamps; a lease owner that is not a plain identifier prints as a JSON string with every code point outside U+0020 to U+007E escaped. The card starts from main and ports by hand the render shape, interval check and pipe handling of local branch T1-RUN-DRIVER-3 (7e3c56d); that branch's state-copy preview is not needed. The coded intake error the last R3 decision asked for changes the directive contract and is left out. Estimate: +80 to +110 src lines.
+
+**W0, T1-BASELINE-HARNESS and T1-BASELINE-REPORT.** The user decided D1-D3 again (Decisions), so both cards are released with the design in 4.5. The harness README states the caps: $10 per run, $500 in total, 3 h wall clock per run. REPORT.md states that the token and cost axes count each arm's driving session only, so the review commands arm B starts are outside them.
+
+Shared budget: W2 (+96) and W5 so far (+283: context pack +140, run driver core +143) are merged. T1-BOUND-STATS at most +130 and T1-BOARD-WATCH at most +110 bring the shared W2+W4+W5 total to at most +619, inside the last ceiling the user approved (+1350). Section 1's +400 was raised for the telemetry repairs only, so approving these cards approves the +619 ceiling for them.
