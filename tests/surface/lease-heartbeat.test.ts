@@ -4,12 +4,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dispatchHook } from '../../src/hooks/entry.ts';
-import type { HookEvent } from '../../src/hooks/index.ts';
+import { renewSessionCardLeases, type HookEvent } from '../../src/hooks/index.ts';
 import { DEFAULT_LEASE_TTL_MS, LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS, addMs, type ActorIdentity, type Lease } from '../../src/core/types.ts';
 import { hostName } from '../../src/state/paths.ts';
@@ -21,8 +22,10 @@ const S: ActorIdentity = { session: 'sess-S', pid: 11, processStart: START, host
 const T: ActorIdentity = { session: 'sess-T', pid: 12, processStart: START, host: hostName() };
 const bash: HookEvent = { hook_event_name: 'PreToolUse', tool_name: 'Bash', tool_input: { command: 'git status' }, session_id: 'sess-S' };
 const key = (cardId: string): string => resourceKeys.card('repo', cardId);
-/** The reservation file name of a session's minute window: sha256 of the session, first 16 hex, then the window number. */
-const reservation = (session: string, at: string): string => `${createHash('sha256').update(session).digest('hex').slice(0, 16)}.${Math.floor(Date.parse(at) / 60_000)}`;
+/** The marker file name of a session: the first 16 hex of the sha256 of the session id. */
+const marker = (session: string): string => createHash('sha256').update(session).digest('hex').slice(0, 16);
+/** The UTC minute window of a time: floor(ms / 60 000). */
+const windowOf = (at: string): number => Math.floor(Date.parse(at) / 60_000);
 
 function withState<T>(fn: (s: { cwd: string; env: NodeJS.ProcessEnv; stateDir: string; leases: LeaseStore }) => T): T {
   const cwd = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-heartbeat-')));
@@ -143,18 +146,24 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 3: a UserPromptSubmit event of session 
   });
 });
 
-test('T0-CARD-LEASE-HEARTBEAT acceptance 8: a session scans the leases once per minute window, and a state without a leases directory gets no heartbeat file [R3]', () => {
-  withState(({ cwd, env, leases }) => {
+test('T0-CARD-LEASE-HEARTBEAT acceptance 8: one marker per session holds the minute window of its last scan; the same or an older window does not scan, the next one does, and a state without a leases directory gets nothing [R3]', () => {
+  withState(({ cwd, env, stateDir, leases }) => {
+    const markerFile = path.join(stateDir, 'heartbeat', marker('sess-S'));
     leaseOf(leases, 'T1-FIRST', S, 6 * MINUTE_MS);
     dispatchHook(bash, { cwd, env, now: NOW });
-    assert.equal(leases.read(key('T1-FIRST'))?.expiresAt, addMs(NOW, DEFAULT_LEASE_TTL_MS), 'the first event scans and renews');
-    // a lease that is due after that scan: an event 30 s later does not scan, so it is not written
+    assert.equal(leases.read(key('T1-FIRST'))?.expiresAt, addMs(NOW, DEFAULT_LEASE_TTL_MS), 'an event with no marker scans and renews');
+    assert.equal(readFileSync(markerFile, 'utf8'), String(windowOf(NOW)), 'the marker holds the current window');
     leaseOf(leases, 'T1-LATE', S, 6 * MINUTE_MS);
     const before = bytes(leases, 'T1-LATE');
     dispatchHook(bash, { cwd, env, now: addMs(NOW, 30_000) });
-    assert.equal(bytes(leases, 'T1-LATE'), before, 'within 60 s of the last scan nothing is renewed');
+    assert.equal(bytes(leases, 'T1-LATE'), before, 'the same window renews nothing');
+    dispatchHook(bash, { cwd, env, now: addMs(NOW, -MINUTE_MS) });
+    assert.equal(bytes(leases, 'T1-LATE'), before, 'an older window (a delayed hook) does not scan');
     dispatchHook(bash, { cwd, env, now: addMs(NOW, 61_000) });
-    assert.equal(leases.read(key('T1-LATE'))?.expiresAt, addMs(NOW, 61_000 + DEFAULT_LEASE_TTL_MS), '61 s later the scan runs again');
+    assert.equal(leases.read(key('T1-LATE'))?.expiresAt, addMs(NOW, 61_000 + DEFAULT_LEASE_TTL_MS), 'the next window scans');
+    dispatchHook(bash, { cwd, env, now: addMs(NOW, 2 * MINUTE_MS) });
+    assert.deepEqual(readdirSync(path.join(stateDir, 'heartbeat')), [marker('sess-S')], 'one file per session after scans in three windows');
+    assert.equal(readFileSync(markerFile, 'utf8'), String(windowOf(addMs(NOW, 2 * MINUTE_MS))));
   });
   withState(({ cwd, env, stateDir }) => {
     rmSync(path.join(stateDir, 'leases'), { recursive: true });
@@ -163,20 +172,6 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 8: a session scans the leases once per 
     const absent = path.join(cwd, 'absent-state');
     dispatchHook(bash, { cwd, env: { ...env, AIDLC_STATE_DIR: absent }, now: NOW });
     assert.equal(existsSync(absent), false, 'an absent state root is not created');
-  });
-});
-
-test('T0-CARD-LEASE-HEARTBEAT acceptance 8: the last millisecond of a minute window does not scan again, and the first of the next window does and removes the older reservation [R3]', () => {
-  withState(({ cwd, env, stateDir, leases }) => {
-    const at = '2026-11-09T12:00:30.000Z';
-    dispatchHook(bash, { cwd, env, now: at });
-    leaseOf(leases, 'T1-DUE', S, 6 * MINUTE_MS);
-    const before = bytes(leases, 'T1-DUE');
-    dispatchHook(bash, { cwd, env, now: '2026-11-09T12:00:59.999Z' });
-    assert.equal(bytes(leases, 'T1-DUE'), before, 'the same window does not scan');
-    dispatchHook(bash, { cwd, env, now: '2026-11-09T12:01:00.000Z' });
-    assert.equal(leases.read(key('T1-DUE'))?.expiresAt, addMs('2026-11-09T12:01:00.000Z', DEFAULT_LEASE_TTL_MS), 'the next window scans');
-    assert.deepEqual(readdirSync(path.join(stateDir, 'heartbeat')), [reservation('sess-S', '2026-11-09T12:01:00.000Z')], 'only the current window is reserved');
   });
 });
 
@@ -205,29 +200,32 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 10: a PreToolUse event that no guard ha
   });
 });
 
-test('T0-CARD-LEASE-HEARTBEAT acceptance 11: of two events of one session in one minute window only one scans; a window another hook reserved is not scanned [R3]', () => {
-  withState(({ cwd, env, stateDir, leases }) => {
-    leaseOf(leases, 'T1-DUE', S, 6 * MINUTE_MS);
-    let heartbeats = 0;
-    class Counting extends LeaseStore {
-      override heartbeat(resourceKey: string, generation: number, options: { ttlMs?: number; actor?: ActorIdentity; now?: string } = {}): Lease {
-        heartbeats += 1;
-        // the lease is due again when the second event reads it
-        const lease = super.heartbeat(resourceKey, generation, options);
-        this.update(resourceKey, (e) => e && { ...e, expiresAt: addMs(NOW, MINUTE_MS) });
-        return lease;
-      }
+test('T0-CARD-LEASE-HEARTBEAT acceptance 11: a scanning event lists only the leases directory, and a skipped event lists none [R3]', () => {
+  withState(({ cwd, env, leases }) => {
+    leaseOf(leases, 'T1-OTHER-1', T, 6 * MINUTE_MS);
+    leaseOf(leases, 'T1-OTHER-2', T, 2 * MINUTE_MS);
+    leaseOf(leases, 'T1-MINE', S, 6 * MINUTE_MS);
+    const listed: string[] = [];
+    const original = fs.readdirSync;
+    fs.readdirSync = ((dir: fs.PathLike, ...rest: unknown[]) => {
+      listed.push(path.resolve(String(dir)));
+      return (original as (...args: unknown[]) => unknown)(dir, ...rest);
+    }) as typeof fs.readdirSync;
+    syncBuiltinESMExports();
+    let scanning: string[];
+    let skipped: string[];
+    try {
+      renewSessionCardLeases(bash, cwd, env, NOW);
+      scanning = listed.splice(0);
+      renewSessionCardLeases(bash, cwd, env, addMs(NOW, 30_000));
+      skipped = listed.splice(0);
+    } finally {
+      fs.readdirSync = original;
+      syncBuiltinESMExports();
     }
-    const open = (dir: string) => new Counting(dir, { timeoutMs: 50 });
-    dispatchHook(bash, { cwd, env, now: NOW, openLeases: open });
-    dispatchHook(bash, { cwd, env, now: NOW, openLeases: open });
-    assert.equal(heartbeats, 1, 'one scan in the window');
-    // a reservation another hook of this session holds for the window: this event does not scan
-    const later = addMs(NOW, 5 * MINUTE_MS);
-    writeFileSync(path.join(stateDir, 'heartbeat', reservation('sess-S', later)), '');
-    const before = bytes(leases, 'T1-DUE');
-    dispatchHook(bash, { cwd, env, now: later });
-    assert.equal(bytes(leases, 'T1-DUE'), before, 'a reserved window is not scanned');
+    assert.deepEqual(scanning, [path.resolve(leases.dir)], 'a scanning event lists the leases directory once');
+    assert.deepEqual(skipped, [], 'a skipped event lists nothing');
+    assert.equal(leases.read(key('T1-MINE'))?.expiresAt, addMs(NOW, DEFAULT_LEASE_TTL_MS));
   });
 });
 
