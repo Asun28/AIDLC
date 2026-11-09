@@ -34,6 +34,7 @@ acceptance:
   - 7. The docs and CHANGELOG state R1, R2 and R4 (reviewer-verified against the diff). [R5]
 depends_on: [T0-CARD-TERMINAL-GOAL-2]
 budget: 280
+size_exception: "written before the T0-CARD-SIZE rule (2026-11-10)"
 tdd: true
 diagnosis:
   root_cause: "Two gaps (main at 338ae27). (1) A card lease lives 10 minutes (`DEFAULT_LEASE_TTL_MS`, src/coordination/lease.ts:20) and only the owner's card commands renew it (`CardRunner.assess`, card-runner.ts:615), so a BUILD whose implementer works longer than that leaves the lease expired while its session is alive. (2) A non-owner's `card next` then saves an ownership stop on the run (PREPARE's claim returns `expired` or `held`, card-runner.ts:891 and :896), and `nextInRun` (controller.ts:340) stops the goal on any stopped projected card, so the goal stops although the owner's next `card next` clears that stop (card-runner.ts:620). Fixing (1) alone still stops the goal through the `held` branch; fixing (2) alone still lets the lease expire."

@@ -25,6 +25,12 @@ export interface ParsedCard {
   body: string;
 }
 
+/**
+ * The largest budget a card that changes `src/` may declare without a `size_exception` (card T0-CARD-SIZE). On the
+ * records of 2026-11-10, such cards stopped on R3 review in 10 to 15 percent of runs at or below it and 44 to 60 above.
+ */
+export const MAX_CODE_CARD_BUDGET = 250;
+
 export const CARD_RULES = {
   id: CARD_ID_REGEX,
   tokenLiteral: /\{\{[A-Z_]+\}\}/,
@@ -103,6 +109,8 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
     hygiene: scalar(fm, 'hygiene') || undefined,
     doc_sync: scalar(fm, 'doc_sync') || undefined,
     superseded_by: scalar(fm, 'superseded_by') || undefined,
+    // One pair of outer quotes is removed, so `size_exception: ""` reads as blank.
+    size_exception: scalar(fm, 'size_exception')?.replace(/^(["'])([\s\S]*)\1$/, '$2'),
     tdd: parseBool(scalar(fm, 'tdd')) ?? true,
     freeze: parseBool(scalar(fm, 'freeze')) ?? false,
     migration_phase: scalar(fm, 'migration_phase') || undefined,
@@ -134,6 +142,10 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
   if (CARD_RULES.blockScalar.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-BLOCK-SCALAR]', severity: 'block', message: 'dod_command is a bare block-scalar indicator' });
   if (CARD_RULES.noopDod.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-NOOP]', severity: 'block', message: 'dod_command is a no-op' });
   if (/pwsh\s+-Command[^\n]*\$[A-Za-z_]/.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-NESTED-VAR]', severity: 'block', message: 'no `$variable` inside a nested pwsh -Command payload (L95)' });
+  const changesSrc = card.allow_paths.some((p) => p.replace(/\\/g, '/').replace(/^\.\//, '').startsWith('src/'));
+  if (changesSrc && card.budget !== undefined && card.budget > MAX_CODE_CARD_BUDGET) {
+    findings.push({ sentinel: '[CARD-SIZE]', severity: active && !card.size_exception?.trim() ? 'block' : 'warn', message: `budget ${card.budget} is over ${MAX_CODE_CARD_BUDGET} on a card that changes src/: split the card, or record who approved it and why as size_exception` });
+  }
   if (card.allow_paths.length > 5 && !card.sweep) findings.push({ sentinel: '[CARD-SWEEP]', severity: advisory, message: `allow_paths has ${card.allow_paths.length} entries (>5) but no sweep` });
   if (CARD_RULES.tokenLiteral.test(text)) findings.push({ sentinel: '[CARD-TOKEN-LITERAL]', severity: 'block', message: 'template token literal {{...}} left in card' });
   if (CARD_RULES.placeholder.test(fm)) findings.push({ sentinel: '[CARD-PLACEHOLDER]', severity: 'warn', message: 'placeholder text (path/to/ or <...>) left in front matter' });

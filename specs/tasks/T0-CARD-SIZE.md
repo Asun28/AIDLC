@@ -54,3 +54,17 @@ npm run typecheck && node --test tests/surface/card.test.ts tests/surface/budget
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and both test files pass.
+
+## Attempt evidence
+
+Attempt 1 (RED 577557e: the four `[CARD-SIZE]` tests failed before the fix, expected 1 finding got 0, no `superseded_by`, no paragraph).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/card.test.ts, "a todo card that changes src/ with budget 251 gets one blocking finding ..." | pass |
+| 2 | same file, "merged, superseded or a non-blank size_exception makes it a warning ..." | pass |
+| 3 | same file, "this repository loads with no blocking [CARD-SIZE] ..." (reads the worktree registry; `aidlc cards validate` reads the main checkout's until the merge) | pass |
+| 4 | tests/surface/budget-doc.test.ts, unchanged | pass |
+| 5 | same card.test.ts file, "docs/OPERATIONS.md, the CHANGELOG Unreleased section and both card templates carry the rule" | pass |
+
+DoD: `npm run typecheck && node --test tests/surface/card.test.ts tests/surface/budget-doc.test.ts` exit 0, 37 tests, 37 pass. `git diff --numstat origin/main -- src`: card.ts +12, types.ts +2. tests/surface/prose.test.ts and tests/surface/templates.test.ts also pass.

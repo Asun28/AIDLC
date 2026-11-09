@@ -34,6 +34,7 @@ acceptance:
   - 8. `docs/OPERATIONS.md`, the `docs/ARCHITECTURE.md` board paragraph and README state the command and the Output contract (reviewer-verified against the diff). [R1]
 depends_on: []
 budget: 500
+size_exception: "budget 500 approved by the user on 2026-11-09 with the plan section 2026-11-09 follow-up cards, before the T0-CARD-SIZE rule"
 tdd: true
 sweep: "grep -rn 'aidlc board' README.md docs/OPERATIONS.md docs/ARCHITECTURE.md CLAUDE.md templates/CLAUDE.aidlc.md .claude/skills/aidlc-loop/*.md: docs/OPERATIONS.md:168 (Sessions, state commands), docs/ARCHITECTURE.md:14 and :176 (board.ts and the board file), CLAUDE.md:130, templates/CLAUDE.aidlc.md:13 and .claude/skills/aidlc-loop/arc.md:5 describe the board view and need no change, since --watch is optional."
 forbid: [a call to aidlc next or the goal controller, any write under the state directory, a change to the Directive schema, record text on screen other than the R3 kinds, a longer README Multi-session section]
