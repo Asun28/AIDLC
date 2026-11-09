@@ -122,19 +122,19 @@ function getPath(obj: unknown, p: string): unknown {
 
 /**
  * Runs one case with `AIDLC_STATE_DIR` set to a new empty temporary directory, so no eval reaches the repository's
- * `.aidlc/`. Under `skipModel` the checks run in `options.cwd` and no model is called. Otherwise the model and every
- * check run in a detached temporary checkout of HEAD (of `options.ref` when given). The state directory and the checkout
- * are removed afterwards, also when the model, a check or the runner throws; what could not be removed is reported in
- * `detail`.
+ * `.aidlc/`. Under `skipModel` no model is called and the checks run in `options.cwd`, or, with `checkout` (every trial
+ * run of `runTrials`), in a detached temporary checkout of HEAD. Otherwise the model and every check run in a detached
+ * temporary checkout of HEAD (of `options.ref` when given). The state directory and the checkout are removed
+ * afterwards, also when the model, a check or the runner throws; what could not be removed is reported in `detail`.
  */
-export async function runEval(evalCase: EvalCase, provider: ModelProvider, options: { cwd: string; runner?: SyncRunner; skipModel?: boolean; ref?: string } = { cwd: process.cwd() }): Promise<EvalResult> {
+export async function runEval(evalCase: EvalCase, provider: ModelProvider, options: { cwd: string; runner?: SyncRunner; skipModel?: boolean; ref?: string; checkout?: boolean } = { cwd: process.cwd() }): Promise<EvalResult> {
   const started = Date.now();
   const runner = options.runner ?? runSync;
   const done = (checks: EvalResult['checks'], r?: CompletionResult): EvalResult => ({ id: evalCase.id, dimension: evalCase.dimension, passed: checks.every((c) => c.ok), checks, invocationId: r?.invocationId, model: r?.model, durationMs: Date.now() - started });
   const ws: Workspace = {};
   let result: EvalResult;
   try {
-    if (options.skipModel) {
+    if (options.skipModel && !options.checkout) {
       ws.stateDir = newStateDir();
       result = done(runChecks(evalCase, runner, options.cwd, undefined, { AIDLC_STATE_DIR: ws.stateDir }));
     } else {
@@ -154,6 +154,7 @@ export async function runEval(evalCase: EvalCase, provider: ModelProvider, optio
       return done([{ check: 'checkout', ok: false, detail: (err as Error).message }]);
     }
     const env = { AIDLC_STATE_DIR: w.stateDir! };
+    if (options.skipModel) return done(runChecks(evalCase, runner, w.checkout!, undefined, env));
     const recordToolCalls = evalCase.checks.some((c) => TOOL_CALL_CHECKS.has(c.type));
     const r = await provider.complete({ role: evalCase.role, system: EVAL_SYSTEM_PROMPT, prompt: evalCase.prompt, effort: evalCase.effort, allowedTools: evalCase.allowedTools, cwd: w.checkout, env, ...(recordToolCalls ? { recordToolCalls } : {}) });
     if (r.outcome !== 'ok') return done([{ check: 'model', ok: false, detail: `${r.outcome}: ${r.error ?? ''}` }], r);
@@ -441,10 +442,10 @@ function figures(runsByCase: TrialRun[][]): { perCase: TrialFigures[]; total: Tr
 }
 
 /**
- * Runs each case `trials` times (card T1-EVAL-VARIANT). With `variant`, each run of a case on a temporary checkout of
- * HEAD is followed by one on a temporary checkout of the variant commit, both through `runEval`, and the report carries
- * the `compareTrials` verdict for HEAD against the ref on the pass rate. A quota hold or a checkout that cannot be created stops
- * the run. Refused before any model call: a trial count outside 1 to 20, `variant` with `skipModel`, and a variant that
+ * Runs each case `trials` times (card T1-EVAL-VARIANT), each run through `runEval` in a temporary checkout of HEAD,
+ * under `skipModel` too. With `variant`, each run of a case on HEAD is followed by one on a temporary checkout of the
+ * variant commit, and the report carries the `compareTrials` verdict for HEAD against the ref on the pass rate. A quota
+ * hold or a checkout that cannot be created stops the run. Refused before any model call: a trial count outside 1 to 20, `variant` with `skipModel`, and a variant that
  * names no commit.
  */
 export async function runTrials(cases: EvalCase[], provider: ModelProvider, options: { cwd: string; trials: number; variant?: string; skipModel?: boolean; runner?: SyncRunner; dir?: string }): Promise<EvalTrialsReport> {
@@ -480,7 +481,8 @@ export async function runTrials(cases: EvalCase[], provider: ModelProvider, opti
     for (const [i, c] of cases.entries()) {
       for (const [s, ref] of sides.entries()) {
         outcome = undefined;
-        const r = await runEval(c, watched, { cwd, runner: options.runner, skipModel: options.skipModel, ref });
+        // Every trial run, with or without skipModel, runs in a temporary checkout, never in `cwd` itself.
+        const r = await runEval(c, watched, { cwd, runner: options.runner, skipModel: options.skipModel, ref, checkout: true });
         if (r.detail) left.push(r.detail);
         const checkout = r.checks.find((x) => x.check === 'checkout' && !x.ok);
         if (checkout) {

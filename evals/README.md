@@ -73,7 +73,10 @@ checks that exit 0/1. No model-graded opinions.
   notes it. The exit code is 0 for any verdict and 1 when a temporary
   checkout cannot be created; the threshold does not apply. `--trials`
   without `--variant` runs HEAD alone n times and reports the same
-  figures with no verdict; with neither option the output and the gate
+  figures with no verdict. Every run of a `--trials` or `--variant` run,
+  also under `--skip-model`, runs in a detached temporary checkout (of
+  HEAD or of the ref) with a new empty `AIDLC_STATE_DIR`, both removed
+  afterwards, never in the worktree it is started from; with neither option the output and the gate
   are unchanged.
 - A change to `.claude/**`, CLAUDE.md or REVIEW.md is kept when the
   variant run on the agent cases gives `better` or
