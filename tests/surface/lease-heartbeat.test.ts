@@ -237,3 +237,31 @@ test('T0-CARD-LEASE-HEARTBEAT R1: a Stop event of session S leaves its due lease
     assert.equal(bytes(leases, 'T1-DUE'), before);
   });
 });
+
+test('T0-CARD-LEASE-HEARTBEAT-2 acceptance 12: the per-guard entry `aidlc hook protect-paths` renews the session lease and answers as it does with no lease [R1] [R2]', () => {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    const upper = k.toUpperCase();
+    if (upper.startsWith('AIDLC_') || ['CLAUDE_CODE_SESSION_ID', 'RELEASE_APPROVAL', 'NODE_OPTIONS'].includes(upper)) continue;
+    env[k] = v;
+  }
+  const guard = (stateDir: string) =>
+    spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'hook', 'protect-paths'], {
+      cwd: root,
+      input: JSON.stringify({ ...bash, cwd: root }),
+      env: { ...env, AIDLC_STATE_DIR: stateDir },
+      encoding: 'utf8',
+      windowsHide: true,
+    });
+  const without = withState(({ stateDir }) => guard(stateDir));
+  withState(({ stateDir, leases }) => {
+    // the child runs on the real clock: a lease that expired in 2020 is due whatever the time
+    const old = leases.claim(key('T1-DUE'), { actor: S, now: '2019-12-31T23:50:00.000Z', operation: 'card:T1-DUE' }).lease;
+    assert.equal(old.expiresAt, '2020-01-01T00:00:00.000Z');
+    const r = guard(stateDir);
+    assert.deepEqual([r.status, r.stdout], [without.status, without.stdout], 'the guard answers as with no lease');
+    const after = leases.read(key('T1-DUE'));
+    assert.ok(after && Date.parse(after.expiresAt) > Date.parse(old.expiresAt), `renewed: ${after?.expiresAt}`);
+    assert.equal(after?.generation, old.generation);
+  });
+});
