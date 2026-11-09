@@ -103,6 +103,9 @@ test('T0-CARD-TERMINAL-GOAL acceptance 5: after goal resume the same card next i
   const { fx, goalId, cli } = setup();
   try {
     fx.controller.report({ goalId, generation: 0, result: 'cancel', data: { detail: 'stopped' } });
+    // The CLI runs on the real clock, past the fixture's goal deadline: a fixed far deadline keeps the resumed goal from a time stop.
+    const g = fx.goal(goalId);
+    fx.store.saveGoal({ ...g, deadlines: { ...g.deadlines, goalDeadline: '2099-01-01T00:00:00.000Z' } });
     const resume = cli('goal', 'resume', goalId, '--reason', 'continue the card');
     assert.equal(resume.status, 0, resume.stderr);
     const r = cli('card', 'next', CARD, '--goal', goalId);
