@@ -322,7 +322,12 @@ export class GoalController {
     const ownedElsewhere = new Map<string, string>();
     for (const r of runs) {
       if (!goal.cards.includes(r.cardId) || r.state !== 'STOP' || r.stop?.reason !== 'ownership' || outcomes[r.cardId] !== 'stopped') continue;
-      const lease = this.leases.read(resourceKeys.card(this.repo.key, r.cardId));
+      let lease: Lease | undefined;
+      try {
+        lease = this.leases.read(resourceKeys.card(this.repo.key, r.cardId));
+      } catch {
+        continue; // a lease that cannot be read keeps the run stopped, as before this card
+      }
       if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now)) {
         ownedElsewhere.set(r.cardId, lease.owner.session);
         outcomes[r.cardId] = 'running';
