@@ -63,3 +63,16 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/core/trial-co
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `80399e1:1`. At 80399e1 `runTrials` is a stub that throws `runTrials: not implemented`, `compareTrials` takes no names and `evals run` declares no `--trials`: the typecheck fails with five TS2554 errors (the third argument of `compareTrials` in the acceptance 5 test), and the DoD test files run 41 tests, 31 pass, 10 fail: every new test except acceptance 4, each on its own assertion or on the stub error. Acceptance 4 passes there, since it pins the output from before the card.
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/surface/evals.test.ts `T1-EVAL-VARIANT acceptance 1` (two tests): two-commit fixture, scripted provider; HEAD 0/3 and the variant 3/3 with literal figures, verdict `better`, the provider saw the notes of HEAD, variant, HEAD, variant, HEAD, variant, and every checkout is gone; from the other commit the verdict is `worse` | pass |
+| 2 | Same file, `acceptance 2` (two tests): a model error on call 1 (HEAD) and on call 4 (the variant) each give `inconclusive` with the reason naming the side and `1 model errors`; a quota hold on call 3 stops the run after 3 calls and the reason names the trial counts and `1 quota holds`; `--trials 2` gives `inconclusive` naming `2 trials, fewer than the 3` | pass |
+| 3 | Same file, `acceptance 3` (two tests): `runTrials` refuses `variant` with `skipModel`, the refs `no-such-ref"`, a blob id and `--all` (each quoted as a JSON string), and the trial counts 0, 21 and 1.5, with the scripted provider never called; the CLI exits 1 on `--trials 0`, `--trials 21` and `--variant HEAD --skip-model` with empty stdout | pass |
+| 4 | Same file, `acceptance 4`: the CLI with neither option on a copy of `evals/example-regression.json` gives the literal result object of before the card and exit 0 with `npm test` passing, exit 1 with it failing | pass |
+| 5 | tests/core/trial-compare.test.ts `T1-EVAL-VARIANT acceptance 5`: with names that carry no second metric, `better`, `worse` and `no-measurable-difference` with reasons naming only the pass rate; a false-block range left in the summaries does not decide; the inconclusive reason names quota holds and model errors | pass |
+| 6 | tests/surface/command-lines.test.ts `T1-EVAL-VARIANT acceptance 6`: `evals run --help` declares `--variant <ref>` and `--trials <n>`; OPERATIONS and evals/README.md name the variant command line | pass |
+| 7 | evals/README.md and templates/evals/README.md (identical) and docs/OPERATIONS.md, Evals: the commands, R1 to R6, and the keep rule for `.claude/**`, CLAUDE.md and REVIEW.md as a practice, not a gate (reviewer-verified against the diff) | written |
