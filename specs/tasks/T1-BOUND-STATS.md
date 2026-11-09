@@ -1,7 +1,7 @@
 ---
 id: T1-BOUND-STATS
 title: "`aidlc bounds [--goal <id>]` counts each loop bound that fired and the goal outcome after it, read only from the goal and card-run records"
-status: todo
+status: merged
 branch: T1-BOUND-STATS
 worktree: D:\wt\AIDLC\T1-BOUND-STATS
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#2026-11-09-follow-up-cards
@@ -71,3 +71,17 @@ npm run typecheck && node --test tests/infra/bounds.test.ts tests/surface/bounds
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+Attempt 1. RED commit `6e6c160` (tests only): the DoD exited 2 there, `tsc` TS2307 for the missing `src/state/bounds.ts` and the CLI test failing on `unknown command 'bounds'`.
+Attempt 2 repairs R3 decision 1: F1 adds the ci STOP whose only rerun is cancelled (fires once) and one whose rerun is for another candidate (does not fire); F2 adds the no-snapshot statement of R6 to the README Limits paragraph and the `docs/ARCHITECTURE.md` module map.
+
+| Acceptance | Proved by | Result |
+|---|---|---|
+| 1 | `tests/infra/bounds.test.ts`, suite "Derivation rows": one test per row, the STOP case and, where the row has one, the reached case, each asserting the full set of fired bounds; the Transient CI rerun STOP case also alone (only a cancelled rerun) and with a rerun for another candidate | pass |
+| 2 | same file, suite "STOPs that are not a bound": the card time STOP copied to the goal, both orders; ci STOP with no rerun, R2 exhaustion, ownership STOP, checkpoint STOP with a `planRef` | pass |
+| 3 | same file, suite "outcomes": DONE, STOP/cancelled and open goals; a run of a card absent from `goal.cards`; one card with runs in two goals | pass |
+| 4 | same file, suite "the line": exact line in Limits order, `Bounds: none fired`, `Extensions:` counts, an extension-lifted time STOP not counted, the effective deadline after an extension, escaped ids | pass |
+| 5 | `tests/surface/bounds.test.ts`: piped JSON, `--goal` narrows, `--no-json` line, unknown and non-plain `--goal` exit 1, schema-invalid run and malformed goal exit 1 naming file and code with no stack trace, state directory snapshot byte-identical | pass |
+| 6 | `git diff --numstat origin/main...HEAD -- src`: `src/cli/main.ts` +20, `src/state/bounds.ts` +101, total +121; `git diff origin/main...HEAD -- src/core/types.ts src/loop/card-runner.ts src/loop/controller.ts src/state/journal.ts` empty | pass |
+| 7 | README.md Limits paragraph, `docs/OPERATIONS.md` "Bound statistics" (before "Review statistics", which tests pin to be followed by "Mutant sweep"), `docs/ARCHITECTURE.md` `src/state/` paragraph | reviewer to verify |
