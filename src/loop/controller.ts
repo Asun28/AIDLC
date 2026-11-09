@@ -317,6 +317,22 @@ export class GoalController {
     const base = this.baseOf(goal);
     const registry = this.registryLoader();
     const { cards, runs, outcomes } = this.cardOutcomes(goal, registry);
+    // A projected run stopped for ownership while its card lease is live is the lease owner's work in progress: the owner's
+    // next `card next` clears that stop, so the goal waits on it instead of stopping (card T0-CARD-LEASE-HEARTBEAT).
+    const ownedElsewhere = new Map<string, string>();
+    for (const r of runs) {
+      if (!goal.cards.includes(r.cardId) || r.state !== 'STOP' || r.stop?.reason !== 'ownership' || outcomes[r.cardId] !== 'stopped') continue;
+      let lease: Lease | undefined;
+      try {
+        lease = this.leases.read(resourceKeys.card(this.repo.key, r.cardId));
+      } catch {
+        continue; // a lease that cannot be read keeps the run stopped, as before this card
+      }
+      if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now)) {
+        ownedElsewhere.set(r.cardId, lease.owner.session);
+        outcomes[r.cardId] = 'running';
+      }
+    }
     const poolBusy = this.queue.pool(goal.reviewPool).maxConcurrent <= 1;
     const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers, singleReviewerSlot: poolBusy && goal.maxWorkers > 1 ? false : undefined });
     this.writeBoard(goal, cards, runs, outcomes);
@@ -348,7 +364,7 @@ export class GoalController {
         const next = transitionGoal(goal, 'WAIT', now);
         this.store.saveGoal(next);
       }
-      const running = projected.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state)).map((r) => `${r.cardId}:${r.state}`);
+      const running = projected.filter((r) => ['BUILD', 'SHIP', 'REVIEW_FIX', 'WAIT', 'PREPARE', 'CLOSE'].includes(r.state) || ownedElsewhere.has(r.cardId)).map((r) => (ownedElsewhere.has(r.cardId) ? `${r.cardId}:owner:${ownedElsewhere.get(r.cardId)}` : `${r.cardId}:${r.state}`));
       return Directive.parse({ kind: 'wait', ...base, goalState: 'WAIT', on: running.join(',') || 'dependencies', pollSeconds: 90, narration: `Waiting on ${running.join(', ') || 'dependency closure'}; ${arc.reasons.join('; ')}` });
     }
     if (goal.state === 'WAIT') {

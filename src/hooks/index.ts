@@ -26,13 +26,14 @@
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
-import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { droppedCards } from '../core/amendments.ts';
 import { requireAuthority } from '../core/authorization.ts';
-import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
+import { AuthorizationRecord, nowIso, type ActorIdentity, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
-import { StoreError } from '../state/store.ts';
+import { StoreError, atomicWriteText } from '../state/store.ts';
 import type { LeaseStore } from '../coordination/lease.ts';
 import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -546,6 +547,74 @@ export function secretsGuard(event: HookEvent): HookResult {
 export function hookSession(event: HookEvent, env: NodeJS.ProcessEnv): string | undefined {
   if (env['AIDLC_SESSION']) return env['AIDLC_SESSION'];
   return typeof event.session_id === 'string' && event.session_id ? event.session_id : undefined;
+}
+
+/** `DEFAULT_LEASE_TTL_MS` of `../coordination/lease.ts`, repeated so an event with no lease to renew loads no lease module. */
+const LEASE_TTL_MS = 10 * 60 * 1000;
+/** How long a heartbeat waits for a lease lock another process holds before it skips that lease. */
+const HEARTBEAT_LOCK_MS = 50;
+/** A session scans the lease files at most once per UTC window of this length: a scan of a few hundred files costs about as much as loading zod. */
+const HEARTBEAT_WINDOW_MS = 60 * 1000;
+
+/**
+ * Card T0-CARD-LEASE-HEARTBEAT, R1 to R3: renew every card lease of the event's session on this host that is unreleased
+ * and has less than half of its TTL left (expired included), through `LeaseStore.heartbeat` at the lease's own
+ * generation, so a session that is making tool calls keeps its card lease live. The scan reads the lease files with
+ * node:fs and JSON.parse; the lease store loads only when a lease qualifies. The scan runs once per UTC minute window
+ * (floor(now / `HEARTBEAT_WINDOW_MS`)) per session: the marker `<state>/heartbeat/<sha256(session) first 16 hex>` holds
+ * the window of the session's last scan, and an event in that window or an earlier one does nothing more. Two hooks
+ * that read the marker before either writes it may both scan; that renews the same leases twice under the lease lock,
+ * which costs time only. A state without a leases directory gets nothing created, and only that directory is listed.
+ * A lease that cannot be read, a released lease, a fenced heartbeat (another session took the lease over) or a lock
+ * held elsewhere skips that lease. Nothing is printed,
+ * returned or journaled, and no error leaves this function.
+ */
+export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJS.ProcessEnv, now: string = nowIso(), openLeases?: (dir: string) => LeaseStore): void {
+  try {
+    const session = hookSession(event, env) ?? env['CLAUDE_CODE_SESSION_ID'];
+    if (!session) return;
+    const paths = resolveStatePaths(cwd, env);
+    const dir = paths.leases;
+    const nowMs = Date.parse(now);
+    if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
+    const marker = path.join(paths.root, 'heartbeat', createHash('sha256').update(session).digest('hex').slice(0, 16));
+    const window = Math.floor(nowMs / HEARTBEAT_WINDOW_MS);
+    let last = -Infinity;
+    try {
+      const text = readFileSync(marker, 'utf8');
+      if (/^\d+$/.test(text)) last = Number(text);
+    } catch {
+      /* no marker */
+    }
+    // The current window or a later one (a delayed hook carrying an older time) is already scanned.
+    if (last >= window) return;
+    atomicWriteText(marker, String(window));
+    const names = readdirSync(dir);
+    const host = hostName();
+    const due: { resourceKey: string; generation: number; owner: ActorIdentity }[] = [];
+    for (const name of names) {
+      if (!name.endsWith('.json')) continue;
+      try {
+        const raw = JSON.parse(readFileSync(path.join(dir, name), 'utf8')) as Partial<Lease> | null;
+        if (!raw || typeof raw.resourceKey !== 'string' || !raw.resourceKey.startsWith('card:') || raw.released === true) continue;
+        if (raw.owner?.session !== session || raw.owner.host !== host || !Number.isInteger(raw.generation)) continue;
+        if (Date.parse(String(raw.expiresAt)) - nowMs < LEASE_TTL_MS / 2) due.push({ resourceKey: raw.resourceKey, generation: raw.generation!, owner: raw.owner });
+      } catch {
+        /* unreadable: skipped */
+      }
+    }
+    if (!due.length) return;
+    const leases = openLeases ? openLeases(dir) : new (lazy.lease().LeaseStore)(dir, { timeoutMs: HEARTBEAT_LOCK_MS });
+    for (const lease of due) {
+      try {
+        leases.heartbeat(lease.resourceKey, lease.generation, { actor: lease.owner, now, ttlMs: LEASE_TTL_MS });
+      } catch {
+        /* malformed, released, fenced or locked: skipped */
+      }
+    }
+  } catch {
+    /* the renewal never changes the hook result */
+  }
 }
 
 /** The codes a lease read fails with; anything else is UNREADABLE, so no error text reaches a session's context. */

@@ -65,3 +65,67 @@ npm run typecheck && node --test tests/surface/lease-heartbeat.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1. RED 10f3434 (both test files), corrected at dea9441: acceptance 4's expired case now saves its stop after the expiry (PREPARE's `expired` claim, as in the incident); saved under the live lease, the stop is the stale-generation one, which never names `card takeover`. Still red without the controller change (`expected 'wait'`, `actual 'stop'`).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 [R1] | `tests/surface/lease-heartbeat.test.ts` "acceptance 1": 4 min left and expired 20 min ago renewed to now + `DEFAULT_LEASE_TTL_MS` at the same generation; 6 min left, released, session T byte-identical. The event carries `session_id` and the env has no `AIDLC_SESSION`, so the event's session is the one used (a subagent's PreToolUse carries the parent's `session_id`) | pass; red before (`12:04` vs `12:10`) |
+| 2 [R2] | same file, two "acceptance 2" tests: in process, malformed (not JSON, and JSON naming S that the schema refuses), fenced (takeover by T injected between the scan and the heartbeat through `openLeases`) and a held lock give the result of the same event on an empty state dir, the takeover stands, a good lease beside them is renewed, no `journal/`; as a process (`bin/aidlc-hook.js`), malformed plus held lock: exit 0, stdout and stderr empty | pass |
+| 3 [R1] | same file, "acceptance 3": UserPromptSubmit renews S's 4-minute lease | pass; red before |
+| 4 [R4] | `tests/scenarios/ownership-wait.test.ts` "acceptance 4": live lease of B: `wait` on `T1-HELLO:owner:win-B`, goal not STOP, no `GOAL_STOPPED`; expired: STOP/ownership naming `card takeover`, one `GOAL_STOPPED` | pass; red before |
+| 5 [R1][R4] | same file, "acceptance 5": hook renews A's lease 1 s before expiry, B's `card next` saves the ownership stop, B's `controller.next` waits, A's `card next` builds (`LEASE_RENEWED` revalidated), attempt recorded, run at CLOSE, A's `next` not stop, `verifyAudit` has no `WORK_AFTER_TERMINAL` | pass; red before |
+| 6 [R3] | `hooks.test.ts`, `hook-lazy.test.ts` unchanged and green in the DoD; `npm run build && npm run bench -- --check`: "every count within its ceiling (6 journeys)"; fsCalls hook.pre-bash 9/7, hook.pre-edit 10/8, hook.prompt 9/7 (the marker stat and the `leases/` listing), modules and depBytes within slack; no ceiling raised | pass |
+| 8 [R3] | `tests/surface/lease-heartbeat.test.ts` "acceptance 8": a lease due after the first scan is byte-identical after an event 30 s later and renewed to now + TTL by one 61 s later; a state root without `leases/` stays empty and an absent state root is not created | pass; red at 821d5ab (the 30 s event renewed it) |
+| 7 [R5] | OPERATIONS.md `ownership` row and a Hooks paragraph, ARCHITECTURE.md hooks paragraph, CHANGELOG Unreleased bullet | reviewer to verify |
+
+Amendment (coordinator pre-review of 1bf5dc7): R3 gains the 60-second scan throttle and acceptance 8. Reason: this repository's `.aidlc/leases` holds 429 files and the unthrottled scan cost 72 to 88 ms per tool call (coordinator's warm measurement), about the cost of loading zod, which the bench cannot see on its empty state directory. Measured after the fix on a temp state with 429 lease files of another session, 10 runs in process on Windows: scan median 183.7 ms, throttled event (marker 30 s old) median 0.14 ms. The marker is `<state>/heartbeat/<sha256(session) first 16 hex>`, its mtime set to the scan time.
+
+R4, unreadable lease: `nextInRun` catches a card lease read that throws (malformed JSON, schema) and keeps the run `stopped`, so the goal stops as before this card; this is R4's "absent" case extended to a lease that cannot be read. Proof: `tests/scenarios/ownership-wait.test.ts` "a card lease file that cannot be read keeps the goal stop" (red at 821d5ab: `controller.next` threw `MALFORMED_JSON`).
+
+same_class readers:
+- `src/state/board.ts` `outcomeOf`: not changed (outside allow_paths). The controller passes its adjusted outcomes to `writeBoard`, but `renderBoard` writes each projected card over them from its own run, so the board row still shows the run as STOP while the goal waits.
+- Stop hook ownership check (`verifyBeforeDone`, `ownedHere`): not affected. It lists runs in BUILD, SHIP or REVIEW_FIX only, never a STOP run, and reads no expiry; the heartbeat only keeps the owner's lease live.
+- Goal lease: not renewed by the hook (non_goals).
+
+Not changed: the OPERATIONS.md Sessions sentence "the goal-level `aidlc next` run between the card's stop and the takeover stops the goal on that stop" now holds only once the card lease has expired (the brief keeps the Sessions section from growing; the `ownership` row states the wait).
+
+Budget: raised from 280 to 420 by the coordinator at b2cd824. The diff is +416/-8: source about 101 lines, the two new test files about 285, docs and this card about 38. The excess comes from the coordinator's pre-review amendment (the 60-second scan throttle, acceptance 8 and the unreadable-lease case) and from the test files, not from source outside the requirements.
+
+Mutation sweep on 4444322 (`.review/T0-CARD-LEASE-HEARTBEAT.mutants.json`), 5 survivors. Three closed with tests only, no source change, in `tests/surface/lease-heartbeat.test.ts`; each was checked by hand: the mutant applied, the named test run and seen failing, the mutant reverted, `git diff --stat -- src/` empty afterwards.
+- `src/hooks/entry.ts:59` force-true: "R1: a Stop event of session S leaves its due lease unwritten" fails under it (the lease is renewed).
+- `src/hooks/index.ts:579` `>=` to `>`: "acceptance 8: an event at the marker time does not scan, and one exactly 60 seconds after it does" fails under it ("an event at the time of the last scan does not scan").
+- `src/hooks/index.ts:579` `<` to `<=`: the same test fails under it ("an event 60 s after the last scan scans").
+- `src/hooks/index.ts:592` drop-statement and force-false of the `.json` filter: equivalent mutants. A file that is not a lease record fails `JSON.parse` or the field checks and is skipped either way, so no observable behaviour changes.
+
+### Attempt 3 (REVIEW_FIX after R3 decision 1 on a1b3a05)
+
+RED 7d62ac3: acceptance 8 window edges (the next-window event did not renew: `12:04` vs `12:11`), 9 (a lease released meanwhile got `expiresAt` `12:10`), 10 (a `Read` event renewed nothing), 11 (a pre-reserved window still scanned), and `tests/infra/lease.test.ts` "heartbeat refuses a released lease" (missing expected exception). Card amended: allow_paths and dod_command gain `src/coordination/lease.ts` and `tests/infra/lease.test.ts`; R1, R3, acceptance 8 reworded; acceptance 9 to 11 and one non_goal added.
+
+| Finding | Class closed | Fix | Proof |
+|---|---|---|---|
+| F1 heartbeat-after-release | every heartbeat caller, not only the hook: the check is in `LeaseStore.heartbeat` under the lease lock | a released lease throws `FencedError` (`lease released`) | acceptance 9 (hook, release injected between scan and heartbeat through `openLeases`) and `lease.test.ts` (store, byte-identical record) |
+| F2 heartbeat-skips-unguarded-tools | every PreToolUse and UserPromptSubmit event, whatever guards apply | the renewal runs before the no-guards return in `dispatchHook`; `main` also awaits the git prefetch for those events, so an unguarded event never asks git synchronously | acceptance 10 (`Read` event) |
+| F3 non-atomic-heartbeat-throttle | every overlapping pair of hooks of one session | reservation by `createExclusive(<state>/heartbeat/<hash16>.<floor(now/60000)>)`, the store's one exclusive-create primitive (`tests/infra/update-json.test.ts` keeps `'wx'` in `src/state/store.ts` only); false (EEXIST) means no scan; `leases/` checked with one stat before anything is created; older windows of the session removed best effort; the mtime marker removed | acceptance 8 (window edges, older reservation removed, no `leases/` creates nothing) and 11 (two events in one window: one heartbeat call; a reserved window is not scanned) |
+
+Steady-state cost of an event inside a reserved window: one stat of `leases/`, the recursive mkdir `createExclusive` makes, and one failed exclusive create.
+
+Bench after `npm run build`: `npm run bench -- --check` reports every count within its ceiling (6 journeys); fsCalls hook.pre-bash 8/7, hook.pre-edit 9/8, hook.prompt 8/7 (the one stat of the absent `leases/`), no ceiling raised. DoD: 79 tests, 75 pass, 0 fail, 4 platform skips.
+
+### Attempt 4 (REVIEW_FIX after R3 decision 2 on b9cf7c5)
+
+Coordinator ruling: the throttle bounds cost and is not a correctness property, so the design is simplified and no session lock is added. R3, acceptance 8 and 11 are replaced and a non_goal states the remaining race.
+
+RED ab38566: acceptance 8 (no per-session marker on b9cf7c5: `ENOENT` reading `heartbeat/<hash16>`) and acceptance 11 (a scanning event listed `heartbeat/` and `leases/`).
+
+| Finding | Fix | Proof |
+|---|---|---|
+| cleanup removed the previous window file, so a delayed hook could reserve that window again and scan | one marker per session holding the window of the last scan; an event whose window is the marker's or older does nothing more, so a delayed hook with an older time skips; no file is ever removed | acceptance 8 (older window skips; one file per session after scans in three windows) |
+| the overlap test ran its two events one after the other | the exact one-scan guarantee across simultaneous processes is a non_goal now; the window rule is tested with a fixed clock | acceptance 8 (same window renews nothing, even a lease made due again) |
+| the `heartbeat/` listing was a second listing | the reservation, the `heartbeat/` listing and the unlink cleanup are removed; the marker is read with `readFileSync` and written with `atomicWriteText` | acceptance 11 (counted `fs.readdirSync`: the scanning event lists `leases/` only, the skipped event none) |
+
+Cost of an event inside the marker's window: one stat of `leases/` and one read of the marker. F1 (`LeaseStore.heartbeat` refuses a released lease) and F2 (renewal before the no-guards return) are unchanged.
+
+DoD: 78 tests, 74 pass, 0 fail, 4 platform skips. `tests/infra/update-json.test.ts`: 17 pass. Bench after `npm run build`: every count within its ceiling (6 journeys); fsCalls hook.pre-bash 8/7, hook.pre-edit 9/8, hook.prompt 8/7; no ceiling raised.

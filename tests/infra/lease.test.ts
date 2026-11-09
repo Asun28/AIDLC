@@ -176,6 +176,15 @@ describe('coordination/lease (Q23 shared ownership, generations, fencing)', () =
     assert.equal(existsSync(lock), false);
   });
 
+  it('T0-CARD-LEASE-HEARTBEAT acceptance 9: heartbeat refuses a released lease under its lock and leaves the record byte-identical', () => {
+    const key = resourceKeys.card('repo1', 'T1-RELEASED-HB');
+    store.claim(key, { actor: A, now: t0 });
+    store.release(key, 0, A);
+    const before = readFileSync(store.file(key), 'utf8');
+    assert.throws(() => store.heartbeat(key, 0, { actor: A, now: iso(1000) }), (e: unknown) => e instanceof FencedError && /lease released/.test(e.message));
+    assert.equal(readFileSync(store.file(key), 'utf8'), before);
+  });
+
   it('list() returns every parseable lease; resource keys are scoped and case-insensitive', () => {
     const leases = store.list();
     assert.ok(leases.length >= 4);
