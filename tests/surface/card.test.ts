@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { computeTier, loadCardRegistry, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
+import { computeTier, loadCardRegistry, MAX_CODE_CARD_BUDGET, parseCardText, renderCard, validateRegistry, type CardFinding } from '../../src/artifacts/card.ts';
 
 function templateCard(overrides: Partial<Record<string, string>> = {}, extraFm = ''): string {
   const fm: Record<string, string> = {
@@ -375,6 +375,10 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
     assert.deepEqual(sized(card('250')), [], 'budget 250');
     assert.deepEqual(sized(card(undefined)), [], 'no budget');
     assert.deepEqual(sized(card('900', { allow_paths: '\n  - docs/foo.md\n  - tests/foo.test.ts' })), [], 'no src/ path');
+    const rendered = parseCardText(renderCard({ id: 'T1-FOO', title: 'foo', allowPaths: ['src/foo.ts'], dodCommand: 'node --test tests/foo.test.ts', acceptance: ['1. foo holds. [dod arm 1]'], worktreeRoot: 'C:\\wt', deliverable: 'foo' }), 'T1-FOO.md');
+    assert.ok(!('error' in rendered));
+    assert.equal(rendered.card.budget, MAX_CODE_CARD_BUDGET, 'renderCard defaults the budget to the limit');
+    assert.deepEqual(sized(rendered), [], 'a rendered src/ card with the default budget');
   });
 
   test('merged, superseded or a non-blank size_exception makes it a warning; a blank size_exception keeps the block; src\\ and ./src/ paths count [R1] [R2] [R3]', () => {
@@ -387,6 +391,11 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
     assert.deepEqual(severities(excepted), ['warn'], 'size_exception');
     assert.deepEqual(severities(card('251', {}, 'size_exception: ""')), ['block'], 'empty size_exception');
     assert.deepEqual(severities(card('251', {}, 'size_exception: "   "')), ['block'], 'blank size_exception');
+    // R3 decision 1, F1 (blank-size-exception-bypass): the YAML value decides, not the raw line text.
+    assert.deepEqual(severities(card('251', {}, 'size_exception: # approval pending')), ['block'], 'a comment only');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: |')), ['block'], 'an empty literal block scalar');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: "\\t"')), ['block'], 'an escaped tab');
+    assert.deepEqual(severities(card('251', {}, 'size_exception: 42')), ['block'], 'a number is not a reason');
     assert.deepEqual(severities(card('251', { allow_paths: '\n  - src\\foo.ts' })), ['block'], 'src\\foo.ts');
     assert.deepEqual(severities(card('251', { allow_paths: '\n  - ./src/foo.ts' })), ['block'], './src/foo.ts');
   });
