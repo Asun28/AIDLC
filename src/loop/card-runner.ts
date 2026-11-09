@@ -145,7 +145,7 @@ interface FormalResult {
 const ACCEPTANCE_TABLE = 'When allow_paths lists this card file, write a table in its `## Attempt evidence` section before the final DoD run, one row per acceptance item: the item number, the test or command that proves it, and its result. A row with no proof is unfinished work. Correct the table on every repair.';
 
 /** What a formal repair narration asks of whoever makes the repair (card T0-REPAIR-CHECK). No gate reads it. */
-const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines.';
+const REPAIR_CHECK = 'Before adding code, check whether removing the code the finding names fixes the defect at every site, and remove it if so. After the repair, read the repair hunks again for what they newly break: most later findings sit on or next to those lines. List in the attempt evidence each input form and failure path the repair hunks handle (for a parser, each kind of value it can be given; for I/O, each error it can raise), each with the test that covers it.';
 
 /** A formal result recovered from a reservation: it always names the pool request to settle. */
 type RetainedFormalResult = FormalResult & { key: string };
