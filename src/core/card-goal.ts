@@ -33,3 +33,25 @@ export function resolveCardGoal(goals: readonly CardGoalCandidate[], cardId: str
   if (projecting.length > 1) return { ok: false, error: `card ${cardId} is projected by no active goal and by ${projecting.length} terminal goals (${projecting.map((g) => g.id).join(', ')}); pass --goal <id>` };
   return { ok: false, error: `no goal projects card ${cardId}; create one with \`aidlc goal new --card ${cardId}\`` };
 }
+
+/** The goal fields the terminal-goal refusal reads (card T0-CARD-TERMINAL-GOAL). */
+export interface CardGoalState {
+  id: string;
+  state: string;
+  terminal: boolean;
+  stop?: { reason: string };
+}
+
+/**
+ * The refusal of a card command that does card work on a goal the goal dispatch guard treats as finished: terminal, or in
+ * STOP or DONE (`GoalController.next`). Returns the text naming the goal, its state, the stop reason and the one command
+ * that re-admits it, or nothing when the goal admits card work. A stop for time, and a goal a resume of a time stop left
+ * in STOP, is re-admitted by `aidlc goal extend`; any other is re-admitted by `aidlc goal resume`.
+ */
+export function terminalGoalRefusal(goal: CardGoalState): string | undefined {
+  if (!goal.terminal && goal.state !== 'STOP' && goal.state !== 'DONE') return undefined;
+  const reason = goal.stop ? ` (stop reason: ${goal.stop.reason})` : '';
+  const forTime = goal.stop?.reason === 'time' || (goal.state === 'STOP' && !goal.terminal);
+  const readmit = forTime ? `aidlc goal extend ${goal.id} --until <iso> --by <who> --reason "..."` : `aidlc goal resume ${goal.id} --reason "..."`;
+  return `goal ${goal.id} is ${goal.state}${reason}; card commands do no card work on it; re-admit it with \`${readmit}\``;
+}

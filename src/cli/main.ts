@@ -30,7 +30,7 @@ import { parseSpec } from '../artifacts/spec.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
-import { resolveCardGoal } from '../core/card-goal.ts';
+import { resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
 import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -485,8 +485,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   // ------------------------------------------------------------------ cards
   const card = program.command('card').description('single-card execution');
   const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store, allowShip: process.env['AIDLC_RUN_NO_SHIP'] !== '1' });
-  const cardCtx = (c: Ctx, cardId: string, goalId?: string) => {
+  /** The card's goal, refused when it is stopped or done before any card run is read or written (card T0-CARD-TERMINAL-GOAL). */
+  const workGoal = (c: Ctx, cardId: string, goalId?: string) => {
     const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, goalId));
+    const refusal = terminalGoalRefusal(goalRec);
+    if (refusal) fail(refusal);
+    return goalRec;
+  };
+  // `guard: false` is `card ci-reconcile`: it records an observed CI rerun, so it runs on a stopped goal too.
+  const cardCtx = (c: Ctx, cardId: string, goalId?: string, guard = true) => {
+    const goalRec = guard ? workGoal(c, cardId, goalId) : c.controller.mustGoal(cardGoalId(c, cardId, goalId));
     const parsed = cardOf(c, cardId);
     const run = c.controller.ensureCardRun(goalRec, cardId);
     return { goalRec, parsed, run };
@@ -565,7 +573,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { run: string; goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal, false);
       const updated = runnerFor(c).ciReconcile(goalRec, parsed.card, run, o.run);
       out(c, updated.ci, () => `reconciled; state=${updated.state}`);
     });
@@ -576,7 +584,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--data <json>')
     .action((cardId: string, o: { goal?: string; data: string }) => {
       const c = ctx(g());
-      const id = cardGoalId(c, cardId, o.goal);
+      const id = workGoal(c, cardId, o.goal).id;
       c.controller.ensureCardRun(c.controller.mustGoal(id), cardId);
       const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'card-result', cardId, data: parseData(o.data) });
       out(c, r.directive, () => `[${r.directive.kind}] ${r.directive.narration}`);
