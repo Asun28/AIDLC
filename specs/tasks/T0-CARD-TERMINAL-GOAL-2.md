@@ -62,3 +62,23 @@ npm run typecheck && node --test tests/core/card-goal.test.ts tests/scenarios/ca
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+History: T0-CARD-TERMINAL-GOAL, RED d85b58c (acceptance 1 to 3) and a720305 (R3 decision 1, F1 and F2); R3 passed dd876ac at decision 2; its base-sync merge d770af3 was blocked (F1 to F3, unguarded-goal-reload, refusal-runs-exit-sweep) and this card replaces it.
+
+RED at 4daa411: acceptance 6 fails at 9b484f0 with `card next T1-HELLO: ... listGoals,listGoals,getGoal,getCardRun,...`; acceptance 7 fails with the R2 refusal printed after the sweep was registered (`worktree removed: T1-HELLO` follows it).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/card-goal.test.ts`, `terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)` | pass |
+| 2 | `tests/scenarios/card-terminal-goal.test.ts`, acceptance 2 (three tests: eight commands with and without `--goal`; malformed run of an unprojected card; `card close --cleanup` and `--all` with no sweep) | pass |
+| 3 | same file, acceptance 3 | pass |
+| 4 | same file, acceptance 4 | pass |
+| 5 | same file, acceptance 5 | pass |
+| 6 | same file, `T0-CARD-TERMINAL-GOAL-2 acceptance 6`, with `card-terminal-goal.preload.ts` | pass (failed at RED) |
+| 7 | same file, `T0-CARD-TERMINAL-GOAL-2 acceptance 7`, preload with `AIDLC_TEST_CANCEL_AFTER_LIST` | pass (failed at RED) |
+| 8 | `tests/scenarios/card-goal.test.ts`, unchanged | pass |
+| 9 | `CHANGELOG.md` (Unreleased), `docs/OPERATIONS.md` (STOP reasons), `docs/ARCHITECTURE.md` (module map) under T0-CARD-TERMINAL-GOAL-2 | reviewer-verified |
+
+Goal-store calls up to the first card-run access on an active goal, with and without `--goal`, through the preload: `card next`, `card attempt`, `card close --all`, `card report`, `review pre`, `review r3`, `review dispute`, `review accept` each log `listGoals,getCardRun`.

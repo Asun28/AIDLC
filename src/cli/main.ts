@@ -30,7 +30,7 @@ import { parseSpec } from '../artifacts/spec.ts';
 import { evaluatePlanReadiness, parsePlanCards } from '../artifacts/plan.ts';
 import { formatRouting } from '../core/router.ts';
 import { formatStop } from '../core/stop.ts';
-import { resolveCardGoal } from '../core/card-goal.ts';
+import { resolveCardGoal, terminalGoalRefusal } from '../core/card-goal.ts';
 import { classifyCiFailure } from '../core/ci-policy.ts';
 import { detectDataImpact, buildMigrationPlan, checkMigrationOrdering, assessRecovery } from '../core/migrate.ts';
 import { ReviewQueue } from '../coordination/review-queue.ts';
@@ -505,12 +505,27 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   // ------------------------------------------------------------------ cards
   const card = program.command('card').description('single-card execution');
   const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store, allowShip: process.env['AIDLC_RUN_NO_SHIP'] !== '1' });
-  const cardCtx = (c: Ctx, cardId: string, goalId?: string) => {
-    const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, goalId));
-    const parsed = cardOf(c, cardId);
-    const run = c.controller.ensureCardRun(goalRec, cardId);
-    return { goalRec, parsed, run };
+  /**
+   * The card's goal from one read of the goal records (cards T0-CARD-TERMINAL-GOAL, T0-CARD-TERMINAL-GOAL-2): resolved as
+   * `cardGoalId` does and, with `guard`, refused when it is stopped or done; a named terminal goal is refused before
+   * `holdsRun` reads a run. The command then uses this record, never a reload, up to its first card-run access.
+   */
+  const checkedGoal = (c: Ctx, cardId: string, explicit: string | undefined, guard = true): Goal => {
+    const goals = c.store.listGoals();
+    const refuse = (goalRec: Goal | undefined) => {
+      const refusal = guard && goalRec ? terminalGoalRefusal(goalRec) : undefined;
+      if (refusal) fail(refusal);
+    };
+    if (explicit !== undefined) refuse(goals.find((x) => x.id === explicit));
+    const r = resolveCardGoal(goals, cardId, { explicit, holdsRun: (goalId) => c.store.getCardRun(goalId, cardId) !== undefined });
+    if (!r.ok) fail(r.error);
+    const goalRec = goals.find((x) => x.id === r.goalId)!;
+    refuse(goalRec);
+    return goalRec;
   };
+  const runCtx = (c: Ctx, goalRec: Goal, cardId: string) => ({ goalRec, parsed: cardOf(c, cardId), run: c.controller.ensureCardRun(goalRec, cardId) });
+  // `guard: false` is `card ci-reconcile`: it records an observed CI rerun, so it runs on a stopped goal too.
+  const cardCtx = (c: Ctx, cardId: string, goalId?: string, guard = true) => runCtx(c, checkedGoal(c, cardId, goalId, guard), cardId);
   card
     .command('next <cardId>')
     .description('gather evidence, select the card state and perform its bounded action')
@@ -570,9 +585,11 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')
     .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean; lesson?: string; skipLesson?: string }) => {
       const c = ctx(g());
+      // The goal is resolved and checked before the sweep is registered, so a refusal of a stopped goal runs no sweep.
+      const checked = checkedGoal(c, cardId, o.goal);
       // On exit, not in a `finally`: `fail` exits from inside the load of the card, and the sweep concerns the other cards.
       if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c));
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = runCtx(c, checked, cardId);
       const lessons = o.lesson !== undefined || o.skipLesson !== undefined ? true : undefined;
       const flags = o.all ? { metadata: true, docSync: true, findings: true, evidence: true, cleanup: true, lessons } : { metadata: o.metadata, docSync: o.docSync, findings: o.findings, evidence: o.evidence, cleanup: o.cleanup, lessons };
       const defined = Object.fromEntries(Object.entries(flags).filter(([, v]) => v !== undefined)) as Partial<typeof run.closure>;
@@ -585,7 +602,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--goal <id>')
     .action((cardId: string, o: { run: string; goal?: string }) => {
       const c = ctx(g());
-      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
+      const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal, false);
       const updated = runnerFor(c).ciReconcile(goalRec, parsed.card, run, o.run);
       out(c, updated.ci, () => `reconciled; state=${updated.state}`);
     });
@@ -596,9 +613,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .requiredOption('--data <json>')
     .action((cardId: string, o: { goal?: string; data: string }) => {
       const c = ctx(g());
-      const id = cardGoalId(c, cardId, o.goal);
-      c.controller.ensureCardRun(c.controller.mustGoal(id), cardId);
-      const r = c.controller.report({ goalId: id, generation: c.controller.mustGoal(id).generation, result: 'card-result', cardId, data: parseData(o.data) });
+      const goalRec = checkedGoal(c, cardId, o.goal);
+      c.controller.ensureCardRun(goalRec, cardId);
+      const r = c.controller.report({ goalId: goalRec.id, generation: goalRec.generation, result: 'card-result', cardId, data: parseData(o.data) });
       out(c, r.directive, () => `[${r.directive.kind}] ${r.directive.narration}`);
     });
   card
