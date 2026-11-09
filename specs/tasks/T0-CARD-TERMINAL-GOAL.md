@@ -20,7 +20,7 @@ requirements:
   - R2. The refusal shall name the goal id, its state and, for a stop, the stop reason, and the one command that re-admits the goal: `aidlc goal extend <id> --until <iso> --by <who> --reason "..."` for a stop for time or a goal left in `STOP` by a resume of a time stop, else `aidlc goal resume <id> --reason "..."`.
   - R3. The refusal shall be one pure function in `src/core/card-goal.ts` over the goal record (id, state, terminal, stop reason), returning the refusal text or nothing, used by every command of R1.
   - R4. `aidlc card status`, `card takeover` (the documented order is takeover, then `goal resume`), `card ci-reconcile` (it records an observed CI rerun), `card withdraw` (it keeps its own terminal refusal), `card mutants`, `review findings` and `review repro` shall behave as before this card on a terminal goal.
-  - R5. `docs/OPERATIONS.md` (Sessions, after the T0-CARD-GOAL-RESOLVE rule), `docs/ARCHITECTURE.md` (module map, `src/core/card-goal.ts`) and the CHANGELOG Unreleased section shall state R1, R2 and R4 under this card id.
+  - R5. `docs/OPERATIONS.md` (STOP reasons, not Sessions: tests/surface/prose.test.ts caps Sessions at 13701 bytes and it holds 13493 at a125546), `docs/ARCHITECTURE.md` (module map, `src/core/card-goal.ts`) and the CHANGELOG Unreleased section shall state R1, R2 and R4 under this card id.
 acceptance:
   - 1. `tests/core/card-goal.test.ts`: the function of R3 returns nothing for a goal in RUN, WAIT and CLOSE; for a goal stopped for time it returns text naming the goal, `STOP`, `time` and `aidlc goal extend`; for a goal stopped for ownership or cancelled it names the reason and `aidlc goal resume`; for a DONE goal it names `DONE` and `aidlc goal resume`; for a non-terminal goal in `STOP` (a resumed time stop) it names `aidlc goal extend`. [R2] [R3] [dod arm 1]
   - 2. `tests/scenarios/card-terminal-goal.test.ts` runs the CLI from the sources against a goal stopped with `cancel` that projects a card with no run: each command of R1, with `--goal` and without it, exits non-zero with the refusal of R2 on stderr, no card run file exists afterwards, and the goal journal has the same events as before the command. Fails before the fix (`card next` exits 0 and journals `CARD_DISPATCHED`). [R1] [R2] [dod arm 1]
@@ -40,7 +40,7 @@ sweep: "grep -n \"cardCtx\\|ensureCardRun\\|cardGoalId\" src/cli/main.ts. Lines 
 forbid: [weakening or skipping a test to go green, editing .aidlc state by hand, changing the verifier or WORK_AFTER_TERMINAL accounting, changing goal resolution (`resolveCardGoal`), refusing `card takeover` or `card ci-reconcile` on a stopped goal]
 non_goals: [rewriting the record of goal g-20261107095106-c08940 (its finding stays as recorded), stopping the goal less often when a card lease lapses while its owner works, guards inside `CardRunner` for library callers (only the CLI calls `next` and `recordAttempt`)]
 hygiene: "The full suite runs locally before SHIP: the guard can break a scenario test that drives a card command on a stopped goal, which the DoD files cannot show. Pass --goal on every card and review command while this card runs (docs/LESSONS.md 2026-09-26 T0-BASE-SYNC-HOLD-NARRATION). Run the mutation sweep over the new branch before the first review (docs/LESSONS.md 2026-09-24)."
-doc_sync: docs/OPERATIONS.md (Sessions), docs/ARCHITECTURE.md (module map), CHANGELOG.md
+doc_sync: docs/OPERATIONS.md (STOP reasons), docs/ARCHITECTURE.md (module map), CHANGELOG.md
 ---
 
 # T0-CARD-TERMINAL-GOAL
