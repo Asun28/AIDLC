@@ -9,6 +9,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import { Card, CARD_ID_REGEX, type ProjectTier } from '../core/types.ts';
 import { blockList, flowItems, hasKey, referenceCuts, renderFrontMatter, scalar, scalarRange, splitFrontMatter, stripComment } from './frontmatter.ts';
 
@@ -30,6 +31,19 @@ export interface ParsedCard {
  * records of 2026-11-10, such cards stopped on R3 review in 10 to 15 percent of runs at or below it and 44 to 60 above.
  */
 export const MAX_CODE_CARD_BUDGET = 250;
+
+/**
+ * The `size_exception` value of its own line, decoded as a YAML scalar, so a comment, an empty block scalar or an escaped
+ * blank is no reason (R3 decision 1, F1). A value that does not parse alone, or is not a string, is none; the whole front
+ * matter is not parsed, because many cards are not valid YAML as a document.
+ */
+function sizeExceptionOf(fm: string): string | undefined {
+  const raw = scalar(fm, 'size_exception');
+  if (raw === undefined) return undefined;
+  const doc = YAML.parseDocument(raw, { logLevel: 'silent' });
+  const value: unknown = doc.errors.length === 0 ? doc.toJS() : undefined;
+  return typeof value === 'string' ? value : undefined;
+}
 
 export const CARD_RULES = {
   id: CARD_ID_REGEX,
@@ -109,8 +123,7 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
     hygiene: scalar(fm, 'hygiene') || undefined,
     doc_sync: scalar(fm, 'doc_sync') || undefined,
     superseded_by: scalar(fm, 'superseded_by') || undefined,
-    // One pair of outer quotes is removed, so `size_exception: ""` reads as blank.
-    size_exception: scalar(fm, 'size_exception')?.replace(/^(["'])([\s\S]*)\1$/, '$2'),
+    size_exception: sizeExceptionOf(fm),
     tdd: parseBool(scalar(fm, 'tdd')) ?? true,
     freeze: parseBool(scalar(fm, 'freeze')) ?? false,
     migration_phase: scalar(fm, 'migration_phase') || undefined,
@@ -317,7 +330,7 @@ export function renderCard(input: NewCardInput): string {
   if (input.requirements?.length) data['requirements'] = input.requirements;
   if (input.dependsOn?.length) data['depends_on'] = input.dependsOn;
   if (input.planRef) data['plan_ref'] = input.planRef;
-  data['budget'] = input.budget ?? 400;
+  data['budget'] = input.budget ?? MAX_CODE_CARD_BUDGET;
   if (input.nonGoals?.length) data['non_goals'] = input.nonGoals;
   if (input.diagnosis) data['diagnosis'] = input.diagnosis;
   if (input.dodAssert) data['dod_assert'] = input.dodAssert;
