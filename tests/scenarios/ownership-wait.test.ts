@@ -10,8 +10,11 @@ import { MINUTE_MS, addMs, type Goal } from '../../src/core/types.ts';
 import { dispatchHook } from '../../src/hooks/entry.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 
-/** Session B prepares the card (B holds its lease); session A, which coordinates the goal, then reads the run and stops it for ownership. */
-function stoppedForOwnership(): { fx: Fixture; goal: Goal } {
+/**
+ * Session B prepares the card (B holds its lease); `elapsed` later session A, which coordinates the goal, reads the run
+ * and stops it for ownership: under B's live lease, or, once that lease has expired, at PREPARE's claim as in the incident.
+ */
+function stoppedForOwnership(elapsed: number): { fx: Fixture; goal: Goal } {
   const fx = makeFixture({ actor: actorA });
   writeCard(fx, { id: 'T1-HELLO', title: 'print hello' });
   const goal = goalForCards(fx, ['T1-HELLO']);
@@ -19,6 +22,7 @@ function stoppedForOwnership(): { fx: Fixture; goal: Goal } {
   setActorForTests(actorB);
   const prepared = fx.runner().next(fx.goal(goal.id), card, fx.controller.ensureCardRun(fx.goal(goal.id), 'T1-HELLO'));
   assert.equal(prepared.directive.kind, 'prepare');
+  fx.advance(elapsed);
   setActorForTests(actorA);
   const stopped = fx.runner().next(fx.goal(goal.id), card, fx.store.getCardRun(goal.id, 'T1-HELLO')!);
   assert.equal(stopped.run.stop?.reason, 'ownership');
@@ -26,10 +30,9 @@ function stoppedForOwnership(): { fx: Fixture; goal: Goal } {
 }
 
 test('T0-CARD-LEASE-HEARTBEAT acceptance 4: a card run stopped for ownership under a live lease of another session makes the goal wait; with that lease expired the goal stops for ownership naming card takeover [R4]', () => {
-  const live = stoppedForOwnership();
+  const live = stoppedForOwnership(MINUTE_MS);
   try {
     const { fx, goal } = live;
-    fx.advance(MINUTE_MS);
     const d = fx.controller.next(goal.id);
     assert.equal(d.kind, 'wait', d.narration);
     if (d.kind === 'wait') assert.equal(d.on, 'T1-HELLO:owner:win-B');
@@ -39,10 +42,9 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 4: a card run stopped for ownership und
     setActorForTests(actorA);
     live.fx.cleanup();
   }
-  const expired = stoppedForOwnership();
+  const expired = stoppedForOwnership(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
   try {
     const { fx, goal } = expired;
-    fx.advance(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
     const d = fx.controller.next(goal.id);
     assert.equal(d.kind, 'stop', d.narration);
     const stop = fx.goal(goal.id).stop;
