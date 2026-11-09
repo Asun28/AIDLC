@@ -2,6 +2,7 @@
 id: T1-BOARD-WATCH
 title: "`aidlc board --watch [--interval <s>]` re-renders a read-only screen of one goal under a stated output contract"
 status: todo
+superseded_by: T1-BOARD-WATCH-2
 branch: T1-BOARD-WATCH
 worktree: D:\wt\AIDLC\T1-BOARD-WATCH
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#2026-11-09-follow-up-cards
@@ -34,6 +35,7 @@ acceptance:
   - 8. `docs/OPERATIONS.md`, the `docs/ARCHITECTURE.md` board paragraph and README state the command and the Output contract (reviewer-verified against the diff). [R1]
 depends_on: []
 budget: 500
+size_exception: "budget 500 approved by the user on 2026-11-09 with the plan section 2026-11-09 follow-up cards, before the T0-CARD-SIZE rule"
 tdd: true
 sweep: "grep -rn 'aidlc board' README.md docs/OPERATIONS.md docs/ARCHITECTURE.md CLAUDE.md templates/CLAUDE.aidlc.md .claude/skills/aidlc-loop/*.md: docs/OPERATIONS.md:168 (Sessions, state commands), docs/ARCHITECTURE.md:14 and :176 (board.ts and the board file), CLAUDE.md:130, templates/CLAUDE.aidlc.md:13 and .claude/skills/aidlc-loop/arc.md:5 describe the board view and need no change, since --watch is optional."
 forbid: [a call to aidlc next or the goal controller, any write under the state directory, a change to the Directive schema, record text on screen other than the R3 kinds, a longer README Multi-session section]
@@ -79,3 +81,30 @@ npm run typecheck && node --test tests/infra/board.test.ts tests/scenarios/board
 ```
 - Expected exit code: 0
 - Assertion: every listed test passes and the typecheck is clean.
+
+## Attempt evidence
+
+RED: 7329077 (tests only). DoD at RED exit 2: the typecheck failed on the missing exports `readWatch`, `renderWatch`, `WatchReads` (board.ts) and `watchLoop` (main.ts), and both test files failed to load on the same exports.
+
+Behavioural RED (attempt 2, R3 decision 1 F1): the candidate's tests at 19bbd77 against inert stubs that keep every export and type, in a scratch checkout that was not committed (`readWatch` returns an unreadable goal, `renderWatch` returns an empty string, `watchLoop` resolves at once, and the `--watch` branch and interval checks are removed, so `board --watch` runs the plain board). The typecheck passes. All four `renderWatch`/`readWatch` tests in `tests/infra/board.test.ts` fail with ERR_ASSERTION. Run one at a time, the scenario tests fail as follows: interval and goal-id refusal, default goal and injectable stop with ERR_ASSERTION; EPIPE with the unhandled `write failed` error; two screens cancelled while waiting for a second screen the plain board never prints. The two Linux-only tests are skipped on win32. The stub patch and both outputs are retained as evidence `red-behavioral-T1-BOARD-WATCH`.
+
+Attempt 2 also repairs F2 (a supplied empty goal id, positional or `--goal ''`, is checked as given and exits with INVALID_GOAL_ID; only an absent id selects the default goal) and F3 (`ctx()` builds the goal controller on first use, so `board --watch` never constructs it).
+
+Attempt 4 repairs the Windows CI failure of PR 242 (acceptance 4 missed the goal lease row): the fixture is not a git repository, so the CLI keys leases by its cwd as given, an 8.3 short path on the runner, while the test keyed the lease by the long path. The fixture now canonicalizes its temporary directory first, so the cwd and the key name one path. Reproduced locally with TEMP set to a junction (fails before, 5 pass and 2 skipped after).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/infra/board.test.ts`, "renders the six line groups of the Output contract" (exact lines: Stop reason only, live leases only, `T1-GONE SHIP not in the card registry`) and "says (none) for no cards and no live lease" | pass |
+| 2 | Same file, "never prints stop detail, next action, blocker or request text": newline, ESC `[2J`, U+009B, U+202E and DEL in stop detail, next action, blocker and request text are absent; owner and host print as `"sX\n\u001b[2J\u009b\u202e\u007f"`; the screen holds only U+0020 to U+007E and line breaks. Card titles never reach `renderWatch`: the registry is read as a set of ids | pass |
+| 3 | Same file, "prints a code on the row of a record that cannot be read": scripted reads give `state unreadable: MALFORMED_JSON`, `NOT_FOUND`, `T1-A unreadable: SCHEMA_VIOLATION`, `goal unreadable: READ_FAILED`, `T1-A unreadable: UNREADABLE`, an unreadable registry marks no card, and each next good read renders the row | pass |
+| 4 | `tests/scenarios/board-watch.test.ts`, "prints two screens, exits 0 when its reader closes stdout, and writes nothing": no session variables, two exact screens (T1-A in the registry unmarked, T1-B marked) with the goal lease read under the CLI's canonical key, exit 0, empty stderr, state and repository directories byte-identical, no `session-default` | pass |
+| 5 | Same file, "refuses a bad interval ..." (0, 3601, 1.5, abc; 1 and 3600 reach the goal check; `--interval` without `--watch`; three non-plain ids; unknown goal) and "with no goal id checks the default goal" (unreadable goal list, an empty positional id and `--goal ''` with that list still unreadable, stored id not plain): exit 1 and the exact stderr of the table; the empty-id cases fail when an empty id selects the default goal | pass |
+| 6 | Same file, "stopped the way SIGINT stops it" (mock timers: two screens, abort, nothing rendered or written after) and "ends quietly on EPIPE, reports any other stdout error code, and clears a terminal"; the real-SIGINT test is skipped on win32 (no SIGINT delivery to a child process there); "exits 1 naming the errno code" writes stdout to /dev/full (ENOSPC), skipped where /dev/full is missing. Both passed on Linux (WSL Ubuntu, Node 24.3: 7 of 7) | pass (2 skipped on win32) |
+| 7 | `git diff --numstat origin/main...HEAD -- src`: main.ts 44/5, board.ts 66/1, total +110 -6 (net +104); the watch path never constructs the goal controller (`ctx()` builds it on first use); `git diff origin/main -- src/loop/controller.ts src/state/journal.ts src/loop/directive.ts` is empty | pass |
+| 8 | `docs/OPERATIONS.md` new section "Watching a goal" (command, six line groups, codes, exit table, writes nothing) and one sentence in the Sessions bullet; `docs/ARCHITECTURE.md` board.ts paragraph and the board file row; README Quick start sentence; CHANGELOG entry | reviewer reads the diff |
+
+Placement: the Output contract went into a new OPERATIONS section after Sessions, not into Sessions, because `tests/surface/prose.test.ts` holds Sessions under 13701 bytes (13556 now). The README Multi-session section is unchanged.
+
+Mutation sweep: 39 mutants of the added branches (each exit-table row, interval bounds 0/1/3600/3601 and the whole-number check, the plain-id check and its length, the live-lease filter, each unreadable row, the registry read, EPIPE versus other errors, the stop listener, clearInterval, the TTY clear both ways, SIGINT); every one fails a test. The SIGINT handler and the CLI mapping of a non-EPIPE error are killed only by the Linux-only tests (run under WSL).
+
+Other checks: every `tests/surface` and `tests/scenarios` file that reads README.md, docs/OPERATIONS.md, docs/ARCHITECTURE.md or CHANGELOG.md: 1411 pass, 0 fail, 10 skipped.

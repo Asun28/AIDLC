@@ -9,6 +9,7 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import YAML from 'yaml';
 import { Card, CARD_ID_REGEX, type ProjectTier } from '../core/types.ts';
 import { blockList, flowItems, hasKey, referenceCuts, renderFrontMatter, scalar, scalarRange, splitFrontMatter, stripComment } from './frontmatter.ts';
 
@@ -23,6 +24,26 @@ export interface ParsedCard {
   file?: string;
   findings: CardFinding[];
   body: string;
+}
+
+/**
+ * The largest budget a card that changes `src/` may declare without a `size_exception` (card T0-CARD-SIZE). On the
+ * records of 2026-11-10, such cards stopped on R3 review in 10 to 15 percent of runs at or below it and 44 to 60 above.
+ */
+export const MAX_CODE_CARD_BUDGET = 250;
+
+/**
+ * The `size_exception` value of its own line, decoded as a YAML scalar, so a comment, an empty block scalar or an escaped
+ * blank is no reason (R3 decision 1, F1). A value that does not parse alone, or is not a scalar node holding a string, is
+ * none; the node is read without conversion, so an alias or a collection never throws (R3 decision 2, F2). The whole front
+ * matter is not parsed, because many cards are not valid YAML as a document.
+ */
+function sizeExceptionOf(fm: string): string | undefined {
+  const raw = scalar(fm, 'size_exception');
+  if (raw === undefined) return undefined;
+  const doc = YAML.parseDocument(raw, { logLevel: 'silent' });
+  if (doc.errors.length > 0 || !YAML.isScalar(doc.contents)) return undefined;
+  return typeof doc.contents.value === 'string' ? doc.contents.value : undefined;
 }
 
 export const CARD_RULES = {
@@ -103,6 +124,7 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
     hygiene: scalar(fm, 'hygiene') || undefined,
     doc_sync: scalar(fm, 'doc_sync') || undefined,
     superseded_by: scalar(fm, 'superseded_by') || undefined,
+    size_exception: sizeExceptionOf(fm),
     tdd: parseBool(scalar(fm, 'tdd')) ?? true,
     freeze: parseBool(scalar(fm, 'freeze')) ?? false,
     migration_phase: scalar(fm, 'migration_phase') || undefined,
@@ -134,6 +156,10 @@ export function parseCardText(text: string, file?: string, options: CardParseOpt
   if (CARD_RULES.blockScalar.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-BLOCK-SCALAR]', severity: 'block', message: 'dod_command is a bare block-scalar indicator' });
   if (CARD_RULES.noopDod.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-NOOP]', severity: 'block', message: 'dod_command is a no-op' });
   if (/pwsh\s+-Command[^\n]*\$[A-Za-z_]/.test(card.dod_command)) findings.push({ sentinel: '[CARD-DOD-NESTED-VAR]', severity: 'block', message: 'no `$variable` inside a nested pwsh -Command payload (L95)' });
+  const changesSrc = card.allow_paths.some((p) => p.replace(/\\/g, '/').replace(/^\.\//, '').startsWith('src/'));
+  if (changesSrc && card.budget !== undefined && card.budget > MAX_CODE_CARD_BUDGET) {
+    findings.push({ sentinel: '[CARD-SIZE]', severity: active && !card.size_exception?.trim() ? 'block' : 'warn', message: `budget ${card.budget} is over ${MAX_CODE_CARD_BUDGET} on a card that changes src/: split the card, or record who approved it and why as size_exception` });
+  }
   if (card.allow_paths.length > 5 && !card.sweep) findings.push({ sentinel: '[CARD-SWEEP]', severity: advisory, message: `allow_paths has ${card.allow_paths.length} entries (>5) but no sweep` });
   if (CARD_RULES.tokenLiteral.test(text)) findings.push({ sentinel: '[CARD-TOKEN-LITERAL]', severity: 'block', message: 'template token literal {{...}} left in card' });
   if (CARD_RULES.placeholder.test(fm)) findings.push({ sentinel: '[CARD-PLACEHOLDER]', severity: 'warn', message: 'placeholder text (path/to/ or <...>) left in front matter' });
@@ -305,7 +331,7 @@ export function renderCard(input: NewCardInput): string {
   if (input.requirements?.length) data['requirements'] = input.requirements;
   if (input.dependsOn?.length) data['depends_on'] = input.dependsOn;
   if (input.planRef) data['plan_ref'] = input.planRef;
-  data['budget'] = input.budget ?? 400;
+  data['budget'] = input.budget ?? MAX_CODE_CARD_BUDGET;
   if (input.nonGoals?.length) data['non_goals'] = input.nonGoals;
   if (input.diagnosis) data['diagnosis'] = input.diagnosis;
   if (input.dodAssert) data['dod_assert'] = input.dodAssert;

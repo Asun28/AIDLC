@@ -2,6 +2,8 @@
 id: T0-CARD-LEASE-HEARTBEAT
 title: "The working session's tool calls keep its card lease live, and the goal dispatch waits on a card stopped for ownership while that card's lease is live instead of stopping the goal"
 status: todo
+superseded_by: T0-CARD-LEASE-HEARTBEAT-2
+size_exception: "written before the T0-CARD-SIZE rule (2026-11-10) at budget 280; raised to 420 by the coordinator on 2026-11-10 for its tests and the R3 decision 1 repair; budget approved by the user (asun28) on 2026-11-10 with its replacement T0-CARD-LEASE-HEARTBEAT-2"
 branch: T0-CARD-LEASE-HEARTBEAT
 worktree: D:\wt\AIDLC\T0-CARD-LEASE-HEARTBEAT
 allow_paths:
