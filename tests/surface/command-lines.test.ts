@@ -183,3 +183,11 @@ test('T1-FINDING-REPRO-2 acceptance 7: the CLI declares `review repro <cardId> <
   assert.match(missing.stderr, /--argv <json>/);
   assert.ok(flat('docs/OPERATIONS.md').includes('aidlc review repro <cardId> <findingId> --argv <json> [--files <paths>] [--goal <id>]'), 'OPERATIONS.md documents the command line');
 });
+
+test('T1-EVAL-VARIANT acceptance 6: the CLI declares `evals run --variant <ref>` and `--trials <n>`, and OPERATIONS and the evals README name the variant command line [R1] [R7]', () => {
+  const help = spawnSync(process.execPath, [path.join(root, 'src', 'cli', 'main.ts'), 'evals', 'run', '--help'], { cwd: root, encoding: 'utf8', windowsHide: true });
+  assert.equal(help.status, 0, help.stderr);
+  assert.match(help.stdout, /^ {2}--variant <ref> /m);
+  assert.match(help.stdout, /^ {2}--trials <n> /m);
+  for (const file of ['docs/OPERATIONS.md', 'evals/README.md']) assert.ok(flat(file).includes('aidlc evals run --dir evals/agent --provider claude-code --variant <ref> --trials 3'), file);
+});

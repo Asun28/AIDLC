@@ -41,7 +41,7 @@ import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
 import { compareBenchReports, exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { runRepro } from '../review/repro.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
-import { loadEvals, resolvesInside, runSuite } from '../evals/runner.ts';
+import { formatTrials, loadEvals, MAX_TRIALS, resolvesInside, runSuite, runTrials, type EvalTrialsReport } from '../evals/runner.ts';
 import { MockProvider } from '../providers/mock.ts';
 import { ClaudeApiProvider } from '../providers/claude-api.ts';
 import { ClaudeCodeProvider } from '../providers/claude-code.ts';
@@ -1147,7 +1147,13 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--threshold <n>', 'pass-rate gate', '0.9')
     .option('--provider <name>', 'mock|claude-code|claude-api')
     .option('--skip-model', 'run only the deterministic checks')
-    .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean }) => {
+    .option('--variant <ref>', 'run each case on temporary checkouts of HEAD and of this ref, alternating, and give the verdict for HEAD against the ref on the pass rate (no threshold gate)')
+    .option('--trials <n>', `run each case n times (1 to ${MAX_TRIALS}, default 1) and report the pass counts and the pass-rate median and range`)
+    .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean; variant?: string; trials?: string }) => {
+      // Card T1-EVAL-VARIANT: the option checks come before any case is read or run.
+      const trials = Number(o.trials ?? '1');
+      if (o.trials !== undefined && (!/^[0-9]+$/.test(o.trials) || trials < 1 || trials > MAX_TRIALS)) fail(`evals run: --trials must be an integer from 1 to ${MAX_TRIALS}, not ${JSON.stringify(o.trials)}`);
+      if (o.variant !== undefined && o.skipModel) fail('evals run: --variant cannot be used with --skip-model');
       const c = ctx(g());
       // The invoking worktree is evaluated: its cases, its working tree under --skip-model and its HEAD for a model run.
       const worktree = c.repo.worktreeRoot;
@@ -1157,6 +1163,18 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const stateDirs: Array<[string, string]> = [[c.paths.root, 'the state directory'], [path.join(c.root, '.aidlc'), "the repository's .aidlc"]];
       for (const [p, name] of stateDirs) if (resolvesInside(p, dir)) fail(`evals run: --dir ${JSON.stringify(dir)} is inside ${name} ${JSON.stringify(p)}`);
       const cases = loadEvals(dir, { protectedDirs: stateDirs.map(([p]) => p) });
+      if (o.variant !== undefined || o.trials !== undefined) {
+        // No threshold gate: exit 0 for any verdict, 1 when a temporary checkout could not be created.
+        let report: EvalTrialsReport;
+        try {
+          report = await runTrials(cases, providerFor(o.provider, c.config), { cwd: worktree, trials, variant: o.variant, skipModel: o.skipModel, dir });
+        } catch (err) {
+          return fail(`evals run: ${(err as Error).message}`);
+        }
+        out(c, report, () => formatTrials(report));
+        if (report.checkoutError !== undefined) process.exitCode = 1;
+        return;
+      }
       const suite = await runSuite(cases, providerFor(o.provider, c.config), { cwd: worktree, threshold: Number(o.threshold), skipModel: o.skipModel });
       out(c, suite, () => [...suite.results.map((r) => `${r.passed ? 'PASS' : 'FAIL'} ${r.id} (${r.dimension}) ${r.checks.filter((x) => !x.ok).map((x) => `${x.check}: ${x.detail}`).join('; ')}${r.detail ? ` [${r.detail}]` : ''}`), `evals: ${suite.gate.toUpperCase()} ${suite.passed}/${suite.total} (threshold ${suite.threshold})`].join('\n'));
       if (suite.gate === 'fail') process.exitCode = 1;

@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { runSync, type SyncRunner } from '../probes/exec.ts';
 import type { CompletionResult, ModelProvider, ToolCall } from '../providers/types.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
+import { compareTrials, trialRange, type TrialNames, type TrialRange, type TrialVerdict } from '../core/trial-compare.ts';
 
 export const EvalCheck = z.discriminatedUnion('type', [
   z.object({ type: z.literal('command'), command: z.array(z.string()).min(1), expectExit: z.number().int().default(0), cwd: z.string().optional(), timeoutMs: z.number().int().positive().default(10 * 60 * 1000) }),
@@ -121,18 +122,19 @@ function getPath(obj: unknown, p: string): unknown {
 
 /**
  * Runs one case with `AIDLC_STATE_DIR` set to a new empty temporary directory, so no eval reaches the repository's
- * `.aidlc/`. Under `skipModel` the checks run in `options.cwd` and no model is called. Otherwise the model and every
- * check run in a detached temporary checkout of HEAD. The state directory and the checkout are removed afterwards, also
- * when the model, a check or the runner throws; what could not be removed is reported in `detail`.
+ * `.aidlc/`. Under `skipModel` no model is called and the checks run in `options.cwd`, or, with `checkout` (every trial
+ * run of `runTrials`), in a detached temporary checkout of HEAD. Otherwise the model and every check run in a detached
+ * temporary checkout of HEAD (of `options.ref` when given). The state directory and the checkout are removed
+ * afterwards, also when the model, a check or the runner throws; what could not be removed is reported in `detail`.
  */
-export async function runEval(evalCase: EvalCase, provider: ModelProvider, options: { cwd: string; runner?: SyncRunner; skipModel?: boolean } = { cwd: process.cwd() }): Promise<EvalResult> {
+export async function runEval(evalCase: EvalCase, provider: ModelProvider, options: { cwd: string; runner?: SyncRunner; skipModel?: boolean; ref?: string; checkout?: boolean } = { cwd: process.cwd() }): Promise<EvalResult> {
   const started = Date.now();
   const runner = options.runner ?? runSync;
   const done = (checks: EvalResult['checks'], r?: CompletionResult): EvalResult => ({ id: evalCase.id, dimension: evalCase.dimension, passed: checks.every((c) => c.ok), checks, invocationId: r?.invocationId, model: r?.model, durationMs: Date.now() - started });
   const ws: Workspace = {};
   let result: EvalResult;
   try {
-    if (options.skipModel) {
+    if (options.skipModel && !options.checkout) {
       ws.stateDir = newStateDir();
       result = done(runChecks(evalCase, runner, options.cwd, undefined, { AIDLC_STATE_DIR: ws.stateDir }));
     } else {
@@ -147,11 +149,12 @@ export async function runEval(evalCase: EvalCase, provider: ModelProvider, optio
 
   async function runInWorkspace(w: Workspace, root: string): Promise<EvalResult> {
     try {
-      openWorkspace(w, root);
+      openWorkspace(w, root, options.ref ?? 'HEAD');
     } catch (err) {
       return done([{ check: 'checkout', ok: false, detail: (err as Error).message }]);
     }
     const env = { AIDLC_STATE_DIR: w.stateDir! };
+    if (options.skipModel) return done(runChecks(evalCase, runner, w.checkout!, undefined, env));
     const recordToolCalls = evalCase.checks.some((c) => TOOL_CALL_CHECKS.has(c.type));
     const r = await provider.complete({ role: evalCase.role, system: EVAL_SYSTEM_PROMPT, prompt: evalCase.prompt, effort: evalCase.effort, allowedTools: evalCase.allowedTools, cwd: w.checkout, env, ...(recordToolCalls ? { recordToolCalls } : {}) });
     if (r.outcome !== 'ok') return done([{ check: 'model', ok: false, detail: `${r.outcome}: ${r.error ?? ''}` }], r);
@@ -297,13 +300,13 @@ const git = (args: string[], cwd: string): ReturnType<SyncRunner> | undefined =>
 
 const newStateDir = (): string => realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-eval-state-')));
 
-function openWorkspace(w: Workspace, root: string): void {
+function openWorkspace(w: Workspace, root: string, ref: string): void {
   // The long, canonical forms, so the path git records compares equal to the one the cleanup looks for.
   w.stateDir = newStateDir();
   w.holder = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-eval-')));
   const checkout = path.join(w.holder, 'checkout');
-  const add = git(['worktree', 'add', '--detach', checkout, 'HEAD'], root);
-  if (add?.exitCode !== 0) throw new Error(`no temporary checkout of HEAD: ${add?.stderr.trim() || `git worktree add exit ${add?.exitCode}`}`);
+  const add = git(['worktree', 'add', '--detach', checkout, ref], root);
+  if (add?.exitCode !== 0) throw new Error(`no temporary checkout of ${ref}: ${add?.stderr.trim() || `git worktree add exit ${add?.exitCode}`}`);
   w.checkout = checkout;
   const common = git(['rev-parse', '--git-common-dir'], root);
   if (common?.exitCode !== 0) throw new Error(`git rev-parse --git-common-dir failed: ${common?.stderr.trim() ?? ''}`);
@@ -363,4 +366,159 @@ export async function runSuite(cases: EvalCase[], provider: ModelProvider, optio
   const passRate = total === 0 ? 0 : passed / total;
   const threshold = options.threshold ?? 0.9;
   return { total, passed, passRate, threshold, gate: total > 0 && passRate >= threshold ? 'pass' : 'fail', results };
+}
+
+/** The most trials one run takes. */
+export const MAX_TRIALS = 20;
+
+/** One side's figures over its trials (card T1-EVAL-VARIANT). */
+export interface TrialFigures {
+  passed: number;
+  trials: number;
+  /** The median, minimum and maximum of the pass rate over trials; null with no trial. */
+  passRate: TrialRange | null;
+  modelErrors: number;
+  quotaHolds: number;
+}
+
+export interface EvalTrialsReport {
+  trials: number;
+  /** The ref as given and the commits of both sides; absent without a variant. */
+  variant?: { ref: string; commit: string; head: string };
+  cases: Array<{ id: string; head: TrialFigures; variant?: TrialFigures; note?: string }>;
+  total: { head: TrialFigures; variant?: TrialFigures };
+  verdict?: TrialVerdict;
+  reason?: string;
+  /** Why a temporary checkout could not be created; the run stopped there. */
+  checkoutError?: string;
+  /** What a run could not remove (`EvalResult.detail`). */
+  left?: string[];
+}
+
+/** The words of the verdict on HEAD (after) against the ref (before, quoted as a JSON string). */
+const variantNames = (ref: string): TrialNames => ({ before: JSON.stringify(ref), after: 'HEAD', first: 'pass rate', noVerdict: 'quota holds', errors: 'model errors' });
+const DIFFERS_NOTE = 'the prompt or checks differ at the ref; both sides ran the HEAD copy';
+
+/** The commit `ref` names in `cwd`, or undefined when it names none. */
+function commitOf(ref: string, cwd: string): string | undefined {
+  const r = git(['rev-parse', '--verify', '--quiet', '--end-of-options', `${ref}^{commit}`], cwd);
+  return r?.exitCode === 0 ? r.stdout.trim() : undefined;
+}
+
+/**
+ * The ids of `cases` with no copy of the same id among the files of `dir` (names as listed now) at `commit`, or whose
+ * copy there has another prompt or other checks.
+ */
+function differsAt(cases: EvalCase[], dir: string, commit: string, cwd: string): Set<string> {
+  const rel = path.relative(cwd, dir).split(path.sep).join('/');
+  const there = new Map<string, EvalCase>();
+  for (const name of existsSync(dir) ? readdirSync(dir).filter((n) => n.endsWith('.json')) : []) {
+    const shown = git(['show', `${commit}:./${rel ? `${rel}/` : ''}${name}`], cwd);
+    if (shown?.exitCode !== 0) continue;
+    try {
+      const c = EvalCase.safeParse(JSON.parse(shown.stdout));
+      if (c.success) there.set(c.data.id, c.data);
+    } catch {
+      // a copy that is not JSON is no copy
+    }
+  }
+  const key = (c: EvalCase) => JSON.stringify({ prompt: c.prompt, checks: c.checks });
+  return new Set(cases.filter((c) => !there.has(c.id) || key(there.get(c.id)!) !== key(c)).map((c) => c.id));
+}
+
+type TrialRun = { passed: boolean; modelError: boolean; quota: boolean };
+
+/** Per case and in total: a trial's pass rate in total is over the runs that trial made on the side. */
+function figures(runsByCase: TrialRun[][]): { perCase: TrialFigures[]; total: TrialFigures } {
+  const count = (rs: TrialRun[], f: (r: TrialRun) => boolean) => rs.filter(f).length;
+  const of = (rs: TrialRun[], trials: number, rates: number[]): TrialFigures => ({ passed: count(rs, (r) => r.passed), trials, passRate: trialRange(rates), modelErrors: count(rs, (r) => r.modelError), quotaHolds: count(rs, (r) => r.quota) });
+  const perCase = runsByCase.map((rs) => of(rs, rs.length, rs.map((r) => (r.passed ? 1 : 0))));
+  const trials = Math.max(0, ...runsByCase.map((rs) => rs.length));
+  const rates = Array.from({ length: trials }, (_, t) => {
+    const inTrial = runsByCase.flatMap((rs) => (rs[t] ? [rs[t]] : []));
+    return count(inTrial, (r) => r.passed) / inTrial.length;
+  });
+  return { perCase, total: of(runsByCase.flat(), trials, rates) };
+}
+
+/**
+ * Runs each case `trials` times (card T1-EVAL-VARIANT), each run through `runEval` in a temporary checkout of HEAD,
+ * under `skipModel` too. With `variant`, each run of a case on HEAD is followed by one on a temporary checkout of the
+ * variant commit, and the report carries the `compareTrials` verdict for HEAD against the ref on the pass rate. A quota
+ * hold or a checkout that cannot be created stops the run. Refused before any model call: a trial count outside 1 to 20, `variant` with `skipModel`, and a variant that
+ * names no commit.
+ */
+export async function runTrials(cases: EvalCase[], provider: ModelProvider, options: { cwd: string; trials: number; variant?: string; skipModel?: boolean; runner?: SyncRunner; dir?: string }): Promise<EvalTrialsReport> {
+  const { trials, variant, cwd } = options;
+  if (!Number.isInteger(trials) || trials < 1 || trials > MAX_TRIALS) throw new Error(`--trials must be an integer from 1 to ${MAX_TRIALS}, not ${trials}`);
+  if (variant !== undefined && options.skipModel) throw new Error('--variant cannot be used with --skip-model');
+  let sides = ['HEAD'];
+  let named: EvalTrialsReport['variant'];
+  let differs = new Set<string>();
+  if (variant !== undefined) {
+    const commit = commitOf(variant, cwd);
+    if (commit === undefined) throw new Error(`--variant ${JSON.stringify(variant)} names no commit`);
+    const head = commitOf('HEAD', cwd);
+    if (head === undefined) throw new Error('HEAD names no commit');
+    named = { ref: variant, commit, head };
+    sides = [head, commit];
+    if (options.dir !== undefined) differs = differsAt(cases, options.dir, commit, cwd);
+  }
+  let outcome: CompletionResult['outcome'] | undefined;
+  const watched: ModelProvider = {
+    name: provider.name,
+    available: () => provider.available(),
+    complete: async (request) => {
+      const r = await provider.complete(request);
+      outcome = r.outcome;
+      return r;
+    },
+  };
+  const runs: TrialRun[][][] = sides.map(() => cases.map(() => []));
+  const left: string[] = [];
+  let checkoutError: string | undefined;
+  run: for (let t = 0; t < trials; t++) {
+    for (const [i, c] of cases.entries()) {
+      for (const [s, ref] of sides.entries()) {
+        outcome = undefined;
+        // Every trial run, with or without skipModel, runs in a temporary checkout, never in `cwd` itself.
+        const r = await runEval(c, watched, { cwd, runner: options.runner, skipModel: options.skipModel, ref, checkout: true });
+        if (r.detail) left.push(r.detail);
+        const checkout = r.checks.find((x) => x.check === 'checkout' && !x.ok);
+        if (checkout) {
+          checkoutError = checkout.detail;
+          break run;
+        }
+        runs[s]![i]!.push({ passed: r.passed, modelError: outcome !== undefined && outcome !== 'ok' && outcome !== 'quota', quota: outcome === 'quota' });
+        if (outcome === 'quota') break run;
+      }
+    }
+  }
+  const [head, other] = runs.map(figures);
+  const report: EvalTrialsReport = {
+    trials,
+    ...(named ? { variant: named } : {}),
+    cases: cases.map((c, i) => ({ id: c.id, head: head!.perCase[i]!, ...(other ? { variant: other.perCase[i]! } : {}), ...(differs.has(c.id) ? { note: DIFFERS_NOTE } : {}) })),
+    total: { head: head!.total, ...(other ? { variant: other.total } : {}) },
+  };
+  if (other) {
+    const side = (f: TrialFigures) => ({ summary: { trials: f.trials, recall: f.passRate, falseBlockRate: null, noVerdict: f.quotaHolds, errors: f.modelErrors }, caseIds: cases.map((c) => c.id) });
+    Object.assign(report, compareTrials(side(other.total), side(head!.total), variantNames(named!.ref)));
+  }
+  if (checkoutError !== undefined) report.checkoutError = checkoutError;
+  if (left.length) report.left = left;
+  return report;
+}
+
+/** The human lines of a trials report; the ref is printed as a JSON string. */
+export function formatTrials(report: EvalTrialsReport): string {
+  const fig = (f: TrialFigures) => `${f.passed}/${f.trials}${f.passRate ? ` (median ${f.passRate.median.toFixed(2)}, ${f.passRate.min.toFixed(2)} to ${f.passRate.max.toFixed(2)})` : ''}, ${f.modelErrors} model errors, ${f.quotaHolds} quota holds`;
+  const ref = report.variant ? JSON.stringify(report.variant.ref) : '';
+  const pair = (h: TrialFigures, v?: TrialFigures) => `HEAD ${fig(h)}${v ? `; ${ref} ${fig(v)}` : ''}`;
+  const lines = report.cases.map((c) => `${c.id}: ${pair(c.head, c.variant)}${c.note ? ` [${c.note}]` : ''}`);
+  lines.push(`total over ${report.trials} trials: ${pair(report.total.head, report.total.variant)}`);
+  if (report.variant) lines.push(`HEAD (${report.variant.head.slice(0, 12)}) against ${ref} (${report.variant.commit.slice(0, 12)}): ${report.verdict}: ${report.reason}`);
+  if (report.checkoutError) lines.push(`stopped: ${report.checkoutError}`);
+  for (const l of report.left ?? []) lines.push(`left: ${l}`);
+  return lines.join('\n');
 }

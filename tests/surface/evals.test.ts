@@ -1,13 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EvalCase, loadEvals, realPathRule, runEval, runSuite } from '../../src/evals/runner.ts';
+import { EvalCase, loadEvals, realPathRule, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
-import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
@@ -315,4 +315,181 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 9: loadEvals refuses a case file that is a
   }
   assert.throws(() => loadEvals(evalsDir, { protectedDirs: [state] }), (err: Error) => err.message.includes(JSON.stringify(link)) && /inside a protected directory/.test(err.message), 'refused naming the quoted path, before any read');
   assert.throws(() => loadEvals(evalsDir), (err: Error) => err.message.includes(JSON.stringify(link)) && /inside a protected directory/.test(err.message), "with no options loadEvals derives the repository's .aidlc itself");
+});
+
+// Card T1-EVAL-VARIANT: `--variant <ref> --trials <n>` runs the same cases on HEAD and on the ref and gives the trial verdict.
+
+/** A repository whose first commit has `note.txt` reading "hello world" and whose second (HEAD) has it reading "bye". */
+function twoCommits() {
+  const { cwd } = setup();
+  const first = git(cwd, 'rev-parse', 'HEAD').stdout.trim();
+  writeFileSync(path.join(cwd, 'note.txt'), 'bye', 'utf8');
+  git(cwd, 'commit', '-q', '-am', 'second');
+  return { cwd, first };
+}
+
+const hello = EvalCase.parse({ id: 'hello', prompt: 'do it', checks: [{ type: 'contains', file: 'note.txt', text: 'hello' }] });
+
+/** A scripted provider that records the note each request's checkout held, and answers call k (1-based) with `outcomes[k]`. */
+function sidesProvider(outcomes: Record<number, CompletionResult['outcome']> = {}) {
+  const notes: string[] = [];
+  const cwds: string[] = [];
+  const provider: ModelProvider = {
+    name: 'sides',
+    available: async () => ({ ok: true, detail: '' }),
+    complete: async (request: CompletionRequest): Promise<CompletionResult> => {
+      cwds.push(request.cwd!);
+      notes.push(readFileSync(path.join(request.cwd!, 'note.txt'), 'utf8'));
+      const outcome = outcomes[notes.length] ?? 'ok';
+      return { invocationId: `i${notes.length}`, provider: 'sides', model: 'm', text: 'done', outcome, ...(outcome === 'ok' ? {} : { error: 'scripted' }), durationMs: 0 };
+    },
+  };
+  return { provider, notes, cwds };
+}
+
+const cliMain = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'cli', 'main.ts');
+
+test('T1-EVAL-VARIANT acceptance 1: HEAD passing where the ref fails, --trials 3, reports 3/3 on HEAD and 0/3 on the ref, the verdict better for HEAD, and the sides alternate [R2] [R3] [R4]', async () => {
+  const { cwd, first } = twoCommits();
+  const second = git(cwd, 'rev-parse', 'HEAD').stdout.trim();
+  git(cwd, 'checkout', '-q', '--detach', first);
+  const { provider, notes, cwds } = sidesProvider();
+  const report = await runTrials([hello], provider, { cwd, trials: 3, variant: second, runner });
+  assert.deepEqual(notes, ['hello world', 'bye', 'hello world', 'bye', 'hello world', 'bye'], 'HEAD, ref, HEAD, ref, HEAD, ref');
+  for (const c of cwds) assert.equal(existsSync(c), false, `the checkout ${c} is removed`);
+  for (const c of cwds) assert.equal(samePath(c, cwd), false, 'no side runs in the repository itself');
+  const head = { passed: 3, trials: 3, passRate: { median: 1, min: 1, max: 1 }, modelErrors: 0, quotaHolds: 0 };
+  const variant = { passed: 0, trials: 3, passRate: { median: 0, min: 0, max: 0 }, modelErrors: 0, quotaHolds: 0 };
+  assert.deepEqual(report.cases, [{ id: 'hello', head, variant }]);
+  assert.deepEqual(report.total, { head, variant });
+  assert.deepEqual(report.variant, { ref: second, commit: second, head: first });
+  assert.equal(report.verdict, 'better');
+  assert.equal(report.reason, `pass rate 1.00 to 1.00 HEAD, 0.00 to 0.00 ${JSON.stringify(second)}: the ranges do not overlap`);
+  assert.equal(report.checkoutError, undefined);
+});
+
+test('T1-EVAL-VARIANT acceptance 1: the mirror, HEAD failing where --variant HEAD~1 passes, gives worse for HEAD [R2] [R4]', async () => {
+  const { cwd } = twoCommits();
+  const { provider, notes } = sidesProvider();
+  const report = await runTrials([hello], provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
+  assert.deepEqual(notes, ['bye', 'hello world', 'bye', 'hello world', 'bye', 'hello world']);
+  assert.deepEqual([report.total.head.passed, report.total.variant?.passed], [0, 3]);
+  assert.equal(report.verdict, 'worse');
+  assert.equal(report.reason, 'pass rate 0.00 to 0.00 HEAD, 1.00 to 1.00 "HEAD~1": the ranges do not overlap');
+});
+
+test('T1-EVAL-VARIANT acceptance 2: one model error on either side makes the verdict inconclusive naming it; a quota hold stops the run and is named [R4]', async () => {
+  const { cwd } = twoCommits();
+  for (const [call, side] of [[1, 'HEAD'], [4, '"HEAD~1"']] as const) {
+    const report = await runTrials([hello], sidesProvider({ [call]: 'error' }).provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
+    assert.equal(report.verdict, 'inconclusive');
+    assert.equal(report.reason, `${side} has 0 quota holds and 1 model errors over its trials`);
+  }
+  const quota = sidesProvider({ 3: 'quota' });
+  const held = await runTrials([hello], quota.provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
+  assert.equal(quota.notes.length, 3, 'the run stopped at the quota hold');
+  assert.deepEqual([held.total.head.trials, held.total.head.quotaHolds, held.total.variant?.trials], [2, 1, 1]);
+  assert.equal(held.verdict, 'inconclusive');
+  assert.equal(held.reason, '"HEAD~1" has 1 trials, fewer than the 3 a verdict needs; HEAD has 2 trials, fewer than the 3 a verdict needs; HEAD has 1 quota holds and 0 model errors over its trials');
+});
+
+test('T1-EVAL-VARIANT acceptance 2: --trials 2 is inconclusive naming the trial count [R4]', async () => {
+  const { cwd } = twoCommits();
+  const report = await runTrials([hello], sidesProvider().provider, { cwd, trials: 2, variant: 'HEAD~1', runner });
+  assert.equal(report.verdict, 'inconclusive');
+  assert.equal(report.reason, '"HEAD~1" has 2 trials, fewer than the 3 a verdict needs; HEAD has 2 trials, fewer than the 3 a verdict needs');
+});
+
+test('T1-EVAL-VARIANT acceptance 3: --variant with --skip-model and a ref that names no commit are refused before any provider call; --trials 0 and 21 are refused [R1]', async () => {
+  const { cwd, first } = twoCommits();
+  const blob = git(cwd, 'rev-parse', 'HEAD:note.txt').stdout.trim();
+  const { provider, notes } = sidesProvider();
+  await assert.rejects(runTrials([hello], provider, { cwd, trials: 3, variant: first, skipModel: true, runner }), /--variant cannot be used with --skip-model/);
+  for (const ref of ['no-such-ref"', blob, '--all']) await assert.rejects(runTrials([hello], provider, { cwd, trials: 3, variant: ref, runner }), (err: Error) => err.message === `--variant ${JSON.stringify(ref)} names no commit`, ref);
+  for (const trials of [0, 21, 1.5]) await assert.rejects(runTrials([hello], provider, { cwd, trials, variant: first, runner }), (err: Error) => err.message === `--trials must be an integer from 1 to 20, not ${trials}`, String(trials));
+  assert.deepEqual(notes, [], 'the provider was never called');
+});
+
+test('T1-EVAL-VARIANT acceptance 3: the CLI refuses --trials 0, --trials 21 and --variant with --skip-model, running no case [R1]', () => {
+  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  const { cwd } = twoCommits();
+  const refused: Array<[string[], string]> = [
+    [['--trials', '0'], '--trials must be an integer from 1 to 20, not "0"'],
+    [['--trials', '21'], '--trials must be an integer from 1 to 20, not "21"'],
+    [['--variant', 'HEAD', '--skip-model'], '--variant cannot be used with --skip-model'],
+  ];
+  for (const [args, message] of refused) {
+    const r = spawnSync(process.execPath, [cliMain, 'evals', 'run', ...args], { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+    assert.equal(r.status, 1, `${args.join(' ')}: ${r.stderr}`);
+    assert.ok(r.stderr.includes(message), `${args.join(' ')}: ${r.stderr}`);
+    assert.equal(r.stdout, '', 'no case was run');
+  }
+});
+
+test('T1-EVAL-VARIANT acceptance 4: with neither option, the example case gives the result object and exit code it gave before the card [R5] [R6]', () => {
+  const example = readFileSync(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'evals', 'example-regression.json'), 'utf8');
+  for (const [exit, gate] of [[0, 'pass'], [1, 'fail']] as const) {
+    const { cwd } = setup();
+    mkdirSync(path.join(cwd, 'evals'));
+    writeFileSync(path.join(cwd, 'evals', 'example-regression.json'), example);
+    writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', private: true, scripts: { test: `node -e "process.exit(${exit})"` } }));
+    const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+    const r = spawnSync(process.execPath, [cliMain, 'evals', 'run', '--skip-model', '--threshold', '0.9', '--json'], { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
+    assert.equal(r.status, exit, r.stderr);
+    const suite = JSON.parse(r.stdout) as { results: Array<Record<string, unknown>> };
+    for (const x of suite.results) delete x['durationMs'];
+    assert.deepEqual(suite, { total: 1, passed: 1 - exit, passRate: 1 - exit, threshold: 0.9, gate, results: [{ id: 'example-regression-tests-stay-green', dimension: 'regression', passed: exit === 0, checks: [{ check: 'command npm test', ok: exit === 0, detail: `exit ${exit}` }] }] });
+  }
+});
+
+test('T1-EVAL-VARIANT R5: --trials without --variant runs HEAD alone n times and reports the figures with no verdict', async () => {
+  const { cwd } = twoCommits();
+  const { provider, notes } = sidesProvider();
+  const report = await runTrials([hello], provider, { cwd, trials: 2, runner });
+  assert.deepEqual(notes, ['bye', 'bye']);
+  assert.deepEqual(report.total, { head: { passed: 0, trials: 2, passRate: { median: 0, min: 0, max: 0 }, modelErrors: 0, quotaHolds: 0 } });
+  assert.equal(report.verdict, undefined);
+  assert.equal(report.variant, undefined);
+});
+
+test('T1-EVAL-VARIANT card rule: a case whose prompt or checks differ at the variant runs from the HEAD copy on both sides, and the report notes it', async () => {
+  const { cwd, first } = twoCommits();
+  const evalsDir = path.join(cwd, 'evals');
+  mkdirSync(evalsDir);
+  writeFileSync(path.join(evalsDir, 'hello.json'), JSON.stringify({ id: 'hello', prompt: 'do it', checks: [{ type: 'contains', file: 'note.txt', text: 'hello' }] }));
+  git(cwd, 'add', 'evals');
+  git(cwd, 'commit', '-q', '-m', 'cases');
+  const third = git(cwd, 'rev-parse', 'HEAD').stdout.trim();
+  const cases = loadEvals(evalsDir);
+  const differs = sidesProvider();
+  const noted = await runTrials(cases, differs.provider, { cwd, trials: 1, variant: first, runner, dir: evalsDir });
+  assert.deepEqual(noted.cases.map((c) => c.note), ['the prompt or checks differ at the ref; both sides ran the HEAD copy']);
+  assert.equal(differs.notes.length, 2, 'the case still ran on both sides');
+  const same = await runTrials(cases, sidesProvider().provider, { cwd, trials: 1, variant: third, runner, dir: evalsDir });
+  assert.deepEqual(same.cases.map((c) => c.note), [undefined]);
+});
+
+test('T1-EVAL-VARIANT R5 (R3 decision 1, trials-in-main-checkout): --trials 2 --skip-model runs each check in a temporary checkout of HEAD, removed after the run, and a command check that writes a file leaves the working tree unchanged', async () => {
+  const { cwd } = twoCommits();
+  const seen: Array<{ cwd: string; stateDir?: string }> = [];
+  const recording: SyncRunner = (command, args, options = {}) => {
+    seen.push({ cwd: options.cwd ?? '', stateDir: options.env?.['AIDLC_STATE_DIR'] });
+    return runSync(command, args, options);
+  };
+  const writes = EvalCase.parse({ id: 'writes', prompt: 'do it', checks: [{ type: 'command', command: [process.execPath, '-e', "require('fs').writeFileSync('written.txt', 'x')"] }, { type: 'contains', file: 'note.txt', text: 'bye' }] });
+  const provider = new MockProvider();
+  const report = await runTrials([writes], provider, { cwd, trials: 2, skipModel: true, runner: recording });
+  assert.equal(provider.calls.length, 0, 'no model call');
+  assert.deepEqual(report.total.head, { passed: 2, trials: 2, passRate: { median: 1, min: 1, max: 1 }, modelErrors: 0, quotaHolds: 0 });
+  assert.equal(seen.length, 2, 'the command check ran once per trial');
+  for (const s of seen) {
+    assert.equal(samePath(s.cwd, cwd), false, `the check ran in ${s.cwd}, not the repository root`);
+    assert.equal(existsSync(s.cwd), false, `the checkout ${s.cwd} is removed`);
+    assert.ok(s.stateDir && !existsSync(s.stateDir), 'AIDLC_STATE_DIR was set and is removed');
+  }
+  const status = git(cwd, 'status', '--porcelain');
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout, '', 'the working tree is unchanged');
+  const listed = git(cwd, 'worktree', 'list', '--porcelain').stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree '));
+  assert.equal(listed.length, 1, 'no temporary checkout is left registered');
 });
