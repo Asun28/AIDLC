@@ -77,7 +77,7 @@ test('T0-CARD-TERMINAL-GOAL acceptance 3: on a goal stopped for ownership with a
       assert.ok(r.stderr.includes('ownership') && r.stderr.includes(`aidlc goal resume ${goalId}`), `${args.join(' ')}: ${r.stderr}`);
     }
     assert.equal(readFileSync(file, 'utf8'), bytes, 'the stored run is byte-identical');
-    const after = types().slice(before);
+    const after: string[] = types().slice(before);
     for (const type of ['ATTEMPT_STARTED', 'ATTEMPT_FINISHED', 'LEASE_RENEWED', 'CARD_STATE', 'OPERATION_ISSUED']) assert.ok(!after.includes(type), `no ${type} after the stop: ${after.join(',')}`);
   } finally {
     fx.cleanup();
