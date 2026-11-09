@@ -1,7 +1,7 @@
 ---
 id: T0-REMOVED-CARD-RUNS
 title: "The goal's wait and arc-stop directives and the Stop-hook DoD reminder skip the run of a card that a goal revision removed or superseded"
-status: todo
+status: merged
 branch: T0-REMOVED-CARD-RUNS
 worktree: D:\wt\AIDLC\T0-REMOVED-CARD-RUNS
 allow_paths:
