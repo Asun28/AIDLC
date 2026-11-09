@@ -140,6 +140,13 @@ test('board --watch with no goal id checks the default goal: an unreadable goal 
     const unreadable = cli(fx, ['board', '--watch']);
     assert.equal(unreadable.status, 1);
     assert.equal(unreadable.stderr, 'aidlc: board --watch: MALFORMED_JSON\n');
+    // An empty id that is supplied is checked as given and never selects the default goal: with the goal list
+    // unreadable, a default selection would print MALFORMED_JSON instead (R3 decision 1, F2).
+    for (const args of [['board', '', '--watch'], ['board', '--watch', '--goal', '']]) {
+      const empty = cli(fx, args);
+      assert.equal(empty.status, 1, JSON.stringify(args));
+      assert.equal(empty.stderr, 'aidlc: board --watch: INVALID_GOAL_ID\n', JSON.stringify(args));
+    }
     writeFileSync(path.join(fx.state, 'goals', 'g-bad.json'), JSON.stringify(goal({ id: 'g-\u001b[2J', createdAt: '2026-09-12T00:00:00.000Z' })), 'utf8');
     const odd = cli(fx, ['board', '--watch']);
     assert.equal(odd.status, 1);

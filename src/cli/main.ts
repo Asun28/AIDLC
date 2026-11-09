@@ -76,9 +76,9 @@ function ctx(opts: { json?: boolean; cwd?: string }): Ctx {
   // State directories are created lazily by the first write; read-only commands leave the repo untouched.
   const paths = resolveStatePaths(cwd);
   const store = new GoalStore(paths);
-  const controller = new GoalController({ paths, repo, config, store, boardMirror: path.join(repo.mainRoot, '_local', 'aidlc-board.md') });
   const json = opts.json ?? !process.stdout.isTTY;
-  return { root: repo.mainRoot, repo, config, configFound: found, paths, store, controller, json };
+  let controller: GoalController | undefined; // built on first use, so `board --watch` never constructs it (card T1-BOARD-WATCH)
+  return { root: repo.mainRoot, repo, config, configFound: found, paths, store, json, get controller() { return (controller ??= new GoalController({ paths, repo, config, store, boardMirror: path.join(repo.mainRoot, '_local', 'aidlc-board.md') })); } };
 }
 
 /** A line for the operator, written synchronously: a stderr that cannot take it fails here and reaches no caller. */
@@ -496,8 +496,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       if (o.interval !== undefined && !o.watch) fail('--interval needs --watch');
       const c = ctx(g());
       if (o.watch) {
-        let id = '';
-        try { id = latestActiveGoalId(c, goalId ?? o.goal); } catch (err) { fail(`board --watch: ${readErrorCode(err)}`); }
+        let id = goalId ?? o.goal; // a supplied id, even an empty one, is checked as given; only an absent one selects the default goal
+        try { id ??= latestActiveGoalId(c); } catch (err) { fail(`board --watch: ${readErrorCode(err)}`); }
         if (!PLAIN_ID.test(id)) fail('board --watch: INVALID_GOAL_ID');
         if (!existsSync(c.store.goalFile(id))) fail(`unknown goal ${id}`);
         // Read-only accessors only (R2): no controller, no session, no journal, no board file.
