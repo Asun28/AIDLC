@@ -28,6 +28,7 @@
  */
 import { existsSync, lstatSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { droppedCards } from '../core/amendments.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
@@ -595,7 +596,11 @@ export function verifyBeforeDone(cwd: string, env: NodeJS.ProcessEnv, session?: 
     try {
       const pending: string[] = [];
       for (const goal of active) {
+        // A card a revision removed or superseded keeps its run as evidence; it is no longer the goal's work to verify,
+        // unless the projection lists it again. Its lease is not read.
+        const dropped = droppedCards(goal);
         for (const run of store.listCardRuns(goal.id)) {
+          if (dropped.has(run.cardId)) continue;
           if (['BUILD', 'SHIP', 'REVIEW_FIX'].includes(run.state) && !run.dodReceipt && ownedHere(run.cardId)) pending.push(`${run.cardId} (${run.state})`);
         }
       }

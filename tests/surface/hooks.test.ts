@@ -1558,3 +1558,18 @@ test('T1-INIT-SURFACE acceptance 4: a broken config reaches the three guards and
   assert.ok(route.stdout?.includes(`${JSON.stringify(file)} cannot be used`), route.stdout);
   assertNoBareInstruction(route, 'route-new-work');
 });
+
+test('T0-REMOVED-CARD-RUNS acceptance 4: verify-before-done skips a run whose card a revision removed or superseded, unless the projection lists it again [R3]', () => {
+  const { cwd, env } = envWithState();
+  const store = new GoalStore(resolveStatePaths(cwd, env));
+  const created = makeGoal('g1');
+  const revision = (n: number, mapping: { removedCards?: string[]; supersededCards?: Record<string, string> }) => ({ revision: n, at: created.createdAt, reason: 'amended', request: created.revisions[0]!.request, ...mapping });
+  const revised = Goal.parse({ ...created, revision: 1, revisions: [...created.revisions, revision(1, { removedCards: ['T1-OLD'], supersededCards: { 'T1-SUP': 'T1-NEW' } })], cards: ['T1-NEW'] });
+  store.saveGoal(revised);
+  const now = nowIso();
+  for (const cardId of ['T1-OLD', 'T1-SUP', 'T1-NEW']) store.saveCardRun(CardRun.parse({ goalId: 'g1', cardId, cardRevision: 0, goalGeneration: 0, state: 'BUILD', startedAt: now, deadline: addMs(now, 3600_000), updatedAt: now }));
+  const stop = () => stopCards(runHook('verify-before-done', { hook_event_name: 'Stop', session_id: 'win-A' }, { cwd, env }));
+  assert.deepEqual(stop(), ['T1-NEW']);
+  store.saveGoal(Goal.parse({ ...revised, revision: 2, revisions: [...revised.revisions, revision(2, {})], cards: ['T1-NEW', 'T1-OLD'] }));
+  assert.deepEqual(stop().sort(), ['T1-NEW', 'T1-OLD']);
+});
