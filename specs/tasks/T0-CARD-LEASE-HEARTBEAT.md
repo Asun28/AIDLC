@@ -32,7 +32,7 @@ acceptance:
   - 5. Same file: the incident sequence: owner session A's lease is renewed by a PreToolUse event at the moment it would have expired, session B's `card next` saves an ownership stop on the run, B's `controller.next` waits, and A's next `card next` clears the stop (LEASE_RENEWED revalidated) and the goal continues; `verifyAudit` on the journal reports no `WORK_AFTER_TERMINAL`. [R1] [R4] [dod arm 1]
   - 6. `tests/surface/hooks.test.ts` and `tests/surface/hook-lazy.test.ts` pass unchanged, and `npm run bench -- --check` passes after `npm run build` (output in the attempt evidence; a ceiling raised by hand is named in the PR body with its reason). [R3] [dod arm 1]
   - 7. The docs and CHANGELOG state R1, R2 and R4 (reviewer-verified against the diff). [R5]
-depends_on: [T0-CARD-TERMINAL-GOAL]
+depends_on: [T0-CARD-TERMINAL-GOAL-2]
 budget: 280
 tdd: true
 diagnosis:
