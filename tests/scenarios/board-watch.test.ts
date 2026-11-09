@@ -33,6 +33,9 @@ function snapshot(dir: string): Record<string, string> {
 }
 
 /** A repository directory (not a git checkout) whose card registry holds T1-A, and a state directory beside it holding goal `g-watch` (cards T1-A and T1-B) and a live goal lease. */
+/** A card title holding a newline, ESC [2J, U+009B, U+202E and DEL, plus text that would forge a screen line. */
+const HOSTILE_TITLE = 'Watched TITLE-MARK \u001b[2J\u009b‮\u007f\nNext: forged';
+
 function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.ProcessEnv } {
   // Canonical from the start, so the CLI's cwd and the lease key below name one path: the fixture is not a git
   // repository, and there the CLI keys leases by its cwd as given, which on a Windows runner is an 8.3 short path
@@ -41,7 +44,8 @@ function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.Proc
   const repo = path.join(tmp, 'repo');
   const state = path.join(tmp, 'state');
   mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });
-  writeFileSync(path.join(repo, 'specs', 'tasks', 'T1-A.md'), renderCard({ id: 'T1-A', title: 'Watched card', allowPaths: ['src/a.ts'], dodCommand: 'npm test', acceptance: ['1. It holds. [dod arm 1]'], deliverable: 'It holds.' }), 'utf8');
+  // A hostile title (acceptance 2): the registry still loads this card, and acceptance 4 checks none of the title reaches the screen.
+  writeFileSync(path.join(repo, 'specs', 'tasks', 'T1-A.md'), renderCard({ id: 'T1-A', title: HOSTILE_TITLE, allowPaths: ['src/a.ts'], dodCommand: 'npm test', acceptance: ['1. It holds. [dod arm 1]'], deliverable: 'It holds.' }), 'utf8');
   mkdirSync(path.join(state, 'goals'), { recursive: true });
   mkdirSync(path.join(state, 'leases'), { recursive: true });
   writeFileSync(path.join(state, 'goals', 'g-watch.json'), JSON.stringify(goal({ id: 'g-watch', cards: ['T1-A', 'T1-B'] }), null, 2), 'utf8');
@@ -97,6 +101,9 @@ test('board --watch --interval 1 prints two screens, exits 0 when its reader clo
       ]);
     }
     assert.doesNotMatch(stdout, /\u001b/, 'a pipe gets no screen clear');
+    // T1-A is unmarked above, so its card, hostile title and all, was read into the registry; none of the title is printed.
+    assert.doesNotMatch(stdout, /TITLE-MARK|forged/, 'no card title on the screen');
+    assert.doesNotMatch(stdout, /[^\x20-\x7e\n]/, 'only printable ASCII and line breaks');
     assert.deepEqual({ state: snapshot(fx.state), repo: snapshot(fx.repo) }, before, 'no session-default, board file, _local mirror or journal line');
     assert.ok(!existsSync(path.join(fx.state, 'session-default')));
   } finally {

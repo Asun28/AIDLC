@@ -165,7 +165,8 @@ describe('aidlc board --watch screen (T1-BOARD-WATCH)', () => {
     });
     const run = makeCardRun(g.id, 'T1-A', { state: 'STOP', stop: makeStop('card', `detail${hostile}`, `nextaction${hostile}`, { at: iso() }), blocker: `blocker${hostile}` });
     const owner = lease('goal', `s${hostile}`, 1, '2026-09-11T12:10:00.000Z', false, `h${hostile}`);
-    // The registry is read as card ids only, so a card title has no way onto the screen.
+    // The registry is read as card ids only, so a card title has no way onto the screen; the CLI test of acceptance 4
+    // (tests/scenarios/board-watch.test.ts) loads a registry card with a hostile title and checks none of it is printed.
     const screen = renderWatch(readWatch('goal-watch', reads({ goal: () => g, run: () => run, lease: (label) => (label === 'goal' ? owner : undefined), registry: () => new Set(['T1-A']) })), now);
     assert.deepEqual(screen.split('\n'), [
       'aidlc watch: goal-watch at 2026-09-11T12:00:00.000Z (view only; Ctrl+C ends it)',
