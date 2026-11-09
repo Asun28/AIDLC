@@ -55,3 +55,41 @@ npm run typecheck && node --test tests/core/card-goal.test.ts tests/scenarios/ca
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+RED at d85b58c: `tests/core/card-goal.test.ts` fails to load (no export `terminalGoalRefusal`); acceptance 2 and 3 fail with `card next` exiting 0.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/card-goal.test.ts`, `terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)`: five tests | pass |
+| 2 | `tests/scenarios/card-terminal-goal.test.ts`, acceptance 2: eight commands, with and without `--goal` | pass (failed at RED) |
+| 3 | same file, acceptance 3: `card next` and `card attempt` on a goal stopped for ownership with the run in BUILD | pass (failed at RED) |
+| 4 | same file, acceptance 4: `card status` exits 0 with the run; `card takeover` and `card ci-reconcile` print no refusal | pass |
+| 5 | same file, acceptance 5: `card next` after `goal resume` exits 0, no refusal | pass |
+| 6 | `tests/scenarios/card-goal.test.ts`, unchanged | pass |
+| 7 | `docs/OPERATIONS.md` (STOP reasons), `docs/ARCHITECTURE.md` (module map, `src/core/card-goal.ts`), `CHANGELOG.md` (Unreleased) | reviewer-verified |
+
+### Attempt 2 (R3 decision 1: F1 run-read-before-terminal-guard, F2 refusal-runs-exit-sweep)
+
+RED at a720305: both tests below fail at 87ac4ae (F1: `aidlc: MALFORMED_JSON ... T1-GONE.json` instead of the refusal; F2: `worktree removed: T1-HELLO: goal ... was cancelled` after the refusal).
+
+The guard (`refuseTerminalGoal`, src/cli/main.ts) reads goal records only: the `--goal` record when one is named, else the goal `resolveCardGoal` resolves without `holdsRun` (implicit resolution never calls it), so no card run is read before the refusal. A goal that does not resolve there falls through to `cardGoalId`'s own error, unchanged.
+
+| Item | Proof | Result |
+|---|---|---|
+| 2 (F1) | `tests/scenarios/card-terminal-goal.test.ts`, acceptance 2: `--goal` naming a stopped goal that holds a malformed run of a card it no longer projects; `card next`, `card attempt` | pass (failed at RED) |
+| 2 (F2) | same file, acceptance 2: `card close --cleanup` and `--all` on a stopped goal in a git repository with a reclaimable worktree; no sweep line, worktree kept, no evidence copied | pass (failed at RED) |
+
+What runs before the guard, per R1 command:
+
+| Command | Before the guard | Side effect or card-run read |
+|---|---|---|
+| card next | `ctx()`: repo identity, config, state paths, store and controller constructors | none |
+| card attempt | `ctx()` | none |
+| card close | `ctx()`; the guard now precedes the `--all`/`--cleanup` exit sweep | none (was: the sweep, F2) |
+| card report | `ctx()` | none |
+| review pre | `ctx()` | none |
+| review r3 | `ctx()` | none |
+| review dispute | `parseDisputeKind(--kind)` (pure, may refuse), `ctx()` | none |
+| review accept | `ctx()` | none |

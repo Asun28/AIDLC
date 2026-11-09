@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveCardGoal, type CardGoalCandidate } from '../../src/core/card-goal.ts';
+import { resolveCardGoal, terminalGoalRefusal, type CardGoalCandidate } from '../../src/core/card-goal.ts';
 
 /** A goal record as the resolver reads it; lists are newest first, as the goal store returns them. */
 const goal = (id: string, cards: string[], terminal = false): CardGoalCandidate => ({ id, cards, terminal });
@@ -59,5 +59,35 @@ describe('resolveCardGoal (T0-CARD-GOAL-RESOLVE)', () => {
     // A --goal given empty is a goal named, not an absent option: it is refused, never resolved from the projection.
     const empty = refused(resolveCardGoal(goals, 'T0-X', { explicit: '', holdsRun: () => false }));
     assert.ok(empty.includes('not found'), empty);
+  });
+});
+
+describe('terminalGoalRefusal (T0-CARD-TERMINAL-GOAL)', () => {
+  const EXTEND = 'aidlc goal extend g-1 --until <iso> --by <who> --reason "..."';
+  const RESUME = 'aidlc goal resume g-1 --reason "..."';
+  const names = (text: string | undefined, parts: string[], absent: string) => {
+    assert.ok(text !== undefined, 'expected a refusal');
+    for (const part of parts) assert.ok(text.includes(part), `${text} names ${part}`);
+    assert.ok(!text.includes(absent), `${text} names one re-admitting command, not ${absent}`);
+  };
+
+  test('a goal in RUN, WAIT or CLOSE is not refused [R3]', () => {
+    for (const state of ['RUN', 'WAIT', 'CLOSE']) assert.equal(terminalGoalRefusal({ id: 'g-1', state, terminal: false }), undefined, state);
+  });
+
+  test('a goal stopped for time names the goal, STOP, time and aidlc goal extend [R2]', () => {
+    names(terminalGoalRefusal({ id: 'g-1', state: 'STOP', terminal: true, stop: { reason: 'time' } }), ['g-1', 'STOP', 'time', EXTEND], 'goal resume');
+  });
+
+  test('a goal stopped for ownership or cancelled names the reason and aidlc goal resume [R2]', () => {
+    for (const reason of ['ownership', 'cancelled']) names(terminalGoalRefusal({ id: 'g-1', state: 'STOP', terminal: true, stop: { reason } }), ['g-1', 'STOP', reason, RESUME], 'goal extend');
+  });
+
+  test('a DONE goal names DONE and aidlc goal resume [R2]', () => {
+    names(terminalGoalRefusal({ id: 'g-1', state: 'DONE', terminal: true }), ['g-1', 'DONE', RESUME], 'goal extend');
+  });
+
+  test('a non-terminal goal left in STOP by the resume of a time stop names aidlc goal extend [R2]', () => {
+    names(terminalGoalRefusal({ id: 'g-1', state: 'STOP', terminal: false }), ['g-1', 'STOP', EXTEND], 'goal resume');
   });
 });
