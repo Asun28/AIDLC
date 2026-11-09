@@ -2,6 +2,7 @@
 // live, and stops the goal as before once the lease has expired; the incident sequence of goal g-20261107095106-c08940.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { writeFileSync } from 'node:fs';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, actorA, actorB, type Fixture } from './_harness.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
@@ -55,6 +56,19 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 4: a card run stopped for ownership und
   } finally {
     setActorForTests(actorA);
     expired.fx.cleanup();
+  }
+});
+
+test('T0-CARD-LEASE-HEARTBEAT acceptance 4: a card lease file that cannot be read keeps the goal stop of a run stopped for ownership, as before this card [R4]', () => {
+  const { fx, goal } = stoppedForOwnership(MINUTE_MS);
+  try {
+    writeFileSync(fx.leases.file(resourceKeys.card(fx.repo.key, 'T1-HELLO')), '{ not json', 'utf8');
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+    assert.equal(fx.goal(goal.id).stop?.reason, 'ownership');
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
   }
 });
 

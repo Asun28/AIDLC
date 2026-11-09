@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -137,5 +137,28 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 3: a UserPromptSubmit event of session 
     dispatchHook({ hook_event_name: 'UserPromptSubmit', prompt: 'what is left on this card?', session_id: 'sess-S' }, { cwd, env, now: NOW });
     const after = leases.read(key('T1-FOUR'));
     assert.deepEqual([after?.expiresAt, after?.generation], [addMs(NOW, DEFAULT_LEASE_TTL_MS), four.generation]);
+  });
+});
+
+test('T0-CARD-LEASE-HEARTBEAT acceptance 8: a session scans the leases at most once per 60 seconds, and a state without a leases directory gets no marker [R3]', () => {
+  withState(({ cwd, env, leases }) => {
+    leaseOf(leases, 'T1-FIRST', S, 6 * MINUTE_MS);
+    dispatchHook(bash, { cwd, env, now: NOW });
+    assert.equal(leases.read(key('T1-FIRST'))?.expiresAt, addMs(NOW, DEFAULT_LEASE_TTL_MS), 'the first event scans and renews');
+    // a lease that is due after that scan: an event 30 s later does not scan, so it is not written
+    leaseOf(leases, 'T1-LATE', S, 6 * MINUTE_MS);
+    const before = bytes(leases, 'T1-LATE');
+    dispatchHook(bash, { cwd, env, now: addMs(NOW, 30_000) });
+    assert.equal(bytes(leases, 'T1-LATE'), before, 'within 60 s of the last scan nothing is renewed');
+    dispatchHook(bash, { cwd, env, now: addMs(NOW, 61_000) });
+    assert.equal(leases.read(key('T1-LATE'))?.expiresAt, addMs(NOW, 61_000 + DEFAULT_LEASE_TTL_MS), '61 s later the scan runs again');
+  });
+  withState(({ cwd, env, stateDir }) => {
+    rmSync(path.join(stateDir, 'leases'), { recursive: true });
+    dispatchHook(bash, { cwd, env, now: NOW });
+    assert.deepEqual(readdirSync(stateDir), [], 'a state root without leases/ is left as it was');
+    const absent = path.join(cwd, 'absent-state');
+    dispatchHook(bash, { cwd, env: { ...env, AIDLC_STATE_DIR: absent }, now: NOW });
+    assert.equal(existsSync(absent), false, 'an absent state root is not created');
   });
 });
