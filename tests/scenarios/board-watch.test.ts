@@ -34,7 +34,10 @@ function snapshot(dir: string): Record<string, string> {
 
 /** A repository directory (not a git checkout) whose card registry holds T1-A, and a state directory beside it holding goal `g-watch` (cards T1-A and T1-B) and a live goal lease. */
 function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.ProcessEnv } {
-  const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-watch-'));
+  // Canonical from the start, so the CLI's cwd and the lease key below name one path: the fixture is not a git
+  // repository, and there the CLI keys leases by its cwd as given, which on a Windows runner is an 8.3 short path
+  // (RUNNER~1) unless it is resolved here (lesson 2026-11-08 T0-WORKTREE-RECLAIM-2).
+  const tmp = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-watch-')));
   const repo = path.join(tmp, 'repo');
   const state = path.join(tmp, 'state');
   mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });
@@ -42,8 +45,8 @@ function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.Proc
   mkdirSync(path.join(state, 'goals'), { recursive: true });
   mkdirSync(path.join(state, 'leases'), { recursive: true });
   writeFileSync(path.join(state, 'goals', 'g-watch.json'), JSON.stringify(goal({ id: 'g-watch', cards: ['T1-A', 'T1-B'] }), null, 2), 'utf8');
-  // The key the CLI derives: the canonical repository path (lesson 2026-11-08 T0-WORKTREE-RECLAIM-2).
-  const key = resourceKeys.goal(shortKey(realpathSync.native(repo)), 'g-watch');
+  // The key the CLI derives from its cwd, `repo`, which is canonical (above).
+  const key = resourceKeys.goal(shortKey(repo), 'g-watch');
   const lease = { resourceKey: key, generation: 2, owner: { session: 'win-A', pid: 1, processStart: '2026-09-11T00:00:00.000Z', host: 'h1' }, acquiredAt: '2026-09-11T00:00:00.000Z', heartbeatAt: '2026-09-11T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', released: false };
   writeFileSync(new LeaseStore(path.join(state, 'leases')).file(key), JSON.stringify(lease), 'utf8');
   const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: state };

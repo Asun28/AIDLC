@@ -88,6 +88,8 @@ Behavioural RED (attempt 2, R3 decision 1 F1): the candidate's tests at 19bbd77 
 
 Attempt 2 also repairs F2 (a supplied empty goal id, positional or `--goal ''`, is checked as given and exits with INVALID_GOAL_ID; only an absent id selects the default goal) and F3 (`ctx()` builds the goal controller on first use, so `board --watch` never constructs it).
 
+Attempt 4 repairs the Windows CI failure of PR 242 (acceptance 4 missed the goal lease row): the fixture is not a git repository, so the CLI keys leases by its cwd as given, an 8.3 short path on the runner, while the test keyed the lease by the long path. The fixture now canonicalizes its temporary directory first, so the cwd and the key name one path. Reproduced locally with TEMP set to a junction (fails before, 5 pass and 2 skipped after).
+
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/infra/board.test.ts`, "renders the six line groups of the Output contract" (exact lines: Stop reason only, live leases only, `T1-GONE SHIP not in the card registry`) and "says (none) for no cards and no live lease" | pass |
