@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { makeStop } from '../../src/core/stop.ts';
@@ -49,6 +50,64 @@ test('T0-CARD-TERMINAL-GOAL acceptance 2: on a cancelled goal every card command
     }
   } finally {
     fx.cleanup();
+  }
+});
+
+test('T0-CARD-TERMINAL-GOAL acceptance 2: with --goal naming a stopped goal that holds a run of a card it no longer projects, card next and card attempt are refused before that run is read [R1] [R2]', () => {
+  const { fx, goalId, cli, types } = setup();
+  try {
+    writeCard(fx, { id: 'T1-GONE', title: 'a card the goal no longer projects' });
+    fx.controller.report({ goalId, generation: 0, result: 'cancel', data: { detail: 'stopped' } });
+    // A malformed run, written after the stop: any read of it is a store error, so the refusal shows the guard ran before the read.
+    const file = fx.store.cardFile(goalId, 'T1-GONE');
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, '{', 'utf8');
+    const before = types();
+    for (const args of [['card', 'next', 'T1-GONE', '--goal', goalId], ['card', 'attempt', 'T1-GONE', '--goal', goalId, '--outcome', 'success']]) {
+      const r = cli(...args);
+      const label = args.join(' ');
+      assert.notEqual(r.status, 0, `${label} exits non-zero: ${r.stdout}`);
+      for (const part of [goalId, 'cancelled', `aidlc goal resume ${goalId}`]) assert.ok(r.stderr.includes(part), `${label}: the refusal names ${part}, not a store error: ${r.stderr}`);
+      assert.equal(readFileSync(file, 'utf8'), '{', `${label} leaves the run file as it was`);
+      assert.deepEqual(types(), before, `${label} appends no journal event`);
+    }
+  } finally {
+    fx.cleanup();
+  }
+});
+
+function git(cwd: string, args: string[]): void {
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+}
+
+test('T0-CARD-TERMINAL-GOAL acceptance 2: card close --cleanup and --all on a stopped goal are refused without the worktree sweep, which would remove the card worktree of the cancelled goal [R1] [R2]', () => {
+  for (const flag of ['--cleanup', '--all']) {
+    const { fx, goalId, cli } = setup();
+    try {
+      fx.controller.ensureCardRun(fx.goal(goalId), CARD);
+      fx.controller.report({ goalId, generation: 0, result: 'cancel', data: { detail: 'stopped' } });
+      // A git repository on the github ship path with the card's clean worktree: the sweep removes it for the cancelled goal.
+      writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\n.review/\nwt/\naidlc.config.json\n');
+      writeFileSync(path.join(fx.tmp, 'tracked.txt'), 'base\n');
+      git(fx.tmp, ['init', '-q', '-b', 'main']);
+      git(fx.tmp, ['add', '-A']);
+      git(fx.tmp, ['commit', '-q', '-m', 'base']);
+      git(fx.tmp, ['branch', CARD]);
+      mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
+      const root = realpathSync.native(path.join(fx.tmp, 'wt'));
+      const worktree = path.join(root, CARD);
+      git(fx.tmp, ['worktree', 'add', '-q', worktree, CARD]);
+      writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'github', worktreeRoot: root, cardsDir: 'specs/tasks', base: 'main' }));
+      const r = cli('card', 'close', CARD, '--goal', goalId, flag);
+      assert.notEqual(r.status, 0, `card close ${flag} exits non-zero: ${r.stdout}`);
+      assert.ok(r.stderr.includes(`aidlc goal resume ${goalId}`), `card close ${flag}: ${r.stderr}`);
+      assert.doesNotMatch(r.stderr, /worktree /, `card close ${flag} runs no sweep`);
+      assert.equal(existsSync(path.join(worktree, 'tracked.txt')), true, `card close ${flag} leaves the worktree`);
+      assert.equal(existsSync(path.join(fx.paths.evidence, goalId, 'review', CARD)), false, `card close ${flag} copies no evidence`);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
 
