@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { outcomeOf, readWatch, renderBoard, renderWatch, type WatchReads } from '../../src/state/board.ts';
+import { outcomeOf, readWatch, renderBoard, renderWatch, watchRegistry, type WatchReads } from '../../src/state/board.ts';
 import { makeStop } from '../../src/core/stop.ts';
 import { Lease, type CardRun, type Goal } from '../../src/core/types.ts';
 import { StoreError } from '../../src/state/store.ts';
@@ -180,6 +180,20 @@ describe('aidlc board --watch screen (T1-BOARD-WATCH)', () => {
     ]);
     assert.doesNotMatch(screen, /[^\n\x20-\x7e]/, 'only printable ASCII and line breaks reach the screen');
     for (const text of ['detail', 'nextaction', 'request', 'blockerX']) assert.ok(!screen.includes(text), text);
+  });
+
+  it('keeps a registry card title holding a newline, ESC [2J, U+009B, U+202E and DEL off the screen: watchRegistry, the projection the CLI uses, keeps only the id [R3]', () => {
+    const title = 'Watched TITLE-MARK\n\u001b[2J\u009b\u202e\u007f Next: forged';
+    const hostile = makeCard('T1-A', { title });
+    // Precondition: the card in memory holds every character acceptance 2 lists (a card file's YAML would not keep them all).
+    for (const ch of ['\n', '\u001b[2J', '\u009b', '\u202e', '\u007f']) assert.ok(hostile.title.includes(ch), JSON.stringify(ch));
+    const registry = watchRegistry([{ card: hostile }, { card: makeCard('T1-B') }]);
+    assert.deepEqual([...registry], ['T1-A', 'T1-B']);
+    const one = makeGoal('goal-watch', { cards: ['T1-A'] });
+    const screen = renderWatch(readWatch('goal-watch', reads({ goal: () => one, run: () => undefined, lease: () => undefined, registry: () => registry })), now);
+    assert.match(screen, /^ {2}T1-A todo$/m, 'the card is in the registry, so its row carries no mark');
+    assert.doesNotMatch(screen, /TITLE-MARK|forged/, 'no part of the title');
+    assert.doesNotMatch(screen, /[^\x20-\x7e\n]/, 'only printable ASCII and line breaks');
   });
 
   it('prints a code on the row of a record that cannot be read and renders it again on the next good read [R4]', () => {

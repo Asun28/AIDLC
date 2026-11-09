@@ -123,11 +123,11 @@ export function readWatch(goalId: string, reads: WatchReads): WatchSnapshot {
 export const PLAIN_ID = /^[A-Za-z0-9._:-]{1,64}$/;
 /** The one encoding point for record text on the watch screen (R3): a plain identifier as is, anything else as escaped JSON. */
 const shown = (text: string): string => (PLAIN_ID.test(text) ? text : asciiJson(text));
+/** The card registry as the watch reads it: the card ids only, so no title or other card text can reach the screen (R3). */
+export const watchRegistry = (cards: readonly { card: { id: string } }[]): ReadonlySet<string> => new Set(cards.map((p) => p.card.id));
 
-/**
- * One `aidlc board --watch` screen, the Output contract of card T1-BOARD-WATCH. Record text appears only as enum values,
- * card ids, integers, ISO timestamps and `shown` identifiers; never a stop detail, next action, blocker or request text.
- */
+/** One `aidlc board --watch` screen (Output contract of card T1-BOARD-WATCH): record text appears only as enum values, card
+ *  ids, integers, ISO timestamps and `shown` identifiers, never a stop detail, next action, blocker, title or request text. */
 export function renderWatch(s: WatchSnapshot, now: string): string {
   const goalId = shown(s.goalId);
   const lines = [`aidlc watch: ${goalId} at ${now} (view only; Ctrl+C ends it)`];

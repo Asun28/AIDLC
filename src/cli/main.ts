@@ -11,7 +11,7 @@ import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import { readErrorCode, workingTreeReport } from '../state/claims.ts';
-import { PLAIN_ID, readWatch, renderWatch, type WatchReads } from '../state/board.ts';
+import { PLAIN_ID, readWatch, renderWatch, watchRegistry, type WatchReads } from '../state/board.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
@@ -506,7 +506,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           goal: () => c.store.getGoal(id),
           run: (cardId) => c.store.getCardRun(id, cardId),
           lease: (label) => leases.read(label === 'goal' ? resourceKeys.goal(c.repo.key, id) : resourceKeys.card(c.repo.key, label)),
-          registry: () => new Set(loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir)).cards.map((p) => p.card.id)),
+          registry: () => watchRegistry(loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir)).cards),
         };
         const stop = new AbortController();
         process.once('SIGINT', () => stop.abort());
