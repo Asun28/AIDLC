@@ -69,3 +69,26 @@ npm run typecheck && node --test tests/surface/lease-heartbeat.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+History: continues T0-CARD-LEASE-HEARTBEAT at 982d892 (R3 decision 3 passed; decision 4 blocked on the per-guard entry). Its RED receipts: 10f3434 (acceptance 1 to 5), 821d5ab (60 s throttle, unreadable card lease in the dispatch), 7d62ac3 (R3 decision 1: released lease, unguarded PreToolUse, window reservation), ab38566 (R3 decision 2: one window marker per session, one directory listed). Its attempt evidence, same_class readers, mutation sweep and amendments are in `specs/tasks/T0-CARD-LEASE-HEARTBEAT.md`.
+
+Attempt 1. RED f5abe1b: "T0-CARD-LEASE-HEARTBEAT-2 acceptance 12" failed on 8a2a26e (`renewed: 2020-01-01T00:00:00.000Z`, the lease unchanged). Fix: the `hook <name>` action of `src/cli/main.ts` calls `renewSessionCardLeases(event, cwd, process.env)` before `runHook` for a `PreToolUse` or `UserPromptSubmit` event when the name is not `auto` (which renews inside `dispatchHook`), so each process renews once. That action has no git prefetch; `resolveStatePaths` resolves the root synchronously as the guards do.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 [R1] | `tests/surface/lease-heartbeat.test.ts` "acceptance 1" (the event's `session_id` is the session used, with no `AIDLC_SESSION`; a subagent's PreToolUse carries its parent's `session_id`) | pass |
+| 2 [R2] | same file, both "acceptance 2" tests (in process: malformed, fenced, held lock; as a process: exit 0, no output) | pass |
+| 3 [R1] | same file, "acceptance 3" (UserPromptSubmit) | pass |
+| 4 [R4] | `tests/scenarios/ownership-wait.test.ts`, both "acceptance 4" tests (live lease waits on `T1-HELLO:owner:win-B`; expired lease stops naming `card takeover`; unreadable lease stops as before) | pass |
+| 5 [R1][R4] | same file, "acceptance 5" (incident sequence, `verifyAudit` without `WORK_AFTER_TERMINAL`) | pass |
+| 6 [R3] | `hooks.test.ts`, `hook-lazy.test.ts` unchanged and green in the DoD; `npm run build && npm run bench -- --check`: every count within its ceiling (6 journeys), fsCalls hook.pre-bash 8/7, hook.pre-edit 9/8, hook.prompt 8/7, no ceiling raised | pass |
+| 7 [R5] | OPERATIONS.md (ownership row, Hooks: every hook entry, per-guard included), ARCHITECTURE.md (hooks paragraph, persisted-state row), CHANGELOG entry under T0-CARD-LEASE-HEARTBEAT-2 | reviewer to verify |
+| 8 [R3] | `lease-heartbeat.test.ts` "acceptance 8" (marker window, same and older window skip, next window scans, no leases directory creates nothing, one file per session) | pass |
+| 9 [R1][R2] | same file "acceptance 9"; `tests/infra/lease.test.ts` "heartbeat refuses a released lease" | pass |
+| 10 [R1] | same file "acceptance 10" (PreToolUse `Read`) | pass |
+| 11 [R3] | same file "acceptance 11" (counted `fs.readdirSync`: the leases directory only, none when skipped) | pass |
+| 12 [R1][R2] | same file "T0-CARD-LEASE-HEARTBEAT-2 acceptance 12" (`node src/cli/main.ts hook protect-paths`: the 2020 lease renewed at its generation; exit code and stdout equal those with no lease) | pass; red at f5abe1b |
+
+DoD: 79 tests, 75 pass, 0 fail, 4 platform skips. `node --test tests/infra/update-json.test.ts`: 17 pass.

@@ -52,7 +52,7 @@ import { EvidenceStore, Manifest } from '../audit/manifest.ts';
 import { verifyAudit } from '../audit/verifier.ts';
 import { evaluateBands, parseBandsYaml, type Sample } from '../maintain/bands.ts';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../maintain/incident.ts';
-import { readStdinJson, runHook, type HookName } from '../hooks/index.ts';
+import { readStdinJson, renewSessionCardLeases, runHook, type HookName } from '../hooks/index.ts';
 import { dispatchHook, readStdin } from '../hooks/entry.ts';
 import { initProject } from '../scaffold/init.ts';
 import { Goal, OperationKind, nowIso, type DeliveryTarget, type DisputeKind, type RequestSize, type RoundCoverage } from '../core/types.ts';
@@ -1374,6 +1374,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action(async (name: string) => {
       const event = readStdinJson(await readStdin());
       const cwd = g().cwd ?? event.cwd ?? process.cwd();
+      // A per-guard entry renews the session's card leases as the dispatcher does (card T0-CARD-LEASE-HEARTBEAT-2); `auto` renews inside dispatchHook.
+      if (name !== 'auto' && (event.hook_event_name === 'PreToolUse' || event.hook_event_name === 'UserPromptSubmit')) renewSessionCardLeases(event, cwd, process.env);
       const result = name === 'auto' ? dispatchHook(event, { cwd }) : runHook(name as HookName, event, { cwd });
       if (result.stdout) process.stdout.write(result.stdout + '\n');
       if (result.stderr) process.stderr.write(result.stderr + '\n');
