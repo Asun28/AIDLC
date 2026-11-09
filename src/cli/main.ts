@@ -10,7 +10,8 @@ import { spawn, spawnSync } from 'node:child_process';
 import { ConfigError, loadProjectConfig, resolveWorktreeRoot, type ProjectConfig } from '../config.ts';
 import { resolveRepoIdentity, resolveStatePaths, type RepoIdentity, type StatePaths } from '../state/paths.ts';
 import { GoalStore } from '../state/goal-store.ts';
-import { workingTreeReport } from '../state/claims.ts';
+import { readErrorCode, workingTreeReport } from '../state/claims.ts';
+import { PLAIN_ID, readWatch, renderWatch, type WatchReads } from '../state/board.ts';
 import { GitProbe, oneLine } from '../probes/git.ts';
 import { sweepWorktrees } from '../loop/worktree-reclaim.ts';
 import { baseSyncReport } from '../probes/base-sync.ts';
@@ -108,6 +109,21 @@ function out(c: { json: boolean }, data: unknown, human?: () => string): void {
 function fail(message: string, code = 1): never {
   process.stderr.write(`aidlc: ${message}\n`);
   process.exit(code);
+}
+
+/**
+ * `board --watch`: a screen now and one per interval (a terminal cleared first) until `stop` aborts (SIGINT) or `out` fails.
+ * Resolves an output failure's errno code, or `undefined` for a stop or a reader that closed the pipe (EPIPE).
+ */
+export function watchLoop(screen: () => string, out: NodeJS.WritableStream & { isTTY?: boolean }, ms: number, stop: AbortSignal): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const end = (error?: string) => (clearInterval(timer), resolve(error));
+    out.on('error', (err: NodeJS.ErrnoException) => end(err.code === 'EPIPE' ? undefined : (err.code ?? 'UNKNOWN')));
+    stop.addEventListener('abort', () => end(), { once: true });
+    const tick = () => out.write(`${out.isTTY ? '\x1b[2J\x1b[H' : ''}${screen()}\n\n`);
+    const timer = setInterval(tick, ms);
+    tick();
+  });
 }
 
 /** Doctor's `workingTree` (card T0-PLANNING-CLAIMS): `workingTreeReport` over the main checkout's git status, goals, plans and goal leases. */
@@ -471,10 +487,33 @@ export async function main(argv: string[] = process.argv): Promise<void> {
 
   program
     .command('board [goalId]')
-    .description('regenerate and print the board view')
+    .description('regenerate and print the board view; with --watch, re-render a read-only screen of the goal until Ctrl+C')
     .option('--goal <id>', 'goal id (alternative to the positional argument)')
-    .action((goalId: string | undefined, o: { goal?: string }) => {
+    .option('--watch', 'goal state, card states and live leases every interval, writing nothing')
+    .option('--interval <seconds>', 'seconds between --watch screens, 1 to 3600 (default 5)')
+    .action(async (goalId: string | undefined, o: { goal?: string; watch?: boolean; interval?: string }) => {
+      if (o.interval !== undefined && !(/^\d{1,4}$/.test(o.interval) && Number(o.interval) >= 1 && Number(o.interval) <= 3600)) fail('--interval must be a whole number of seconds from 1 to 3600');
+      if (o.interval !== undefined && !o.watch) fail('--interval needs --watch');
       const c = ctx(g());
+      if (o.watch) {
+        let id = '';
+        try { id = latestActiveGoalId(c, goalId ?? o.goal); } catch (err) { fail(`board --watch: ${readErrorCode(err)}`); }
+        if (!PLAIN_ID.test(id)) fail('board --watch: INVALID_GOAL_ID');
+        if (!existsSync(c.store.goalFile(id))) fail(`unknown goal ${id}`);
+        // Read-only accessors only (R2): no controller, no session, no journal, no board file.
+        const leases = new LeaseStore(c.paths.leases);
+        const reads: WatchReads = {
+          goal: () => c.store.getGoal(id),
+          run: (cardId) => c.store.getCardRun(id, cardId),
+          lease: (label) => leases.read(label === 'goal' ? resourceKeys.goal(c.repo.key, id) : resourceKeys.card(c.repo.key, label)),
+          registry: () => new Set(loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir)).cards.map((p) => p.card.id)),
+        };
+        const stop = new AbortController();
+        process.once('SIGINT', () => stop.abort());
+        const error = await watchLoop(() => renderWatch(readWatch(id, reads), nowIso()), process.stdout, Number(o.interval ?? 5) * 1000, stop.signal);
+        if (error) fail(`board --watch: ${error}`);
+        process.exit(0);
+      }
       const goalRec = c.controller.mustGoal(latestActiveGoalId(c, goalId ?? o.goal));
       const registry = loadCardRegistry(path.join(c.root, c.config.cardsDir), path.join(c.root, c.config.archiveDir));
       const cards = goalRec.cards.map((id) => registry.cards.find((p) => p.card.id === id)?.card).filter((x): x is NonNullable<typeof x> => Boolean(x));

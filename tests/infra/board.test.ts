@@ -157,11 +157,11 @@ describe('aidlc board --watch screen (T1-BOARD-WATCH)', () => {
   });
 
   it('never prints stop detail, next action, blocker or request text, and escapes a lease owner and host that are not plain [R3]', () => {
-    const hostile = 'X\n\u001b[2J\u009b‮\u007f';
+    const hostile = 'X\n\u001b[2J\u009b\u202e\u007f';
     const g: Goal = makeGoal('goal-watch', {
       cards: ['T1-A'],
       stop: makeStop('review', `detail${hostile}`, `nextaction${hostile}`, { at: iso() }),
-      revisions: [{ revision: 0, at: iso(), reason: 'intake', request: { text: `request${hostile}`, source: 'natural-language', affectedSurfaces: [] } }],
+      revisions: [{ revision: 0, at: iso(), reason: 'intake', request: { text: `request${hostile}`, source: 'natural-language', affectedSurfaces: [] }, supersededCards: {}, removedCards: [] }],
     });
     const run = makeCardRun(g.id, 'T1-A', { state: 'STOP', stop: makeStop('card', `detail${hostile}`, `nextaction${hostile}`, { at: iso() }), blocker: `blocker${hostile}` });
     const owner = lease('goal', `s${hostile}`, 1, '2026-09-11T12:10:00.000Z', false, `h${hostile}`);
@@ -186,6 +186,9 @@ describe('aidlc board --watch screen (T1-BOARD-WATCH)', () => {
     assert.equal(renderWatch(readWatch('goal-watch', onGoal), now), 'aidlc watch: goal-watch at 2026-09-11T12:00:00.000Z (view only; Ctrl+C ends it)\nstate unreadable: MALFORMED_JSON');
     assert.match(renderWatch(readWatch('goal-watch', onGoal), now), /^Goal: RUN, generation 0,/m, 'the next good read renders the goal');
     assert.equal(renderWatch(readWatch('goal-watch', reads({ goal: () => undefined })), now).split('\n')[1], 'state unreadable: NOT_FOUND');
+    const noRegistry = reads({ registry: scripted(new StoreError('READ_FAILED', 'specs/tasks', 'EACCES'), new Set(['T1-A', 'T1-B', 'T1-E'])) });
+    assert.equal(renderWatch(readWatch('goal-watch', noRegistry), now).split('\n')[7], '  T1-GONE SHIP', 'an unreadable registry marks no card');
+    assert.equal(renderWatch(readWatch('goal-watch', noRegistry), now).split('\n')[7], '  T1-GONE SHIP not in the card registry', 'the next good read marks it again');
 
     const runA = scripted(new StoreError('SCHEMA_VIOLATION', 'run.json', 'state: bad'), runs['T1-A']);
     const leaseGoal = scripted(new StoreError('READ_FAILED', 'lease.json', 'EACCES'), leases['goal']);

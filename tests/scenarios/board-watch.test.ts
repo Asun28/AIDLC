@@ -1,6 +1,6 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
@@ -10,6 +10,7 @@ import { goal } from '../core/_fixtures.ts';
 import { cleanup } from '../infra/helpers.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 import { shortKey } from '../../src/state/paths.ts';
+import { renderCard } from '../../src/artifacts/card.ts';
 import { watchLoop } from '../../src/cli/main.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -31,15 +32,16 @@ function snapshot(dir: string): Record<string, string> {
   return files;
 }
 
-/** A repository directory (not a git checkout) and a state directory beside it holding goal `g-watch`, its card run and a live goal lease. */
+/** A repository directory (not a git checkout) whose card registry holds T1-A, and a state directory beside it holding goal `g-watch` (cards T1-A and T1-B) and a live goal lease. */
 function fixture(): { tmp: string; repo: string; state: string; env: NodeJS.ProcessEnv } {
   const tmp = mkdtempSync(path.join(tmpdir(), 'aidlc-watch-'));
   const repo = path.join(tmp, 'repo');
   const state = path.join(tmp, 'state');
-  mkdirSync(repo, { recursive: true });
+  mkdirSync(path.join(repo, 'specs', 'tasks'), { recursive: true });
+  writeFileSync(path.join(repo, 'specs', 'tasks', 'T1-A.md'), renderCard({ id: 'T1-A', title: 'Watched card', allowPaths: ['src/a.ts'], dodCommand: 'npm test', acceptance: ['1. It holds. [dod arm 1]'], deliverable: 'It holds.' }), 'utf8');
   mkdirSync(path.join(state, 'goals'), { recursive: true });
   mkdirSync(path.join(state, 'leases'), { recursive: true });
-  writeFileSync(path.join(state, 'goals', 'g-watch.json'), JSON.stringify(goal({ id: 'g-watch', cards: ['T1-A'] }), null, 2), 'utf8');
+  writeFileSync(path.join(state, 'goals', 'g-watch.json'), JSON.stringify(goal({ id: 'g-watch', cards: ['T1-A', 'T1-B'] }), null, 2), 'utf8');
   // The key the CLI derives: the canonical repository path (lesson 2026-11-08 T0-WORKTREE-RECLAIM-2).
   const key = resourceKeys.goal(shortKey(realpathSync.native(repo)), 'g-watch');
   const lease = { resourceKey: key, generation: 2, owner: { session: 'win-A', pid: 1, processStart: '2026-09-11T00:00:00.000Z', host: 'h1' }, acquiredAt: '2026-09-11T00:00:00.000Z', heartbeatAt: '2026-09-11T00:00:00.000Z', expiresAt: '2099-01-01T00:00:00.000Z', released: false };
@@ -84,7 +86,8 @@ test('board --watch --interval 1 prints two screens, exits 0 when its reader clo
       assert.deepEqual(lines.slice(1), [
         'Goal: PLAN, generation 0, revision 0, deadline ' + goal().deadlines.goalDeadline,
         'Cards:',
-        '  T1-A todo not in the card registry',
+        '  T1-A todo',
+        '  T1-B todo not in the card registry',
         'Leases:',
         '  goal owner win-A host h1 generation 2 until 2099-01-01T00:00:00.000Z',
         'Next: not computed (view only); run aidlc next --goal g-watch',
@@ -116,7 +119,7 @@ test('board --watch refuses a bad interval, --interval without --watch, a goal i
     const noWatch = cli(fx, ['board', 'g-watch', '--interval', '5']);
     assert.equal(noWatch.status, 1);
     assert.equal(noWatch.stderr, 'aidlc: --interval needs --watch\n');
-    for (const id of ['g-é\u001b[31m', '../x', 'a'.repeat(65)]) {
+    for (const id of ['g-\u00e9\u001b[31m', '../x', 'a'.repeat(65)]) {
       const r = cli(fx, ['board', id, '--watch']);
       assert.equal(r.status, 1, id);
       assert.equal(r.stderr, 'aidlc: board --watch: INVALID_GOAL_ID\n', id);
@@ -209,6 +212,17 @@ test('a real SIGINT ends board --watch with exit 0 and an empty stderr', { skip:
     clearTimeout(guard);
     assert.equal(code, 0, stderr);
     assert.equal(stderr, '');
+  } finally {
+    cleanup(fx.tmp);
+  }
+});
+
+test('board --watch exits 1 naming the errno code when stdout fails with an error other than EPIPE', { skip: existsSync('/dev/full') ? false : 'needs /dev/full, which fails every write with ENOSPC (Linux only)' }, () => {
+  const fx = fixture();
+  try {
+    const r = spawnSync(process.execPath, [main, 'board', 'g-watch', '--watch'], { cwd: fx.repo, env: fx.env, stdio: ['ignore', openSync('/dev/full', 'w'), 'pipe'], encoding: 'utf8', timeout: 30_000 });
+    assert.equal(r.status, 1);
+    assert.equal(r.stderr, 'aidlc: board --watch: ENOSPC\n');
   } finally {
     cleanup(fx.tmp);
   }

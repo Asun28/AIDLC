@@ -3,10 +3,12 @@
  * per-card status/dependencies/wave/worktree/PR/counters/blocker. It is never the only store
  * of clocks, approvals or history.
  */
-import type { Card, CardRun, Goal } from '../core/types.ts';
+import type { Card, CardRun, Goal, Lease } from '../core/types.ts';
 import { effectiveGoalDeadline } from '../core/deadlines.ts';
 import { selectArc, type CardOutcome } from '../core/arc.ts';
 import { formatStop } from '../core/stop.ts';
+import { readErrorCode } from './claims.ts';
+import { asciiJson } from './bounds.ts';
 
 const CHECKBOX: Record<string, string> = {
   todo: '[ ]',
@@ -82,5 +84,68 @@ export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: str
     for (const r of arc.reasons) lines.push(`- ${r}`);
     lines.push('');
   }
+  return lines.join('\n');
+}
+
+/** What `aidlc board --watch` reads, each call one record (card T1-BOARD-WATCH R2); a lease is labelled `goal` or by its card id. */
+export interface WatchReads {
+  goal(): Goal | undefined;
+  run(cardId: string): CardRun | undefined;
+  lease(label: string): Lease | undefined;
+  registry(): ReadonlySet<string>;
+}
+/** A record as read, or the store error code it failed with (`readErrorCode`); `undefined` when there is none. */
+type Got<T> = T | { unreadable: string } | undefined;
+export interface WatchSnapshot {
+  goalId: string;
+  goal: Goal | { unreadable: string };
+  runs: Map<string, Got<CardRun>>;
+  leases: { label: string; lease: Got<Lease> }[];
+  registry: ReadonlySet<string> | undefined; // undefined when unreadable: no card is marked
+}
+
+function attempt<T>(read: () => T | undefined): Got<T> {
+  try { return read(); } catch (err) { return { unreadable: readErrorCode(err) }; }
+}
+/** One tick's reads: a record that cannot be read becomes its store error code (R4); nothing here writes. */
+export function readWatch(goalId: string, reads: WatchReads): WatchSnapshot {
+  const goal = attempt(reads.goal) ?? { unreadable: 'NOT_FOUND' };
+  const cards = 'unreadable' in goal ? [] : goal.cards;
+  const registry = attempt(reads.registry);
+  return { goalId, goal,
+    runs: new Map(cards.map((id) => [id, attempt(() => reads.run(id))])),
+    leases: ['goal', ...cards].map((label) => ({ label, lease: attempt(() => reads.lease(label)) })),
+    registry: registry && 'has' in registry ? registry : undefined,
+  };
+}
+
+/** A plain identifier: the watch prints it as is, and `board --watch` accepts only such a goal id. */
+export const PLAIN_ID = /^[A-Za-z0-9._:-]{1,64}$/;
+/** The one encoding point for record text on the watch screen (R3): a plain identifier as is, anything else as escaped JSON. */
+const shown = (text: string): string => (PLAIN_ID.test(text) ? text : asciiJson(text));
+
+/**
+ * One `aidlc board --watch` screen, the Output contract of card T1-BOARD-WATCH. Record text appears only as enum values,
+ * card ids, integers, ISO timestamps and `shown` identifiers; never a stop detail, next action, blocker or request text.
+ */
+export function renderWatch(s: WatchSnapshot, now: string): string {
+  const goalId = shown(s.goalId);
+  const lines = [`aidlc watch: ${goalId} at ${now} (view only; Ctrl+C ends it)`];
+  const { goal } = s;
+  if ('unreadable' in goal) return [...lines, `state unreadable: ${goal.unreadable}`].join('\n');
+  lines.push(`Goal: ${goal.state}${goal.terminal ? ' (terminal)' : ''}, generation ${goal.generation}, revision ${goal.revision}, deadline ${effectiveGoalDeadline(goal.deadlines)}`);
+  if (goal.stop) lines.push(`Stop: ${goal.stop.reason}`);
+  lines.push('Cards:');
+  for (const id of goal.cards) {
+    const run = s.runs.get(id);
+    if (run && 'unreadable' in run) lines.push(`  ${id} unreadable: ${run.unreadable}`);
+    else lines.push(`  ${id} ${run?.state ?? 'todo'}${run?.stop ? ` stop ${run.stop.reason}` : ''}${run?.blocker ? ' blocker' : ''}${s.registry && !s.registry.has(id) ? ' not in the card registry' : ''}`);
+  }
+  if (!goal.cards.length) lines.push('  (none)');
+  lines.push('Leases:');
+  // A live lease is unreleased and not expired at `now`; a missing, released or expired one is no row.
+  const rows = s.leases.flatMap(({ label, lease: l }) => (!l ? [] : 'unreadable' in l ? [`  ${label} unreadable: ${l.unreadable}`]
+    : !l.released && Date.parse(l.expiresAt) >= Date.parse(now) ? [`  ${label} owner ${shown(l.owner.session)} host ${shown(l.owner.host)} generation ${l.generation} until ${l.expiresAt}`] : []));
+  lines.push(...(rows.length ? rows : ['  (none)']), `Next: not computed (view only); run aidlc next --goal ${goalId}`);
   return lines.join('\n');
 }
