@@ -26,14 +26,14 @@
  *
  * `./entry.ts` runs every guard for an event in one process (`bin/aidlc-hook.js`, `aidlc hook auto`).
  */
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync, unlinkSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { droppedCards } from '../core/amendments.ts';
 import { requireAuthority } from '../core/authorization.ts';
 import { AuthorizationRecord, nowIso, type ActorIdentity, type Goal, type Lease } from '../core/types.ts';
 import { canonical, hostName, resolveRepoIdentity, resolveStatePaths } from '../state/paths.ts';
-import { StoreError, createExclusive } from '../state/store.ts';
+import { StoreError, atomicWriteText } from '../state/store.ts';
 import type { LeaseStore } from '../coordination/lease.ts';
 import { CONFIG_FILE, ProjectConfig, loadProjectConfig } from '../config.ts';
 import { GitProbe } from '../probes/git.ts';
@@ -560,10 +560,11 @@ const HEARTBEAT_WINDOW_MS = 60 * 1000;
  * Card T0-CARD-LEASE-HEARTBEAT, R1 to R3: renew every card lease of the event's session on this host that is unreleased
  * and has less than half of its TTL left (expired included), through `LeaseStore.heartbeat` at the lease's own
  * generation, so a session that is making tool calls keeps its card lease live. The scan reads the lease files with
- * node:fs and JSON.parse; the lease store loads only when a lease qualifies. A session scans at most once per minute
- * window (floor(now / `HEARTBEAT_WINDOW_MS`)): the scan is reserved by an exclusive create of
- * `<state>/heartbeat/<sha256(session) first 16 hex>.<window>`, so of two overlapping hooks of one session only one scans,
- * and the reservations of older windows are then removed. A state without a leases directory gets nothing created.
+ * node:fs and JSON.parse; the lease store loads only when a lease qualifies. The scan runs once per UTC minute window
+ * (floor(now / `HEARTBEAT_WINDOW_MS`)) per session: the marker `<state>/heartbeat/<sha256(session) first 16 hex>` holds
+ * the window of the session's last scan, and an event in that window or an earlier one does nothing more. Two hooks
+ * that read the marker before either writes it may both scan; that renews the same leases twice under the lease lock,
+ * which costs time only. A state without a leases directory gets nothing created, and only that directory is listed.
  * A lease that cannot be read, a released lease, a fenced heartbeat (another session took the lease over) or a lock
  * held elsewhere skips that lease. Nothing is printed,
  * returned or journaled, and no error leaves this function.
@@ -576,16 +577,18 @@ export function renewSessionCardLeases(event: HookEvent, cwd: string, env: NodeJ
     const dir = paths.leases;
     const nowMs = Date.parse(now);
     if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return;
-    const hbDir = path.join(paths.root, 'heartbeat');
-    const prefix = `${createHash('sha256').update(session).digest('hex').slice(0, 16)}.`;
+    const marker = path.join(paths.root, 'heartbeat', createHash('sha256').update(session).digest('hex').slice(0, 16));
     const window = Math.floor(nowMs / HEARTBEAT_WINDOW_MS);
-    // The store's one exclusive-create primitive: false when another hook of this session holds this window.
-    if (!createExclusive(path.join(hbDir, `${prefix}${window}`), now)) return;
+    let last = -Infinity;
     try {
-      for (const name of readdirSync(hbDir)) if (name.startsWith(prefix) && Number(name.slice(prefix.length)) < window) unlinkSync(path.join(hbDir, name));
+      const text = readFileSync(marker, 'utf8');
+      if (/^\d+$/.test(text)) last = Number(text);
     } catch {
-      /* best effort */
+      /* no marker */
     }
+    // The current window or a later one (a delayed hook carrying an older time) is already scanned.
+    if (last >= window) return;
+    atomicWriteText(marker, String(window));
     const names = readdirSync(dir);
     const host = hostName();
     const due: { resourceKey: string; generation: number; owner: ActorIdentity }[] = [];
