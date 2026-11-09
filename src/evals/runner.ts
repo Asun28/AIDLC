@@ -394,8 +394,9 @@ export interface EvalTrialsReport {
   left?: string[];
 }
 
-const VARIANT_NAMES: TrialNames = { before: 'HEAD', after: 'the variant', first: 'pass rate', noVerdict: 'quota holds', errors: 'model errors' };
-const DIFFERS_NOTE = 'the prompt or checks differ at the variant; both sides ran the HEAD copy';
+/** The words of the verdict on HEAD (after) against the ref (before, quoted as a JSON string). */
+const variantNames = (ref: string): TrialNames => ({ before: JSON.stringify(ref), after: 'HEAD', first: 'pass rate', noVerdict: 'quota holds', errors: 'model errors' });
+const DIFFERS_NOTE = 'the prompt or checks differ at the ref; both sides ran the HEAD copy';
 
 /** The commit `ref` names in `cwd`, or undefined when it names none. */
 function commitOf(ref: string, cwd: string): string | undefined {
@@ -442,7 +443,7 @@ function figures(runsByCase: TrialRun[][]): { perCase: TrialFigures[]; total: Tr
 /**
  * Runs each case `trials` times (card T1-EVAL-VARIANT). With `variant`, each run of a case on a temporary checkout of
  * HEAD is followed by one on a temporary checkout of the variant commit, both through `runEval`, and the report carries
- * the `compareTrials` verdict for the variant on the pass rate. A quota hold or a checkout that cannot be created stops
+ * the `compareTrials` verdict for HEAD against the ref on the pass rate. A quota hold or a checkout that cannot be created stops
  * the run. Refused before any model call: a trial count outside 1 to 20, `variant` with `skipModel`, and a variant that
  * names no commit.
  */
@@ -500,7 +501,7 @@ export async function runTrials(cases: EvalCase[], provider: ModelProvider, opti
   };
   if (other) {
     const side = (f: TrialFigures) => ({ summary: { trials: f.trials, recall: f.passRate, falseBlockRate: null, noVerdict: f.quotaHolds, errors: f.modelErrors }, caseIds: cases.map((c) => c.id) });
-    Object.assign(report, compareTrials(side(head!.total), side(other.total), VARIANT_NAMES));
+    Object.assign(report, compareTrials(side(other.total), side(head!.total), variantNames(named!.ref)));
   }
   if (checkoutError !== undefined) report.checkoutError = checkoutError;
   if (left.length) report.left = left;
@@ -510,10 +511,11 @@ export async function runTrials(cases: EvalCase[], provider: ModelProvider, opti
 /** The human lines of a trials report; the ref is printed as a JSON string. */
 export function formatTrials(report: EvalTrialsReport): string {
   const fig = (f: TrialFigures) => `${f.passed}/${f.trials}${f.passRate ? ` (median ${f.passRate.median.toFixed(2)}, ${f.passRate.min.toFixed(2)} to ${f.passRate.max.toFixed(2)})` : ''}, ${f.modelErrors} model errors, ${f.quotaHolds} quota holds`;
-  const pair = (h: TrialFigures, v?: TrialFigures) => `HEAD ${fig(h)}${v ? `; variant ${fig(v)}` : ''}`;
+  const ref = report.variant ? JSON.stringify(report.variant.ref) : '';
+  const pair = (h: TrialFigures, v?: TrialFigures) => `HEAD ${fig(h)}${v ? `; ${ref} ${fig(v)}` : ''}`;
   const lines = report.cases.map((c) => `${c.id}: ${pair(c.head, c.variant)}${c.note ? ` [${c.note}]` : ''}`);
   lines.push(`total over ${report.trials} trials: ${pair(report.total.head, report.total.variant)}`);
-  if (report.variant) lines.push(`variant ${JSON.stringify(report.variant.ref)} (${report.variant.commit.slice(0, 12)}) against HEAD (${report.variant.head.slice(0, 12)}): ${report.verdict}: ${report.reason}`);
+  if (report.variant) lines.push(`HEAD (${report.variant.head.slice(0, 12)}) against ${ref} (${report.variant.commit.slice(0, 12)}): ${report.verdict}: ${report.reason}`);
   if (report.checkoutError) lines.push(`stopped: ${report.checkoutError}`);
   for (const l of report.left ?? []) lines.push(`left: ${l}`);
   return lines.join('\n');

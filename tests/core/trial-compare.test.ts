@@ -44,18 +44,18 @@ test('T1-BENCH-TRIALS-2 acceptance 1: inconclusive names each cause in a one-lin
 });
 
 // Card T1-EVAL-VARIANT: the eval variant run passes the pass rate as the one metric, with no second metric.
-const one = { before: 'HEAD', after: 'the variant', first: 'pass rate', noVerdict: 'quota holds', errors: 'model errors' };
+const one = { before: '"main"', after: 'HEAD', first: 'pass rate', noVerdict: 'quota holds', errors: 'model errors' };
 const rate = (min: number, max: number, extra: Partial<TrialSummary> = {}) => side({ recall: range(min, max), falseBlockRate: null, ...extra }, ['a']);
 
 test('T1-EVAL-VARIANT acceptance 5: the verdict with one metric and no second metric names only that metric [R4]', () => {
-  assert.deepEqual(compareTrials(rate(0, 0.2), rate(0.5, 1), one), { verdict: 'better', reason: 'pass rate 0.50 to 1.00 the variant, 0.00 to 0.20 HEAD: the ranges do not overlap' });
-  assert.deepEqual(compareTrials(rate(0.5, 1), rate(0, 0.2), one), { verdict: 'worse', reason: 'pass rate 0.00 to 0.20 the variant, 0.50 to 1.00 HEAD: the ranges do not overlap' });
+  assert.deepEqual(compareTrials(rate(0, 0.2), rate(0.5, 1), one), { verdict: 'better', reason: 'pass rate 0.50 to 1.00 HEAD, 0.00 to 0.20 "main": the ranges do not overlap' });
+  assert.deepEqual(compareTrials(rate(0.5, 1), rate(0, 0.2), one), { verdict: 'worse', reason: 'pass rate 0.00 to 0.20 HEAD, 0.50 to 1.00 "main": the ranges do not overlap' });
   assert.deepEqual(compareTrials(rate(0, 0.6), rate(0.5, 1), one), { verdict: 'no-measurable-difference', reason: 'the pass rate ranges overlap or are not scored on both sides' });
   // A second metric left in the summaries does not decide when the names carry none.
   const withSecond = (min: number, fb: number) => side({ recall: range(min, 0.6), falseBlockRate: range(fb, fb) }, ['a']);
   assert.equal(compareTrials(withSecond(0.4, 0.5), withSecond(0.5, 0), one).verdict, 'no-measurable-difference');
   assert.deepEqual(compareTrials(rate(0, 0.2, { trials: 2 }), rate(0.5, 1, { errors: 1, noVerdict: 1 }), one), {
     verdict: 'inconclusive',
-    reason: 'HEAD has 2 trials, fewer than the 3 a verdict needs; the variant has 1 quota holds and 1 model errors over its trials',
+    reason: '"main" has 2 trials, fewer than the 3 a verdict needs; HEAD has 1 quota holds and 1 model errors over its trials',
   });
 });

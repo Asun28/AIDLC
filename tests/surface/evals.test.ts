@@ -349,54 +349,55 @@ function sidesProvider(outcomes: Record<number, CompletionResult['outcome']> = {
 
 const cliMain = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'cli', 'main.ts');
 
-test('T1-EVAL-VARIANT acceptance 1: --variant <first commit> --trials 3 reports 0/3 on HEAD and 3/3 on the variant, the verdict better for the variant, and the sides alternate [R2] [R3] [R4]', async () => {
-  const { cwd, first } = twoCommits();
-  const { provider, notes, cwds } = sidesProvider();
-  const report = await runTrials([hello], provider, { cwd, trials: 3, variant: first, runner });
-  assert.deepEqual(notes, ['bye', 'hello world', 'bye', 'hello world', 'bye', 'hello world'], 'HEAD, variant, HEAD, variant, HEAD, variant');
-  for (const c of cwds) assert.equal(existsSync(c), false, `the checkout ${c} is removed`);
-  for (const c of cwds) assert.equal(samePath(c, cwd), false, 'no side runs in the repository itself');
-  const head = { passed: 0, trials: 3, passRate: { median: 0, min: 0, max: 0 }, modelErrors: 0, quotaHolds: 0 };
-  const variant = { passed: 3, trials: 3, passRate: { median: 1, min: 1, max: 1 }, modelErrors: 0, quotaHolds: 0 };
-  assert.deepEqual(report.cases, [{ id: 'hello', head, variant }]);
-  assert.deepEqual(report.total, { head, variant });
-  assert.equal(report.variant?.ref, first);
-  assert.equal(report.verdict, 'better');
-  assert.equal(report.reason, 'pass rate 1.00 to 1.00 the variant, 0.00 to 0.00 HEAD: the ranges do not overlap');
-  assert.equal(report.checkoutError, undefined);
-});
-
-test('T1-EVAL-VARIANT acceptance 1: the same run from the first commit with --variant naming the second gives worse [R4]', async () => {
+test('T1-EVAL-VARIANT acceptance 1: HEAD passing where the ref fails, --trials 3, reports 3/3 on HEAD and 0/3 on the ref, the verdict better for HEAD, and the sides alternate [R2] [R3] [R4]', async () => {
   const { cwd, first } = twoCommits();
   const second = git(cwd, 'rev-parse', 'HEAD').stdout.trim();
   git(cwd, 'checkout', '-q', '--detach', first);
-  const { provider, notes } = sidesProvider();
+  const { provider, notes, cwds } = sidesProvider();
   const report = await runTrials([hello], provider, { cwd, trials: 3, variant: second, runner });
-  assert.deepEqual(notes, ['hello world', 'bye', 'hello world', 'bye', 'hello world', 'bye']);
-  assert.deepEqual([report.total.head.passed, report.total.variant?.passed], [3, 0]);
+  assert.deepEqual(notes, ['hello world', 'bye', 'hello world', 'bye', 'hello world', 'bye'], 'HEAD, ref, HEAD, ref, HEAD, ref');
+  for (const c of cwds) assert.equal(existsSync(c), false, `the checkout ${c} is removed`);
+  for (const c of cwds) assert.equal(samePath(c, cwd), false, 'no side runs in the repository itself');
+  const head = { passed: 3, trials: 3, passRate: { median: 1, min: 1, max: 1 }, modelErrors: 0, quotaHolds: 0 };
+  const variant = { passed: 0, trials: 3, passRate: { median: 0, min: 0, max: 0 }, modelErrors: 0, quotaHolds: 0 };
+  assert.deepEqual(report.cases, [{ id: 'hello', head, variant }]);
+  assert.deepEqual(report.total, { head, variant });
+  assert.deepEqual(report.variant, { ref: second, commit: second, head: first });
+  assert.equal(report.verdict, 'better');
+  assert.equal(report.reason, `pass rate 1.00 to 1.00 HEAD, 0.00 to 0.00 ${JSON.stringify(second)}: the ranges do not overlap`);
+  assert.equal(report.checkoutError, undefined);
+});
+
+test('T1-EVAL-VARIANT acceptance 1: the mirror, HEAD failing where --variant HEAD~1 passes, gives worse for HEAD [R2] [R4]', async () => {
+  const { cwd } = twoCommits();
+  const { provider, notes } = sidesProvider();
+  const report = await runTrials([hello], provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
+  assert.deepEqual(notes, ['bye', 'hello world', 'bye', 'hello world', 'bye', 'hello world']);
+  assert.deepEqual([report.total.head.passed, report.total.variant?.passed], [0, 3]);
   assert.equal(report.verdict, 'worse');
+  assert.equal(report.reason, 'pass rate 0.00 to 0.00 HEAD, 1.00 to 1.00 "HEAD~1": the ranges do not overlap');
 });
 
 test('T1-EVAL-VARIANT acceptance 2: one model error on either side makes the verdict inconclusive naming it; a quota hold stops the run and is named [R4]', async () => {
-  const { cwd, first } = twoCommits();
-  for (const [call, side] of [[1, 'HEAD'], [4, 'the variant']] as const) {
-    const report = await runTrials([hello], sidesProvider({ [call]: 'error' }).provider, { cwd, trials: 3, variant: first, runner });
+  const { cwd } = twoCommits();
+  for (const [call, side] of [[1, 'HEAD'], [4, '"HEAD~1"']] as const) {
+    const report = await runTrials([hello], sidesProvider({ [call]: 'error' }).provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
     assert.equal(report.verdict, 'inconclusive');
     assert.equal(report.reason, `${side} has 0 quota holds and 1 model errors over its trials`);
   }
   const quota = sidesProvider({ 3: 'quota' });
-  const held = await runTrials([hello], quota.provider, { cwd, trials: 3, variant: first, runner });
+  const held = await runTrials([hello], quota.provider, { cwd, trials: 3, variant: 'HEAD~1', runner });
   assert.equal(quota.notes.length, 3, 'the run stopped at the quota hold');
   assert.deepEqual([held.total.head.trials, held.total.head.quotaHolds, held.total.variant?.trials], [2, 1, 1]);
   assert.equal(held.verdict, 'inconclusive');
-  assert.equal(held.reason, 'HEAD has 2 trials, fewer than the 3 a verdict needs; HEAD has 1 quota holds and 0 model errors over its trials; the variant has 1 trials, fewer than the 3 a verdict needs');
+  assert.equal(held.reason, '"HEAD~1" has 1 trials, fewer than the 3 a verdict needs; HEAD has 2 trials, fewer than the 3 a verdict needs; HEAD has 1 quota holds and 0 model errors over its trials');
 });
 
 test('T1-EVAL-VARIANT acceptance 2: --trials 2 is inconclusive naming the trial count [R4]', async () => {
-  const { cwd, first } = twoCommits();
-  const report = await runTrials([hello], sidesProvider().provider, { cwd, trials: 2, variant: first, runner });
+  const { cwd } = twoCommits();
+  const report = await runTrials([hello], sidesProvider().provider, { cwd, trials: 2, variant: 'HEAD~1', runner });
   assert.equal(report.verdict, 'inconclusive');
-  assert.equal(report.reason, 'HEAD has 2 trials, fewer than the 3 a verdict needs; the variant has 2 trials, fewer than the 3 a verdict needs');
+  assert.equal(report.reason, '"HEAD~1" has 2 trials, fewer than the 3 a verdict needs; HEAD has 2 trials, fewer than the 3 a verdict needs');
 });
 
 test('T1-EVAL-VARIANT acceptance 3: --variant with --skip-model and a ref that names no commit are refused before any provider call; --trials 0 and 21 are refused [R1]', async () => {
@@ -462,7 +463,7 @@ test('T1-EVAL-VARIANT card rule: a case whose prompt or checks differ at the var
   const cases = loadEvals(evalsDir);
   const differs = sidesProvider();
   const noted = await runTrials(cases, differs.provider, { cwd, trials: 1, variant: first, runner, dir: evalsDir });
-  assert.deepEqual(noted.cases.map((c) => c.note), ['the prompt or checks differ at the variant; both sides ran the HEAD copy']);
+  assert.deepEqual(noted.cases.map((c) => c.note), ['the prompt or checks differ at the ref; both sides ran the HEAD copy']);
   assert.equal(differs.notes.length, 2, 'the case still ran on both sides');
   const same = await runTrials(cases, sidesProvider().provider, { cwd, trials: 1, variant: third, runner, dir: evalsDir });
   assert.deepEqual(same.cases.map((c) => c.note), [undefined]);

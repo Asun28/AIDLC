@@ -1147,7 +1147,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--threshold <n>', 'pass-rate gate', '0.9')
     .option('--provider <name>', 'mock|claude-code|claude-api')
     .option('--skip-model', 'run only the deterministic checks')
-    .option('--variant <ref>', 'run each case on temporary checkouts of HEAD and of this ref, alternating, and give the verdict for the ref on the pass rate (no threshold gate)')
+    .option('--variant <ref>', 'run each case on temporary checkouts of HEAD and of this ref, alternating, and give the verdict for HEAD against the ref on the pass rate (no threshold gate)')
     .option('--trials <n>', `run each case n times (1 to ${MAX_TRIALS}, default 1) and report the pass counts and the pass-rate median and range`)
     .action(async (o: { dir?: string; threshold: string; provider?: string; skipModel?: boolean; variant?: string; trials?: string }) => {
       // Card T1-EVAL-VARIANT: the option checks come before any case is read or run.

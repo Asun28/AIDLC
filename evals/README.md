@@ -64,9 +64,9 @@ checks that exit 0/1. No model-graded opinions.
   model call. The report gives, per case and in total, each side's pass
   count, trial count, the median, minimum and maximum of the pass rate
   over trials, and its model errors (an outcome other than ok or quota)
-  and quota holds. Its verdict is for the ref against HEAD, on the pass
-  rate alone: `better` or `worse` when the two pass-rate ranges do not
-  overlap, `no-measurable-difference` when they do, and `inconclusive`
+  and quota holds. Its verdict is for HEAD (the change) against the ref
+  (the base), on the pass rate alone: `better` or `worse` for HEAD when
+  the two pass-rate ranges do not overlap, `no-measurable-difference` when they do, and `inconclusive`
   when either side has fewer than 3 trials or a model error or quota hold
   in any trial. A quota hold stops the run. A case whose prompt or checks
   differ at the ref runs from the HEAD copy on both sides, and the report
@@ -78,9 +78,9 @@ checks that exit 0/1. No model-graded opinions.
 - A change to `.claude/**`, CLAUDE.md or REVIEW.md is kept when the
   variant run on the agent cases gives `better` or
   `no-measurable-difference`. This is a documented practice, not a gate:
-  CI never runs it and the loop does not read the verdict. Run it from a
-  checkout of the base with the change as the variant, so the verdict is
-  for the change: `aidlc evals run --dir evals/agent --provider claude-code --variant <change-branch> --trials 3`.
+  CI never runs it and the loop does not read the verdict. Run it from
+  the change, with the base as the ref:
+  `aidlc evals run --dir evals/agent --provider claude-code --variant main --trials 3`.
 - CI runs `aidlc evals run --skip-model --threshold 0.9` on changes to
   CLAUDE.md, `.claude/**`, `evals/**` and REVIEW.md, and nightly: the
   deterministic checks only, with no model and no credentials. The pass
