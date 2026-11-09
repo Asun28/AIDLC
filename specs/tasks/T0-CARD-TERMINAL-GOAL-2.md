@@ -37,6 +37,7 @@ acceptance:
   - 9. The docs and CHANGELOG state R1, R2, R4, R5 and the non-goal on concurrent stops (reviewer-verified against the diff). [R7]
 depends_on: []
 budget: 400
+size_exception: "written before the T0-CARD-SIZE rule; it carries the candidate of T0-CARD-TERMINAL-GOAL under the user ruling on its R3 base-sync decision"
 tdd: true
 diagnosis:
   root_cause: "At d770af3 (branch T0-CARD-TERMINAL-GOAL) `workGoal` checks the goal from one `listGoals` read (`refuseTerminalGoal`) and then returns a second read (`controller.mustGoal(cardGoalId(...))`) that nothing checks; `card report` reloads the goal again before `ensureCardRun`; and `card close` guards once before registering its exit sweep and again inside `cardCtx` after it, so a stop saved between the reads either reaches `ensureCardRun` as a checked-looking record or refuses after the sweep is registered (R3 base-sync decision on d770af3, findings F1 to F3, class unguarded-goal-reload and refusal-runs-exit-sweep)."

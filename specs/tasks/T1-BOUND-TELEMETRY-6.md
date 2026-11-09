@@ -59,6 +59,7 @@ acceptance:
   - 8. The one remaining R3 Codex decision and normal R2 DeepSeek v4 Pro pass before reviewed feature PR, CI and verified merge; separately reviewed evidence retention and metadata closure complete the goal (review and ship receipts). [R2] [R4] [dod arm 1]
 depends_on: [T1-AUDIT-FACTS-2]
 budget: 6500
+superseded_by: T1-BOUND-STATS
 tdd: true
 sweep: "R3 F3–F10 were repaired in clean predecessor commit 3f426fe with independent RED, focused GREEN and semantic mutation evidence. This successor changes only integration or a diagnosed final-check regression; rerun exact tests, mutation guards and full DoD before its sole success receipt."
 forbid: [a new config key, a new persistent state file under .aidlc/, a counter kept outside the journal, a change to any bound's value, a bound stop that waits on the journal, a firing key read from the clock, a raw card report patch of loop-owned recovery fields, a reset of any prior attempt or review counter]

@@ -191,6 +191,8 @@ export const Card = z.object({
   hygiene: z.string().optional(),
   doc_sync: z.string().optional(),
   superseded_by: z.string().optional(),
+  /** Who approved a `src/` card with a budget over the size limit, and why (card T0-CARD-SIZE). */
+  size_exception: z.string().optional(),
   /** aidlc extension: explicit non-TDD exemption (documentation / pure config cards). */
   tdd: z.boolean().default(true),
   /** aidlc extension: shared interface definition / freeze card; runs alone before dependents. */
