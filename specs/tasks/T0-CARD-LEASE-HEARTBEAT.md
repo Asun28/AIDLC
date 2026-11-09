@@ -34,7 +34,7 @@ acceptance:
   - 7. The docs and CHANGELOG state R1, R2 and R4 (reviewer-verified against the diff). [R5]
   - 8. `tests/surface/lease-heartbeat.test.ts`: a second PreToolUse within 60 s (fixed clock) renews nothing, even a due lease, and one 61 s later renews it; with no leases directory, no marker or directory is created. [R3] [dod arm 1]
 depends_on: [T0-CARD-TERMINAL-GOAL-2]
-budget: 280
+budget: 420
 tdd: true
 diagnosis:
   root_cause: "Two gaps (main at 338ae27). (1) A card lease lives 10 minutes (`DEFAULT_LEASE_TTL_MS`, src/coordination/lease.ts:20) and only the owner's card commands renew it (`CardRunner.assess`, card-runner.ts:615), so a BUILD whose implementer works longer than that leaves the lease expired while its session is alive. (2) A non-owner's `card next` then saves an ownership stop on the run (PREPARE's claim returns `expired` or `held`, card-runner.ts:891 and :896), and `nextInRun` (controller.ts:340) stops the goal on any stopped projected card, so the goal stops although the owner's next `card next` clears that stop (card-runner.ts:620). Fixing (1) alone still stops the goal through the `held` branch; fixing (2) alone still lets the lease expire."
@@ -84,3 +84,5 @@ same_class readers:
 - Goal lease: not renewed by the hook (non_goals).
 
 Not changed: the OPERATIONS.md Sessions sentence "the goal-level `aidlc next` run between the card's stop and the takeover stops the goal on that stop" now holds only once the card lease has expired (the brief keeps the Sessions section from growing; the `ownership` row states the wait).
+
+Budget: raised from 280 to 420 by the coordinator at b2cd824. The diff is +416/-8: source about 101 lines, the two new test files about 285, docs and this card about 38. The excess comes from the coordinator's pre-review amendment (the 60-second scan throttle, acceptance 8 and the unreadable-lease case) and from the test files, not from source outside the requirements.
