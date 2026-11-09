@@ -7,7 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EvalCase, loadEvals, realPathRule, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
-import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
+import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
@@ -467,4 +467,29 @@ test('T1-EVAL-VARIANT card rule: a case whose prompt or checks differ at the var
   assert.equal(differs.notes.length, 2, 'the case still ran on both sides');
   const same = await runTrials(cases, sidesProvider().provider, { cwd, trials: 1, variant: third, runner, dir: evalsDir });
   assert.deepEqual(same.cases.map((c) => c.note), [undefined]);
+});
+
+test('T1-EVAL-VARIANT R5 (R3 decision 1, trials-in-main-checkout): --trials 2 --skip-model runs each check in a temporary checkout of HEAD, removed after the run, and a command check that writes a file leaves the working tree unchanged', async () => {
+  const { cwd } = twoCommits();
+  const seen: Array<{ cwd: string; stateDir?: string }> = [];
+  const recording: SyncRunner = (command, args, options = {}) => {
+    seen.push({ cwd: options.cwd ?? '', stateDir: options.env?.['AIDLC_STATE_DIR'] });
+    return runSync(command, args, options);
+  };
+  const writes = EvalCase.parse({ id: 'writes', prompt: 'do it', checks: [{ type: 'command', command: [process.execPath, '-e', "require('fs').writeFileSync('written.txt', 'x')"] }, { type: 'contains', file: 'note.txt', text: 'bye' }] });
+  const provider = new MockProvider();
+  const report = await runTrials([writes], provider, { cwd, trials: 2, skipModel: true, runner: recording });
+  assert.equal(provider.calls.length, 0, 'no model call');
+  assert.deepEqual(report.total.head, { passed: 2, trials: 2, passRate: { median: 1, min: 1, max: 1 }, modelErrors: 0, quotaHolds: 0 });
+  assert.equal(seen.length, 2, 'the command check ran once per trial');
+  for (const s of seen) {
+    assert.equal(samePath(s.cwd, cwd), false, `the check ran in ${s.cwd}, not the repository root`);
+    assert.equal(existsSync(s.cwd), false, `the checkout ${s.cwd} is removed`);
+    assert.ok(s.stateDir && !existsSync(s.stateDir), 'AIDLC_STATE_DIR was set and is removed');
+  }
+  const status = git(cwd, 'status', '--porcelain');
+  assert.equal(status.status, 0);
+  assert.equal(status.stdout, '', 'the working tree is unchanged');
+  const listed = git(cwd, 'worktree', 'list', '--porcelain').stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree '));
+  assert.equal(listed.length, 1, 'no temporary checkout is left registered');
 });
