@@ -38,6 +38,7 @@ import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { loadDeliveryOps, lookupOperation, resolveRoles } from '../delivery/ops.ts';
 import { summarizeReviews, formatReviewStats } from '../review/stats.ts';
+import { BoundsReadError, asciiJson, formatBounds, readBoundRecords, summarizeBounds } from '../state/bounds.ts';
 import { compareBenchReports, exportBenchCases, formatBenchExport, formatBenchReport, runReviewBench } from '../review/bench.ts';
 import { runRepro } from '../review/repro.ts';
 import { MUTANT_MAX_DEFAULT, MUTANT_TIMEOUT_DEFAULT_MS, mutantSummaryText, restoreMutants, runMutants } from '../review/mutants.ts';
@@ -480,6 +481,25 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       // One render: the text the board file gets is the text the command prints, prerequisites resolved once.
       const text = c.controller.writeBoard(goalRec, cards);
       process.stdout.write(text + '\n');
+    });
+
+  program
+    .command('bounds')
+    .description('how often each loop bound fired and the current outcome of its goal, read only from the goal and card-run records')
+    .option('--goal <id>', 'one goal (default: every goal)')
+    .action((o: { goal?: string }) => {
+      // The value is echoed only when it is a plain identifier.
+      if (o.goal !== undefined && !/^[A-Za-z0-9._:-]+$/.test(o.goal)) fail('--goal is not a goal id');
+      const c = ctx(g());
+      let records: ReturnType<typeof readBoundRecords>;
+      try {
+        records = readBoundRecords(c.store, o.goal);
+      } catch (err) {
+        return fail(err instanceof BoundsReadError ? err.message : 'cannot read the state directory');
+      }
+      if (!records) return fail(`unknown goal ${o.goal}`);
+      const stats = summarizeBounds(records.goals, records.runs);
+      process.stdout.write(`${c.json ? asciiJson(stats, 2) : formatBounds(stats)}\n`);
     });
 
   // ------------------------------------------------------------------ cards

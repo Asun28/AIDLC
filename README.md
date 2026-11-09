@@ -149,6 +149,8 @@ Several windows may work on one repository. State is shared through `<main check
 | Lifecycle repair cycles | 1, stated in the release-health stop directive; not enforced in code | `src/loop/controller.ts` |
 | Card workers | 2, only with disjoint paths and resources; 1 with a single reviewer slot | `src/core/arc.ts` |
 
+`aidlc bounds [--goal <id>]` counts how often each of the first nine limits fired, from the goal and card-run records only, with the current outcome of the goal that hit it (DONE, STOP/<reason> or open) and each goal's deadline extension count. A time STOP that `aidlc goal extend` lifted is not counted. Records are read one at a time with no snapshot across files, so a count taken while the loop writes can combine records from different moments. Details in `docs/OPERATIONS.md`, Bound statistics.
+
 ## Layout
 
 ```
