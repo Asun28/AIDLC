@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-SIZE
 title: "`aidlc cards validate` blocks a card that changes src/ with a budget over 250 and tells the author to split it, unless the card records a size_exception"
-status: todo
+status: merged
 branch: T0-CARD-SIZE
 worktree: D:\wt\AIDLC\T0-CARD-SIZE
 allow_paths:
