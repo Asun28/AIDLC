@@ -497,3 +497,5 @@ On 2026-11-09 the user asked for cards, before any run, for the three lines this
 **W0, T1-BASELINE-HARNESS and T1-BASELINE-REPORT.** The user decided D1-D3 again (Decisions), so both cards are released with the design in 4.5. The harness README states the caps: $10 per run, $500 in total, 3 h wall clock per run. REPORT.md states that the token and cost axes count each arm's driving session only, so the review commands arm B starts are outside them.
 
 Shared budget: W2 (+96) and W5 so far (+283: context pack +140, run driver core +143) are merged. T1-BOUND-STATS at most +130 and T1-BOARD-WATCH at most +110 bring the shared W2+W4+W5 total to at most +619, inside the last ceiling the user approved (+1350). Section 1's +400 was raised for the telemetry repairs only, so approving these cards approves the +619 ceiling for them.
+
+Approved by the user on 2026-11-09: the four cards, the changes from 4.5 stated above (no board `Bounds:` line, extension-lifted time STOPs not counted, the `Next:` pointer in place of the directive, the coded intake error left out) and the +619 shared ceiling.
