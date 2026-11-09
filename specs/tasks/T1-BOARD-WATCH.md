@@ -2,6 +2,7 @@
 id: T1-BOARD-WATCH
 title: "`aidlc board --watch [--interval <s>]` re-renders a read-only screen of one goal under a stated output contract"
 status: todo
+superseded_by: T1-BOARD-WATCH-2
 branch: T1-BOARD-WATCH
 worktree: D:\wt\AIDLC\T1-BOARD-WATCH
 plan_ref: docs/plans/PLAN-v5.1-hardening.md#2026-11-09-follow-up-cards
