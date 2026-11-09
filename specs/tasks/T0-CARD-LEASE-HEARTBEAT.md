@@ -57,3 +57,24 @@ npm run typecheck && node --test tests/surface/lease-heartbeat.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1. RED 10f3434 (both test files), corrected at dea9441: acceptance 4's expired case now saves its stop after the expiry (PREPARE's `expired` claim, as in the incident); saved under the live lease, the stop is the stale-generation one, which never names `card takeover`. Still red without the controller change (`expected 'wait'`, `actual 'stop'`).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 [R1] | `tests/surface/lease-heartbeat.test.ts` "acceptance 1": 4 min left and expired 20 min ago renewed to now + `DEFAULT_LEASE_TTL_MS` at the same generation; 6 min left, released, session T byte-identical. The event carries `session_id` and the env has no `AIDLC_SESSION`, so the event's session is the one used (a subagent's PreToolUse carries the parent's `session_id`) | pass; red before (`12:04` vs `12:10`) |
+| 2 [R2] | same file, two "acceptance 2" tests: in process, malformed (not JSON, and JSON naming S that the schema refuses), fenced (takeover by T injected between the scan and the heartbeat through `openLeases`) and a held lock give the result of the same event on an empty state dir, the takeover stands, a good lease beside them is renewed, no `journal/`; as a process (`bin/aidlc-hook.js`), malformed plus held lock: exit 0, stdout and stderr empty | pass |
+| 3 [R1] | same file, "acceptance 3": UserPromptSubmit renews S's 4-minute lease | pass; red before |
+| 4 [R4] | `tests/scenarios/ownership-wait.test.ts` "acceptance 4": live lease of B: `wait` on `T1-HELLO:owner:win-B`, goal not STOP, no `GOAL_STOPPED`; expired: STOP/ownership naming `card takeover`, one `GOAL_STOPPED` | pass; red before |
+| 5 [R1][R4] | same file, "acceptance 5": hook renews A's lease 1 s before expiry, B's `card next` saves the ownership stop, B's `controller.next` waits, A's `card next` builds (`LEASE_RENEWED` revalidated), attempt recorded, run at CLOSE, A's `next` not stop, `verifyAudit` has no `WORK_AFTER_TERMINAL` | pass; red before |
+| 6 [R3] | `hooks.test.ts`, `hook-lazy.test.ts` unchanged and green in the DoD; `npm run build && npm run bench -- --check`: "every count within its ceiling (6 journeys)"; fsCalls hook.pre-bash 8/7, hook.pre-edit 9/8, hook.prompt 8/7 (the one `leases/` listing), modules and depBytes within slack; no ceiling raised | pass |
+| 7 [R5] | OPERATIONS.md `ownership` row and a Hooks paragraph, ARCHITECTURE.md hooks paragraph, CHANGELOG Unreleased bullet | reviewer to verify |
+
+same_class readers:
+- `src/state/board.ts` `outcomeOf`: not changed (outside allow_paths). The controller passes its adjusted outcomes to `writeBoard`, but `renderBoard` writes each projected card over them from its own run, so the board row still shows the run as STOP while the goal waits.
+- Stop hook ownership check (`verifyBeforeDone`, `ownedHere`): not affected. It lists runs in BUILD, SHIP or REVIEW_FIX only, never a STOP run, and reads no expiry; the heartbeat only keeps the owner's lease live.
+- Goal lease: not renewed by the hook (non_goals).
+
+Not changed: the OPERATIONS.md Sessions sentence "the goal-level `aidlc next` run between the card's stop and the takeover stops the goal on that stop" now holds only once the card lease has expired (the brief keeps the Sessions section from growing; the `ownership` row states the wait).
