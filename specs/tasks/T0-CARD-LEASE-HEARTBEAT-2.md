@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-LEASE-HEARTBEAT-2
 title: "The working session's tool calls keep its card lease live through every hook entry, and the goal dispatch waits on a card stopped for ownership while that card's lease is live instead of stopping the goal"
-status: todo
+status: merged
 size_exception: "approved by the user (asun28) on 2026-11-10: budget 520, one coherent fix (the lease heartbeat and the live-lease goal wait prevent the 2026-11-09 ownership stop only together), about 120 source lines with the rest tests and docs"
 branch: T0-CARD-LEASE-HEARTBEAT-2
 worktree: D:\wt\AIDLC\T0-CARD-LEASE-HEARTBEAT-2
