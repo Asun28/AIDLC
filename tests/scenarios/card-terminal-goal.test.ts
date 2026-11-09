@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { makeStop } from '../../src/core/stop.ts';
 
@@ -170,6 +170,63 @@ test('T0-CARD-TERMINAL-GOAL acceptance 5: after goal resume the same card next i
     const r = cli('card', 'next', CARD, '--goal', goalId);
     assert.ok(!r.stderr.includes('aidlc goal resume'), `card next is not refused after the resume: ${r.stderr}`);
     assert.equal(r.status, 0, r.stderr);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+/** The CLI with the goal-store preload: the call log at `<tmp>/calls.log`, and `env` for the preload's options. */
+const PRELOAD = pathToFileURL(fileURLToPath(new URL('./card-terminal-goal.preload.ts', import.meta.url))).href;
+function cliWithPreload(fx: ReturnType<typeof makeFixture>, env: Record<string, string>, ...args: string[]) {
+  const log = path.join(fx.tmp, 'calls.log');
+  writeFileSync(log, '');
+  const r = spawnSync(process.execPath, ['--import', PRELOAD, MAIN, ...args, '--json'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root, AIDLC_SESSION: 'win-A', AIDLC_TEST_CALL_LOG: log, ...env }, encoding: 'utf8', timeout: 120_000 });
+  return { ...r, calls: readFileSync(log, 'utf8').split('\n').filter(Boolean) };
+}
+
+test('T0-CARD-TERMINAL-GOAL-2 acceptance 6: card next, attempt, report and close --all read the goal records once, with no getGoal, before the first card-run access, with --goal and without [R5]', () => {
+  const commands = [
+    ['card', 'next', CARD],
+    ['card', 'attempt', CARD, '--outcome', 'success'],
+    ['card', 'report', CARD, '--data', '{}'],
+    ['card', 'close', CARD, '--all'],
+  ];
+  for (const base of commands) {
+    for (const explicit of [false, true]) {
+      const { fx, goalId } = setup();
+      try {
+        const args = explicit ? [...base, '--goal', goalId] : base;
+        const { calls } = cliWithPreload(fx, {}, ...args);
+        const first = calls.findIndex((x) => x === 'getCardRun' || x === 'saveCardRun');
+        assert.ok(first >= 0, `${args.join(' ')} reaches a card run: ${calls.join(',')}`);
+        assert.deepEqual(calls.slice(0, first), ['listGoals'], `${args.join(' ')}: goal-store calls before the first card-run access: ${calls.join(',')}`);
+      } finally {
+        fx.cleanup();
+      }
+    }
+  }
+});
+
+test('T0-CARD-TERMINAL-GOAL-2 acceptance 7: a cancel saved right after the one read lets card close --all reach markClosure, which refuses with the sweep run, and no guard refuses after the sweep is registered [R5] [R6]', () => {
+  const { fx, goalId } = setup();
+  try {
+    const run = fx.controller.ensureCardRun(fx.goal(goalId), CARD);
+    fx.store.saveCardRun({ ...run, state: 'CLOSE', mergeVerified: true });
+    writeFileSync(path.join(fx.tmp, '.gitignore'), '.aidlc/\n.review/\nwt/\naidlc.config.json\ncalls.log\n');
+    writeFileSync(path.join(fx.tmp, 'tracked.txt'), 'base\n');
+    git(fx.tmp, ['init', '-q', '-b', 'main']);
+    git(fx.tmp, ['add', '-A']);
+    git(fx.tmp, ['commit', '-q', '-m', 'base']);
+    git(fx.tmp, ['branch', CARD]);
+    mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
+    const root = realpathSync.native(path.join(fx.tmp, 'wt'));
+    git(fx.tmp, ['worktree', 'add', '-q', path.join(root, CARD), CARD]);
+    writeFileSync(path.join(fx.tmp, 'aidlc.config.json'), JSON.stringify({ shipPath: 'github', worktreeRoot: root, cardsDir: 'specs/tasks', base: 'main' }));
+    const r = cliWithPreload(fx, { AIDLC_TEST_CANCEL_AFTER_LIST: goalId }, 'card', 'close', CARD, '--goal', goalId, '--all');
+    assert.notEqual(r.status, 0, r.stdout);
+    assert.match(r.stderr, /closure cannot change/, 'markClosure refuses the goal the preload cancelled');
+    assert.ok(!r.stderr.includes('card commands do no card work'), `no refusal of R2 after the sweep is registered: ${r.stderr}`);
+    assert.match(r.stderr, /worktree removed: T1-HELLO/, 'a refusal raised after the read still runs the sweep (R6)');
   } finally {
     fx.cleanup();
   }
