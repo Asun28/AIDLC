@@ -41,3 +41,17 @@ npm run typecheck && node --test tests/scenarios/repair-check.test.ts tests/scen
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and the four test files pass.
+
+## Attempt evidence
+
+Attempt 1 (RED c98ce35: repair-check.test.ts failed 3 of 4 before the fix, the directive carried the old text and the docs and CHANGELOG lacked the new text).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/scenarios/repair-check.test.ts, the two "T0-REPAIR-CHECK acceptance 1" tests and "acceptance 2", with the new pinned REPAIR_CHECK | pass |
+| 2 | tests/scenarios/review-block.test.ts, finding-repro.test.ts, base-sync-review.test.ts, unchanged | pass |
+| 3 | same repair-check file, "T0-REPAIR-FORMS acceptance 3" | pass |
+
+Input forms and failure paths of the repair hunks: none; the change is one constant string, read by the narrations that already carried it.
+
+DoD: `npm run typecheck && node --test tests/scenarios/repair-check.test.ts tests/scenarios/review-block.test.ts tests/scenarios/finding-repro.test.ts tests/scenarios/base-sync-review.test.ts` exit 0, 46 tests, 46 pass. `git diff --numstat origin/main -- src`: card-runner.ts +1 -1.
