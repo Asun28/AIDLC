@@ -1,7 +1,7 @@
 ---
 id: T0-REPAIR-FORMS
 title: "The repair check on a formal REVIEW_FIX directive also asks the repairer to list each input form and failure path the repair hunks handle, each with its test, in the attempt evidence"
-status: todo
+status: merged
 branch: T0-REPAIR-FORMS
 worktree: D:\wt\AIDLC\T0-REPAIR-FORMS
 allow_paths:
