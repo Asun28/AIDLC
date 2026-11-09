@@ -485,12 +485,22 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   // ------------------------------------------------------------------ cards
   const card = program.command('card').description('single-card execution');
   const runnerFor = (c: Ctx) => new CardRunner({ paths: c.paths, repo: c.repo, config: c.config, store: c.store, allowShip: process.env['AIDLC_RUN_NO_SHIP'] !== '1' });
-  /** The card's goal, refused when it is stopped or done before any card run is read or written (card T0-CARD-TERMINAL-GOAL). */
-  const workGoal = (c: Ctx, cardId: string, goalId?: string) => {
-    const goalRec = c.controller.mustGoal(cardGoalId(c, cardId, goalId));
-    const refusal = terminalGoalRefusal(goalRec);
+  /**
+   * Refuses a stopped or done goal from the goal records alone, before any card run is read (card T0-CARD-TERMINAL-GOAL):
+   * the named goal, else the goal the projection resolves to, which never reads a run. A goal that does not resolve here
+   * is left to `cardGoalId`'s own error.
+   */
+  const refuseTerminalGoal = (c: Ctx, cardId: string, goalId?: string) => {
+    const goals = c.store.listGoals();
+    const resolved = goalId === undefined ? resolveCardGoal(goals, cardId) : undefined;
+    const id = goalId ?? (resolved?.ok ? resolved.goalId : undefined);
+    const goalRec = goals.find((x) => x.id === id);
+    const refusal = goalRec && terminalGoalRefusal(goalRec);
     if (refusal) fail(refusal);
-    return goalRec;
+  };
+  const workGoal = (c: Ctx, cardId: string, goalId?: string) => {
+    refuseTerminalGoal(c, cardId, goalId);
+    return c.controller.mustGoal(cardGoalId(c, cardId, goalId));
   };
   // `guard: false` is `card ci-reconcile`: it records an observed CI rerun, so it runs on a stopped goal too.
   const cardCtx = (c: Ctx, cardId: string, goalId?: string, guard = true) => {
@@ -558,6 +568,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .option('--skip-lesson <why>', 'record why this card taught no rule (commander reserves the --no- prefix, so not --no-lesson)')
     .action((cardId: string, o: { goal?: string; metadata?: boolean; docSync?: boolean; findings?: boolean; evidence?: boolean; cleanup?: boolean; all?: boolean; lesson?: string; skipLesson?: string }) => {
       const c = ctx(g());
+      // Before the sweep is registered: a refused close of a stopped goal runs no sweep.
+      refuseTerminalGoal(c, cardId, o.goal);
       // On exit, not in a `finally`: `fail` exits from inside the load of the card, and the sweep concerns the other cards.
       if (o.all || o.cleanup) process.once('exit', () => sweepAfter(c));
       const { goalRec, parsed, run } = cardCtx(c, cardId, o.goal);
