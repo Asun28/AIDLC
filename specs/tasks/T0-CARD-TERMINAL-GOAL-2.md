@@ -1,7 +1,7 @@
 ---
 id: T0-CARD-TERMINAL-GOAL-2
 title: "Card commands that do card work refuse a stopped or done goal from one read of the goal records, before any card run is read or written, and use that checked record for the rest of the command"
-status: todo
+status: merged
 branch: T0-CARD-TERMINAL-GOAL-2
 worktree: D:\wt\AIDLC\T0-CARD-TERMINAL-GOAL-2
 allow_paths:
