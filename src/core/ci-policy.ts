@@ -194,16 +194,17 @@ function parsePayload(payload: string): unknown {
 
 /**
  * Whether a `[CI-GATE-RED]` payload is exactly what the GitHub ship path prints (`checksJson` in src/delivery/github-ship.ts):
- * a JSON array of `name` and `conclusion` (a string or null), in that order, with no other or repeated key, no other spacing,
- * names in the printed encoding (card T0-SCAN-SETUP-STEP-2). The gate prints a red line only for completed check runs, whose
- * status `checksJson` omits, so a printed red element has no `status`, whatever its value.
+ * a non-empty JSON array of `name` and `conclusion` (null, or a string that is not `success` in any letter case), in that
+ * order, with no other or repeated key, no other spacing, names in the printed encoding (card T0-SCAN-SETUP-STEP-2). The gate
+ * prints a red line only for completed check runs that did not pass, whose status `checksJson` omits, so a printed red element
+ * has no `status`, whatever its value.
  */
 function isPrintedRed(payload: string): boolean {
   const v = parsePayload(payload);
-  if (!Array.isArray(v)) return false;
+  if (!Array.isArray(v) || v.length === 0) return false;
   const printed: unknown[] = [];
   for (const c of v) {
-    if (!isRecord(c) || !isPrintedName(c.name) || (typeof c.conclusion !== 'string' && c.conclusion !== null)) return false;
+    if (!isRecord(c) || !isPrintedName(c.name) || (c.conclusion !== null && (typeof c.conclusion !== 'string' || c.conclusion.toLowerCase() === 'success'))) return false;
     printed.push({ name: c.name, conclusion: c.conclusion });
   }
   return payload === printedPayload(printed);
@@ -211,7 +212,7 @@ function isPrintedRed(payload: string): boolean {
 
 /**
  * Whether a `[CI-GATE-STEP]` payload is exactly what the GitHub ship path prints (`gateStepLine` in src/delivery/github-ship.ts):
- * the JSON of `check`, `job` (a job id of digits) and `step` (null, or a positive integer `number`, a `name` and the
+ * the JSON of `check`, `job` (a job id of digits with no leading zero, as the check run id prints) and `step` (null, or a positive integer `number`, a `name` and the
  * conclusion `failure`, since it names the first step whose conclusion is `failure`), in that order, with no other or repeated
  * key, no other spacing, names in the printed encoding. Any other form
  * denies every scan setup exemption of the text (card T0-SCAN-SETUP-STEP-2); a change to the printed form makes every red
@@ -219,7 +220,7 @@ function isPrintedRed(payload: string): boolean {
  */
 function isPrintedStep(payload: string): boolean {
   const v = parsePayload(payload);
-  if (!isRecord(v) || !isPrintedName(v.check) || typeof v.job !== 'string' || !/^\d+$/.test(v.job)) return false;
+  if (!isRecord(v) || !isPrintedName(v.check) || typeof v.job !== 'string' || !/^[1-9]\d*$/.test(v.job)) return false;
   let step: { number: number; name: string; conclusion: string } | null = null;
   if (v.step !== null) {
     if (!isRecord(v.step)) return false;
