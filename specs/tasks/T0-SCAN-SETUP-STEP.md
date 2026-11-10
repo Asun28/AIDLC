@@ -2,6 +2,7 @@
 id: T0-SCAN-SETUP-STEP
 title: "A red secret-scan check whose failed step is a listed scanner setup step is classified by its other evidence, not as a security finding, so a scanner download outage stops as `ci`, not `risk`"
 status: todo
+superseded_by: T0-SCAN-SETUP-STEP-2
 branch: T0-SCAN-SETUP-STEP
 worktree: D:\wt\AIDLC\T0-SCAN-SETUP-STEP
 allow_paths:
