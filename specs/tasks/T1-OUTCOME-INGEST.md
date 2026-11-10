@@ -58,3 +58,17 @@ npm run typecheck && node --test tests/surface/outcome-ingest.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; item 5 is skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+RED: commit 8af61e5 (the test against seam modules that return empty tables): 4 failed and 1 skipped without `DUCKDB_BIN`, 5 failed with it.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `node --test tests/surface/outcome-ingest.test.ts`, test `acceptance 1` | pass |
+| 2 | same file, test `acceptance 2` | pass |
+| 3 | same file, test `acceptance 3` | pass |
+| 4 | same file, test `acceptance 4` | pass |
+| 5 | same file, test `acceptance 5`, with `DUCKDB_BIN` set to the local duckdb.exe (v1.5.6): `# tests 5`, `# pass 5`, `# fail 0`, `# skipped 0`; without it: `# pass 4`, `# skipped 1`, `# SKIP no duckdb binary` | pass |
+| 6 | `bench/outcome/README.md`, sections Command (R9), Tables (R1 to R8), Views (R10 to R12), Tests (R13) | reviewer-verified against the diff |
+
+Run on the main checkout's state on 2026-11-10 (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, `--out` outside the repository), exit 0: cards 268 (82 with `superseded_by`), card_runs 271, review_decisions 1047, findings 733, state_spans 918, attempts 677, ingest_errors 0. The README states the limit that run showed in the `CARD_STATE` events.
