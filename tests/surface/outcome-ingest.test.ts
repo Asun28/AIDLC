@@ -2,7 +2,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -168,4 +168,101 @@ test('T1-OUTCOME-INGEST acceptance 5: run.ts prints the successor rate, the revi
     { measure: 'state_total', state: 'SHIP', hours: 3.5, n: 1 },
   ]);
   assert.deepEqual(views.get('summary_stop_reasons'), [{ stopReason: 'card', runs: 1 }]);
+});
+
+// Repair of R3 decision 1 (F1 to F6): absent inputs, where output may be written, the --duckdb path and the successor chain.
+const emptyTables = (): Tables => ({ cards: [], card_runs: [], review_decisions: [], findings: [], state_spans: [], attempts: [], ingest_errors: [] });
+const missingBin = (): string => path.join(tempDir(), 'missing-duckdb.exe');
+
+/** `node bench/outcome/run.ts <args>` from `cwd`, in the environment of `runOutcome`. */
+function spawnRun(args: string[], cwd: string = root): { status: number | null; stderr: string } {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('AIDLC_') && k.toUpperCase() !== 'NODE_OPTIONS'));
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), ...args], { cwd, env, encoding: 'utf8', windowsHide: true });
+  return { status: r.status, stderr: r.stderr };
+}
+
+test('T1-OUTCOME-INGEST acceptance 7: an absent registry, card-run directory or journal directory is one ingest_errors row each, beside the rows of the directories that exist [R14]', () => {
+  const { stateDir, cardsDir } = fixture();
+  const gone = path.join(tempDir(), 'gone');
+  const noState = ingestState({ stateDir: gone, cardsDir });
+  assert.deepEqual(noState.ingest_errors, [
+    { source: 'card_run', path: path.join(gone, 'cards'), line: null, problem: 'missing directory' },
+    { source: 'journal', path: path.join(gone, 'journal'), line: null, problem: 'missing directory' },
+  ]);
+  assert.deepEqual(noState.cards.map((c) => c['id']), ['T1-MERGED', 'T1-STOPPED']);
+  const noCards = ingestState({ stateDir, cardsDir: put(path.join(gone, 'a-file'), 'x') });
+  assert.deepEqual(noCards.ingest_errors, [{ source: 'card', path: path.join(gone, 'a-file'), line: null, problem: 'missing directory' }]);
+  assert.deepEqual([noCards.card_runs.length, noCards.state_spans.length, noCards.attempts.length], [3, 8, 2]);
+  mkdirSync(path.join(stateDir, 'cards', 'g-empty'));
+  assert.deepEqual(ingestState({ stateDir, cardsDir }).ingest_errors, [], 'a goal directory without card runs is no error');
+});
+
+test('T1-OUTCOME-INGEST acceptance 8: run.ts exits 1 and creates nothing for an --out inside the state directory or the registry, by a ..name or through a link [R15]', () => {
+  const { stateDir, cardsDir } = fixture();
+  const link = path.join(tempDir(), 'link');
+  symlinkSync(stateDir, link, 'junction');
+  const cases: [out: string, created: string][] = [
+    [path.join(stateDir, '..out'), path.join(stateDir, '..out')],
+    [path.join(cardsDir, '..out'), path.join(cardsDir, '..out')],
+    [path.join(link, 'new', 'deeper'), path.join(stateDir, 'new')],
+    [stateDir, path.join(stateDir, 'cards.jsonl')],
+  ];
+  for (const [out, created] of cases) {
+    const r = spawnRun(['--state', stateDir, '--cards', cardsDir, '--out', out, '--duckdb', missingBin()]);
+    assert.equal(r.status, 1, `${out}: ${r.stderr}`);
+    assert.match(r.stderr, /refusing to write/, out);
+    assert.equal(existsSync(created), false, `${created} was created`);
+  }
+  const beside = path.join(path.dirname(stateDir), 'state..out');
+  assert.equal(spawnRun(['--state', stateDir, '--cards', cardsDir, '--out', beside, '--duckdb', missingBin()]).status, 2, 'a directory beside the state directory is written');
+  assert.ok(existsSync(path.join(beside, 'cards.jsonl')));
+});
+
+test('T1-OUTCOME-INGEST acceptance 9: writeTables replaces a link at an output name and leaves the file it points to unchanged [R15]', (t) => {
+  const { stateDir, cardsDir } = fixture();
+  const out = tempDir();
+  const [card, cardRun] = [path.join(cardsDir, 'T1-MERGED.md'), path.join(stateDir, 'cards', 'g-b', 'T1-MERGED.json')];
+  const before = [readFileSync(card, 'utf8'), readFileSync(cardRun, 'utf8')];
+  linkSync(card, path.join(out, 'cards.jsonl'));
+  let symlinked = true;
+  try {
+    symlinkSync(cardRun, path.join(out, 'attempts.jsonl'), 'file');
+  } catch (err) {
+    // Windows refuses a file symlink without the privilege; the hard link above still runs there, and Linux never skips.
+    if (process.platform !== 'win32' || (err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
+    symlinked = false;
+    t.diagnostic('file symlink assertion skipped: no symlink privilege on this Windows account');
+  }
+  writeTables(ingestState({ stateDir, cardsDir }), out);
+  assert.deepEqual([readFileSync(card, 'utf8'), readFileSync(cardRun, 'utf8')], before);
+  assert.match(readFileSync(path.join(out, 'cards.jsonl'), 'utf8'), /^\{"id":"T1-MERGED"/);
+  if (symlinked) assert.equal(lstatSync(path.join(out, 'attempts.jsonl')).isSymbolicLink(), false);
+  assert.match(readFileSync(path.join(out, 'attempts.jsonl'), 'utf8'), /^\{"goalId":"g-b"/);
+});
+
+test('T1-OUTCOME-INGEST acceptance 10: run.ts starts a relative --duckdb path from the invocation directory, not from the output directory [R16]', () => {
+  const { stateDir, cardsDir } = fixture();
+  // Node stands in for the binary: started from its own directory it rejects the DuckDB flags, which is exit 1, not exit 2.
+  const r = spawnRun(['--state', stateDir, '--cards', cardsDir, '--out', path.join(tempDir(), 'out'), '--duckdb', `.${path.sep}${path.basename(process.execPath)}`], path.dirname(process.execPath));
+  assert.equal(r.status, 1, r.stderr);
+  assert.doesNotMatch(r.stderr, /winget install/);
+});
+
+test('T1-OUTCOME-INGEST acceptance 11: card_family reaches the end of a chain of 60 cards, stops a cycle on the repeated id, and ends on a name the registry does not hold [R10]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  const out = tempDir();
+  const cardRow = (id: string, superseded_by: string | null): Row => ({ id, status: 'todo', superseded_by, depends_on: [], tdd: true, budget: null });
+  const chain = Array.from({ length: 60 }, (_, i) => cardRow(`T1-C${i}`, i < 59 ? `T1-C${i + 1}` : null));
+  writeTables({ ...emptyTables(), cards: [...chain, cardRow('T1-X', 'T1-Y'), cardRow('T1-Y', 'T1-X'), cardRow('T1-SELF', 'T1-SELF'), cardRow('T1-E', 'T1-GONE')] }, out);
+  const sql = readFileSync(path.join(root, 'bench', 'outcome', 'views', '10-cards.sql'), 'utf8');
+  const r = spawnSync(duckdb!, ['-json', '-bail'], { cwd: out, input: `${sql}\nSELECT * FROM card_family WHERE id IN ('T1-C0', 'T1-C57', 'T1-C59', 'T1-X', 'T1-Y', 'T1-SELF', 'T1-E') ORDER BY id;\n`, encoding: 'utf8', windowsHide: true });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), [
+    { id: 'T1-C0', last_card: 'T1-C59', steps: 59 },
+    { id: 'T1-C57', last_card: 'T1-C59', steps: 2 },
+    { id: 'T1-C59', last_card: 'T1-C59', steps: 0 },
+    { id: 'T1-E', last_card: 'T1-GONE', steps: 1 },
+    { id: 'T1-SELF', last_card: 'T1-SELF', steps: 0 },
+    { id: 'T1-X', last_card: 'T1-Y', steps: 1 },
+    { id: 'T1-Y', last_card: 'T1-X', steps: 1 },
+  ]);
 });
