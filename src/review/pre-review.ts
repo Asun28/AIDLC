@@ -441,6 +441,8 @@ export function buildReviewPrompt(i: ReviewPromptInput): string {
     lines.push(`- ${i.lessons.omitted} ${i.lessons.matched ? 'other' : 'older'} lessons omitted at the byte cap${left}.`);
   }
   lines.push('', '## Card contract', `- id: ${c.id}`, `- title: ${c.title}`, `- tier: ${c.tier ?? 'computed from allow_paths'}`, `- allow_paths: ${c.allow_paths.join(', ')}`);
+  // The requirements the REVIEW.md impact bar refers to (card T0-EDGE-SCOPE), printed as the acceptance lines are.
+  if (c.requirements?.length) lines.push('- requirements:', ...c.requirements.map((r) => `  ${r}`));
   if (c.non_goals?.length) lines.push(`- non_goals: ${c.non_goals.join('; ')}`);
   if (c.forbid?.length) lines.push(`- forbid: ${c.forbid.join('; ')}`);
   if (c.diagnosis) lines.push(`- diagnosis.root_cause: ${c.diagnosis.root_cause}`);
