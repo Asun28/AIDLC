@@ -2,6 +2,10 @@
 // from git on an injected runner. Read-only: every git call is `rev-parse`, `log`, `grep`, `blame`, `merge-base` or `diff --quiet`.
 // The base follows `--end-of-options`, a commit id from the state reaches git only when it is 40 hex characters, lowered first,
 // and a file from a finding follows `--`. No git failure leaves a function: it is one `history_errors` row.
+// R6: each call passes the options that fix its output and its answer, so no git configuration changes a result: `log`
+// prints no signature lines and the message in UTF-8; `grep` counts with the basic pattern type, no colour, no submodule
+// and `-z`, which prints the path unquoted; `blame` ignores no revision, runs no textconv and fixes the diff algorithm;
+// `diff --quiet` runs no external diff and no textconv and ignores no submodule change.
 import type { SyncRunner } from '../../src/probes/exec.ts';
 import type { HistoryTable, Row, Tables } from './ingest.ts';
 
@@ -50,7 +54,7 @@ function holds(git: Git, sha: string): boolean | undefined {
 
 /** Whether `file` is the same in both commits: `diff --quiet` exits 0 when it is and 1 when it differs. Undefined after any other exit. */
 function sameFile(git: Git, from: string, to: string, file: string): boolean | undefined {
-  const exit = git(['--literal-pathspecs', 'diff', '--quiet', '--no-ext-diff', '--end-of-options', from, to, '--', file], [0, 1]).exit;
+  const exit = git(['--literal-pathspecs', 'diff', '--quiet', '--no-ext-diff', '--no-textconv', '--ignore-submodules=none', '--end-of-options', from, to, '--', file], [0, 1]).exit;
   return exit === undefined ? undefined : exit === 0;
 }
 
@@ -81,7 +85,7 @@ function baseCommit(git: Git, base: string, errors: Row[]): string | undefined {
 
 function rulingsOf(git: Git, tip: string): Row[] {
   const rows: Row[] = [];
-  for (const record of git(['log', '--first-parent', '--format=%H %cI%n%B%x00', '--end-of-options', tip, '--']).out.split('\0')) {
+  for (const record of git(['log', '--first-parent', '--no-show-signature', '--no-color', '--encoding=UTF-8', '--format=%H %cI%n%B%x00', '--end-of-options', tip, '--']).out.split('\0')) {
     const m = /^\n?([0-9a-f]{40}) (\S+)\n([^\r\n]*)([\s\S]*)$/.exec(record);
     if (!m || !RULING.test(m[3]! + m[4]!)) continue;
     const [subject, time] = [m[3]!, Date.parse(m[2]!)];
@@ -125,13 +129,13 @@ function predates(git: Git, file: string | null, first: string | null, at: strin
     const same = sameFile(git, first, at, file);
     return same === undefined ? 'unknown' : same ? 'true' : 'file-changed';
   }
-  // The line count of the file in `at`: `grep -c` exits 0 and prints `<at>:<file>:<count>`, and exits 1 for a file that
+  // The line count of the file in `at`: `grep -c -z` exits 0 and prints `<at>:<file>`, a NUL and the count, and exits 1 for a file that
   // has no line or is not in the commit. A line past the end is therefore `unknown` before any blame, and no error.
-  const counted = git(['--literal-pathspecs', 'grep', '-a', '-c', '-e', '$', at, '--', file], [0, 1]);
+  const counted = git(['--literal-pathspecs', 'grep', '-a', '-c', '-z', '--basic-regexp', '--no-color', '--no-recurse-submodules', '-e', '$', at, '--', file], [0, 1]);
   // The output must be that one line: a `file` that names a directory lists the files under it, and no count of those is used.
-  const count = counted.out.trim().startsWith(`${at}:${file}:`) ? counted.out.trim().slice(at.length + file.length + 2) : '';
+  const count = counted.out.startsWith(`${at}:${file}\0`) ? counted.out.slice(at.length + file.length + 2).trim() : '';
   if (counted.exit !== 0 || !/^\d+$/.test(count) || line < 1 || line > Number(count)) return 'unknown';
-  const named = /^([0-9a-f]{40}) /.exec(git(['blame', '--porcelain', '-L', `${line},${line}`, at, '--', file]).out)?.[1];
+  const named = /^([0-9a-f]{40}) /.exec(git(['blame', '--porcelain', '--ignore-revs-file=', '--no-textconv', '--diff-algorithm=myers', '--indent-heuristic', '-L', `${line},${line}`, at, '--', file]).out)?.[1];
   if (named === undefined) return 'unknown';
   if (named === first) return 'true';
   // `merge-base --is-ancestor` exits 0 for an ancestor and 1 for a commit that is none.

@@ -73,7 +73,9 @@ Attempt 2 repairs the four findings of R3 decision 1 on 3817ea0f. RED commit 610
 
 Attempt 3 applies the ruling on entries stored without a decision and the word start of `ruling on `. RED commit 555a8559: 13 tests, 10 pass, 2 fail (`acceptance 11, no decision` and `acceptance 11, on`, each on its assertion), 1 skipped.
 
-DoD (attempt 3): `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (45 tests, 45 pass) and exit 0 without it (45 tests, 37 pass, 8 skipped `no duckdb binary`).
+Attempt 4 repairs F5 of R3 decision 2 (git-grep-config-leak) for every git call. RED commit 0885dbe5: 18 tests, 13 pass, 4 fail, 1 skipped; `grep.patternType`, `color.grep`, `color.ui` and `blame.ignoreRevsFile` fail on the assertion, and `log.showSignature` passes at once, since no fixture commit is signed, and stays as a regression.
+
+DoD (attempt 4): `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (50 tests, 50 pass) and exit 0 without it (50 tests, 42 pass, 8 skipped `no duckdb binary`).
 
 | Item | Test or command | Result |
 |---|---|---|
@@ -88,6 +90,7 @@ DoD (attempt 3): `npm run typecheck` exit 0; the four test files exit 0 with `DU
 | 9 | `acceptance 9: a base of --output=x writes no file and is one history_errors row ...` | pass |
 | 10 | `outcome-github.test.ts` `T1-OUTCOME-GITHUB-2 acceptance 12`, the run with neither flag | pass with DuckDB, else skipped |
 | 11 | `acceptance 11, base ...`, `acceptance 11, entry ...`, `acceptance 11, citation ...`, `acceptance 11, case ...`, `acceptance 11, no decision ...`, `acceptance 11, on ...` | pass |
+| 12 | `acceptance 12: with <key> set in the repository ...`, one test per setting, five | pass |
 
 Item 10 changed two assertions of that run, not one: the file list, and the list of printed views, which now holds the three history views.
 
@@ -109,6 +112,9 @@ Mutants (one expression changed, `outcome-history.test.ts` run with DuckDB, the 
 | F4 | attempt 2: ids not lowered; `first` not lowered; a later entry compared as stored | killed (11 case), all three |
 | R3, R5 | attempt 3: fallback entry of any outcome; the first of several block entries taken; the fallback used before the recorded decision | killed (11 no decision), twice; killed (4, 11 entry, 11 case) |
 | R1 | attempt 3: `ruling on ` matched inside a word | killed (11 on) |
+| R6 | attempt 4, one option removed per key group | killed: the basic pattern type (12 grep.patternType), `--no-color` of grep (12 color.grep, color.ui), `-z` (3, 5, 11), `--ignore-revs-file=` (12 blame.ignoreRevsFile). Survived, with no test here: `--no-recurse-submodules`, `--no-textconv` of blame, the blame diff algorithm, `--no-show-signature` (no fixture commit is signed), `--no-color` and `--encoding` of log, `--no-textconv` and `--ignore-submodules` of diff |
+
+F5 key list, per command (README, `Git configuration (R6)`): `grep`: `grep.patternType`, `grep.extendedRegexp` (`--basic-regexp`), `color.grep`, `color.ui` (`--no-color`), `core.quotePath` (`-z`), `submodule.recurse` (`--no-recurse-submodules`); `grep.fullName` changes nothing in the root of the checkout. `blame`: `blame.ignoreRevsFile`, `blame.markIgnoredLines`, `blame.markUnblamableLines` (`--ignore-revs-file=`), textconv (`--no-textconv`), `diff.algorithm`, `diff.indentHeuristic` (`--diff-algorithm=myers --indent-heuristic`); the porcelain form has no date, email or colour. `log`: `log.showSignature` (`--no-show-signature`), `i18n.logOutputEncoding` (`--encoding=UTF-8`), colour (`--no-color`); `%H %cI %B` do not change with `log.date`, `log.mailmap`, `log.decorate`, `log.abbrevCommit` or `format.pretty`. `diff --quiet`: `diff.external` (`--no-ext-diff`), textconv (`--no-textconv`), `diff.ignoreSubmodules` (`--ignore-submodules=none`). `rev-parse --verify` and `merge-base --is-ancestor`: no key. Not covered, and not stated by the card: a `blame.ignoreRevsFile` naming a missing file (each blame fails: error row, `unknown`), replace refs and grafts, a partial clone.
 
 R3 decision 1 (RED 610a6856, each test `acceptance 11, <name>` in `outcome-history.test.ts`), with the sweep of its class:
 - F1 invalid-base-continues-git, test `base`: `historyTables` resolves the base once and gives the readers a git that makes no call when it fails. Sweep: `rulings` already stopped; a `rev-parse` that exits 0 without a commit id stopped with no row and now adds one; `rulingSet` makes no git call; `run.ts` calls only `historyTables`. Work continues after a failed `log` (no ruling, findings still classified) and after any failed per-finding command (that row `unknown`): both are R6's "the row it was computing".
@@ -130,5 +136,5 @@ Where the eight review points are applied:
 - `summary_rulings`: `substr(date, 1, 7)`: a null `date` is its own group with a null key. `GROUP BY "on"`: a null is its own group. `nullif(count, 0)` in both ratios: a 0 denominator gives null. `r.predecessor = c.id`: a null predecessor matches no card. `ORDER BY metric, key NULLS LAST`.
 - Not stated by R8, and read as above: a null `perspective`, a null `date`, a null `disputes`, `reraises`, `outsideDelta`, `cardId` or `mergeVerified`; that "card attempts per ruling" is rows of `card_attempts` over rulings; where a null `predecessor` is "a group of its own" (it is only compared here, never grouped).
 
-Real run (read-only, main checkout state, `--no-usage --no-github`, exit 0), attempt 3: rulings 31, ruling_set 31, repeat_blocks 178 (predates false 89, true 82, unknown 7, as at attempts 1 and 2), finding_fixes 779 (changedAfter true 500, false 32, unknown 247), history_errors 0. Attempt 1 gave 500, 32, 242 of 774; attempt 2, before the fallback for the 301 of 562 formal entries stored without a `decision`, gave 319, 31, 428 of 778.
+Real run (read-only, main checkout state, `--no-usage --no-github`, exit 0), attempt 4: rulings 31, repeat_blocks 179 (predates false 89, true 83, unknown 7), finding_fixes 780 (changedAfter true 505, false 32, unknown 243), history_errors 0. The state grew since attempt 3 (779 findings, 500 / 32 / 247 and 89 / 82 / 7): on the same state the code of c74c7e58 and this code write the five tables byte for byte alike.
 
