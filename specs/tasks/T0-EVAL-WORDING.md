@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-WORDING
 title: "The trials total line counts case runs, and the evals docs say that a recorded empty tool-call list passes the negative tool-call checks"
-status: todo
+status: merged
 branch: T0-EVAL-WORDING
 worktree: D:\wt\AIDLC\T0-EVAL-WORDING
 allow_paths:
