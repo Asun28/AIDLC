@@ -89,6 +89,8 @@ interface GateRead {
   log: string;
   /** The `[CI-GATE-STEP]` lines, decoded: the structured evidence of a transient failure. */
   steps: GateStep[];
+  /** The check each malformed `[CI-GATE-STEP]` line names, decoded, or null when no check can be read from it. */
+  invalidSteps: Array<string | null>;
 }
 
 /**
@@ -105,6 +107,7 @@ function readGate(text: string): GateRead {
   const ambiguousRed: string[] = [];
   const log: string[] = [];
   const steps: GateStep[] = [];
+  const invalidSteps: Array<string | null> = [];
   let structured = false;
   let unresolvedRed = false;
   for (const line of text.split(/\r?\n/)) {
@@ -114,10 +117,13 @@ function readGate(text: string): GateRead {
       continue;
     }
     if (line.startsWith('[CI-GATE-WAIT]')) continue;
-    // A step line is structured evidence and never log text; one that does not parse is no evidence at all.
+    // A step line is structured evidence and never log text; one that does not parse is no transient evidence, and it is
+    // kept by the check it names so it can deny a scan setup exemption (card T0-SCAN-SETUP-STEP).
     if (line.startsWith('[CI-GATE-STEP]')) {
-      const step = readStep(line.slice('[CI-GATE-STEP]'.length));
+      const payload = line.slice('[CI-GATE-STEP]'.length);
+      const step = readStep(payload);
       if (step) steps.push(step);
+      else invalidSteps.push(readStepCheck(payload));
       continue;
     }
     const m = line.match(JSON_PAYLOAD);
@@ -156,7 +162,18 @@ function readGate(text: string): GateRead {
     if (line.startsWith('[CI-GATE-TIMEOUT]')) unresolvedRed = true;
     log.push(line);
   }
-  return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps };
+  return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps, invalidSteps };
+}
+
+/** The check a malformed `[CI-GATE-STEP]` payload names, decoded, or null when it names none that can be read. */
+function readStepCheck(payload: string): string | null {
+  try {
+    const v: unknown = JSON.parse(payload.trim());
+    const check = typeof v === 'object' && v !== null ? (v as { check?: unknown }).check : undefined;
+    return typeof check === 'string' ? decodeCheckName(check) : null;
+  } catch {
+    return null;
+  }
 }
 
 /** A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed. */
@@ -195,11 +212,13 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   const evidence: string[] = [];
   /** Each hit, with the red scan check it names when it comes from a check name alone. */
   const securityHits: Array<{ hit: string; check?: string }> = [];
-  for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push({ hit: j.name, check: j.name });
+  // A receipt wrapper is no check record, so a hit from its name is never exempt.
+  for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push({ hit: j.name, check: j.aggregate === true ? undefined : j.name });
   const logs: string[] = [];
   const gateChecked: CiJob[] = [];
   const gateRecords: CiJob[] = [];
   const steps: GateStep[] = [];
+  const invalidSteps: Array<string | null> = [];
   let gateStructured = false;
   let unresolvedRed = false;
   for (const { raw, inspectLog } of texts) {
@@ -207,6 +226,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     gateChecked.push(...gate.redChecks);
     gateRecords.push(...gate.checks);
     steps.push(...gate.steps);
+    invalidSteps.push(...gate.invalidSteps);
     unresolvedRed ||= gate.unresolvedRed;
     gateStructured ||= gate.structured || gate.checks.length > 0;
     for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push({ hit: c.name, check: c.name });
@@ -248,10 +268,16 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   });
   const red = gateStructured ? [...gateChecked, ...independentFailed.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independentFailed;
   const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
-  // A scan check that failed installing its scanner did not scan (card T0-SCAN-SETUP-STEP). Fails closed: the check is one red
-  // record whose identities agree, no red line is unresolved, and every step line of the check names a failed listed step.
+  // A scan check that failed installing its scanner did not scan (card T0-SCAN-SETUP-STEP). Fails closed: no red line is
+  // unresolved; the check has at most one job record and one gate record, counted before they are matched, which agree on its
+  // conclusion, and is one red check; no step line naming it, or naming no readable check, is malformed; and every step line
+  // naming it names a failed listed step. Records of other checks never decide this check.
   const setupStep = (check: string): string | undefined => {
-    if (unresolvedRed || !identitiesAgree || red.filter((c) => c.name === check).length !== 1) return undefined;
+    const jobRecords = independent.filter((j) => j.name === check);
+    const gateRecordsOf = gateRecords.filter((c) => c.name === check);
+    if (unresolvedRed || jobRecords.length > 1 || gateRecordsOf.length > 1 || red.filter((c) => c.name === check).length !== 1) return undefined;
+    if (new Set([...jobRecords, ...gateRecordsOf].map((c) => c.conclusion?.toLowerCase())).size !== 1) return undefined;
+    if (invalidSteps.some((c) => c === null || c === check)) return undefined;
     const placed = steps.filter((s) => s.check === check);
     if (!placed.length || !placed.every((s) => s.step !== null && s.step.conclusion === 'failure' && scanSetupSteps.includes(s.step.name))) return undefined;
     return placed[0]!.step!.name;
@@ -268,7 +294,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first
   else if (!unresolvedRed && identitiesAgree && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
   else cls = 'unknown';
-  const setupNotes = cls === 'security' ? [] : [...setupFailures].map(([check, step]) => `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(step)} before its scan`);
+  const setupNotes = [...setupFailures].map(([check, step]) => `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(step)} before its scan`);
   return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(findings.map((f) => f.hit)).values()].map((s) => `security: ${s}`).concat(evidence, setupNotes) };
 }
 

@@ -67,13 +67,13 @@ Attempt 1 (effort medium). RED receipt `3db5358`: acceptance 1, 3, 4 and 5 faile
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/core/ci-policy.test.ts` "acceptance 1: a scan check red at its listed install step is no security finding and says why" | pass |
-| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (13 cases) | pass |
-| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" | pass |
+| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (18 gate cases, 3 direct-record cases, the note only on the two raw-output cases) | pass |
+| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" (also: another check with disagreeing records, a second red scan check keeping the note) | pass |
 | 4 | `tests/scenarios/ci-rerun.test.ts` "T0-SCAN-SETUP-STEP acceptance 4" and the R7 security tests unchanged | pass |
 | 5 | `tests/surface/templates.test.ts` "T0-SCAN-SETUP-STEP acceptance 5" | pass |
 | 6 | docs/OPERATIONS.md (paragraph after the gitleaks gate), docs/ARCHITECTURE.md (outcome map security clause), CHANGELOG.md Unreleased | reviewer |
 
-Rule against main (lesson T0-EXIT-ZERO-NOT-MERGED-3): the change only removes hits from the security list, so an input main classifies as `code-defect`, `transient` or `unknown` keeps its class and its evidence. An input main classifies as `security` stays `security` unless every R1 condition holds for each check-name hit and no other hit remains; it then gets the class main gives the same input with that check's name not read as a scan, plus the `scan-setup` evidence line.
+Rule against main (lesson T0-EXIT-ZERO-NOT-MERGED-3): the change only removes hits from the security list, so an input main classifies as `code-defect`, `transient` or `unknown` keeps its class and its evidence. An input main classifies as `security` stays `security` unless every R1 condition holds for each check-name hit and no other hit remains; it then gets the class main gives the same input with that check's name not read as a scan, plus the `scan-setup` evidence line. When another hit remains, the class stays `security`, the exempt check's `security:` line is dropped and its `scan-setup:` line is added, so the STOP/risk detail names the remaining hit.
 
 Same class (`securityHits` pushes in `classifyCiFailure`, and the callers):
 - a failed independent job named for a scan: covered by R1 (acceptance 1, the job passed in directly).
@@ -83,3 +83,16 @@ Same class (`securityHits` pushes in `classifyCiFailure`, and the callers):
 - `aidlc ci classify --log` (src/cli/main.ts) and the card runner's CI gate (src/loop/card-runner.ts): both pass `ci.scanSetupSteps` (acceptance 3 and 4); no other caller of `classifyCiFailure` or reader of `SECURITY_CHECK_NAME` exists in `src/`.
 
 `tests/infra/github-ship.test.ts` changes only its `ci` config builder, which now spreads the fixture's `ci` so the new required field is present; its 58 tests pass.
+
+Attempt 2 (effort medium), repair of R3 decision 1 (F1 to F5). The card's R1, R2, R5 and acceptance 2 and 3 were amended on main at d793fe5 to state the rules the block read, and merged into the branch. Regression RED before the repair: acceptance 2 (no note on raw gitleaks output) and acceptance 3 (`security` where `code-defect` was expected beside another check's disagreeing records) failed on their assertions.
+
+Input forms and failure paths of the repair hunks, each with its test (`tests/core/ci-policy.test.ts`):
+- a step line whose payload is not JSON: no readable check, every exemption denied (acceptance 2, "a malformed step line naming no readable check"). F1.
+- a step line of valid JSON with no `check`, or a `check` that is not a string: no readable check, every exemption denied (acceptance 2, the two cases after it). F1.
+- a step line naming the check with a malformed step (`conclusion` null): the check's exemption denied, also with the setup step on `transientSteps` (acceptance 2, two cases). F1.
+- two job records of the check beside one gate record: denied, counted before matching (acceptance 2, direct case 1); one job record and one gate record that agree: exempt (acceptance 2, last assertion). F2.
+- a job record and a gate record of the check that disagree: denied (acceptance 2, direct case 2). F3.
+- another check whose records disagree: no effect on the scan check, class `code-defect` (acceptance 3). F3.
+- an aggregate wrapper named for a scan: its hit is never exempt (acceptance 2, direct case 3).
+- an exempt check beside another red scan check: class `security`, evidence starts with the other hit and ends with the note (acceptance 3). F4.
+- the docs: docs/ARCHITECTURE.md outcome map clause and docs/OPERATIONS.md paragraph state every R1 condition, the default list and the two readers (acceptance 6). F5.

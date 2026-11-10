@@ -481,18 +481,41 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP)', () => {
       ['raw gitleaks output', [RUN_42467444385, '1:23PM WRN leaks found: 2'].join('\n')],
       ['a RuleID line', [RUN_42467444385, 'RuleID:      generic-api-key'].join('\n')],
       ['an unparsed red line naming a scan', [RUN_42467444385, '[CI-GATE-RED] Gitleaks (committed history),linux=failure'].join('\n')],
+      ['a malformed step line naming the check', [RUN_42467444385, `[CI-GATE-STEP] ${JSON.stringify({ check: SCAN, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`].join('\n')],
+      ['a malformed step line naming the check, the setup step on transientSteps', [RUN_42467444385, `[CI-GATE-STEP] ${JSON.stringify({ check: SCAN, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`].join('\n'), { transientSteps: ['Set up job', 'Complete job', INSTALL] } as { scanSetupSteps?: string[] }],
+      ['a malformed step line naming no readable check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null'].join('\n')],
+      ['a step line of valid JSON naming no check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null}'].join('\n')],
+      ['a step line whose check is not a string', [RUN_42467444385, '[CI-GATE-STEP] {"check":7,"job":"2","step":null}'].join('\n')],
     ];
+    /** Raw gitleaks output is a hit of its own: the check itself is exempt and keeps its note. */
+    const ownHit = new Set(['raw gitleaks output', 'a RuleID line']);
     for (const [label, text, options] of cases) {
       const c = ship(text, options);
       assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
-      assert.ok(!c.evidence.some((e) => e.startsWith('scan-setup:')), `${label}: no scan-setup evidence`);
+      assert.equal(c.evidence.some((e) => e.startsWith('scan-setup:')), ownHit.has(label), `${label}: scan-setup evidence only where the check itself is exempt`);
     }
+    const gate: CiJob = { name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: RUN_42467444385 };
+    const direct: Array<[string, CiJob[]]> = [
+      ['two job records of the check', [{ name: SCAN, conclusion: 'failure' }, { name: SCAN, conclusion: 'failure' }, gate]],
+      ['a job record and a gate record that disagree', [{ name: SCAN, conclusion: 'success' }, gate]],
+      ['an aggregate wrapper named for a scan', [{ ...gate, name: SCAN }]],
+    ];
+    for (const [label, jobs] of direct) {
+      const c = classifyCiFailure(jobs);
+      assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
+    }
+    assert.equal(classifyCiFailure([{ name: SCAN, conclusion: 'failure' }, gate]).class, 'unknown', 'one job record corroborates one gate record');
   });
 
   test('acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list [R1] [R3]', () => {
     assert.equal(ship(RUN_42467444385, { transientSteps: ['Set up job', 'Complete job', INSTALL] }).class, 'transient', 'a setup step also on transientSteps earns the rerun any check earns');
     const beside = [redLine('check (ubuntu-latest, 22)', SCAN), stepLine(SCAN, INSTALL), 'AssertionError: expected 1 to equal 2'].join('\n');
     assert.equal(ship(beside).class, 'code-defect', 'a failing test beside the scan setup failure is a code defect');
+    const disagreeing = classifyCiFailure([{ name: 'check (ubuntu-latest, 22)', conclusion: 'cancelled' }, { name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: beside }]);
+    assert.equal(disagreeing.class, 'code-defect', `records of another check that disagree leave the scan exempt: ${disagreeing.evidence.join(' | ')}`);
+    const audit = ship([redLine(SCAN, 'security audit'), stepLine(SCAN, INSTALL)].join('\n'));
+    assert.equal(audit.class, 'security', 'a second red scan check is a finding');
+    assert.deepEqual([audit.evidence[0], audit.evidence.at(-1)], ['security: security audit', 'scan-setup: "Gitleaks (committed history)" failed at "Install gitleaks (pinned version, checksum verified)" before its scan']);
     const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-scan-'));
     try {
       const file = path.join(dir, 'ci.log');
