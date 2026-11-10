@@ -68,7 +68,9 @@ npm run typecheck && node --test tests/surface/outcome-history.test.ts tests/sur
 
 Attempt 1. RED commit d2f58ca9 (a seam with the final signatures and empty results): 7 tests, 0 pass, 7 fail, each on its assertion. After RED the ids of the three findings of the second fixture run changed from G1 to G3 to F1 to F3, since `CardRun` accepts only `F<digits>`, and acceptance 9 got one more entry (mutant R6c).
 
-DoD: `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (39 tests, 39 pass) and exit 0 without it (39 tests, 31 pass, 8 skipped `no duckdb binary`).
+Attempt 2 repairs the four findings of R3 decision 1 on 3817ea0f. RED commit 610a6856: 11 tests, 6 pass, 4 fail (the four of item 11, each on its assertion), 1 skipped. The fixture then got `cycle: 0` on its pre findings and acceptance 9 a `decision` on its entries, since the raising entry is now found by them.
+
+DoD (attempt 2): `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (43 tests, 43 pass) and exit 0 without it (43 tests, 35 pass, 8 skipped `no duckdb binary`).
 
 | Item | Test or command | Result |
 |---|---|---|
@@ -82,6 +84,7 @@ DoD: `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (3
 | 8 | the three other test files, changed only in `run.ts` spawn arguments and the assertions of item 10 | pass, both ways |
 | 9 | `acceptance 9: a base of --output=x writes no file and is one history_errors row ...` | pass |
 | 10 | `outcome-github.test.ts` `T1-OUTCOME-GITHUB-2 acceptance 12`, the run with neither flag | pass with DuckDB, else skipped |
+| 11 | `acceptance 11, base ...`, `acceptance 11, entry ...`, `acceptance 11, citation ...`, `acceptance 11, case ...` | pass |
 
 Item 10 changed two assertions of that run, not one: the file list, and the list of printed views, which now holds the three history views.
 
@@ -97,6 +100,16 @@ Mutants (one expression changed, `outcome-history.test.ts` run with DuckDB, the 
 | R6 | no 40-hex check of `at` in `predates`; no error row for exit 128; no 40-hex check of `at` in `findingFixes` | killed (9); killed (5, 9); survived, then killed (9) after an entry with a commit of the repository was added behind the finding's |
 | R7 | `40-history.sql` run with `--no-history` | killed (6) |
 | R8 | `fixed` without `resolvedAt`; without `mergeVerified`; `outsideDelta IS DISTINCT FROM false`; share by `successor` | killed (6), all four |
+| F1 | attempt 2: `historyTables` keeps the runner after a base that does not resolve | killed (11 base) |
+| F2 | attempt 2: raising entry found by `candidateSha`; next entry searched from the raising entry, not after it | killed (11 entry); survived, equivalent while an entry and its findings record one commit, since the raising entry then never has "another `candidateSha`" |
+| F3 | attempt 2: line taken without the path check; paths compared as written; line count read from any last line of the `grep` output | killed (11 citation), all three |
+| F4 | attempt 2: ids not lowered; `first` not lowered; a later entry compared as stored | killed (11 case), all three |
+
+R3 decision 1 (RED 610a6856, each test `acceptance 11, <name>` in `outcome-history.test.ts`), with the sweep of its class:
+- F1 invalid-base-continues-git, test `base`: `historyTables` resolves the base once and gives the readers a git that makes no call when it fails. Sweep: `rulings` already stopped; a `rev-parse` that exits 0 without a commit id stopped with no row and now adds one; `rulingSet` makes no git call; `run.ts` calls only `historyTables`. Work continues after a failed `log` (no ruling, findings still classified) and after any failed per-finding command (that row `unknown`): both are R6's "the row it was computing".
+- F2 finding-entry-sha-alias, test `entry`: the raising entry is found by `decision`, or `round` and `cycle`. Sweep: `first` and the entries are per goal and card (`entriesOf`); the last run of a card is chosen over all goals by `startedAt`, then read by goal and card; the last formal entry is by stored order; the view joins `finding_fixes` on goal, card and id (the fixture repeats F1 to F3 in two runs; the real run has 774 findings and 774 such keys); a card that is the predecessor of two rulings counts once (`EXISTS`).
+- F3 citation-line-file-mismatch, test `citation`: the first citation is parsed with its optional line, as `findingLocation` of `src/core/review-policy.ts` reads the path, and its path compared with `file` after one normalisation. Sweep: the `grep -c` count was read from the last line of any output and is now read only from the one line of that commit and file (same test, the directory row); the blame sha, the log record and the first stderr line are anchored; `replaces` and `ruling on` take the first match in the subject.
+- F4 uppercase-sha-rejected, test `case`: `sha()` lowers a 40-hex id of the state where it is read (`first`, `at`, each later entry, the `candidateSha` of `ruling_set`). Sweep: shas in git output are matched in lower case only, which is what git prints; card ids, goal ids and finding ids are compared as written.
 
 Where the eight review points are applied:
 1. Option-shaped values: `rulings` passes the base after `--end-of-options`; `predates` and `findingFixes` test `SHA` before any git call; every file follows `--`, with `--literal-pathspecs` for `grep` and `diff` (acceptance 9).
@@ -112,5 +125,5 @@ Where the eight review points are applied:
 - `summary_rulings`: `substr(date, 1, 7)`: a null `date` is its own group with a null key. `GROUP BY "on"`: a null is its own group. `nullif(count, 0)` in both ratios: a 0 denominator gives null. `r.predecessor = c.id`: a null predecessor matches no card. `ORDER BY metric, key NULLS LAST`.
 - Not stated by R8, and read as above: a null `perspective`, a null `date`, a null `disputes`, `reraises`, `outsideDelta`, `cardId` or `mergeVerified`; that "card attempts per ruling" is rows of `card_attempts` over rulings; where a null `predecessor` is "a group of its own" (it is only compared here, never grouped).
 
-Real run (read-only, main checkout state, `--no-usage --no-github`, exit 0, about 70 s): rulings 30, ruling_set 30, repeat_blocks 178, finding_fixes 774, history_errors 0. `git log --first-parent -i --grep="user's ruling" --grep="user ruling"` on main also gives 30.
+Real run (read-only, main checkout state, `--no-usage --no-github`, exit 0): rulings 31, ruling_set 31, repeat_blocks 178 (predates false 89, true 82, unknown 7), finding_fixes 778 (changedAfter true 319, false 31, unknown 428; attempt 1 gave 500, 32, 242 of 774), history_errors 0. The rise of `unknown` is the 301 of 562 formal entries stored without a `decision`: no raising entry is found for their findings, a case the card does not state. Attempt 1 gave predates false 89, true 82, unknown 7. `git log --first-parent -i --grep="user's ruling" --grep="user ruling"` on main also gives 30.
 

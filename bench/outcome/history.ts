@@ -1,6 +1,6 @@
 // Card T1-OUTCOME-HISTORY: the ruling set, the repeat-block classification and the findings followed by a change, read
 // from git on an injected runner. Read-only: every git call is `rev-parse`, `log`, `grep`, `blame`, `merge-base` or `diff --quiet`.
-// The base follows `--end-of-options`, a commit id from the state reaches git only when it is 40 lower-case hex characters,
+// The base follows `--end-of-options`, a commit id from the state reaches git only when it is 40 hex characters, lowered first,
 // and a file from a finding follows `--`. No git failure leaves a function: it is one `history_errors` row.
 import type { SyncRunner } from '../../src/probes/exec.ts';
 import type { HistoryTable, Row, Tables } from './ingest.ts';
@@ -16,12 +16,17 @@ const ID = 'T\\d+-[A-Z0-9]+(?:-[A-Z0-9]+)*';
 const CARD = new RegExp(`\\b${ID}\\b`, 'g');
 const REPLACES = new RegExp(`\\b(${ID}) replaces (${ID})\\b`);
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+/** A commit id from the state: 40 hex characters in either case are lowered, the form git prints and `SHA` tests; any other value is as stored. */
+const sha = (value: unknown): string | null => (typeof value === 'string' && /^[0-9a-fA-F]{40}$/.test(value) ? value.toLowerCase() : text(value));
+/** R3: the first `@ <path>[:<line>]` of a reason, the path read and normalised as `findingLocation` of src/core/review-policy.ts does. */
+const CITED = /@\s*([^\s@:]+)(?::(\d+))?/u;
+const posix = (file: string): string => file.replace(/\\/g, '/').replace(/^\.\//, '');
 const decided = (entry: Row): boolean => entry['outcome'] === 'pass' || entry['outcome'] === 'block';
 
 /** `exit` is the exit code when it is one of the answers the caller named, else undefined, with one `history_errors` row. */
 type Git = (args: string[], answers?: number[]) => { exit: number | undefined; out: string };
 
-/** Git through the runner. A command line runs once per reader: every call only reads, so a second one is answered from the first. */
+/** Git through the runner. A command line runs once: every call only reads, so a second one is answered from the first. */
 function gitOn(runner: SyncRunner, errors: Row[]): Git {
   const done = new Map<string, ReturnType<Git>>();
   return (args, answers = [0]) => {
@@ -58,18 +63,32 @@ const entriesOf = (tables: Tables, finding: Row, stage: unknown): Row[] => table
  * commit date as UTC ISO, `cards` the card ids of the subject, `on` the subject text after the first `ruling on `.
  */
 export function rulings(runner: SyncRunner, base: string): Read {
-  const read: Read = { rows: [], errors: [] };
-  const git = gitOn(runner, read.errors);
-  const tip = git(['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]).out.trim();
-  if (!SHA.test(tip)) return read;
+  const errors: Row[] = [];
+  const git = gitOn(runner, errors);
+  const tip = baseCommit(git, base, errors);
+  return { rows: tip === undefined ? [] : rulingsOf(git, tip), errors };
+}
+
+/** The commit of `base`. Undefined when it does not resolve, which is one error row: a failed `rev-parse`, or one that printed no commit id. */
+function baseCommit(git: Git, base: string, errors: Row[]): string | undefined {
+  const args = ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`];
+  const resolved = git(args);
+  const tip = resolved.out.trim();
+  if (SHA.test(tip)) return tip;
+  if (resolved.exit === 0) errors.push({ command: ['git', ...args].join(' '), exit: 0, stderr: '' });
+  return undefined;
+}
+
+function rulingsOf(git: Git, tip: string): Row[] {
+  const rows: Row[] = [];
   for (const record of git(['log', '--first-parent', '--format=%H %cI%n%B%x00', '--end-of-options', tip, '--']).out.split('\0')) {
     const m = /^\n?([0-9a-f]{40}) (\S+)\n([^\r\n]*)([\s\S]*)$/.exec(record);
     if (!m || !RULING.test(m[3]! + m[4]!)) continue;
     const [subject, time] = [m[3]!, Date.parse(m[2]!)];
     const replaces = REPLACES.exec(subject);
-    read.rows.push({ sha: m[1]!, date: Number.isNaN(time) ? null : new Date(time).toISOString(), subject, cards: subject.match(CARD) ?? [], successor: replaces?.[1] ?? null, predecessor: replaces?.[2] ?? null, on: /ruling on (.+)$/i.exec(subject)?.[1]!.trim() ?? null });
+    rows.push({ sha: m[1]!, date: Number.isNaN(time) ? null : new Date(time).toISOString(), subject, cards: subject.match(CARD) ?? [], successor: replaces?.[1] ?? null, predecessor: replaces?.[2] ?? null, on: /ruling on (.+)$/i.exec(subject)?.[1]!.trim() ?? null });
   }
-  return read;
+  return rows;
 }
 
 /**
@@ -89,7 +108,7 @@ export function rulingSet(rulings: Row[], tables: Tables): Row[] {
       ...ruling,
       stopReason: run['stopReason'] ?? null,
       stopDetail: run['stopDetail'] ?? null,
-      candidateSha: entry?.['candidateSha'] ?? null,
+      candidateSha: sha(entry?.['candidateSha']),
       outcome: entry?.['outcome'] ?? null,
       decision: entry?.['decision'] ?? null,
       findings: open.map((f) => ({ id: f['id'], class: f['class'] ?? null, file: f['file'] ?? null, reason: f['reason'] })),
@@ -109,7 +128,9 @@ function predates(git: Git, file: string | null, first: string | null, at: strin
   // The line count of the file in `at`: `grep -c` exits 0 and prints `<at>:<file>:<count>`, and exits 1 for a file that
   // has no line or is not in the commit. A line past the end is therefore `unknown` before any blame, and no error.
   const counted = git(['--literal-pathspecs', 'grep', '-a', '-c', '-e', '$', at, '--', file], [0, 1]);
-  if (counted.exit !== 0 || line < 1 || line > Number(/:(\d+)\s*$/.exec(counted.out)?.[1] ?? 0)) return 'unknown';
+  // The output must be that one line: a `file` that names a directory lists the files under it, and no count of those is used.
+  const count = counted.out.trim().startsWith(`${at}:${file}:`) ? counted.out.trim().slice(at.length + file.length + 2) : '';
+  if (counted.exit !== 0 || !/^\d+$/.test(count) || line < 1 || line > Number(count)) return 'unknown';
   const named = /^([0-9a-f]{40}) /.exec(git(['blame', '--porcelain', '-L', `${line},${line}`, at, '--', file]).out)?.[1];
   if (named === undefined) return 'unknown';
   if (named === first) return 'true';
@@ -120,43 +141,61 @@ function predates(git: Git, file: string | null, first: string | null, at: strin
 
 /**
  * R3: one row per formal finding of round 2 or later, in the order of `tables.findings`. `first` is the `candidateSha` of
- * the first formal entry the run stores with outcome `pass` or `block`; `line` is the first number after `@ <file>:`.
+ * the first formal entry the run (goal and card) stores with outcome `pass` or `block`; `line` is that of the first citation
+ * of the reason when its path is the finding's `file`, both normalised alike, and null otherwise: no later citation is read.
  */
 export function repeatBlocks(runner: SyncRunner, tables: Tables): Read {
-  const read: Read = { rows: [], errors: [] };
-  const git = gitOn(runner, read.errors);
+  const errors: Row[] = [];
+  return { rows: blocksOf(gitOn(runner, errors), tables), errors };
+}
+
+function blocksOf(git: Git, tables: Tables): Row[] {
+  const rows: Row[] = [];
   for (const f of tables.findings) {
     if (f['stage'] !== 'formal' || !(Number(f['round']) >= 2)) continue;
-    const cited = /@ [^\s:]+:(\d+)/.exec(text(f['reason']) ?? '')?.[1];
-    const [file, line] = [text(f['file']), cited === undefined ? null : Number(cited)];
-    const first = text(entriesOf(tables, f, 'formal').find(decided)?.['candidateSha']);
-    read.rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, line, outsideDelta: f['outsideDelta'] ?? null, predates: predates(git, file, first, text(f['candidateSha']), line) });
+    const [file, cited] = [text(f['file']), CITED.exec(text(f['reason']) ?? '')];
+    const line = file !== null && cited?.[2] !== undefined && posix(cited[1]!) === posix(file) ? Number(cited[2]) : null;
+    const first = sha(entriesOf(tables, f, 'formal').find(decided)?.['candidateSha']);
+    rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, line, outsideDelta: f['outsideDelta'] ?? null, predates: predates(git, file, first, sha(f['candidateSha']), line) });
   }
-  return read;
+  return rows;
 }
 
 /**
  * R5: one row per finding with a `file` and a `candidateSha`, in the order of `tables.findings`. The finding's entry is
- * the first entry of its run and stage with its `candidateSha`; the next one is the first later entry with outcome `pass`
- * or `block` and another `candidateSha`. No such entry, a sha that is not 40 hex or a commit the repository lacks: `unknown`.
+ * the entry of its run and stage that raised it: the formal entry whose `decision` is the finding's `round`, or the pre
+ * round with its `round` and `cycle`; of several stored with that number, the last. It is never found by `candidateSha`,
+ * which a later entry can repeat. The next one is the first later entry with outcome `pass` or `block` and another
+ * `candidateSha`. No raising entry, no next one, a sha that is not 40 hex or a commit the repository lacks: `unknown`.
  */
 export function findingFixes(runner: SyncRunner, tables: Tables): Read {
-  const read: Read = { rows: [], errors: [] };
-  const git = gitOn(runner, read.errors);
-  for (const f of tables.findings) {
-    const [file, at] = [text(f['file']), text(f['candidateSha'])];
-    if (file === null || at === null) continue;
-    const entries = entriesOf(tables, f, f['stage']);
-    const own = entries.findIndex((d) => d['candidateSha'] === at);
-    const next = own < 0 ? null : text(entries.slice(own + 1).find((d) => decided(d) && typeof d['candidateSha'] === 'string' && d['candidateSha'] !== at)?.['candidateSha']);
-    const same = next !== null && SHA.test(at) && SHA.test(next) && holds(git, at) === true && holds(git, next) === true ? sameFile(git, at, next, file) : undefined;
-    read.rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, candidateSha: at, changedAfter: same === undefined ? 'unknown' : same ? 'false' : 'true' });
-  }
-  return read;
+  const errors: Row[] = [];
+  return { rows: fixesOf(gitOn(runner, errors), tables), errors };
 }
 
-/** R7: the five tables for one base. */
+function fixesOf(git: Git, tables: Tables): Row[] {
+  const rows: Row[] = [];
+  for (const f of tables.findings) {
+    const [file, at] = [text(f['file']), sha(f['candidateSha'])];
+    if (file === null || at === null) continue;
+    const entries = entriesOf(tables, f, f['stage']);
+    const own = entries.findLastIndex((d) => (f['stage'] === 'formal' ? d['decision'] === f['round'] : d['round'] === f['round'] && (d['cycle'] ?? null) === (f['cycle'] ?? null)));
+    const next = own < 0 ? null : sha(entries.slice(own + 1).find((d) => decided(d) && sha(d['candidateSha']) !== null && sha(d['candidateSha']) !== at)?.['candidateSha']);
+    const same = next !== null && SHA.test(at) && SHA.test(next) && holds(git, at) === true && holds(git, next) === true ? sameFile(git, at, next, file) : undefined;
+    rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, candidateSha: at, changedAfter: same === undefined ? 'unknown' : same ? 'false' : 'true' });
+  }
+  return rows;
+}
+
+/**
+ * R7: the five tables for one base, on one git, so a command line runs once in the run. R6: when the base does not
+ * resolve, that one `rev-parse` is the only git call: there is no ruling, and every `predates` and `changedAfter` is `unknown`.
+ */
 export function historyTables(runner: SyncRunner, base: string, tables: Tables): Record<HistoryTable, Row[]> {
-  const [found, blocks, fixes] = [rulings(runner, base), repeatBlocks(runner, tables), findingFixes(runner, tables)];
-  return { rulings: found.rows, ruling_set: rulingSet(found.rows, tables), repeat_blocks: blocks.rows, finding_fixes: fixes.rows, history_errors: [...found.errors, ...blocks.errors, ...fixes.errors] };
+  const errors: Row[] = [];
+  const onRunner = gitOn(runner, errors);
+  const tip = baseCommit(onRunner, base, errors);
+  const git: Git = tip === undefined ? () => ({ exit: undefined, out: '' }) : onRunner;
+  const found = tip === undefined ? [] : rulingsOf(git, tip);
+  return { rulings: found, ruling_set: rulingSet(found, tables), repeat_blocks: blocksOf(git, tables), finding_fixes: fixesOf(git, tables), history_errors: errors };
 }

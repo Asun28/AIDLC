@@ -124,7 +124,7 @@ function fixture(sha: Record<string, string>): { stateDir: string; cardsDir: str
       f('F7', 3, 'gone @ a.ts:1', { file: 'a.ts', candidateSha: GONE }),
       f('F8', 3, 'names no file', { candidateSha: k2 }),
       f('F9', 4, 'still there @ a.ts:3', { file: 'a.ts', candidateSha: k3, outsideDelta: true, class: 'off-by-one', resolvedAt: undefined }),
-      f('F11', 1, 'pre @ a.ts:1', { stage: 'pre', perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
+      f('F11', 1, 'pre @ a.ts:1', { stage: 'pre', cycle: 0, perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
     ],
   });
   run('g-2', 'T1-A', at(1, 2), { stop: stop('time', 'an earlier stop') });
@@ -134,9 +134,9 @@ function fixture(sha: Record<string, string>): { stateDir: string; cardsDir: str
     review: { substantiveDecisions: 1, invocations: [formal(1, 'pass', k2, { decision: 1 })] },
     preReview: { rounds: [round(1, 'block', k1), round(2, 'pass', k2)] },
     findings: [
-      f('F1', 1, 'fixed @ a.ts:2', { stage: 'pre', perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
-      f('F2', 1, 'left alone @ c.ts:1', { stage: 'pre', perspective: 'bugs', file: 'c.ts', candidateSha: k1 }),
-      f('F3', 1, 'not resolved @ a.ts:2', { stage: 'pre', perspective: 'security', file: 'a.ts', candidateSha: k1, resolvedAt: undefined, disputes: [{ at: at(1, 2, '06:00'), note: 'intended' }] }),
+      f('F1', 1, 'fixed @ a.ts:2', { stage: 'pre', cycle: 0, perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
+      f('F2', 1, 'left alone @ c.ts:1', { stage: 'pre', cycle: 0, perspective: 'bugs', file: 'c.ts', candidateSha: k1 }),
+      f('F3', 1, 'not resolved @ a.ts:2', { stage: 'pre', cycle: 0, perspective: 'security', file: 'a.ts', candidateSha: k1, resolvedAt: undefined, disputes: [{ at: at(1, 2, '06:00'), note: 'intended' }] }),
     ],
   });
   mkdirSync(path.join(stateDir, 'journal'));
@@ -214,8 +214,7 @@ test('T1-OUTCOME-HISTORY acceptance 9: a base of --output=x writes no file and i
   const read = rulings(runner, '--output=x');
   assert.deepEqual([read.rows, read.errors.map((e) => e['command']), calls], [[], ['git rev-parse --verify --end-of-options --output=x^{commit}'], ['git rev-parse --verify --end-of-options --output=x^{commit}']]);
   // The entry after the finding's has a commit the repository holds, so only the 40-hex check keeps git from being called.
-  const entry = (candidateSha: string): Row => ({ goalId: 'g', cardId: 'T1-A', stage: 'formal', outcome: 'block', candidateSha });
-  const tables: Tables = { cards: [], card_runs: [], state_spans: [], attempts: [], ingest_errors: [], review_decisions: [entry(sha['k1']!), entry('--output=x'), entry(sha['k2']!)], findings: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', stage: 'formal', round: 2, file: 'a.ts', candidateSha: '--output=x', outsideDelta: null, reason: 'x @ a.ts:1' }] };
+  const tables = oneRun([sha['k1']!, '--output=x', sha['k2']!], [['F1', 2, 'a.ts', '--output=x', 'x @ a.ts:1']]);
   assert.deepEqual(repeatBlocks(runner, tables), { rows: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', file: 'a.ts', line: 1, outsideDelta: null, predates: 'unknown' }], errors: [] });
   assert.deepEqual(findingFixes(runner, tables), { rows: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', file: 'a.ts', candidateSha: '--output=x', changedAfter: 'unknown' }], errors: [] });
   assert.equal(calls.length, 1, 'a git call was made for a candidateSha that is not 40 hex');
@@ -243,10 +242,10 @@ test('T1-OUTCOME-HISTORY acceptance 11, entry: for entries on the commits A, B, 
   assert.deepEqual([values(read.rows, 'changedAfter'), read.errors], [[['F1', 'true'], ['F2', 'unknown']], []]);
 });
 
-test('T1-OUTCOME-HISTORY acceptance 11, citation: a reason x @ a.ts: see @ b.ts:1 with file a.ts gives a null line, and a first citation ./a.ts:2 gives line 2 [R3]', () => {
+test('T1-OUTCOME-HISTORY acceptance 11, citation: a reason x @ a.ts: see @ b.ts:1 with file a.ts gives a null line, as does a first citation of another file, a first citation ./a.ts:2 gives line 2, and a file that is a directory is unknown without a blame [R3]', () => {
   const { dir, sha } = repo();
-  const read = repeatBlocks(gitIn(dir), oneRun([sha['k1']!, sha['k2']!], [['F1', 2, 'a.ts', sha['k2']!, 'x @ a.ts: see @ b.ts:1'], ['F2', 2, 'a.ts', sha['k2']!, 'y @ ./a.ts:2 and @ a.ts:1']]));
-  assert.deepEqual([values(read.rows, 'line'), values(read.rows, 'predates')], [[['F1', null], ['F2', 2]], [['F1', 'file-changed'], ['F2', 'false']]]);
+  const read = repeatBlocks(gitIn(dir), oneRun([sha['k1']!, sha['k2']!], [['F1', 2, 'a.ts', sha['k2']!, 'x @ a.ts: see @ b.ts:1'], ['F2', 2, 'a.ts', sha['k2']!, 'y @ ./a.ts:2 and @ a.ts:1'], ['F3', 2, 'a.ts', sha['k2']!, 'z @ b.ts:1'], ['F4', 2, '.', sha['k2']!, 'directory @ .:1']]));
+  assert.deepEqual([values(read.rows, 'line'), values(read.rows, 'predates'), read.errors], [[['F1', null], ['F2', 2], ['F3', null], ['F4', 1]], [['F1', 'file-changed'], ['F2', 'false'], ['F3', 'file-changed'], ['F4', 'unknown']], []]);
 });
 
 test('T1-OUTCOME-HISTORY acceptance 11, case: a candidateSha in upper case and one in mixed case are classified as the same commit in lower case is, in repeatBlocks and in findingFixes [R6]', () => {
@@ -255,7 +254,7 @@ test('T1-OUTCOME-HISTORY acceptance 11, case: a candidateSha in upper case and o
   const mixed = (name: string): string => [...sha[name]!].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join('');
   const findings = (k2: string[]): Parameters<typeof oneRun>[1] => [['F1', 2, 'c.ts', k2[0]!, 'whole file @ c.ts'], ['F2', 2, 'a.ts', k2[1]!, 'repaired @ a.ts:2']];
   const expected = [[['F1', 'true'], ['F2', 'false']], [['F1', 'true'], ['F2', 'false']]];
-  for (const tables of [oneRun([sha['k1']!, sha['k2']!, sha['k3']!], findings([sha['k2']!, sha['k2']!])), oneRun([upper('k1'), mixed('k2'), upper('k3')], findings([upper('k2'), mixed('k2')]))]) {
+  for (const tables of [oneRun([sha['k1']!, sha['k2']!, sha['k2']!, sha['k3']!], findings([sha['k2']!, sha['k2']!])), oneRun([upper('k1'), mixed('k2'), upper('k2'), upper('k3')], findings([upper('k2'), mixed('k2')]))]) {
     assert.deepEqual([values(repeatBlocks(gitIn(dir), tables).rows, 'predates'), values(findingFixes(gitIn(dir), tables).rows, 'changedAfter')], expected);
   }
 });
