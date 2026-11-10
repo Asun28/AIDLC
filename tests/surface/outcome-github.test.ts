@@ -247,6 +247,50 @@ test('T1-OUTCOME-GITHUB acceptance 5: a runner exit of 1, a timeout, output that
   ]);
 });
 
+test('T1-OUTCOME-GITHUB acceptance 5 and 10: a failing ancestry or date call of a revert target, and a malformed jobs page, each give one github_errors row and keep the other rows [R2] [R3] [R5]', () => {
+  const tip = 'f'.repeat(40);
+  const targets = ['1', '2', '3', '4', '5'].map((digit) => digit.repeat(40));
+  const record = (index: number): string => `${String(index).repeat(39)}a 2026-01-05T00:00:00+00:00\n${tip}\n\nRevert\n\nThis reverts commit ${targets[index - 1]}.\n\0\n`;
+  const ancestry = (index: number): string => `git merge-base --is-ancestor --end-of-options ${targets[index - 1]} ${tip}`;
+  const shown = (index: number): string => `git show -s --format=%cI --end-of-options ${targets[index - 1]}`;
+  const git = recording({
+    'git rev-parse': { stdout: `${tip}\n` },
+    'git log': { stdout: [1, 2, 3, 4, 5].map(record).join('') },
+    [ancestry(1)]: { exitCode: 128, stderr: 'fatal: Not a valid commit name 1\n' },
+    [ancestry(2)]: { exitCode: null, timedOut: true },
+    [ancestry(3)]: {},
+    [shown(3)]: { exitCode: 128, stderr: 'fatal: bad object 3\n' },
+    [ancestry(4)]: {},
+    [shown(4)]: { stdout: '\n' },
+    [ancestry(5)]: {},
+    [shown(5)]: { stdout: '2026-01-03T00:00:00+00:00\n' },
+  });
+  const got = reverts(git.runner, 'main');
+  assert.deepEqual(got.rows.map((r) => [r['revertedSha'], r['daysAfter']]), [[targets[0], null], [targets[1], null], [targets[2], null], [targets[3], null], [targets[4], 2]]);
+  assert.deepEqual(got.errors, [
+    { command: ancestry(1), exit: 128, stderr: 'fatal: Not a valid commit name 1', problem: 'did not exit 0' },
+    { command: ancestry(2), exit: null, stderr: '', problem: 'timeout' },
+    { command: shown(3), exit: 128, stderr: 'fatal: bad object 3', problem: 'did not exit 0' },
+    { command: shown(4), exit: 0, stderr: '', problem: 'not a date' },
+  ]);
+
+  // A jobs page without a jobs array, and a job without an id: left out, one row for the call, the run's attempt kept.
+  const jobs = recording({
+    [gh(checksOf('s1'))]: { stdout: JSON.stringify([checkPage(check('a', 'success', at(1), 900, 11), check('b', 'success', at(1), 903, 31))]) },
+    [gh(runsOf('s1'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 900, run_attempt: 2 }, { id: 903, run_attempt: 2 }] }]) },
+    [gh(jobsOf(900, 1))]: { stdout: JSON.stringify([{ total_count: 0 }]) },
+    [gh(jobsOf(900, 2))]: { stdout: JSON.stringify([{ jobs: [{ id: 98 }] }]) },
+    [gh(jobsOf(903, 1))]: { stdout: JSON.stringify([{ jobs: [{ name: 'no id' }] }]) },
+    [gh(jobsOf(903, 2))]: { stdout: JSON.stringify([{ jobs: [{ id: 99 }] }]) },
+  });
+  const checks = checkRuns(jobs.runner, REPO, ['s1']);
+  assert.deepEqual(checks.rows.map((r) => [r['name'], r['runAttempt']]), [['a', 2], ['b', 2]]);
+  assert.deepEqual(checks.errors, [
+    { command: gh(jobsOf(900, 1)), exit: 0, stderr: '', problem: 'page 1 has no jobs array' },
+    { command: gh(jobsOf(903, 1)), exit: 0, stderr: '', problem: 'page 1 holds a job without an id' },
+  ]);
+});
+
 // run.ts over a fixture of four cards: T1-A (accepted, joined by prNumber to a pull request whose headRef names T1-RED,
 // its only branch commit without a trailer a merge of the base),
 // T1-RED (merged, required check ci red on the merge commit and green on the head), T1-REV (merged, joined by headRef, reverted
@@ -374,6 +418,8 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   // Acceptance 10: an earlier success of scan and a queued rerun of it, which has no startedAt, is not green.
   const queued = { name: 'scan', status: 'queued', conclusion: null, started_at: null, completed_at: null, details_url: null };
   assert.deepEqual(variant({ answers: answers(sha, [check('scan', 'success', at(1, '02:01')), queued]) }), success({ failing_checksGreen: 2 }));
+  // The same for a run still in progress that started after the success.
+  assert.deepEqual(variant({ answers: answers(sha, [check('scan', 'success', at(1, '02:01')), check('scan', null, at(1, '02:30'))]) }), success({ failing_checksGreen: 2 }));
   // The same for a queued run that carries a startedAt earlier than the success: its status alone makes it the latest.
   assert.deepEqual(variant({ answers: answers(sha, [check('scan', 'success', at(1, '02:01')), { ...queued, started_at: at(1, '01:00') }]) }), success({ failing_checksGreen: 2 }));
   assert.deepEqual(variant({ answers: answers(sha, undefined, '0'.repeat(40)) }), success({ accepted: 1, pr_success_rate: 0.25, unknown_noHumanCommit: 1 }));

@@ -139,6 +139,8 @@ RED: commit 36613b9f (test changes only); 5 of 7 failed on assertions with `DUCK
 
 16 mutants, each run against the test file with `DUCKDB_BIN`: 15 killed, 1 equivalent (named in the table). Two survived a first run (`OR` to `AND` in pending; no `prNumber` branch) and the fixture gained a queued run with an earlier `startedAt` and pull request 20, named by a second run of T1-RED with a `headRef` that is no card id; both are killed.
 
+Tests added after the repair for its four untested failure paths (they passed on the repaired code, so they are additions, not a RED), each with a mutant that removes the production branch: no error row for a `merge-base` exit other than 1 (killed); no `not a date` problem (killed); no problem for a job without an id (killed); no problem for a page without a `jobs` array (killed). For the run in progress that started after the success, a view where every run is a success is killed; that case is rejected by three conditions at once (pending, latest `startedAt`, null conclusion), so no narrower mutant fails on it alone.
+
 Sweeps:
 - git argv carrying an outside value: `rev-parse` (base, from the configuration), the first-parent `log` (the resolved sha), `merge-base` and `show` (the reverted sha, 40 hex from a commit message, and the resolved sha), the branch `log` (head and merge commit sha from GitHub, each checked as 40 hex). All five follow `--end-of-options`. No other git call exists in `github.ts`.
 - ordering by `startedAt` and `runAttempt` in the views: `green` and `first_failed` are in `commit_checks` and now place a run without `startedAt`; `rerun_share` takes `max(runAttempt) > 1`, where a null `runAttempt` (no workflow run) is no rerun, which is intended.
@@ -149,13 +151,13 @@ Inputs and failure paths of the repair hunks:
 |---|---|---|
 | a base that is not a revision, or starts with `-` | one row, no further git call | acceptance 3 |
 | a reverted sha that is no ancestor (`merge-base` exit 1) | null, no row | acceptance 3 (`f1`) |
-| `merge-base` failing otherwise (a sha the repository does not hold, a timeout) | null and one row | not tested |
-| `git show` failing or printing no date | null and one row | not tested |
+| `merge-base` exiting 128, and timing out | null and one row each, the other reverts returned | acceptance 5 and 10 (`a failing ancestry or date call of a revert target, and a malformed jobs page ...`, scripted runner) |
+| `git show` exiting non-zero, and printing an empty line | null and one row each | acceptance 5 and 10 (`a failing ancestry or date call of a revert target, and a malformed jobs page ...`, scripted runner) |
 | a jobs call that fails | one row, the run's attempt for its check runs | acceptance 2 |
 | a check run in no attempt's jobs | the run's attempt, one row on the workflow-run call | acceptance 2 |
-| a jobs page without a `jobs` array, a job without an id | left out, named in the row of the call | not tested |
+| a jobs page without a `jobs` array, a job without an id | left out, one row for the call, the check runs keep the run's attempt | acceptance 5 and 10 (`a failing ancestry or date call of a revert target, and a malformed jobs page ...`, scripted runner) |
 | a message without a `Co-Authored-By` trailer | an empty trailer line, `modelCoAuthor` false | acceptance 4 |
-| a check run with a status other than completed, or without `startedAt` | pending: last of its name, no success | acceptance 6, 9 and 10 (null `startedAt`); the status alone is not tested |
+| a check run with a status other than completed, or without `startedAt` | pending: last of its name, no success | acceptance 6, 9 and 10: a queued run without `startedAt`, a queued run with an earlier `startedAt`, and a run in progress that started after the success, each not green |
 
 ### Real run
 `node bench/outcome/run.ts --duckdb <path> --state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks --out <temp>` from this worktree on 2026-11-10, twice: before the second amendment (exit 0 in 9 min 8 s) and after it (exit 0 in 8 min 57 s). Each run made 773 `gh` calls (1 for pull requests, 386 for check runs, 386 for workflow runs; derived from the tables) and 194 `git log` calls. The numbers below are from the second run; `summary_lead_time_pr`, `summary_ci` and `summary_reconcile` printed the same bytes in both.
