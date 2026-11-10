@@ -328,11 +328,11 @@ function state(prOfA = 11, verifiedD = true): string {
 }
 
 /** What the stand-in gh answers per endpoint: seven pull requests on two pages (17 is a second, later merged one of T1-REV), and the check runs of seven of the eight commits. */
-function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', 'success', at(1, '02:01'))], headOfA = s['aM']!): Record<string, unknown> {
+function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', 'success', at(1, '02:01'))], headOfA = s['aM']!, mergeOf13: string | null = s['mV']!): Record<string, unknown> {
   const green = [check('ci', 'success', at(5)), check('scan', 'success', at(5))];
   return {
     [PULLS]: [
-      [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
+      [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), mergeOf13)],
       [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!), pr(18, 'T1-RED', s['c0']!, null, null), pr(19, 'T1-NEXT', s['c0']!, null, null), pr(20, 'retry-branch', s['c0']!, null, null), pr(21, 'other', s['c0']!, at(6), s['mF']!)],
     ],
     [checksOf(s['aM']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900, 1), check('ci', 'success', at(1, '01:30'), 900, 2), check('scan', 'success', at(1, '01:10')))],
@@ -445,6 +445,14 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(variant({ answers: answers(sha, undefined, '0'.repeat(40)) }), success({ accepted: 1, pr_success_rate: 0.25, unknown_noHumanCommit: 1 }));
   // Without a mergeVerified run T1-D is not a merged card, so no merged card lacks a pull request.
   assert.deepEqual(variant({ state: state(11, false) }, 'summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 0 }]);
+
+  // T1-REV has two merged pull requests, 13 first and 17 later. With no mergeCommitSha on 13, its merge commit is unknown:
+  // not green, no revert found, its branch commits not read (noHumanCommit null), and the lead time still ends at the mergedAt of 13. Taking the sha of 17 would make it
+  // green and accepted.
+  const noSha = outcome(['--duckdb', duckdb!], { answers: answers(sha, undefined, undefined, null) });
+  assert.equal(noSha.status, 0, noSha.stderr);
+  assert.deepEqual(views(noSha.stdout).get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25, accepted_strict: 1, pr_success_rate_strict: 0.25, failing_checksGreen: 2, failing_notReverted: 0, unknown_noHumanCommit: 1 }));
+  assert.deepEqual(views(noSha.stdout).get('summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 1 }]);
 
   const off = outcome(['--duckdb', duckdb!, '--no-github']);
   assert.equal(off.status, 0, off.stderr);
