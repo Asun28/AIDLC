@@ -90,23 +90,29 @@ function withErrors(): { rows: Row[]; errors: Row[]; expected: Row[] } {
   const badMeta = put(path.join(f.claudeDir, 's1', 'subagents', 'agent-c3.meta.json'), ['{']);
   const noInfo = put(path.join(f.codexDir, 'rollout-noinfo.jsonl'), codexSession('cx3', 'C:\\wt', [codexLine('event_msg', { type: 'token_count', info: null, rate_limits: { plan_type: X } })]));
   const noCount = put(path.join(f.codexDir, 'rollout-none.jsonl'), codexSession('cx2', 'C:\\wt', []));
+  // A directory with the name of a source file cannot be read as one on any platform, and the file inside it is not a source.
+  const [claudeNamedDir, codexNamedDir] = [path.join(f.claudeDir, 's.jsonl'), path.join(f.codexDir, 'rollout-x.jsonl')];
+  put(path.join(claudeNamedDir, 'inner.jsonl'), [claudeLine('assistant', 'm7', [1, 2, 3, 4])]);
+  put(path.join(codexNamedDir, 'rollout-inner.jsonl'), codexSession('cx4', 'C:\\wt', [tokenCount(10, 5, 1)]));
   const all = [claudeUsage([gone, f.claudeDir], ['T1-X', 'T1-X-2']), codexUsage(gone), codexUsage(f.codexDir), reviewLogUsage(gone), reviewLogUsage(f.stateDir)];
   const expected = [
     { source: 'claude-code', path: gone, problem: 'missing directory' },
+    { source: 'claude-code', path: claudeNamedDir, problem: 'unreadable' },
     { source: 'claude-code', path: badMeta, problem: 'not JSON' },
     { source: 'claude-code', path: badLine, problem: 'not JSON (line 1)' },
     { source: 'claude-code', path: badLine, problem: 'usage line without message.id (line 2)' },
     { source: 'codex', path: gone, problem: 'missing directory' },
     { source: 'codex', path: noInfo, problem: 'no token_count line' },
     { source: 'codex', path: noCount, problem: 'no token_count line' },
+    { source: 'codex', path: codexNamedDir, problem: 'unreadable' },
     { source: 'review-log', path: path.join(gone, 'evidence'), problem: 'missing directory' },
   ];
   return { rows: all.flatMap((u) => u.rows), errors: all.flatMap((u) => u.errors), expected };
 }
 
-test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line and a meta file that are not JSON, a usage line without a message id and two Codex files without a usable token_count line give eight usage_errors rows beside the valid rows [R4]', () => {
+test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line and a meta file that are not JSON, a usage line without a message id, two Codex files without a usable token_count line and a directory named as a file of each log source give ten usage_errors rows beside the valid rows [R4]', () => {
   const { rows, errors, expected } = withErrors();
-  assert.deepEqual(errors, expected);
+  assert.deepEqual(errors.map((e) => ({ ...e, problem: String(e['problem']).replace(/^unreadable: .+$/, 'unreadable') })), expected);
   assert.deepEqual(rows.map((r) => `${String(r['source'])} ${String(r['agentId'] ?? r['sessionId'] ?? r['invocation'])}`), ['claude-code s1', 'claude-code s1', 'claude-code a1', 'claude-code b2', 'claude-code c3', 'claude-code s1', 'codex cx1', 'review-log T1-X.r3.1.abc', 'review-log loose']);
   assert.deepEqual(rows[4], claudeRow({ sidechain: true, agentId: 'c3' }), 'the row of a subagent whose meta file is not JSON');
 });
@@ -114,7 +120,7 @@ test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line 
 test('T1-OUTCOME-USAGE acceptance 5: every row has only the keys the card names, and no row or error holds the text of a fixture [R5]', () => {
   const { rows, errors } = withErrors();
   const keys: Record<string, Row> = { 'claude-code': claudeRow({}), codex: codexRow, 'review-log': logRow };
-  assert.deepEqual([rows.length, errors.length], [9, 8]);
+  assert.deepEqual([rows.length, errors.length], [9, 10]);
   for (const row of rows) assert.deepEqual(Object.keys(row).sort(), Object.keys(keys[String(row['source'])]!).sort());
   for (const row of errors) assert.deepEqual(Object.keys(row), ['source', 'path', 'problem']);
   assert.equal(readFileSync(path.join(fixture().claudeDir, 's1.jsonl'), 'utf8').includes(X), true, 'the fixture holds the marker');
