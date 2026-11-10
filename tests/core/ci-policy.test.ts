@@ -486,6 +486,11 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
       ['a malformed step line naming no readable check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null'].join('\n')],
       ['a step line of valid JSON naming no check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null}'].join('\n')],
       ['a step line whose check is not a string', [RUN_42467444385, '[CI-GATE-STEP] {"check":7,"job":"2","step":null}'].join('\n')],
+      ['a red line with a raw bracket in another check name', [RUN_42467444385, redLine('build [x]')].join('\n')],
+      ['a lone percent sign in the step name of another check', [RUN_42467444385, stepLine('build', 'Run 100% tests')].join('\n')],
+      ['a red line whose element carries another key', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', extra: 1 }])}`].join('\n')],
+      ['a red line with other spacing', [RUN_42467444385, `[CI-GATE-RED]  ${JSON.stringify([{ name: 'build', conclusion: 'failure' }])}`].join('\n')],
+      ['a red line whose element carries status completed', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', status: 'completed' }])}`].join('\n')],
       ...['', '  '].flatMap((blank): Array<[string, string, { scanSetupSteps?: string[] }?]> => {
         const malformed = `[CI-GATE-STEP] ${JSON.stringify({ check: blank, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`;
         const wellFormed = stepLine(blank, 'Scan committed history', 'failure', '2');
