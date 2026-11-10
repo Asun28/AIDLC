@@ -256,7 +256,9 @@ function runChecks(evalCase: EvalCase, runner: SyncRunner, workdir: string, r?: 
       }
       default: {
         const name = `${check.type} ${'path' in check ? check.path : `/${check.pattern}/`}`;
-        // A tool-call check never passes vacuously: no model run, or a run that recorded no tool calls, fails it.
+        // No model run fails every tool-call check with `no model run`, and a result with no `toolCalls` fails every one with
+        // `no tool calls recorded`. A recorded empty list (`toolCalls: []`) passes not-ran-command and not-wrote-path, since no
+        // call matches, and fails read-file and ran-command.
         if (!r || !r.toolCalls) {
           checks.push({ check: name, ok: false, detail: r ? 'no tool calls recorded' : 'no model run' });
           break;
@@ -538,11 +540,13 @@ export async function runTrials(cases: EvalCase[], provider: ModelProvider, opti
 
 /** The human lines of a trials report; the ref is printed as a JSON string. */
 export function formatTrials(report: EvalTrialsReport): string {
-  const fig = (f: TrialFigures) => `${f.passed}/${f.trials}${f.passRate ? ` (median ${f.passRate.median.toFixed(2)}, ${f.passRate.min.toFixed(2)} to ${f.passRate.max.toFixed(2)})` : ''}, ${f.modelErrors} model errors, ${f.quotaHolds} quota holds`;
+  const rest = (f: TrialFigures) => `${f.passRate ? ` (median ${f.passRate.median.toFixed(2)}, ${f.passRate.min.toFixed(2)} to ${f.passRate.max.toFixed(2)})` : ''}, ${f.modelErrors} model errors, ${f.quotaHolds} quota holds`;
   const ref = report.variant ? JSON.stringify(report.variant.ref) : '';
-  const pair = (h: TrialFigures, v?: TrialFigures) => `HEAD ${fig(h)}${v ? `; ${ref} ${fig(v)}` : ''}`;
-  const lines = report.cases.map((c) => `${c.id}: ${pair(c.head, c.variant)}${c.note ? ` [${c.note}]` : ''}`);
-  lines.push(`total over ${report.trials} trials: ${pair(report.total.head, report.total.variant)}`);
+  const lines = report.cases.map((c) => `${c.id}: HEAD ${c.head.passed}/${c.head.trials}${rest(c.head)}${c.variant ? `; ${ref} ${c.variant.passed}/${c.variant.trials}${rest(c.variant)}` : ''}${c.note ? ` [${c.note}]` : ''}`);
+  // The total counts case runs (card T0-EVAL-WORDING): a side's runs are the sum of its per-case trials.
+  const runs = (side: 'head' | 'variant') => report.cases.reduce((n, c) => n + (c[side]?.trials ?? 0), 0);
+  const { head, variant } = report.total;
+  lines.push(`total over ${report.trials} trials: HEAD ${head.passed} of ${runs('head')} case runs${rest(head)}${variant ? `; ${ref} ${variant.passed} of ${runs('variant')} case runs${rest(variant)}` : ''}`);
   if (report.variant) lines.push(`HEAD (${report.variant.head.slice(0, 12)}) against ${ref} (${report.variant.commit.slice(0, 12)}): ${report.verdict}: ${report.reason}`);
   if (report.checkoutError) lines.push(`stopped: ${report.checkoutError}`);
   for (const l of report.left ?? []) lines.push(`left: ${l}`);
