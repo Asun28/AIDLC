@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-TEST-TEMP
 title: "The eval tests remove every temporary directory they create, so a test run leaves no `aidlc-evals-*` directory in the OS temp directory"
-status: todo
+status: merged
 branch: T0-EVAL-TEST-TEMP
 worktree: D:\wt\AIDLC\T0-EVAL-TEST-TEMP
 allow_paths:
