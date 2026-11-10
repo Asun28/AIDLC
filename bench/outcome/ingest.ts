@@ -1,6 +1,6 @@
 // Card T1-OUTCOME-INGEST: the outcome tables read from the state directory (card runs, goal journals) and the card registry.
 // Dev-only measurement: files are read, never written, and each record that cannot be read becomes an `ingest_errors` row.
-import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { CardRun } from '../../src/core/types.ts';
@@ -14,6 +14,11 @@ export const COLUMNS = {
   state_spans: ['goalId', 'cardId', 'state', 'startTs', 'endTs'],
   attempts: ['goalId', 'cardId', 'outcome', 'endTs', 'startTs'],
   ingest_errors: ['source', 'path', 'line', 'problem'],
+} as const;
+/** The tables of bench/outcome/usage.ts (card T1-OUTCOME-USAGE). `writeTables` writes each one it is given. */
+export const USAGE_COLUMNS = {
+  usage: ['source', 'sessionId', 'ts', 'model', 'cwd', 'sidechain', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'cacheWrite1hTokens', 'totalTokens', 'durationMs', 'invocation', 'agentId', 'agentType', 'agentCard', 'goalId', 'cardId', 'stage', 'costUsd'],
+  usage_errors: ['source', 'path', 'problem'],
 } as const;
 export type TableName = keyof typeof COLUMNS;
 export type Row = Record<string, unknown>;
@@ -108,22 +113,31 @@ function addRun(t: Tables, run: CardRun): void {
   }
 }
 
-/** The canonical path of `p`: its nearest existing ancestor (a link itself counts as existing) resolved through every link, then the missing remainder. */
-function canonicalPath(p: string): string {
+/**
+ * The canonical path of `p`: its nearest ancestor that `resolve` resolves through every link, then the remainder. An entry
+ * that is absent or cannot be resolved for any other reason (EACCES on it or on an ancestor) is part of the remainder, so
+ * a directory that cannot be reached is still compared, by the path it would have. With no ancestor that resolves (a drive
+ * that is gone) the path is compared as given, so this never throws.
+ */
+function canonicalPath(p: string, resolve: (p: string) => string): string {
   let head = path.resolve(p);
   const rest: string[] = [];
-  while (!lstatSync(head, { throwIfNoEntry: false }) && path.dirname(head) !== head) {
+  for (;;) {
+    try {
+      return path.join(resolve(head), ...rest);
+    } catch {
+      if (path.dirname(head) === head) return path.resolve(p);
+    }
     rest.unshift(path.basename(head));
     head = path.dirname(head);
   }
-  return path.join(realpathSync.native(head), ...rest);
 }
 
 /** Throws when `outDir` is one of the `readOnly` directories or under one, by canonical path. The one place that decides where output may be written. */
-function assertWritable(outDir: string, readOnly: string[]): void {
-  const target = canonicalPath(outDir);
+function assertWritable(outDir: string, readOnly: string[], resolve: (p: string) => string): void {
+  const target = canonicalPath(outDir, resolve);
   for (const dir of readOnly) {
-    const rel = path.relative(canonicalPath(dir), target);
+    const rel = path.relative(canonicalPath(dir, resolve), target);
     const outside = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
     if (!outside) throw new Error(`refusing to write to ${outDir}: it is inside ${dir}, which the outcome scripts only read`);
   }
@@ -135,11 +149,13 @@ function assertWritable(outDir: string, readOnly: string[]): void {
  * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
  * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables, outDir: string, readOnly: string[] = []): void {
-  assertWritable(outDir, readOnly);
+export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS, Row[]>>, outDir: string, readOnly: string[] = [], resolve: (p: string) => string = realpathSync.native): void {
+  assertWritable(outDir, readOnly, resolve);
   mkdirSync(outDir, { recursive: true });
-  for (const name of Object.keys(COLUMNS) as TableName[]) {
-    const lines = tables[name].map((row) => JSON.stringify(Object.fromEntries(COLUMNS[name].map((column) => [column, row[column] ?? null])))).sort();
+  for (const [name, columns] of Object.entries({ ...COLUMNS, ...USAGE_COLUMNS })) {
+    const rows = tables[name as keyof typeof tables];
+    if (rows === undefined) continue;
+    const lines = rows.map((row) => JSON.stringify(Object.fromEntries(columns.map((column) => [column, row[column] ?? null])))).sort();
     const file = path.join(outDir, `${name}.jsonl`);
     rmSync(file, { force: true });
     writeFileSync(file, lines.map((line) => `${line}\n`).join(''), { flag: 'wx' });
