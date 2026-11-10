@@ -52,7 +52,7 @@ After `aidlc card next` asks for a new worktree, it keeps asking until the workt
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/audit.test.ts tests/scenarios/narration-quote.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
@@ -64,7 +64,7 @@ Attempt 1. RED at 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 fa
 |---|---|---|
 | 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
 | 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
-| 3 | prepare-worktree.test.ts, both acceptance 3 tests (stored BUILD, REVIEW_FIX and SHIP with no directory; a regular file at the recorded path; a path under a regular file) | pass |
+| 3 | prepare-worktree.test.ts, the four acceptance 3 tests (stored BUILD, REVIEW_FIX and SHIP with no directory; a regular file at the recorded path; a path under a regular file; an attached worktree deleted while git registers it, prunable or locked; a failed probe of an existing directory) | pass |
 | 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
 | 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
 | 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
@@ -88,4 +88,13 @@ Readers of `run.worktree` (diagnosis.same_class):
 - `card close --cleanup` and `--all`: not affected. They run in CLOSE, which precedes PREPARE, so a merged run whose worktree the cleanup removed goes to CLOSE or DONE as before; `reclaimWorktree` reads `git worktree list`, not `run.worktree`.
 - `reviewCheckout` (card-runner.ts) and `card mutants` (cli/main.ts): not affected; both already check that the directory exists.
 - Board `outcomeOf` (state/board.ts): not affected; a run in PREPARE with no worktree path maps to `todo`, the outcome it had before its first `card next`, and the goal dispatches the same card again.
-- A git worktree entry whose directory is gone: `decideWorktree` decides `attach` (its decision is a non-goal), the run is saved in BUILD with that path, and the next `card next` gets `prepare` again under R2, so no `build` names the missing directory.
+- A git worktree entry whose directory is gone: corrected at attempt 3. The note above said `decideWorktree` decides `attach`; it does not: it probes the common directory inside the missing directory and returns a tool stop, which R3 decision 3 found.
+
+Attempt 3 (repair of the second R3 pass on 2f50b22, class missing-worktree-stops). Under R2 a run whose attached worktree was deleted while git kept its registration went to PREPARE, where `decideWorktree`'s common-directory probe failed in the missing directory and recorded a final `tool` stop. `CardRunner.prepare` now asks, only when `decideWorktree` returns a tool stop, whether git lists the card branch's worktree at the expected path, marked `prunable` or `locked`, with no directory there (`registeredWithoutDirectory`); if so the run stays in PREPARE with no path and a `prepare` `start` that names `git worktree prune` (and `git worktree unlock` for a locked one), so `card next` repeats it until the worktree is made. `decideWorktree` is unchanged (non-goal). The new test failed on 2f50b22 (`stop`) and passes with the repair. Input forms of `registeredWithoutDirectory`, each with its test:
+- the worktree listing fails: the tool stop stands; t0-flow.test.ts T0-PROBE-STOP-TEXT, case T1-PROBE;
+- an entry at another path (mismatch): `decideWorktree` returns an ownership stop first, so the helper is not called; t0-flow.test.ts T0-PROBE-STOP-TEXT ownership test;
+- an entry with neither mark and no directory: the tool stop stands; T0-PROBE-STOP-TEXT, case T1-COMMON;
+- a prunable entry with no directory: retryable `start`; acceptance 3, form "prunable", real repository;
+- a locked entry with no directory (git never marks a locked entry prunable): retryable `start` naming `git worktree unlock`; acceptance 3, form "locked", real repository;
+- a marked entry whose directory exists: the tool stop stands; acceptance 3, failed probe of an existing directory (scripted git).
+The check before BUILD reads the directory only; a directory at the recorded path that is not the card's worktree counts as prepared, as the card's hygiene line (no git probe on every `card next`) sets; docs/OPERATIONS.md states it.

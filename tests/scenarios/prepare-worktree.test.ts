@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
+import { GitProbe } from '../../src/probes/git.ts';
+import { scriptedRunner } from '../../src/probes/exec.ts';
+import { resolveWorktreeRoot } from '../../src/config.ts';
 import type { CardRun } from '../../src/core/types.ts';
 
 const CARD = 'T1-HELLO';
@@ -111,6 +114,62 @@ test('T0-PREPARE-WORKTREE acceptance 3: a run stored in BUILD whose recorded wor
     } finally {
       fx.cleanup();
     }
+  }
+});
+
+test('T0-PREPARE-WORKTREE acceptance 3: an attached worktree whose directory is deleted while git still registers it, prunable or locked, gets a retryable prepare start naming how to clear the registration, never a stop, and builds again once it is made [R2]', () => {
+  for (const form of ['prunable', 'locked'] as const) {
+    const { fx, worktree, next } = setup('github');
+    try {
+      next();
+      git(fx.tmp, ['worktree', 'add', '-q', '-b', CARD, worktree]);
+      next();
+      assert.equal(next().directive.kind, 'build', `${form}: setup, the attached worktree builds`);
+      if (form === 'locked') git(fx.tmp, ['worktree', 'lock', worktree]);
+      rmSync(worktree, { recursive: true, force: true });
+      for (const call of ['first', 'second']) {
+        const r = next();
+        assert.equal(r.directive.kind, 'prepare', `${form}, ${call} card next after the delete: ${r.directive.narration}`);
+        if (r.directive.kind === 'prepare') {
+          assert.equal(r.directive.action, 'start', `${form}, ${call}`);
+          assert.equal(r.directive.worktree, worktree, `${form}, ${call}`);
+          assert.ok(r.directive.narration.includes('git worktree prune'), `${form}, ${call}: ${r.directive.narration}`);
+          if (form === 'locked') assert.ok(r.directive.narration.includes('git worktree unlock'), `${form}, ${call}: ${r.directive.narration}`);
+        }
+        assert.equal(r.run.state, 'PREPARE', `${form}, ${call}`);
+        assert.equal(r.run.stop, undefined, `${form}, ${call}: no stop is recorded`);
+        assert.equal(r.run.worktree, undefined, `${form}, ${call}: no worktree path is recorded`);
+      }
+      if (form === 'locked') git(fx.tmp, ['worktree', 'unlock', worktree]);
+      git(fx.tmp, ['worktree', 'prune']);
+      git(fx.tmp, ['worktree', 'add', '-q', worktree, CARD]);
+      const attach = next();
+      assert.equal(attach.directive.kind, 'prepare', `${form}: ${attach.directive.narration}`);
+      if (attach.directive.kind === 'prepare') assert.equal(attach.directive.action, 'attach', form);
+      assert.equal(next().directive.kind, 'build', `${form}: the worktree made again builds`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('T0-PREPARE-WORKTREE acceptance 3: a common-directory probe that fails for a worktree whose directory exists keeps its tool stop, even when git marks the entry prunable [R2]', () => {
+  const fx = makeFixture();
+  try {
+    writeCard(fx, { id: CARD, title: 'say hello' });
+    const goal = goalForCards(fx, [CARD]);
+    const config = { ...fx.config, shipPath: 'github' as const };
+    const worktree = path.join(resolveWorktreeRoot(config, fx.repo.mainRoot), CARD);
+    mkdirSync(worktree, { recursive: true });
+    const listing = `worktree ${fx.repo.mainRoot}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\nworktree ${worktree}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/${CARD}\nprunable gitdir file points to non-existent location\n\n`;
+    const script = scriptedRunner({ 'git worktree list --porcelain': { stdout: listing }, 'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: unable to read the common git directory' } });
+    const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, git: new GitProbe(script) });
+    const r = runner.next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'tool');
+    assert.ok(r.run.stop?.detail.includes('cannot verify common git directory'), r.run.stop?.detail);
+  } finally {
+    fx.cleanup();
   }
 });
 

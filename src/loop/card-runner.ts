@@ -920,6 +920,17 @@ export class CardRunner {
       decision = { action: run.worktree ? 'attach' : 'start', path: path.join(worktreeRoot, card.id), head: '', reason: 'dry-run' } as ReturnType<typeof decideWorktree>;
     } else {
       decision = decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
+      // A worktree git still registers for the card branch at the expected path, whose directory is gone (deleted after an
+      // attach, or a locked worktree on a drive that is not mounted), fails decideWorktree's common-directory probe inside the
+      // missing directory. That is no tool failure: the run stays in PREPARE with a start that names the registration, so
+      // `card next` asks again until the worktree is there (card T0-PREPARE-WORKTREE R2). A probe that failed for any other
+      // reason keeps its tool stop.
+      const expected = path.join(worktreeRoot, card.id);
+      const stale = decision.action === 'stop' && decision.stopReason === 'tool' ? this.registeredWithoutDirectory(card.id, expected) : undefined;
+      if (stale) {
+        const clear = stale === 'locked' ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\` from the main checkout` : 'run `git worktree prune` from the main checkout';
+        decision = { action: 'start', path: expected, reason: `git still registers a worktree of branch ${card.id} at this path, but the directory does not exist: ${clear}, then make the worktree with \`git worktree add "${expected}" ${card.id}\`, since the branch exists` };
+      }
     }
     if (decision.action === 'stop') {
       // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
@@ -946,6 +957,21 @@ export class CardRunner {
         narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /**
+   * How git registers the one worktree of branch `cardId` at `expected` whose path is not a directory (card
+   * T0-PREPARE-WORKTREE R2): `prunable`, or `locked`, which git never marks prunable. A listing that fails, a mismatch, an
+   * entry with neither mark and an existing directory give undefined, so decideWorktree's own stop stands.
+   */
+  private registeredWithoutDirectory(cardId: string, expected: string): 'prunable' | 'locked' | undefined {
+    try {
+      const { entry, mismatch } = this.git.findWorktree(this.repo.mainRoot, cardId, expected);
+      if (!entry || mismatch || isDirectory(entry.path)) return undefined;
+      return entry.locked ? 'locked' : entry.prunable ? 'prunable' : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
