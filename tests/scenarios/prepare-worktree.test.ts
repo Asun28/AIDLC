@@ -32,7 +32,11 @@ function setup(shipPath: 'github' | 'dry-run') {
   git(fx.tmp, ['commit', '-q', '-m', 'base']);
   mkdirSync(path.join(fx.tmp, 'wt'), { recursive: true });
   const root = realpathSync.native(path.join(fx.tmp, 'wt'));
-  const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath, worktreeRoot: root }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
+  // The main root canonical too: where the temp directory is an 8.3 short path (the Windows runner's RUNNER~1), git
+  // resolves the main checkout's common directory against the short spelling and the worktree's to the long one, and the
+  // attach check reads them as two repositories (lesson 2026-11-09 T1-BOARD-WATCH-2). A real run's main root comes from git.
+  const mainRoot = realpathSync.native(fx.tmp);
+  const runner = new CardRunner({ paths: fx.paths, repo: { ...fx.repo, mainRoot, worktreeRoot: mainRoot }, config: { ...fx.config, shipPath, worktreeRoot: root }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now });
   const next = () => runner.next(fx.goal(goal.id), fx.card(CARD), fx.store.getCardRun(goal.id, CARD) ?? fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
   return { fx, goalId: goal.id, worktree: path.join(root, CARD), next };
 }
