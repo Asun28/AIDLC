@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpath
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EvalCase, loadEvals, realPathRule, removeDir, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
+import { EvalCase, formatTrials, loadEvals, realPathRule, removeDir, runEval, runSuite, runTrials, type EvalTrialsReport, type TrialFigures } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
@@ -606,4 +606,50 @@ test('T1-EVAL-VARIANT R5 (R3 decision 1, trials-in-main-checkout): --trials 2 --
   assert.equal(status.stdout, '', 'the working tree is unchanged');
   const listed = git(cwd, 'worktree', 'list', '--porcelain').stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree '));
   assert.equal(listed.length, 1, 'no temporary checkout is left registered');
+});
+
+/** One side's figures: `passed` of the runs passed over `trials` trials, every trial with the pass rate `rate`. */
+const side = (passed: number, trials: number, rate: number): TrialFigures => ({ passed, trials, passRate: { median: rate, min: rate, max: rate }, modelErrors: 0, quotaHolds: 0 });
+
+test('T0-EVAL-WORDING acceptance 1: the total line of two cases over three trials against main counts case runs on each side; the case lines keep passed/trials [R1]', () => {
+  const report: EvalTrialsReport = {
+    trials: 3,
+    variant: { ref: 'main', commit: 'b'.repeat(40), head: 'a'.repeat(40) },
+    cases: [
+      { id: 'one', head: side(3, 3, 1), variant: side(0, 3, 0) },
+      { id: 'two', head: side(3, 3, 1), variant: side(0, 3, 0) },
+    ],
+    total: { head: side(6, 3, 1), variant: side(0, 3, 0) },
+    verdict: 'better',
+    reason: 'pass rate 1.00 to 1.00 HEAD, 0.00 to 0.00 "main": the ranges do not overlap',
+  };
+  const lines = formatTrials(report).split('\n');
+  assert.equal(lines.find((l) => l.startsWith('total over ')), 'total over 3 trials: HEAD 6 of 6 case runs (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0 of 6 case runs (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds');
+  assert.deepEqual(lines.slice(0, 2), [
+    'one: HEAD 3/3 (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0/3 (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds',
+    'two: HEAD 3/3 (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0/3 (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds',
+  ]);
+});
+
+test('T0-EVAL-WORDING acceptance 2: without a variant, two cases that ran 3 and 2 trials, all passing, print HEAD 5 of 5 case runs on the total line [R1]', () => {
+  const report: EvalTrialsReport = {
+    trials: 3,
+    cases: [
+      { id: 'one', head: side(3, 3, 1) },
+      { id: 'two', head: side(2, 2, 1) },
+    ],
+    total: { head: side(5, 3, 1) },
+  };
+  const total = formatTrials(report).split('\n').find((l) => l.startsWith('total over '));
+  assert.ok(total?.startsWith('total over 3 trials: HEAD 5 of 5 case runs '), `total line: ${total}`);
+});
+
+test('T0-EVAL-WORDING acceptance 3: a recorded empty tool-call list passes not-ran-command and not-wrote-path and fails read-file and ran-command; a result with no toolCalls fails all four with no tool calls recorded [R2]', async () => {
+  const { cwd } = setup();
+  const checks = [{ type: 'read-file', path: 'note.txt' }, { type: 'ran-command', pattern: 'x' }, { type: 'not-ran-command', pattern: 'x' }, { type: 'not-wrote-path', pattern: 'x' }];
+  const c = EvalCase.parse({ id: 'empty', prompt: 'do it', checks });
+  const empty = await runEval(c, withCalls([]), { cwd, runner });
+  assert.deepEqual(empty.checks.map((x) => [x.check.split(' ')[0], x.ok]), [['read-file', false], ['ran-command', false], ['not-ran-command', true], ['not-wrote-path', true]]);
+  const none = await runEval(c, new MockProvider({ implementer: ['done'] }), { cwd, runner });
+  assert.deepEqual(none.checks.map((x) => [x.ok, x.detail]), checks.map(() => [false, 'no tool calls recorded']));
 });

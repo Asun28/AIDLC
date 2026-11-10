@@ -19,6 +19,10 @@ checks that exit 0/1. No model-graded opinions.
   of them makes the `claude-code` provider run with `--output-format
   stream-json --verbose` to record the tool calls. Under `--skip-model`
   each fails with `no model run`; it never passes without a model run.
+  After a provider whose result has no `toolCalls`, each fails with `no
+  tool calls recorded`. A recorded empty list of tool calls
+  (`toolCalls: []`) passes `not-ran-command` and `not-wrote-path`, since
+  no call matches, and fails `read-file` and `ran-command`.
 - A model-backed case runs in a detached temporary checkout of HEAD under
   the OS temp directory, with the main checkout's `node_modules` linked
   in and `AIDLC_STATE_DIR` set to a new empty temporary directory; the
