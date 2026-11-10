@@ -53,3 +53,29 @@ npm run typecheck && node --test tests/infra/board.test.ts tests/scenarios/owner
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+## Attempt evidence
+History: attempt 1 candidate 9618726 withdrawn by the coordinator: the mutation sweep (`.review/T0-BOARD-OWNER-WAIT.mutants.json`) left 6 survivors in `liveOwners` (lines 324, 327 x3, 332, 334). Attempt 2 adds test cases only; no src change, and no new case exposed a defect.
+
+RED 5a358a9 (tests only, `node --test tests/infra/board.test.ts tests/scenarios/ownership-wait.test.ts`: 17 pass, 2 fail):
+- acceptance 1 fails at `assert.match(arcLine(text), /verdict=wait /, ...)` with actual `'- **Arc**: verdict=stop workers=2 wave=- ready=-'` (the board file written by `controller.next`).
+- acceptance 4 (owner lease) fails at `assert.match(out, /^- \*\*Arc\*\*: verdict=wait /m)` with the Arc line `verdict=stop workers=2 wave=- ready=-`.
+- acceptance 2 and acceptance 4 (no owners) pass before the change: they pin the behaviour R3 keeps.
+- acceptance 3 passes before the change: the dispatch already read the card lease once and the board read none; the test fails if the board reads the lease a second time during `controller.next`.
+- RED 57be235 (acceptance 6, on 49b5885 plus the test): fails at `tests/scenarios/ownership-wait.test.ts:201` `assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text))` with the row `| [-] | T1-HELLO | STOP (lease live) | ... ; the goal waits on owner win-B until 2026-09-11T00:10:00.000Z |` after the goal was cancelled under the live card lease.
+- After RED, the expected row literal of acceptance 4 (owner lease) was corrected to the Deadline cell `2026-09-11T13:00:00.000Z` that `makeCardRun` gives every run; the RED failure was the Arc assertion before that line.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/ownership-wait.test.ts` "T0-BOARD-OWNER-WAIT acceptance 1": board file from `next`, `writeBoard(goal)` and `writeBoard(goal, cards)` each show `verdict=wait`, `| [-] | T1-HELLO | STOP (lease live) |`, `ownership:` and `the goal waits on owner win-B until <expiresAt>`; the same test with the clock set exactly to the lease's `expiresAt`: `next` returns `wait` on `T1-HELLO:owner:win-B` and the board shows `STOP (lease live)` and `verdict=wait` (kills the 334 `>=` -> `>` mutant) | pass |
+| 2 | same file, "acceptance 2": expired and malformed lease show `| [S] | T1-HELLO | STOP |` and `verdict=stop`; a run stopped for `review` under the owner's live lease: board `[S]`, `STOP`, `verdict=stop`, then `next` returns `stop` (kills 327 col 73 and col 107); the card re-registered `status: merged` with its run stopped for ownership under a live lease: no `lease live` or `waits on owner` on the board and no `wait` or `:owner:` from `next` (kills 327 col 107) | pass |
+| 3 | same file, "acceptance 3": `fx.leases.read` wrapped, one `controller.next` reads the card lease key exactly once | pass |
+| 4 | `tests/infra/board.test.ts` "board owner wait": with an owner the full row and `verdict=wait`; without, `[S]`, `STOP`, `verdict=stop`; existing tests unchanged | pass |
+| 5 | `docs/OPERATIONS.md` STOP reasons `ownership` row and `CHANGELOG.md` Unreleased state R1 and R3 under T0-BOARD-OWNER-WAIT | reviewer-verified |
+| 6 | `tests/scenarios/ownership-wait.test.ts` "T0-BOARD-OWNER-WAIT acceptance 6": goal cancelled with the card lease still live, `writeBoard(goal)` shows `| [S] | T1-HELLO | STOP |` and no `lease live` or `waits on owner`; the STOP-but-not-terminal case of attempt 2 is not reachable, see the equivalent mutants below | pass |
+
+Equivalent mutants (checked by applying each to `src/loop/controller.ts` and running the DoD tests: 0 failures):
+- 324 col 23 `goal.terminal || goal.state === 'STOP'` -> `&&`: the mutant differs only for a goal in STOP that is not terminal, or a terminal goal outside STOP and DONE. `transitionGoal` sets `terminal` on every move to STOP or DONE, and `terminal` is cleared only by `resume` (which leaves STOP for WAIT, line 655) and by readmission (state CARDS). A resumed time stop is stopped again by the `next` that `report` runs, and reads back as `STOP` with `terminal: true` (probe on this branch). No such goal record can be produced without building it by hand.
+- 327 col 51 `!goal.cards.includes(r.cardId) || r.state !== 'STOP'` -> `&&`: the mutant differs only for a card in `cards` that the goal does not list. Every caller builds `cards` from `goal.cards` (`nextInRun` through `cardOutcomes`, `writeBoard` without cards, and `aidlc board` in src/cli/main.ts), so `!card` already skips such a run.
+- 332 drop `continue;` in the catch: `lease` stays `undefined`, and the following `lease && ...` check skips the run anyway.
+
+Same class: `outcomeOf` is unchanged; `cardOutcomes` is unchanged and `nextInRun` overrides its `stopped` outcome with the decision of `liveOwners`, the function the board uses. `renderWatch` is not affected: it prints the run state and the live lease rows separately and computes no verdict.

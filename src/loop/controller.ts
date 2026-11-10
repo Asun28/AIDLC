@@ -313,29 +313,41 @@ export class GoalController {
     return { cards, runs, outcomes };
   }
 
+  /**
+   * The live owner of each projected card whose run is in STOP for `ownership`, not merged, under a card lease that is
+   * unreleased and not expired at `now`: the one decision the dispatch's wait and the board share (card
+   * T0-BOARD-OWNER-WAIT R2). A lease that cannot be read keeps that card stopped. A goal that is terminal or in STOP or
+   * DONE has no live owners: `next` returns its stop or done, so its board shows the run as before (R1).
+   */
+  private liveOwners(goal: Goal, cards: Card[], runs: CardRun[], now: string): Map<string, Lease> {
+    const owners = new Map<string, Lease>();
+    if (goal.terminal || goal.state === 'STOP' || goal.state === 'DONE') return owners;
+    for (const r of runs) {
+      const card = cards.find((c) => c.id === r.cardId);
+      if (!card || !goal.cards.includes(r.cardId) || r.state !== 'STOP' || r.stop?.reason !== 'ownership' || outcomeOf(r, card) !== 'stopped') continue;
+      let lease: Lease | undefined;
+      try {
+        lease = this.leases.read(resourceKeys.card(this.repo.key, r.cardId));
+      } catch {
+        continue; // a lease that cannot be read keeps the run stopped, as before card T0-CARD-LEASE-HEARTBEAT
+      }
+      if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now)) owners.set(r.cardId, lease);
+    }
+    return owners;
+  }
+
   private nextInRun(goal: Goal, now: string): Directive {
     const base = this.baseOf(goal);
     const registry = this.registryLoader();
     const { cards, runs, outcomes } = this.cardOutcomes(goal, registry);
     // A projected run stopped for ownership while its card lease is live is the lease owner's work in progress: the owner's
     // next `card next` clears that stop, so the goal waits on it instead of stopping (card T0-CARD-LEASE-HEARTBEAT).
-    const ownedElsewhere = new Map<string, string>();
-    for (const r of runs) {
-      if (!goal.cards.includes(r.cardId) || r.state !== 'STOP' || r.stop?.reason !== 'ownership' || outcomes[r.cardId] !== 'stopped') continue;
-      let lease: Lease | undefined;
-      try {
-        lease = this.leases.read(resourceKeys.card(this.repo.key, r.cardId));
-      } catch {
-        continue; // a lease that cannot be read keeps the run stopped, as before this card
-      }
-      if (lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(now)) {
-        ownedElsewhere.set(r.cardId, lease.owner.session);
-        outcomes[r.cardId] = 'running';
-      }
-    }
+    const owners = this.liveOwners(goal, cards, runs, now);
+    const ownedElsewhere = new Map([...owners].map(([id, lease]) => [id, lease.owner.session]));
+    for (const id of owners.keys()) outcomes[id] = 'running';
     const poolBusy = this.queue.pool(goal.reviewPool).maxConcurrent <= 1;
     const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers, singleReviewerSlot: poolBusy && goal.maxWorkers > 1 ? false : undefined });
-    this.writeBoard(goal, cards, runs, outcomes);
+    this.writeBoard(goal, cards, runs, outcomes, owners);
     if (arc.verdict === 'done') {
       // A goal parked in WAIT (polled while its cards were running) resumes to RUN first: the diagram
       // derives VERIFY_ARC from RUN only, never from WAIT.
@@ -834,14 +846,16 @@ export class GoalController {
     return saved;
   }
 
-  writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[], outcomes?: Record<string, CardOutcome>): string {
+  /** `owners` is the dispatch's decision from `liveOwners`; a caller without it gets that decision at the board's clock. */
+  writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[], outcomes?: Record<string, CardOutcome>, owners?: ReadonlyMap<string, Lease>): string {
     // The view reports the arc the controller decided, so the outcomes travel with the cards; a caller without them
     // (every caller that also lets the registry supply the cards) resolves the prerequisites here instead.
     const registry = cards && outcomes ? undefined : this.registryLoader();
     const cs = cards ?? goal.cards.map((id) => registry!.cards.find((c) => c.card.id === id)?.card).filter((c): c is Card => Boolean(c));
     const rs = runs ?? this.store.listCardRuns(goal.id);
     const os = outcomes ?? prerequisitesClosedElsewhere(cs, (id) => registry!.cards.find((r) => r.card.id === id)?.card.status);
-    const text = renderBoard(goal, cs, rs, this.clock(), os);
+    const now = this.clock();
+    const text = renderBoard(goal, cs, rs, now, os, owners ?? this.liveOwners(goal, cs, rs, now));
     mkdirSync(this.paths.board, { recursive: true });
     writeFileSync(path.join(this.paths.board, `${goal.id}.md`), text, 'utf8');
     if (this.boardMirror) {

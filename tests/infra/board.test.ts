@@ -233,3 +233,25 @@ describe('aidlc board --watch screen (T1-BOARD-WATCH)', () => {
     ]);
   });
 });
+
+describe('board owner wait (T0-BOARD-OWNER-WAIT)', () => {
+  const goal = makeGoal('goal-owner', { cards: ['T1-O'] });
+  const cards = [makeCard('T1-O')];
+  const runs = [makeCardRun(goal.id, 'T1-O', { state: 'STOP', stop: makeStop('ownership', 'lease held by win-B', 'wait for the owner', { at: iso() }) })];
+  const expiresAt = '2026-09-11T12:30:00.000Z';
+  const owner = Lease.parse({ resourceKey: 'card:k', generation: 1, owner: { session: 'win-B', pid: 1, processStart: iso(), host: 'h1' }, acquiredAt: iso(), heartbeatAt: iso(), expiresAt, released: false });
+  const row = (text: string): string => text.split('\n').find((l) => l.includes('| T1-O |')) ?? '';
+
+  it('T0-BOARD-OWNER-WAIT acceptance 4: a run stopped for ownership with an owner lease renders as the wait on that owner [R1]', () => {
+    const out = renderBoard(goal, cards, runs, iso(), {}, new Map([['T1-O', owner]]));
+    assert.match(out, /^- \*\*Arc\*\*: verdict=wait /m);
+    assert.equal(row(out), `| [-] | T1-O | STOP (lease live) | - |  |  |  | 0/2 blocks=0 nv=0 | 0/1 |  | 2026-09-11T13:00:00.000Z | ownership: lease held by win-B; the goal waits on owner win-B until ${expiresAt} |`);
+  });
+
+  it('T0-BOARD-OWNER-WAIT acceptance 4: without owners a run stopped for ownership renders the stop as before [R3]', () => {
+    const out = renderBoard(goal, cards, runs, iso());
+    assert.match(out, /^- \*\*Arc\*\*: verdict=stop /m);
+    assert.ok(row(out).startsWith('| [S] | T1-O | STOP |'), row(out));
+    assert.ok(row(out).endsWith('| ownership: lease held by win-B |'), row(out));
+  });
+});

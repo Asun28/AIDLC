@@ -2,13 +2,15 @@
 // live, and stops the goal as before once the lease has expired; the incident sequence of goal g-20261107095106-c08940.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, candidateShaFor, actorA, actorB, type Fixture } from './_harness.ts';
 import { setActorForTests } from '../../src/state/journal.ts';
 import { hostName } from '../../src/state/paths.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS, addMs, type Goal } from '../../src/core/types.ts';
 import { dispatchHook } from '../../src/hooks/entry.ts';
+import { makeStop } from '../../src/core/stop.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 
 /**
@@ -114,6 +116,138 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 5: the owner keeps its lease through a 
     assert.notEqual(dA.kind, 'stop', dA.narration);
     const report = verifyAudit({ goalId: goal.id, journal: fx.journal(goal.id), operations: fx.ops, now: fx.now() });
     assert.deepEqual(report.findings.filter((f) => f.code === 'WORK_AFTER_TERMINAL'), []);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+// Card T0-BOARD-OWNER-WAIT: the board shows a card stopped for ownership under a live card lease as the goal's wait on
+// its owner, from the same lease decision the dispatch uses.
+const arcLine = (text: string): string => text.split('\n').find((l) => l.startsWith('- **Arc**:')) ?? '';
+const helloRow = (text: string): string => text.split('\n').find((l) => l.includes('| T1-HELLO |')) ?? '';
+
+test('T0-BOARD-OWNER-WAIT acceptance 1: under a live card lease, also at the instant it expires, the board written by next, by writeBoard(goal) and by writeBoard(goal, cards) shows the wait on the owner [R1] [R2]', () => {
+  const { fx, goal } = stoppedForOwnership(MINUTE_MS);
+  try {
+    const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'))!;
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'wait', d.narration);
+    const fromNext = readFileSync(path.join(fx.paths.board, `${goal.id}.md`), 'utf8');
+    const fromGoal = fx.controller.writeBoard(fx.goal(goal.id));
+    const fromBoardCommand = fx.controller.writeBoard(fx.goal(goal.id), [fx.card('T1-HELLO')]);
+    for (const [label, text] of [['next', fromNext], ['writeBoard(goal)', fromGoal], ['writeBoard(goal, cards)', fromBoardCommand]] as const) {
+      assert.match(arcLine(text), /verdict=wait /, `${label}: ${arcLine(text)}`);
+      const row = helloRow(text);
+      assert.ok(row.startsWith('| [-] | T1-HELLO | STOP (lease live) |'), `${label}: ${row}`);
+      assert.ok(row.includes('| ownership: '), `${label}: ${row}`);
+      assert.ok(row.endsWith(`; the goal waits on owner win-B until ${lease.expiresAt} |`), `${label}: ${row}`);
+    }
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+  // the boundary: at the clock equal to the lease's expiresAt the lease is still live, for the dispatch and the board
+  const edge = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = edge;
+    const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'))!;
+    fx.clock.now = lease.expiresAt;
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'wait', d.narration);
+    if (d.kind === 'wait') assert.equal(d.on, 'T1-HELLO:owner:win-B');
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [-] | T1-HELLO | STOP (lease live) |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=wait /);
+  } finally {
+    setActorForTests(actorA);
+    edge.fx.cleanup();
+  }
+});
+
+test('T0-BOARD-OWNER-WAIT acceptance 2: with the card lease expired or malformed, or a live lease over a run stopped for another reason or a merged card, writeBoard(goal) shows the stop as before this card and the dispatch does not wait on an owner [R2] [R3]', () => {
+  const expired = stoppedForOwnership(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
+  try {
+    const text = expired.fx.controller.writeBoard(expired.fx.goal(expired.goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=stop /);
+  } finally {
+    setActorForTests(actorA);
+    expired.fx.cleanup();
+  }
+  const malformed = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = malformed;
+    writeFileSync(fx.leases.file(resourceKeys.card(fx.repo.key, 'T1-HELLO')), '{ not json', 'utf8');
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=stop /);
+  } finally {
+    setActorForTests(actorA);
+    malformed.fx.cleanup();
+  }
+  // a run stopped for a reason other than ownership while its owner's card lease is live
+  const review = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = review;
+    const run = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    fx.store.saveCardRun({ ...run, stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=stop /);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+  } finally {
+    setActorForTests(actorA);
+    review.fx.cleanup();
+  }
+  // a merged card whose run is stopped for ownership under a live card lease is closed, not an owner's work
+  const merged = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = merged;
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello', status: 'merged' });
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(!text.includes('lease live'), helloRow(text));
+    assert.ok(!text.includes('waits on owner'), helloRow(text));
+    const d = fx.controller.next(goal.id);
+    assert.notEqual(d.kind, 'wait', d.narration);
+    assert.ok(!JSON.stringify(d).includes(':owner:'), d.narration);
+  } finally {
+    setActorForTests(actorA);
+    merged.fx.cleanup();
+  }
+});
+
+test('T0-BOARD-OWNER-WAIT acceptance 3: one controller next reads the card lease exactly once, the board taking the dispatch decision [R2]', () => {
+  const { fx, goal } = stoppedForOwnership(MINUTE_MS);
+  try {
+    const cardKey = resourceKeys.card(fx.repo.key, 'T1-HELLO');
+    const read = fx.leases.read.bind(fx.leases);
+    let cardReads = 0;
+    fx.leases.read = (key: string) => {
+      if (key === cardKey) cardReads++;
+      return read(key);
+    };
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'wait', d.narration);
+    assert.equal(cardReads, 1);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
+
+test('T0-BOARD-OWNER-WAIT acceptance 6: a goal stopped while the card lease stays live has no live owners, so its board shows the stop as before [R1]', () => {
+  const { fx, goal } = stoppedForOwnership(MINUTE_MS);
+  try {
+    assert.equal(fx.controller.next(goal.id).kind, 'wait');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: { detail: 'stopped' } });
+    const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'));
+    assert.ok(lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(fx.now()), 'the card lease is still live');
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.ok(!text.includes('lease live'), text);
+    assert.ok(!text.includes('waits on owner'), text);
   } finally {
     setActorForTests(actorA);
     fx.cleanup();
