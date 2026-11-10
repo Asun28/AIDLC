@@ -276,6 +276,22 @@ test('T1-OUTCOME-HISTORY acceptance 11, on: a subject holding overruling on x gi
   assert.deepEqual(read.rows.map((row) => [row['sha'], row['on']]), [[s1, null], [s2, 'y']]);
 });
 
+// Each setting is written to the configuration of the fixture repository with the real `git config`, and removed after the test.
+for (const key of ['grep.patternType', 'color.grep', 'color.ui', 'log.showSignature', 'blame.ignoreRevsFile']) {
+  test(`T1-OUTCOME-HISTORY acceptance 12: with ${key} set in the repository the rulings and every predates value are what they are without it, with no history_errors row [R6]`, () => {
+    const { dir, sha } = repo();
+    const config = (...args: string[]): void => assert.equal(spawnSync('git', ['config', ...args], { cwd: dir, windowsHide: true }).status, 0, `git config ${args.join(' ')}`);
+    // The ignored revisions are k1 and k2, the commits a blame names for the cited lines 3 and 2 of a.ts.
+    const value = { 'grep.patternType': 'fixed', 'color.grep': 'always', 'color.ui': 'always', 'log.showSignature': 'true' }[key] ?? put(path.join(tempDir(), 'revs'), `${sha['k1']}\n${sha['k2']}\n`);
+    config(key, value);
+    try {
+      assert.deepEqual([rulings(gitIn(dir), 'main'), repeatBlocks(gitIn(dir), ingestState(fixture(sha)))], [{ rows: expectedRulings(sha), errors: [] }, { rows: BLOCKS, errors: [] }]);
+    } finally {
+      config('--unset', key);
+    }
+  });
+}
+
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
 
 test('T1-OUTCOME-HISTORY acceptance 6: run.ts prints the repeat blocks per predates value, the true-defect proxy per stage and perspective and the ruling figures of the fixture, and --no-history writes none of the five files [R7] [R8]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
