@@ -86,5 +86,20 @@ baseline and approved by the owner before Phase 1 starts.
   `package.json` and CI stay unchanged. Ingest scripts write JSONL and the
   views are `.sql` files.
 
+## Decisions (owner, 2026-11-11)
+- T1-OUTCOME-USAGE and T1-OUTCOME-GITHUB stopped at R3 decision 4, each
+  blocked by the second pass on a commit that decision 3 had passed. Each
+  is replaced by a successor card that carries its candidate, with the
+  three open findings named as non-goals.
+- The second R3 pass stays on. `aidlc review stats` on 2026-11-11: 29
+  cards ran one, 5 were blocked by it, and 3 of those blocks were repaired
+  as real defects (T0-CARD-LEASE-HEARTBEAT, T0-PREPARE-WORKTREE,
+  T1-BOARD-WATCH-2), which meets the rule in docs/OPERATIONS.md for
+  keeping it.
+- The arc deadline is extended by 8 hours, to 2026-11-11T04:45:00Z.
+- Budget: 60 USD more at list price for the two successors and
+  T1-OUTCOME-HISTORY. Phase 0 had spent about 80 USD against 50 by then.
+  Stop and report when it is reached.
+
 ## Open questions
 - (none)
