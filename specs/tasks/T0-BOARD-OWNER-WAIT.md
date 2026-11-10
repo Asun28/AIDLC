@@ -15,7 +15,7 @@ allow_paths:
 dod_command: npm run typecheck && node --test tests/infra/board.test.ts tests/scenarios/ownership-wait.test.ts
 dod_exit: 0
 requirements:
-  - R1. WHEN the board of a goal is written (`GoalController.writeBoard`, from every caller: `aidlc board`, `aidlc next` and the card commands) and a projected card run is in `STOP` with stop reason `ownership`, its card is not merged, and its card lease is unreleased and not expired at the board's clock, the board shall count that card as running: the Arc line shows the verdict `aidlc next` returns for the same records (`wait`, not `stop`), and the card's row shows the box `[-]`, the State `STOP (lease live)` and a Blocker that keeps the stop text (`ownership: <detail>`) and adds `; the goal waits on owner <session> until <expiresAt>` from that lease.
+  - R1. WHEN the board of a goal that is not terminal and not in `STOP` or `DONE` is written (`GoalController.writeBoard`, from every caller: `aidlc board`, `aidlc next` and the card commands) and a projected card run is in `STOP` with stop reason `ownership`, its card is not merged, and its card lease is unreleased and not expired at the board's clock, the board shall count that card as running: the Arc line shows the verdict `aidlc next` returns for the same records (`wait`, not `stop`), and the card's row shows the box `[-]`, the State `STOP (lease live)` and a Blocker that keeps the stop text (`ownership: <detail>`) and adds `; the goal waits on owner <session> until <expiresAt>` from that lease. A goal that is terminal or in `STOP` or `DONE` (the predicate at the top of `GoalController.next`, where `aidlc next` returns the goal's stop or done) has no live owners: its board renders such a run as before this card, whatever its lease.
   - R2. The goal dispatch's wait (`nextInRun`, card T0-CARD-LEASE-HEARTBEAT-2 R4) and the board of R1 shall take that decision from one controller function over the goal's cards, card runs and the clock. When the dispatch writes the board, the board uses the leases the dispatch already decided on and reads no lease again. A lease that cannot be read keeps the card stopped on both, as before.
   - R3. A run stopped for ownership whose card lease is expired, released, absent or unreadable renders as before this card (`[S]`, `STOP`, the stop text as Blocker, the Arc verdict `stop`), and `renderBoard` called without the owners of R2 renders every row and line as before.
   - R4. `docs/OPERATIONS.md` (the `ownership` row of STOP reasons) and the CHANGELOG Unreleased section shall state R1 and R3 under this card id.
@@ -25,6 +25,7 @@ acceptance:
   - 3. Same file, the live-lease case, with `fx.leases.read` wrapped to count calls: one `controller.next` reads the card lease exactly once. [R2] [dod arm 1]
   - 4. `tests/infra/board.test.ts`: `renderBoard` given an owner lease for a card run stopped for ownership renders the row and Arc line of R1; given none, a run stopped for ownership renders `[S]`, `STOP` and `verdict=stop`; the existing tests pass unchanged. [R1] [R3] [dod arm 1]
   - 5. The docs and CHANGELOG state R1 and R3 (reviewer-verified against the diff). [R4]
+  - 6. `tests/scenarios/ownership-wait.test.ts`: the live-lease case of acceptance 1, then the goal stopped with `cancel` while the card lease stays live: `controller.writeBoard(goal)` shows the row `| [S] | T1-HELLO | STOP |` and no `lease live` or `waits on owner` text. Fails on 49b5885. [R1] [dod arm 1]
 depends_on: []
 budget: 200
 tdd: true
@@ -52,7 +53,6 @@ npm run typecheck && node --test tests/infra/board.test.ts tests/scenarios/owner
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
-
 ## Attempt evidence
 RED 5a358a9 (tests only, `node --test tests/infra/board.test.ts tests/scenarios/ownership-wait.test.ts`: 17 pass, 2 fail):
 - acceptance 1 fails at `assert.match(arcLine(text), /verdict=wait /, ...)` with actual `'- **Arc**: verdict=stop workers=2 wave=- ready=-'` (the board file written by `controller.next`).

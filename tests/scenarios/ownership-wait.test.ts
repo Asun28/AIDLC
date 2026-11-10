@@ -189,3 +189,20 @@ test('T0-BOARD-OWNER-WAIT acceptance 3: one controller next reads the card lease
     fx.cleanup();
   }
 });
+
+test('T0-BOARD-OWNER-WAIT acceptance 6: a goal stopped while the card lease stays live has no live owners, so its board shows the stop as before [R1]', () => {
+  const { fx, goal } = stoppedForOwnership(MINUTE_MS);
+  try {
+    assert.equal(fx.controller.next(goal.id).kind, 'wait');
+    fx.controller.report({ goalId: goal.id, generation: 0, result: 'cancel', data: { detail: 'stopped' } });
+    const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'));
+    assert.ok(lease && !lease.released && Date.parse(lease.expiresAt) >= Date.parse(fx.now()), 'the card lease is still live');
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.ok(!text.includes('lease live'), text);
+    assert.ok(!text.includes('waits on owner'), text);
+  } finally {
+    setActorForTests(actorA);
+    fx.cleanup();
+  }
+});
