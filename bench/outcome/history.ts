@@ -60,7 +60,7 @@ const entriesOf = (tables: Tables, finding: Row, stage: unknown): Row[] => table
 /**
  * R1: the first-parent commits of `base` whose message holds the ruling match, in the order git lists them (newest first).
  * `base` is first resolved to a commit; one that does not resolve is one error row and no further git call. `date` is the
- * commit date as UTC ISO, `cards` the card ids of the subject, `on` the subject text after the first `ruling on `.
+ * commit date as UTC ISO, `cards` the card ids of the subject, `on` the subject text after the first `ruling on ` that starts a word.
  */
 export function rulings(runner: SyncRunner, base: string): Read {
   const errors: Row[] = [];
@@ -86,7 +86,7 @@ function rulingsOf(git: Git, tip: string): Row[] {
     if (!m || !RULING.test(m[3]! + m[4]!)) continue;
     const [subject, time] = [m[3]!, Date.parse(m[2]!)];
     const replaces = REPLACES.exec(subject);
-    rows.push({ sha: m[1]!, date: Number.isNaN(time) ? null : new Date(time).toISOString(), subject, cards: subject.match(CARD) ?? [], successor: replaces?.[1] ?? null, predecessor: replaces?.[2] ?? null, on: /ruling on (.+)$/i.exec(subject)?.[1]!.trim() ?? null });
+    rows.push({ sha: m[1]!, date: Number.isNaN(time) ? null : new Date(time).toISOString(), subject, cards: subject.match(CARD) ?? [], successor: replaces?.[1] ?? null, predecessor: replaces?.[2] ?? null, on: /\bruling on (.+)$/i.exec(subject)?.[1]!.trim() ?? null });
   }
   return rows;
 }
@@ -164,8 +164,10 @@ function blocksOf(git: Git, tables: Tables): Row[] {
 /**
  * R5: one row per finding with a `file` and a `candidateSha`, in the order of `tables.findings`. The finding's entry is
  * the entry of its run and stage that raised it: the formal entry whose `decision` is the finding's `round`, or the pre
- * round with its `round` and `cycle`; of several stored with that number, the last. It is never found by `candidateSha`,
- * which a later entry can repeat. The next one is the first later entry with outcome `pass` or `block` and another
+ * round with its `round` and `cycle`; of several stored with that number, the last. When no entry of the stage records
+ * it, as in records written before entries held a decision, it is the one `block` entry of the stage with the finding's
+ * `candidateSha`, and there is none when no such entry or more than one exists: it is never the first of several entries
+ * with that `candidateSha`. The next one is the first later entry with outcome `pass` or `block` and another
  * `candidateSha`. No raising entry, no next one, a sha that is not 40 hex or a commit the repository lacks: `unknown`.
  */
 export function findingFixes(runner: SyncRunner, tables: Tables): Read {
@@ -179,7 +181,9 @@ function fixesOf(git: Git, tables: Tables): Row[] {
     const [file, at] = [text(f['file']), sha(f['candidateSha'])];
     if (file === null || at === null) continue;
     const entries = entriesOf(tables, f, f['stage']);
-    const own = entries.findLastIndex((d) => (f['stage'] === 'formal' ? d['decision'] === f['round'] : d['round'] === f['round'] && (d['cycle'] ?? null) === (f['cycle'] ?? null)));
+    const recorded = entries.findLastIndex((d) => (f['stage'] === 'formal' ? d['decision'] === f['round'] : d['round'] === f['round'] && (d['cycle'] ?? null) === (f['cycle'] ?? null)));
+    const blocks = entries.flatMap((d, index) => (d['outcome'] === 'block' && sha(d['candidateSha']) === at ? [index] : []));
+    const own = recorded >= 0 ? recorded : blocks.length === 1 ? blocks[0]! : -1;
     const next = own < 0 ? null : sha(entries.slice(own + 1).find((d) => decided(d) && sha(d['candidateSha']) !== null && sha(d['candidateSha']) !== at)?.['candidateSha']);
     const same = next !== null && SHA.test(at) && SHA.test(next) && holds(git, at) === true && holds(git, next) === true ? sameFile(git, at, next, file) : undefined;
     rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, candidateSha: at, changedAfter: same === undefined ? 'unknown' : same ? 'false' : 'true' });
