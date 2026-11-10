@@ -52,3 +52,21 @@ npm run typecheck && node --test tests/infra/board.test.ts tests/scenarios/owner
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED 5a358a9 (tests only, `node --test tests/infra/board.test.ts tests/scenarios/ownership-wait.test.ts`: 17 pass, 2 fail):
+- acceptance 1 fails at `assert.match(arcLine(text), /verdict=wait /, ...)` with actual `'- **Arc**: verdict=stop workers=2 wave=- ready=-'` (the board file written by `controller.next`).
+- acceptance 4 (owner lease) fails at `assert.match(out, /^- \*\*Arc\*\*: verdict=wait /m)` with the Arc line `verdict=stop workers=2 wave=- ready=-`.
+- acceptance 2 and acceptance 4 (no owners) pass before the change: they pin the behaviour R3 keeps.
+- acceptance 3 passes before the change: the dispatch already read the card lease once and the board read none; the test fails if the board reads the lease a second time during `controller.next`.
+- After RED, the expected row literal of acceptance 4 (owner lease) was corrected to the Deadline cell `2026-09-11T13:00:00.000Z` that `makeCardRun` gives every run; the RED failure was the Arc assertion before that line.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/ownership-wait.test.ts` "T0-BOARD-OWNER-WAIT acceptance 1": board file from `next`, `writeBoard(goal)` and `writeBoard(goal, cards)` each show `verdict=wait`, `| [-] | T1-HELLO | STOP (lease live) |`, `ownership:` and `the goal waits on owner win-B until <expiresAt>` | pass |
+| 2 | same file, "acceptance 2": expired and malformed lease show `| [S] | T1-HELLO | STOP |` and `verdict=stop` | pass |
+| 3 | same file, "acceptance 3": `fx.leases.read` wrapped, one `controller.next` reads the card lease key exactly once | pass |
+| 4 | `tests/infra/board.test.ts` "board owner wait": with an owner the full row and `verdict=wait`; without, `[S]`, `STOP`, `verdict=stop`; existing tests unchanged | pass |
+| 5 | `docs/OPERATIONS.md` STOP reasons `ownership` row and `CHANGELOG.md` Unreleased state R1 and R3 under T0-BOARD-OWNER-WAIT | reviewer-verified |
+
+Same class: `outcomeOf` is unchanged; `cardOutcomes` is unchanged and `nextInRun` overrides its `stopped` outcome with the decision of `liveOwners`, the function the board uses. `renderWatch` is not affected: it prints the run state and the live lease rows separately and computes no verdict.

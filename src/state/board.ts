@@ -43,12 +43,13 @@ export function outcomeOf(run: CardRun | undefined, card: Card): CardOutcome {
  * `externalOutcomes` carries what the caller vouches for beyond this projection (a prerequisite merged under another
  * goal, from `prerequisitesClosedElsewhere`), so the Arc line reports the arc the controller decided instead of a gap
  * of the view's own making. Every projected card is written over it from its own run, and an id outside the projection
- * is no row of this board.
+ * is no row of this board. `owners` holds the live card lease of each run stopped for ownership that the controller
+ * counts as running (card T0-BOARD-OWNER-WAIT): that card's row and the Arc line show the goal's wait on its owner.
  */
-export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string, externalOutcomes: Record<string, CardOutcome> = {}): string {
+export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: string, externalOutcomes: Record<string, CardOutcome> = {}, owners: ReadonlyMap<string, Lease> = new Map()): string {
   const runById = new Map(runs.map((r) => [r.cardId, r]));
   const outcomes: Record<string, CardOutcome> = { ...externalOutcomes };
-  for (const c of cards) outcomes[c.id] = outcomeOf(runById.get(c.id), c);
+  for (const c of cards) outcomes[c.id] = owners.has(c.id) ? 'running' : outcomeOf(runById.get(c.id), c);
   const arc = selectArc({ cards, outcomes, maxWorkers: goal.maxWorkers });
   const lines: string[] = [];
   lines.push(`# aidlc board — ${goal.id}`);
@@ -69,14 +70,16 @@ export function renderBoard(goal: Goal, cards: Card[], runs: CardRun[], now: str
   for (const card of cards) {
     const run = runById.get(card.id);
     const state = card.status === 'merged' && !run ? 'DONE' : (run?.state ?? 'todo');
-    const box = CHECKBOX[state] ?? '[ ]';
+    const owner = owners.get(card.id);
+    const box = owner ? '[-]' : (CHECKBOX[state] ?? '[ ]');
     const wave = arc.wave.includes(card.id) ? 'next' : arc.blockedByStop.includes(card.id) ? 'blocked' : arc.waitingOn.includes(card.id) ? 'waiting' : '';
     const pr = run?.pr ? `#${run.pr.number} ${run.pr.state}` : '';
     const reviews = run ? `${run.review.substantiveDecisions}/2 blocks=${run.review.substantiveBlocks} nv=${run.review.noVerdictRetriesUsed}` : '';
     const ci = run ? `${run.ci.reruns.length}/1` : '';
     const attempts = run?.effort ? `${run.effort.attempts.filter((a) => a.outcome !== 'not-counted').length}/4${run.effort.escalationUsed ? '↑' : ''}` : '';
-    const blocker = run?.stop ? `${run.stop.reason}: ${run.stop.detail}` : (run?.blocker ?? '');
-    lines.push(`| ${box} | ${card.id} | ${state} | ${card.depends_on.join(', ') || '-'} | ${wave} | ${run?.worktree ?? ''} | ${pr} | ${reviews} | ${ci} | ${attempts} | ${run?.deadline ?? ''} | ${blocker} |`);
+    const stopText = run?.stop ? `${run.stop.reason}: ${run.stop.detail}` : (run?.blocker ?? '');
+    const blocker = owner ? `${stopText}; the goal waits on owner ${owner.owner.session} until ${owner.expiresAt}` : stopText;
+    lines.push(`| ${box} | ${card.id} | ${owner ? `${state} (lease live)` : state} | ${card.depends_on.join(', ') || '-'} | ${wave} | ${run?.worktree ?? ''} | ${pr} | ${reviews} | ${ci} | ${attempts} | ${run?.deadline ?? ''} | ${blocker} |`);
   }
   lines.push('');
   if (arc.reasons.length) {

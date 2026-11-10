@@ -245,7 +245,7 @@ describe('board owner wait (T0-BOARD-OWNER-WAIT)', () => {
   it('T0-BOARD-OWNER-WAIT acceptance 4: a run stopped for ownership with an owner lease renders as the wait on that owner [R1]', () => {
     const out = renderBoard(goal, cards, runs, iso(), {}, new Map([['T1-O', owner]]));
     assert.match(out, /^- \*\*Arc\*\*: verdict=wait /m);
-    assert.equal(row(out), `| [-] | T1-O | STOP (lease live) | - |  |  |  | 0/2 blocks=0 nv=0 | 0/1 |  |  | ownership: lease held by win-B; the goal waits on owner win-B until ${expiresAt} |`);
+    assert.equal(row(out), `| [-] | T1-O | STOP (lease live) | - |  |  |  | 0/2 blocks=0 nv=0 | 0/1 |  | 2026-09-11T13:00:00.000Z | ownership: lease held by win-B; the goal waits on owner win-B until ${expiresAt} |`);
   });
 
   it('T0-BOARD-OWNER-WAIT acceptance 4: without owners a run stopped for ownership renders the stop as before [R3]', () => {
