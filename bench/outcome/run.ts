@@ -34,7 +34,8 @@ function main(): number {
     const codexDir = path.resolve(values['codex-dir'] ?? path.join(os.homedir(), '.codex', 'sessions'));
     const read = [claudeUsage(claudeDirs, tables.cards.map((card) => String(card['id']))), codexUsage(codexDir), reviewLogUsage(stateDir)];
     const prices = JSON.parse(readFileSync(path.join(here, 'prices.json'), 'utf8')) as Prices;
-    tables.usage = attribute(read.flatMap((u) => u.rows), tables, worktreeRoot).map((row) => ({ ...row, costUsd: priceOf(row, prices) }));
+    tables.usage = attribute(read.flatMap((u) => u.rows), tables, worktreeRoot);
+    for (const row of tables.usage) row['costUsd'] = priceOf(row, prices);
     tables.usage_errors = read.flatMap((u) => u.errors);
     readOnly.push(...claudeDirs, codexDir);
   }
