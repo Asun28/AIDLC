@@ -221,9 +221,9 @@ test('T1-OUTCOME-HISTORY acceptance 9: a base of --output=x writes no file and i
   assert.equal(existsSync(path.join(dir, 'x')), false, 'git wrote the file the value names');
 });
 
-/** One run `g/T1-A` with formal block entries on the given commits, decisions 1, 2, 3 in that order, and the given formal findings. */
-function oneRun(commits: string[], findings: [id: string, round: number, file: string, candidateSha: string, reason: string][]): Tables {
-  const review_decisions = commits.map((candidateSha, index): Row => ({ goalId: 'g', cardId: 'T1-A', stage: 'formal', outcome: 'block', candidateSha, decision: index + 1 }));
+/** One run `g/T1-A` with formal block entries on the given commits, decisions 1, 2, 3 in that order unless `decisions` is false, and the given formal findings. */
+function oneRun(commits: string[], findings: [id: string, round: number, file: string, candidateSha: string, reason: string][], decisions = true): Tables {
+  const review_decisions = commits.map((candidateSha, index): Row => ({ goalId: 'g', cardId: 'T1-A', stage: 'formal', outcome: 'block', candidateSha, decision: decisions ? index + 1 : null }));
   return { cards: [], card_runs: [], state_spans: [], attempts: [], ingest_errors: [], review_decisions, findings: findings.map(([id, round, file, candidateSha, reason]): Row => ({ goalId: 'g', cardId: 'T1-A', id, stage: 'formal', round, file, candidateSha, outsideDelta: null, reason })) };
 }
 const values = (rows: Row[], column: string): unknown[] => rows.map((row) => [row['id'], row[column]]);
@@ -257,6 +257,23 @@ test('T1-OUTCOME-HISTORY acceptance 11, case: a candidateSha in upper case and o
   for (const tables of [oneRun([sha['k1']!, sha['k2']!, sha['k2']!, sha['k3']!], findings([sha['k2']!, sha['k2']!])), oneRun([upper('k1'), mixed('k2'), upper('k2'), upper('k3')], findings([upper('k2'), mixed('k2')]))]) {
     assert.deepEqual([values(repeatBlocks(gitIn(dir), tables).rows, 'predates'), values(findingFixes(gitIn(dir), tables).rows, 'changedAfter')], expected);
   }
+});
+
+test('T1-OUTCOME-HISTORY acceptance 11, no decision: a finding whose stage has no entry with a decision is classified from the one block entry with its candidateSha, and is unknown when two block entries have it [R3] [R5]', () => {
+  const { dir, sha } = repo();
+  const [a, b] = [sha['k1']!, sha['k2']!];
+  // A pass and a block on A, then B: the block is the one entry, and the entry after it is B, which changed a.ts.
+  const one = oneRun([a, a, b], [['F1', 2, 'a.ts', a, 'first @ a.ts:1']], false);
+  one.review_decisions[0]!['outcome'] = 'pass';
+  const two = oneRun([a, b, a], [['F1', 3, 'a.ts', a, 'third @ a.ts:1']], false);
+  assert.deepEqual([values(findingFixes(gitIn(dir), one).rows, 'changedAfter'), values(findingFixes(gitIn(dir), two).rows, 'changedAfter')], [[['F1', 'true']], [['F1', 'unknown']]]);
+});
+
+test('T1-OUTCOME-HISTORY acceptance 11, on: a subject holding overruling on x gives a null on, and Ruling on y at the start of a word gives y [R1]', () => {
+  const [s1, s2] = ['1'.repeat(40), '2'.repeat(40)];
+  const log = `${s1} 2026-03-01T00:00:00Z\ncard: T1-Z overruling on x by the user's ruling\n\0${s2} 2026-03-02T00:00:00Z\ncard: T1-Y by the user's Ruling on y\n\0`;
+  const read = rulings(scriptedRunner({ 'git rev-parse': { stdout: `${s1}\n` }, 'git log': { stdout: log } }), 'main');
+  assert.deepEqual(read.rows.map((row) => [row['sha'], row['on']]), [[s1, null], [s2, 'y']]);
 });
 
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
