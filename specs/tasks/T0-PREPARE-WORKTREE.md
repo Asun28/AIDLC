@@ -8,17 +8,21 @@ allow_paths:
   - src/loop/card-runner.ts
   - tests/scenarios/prepare-worktree.test.ts
   - tests/scenarios/fault-points.test.ts
+  - tests/scenarios/merge-unconfirmed.test.ts
+  - tests/scenarios/audit.test.ts
+  - tests/scenarios/narration-quote.test.ts
   - .claude/skills/verify-card-run-writes/SKILL.md
   - docs/OPERATIONS.md
   - CHANGELOG.md
   - specs/tasks/T0-PREPARE-WORKTREE.md
-dod_command: npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts
+dod_command: npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/audit.test.ts tests/scenarios/narration-quote.test.ts
 dod_exit: 0
 requirements:
   - R1. WHEN PREPARE decides `start` (no worktree for the card branch), the run shall stay in PREPARE and record no worktree path; the directive is the `prepare` directive with action `start`, as before this card.
   - R2. The `prepared` evidence of the card machine shall be true only when the run records a worktree path, that directory exists, and this session holds the card lease. A run in BUILD, REVIEW_FIX or SHIP whose recorded worktree directory does not exist shall get PREPARE.
   - R3. With `shipPath: dry-run`, which creates no worktree, `prepared` shall be what it is before this card.
   - R4. `docs/OPERATIONS.md` (the card loop, PREPARE) and the CHANGELOG Unreleased section shall state R1 to R3.
+  - R5. A scenario test that builds a run on the dry-run ship path and then runs `card next` on the github ship path shall create the run's recorded worktree directory before that `card next`, as a prepared github run has one; no assertion of those tests changes. Found by the full suite at attempt 1: 23 tests in merge-unconfirmed, audit and narration-quote went to PREPARE under R2.
 acceptance:
   - 1. `tests/scenarios/prepare-worktree.test.ts`, on the github ship path with a real temporary repository: a card's first `card next` returns `prepare` with action `start`, and a second `card next` without creating the worktree returns `prepare` with action `start` again, not `build`. Fails before the fix. [R1] [R2] [dod arm 1]
   - 2. Same file: after `git worktree add` of the card branch at the directive's path, `card next` returns `prepare` with action `attach`, then `build`. [R1] [R2] [dod arm 1]
@@ -26,6 +30,7 @@ acceptance:
   - 4. Same file: with `shipPath: dry-run` the directives of a first and second `card next` are those before this card. [R3] [dod arm 1]
   - 5. `tests/scenarios/fault-points.test.ts` passes; the PREPARE write is in its covered commands or recorded in the verify skill's coverage record, and the sync commit moves at CLOSE on main. [R1] [dod arm 2]
   - 6. The docs and CHANGELOG state R1 to R3 (reviewer-verified against the diff). [R4]
+  - 7. `tests/scenarios/merge-unconfirmed.test.ts`, `tests/scenarios/audit.test.ts` and `tests/scenarios/narration-quote.test.ts` pass, and their diff only creates the recorded worktree directory before the github `card next` (reviewer-verified against the diff). [R5] [dod arm 1]
 depends_on: []
 budget: 220
 tdd: true
