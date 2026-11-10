@@ -194,6 +194,19 @@ function pinFailure(thrown: unknown): string {
   }
 }
 
+/**
+ * What is at `p`, links followed (card T0-PREPARE-WORKTREE R2): a directory, something else, nothing (stat reports ENOENT,
+ * or ENOTDIR for a path under a file), or unknown (any other stat error, such as a denied read or an I/O error).
+ */
+function pathKind(p: string): 'directory' | 'other' | 'absent' | 'unknown' {
+  try {
+    return statSync(p).isDirectory() ? 'directory' : 'other';
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    return code === 'ENOENT' || code === 'ENOTDIR' ? 'absent' : 'unknown';
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -656,13 +669,17 @@ export class CardRunner {
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
+    // A recorded worktree counts only while it is a directory, so a run whose worktree was never made, is gone or is a file
+    // goes back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record
+    // alone counts, as before (R3).
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || pathKind(run.worktree) === 'directory' : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,
       unknownOperations: unknownOps.filter((o) => o.status === 'UNKNOWN').map((o) => o.id),
       runningOperation: runningOp?.id,
       terminal: run.stop,
-      prepared: Boolean(run.worktree) && Boolean(lease && !lease.released && lease.owner.session === me.session),
+      prepared: worktreeReady && Boolean(lease && !lease.released && lease.owner.session === me.session),
       mergeVerified: run.mergeVerified,
       // A run persisted as DONE keeps its closure complete: DONE is derived from a verified merge and a complete closure and never patched, so a record that predates the lessons predicate stays DONE.
       closureComplete: run.state === 'DONE' || Object.values(run.closure).every(Boolean),
@@ -903,7 +920,13 @@ export class CardRunner {
     if (this.config.shipPath === 'dry-run') {
       decision = { action: run.worktree ? 'attach' : 'start', path: path.join(worktreeRoot, card.id), head: '', reason: 'dry-run' } as ReturnType<typeof decideWorktree>;
     } else {
-      decision = decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
+      // A worktree git still registers for the card branch at the expected path with no directory there (deleted after an
+      // attach, replaced by a file, or a locked worktree on a drive that is not mounted) would fail decideWorktree's
+      // common-directory probe as a final tool stop. It is read first (card T0-PREPARE-WORKTREE R2): a failed listing is the
+      // tool stop decideWorktree records for one; a stale registration is a start that names it, so the run stays in PREPARE
+      // and `card next` asks again; anything else goes to decideWorktree unchanged.
+      const expected = path.join(worktreeRoot, card.id);
+      decision = this.staleRegistration(card.id, expected) ?? decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
     }
     if (decision.action === 'stop') {
       // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
@@ -913,7 +936,11 @@ export class CardRunner {
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
     const lessons = readLessons(this.lessonsFile());
-    const next = this.save({ ...run, state: 'BUILD', worktree: decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
+    // A start leaves the worktree to the agent or the scaffold: the run stays in PREPARE and records no worktree path, so
+    // the next `card next` decides again (card T0-PREPARE-WORKTREE R1). An attach, and either decision of the dry-run ship
+    // path, which makes no worktree (R3), records the path and opens BUILD.
+    const start = decision.action === 'start' && this.config.shipPath !== 'dry-run';
+    const next = this.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
       directive: {
@@ -926,6 +953,28 @@ export class CardRunner {
         narration: `Read docs/LESSONS.md once before the first attempt (${lessons.count} lessons so far; the most recent are in this directive). ` + (decision.action === 'start' ? `Start a new worktree for ${card.id} at ${decision.path} (scaffold: pwsh scripts/task.ps1 -TaskId ${card.id} -Phase start from the main checkout). ${decision.reason}` : `Attach to existing worktree ${decision.path}: ${decision.reason}. Do not re-run start.`),
       },
     };
+  }
+
+  /**
+   * The PREPARE decision for a stale worktree registration of branch `cardId` (card T0-PREPARE-WORKTREE R2). A listing that
+   * fails is the tool stop decideWorktree records for one. One entry at `expected`, marked `prunable` or `locked` (git never
+   * marks a locked entry prunable), with nothing at its path or something that is not a directory, is a start that names how
+   * to clear it. No entry, a mismatch, an entry with neither mark, a directory, and a stat that cannot tell (any error but
+   * ENOENT and ENOTDIR) give undefined, and decideWorktree decides as before this card.
+   */
+  private staleRegistration(cardId: string, expected: string): ReturnType<typeof decideWorktree> | undefined {
+    let found: ReturnType<GitProbe['findWorktree']>;
+    try {
+      found = this.git.findWorktree(this.repo.mainRoot, cardId, expected);
+    } catch (err) {
+      return { action: 'stop', reason: `worktree probe failed: ${(err as Error).message}`, stopReason: 'tool' };
+    }
+    const { entry, mismatch } = found;
+    const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
+    if (kind !== 'absent' && kind !== 'other') return undefined;
+    const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
+    const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
+    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */

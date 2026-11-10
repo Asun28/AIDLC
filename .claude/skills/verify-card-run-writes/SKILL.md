@@ -65,7 +65,8 @@ runs it, so CI runs it on every push.
   and no journal append, so a failed write throws, exits 1 and leaves the
   run and the journal as they were), failed and
   not-counted attempts, R2 and R3 blocks and no-verdict results, PREPARE,
-  BUILD and CLOSE steps of `card next`.
+  BUILD and CLOSE steps of `card next` (a PREPARE start writes PREPARE
+  and no worktree path, card T0-PREPARE-WORKTREE).
 - A confirmed violation the current code shows is not a pass: it is
   pinned in `KNOWN_VIOLATIONS` with its counterexample and filed as a
   T0-bugfix card, so those fault points are known defects, not covered

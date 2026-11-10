@@ -59,3 +59,30 @@ npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+Attempt 1 continues the branch line of T0-PREPARE-WORKTREE at 054ec11, merged with main at 95cb3bc. RED: 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 failed on main's code), and each R3 repair added a test that failed on the candidate before it (F1 on 123855d, F2 on 2f50b22; repros recorded on T0-PREPARE-WORKTREE). Input forms, the class sweep and the readers of `run.worktree` are listed in the attempt evidence of specs/tasks/T0-PREPARE-WORKTREE.md.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
+| 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
+| 3 | prepare-worktree.test.ts, the four acceptance 3 tests | pass |
+| 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
+| 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
+| 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
+| 7 | merge-unconfirmed, audit and narration-quote tests in the DoD; each diff adds one `mkdirSync` of the recorded worktree and changes no assertion | pass |
+
+054ec11 gives the real-repository fixture a canonical main root (`realpathSync.native(fx.tmp)`): Windows CI on PR 250 failed acceptance 2 and the prunable-or-locked acceptance 3 test under the runner's 8.3 temp path, reproduced locally with TMP set to an 8.3 path; 7 of 7 pass under the short and the normal temp directory.
+
+Attempt 2 (repair of R3 decision 1 on 7674f61: F1 stat-error-treated-as-absence, F2 unrelated-probe-stop-cleared). The recovery no longer rewrites a tool stop: `CardRunner.prepare` reads the stale registration first (`staleRegistration`) and calls `decideWorktree` unchanged for anything else. A registration counts as stale only from a listing that succeeds, an entry at the expected path marked `prunable` or `locked`, and a stat that reports nothing there (`pathKind` is `absent` only for ENOENT and ENOTDIR; any other stat error is `unknown`). The new test failed on 7674f61 (a failed first listing became `start`) and passes with the repair. Input forms of `staleRegistration` and `pathKind`, each with its test:
+- the listing fails: `decideWorktree` decides, here a tool stop; new test, form "the first listing fails";
+- a marked entry whose directory stat fails with EACCES: `unknown`, so `decideWorktree` decides (a tool stop); new test, form "EACCES";
+- a marked entry whose directory exists: `decideWorktree` decides (tool stop on a failed common-directory probe); acceptance 3, failed probe of an existing directory;
+- a prunable or a locked entry with nothing at its path: retryable `start`; acceptance 3, forms "prunable" and "locked", real repository;
+- an entry with neither mark, a mismatch, no entry: `decideWorktree` decides as before; t0-flow.test.ts T0-PROBE-STOP-TEXT (T1-COMMON, ownership) and acceptance 1;
+- `prepared` reads `pathKind(...) === 'directory'`: a regular file, a path under a file and a missing path are not prepared; acceptance 3, first two tests.
+
+Attempt 3 (repair of R3 decision 2 on 1d5125a: F3 re F2, a failed first listing followed by a successful listing still lost the stop; F4 registered-file-stops, a registration whose path holds a regular file reached the final stop). `staleRegistration` now returns a PREPARE decision: its own failed listing is the tool stop decideWorktree records for one (same detail), so no later listing can replace it; a marked entry whose path holds something that is not a directory is a retryable `start` that says to move or delete it; a stat that cannot tell still goes to decideWorktree. Both new forms failed on 1d5125a and pass with the repair:
+- a failed listing, then a successful listing with no entry of the card: tool stop; test "a failed listing is the tool stop", first form;
+- a prunable registration with a regular file at its path: retryable `start` naming "move or delete it", then attach and build after the file is removed and the registration pruned; acceptance 3, form "a file at the path", real repository.
