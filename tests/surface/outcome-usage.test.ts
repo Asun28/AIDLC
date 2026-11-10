@@ -180,8 +180,8 @@ test('T1-OUTCOME-USAGE acceptance 8: run.ts prints the five cost views of the fi
   put(path.join(stateDir, 'cards', 'g-c', 'T1-STOPPED.json'), [run('g-c', 'T1-STOPPED', { state: 'STOP' })]);
   const state = (ts: string, goalId: string, cardId: string, to: string): string => JSON.stringify({ seq: 0, ts, type: 'CARD_STATE', goalId, cardId, generation: 0, data: { to } });
   put(path.join(stateDir, 'journal', 'g.jsonl'), [state('2026-01-02T00:30:00Z', 'g-b', 'T1-MERGED', 'BUILD'), state('2026-01-02T02:30:00Z', 'g-b', 'T1-MERGED', 'DONE'), state('2026-01-03T00:00:00Z', 'g-c', 'T1-STOPPED', 'BUILD'), state('2026-01-03T01:00:00Z', 'g-c', 'T1-STOPPED', 'STOP')]);
-  // Coordinator requests inside the BUILD span of each card and one outside every span; an implementer subagent of the superseded card.
-  put(path.join(claudeDir, 's1.jsonl'), [claudeLine('assistant', 'm1', [100, 10, 300, 100]), claudeLine('assistant', 'm2', [200, 5, 0, 0], '2026-01-03T00:30:00.000Z'), claudeLine('assistant', 'm3', [20, 5, 60, 20], '2026-01-05T00:00:00.000Z')]);
+  // Coordinator requests inside the BUILD span of each card (one of them with no tokens, as a synthetic reply has) and one outside every span; an implementer subagent of the superseded card.
+  put(path.join(claudeDir, 's1.jsonl'), [claudeLine('assistant', 'm1', [100, 10, 300, 100]), claudeLine('assistant', 'm2', [200, 5, 0, 0], '2026-01-03T00:30:00.000Z'), claudeLine('assistant', 'm3', [20, 5, 60, 20], '2026-01-05T00:00:00.000Z'), claudeLine('assistant', 'm5', [0, 0, 0, 0]).replace('"model-a"', '"model-zero"')]);
   put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.jsonl'), [claudeLine('assistant', 'm4', [200, 40, 600, 0], '2026-01-03T00:20:00.000Z', { isSidechain: true })]);
   put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.meta.json'), [JSON.stringify({ agentType: 'implementer', description: `${X} T1-STOPPED ${X}` })]);
   // The reviewer's Codex session (200 input, 800 cached, 50 output) ends one minute into the two minutes of the reviewer log, which counts the same 1050 tokens.
@@ -197,18 +197,19 @@ test('T1-OUTCOME-USAGE acceptance 8: run.ts prints the five cost views of the fi
   const r = spawnRun(out);
   assert.equal(r.status, 0, r.stderr);
   const stage = (cards: string, name: string, requests: number, [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens]: Tokens, totalTokens: number | null): Row => ({ cards, stage: name, requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, totalTokens, cost_usd: null, unpriced_requests: requests });
-  assert.deepEqual(r.views.get('summary_cost_by_stage'), [stage('merged', 'coordinate', 1, [100, 10, 300, 100], null), stage('merged', 'review', 2, [200, 50, 800, 12], 1050), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null), stage('superseded', 'implement', 1, [200, 40, 600, 0], null)]);
+  assert.deepEqual(r.views.get('summary_cost_by_stage'), [stage('merged', 'coordinate', 2, [100, 10, 300, 100], null), stage('merged', 'review', 2, [200, 50, 800, 12], 1050), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null), stage('superseded', 'implement', 1, [200, 40, 600, 0], null)]);
   // The superseded card: 205 tokens of its coordinator request and 840 of its subagent.
   assert.deepEqual(r.views.get('summary_superseded_spend'), [{ cards: 1, requests: 2, tokens: 1045, cost_usd: null, unpriced_requests: 2 }]);
   // Claude Code: 300 + 0 + 60 + 600 cache-read tokens of 500 + 200 + 100 + 800 input-side tokens. Codex: 800 of 200 + 800 + 12.
-  assert.deepEqual(r.views.get('summary_cache_share'), [{ source: 'claude-code', model: 'model-a', requests: 4, cache_read_share: 0.6 }, { source: 'codex', model: 'model-b', requests: 1, cache_read_share: 800 / 1012 }]);
+  assert.deepEqual(r.views.get('summary_cache_share'), [{ source: 'claude-code', model: 'model-a', requests: 4, cache_read_share: 0.6 }, { source: 'claude-code', model: 'model-zero', requests: 1, cache_read_share: null }, { source: 'codex', model: 'model-b', requests: 1, cache_read_share: 800 / 1012 }]);
   assert.deepEqual(r.views.get('summary_cost_per_card'), [{ families: 1, priced_families: 0, p50_usd: null, p90_usd: null, max_usd: null }]);
-  // Six rows of 510, 205, 105, 840, 1062 and 1050 tokens; the request outside every span is the unattributed one.
+  // Seven rows of 510, 205, 105, 840, 0, 1062 and 1050 tokens; the request outside every span is the unattributed one.
   assert.deepEqual(r.views.get('summary_unattributed'), [
     { measure: 'codex_sessions_in_review_log', key: null, requests: 1, tokens: 1062, request_share: null, token_share: null },
-    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 6, token_share: 105 / 3772 },
+    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 7, token_share: 105 / 3772 },
     { measure: 'unpriced', key: 'model-a', requests: 4, tokens: 1660, request_share: null, token_share: null },
     { measure: 'unpriced', key: 'model-b', requests: 2, tokens: 2112, request_share: null, token_share: null },
+    { measure: 'unpriced', key: 'model-zero', requests: 1, tokens: 0, request_share: null, token_share: null },
   ]);
   const usage = readFileSync(path.join(out, 'usage.jsonl'), 'utf8');
   assert.equal(usage.includes(X) || readFileSync(path.join(out, 'usage_errors.jsonl'), 'utf8') !== '', false, 'no fixture text and no error row is written');

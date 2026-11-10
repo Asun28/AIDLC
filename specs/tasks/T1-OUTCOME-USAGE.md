@@ -59,3 +59,29 @@ npm run typecheck && node --test tests/surface/outcome-usage.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; item 8 is skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+RED, attempt 1: commit 18c8e9b (the test against a seam module that returns no rows): 7 failed and 1 skipped without `DUCKDB_BIN`, 8 failed with it.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 to 7 | `node --test tests/surface/outcome-usage.test.ts`, tests `acceptance 1` to `acceptance 7` | pass |
+| 8 | same file, test `acceptance 8`, with `DUCKDB_BIN` set to the local duckdb.exe: `# tests 8`, `# pass 8`; without it: `# pass 7`, `# skipped 1` (`no duckdb binary`) | pass |
+| 9 | `bench/outcome/README.md`: Command (R8), Usage tables (R1 to R7), Cost views (R9) | reviewer-verified against the diff |
+
+Input forms and what each becomes (README, Usage tables). Named by R4 and tested by `acceptance 4`: an absent directory of each source, a line that is not JSON, a meta file that is not JSON, a Codex file without a `token_count` line. Tested by `acceptance 1` and `acceptance 3`: an absent meta file and a log without a `tokens used` number give no error. Not named by the card, handled and not tested (no acceptance item names them):
+- A directory or file that cannot be read: one `unreadable: <code>` row. The real run has one, a Codex file over the string limit of Node.
+- A usage line without a `message.id`: an error row, not a row merged with others. A usage line without a `requestId` (two real lines, model `<synthetic>`): a row keyed by its `message.id`.
+- A `token_count` line without `info.total_token_usage`: not counted as one. Several `session_meta` lines: the first.
+- A log directly under `review`: a row with a null `cardId`. Several `tokens used` lines: the last. A goal without a `review` directory: no row.
+- A span or attempt without both ends holds no `ts`; an end is exclusive.
+
+Points where the card and the code differ or the card is silent:
+- R8 asks for the usage tables "through `writeTables`", which writes only the tables of `COLUMNS` in `bench/outcome/ingest.ts`, a file outside `allow_paths`. `run.ts` adds the two usage tables to `COLUMNS` at run time (`Object.assign`). Declaring them in `ingest.ts` would need that file in `allow_paths`.
+- R5 names the fields of R1 to R4 and R6; the views of R9 need the cost of R7, so `run.ts` writes it as `costUsd`. The readers return only the named fields (`acceptance 5`).
+- R9 "overlap a `review-log` row of the same card within its duration": R3 gives that row no timestamp. The view takes the start from `review_decisions.requestedAt` of the decision the log name carries. On the real run 42 sessions match; the last line of a session lies a median 0.3 s after `requestedAt` plus `durationMs`, so the count is a lower bound. Every one of 120 logs checked has a Codex session of the same card with `inputTokens` plus `outputTokens` equal to its `totalTokens`, which would be an exact rule.
+- `prices.json` holds no entry: no list price is cited in this repository and this run had no web access. Every row is unpriced, and `acceptance 8` checks the cost sums over rows it prices itself.
+- Open, DoD with `DUCKDB_BIN`: exit 1, 17 passed and 1 failed. The failing test is `T1-OUTCOME-INGEST acceptance 5` in `tests/surface/outcome-ingest.test.ts`, which is outside `allow_paths`: it runs `run.ts` without `--no-usage` and asserts that exactly the four views of `10-cards.sql` are printed, and R8 makes usage the default, so the five cost views are printed too. Without `DUCKDB_BIN` (the CI case) that test is skipped and the DoD exits 0 with 15 passed and 3 skipped. The `run.ts` calls of that file also read the default Claude and Codex directories of the machine now. Passing `--no-usage` in its two spawn helpers would fix both and needs that file in `allow_paths`.
+- Size: 596 lines added and 17 removed against the budget of 480: test 233, `usage.ts` 193, `20-cost.sql` 62, README 57, `run.ts` 42, this section 26.
+
+Real run on 2026-11-10 (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, default Claude and Codex directories, `--out` outside the repository and every source), exit 0 in 10 s: usage 12086 rows (claude-code 11624, codex 322, review-log 140), usage_errors 25 (24 `missing directory` for worktrees without a Claude project directory, 1 `unreadable: ERR_STRING_TOO_LONG`). `summary_unattributed`: 6141 rows, 50.8% of rows and 56.1% of tokens. `summary_superseded_spend`: 33 cards, 2097 requests, 450867383 tokens. `summary_cost_per_card`: 91 families, 0 priced. `summary_cache_share`: claude-opus-5-5 0.982 over 11324 requests, gpt-6-astra 0.855 over 316. `usage.jsonl` holds the 20 columns of `USAGE_COLUMNS`; its longest string is a 68-character `cwd`.
