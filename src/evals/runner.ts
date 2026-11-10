@@ -324,18 +324,39 @@ export interface RemoveDirDeps {
   wait?: (ms: number) => void;
 }
 
-/** Removes one directory; returns whether the remove call returned without throwing. */
+/** Error codes of a removal that can succeed once another process lets go of the directory (on Windows, a process whose working directory is inside it). */
+const BUSY_CODES = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
+const REMOVE_RETRY_MS = 200;
+const REMOVE_LIMIT_MS = 10_000;
+
+/** Blocks the thread for `ms`. */
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * Removes one directory. A call that throws EBUSY, EPERM or ENOTEMPTY is followed, 200 ms later, by another, until a
+ * call succeeds or a busy call ends at or after 10000 ms on the clock since the first call; any other error ends the
+ * calls at once. Returns whether a remove call returned without throwing.
+ */
 export function removeDir(dir: string, deps: RemoveDirDeps = {}): boolean {
   const remove = deps.remove ?? ((d: string) => rmSync(d, { recursive: true, force: true }));
-  try {
-    remove(dir);
-    return true;
-  } catch {
-    return false;
+  const now = deps.now ?? Date.now;
+  const wait = deps.wait ?? sleepSync;
+  const start = now();
+  for (;;) {
+    try {
+      remove(dir);
+      return true;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException | undefined)?.code;
+      if (!code || !BUSY_CODES.has(code) || now() - start >= REMOVE_LIMIT_MS) return false;
+    }
+    wait(REMOVE_RETRY_MS);
   }
 }
 
-/** Removes the link, the checkout (pruning when the remove fails) and the state directory; returns what is left, if anything. */
+/** Removes the link, the checkout (pruning when the remove fails) and the state directory, the holder and the state directory through `removeDir`, each with its own 10 s; returns what is left, if anything. */
 function closeWorkspace(w: Workspace, root: string): string | undefined {
   const left: string[] = [];
   let linkRemoved = true;
@@ -352,11 +373,7 @@ function closeWorkspace(w: Workspace, root: string): string | undefined {
     // A link that is still there would let a recursive removal reach the main checkout's node_modules.
     if (linkRemoved) {
       const removed = git(['worktree', 'remove', '--force', checkout], root);
-      try {
-        rmSync(w.holder, { recursive: true, force: true });
-      } catch {
-        // reported below
-      }
+      removeDir(w.holder); // reported below
       const pruned = removed?.exitCode === 0 || git(['worktree', 'prune'], root)?.exitCode === 0;
       const listed = git(['worktree', 'list', '--porcelain'], root);
       const named = !listed || listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
@@ -366,11 +383,7 @@ function closeWorkspace(w: Workspace, root: string): string | undefined {
     }
   }
   if (w.stateDir) {
-    try {
-      rmSync(w.stateDir, { recursive: true, force: true });
-    } catch {
-      // reported below
-    }
+    removeDir(w.stateDir); // reported below
     if (existsSync(w.stateDir)) left.push(`state directory ${w.stateDir} not removed`);
   }
   return left.length ? left.join('; ') : undefined;
