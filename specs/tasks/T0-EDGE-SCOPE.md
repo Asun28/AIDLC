@@ -1,7 +1,7 @@
 ---
 id: T0-EDGE-SCOPE
 title: "The review prompt's card contract carries the card's requirements, and both card templates ask a card that reads input or adds I/O to name the input forms and failure paths it handles and the ones it leaves out"
-status: todo
+status: merged
 branch: T0-EDGE-SCOPE
 worktree: D:\wt\AIDLC\T0-EDGE-SCOPE
 allow_paths:
