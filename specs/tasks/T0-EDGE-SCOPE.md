@@ -1,7 +1,7 @@
 ---
 id: T0-EDGE-SCOPE
 title: "The review prompt's card contract carries the card's requirements, and both card templates ask a card that reads input or adds I/O to name the input forms and failure paths it handles and the ones it leaves out"
-status: todo
+status: merged
 branch: T0-EDGE-SCOPE
 worktree: D:\wt\AIDLC\T0-EDGE-SCOPE
 allow_paths:
@@ -52,3 +52,16 @@ npm run typecheck && node --test tests/surface/edge-scope.test.ts tests/surface/
 ```
 - Expected exit code: 0
 - Assertion: the typecheck is clean and the five test files pass.
+
+## Attempt evidence
+
+Attempt 1 (RED 473a624: edge-scope.test.ts failed 3 of 3 before the fix; the prompt had `- non_goals:` directly after `allow_paths`, the templates held the line 0 times and the docs lacked the paragraph).
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | tests/surface/edge-scope.test.ts, "acceptance 1": pre and formal prompts, two requirements, absent key, `requirements: []` | pass |
+| 2 | same file, "acceptance 2": both templates | pass |
+| 3 | same file, "acceptance 3": Edge scope paragraph, the `aidlc review pre` field list, CHANGELOG entry | pass |
+| 4 | tests/surface/pre-review.test.ts, templates.test.ts, budget-doc.test.ts, card.test.ts, unchanged | pass |
+
+Input forms and failure paths of R1: requirements absent, `[]` and two items, each tested in acceptance 1; no I/O, so no failure path.

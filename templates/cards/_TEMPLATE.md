@@ -16,6 +16,7 @@ review_gate: codex {verdict:pass}   # optional; declaring it invokes the indepen
 acceptance:            # CLOSED numbered list the reviewer judges against; required once review_gate is set
   # A change of 30 src lines or fewer gets a card of about 400 words or fewer.
   # Doc text is proved with `(reviewer-verified against the diff)` unless a program reads that exact text.
+  # A card that reads input or adds I/O names in these items each input form and failure path it handles; non_goals names each form it leaves out and what the code does with it (refuse, ignore or fail closed).
   - 1. <one fact that means done, naming the assertion that covers it>. [dod arm 1]
   - 2. <the next one; a gap outside this list is [FOLLOW-UP], not a block>. [dod arm 2]
 # ------- Optional below. Absent is silent; no gate asks for any of these.
