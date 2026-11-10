@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { findingFixes, repeatBlocks, rulingSet, rulings } from '../../bench/outcome/history.ts';
+import { findingFixes, historyTables, repeatBlocks, rulingSet, rulings } from '../../bench/outcome/history.ts';
 import { ingestState, type Row, type Tables } from '../../bench/outcome/ingest.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 
@@ -220,6 +220,44 @@ test('T1-OUTCOME-HISTORY acceptance 9: a base of --output=x writes no file and i
   assert.deepEqual(findingFixes(runner, tables), { rows: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', file: 'a.ts', candidateSha: '--output=x', changedAfter: 'unknown' }], errors: [] });
   assert.equal(calls.length, 1, 'a git call was made for a candidateSha that is not 40 hex');
   assert.equal(existsSync(path.join(dir, 'x')), false, 'git wrote the file the value names');
+});
+
+/** One run `g/T1-A` with formal block entries on the given commits, decisions 1, 2, 3 in that order, and the given formal findings. */
+function oneRun(commits: string[], findings: [id: string, round: number, file: string, candidateSha: string, reason: string][]): Tables {
+  const review_decisions = commits.map((candidateSha, index): Row => ({ goalId: 'g', cardId: 'T1-A', stage: 'formal', outcome: 'block', candidateSha, decision: index + 1 }));
+  return { cards: [], card_runs: [], state_spans: [], attempts: [], ingest_errors: [], review_decisions, findings: findings.map(([id, round, file, candidateSha, reason]): Row => ({ goalId: 'g', cardId: 'T1-A', id, stage: 'formal', round, file, candidateSha, outsideDelta: null, reason })) };
+}
+const values = (rows: Row[], column: string): unknown[] => rows.map((row) => [row['id'], row[column]]);
+
+test('T1-OUTCOME-HISTORY acceptance 11, base: with a base that is not a revision and tables that hold findings, the tables of the run hold one history_errors row and git was called once [R6]', () => {
+  const { dir, sha } = repo();
+  const { runner, calls } = recordingGit(dir);
+  const t = historyTables(runner, 'no-such-base', ingestState(fixture(sha)));
+  assert.deepEqual([t.history_errors.map((e) => e['command']), calls.length, t.rulings], [['git rev-parse --verify --end-of-options no-such-base^{commit}'], 1, []]);
+});
+
+test('T1-OUTCOME-HISTORY acceptance 11, entry: for entries on the commits A, B, A a finding raised at the third is unknown, and one raised at the first is compared with B [R3] [R5]', () => {
+  const { dir, sha } = repo();
+  const [a, b] = [sha['k1']!, sha['k2']!];
+  const read = findingFixes(gitIn(dir), oneRun([a, b, a], [['F1', 1, 'a.ts', a, 'first @ a.ts:1'], ['F2', 3, 'a.ts', a, 'third @ a.ts:1']]));
+  assert.deepEqual([values(read.rows, 'changedAfter'), read.errors], [[['F1', 'true'], ['F2', 'unknown']], []]);
+});
+
+test('T1-OUTCOME-HISTORY acceptance 11, citation: a reason x @ a.ts: see @ b.ts:1 with file a.ts gives a null line, and a first citation ./a.ts:2 gives line 2 [R3]', () => {
+  const { dir, sha } = repo();
+  const read = repeatBlocks(gitIn(dir), oneRun([sha['k1']!, sha['k2']!], [['F1', 2, 'a.ts', sha['k2']!, 'x @ a.ts: see @ b.ts:1'], ['F2', 2, 'a.ts', sha['k2']!, 'y @ ./a.ts:2 and @ a.ts:1']]));
+  assert.deepEqual([values(read.rows, 'line'), values(read.rows, 'predates')], [[['F1', null], ['F2', 2]], [['F1', 'file-changed'], ['F2', 'false']]]);
+});
+
+test('T1-OUTCOME-HISTORY acceptance 11, case: a candidateSha in upper case and one in mixed case are classified as the same commit in lower case is, in repeatBlocks and in findingFixes [R6]', () => {
+  const { dir, sha } = repo();
+  const upper = (name: string): string => sha[name]!.toUpperCase();
+  const mixed = (name: string): string => [...sha[name]!].map((c, i) => (i % 2 === 0 ? c.toUpperCase() : c)).join('');
+  const findings = (k2: string[]): Parameters<typeof oneRun>[1] => [['F1', 2, 'c.ts', k2[0]!, 'whole file @ c.ts'], ['F2', 2, 'a.ts', k2[1]!, 'repaired @ a.ts:2']];
+  const expected = [[['F1', 'true'], ['F2', 'false']], [['F1', 'true'], ['F2', 'false']]];
+  for (const tables of [oneRun([sha['k1']!, sha['k2']!, sha['k3']!], findings([sha['k2']!, sha['k2']!])), oneRun([upper('k1'), mixed('k2'), upper('k3')], findings([upper('k2'), mixed('k2')]))]) {
+    assert.deepEqual([values(repeatBlocks(gitIn(dir), tables).rows, 'predates'), values(findingFixes(gitIn(dir), tables).rows, 'changedAfter')], expected);
+  }
 });
 
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
