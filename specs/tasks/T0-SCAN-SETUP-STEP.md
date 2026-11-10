@@ -14,6 +14,7 @@ allow_paths:
   - tests/core/ci-policy.test.ts
   - tests/scenarios/ci-rerun.test.ts
   - tests/surface/templates.test.ts
+  - tests/infra/github-ship.test.ts
   - docs/OPERATIONS.md
   - docs/ARCHITECTURE.md
   - CHANGELOG.md
@@ -21,7 +22,7 @@ allow_paths:
 dod_command: npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci-rerun.test.ts tests/surface/templates.test.ts
 dod_exit: 0
 requirements:
-  - R1. A red check whose name matches a secret or security scan (`SECURITY_CHECK_NAME`) shall not count as a security hit when all of these hold: a `[CI-GATE-STEP]` line for the check names a failed step listed in `ci.scanSetupSteps`; every `[CI-GATE-STEP]` line for the check names such a step; the check's name occurs once among the red checks; no red gate line is unresolved. The check is then classified as any other red check is (transient only on the structured evidence of T0-CI-RERUN-STRUCTURED, code-defect on code evidence in the log text, else unknown), and the classification's evidence ends with `scan-setup: <check> failed at <step> before its scan`, both names as JSON strings.
+  - R1. A red check whose name matches a secret or security scan (`SECURITY_CHECK_NAME`) shall not count as a security hit when all of these hold: a `[CI-GATE-STEP]` line for the check names a failed step listed in `ci.scanSetupSteps`; every `[CI-GATE-STEP]` line for the check names such a step; the check's name occurs once among the red checks and its records agree on its conclusion; no red gate line is unresolved. The check is then classified as any other red check is (transient only on the structured evidence of T0-CI-RERUN-STRUCTURED, code-defect on code evidence in the log text, else unknown), and the classification's evidence ends with `scan-setup: <check> failed at <step> before its scan`, both names as JSON strings.
   - R2. Every other red scan check shall stay `security` as before this card: no step line for the check, a null step, a failed step not on the list, an empty list, two step lines for the check with one not on the list, a duplicate red check name, an unresolved red gate line, raw gitleaks output (`leaks found: N`, `RuleID:`) in the log text, and an unparsed red gate line naming a scan.
   - R3. `ProjectConfig` shall have a field `ci.scanSetupSteps` (non-blank strings) whose default is `["Install gitleaks (pinned version, checksum verified)"]`, the step of the shipped `security-scanners.yml` that installs the scanner before its scan step; `templates/aidlc.config.json` and `aidlc.config.json` carry it, and the card runner's CI gate and `aidlc ci classify --log` pass it to `classifyCiFailure`.
   - R4. WHEN the gate output of run 42467444385 attempt 1 reaches the card runner (Gitleaks red at step 3, the install step, after `curl: (22) The requested URL returned error: 504`), the runner shall stop with STOP/ci, not STOP/risk, persist no rerun intent, and journal CI_CLASSIFIED with class `unknown`.
@@ -43,7 +44,7 @@ diagnosis:
 sweep: "grep -n \"SECURITY_CHECK_NAME\\|securityHits\\|transientSteps\" src. Lines are from main at 19b0da8; read them again at PREPARE."
 forbid: [weakening or skipping a test to go green, granting a rerun to a scan check other than through `ci.transientSteps` as any check gets one, treating a failed scan step as setup, editing .aidlc state by hand]
 non_goals: [adding the install step to `ci.transientSteps`, changing the step lines the GitHub ship path prints, changing `security-scanners.yml`, a new CI failure class]
-hygiene: "A step line names only the first failed step of a job, so list a setup step only when its failure skips the scan (a scan step without `if: always()`); the docs state that limit. Outside text in the evidence is a JSON string (T0-NARRATION-QUOTE)."
+hygiene: "`tests/infra/github-ship.test.ts` changes only where it builds a `ci` config, which gains the new field. A step line names only the first failed step of a job, so list a setup step only when its failure skips the scan (a scan step without `if: always()`); the docs state that limit. Outside text in the evidence is a JSON string (T0-NARRATION-QUOTE)."
 doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md
 ---
 
