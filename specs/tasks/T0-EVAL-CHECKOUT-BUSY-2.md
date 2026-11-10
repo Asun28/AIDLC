@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-CHECKOUT-BUSY-2
 title: "A model-backed eval removes its temporary checkout and state directory once a process that still holds them exits, waiting up to 10 seconds on an awaited timer, instead of leaving them on Windows"
-status: todo
+status: merged
 branch: T0-EVAL-CHECKOUT-BUSY-2
 worktree: D:\wt\AIDLC\T0-EVAL-CHECKOUT-BUSY-2
 allow_paths:
