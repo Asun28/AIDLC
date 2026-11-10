@@ -59,3 +59,27 @@ npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1 (effort medium). RED receipt `3db5358`: acceptance 1, 3, 4 and 5 failed on their assertions (`security` where `unknown` or `transient` was expected, STOP/risk where STOP/ci was expected, no `ci.scanSetupSteps` default); acceptance 2 passed, since it pins main's behaviour.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/core/ci-policy.test.ts` "acceptance 1: a scan check red at its listed install step is no security finding and says why" | pass |
+| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (13 cases) | pass |
+| 3 | `tests/core/ci-policy.test.ts` "acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" | pass |
+| 4 | `tests/scenarios/ci-rerun.test.ts` "T0-SCAN-SETUP-STEP acceptance 4" and the R7 security tests unchanged | pass |
+| 5 | `tests/surface/templates.test.ts` "T0-SCAN-SETUP-STEP acceptance 5" | pass |
+| 6 | docs/OPERATIONS.md (paragraph after the gitleaks gate), docs/ARCHITECTURE.md (outcome map security clause), CHANGELOG.md Unreleased | reviewer |
+
+Rule against main (lesson T0-EXIT-ZERO-NOT-MERGED-3): the change only removes hits from the security list, so an input main classifies as `code-defect`, `transient` or `unknown` keeps its class and its evidence. An input main classifies as `security` stays `security` unless every R1 condition holds for each check-name hit and no other hit remains; it then gets the class main gives the same input with that check's name not read as a scan, plus the `scan-setup` evidence line.
+
+Same class (`securityHits` pushes in `classifyCiFailure`, and the callers):
+- a failed independent job named for a scan: covered by R1 (acceptance 1, the job passed in directly).
+- a red gate check named for a scan: covered by R1 (acceptance 1).
+- an unparsed red gate line naming a scan: kept by R2, no check is attached to the hit (acceptance 2).
+- raw gitleaks output (`leaks found`, `RuleID:`): kept by R2 (acceptance 2).
+- `aidlc ci classify --log` (src/cli/main.ts) and the card runner's CI gate (src/loop/card-runner.ts): both pass `ci.scanSetupSteps` (acceptance 3 and 4); no other caller of `classifyCiFailure` or reader of `SECURITY_CHECK_NAME` exists in `src/`.
+
+`tests/infra/github-ship.test.ts` changes only its `ci` config builder, which now spreads the fixture's `ci` so the new required field is present; its 58 tests pass.

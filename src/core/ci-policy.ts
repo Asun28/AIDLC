@@ -63,6 +63,12 @@ const GATE_LINE = /^\[CI-GATE-(?:RED|TIMEOUT|WAIT|STEP)\]/;
 /** The job steps GitHub runs itself: the default of `ci.transientSteps` (card T0-CI-RERUN-STRUCTURED). */
 export const DEFAULT_TRANSIENT_STEPS: readonly string[] = ['Set up job', 'Complete job'];
 
+/**
+ * The steps of a secret or security scan job that install the scanner before its scan: the default of `ci.scanSetupSteps`, the
+ * install step of the shipped `security-scanners.yml` (card T0-SCAN-SETUP-STEP). A scan check red at one of them did not scan.
+ */
+export const DEFAULT_SCAN_SETUP_STEPS: readonly string[] = ['Install gitleaks (pinned version, checksum verified)'];
+
 /** The failed step a `[CI-GATE-STEP]` line names for a check, or null when the job record places none. */
 interface GateStep {
   check: string;
@@ -178,15 +184,18 @@ export interface CiClassification {
  * T0-CI-RERUN-STRUCTURED): its conclusion is `startup_failure`, or a `[CI-GATE-STEP]` line of the check names a failed step
  * on `transientSteps`. Log text never grants a rerun: a text-only transient is `unknown` (no rerun, STOP/ci), its matches
  * kept as evidence. Red checks include independent jobs and gate checks; only explicitly marked aggregate wrappers are excluded.
- * Security and code-defect evidence keep their precedence.
+ * Security and code-defect evidence keep their precedence. A red scan check is no security hit when it failed in a step on
+ * `scanSetupSteps` before its scan (card T0-SCAN-SETUP-STEP): it is then classified as any other red check is.
  */
-export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[] } = {}): CiClassification {
+export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[]; scanSetupSteps?: readonly string[] } = {}): CiClassification {
   const transientSteps = options.transientSteps ?? DEFAULT_TRANSIENT_STEPS;
+  const scanSetupSteps = options.scanSetupSteps ?? DEFAULT_SCAN_SETUP_STEPS;
   const failed = jobs.filter((j) => j.conclusion && !['success', 'neutral', 'skipped'].includes(j.conclusion.toLowerCase()));
   const texts = [...jobs.map((j) => ({ raw: j.logExcerpt ?? '', inspectLog: failed.includes(j) })), { raw: extraLog ?? '', inspectLog: true }];
   const evidence: string[] = [];
-  const securityHits: string[] = [];
-  for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push(j.name);
+  /** Each hit, with the red scan check it names when it comes from a check name alone. */
+  const securityHits: Array<{ hit: string; check?: string }> = [];
+  for (const j of failed) if (SECURITY_CHECK_NAME.test(j.name)) securityHits.push({ hit: j.name, check: j.name });
   const logs: string[] = [];
   const gateChecked: CiJob[] = [];
   const gateRecords: CiJob[] = [];
@@ -200,12 +209,12 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     steps.push(...gate.steps);
     unresolvedRed ||= gate.unresolvedRed;
     gateStructured ||= gate.structured || gate.checks.length > 0;
-    for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push(c.name);
-    for (const line of gate.ambiguousRed) if (SECURITY_CHECK_NAME.test(line)) securityHits.push(`unparsed red gate line naming a scan: ${line.slice(0, 80)}`);
+    for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push({ hit: c.name, check: c.name });
+    for (const line of gate.ambiguousRed) if (SECURITY_CHECK_NAME.test(line)) securityHits.push({ hit: `unparsed red gate line naming a scan: ${line.slice(0, 80)}` });
     if (!inspectLog) continue;
     for (const p of SECURITY_PATTERNS) {
       const m = gate.log.match(p);
-      if (m) securityHits.push(m[0].trim().slice(0, 80));
+      if (m) securityHits.push({ hit: m[0].trim().slice(0, 80) });
     }
     logs.push(gate.log);
   }
@@ -239,12 +248,28 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   });
   const red = gateStructured ? [...gateChecked, ...independentFailed.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independentFailed;
   const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
+  // A scan check that failed installing its scanner did not scan (card T0-SCAN-SETUP-STEP). Fails closed: the check is one red
+  // record whose identities agree, no red line is unresolved, and every step line of the check names a failed listed step.
+  const setupStep = (check: string): string | undefined => {
+    if (unresolvedRed || !identitiesAgree || red.filter((c) => c.name === check).length !== 1) return undefined;
+    const placed = steps.filter((s) => s.check === check);
+    if (!placed.length || !placed.every((s) => s.step !== null && s.step.conclusion === 'failure' && scanSetupSteps.includes(s.step.name))) return undefined;
+    return placed[0]!.step!.name;
+  };
+  const setupFailures = new Map<string, string>();
+  const findings = securityHits.filter(({ check }) => {
+    const step = check === undefined ? undefined : setupStep(check);
+    if (step === undefined) return true;
+    setupFailures.set(check!, step);
+    return false;
+  });
   let cls: CiFailureClass;
-  if (securityHits.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
+  if (findings.length > 0) cls = 'security'; // a red secret or security scan is never rerun and never repaired blind
   else if (codeHits > 0) cls = 'code-defect'; // any deterministic failure evidence wins; repair first
   else if (!unresolvedRed && identitiesAgree && red.length > 0 && new Set(independent.map((j) => j.name)).size === independent.length && new Set(red.map((c) => c.name)).size === red.length && red.every(evidenced)) cls = 'transient';
   else cls = 'unknown';
-  return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(securityHits).values()].map((s) => `security: ${s}`).concat(evidence) };
+  const setupNotes = cls === 'security' ? [] : [...setupFailures].map(([check, step]) => `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(step)} before its scan`);
+  return { class: cls, failedJobs: failed.map((j) => j.name), evidence: [...new Set(findings.map((f) => f.hit)).values()].map((s) => `security: ${s}`).concat(evidence, setupNotes) };
 }
 
 export interface RerunDecision {

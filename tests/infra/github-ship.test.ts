@@ -280,7 +280,7 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
       let pushes = 0;
       const script = runnerWith({ 'gh api repos/o/r/commits': () => ({ stdout: JSON.stringify({ check_runs: runsFor() }) }), 'git push': () => { pushes += 1; return {}; }, 'gh pr merge': () => { merges += 1; return {}; }, ...extra });
       // No ship path is injected: the runner builds it from the config, so the block below is the only way the options reach the gate.
-      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github, ...(ci ? { ci } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, gateRequired: true, shipPath: 'github', repository: 'o/r', github, ...(ci ? { ci: { ...fx.config.ci, ...ci } } : {}) }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, now: fx.now, runner: script });
       const shipped = runner.next(fx.goal(goal.id), card, built);
       const skills: string[] = shipped.directive.kind === 'build' ? (shipped.directive.skills ?? []) : [];
       return { kind: shipped.directive.kind, state: shipped.run.state, stopReason: shipped.run.stop?.reason, narration: shipped.directive.narration, merges, pushes, reruns: shipped.run.ci.reruns.length, skills, pendingRepair: shipped.run.pendingRepair, dodReceipt: shipped.run.dodReceipt, rerunIds: shipped.run.ci.reruns.map((x) => x.runId), counted: shipped.run.effort?.attempts.filter((a) => a.outcome === 'fail').length ?? 0 };
