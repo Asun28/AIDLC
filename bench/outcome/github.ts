@@ -2,18 +2,8 @@
 // `gh api --paginate --slurp <GET endpoint>`, every git call is `git log`. Each command runs once; one that fails, or
 // whose output is not the expected shape, becomes one `github_errors` row, and the rows of every other command are kept.
 import type { SyncRunner } from '../../src/probes/exec.ts';
-import type { Row } from './ingest.ts';
+import type { GithubTable, Row } from './ingest.ts';
 
-/** The GitHub tables with their columns, in the key order `writeTables` writes. */
-export const GITHUB_COLUMNS = {
-  prs: ['number', 'headRef', 'baseRef', 'state', 'createdAt', 'mergedAt', 'closedAt', 'mergeCommitSha', 'headSha'],
-  checks: ['sha', 'name', 'status', 'conclusion', 'startedAt', 'completedAt', 'runAttempt'],
-  reverts: ['sha', 'date', 'revertedSha', 'daysAfter'],
-  branch_commits: ['number', 'sha', 'date', 'modelCoAuthor'],
-  github_errors: ['command', 'exit', 'stderr', 'problem'],
-  required_checks: ['name'],
-} as const;
-export type GithubTable = keyof typeof GITHUB_COLUMNS;
 /** The rows a reader returns and one `github_errors` row per command that failed. */
 export type Read = { rows: Row[]; errors: Row[] };
 
@@ -21,8 +11,8 @@ const TIMEOUT_MS = 120_000;
 const SHA = /^[0-9a-f]{40}$/;
 /** A `Co-Authored-By:` line that names Claude, Codex or GPT, in any letter case. */
 const MODEL_TRAILER = /^co-authored-by:.*(claude|codex|gpt)/im;
-/** One `git log` record: the sha and the strict ISO commit date on the first line, then the message, then a NUL. */
-const LOG_FORMAT = '--format=%H %cI%n%B%x00';
+/** One `git log` record: the sha and the strict ISO commit date on the first line, the parent shas on the second, then the message, then a NUL. */
+const LOG_FORMAT = '--format=%H %cI%n%P%n%B%x00';
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json | undefined => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Json) : undefined);
@@ -129,18 +119,18 @@ export function checkRuns(runner: SyncRunner, repository: string, shas: string[]
   return read;
 }
 
-interface Commit { sha: string; date: string; time: number; message: string }
+interface Commit { sha: string; date: string; time: number; parents: number; message: string }
 
-/** The commits of one `git log` call, in the order git lists them, the date as UTC ISO. A record that is not a sha, a date and a message is a problem and no commit. */
+/** The commits of one `git log` call, in the order git lists them, the date as UTC ISO. A record that is not a sha, a date, a line of parents and a message is a problem and no commit. */
 function gitLog(runner: SyncRunner, args: string[]): { commits: Commit[]; close: Command['close'] } {
   const c = start(runner, 'git', ['log', LOG_FORMAT, ...args]);
   const commits: Commit[] = [];
   for (const record of (c.out ?? '').split('\0')) {
     if (record.trim() === '') continue;
-    const m = /^\n?([0-9a-f]{40}) (\S+)\n([\s\S]*)$/.exec(record);
+    const m = /^\n?([0-9a-f]{40}) (\S+)\n([0-9a-f ]*)\n([\s\S]*)$/.exec(record);
     const time = m ? Date.parse(m[2]!) : Number.NaN;
-    if (!m || Number.isNaN(time)) c.problems.push('a record is not "<sha> <date>" and a message');
-    else commits.push({ sha: m[1]!, date: new Date(time).toISOString(), time, message: m[3]! });
+    if (!m || Number.isNaN(time)) c.problems.push('a record is not "<sha> <date>", a line of parents and a message');
+    else commits.push({ sha: m[1]!, date: new Date(time).toISOString(), time, parents: m[3]!.split(' ').filter((parent) => parent !== '').length, message: m[4]! });
   }
   return { commits, close: c.close };
 }
@@ -165,7 +155,7 @@ export function reverts(runner: SyncRunner, base: string): Read {
 
 /**
  * R4: for each pull request merged into `base`, the commits reachable from its head and not from the first parent of
- * its merge commit, which is the base before the merge. A pull request that is not merged, or merged into another
+ * its merge commit, which is the base before the merge; `merge` is true for a commit with more than one parent. A pull request that is not merged, or merged into another
  * branch, is not read. A merged one without a 40-hex `headSha` and `mergeCommitSha` is an error row and no git call.
  */
 export function branchCommits(runner: SyncRunner, base: string, pulls: Row[]): Read {
@@ -179,7 +169,7 @@ export function branchCommits(runner: SyncRunner, base: string, pulls: Row[]): R
     }
     const log = gitLog(runner, [head, '--not', `${merge}^1`, '--']);
     log.close(read.errors);
-    for (const c of log.commits) read.rows.push({ number: p['number'], sha: c.sha, date: c.date, modelCoAuthor: MODEL_TRAILER.test(c.message) });
+    for (const c of log.commits) read.rows.push({ number: p['number'], sha: c.sha, date: c.date, merge: c.parents > 1, modelCoAuthor: MODEL_TRAILER.test(c.message) });
   }
   return read;
 }

@@ -3,7 +3,7 @@
 CREATE OR REPLACE VIEW prs AS SELECT * FROM read_json('prs.jsonl', format = 'newline_delimited', columns = {number: 'BIGINT', headRef: 'VARCHAR', baseRef: 'VARCHAR', state: 'VARCHAR', createdAt: 'VARCHAR', mergedAt: 'VARCHAR', closedAt: 'VARCHAR', mergeCommitSha: 'VARCHAR', headSha: 'VARCHAR'});
 CREATE OR REPLACE VIEW checks AS SELECT * FROM read_json('checks.jsonl', format = 'newline_delimited', columns = {sha: 'VARCHAR', name: 'VARCHAR', status: 'VARCHAR', conclusion: 'VARCHAR', startedAt: 'VARCHAR', completedAt: 'VARCHAR', runAttempt: 'BIGINT'});
 CREATE OR REPLACE VIEW reverts AS SELECT * FROM read_json('reverts.jsonl', format = 'newline_delimited', columns = {sha: 'VARCHAR', date: 'VARCHAR', revertedSha: 'VARCHAR', daysAfter: 'DOUBLE'});
-CREATE OR REPLACE VIEW branch_commits AS SELECT * FROM read_json('branch_commits.jsonl', format = 'newline_delimited', columns = {number: 'BIGINT', sha: 'VARCHAR', date: 'VARCHAR', modelCoAuthor: 'BOOLEAN'});
+CREATE OR REPLACE VIEW branch_commits AS SELECT * FROM read_json('branch_commits.jsonl', format = 'newline_delimited', columns = {number: 'BIGINT', sha: 'VARCHAR', date: 'VARCHAR', merge: 'BOOLEAN', modelCoAuthor: 'BOOLEAN'});
 CREATE OR REPLACE VIEW github_errors AS SELECT * FROM read_json('github_errors.jsonl', format = 'newline_delimited', columns = {command: 'VARCHAR', exit: 'BIGINT', stderr: 'VARCHAR', problem: 'VARCHAR'});
 CREATE OR REPLACE VIEW required_checks AS SELECT * FROM read_json('required_checks.jsonl', format = 'newline_delimited', columns = {name: 'VARCHAR'});
 
@@ -32,25 +32,30 @@ SELECT sha,
 FROM runs GROUP BY sha;
 
 -- One row per card attempt (card_attempts). checksGreen, notReverted and noHumanCommit are null for a card without a
--- merged pull request. A merge commit without a run of a required check is not green unless no check is required; a
--- merged pull request without branch commits has no proof and noHumanCommit is false.
+-- merged pull request. A merge commit without a run of a required check is not green unless no check is required.
+-- noHumanCommit: null when the pull request has no branch_commits row (they could not be read), else whether every
+-- row is a merge or has modelCoAuthor. accepted takes null as passing, acceptedStrict does not.
 CREATE OR REPLACE VIEW accepted_changes AS
 WITH parts AS (
   SELECT a.cardId, m.number AS prNumber, m.number IS NOT NULL AS merged,
     CASE WHEN m.number IS NOT NULL THEN coalesce(g.green, (SELECT count(*) FROM required_checks) = 0) END AS checksGreen,
     CASE WHEN m.number IS NOT NULL THEN NOT EXISTS (SELECT 1 FROM reverts v WHERE v.revertedSha = m.mergeCommitSha AND v.daysAfter <= 14) END AS notReverted,
-    CASE WHEN m.number IS NOT NULL THEN coalesce((SELECT bool_and(b.modelCoAuthor) FROM branch_commits b WHERE b.number = m.number), false) END AS noHumanCommit,
+    (SELECT bool_and(b.merge OR b.modelCoAuthor) FROM branch_commits b WHERE b.number = m.number) AS noHumanCommit,
     NOT EXISTS (SELECT 1 FROM review_decisions d LEFT JOIN cards c ON c.id = d.cardId WHERE d.stopReview AND (d.cardId = a.cardId OR c.superseded_by = a.cardId)) AS noRuling
   FROM card_attempts a LEFT JOIN card_merge m ON m.cardId = a.cardId LEFT JOIN commit_checks g ON g.sha = m.mergeCommitSha
 )
-SELECT *, merged AND checksGreen AND notReverted AND noHumanCommit AND noRuling AS accepted FROM parts;
+SELECT *, merged AND checksGreen AND notReverted AND noRuling AND noHumanCommit IS DISTINCT FROM false AS accepted,
+  merged AND checksGreen AND notReverted AND noRuling AND coalesce(noHumanCommit, false) AS acceptedStrict
+FROM parts;
 
--- Accepted changes over card attempts, and the card attempts for which each boolean is false.
+-- Accepted and strictly accepted changes over card attempts, the card attempts for which each boolean is false, and
+-- the card attempts with a merged pull request whose noHumanCommit is null.
 CREATE OR REPLACE VIEW summary_pr_success AS
 SELECT count(*) AS card_attempts, count(*) FILTER (WHERE accepted) AS accepted, count(*) FILTER (WHERE accepted) / count(*) AS pr_success_rate,
+  count(*) FILTER (WHERE acceptedStrict) AS accepted_strict, count(*) FILTER (WHERE acceptedStrict) / count(*) AS pr_success_rate_strict,
   count(*) FILTER (WHERE NOT merged) AS failing_merged, count(*) FILTER (WHERE NOT checksGreen) AS failing_checksGreen,
   count(*) FILTER (WHERE NOT notReverted) AS failing_notReverted, count(*) FILTER (WHERE NOT noHumanCommit) AS failing_noHumanCommit,
-  count(*) FILTER (WHERE NOT noRuling) AS failing_noRuling
+  count(*) FILTER (WHERE NOT noRuling) AS failing_noRuling, count(*) FILTER (WHERE merged AND noHumanCommit IS NULL) AS unknown_noHumanCommit
 FROM accepted_changes;
 
 -- Hours from the startedAt of the earliest run of a card to the mergedAt of its merged pull request (n cards), and

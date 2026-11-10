@@ -64,7 +64,9 @@ npm run typecheck && node --test tests/surface/outcome-github.test.ts tests/surf
 
 Attempt 1. RED: commit a889e3bb (the test file and a seam `github.ts` whose readers return empty results); `node --test tests/surface/outcome-github.test.ts` failed 7 of 7 on assertions with `DUCKDB_BIN` set, and 6 of 7 with 1 skipped without it. The first GREEN state failed the DoD with DuckDB on `T1-OUTCOME-INGEST acceptance 5` (four more `summary_*` views than it lists) and its ingest spawns reached `gh`; the card was amended on main (8e4b5fd5, R6 and acceptance 8), main was merged into the branch, and the two spawn helpers of the ingest test now pass `--no-github`.
 
-DoD, real `gh` on PATH, no stand-in: exit 0 without `DUCKDB_BIN` (17 tests, 14 pass, 3 skipped `no duckdb binary`) and exit 0 with it (17 tests, 17 pass).
+Second amendment (82cf8069: `merge`, the null `noHumanCommit`, `acceptedStrict`, the null count, the columns in `ingest.ts`). RED: commit 469e23c1 (test changes only); 3 of 7 failed on assertions with `DUCKDB_BIN` (acceptance 3 and 4 on the `git log` format and the `merge` field, acceptance 6 and 9 on the summary columns), 2 failed and 1 was skipped without it.
+
+DoD on the final candidate, real `gh` on PATH, no stand-in: exit 0 without `DUCKDB_BIN` (17 tests, 14 pass, 3 skipped `no duckdb binary`) and exit 0 with it (17 tests, 17 pass).
 
 ### Acceptance
 | Item | Test | Result |
@@ -72,11 +74,12 @@ DoD, real `gh` on PATH, no stand-in: exit 0 without `DUCKDB_BIN` (17 tests, 14 p
 | 1 | `outcome-github.test.ts`, `acceptance 1: pullRequests returns the rows of both pages ...` | pass |
 | 2 | `acceptance 2: checkRuns gives a check run of a workflow run on attempt 2 runAttempt 2 ...` | pass |
 | 3 | `acceptance 3: reverts finds a revert made 3 days after its target ...` (real git) | pass |
-| 4 | `acceptance 4: branchCommits lists the commits of each merged branch ...` (real git) | pass |
+| 4 | `acceptance 4: branchCommits lists the commits of each merged branch ...` (real git): pull request 11 lists `aM`, a merge of main into the branch, with `merge` true, and `n1`, on main before the merge, is not listed | pass |
 | 5 | `acceptance 5: a runner exit of 1, a timeout, output that is not JSON and a 429 body ...` and `acceptance 5 through run.ts: a failing gh call is a row of github_errors.jsonl ...` | pass |
-| 6 | `acceptance 6: run.ts prints the PR success rate, the PR lead time, the CI shares and the reconciliation ...` | pass with `DUCKDB_BIN`, skipped without |
+| 6 | `acceptance 6 and 9: run.ts prints the PR success rate, the PR lead time, the CI shares and the reconciliation ...` | pass with `DUCKDB_BIN`, skipped without |
 | 7 | README sections "GitHub tables (`github.ts`)" and "Views (`views/30-github.sql`)" | reviewer-verified against the diff |
 | 8 | `outcome-ingest.test.ts`, changed only by `'--no-github'` in `runOutcome` and `spawnRun` | 10 pass with `DUCKDB_BIN`; 8 pass, 2 skipped without |
+| 9 | the same test as item 6. T1-A's only branch commit without a trailer is the merge `aM`: accepted and acceptedStrict 1 of 4. Head of its pull request not in the repository: `accepted` 1, `accepted_strict` 0, `unknown_noHumanCommit` 1, `failing_noHumanCommit` 0. Its pull request holding `f2`, no merge and no trailer: `accepted` 0, `accepted_strict` 0, `failing_noHumanCommit` 1, `unknown_noHumanCommit` 0 | pass with `DUCKDB_BIN`, skipped without |
 
 ### Inputs and failure paths
 | Input | Decision | Test |
@@ -96,35 +99,36 @@ DoD, real `gh` on PATH, no stand-in: exit 0 without `DUCKDB_BIN` (17 tests, 14 p
 | a revert line on a commit that is not first-parent; a `Revert` subject with a sha and no reverts line | no row | acceptance 3 |
 | a pull request that is open, or merged into another branch | no git call, no row, no error | acceptance 4 (20, 21) |
 | a merged pull request without a 40-hex `headSha` and `mergeCommitSha` | one row, no git call, the others read | acceptance 4 (23) |
-| a failing git call for one pull request | one row, the others read | acceptance 4 (22), 6 (the fourth variant) |
+| a failing git call for one pull request | one row, the others read; `noHumanCommit` null for its card | acceptance 4 (22), 9 |
+| a branch commit with more than one parent | `merge` true; not counted by `noHumanCommit` | acceptance 4, 9 |
 | no `repository` in the configuration | one row, no `gh` call, `reverts` still read | acceptance 5 through run.ts (`unconfigured`) |
 | the pull-request call fails | one row in `github_errors.jsonl`, the ingest tables and `reverts.jsonl` written | acceptance 5 through run.ts (`noPulls`) |
 | an `aidlc.config.json` that does not parse | `run.ts` exits 1 before any write | not tested |
 
-`bench/outcome/ingest.ts` is outside `allow_paths` and `writeTables` writes only the tables `COLUMNS` names, so `run.ts` adds the six tables to `COLUMNS` at run time (`Object.assign(COLUMNS, GITHUB_COLUMNS)`).
+The six tables' columns are `GITHUB_COLUMNS` in `bench/outcome/ingest.ts`; `writeTables` writes each of those tables it is given, and `run.ts` adds nothing to a constant. `ingestState`, `Tables` and `assertWritable` are unchanged.
 
 ### Mutants
-52 single replacements, each run against `tests/surface/outcome-github.test.ts` with `DUCKDB_BIN`; 51 killed.
+First sweep (before the second amendment): 52 single replacements, each run against `tests/surface/outcome-github.test.ts` with `DUCKDB_BIN`; 51 killed after four fixture cases were added for first-sweep survivors (no `stopReview` filter, the missing-pull-request count, `>= 1` for a rerun, latest merged pull request). Second sweep (after it): the 49 below that touch R4, R7 and R8; 47 killed. R1, R2, R3, R5 and R6 mutants are from the first sweep.
 
-| Requirement | Mutants (all killed unless noted) |
+| Requirement | Mutants (killed unless noted) |
 |---|---|
 | R1 | `mergedAt` from `closed_at`; `headSha` from `base.sha`; only the first page read |
 | R2 | 1 for a check run of no workflow run; no dedup of shas; the workflow-run call made for every commit |
 | R3 | no `--first-parent`; days as hours; any 40 hex as the reverted sha; 0 for a sha not on the base |
-| R4 | no `--not <merge>^1`; trailer without `Co-Authored-By:`; without the `i` flag; without GPT; no `baseRef` filter |
+| R4 | no `--not <merge>^1`; trailer without `Co-Authored-By:`; without the `i` flag; without GPT; no `baseRef` filter; `merge` for one parent or more; `merge` for three parents or more |
 | R5 | output of a failed command read; no timeout branch; the whole stderr; the first problem only; `break` after a bad page |
 | R6 | `30-github.sql` run with `--no-github`; no `cwd` on the children; checks of heads only; checks of unmerged pull requests; no required checks |
-| R7 | join by `headRef` only; by `prNumber` or `headRef`; no 14-day bound; first run for `green`; no every-name count; no required filter; any success; `noHumanCommit` true without commits; no successor clause; no `stopReview` filter; checks of the head; `accepted` without each of `checksGreen`, `notReverted`, `noHumanCommit`, `noRuling`; `accepted` without `merged` survived |
-| R8 | latest run for the lead time; p90 as p50; latest merged pull request; no `mergeVerified` in the missing-pull-request count; `>= 1` for a rerun; last run for `first_failed`; unmerged pull requests in `summary_ci`; open pull requests as closed; no card-id filter; no `mergedAt` or `mergeVerified` condition in the reconciliation |
+| R7 | join by `headRef` only; by `prNumber` or `headRef`; no 14-day bound; first run for `green`; no every-name count; no required filter; any success; no successor clause; no `stopReview` filter; checks of the head; `noHumanCommit` counting merges; `bool_or`; null as false; null as true; `accepted` with null failing; `accepted` without `noHumanCommit`, `checksGreen`, `notReverted`, `noRuling`; `acceptedStrict` with null passing; `acceptedStrict` without `noHumanCommit`, `checksGreen`, `notReverted`, `noRuling`; `accepted` without `merged` and `acceptedStrict` without `merged` survived |
+| R8 | the null count without `merged`; the null count counting false; the strict rate and the strict count from `accepted`; `failing_noHumanCommit` counting null; latest run for the lead time; p90 as p50; latest merged pull request; no `mergeVerified` in the missing-pull-request count; `>= 1` for a rerun; last run for `first_failed`; unmerged pull requests in `summary_ci`; open pull requests as closed; no card-id filter; no `mergedAt` or `mergeVerified` condition in the reconciliation |
 
-The survivor is equivalent: without a merged pull request `checksGreen`, `notReverted` and `noHumanCommit` are null, so the conjunction is never true. Four mutants survived the first sweep (no `stopReview` filter, the missing-pull-request count, `>= 1`, latest merged pull request); the fixture gained a formal pass on T1-A, a head check on attempt 1, a variant where T1-D has no `mergeVerified` run, and a second merged pull request of T1-REV, and all four are killed.
+The two survivors are equivalent: without a merged pull request `checksGreen` and `notReverted` are null, so neither conjunction is ever true.
 
 ### Real run
-`node bench/outcome/run.ts --duckdb <path> --state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks --out <temp>` from this worktree on 2026-11-10, exit 0 in 9 min 8 s. 773 `gh` calls (1 for pull requests, 386 for check runs, 386 for workflow runs; derived from the tables) and 194 `git log` calls.
+`node bench/outcome/run.ts --duckdb <path> --state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks --out <temp>` from this worktree on 2026-11-10, twice: before the second amendment (exit 0 in 9 min 8 s) and after it (exit 0 in 8 min 57 s). Each run made 773 `gh` calls (1 for pull requests, 386 for check runs, 386 for workflow runs; derived from the tables) and 194 `git log` calls. The numbers below are from the second run; `summary_lead_time_pr`, `summary_ci` and `summary_reconcile` printed the same bytes in both.
 
-- Rows: `prs` 208 (193 merged), `checks` 1882, `reverts` 1, `branch_commits` 979, `required_checks` 4, `github_errors` 52.
-- `github_errors`: all 52 are `git log <headSha> --not <mergeCommitSha>^1 --`, exit 128, `fatal: bad object <sha>`: the head commit of a merged pull request is no longer in the local repository. Those cards count under `failing_noHumanCommit`.
-- `summary_pr_success`: 263 card attempts, 59 accepted, rate 0.224; failing `merged` 85, `checksGreen` 7, `notReverted` 0, `noHumanCommit` 114, `noRuling` 36.
+- Rows: `prs` 208 (193 merged), `checks` 1882, `reverts` 1, `branch_commits` 979 (226 with `merge`), `required_checks` 4, `github_errors` 52.
+- `github_errors`: all 52 are `git log <headSha> --not <mergeCommitSha>^1 --`, exit 128, `fatal: bad object <sha>`: the head commit of a merged pull request is no longer in the local repository.
+- `summary_pr_success`: 263 card attempts; `accepted` 151, rate 0.574; `accepted_strict` 110, rate 0.418; failing `merged` 85, `checksGreen` 7, `notReverted` 0, `noHumanCommit` 7, `noRuling` 36; `unknown_noHumanCommit` 42. Before the amendment, with a merge counted as a human commit and an unreadable branch as false, the one rate was 59 of 263 (0.224) with `noHumanCommit` failing 114.
 - `summary_lead_time_pr`: p50 0.65 h, p90 6.55 h, n 178, `merged_cards_without_pr` 0.
 - `summary_ci`: 193 merged pull requests, `rerun_share` 0.0052, `first_attempt_failed_share` 0.0052.
 - `summary_reconcile`: `merged_pr_without_mergeVerified` 24 cards, `closed_unmerged` 15 cards, `mergeVerified_without_merged_pr` none.

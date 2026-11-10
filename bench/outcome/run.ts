@@ -9,8 +9,8 @@ import { parseArgs } from 'node:util';
 import { loadProjectConfig } from '../../src/config.ts';
 import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
-import { GITHUB_COLUMNS, githubTables } from './github.ts';
-import { COLUMNS, ingestState, writeTables, type Row, type Tables } from './ingest.ts';
+import { githubTables } from './github.ts';
+import { ingestState, writeTables, type GithubTable, type Row, type Tables } from './ingest.ts';
 
 /** The view file that reads the GitHub tables; not run with --no-github, which does not write them. */
 const GITHUB_VIEWS = '30-github.sql';
@@ -28,19 +28,17 @@ function main(): number {
   const cardsDir = path.resolve(values.cards ?? path.join(mainRoot(), loadProjectConfig(mainRoot()).config.cardsDir));
   const outDir = path.resolve(values.out ?? path.join(mainRoot(), '_local', 'outcome'));
 
-  let tables: Record<string, Row[]> = ingestState({ stateDir, cardsDir });
+  let tables: Tables & Partial<Record<GithubTable, Row[]>> = ingestState({ stateDir, cardsDir });
   if (github) {
     // The main checkout is resolved here, in the invocation directory, and every gh and git child runs in it.
     const repoRoot = mainRoot();
     const config = loadProjectConfig(repoRoot).config;
     const runner: SyncRunner = (command, args, options) => runSync(command, args, { ...options, cwd: repoRoot });
     tables = { ...tables, ...githubTables(runner, config.repository, config.base, config.github.requiredChecks) };
-    // writeTables writes the tables COLUMNS names, and ingest.ts is outside this card: the six tables are added to it here.
-    Object.assign(COLUMNS, GITHUB_COLUMNS);
   }
   // The only write of this script: writeTables refuses an outDir inside either directory before it creates anything.
-  writeTables(tables as Tables, outDir, [stateDir, cardsDir]);
-  process.stderr.write(`outcome: ${Object.keys(COLUMNS).map((name) => `${name} ${tables[name]!.length}`).join(', ')}; written to ${outDir}\n`);
+  writeTables(tables, outDir, [stateDir, cardsDir]);
+  process.stderr.write(`outcome: ${Object.entries(tables).map(([name, rows]) => `${name} ${rows.length}`).join(', ')}; written to ${outDir}\n`);
 
   // A given path (absolute, or holding a separator) is resolved here, against the invocation directory, since the child
   // runs in outDir. A bare name is left to the lookup of the operating system.

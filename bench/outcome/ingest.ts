@@ -19,6 +19,17 @@ export type TableName = keyof typeof COLUMNS;
 export type Row = Record<string, unknown>;
 export type Tables = Record<TableName, Row[]>;
 
+/** The tables of bench/outcome/github.ts (card T1-OUTCOME-GITHUB) with their columns. `writeTables` writes each one it is given. */
+export const GITHUB_COLUMNS = {
+  prs: ['number', 'headRef', 'baseRef', 'state', 'createdAt', 'mergedAt', 'closedAt', 'mergeCommitSha', 'headSha'],
+  checks: ['sha', 'name', 'status', 'conclusion', 'startedAt', 'completedAt', 'runAttempt'],
+  reverts: ['sha', 'date', 'revertedSha', 'daysAfter'],
+  branch_commits: ['number', 'sha', 'date', 'merge', 'modelCoAuthor'],
+  github_errors: ['command', 'exit', 'stderr', 'problem'],
+  required_checks: ['name'],
+} as const;
+export type GithubTable = keyof typeof GITHUB_COLUMNS;
+
 /** The entries of `dir` in name order: its directories, or its files ending in `suffix`. Undefined when `dir` is absent or not a directory. */
 function entries(dir: string, suffix?: string): string[] | undefined {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return undefined;
@@ -132,14 +143,20 @@ function assertWritable(outDir: string, readOnly: string[]): void {
 /**
  * Writes `<table>.jsonl` under `outDir`, one row per line: the keys in the order of `COLUMNS` (a missing one as null) and
  * the lines sorted by UTF-16 code unit, so the order the rows are given in changes no byte. An empty table is an empty file.
+ * A table of `GITHUB_COLUMNS` is written the same way when `tables` holds it, and no file of its name is touched when it does not.
  * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
  * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables, outDir: string, readOnly: string[] = []): void {
+export function writeTables(tables: Tables & Partial<Record<GithubTable, Row[]>>, outDir: string, readOnly: string[] = []): void {
   assertWritable(outDir, readOnly);
   mkdirSync(outDir, { recursive: true });
-  for (const name of Object.keys(COLUMNS) as TableName[]) {
-    const lines = tables[name].map((row) => JSON.stringify(Object.fromEntries(COLUMNS[name].map((column) => [column, row[column] ?? null])))).sort();
+  const given: [name: string, columns: readonly string[], rows: Row[] | undefined][] = [
+    ...(Object.keys(COLUMNS) as TableName[]).map((name) => [name, COLUMNS[name], tables[name]] as [string, readonly string[], Row[]]),
+    ...(Object.keys(GITHUB_COLUMNS) as GithubTable[]).map((name) => [name, GITHUB_COLUMNS[name], tables[name]] as [string, readonly string[], Row[] | undefined]),
+  ];
+  for (const [name, columns, rows] of given) {
+    if (rows === undefined) continue;
+    const lines = rows.map((row) => JSON.stringify(Object.fromEntries(columns.map((column) => [column, row[column] ?? null])))).sort();
     const file = path.join(outDir, `${name}.jsonl`);
     rmSync(file, { force: true });
     writeFileSync(file, lines.map((line) => `${line}\n`).join(''), { flag: 'wx' });
