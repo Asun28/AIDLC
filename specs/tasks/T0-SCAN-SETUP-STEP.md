@@ -1,0 +1,61 @@
+---
+id: T0-SCAN-SETUP-STEP
+title: "A red secret-scan check whose failed step is a listed scanner setup step is classified by its other evidence, not as a security finding, so a scanner download outage stops as `ci`, not `risk`"
+status: todo
+branch: T0-SCAN-SETUP-STEP
+worktree: D:\wt\AIDLC\T0-SCAN-SETUP-STEP
+allow_paths:
+  - src/core/ci-policy.ts
+  - src/config.ts
+  - src/loop/card-runner.ts
+  - src/cli/main.ts
+  - aidlc.config.json
+  - templates/aidlc.config.json
+  - tests/core/ci-policy.test.ts
+  - tests/scenarios/ci-rerun.test.ts
+  - tests/surface/templates.test.ts
+  - tests/infra/github-ship.test.ts
+  - docs/OPERATIONS.md
+  - docs/ARCHITECTURE.md
+  - CHANGELOG.md
+  - specs/tasks/T0-SCAN-SETUP-STEP.md
+dod_command: npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci-rerun.test.ts tests/surface/templates.test.ts
+dod_exit: 0
+requirements:
+  - R1. A red check whose name matches a secret or security scan (`SECURITY_CHECK_NAME`) shall not count as a security hit when all of these hold: at least one `[CI-GATE-STEP]` line names the check, and every step line that names it names a failed step listed in `ci.scanSetupSteps`; no step line that names the check, or whose check cannot be read (a blank check included), is malformed, a step line being malformed unless it is exactly the line the GitHub ship path prints (`gateStepLine`: one space after `[CI-GATE-STEP]`, then the JSON of `check` a non-blank string, `job` a job id of digits and `step` null or `number` a positive integer, `name` and `conclusion` strings, in that order, with no other or repeated key, no other spacing, and `/` written as `\/`); the check has at most one job record and at most one gate record, these agree on its conclusion, and it is one red check; no red gate line is unresolved. A hit from a job record marked `aggregate` (a receipt wrapper) is never such a check. The check is then classified as any other red check is (transient only on the structured evidence of T0-CI-RERUN-STRUCTURED, code-defect on code evidence in the log text, else unknown), and the classification's evidence ends with `scan-setup: <check> failed at <step> before its scan` for each such check, both names as JSON strings, also when another hit keeps the class `security`.
+  - R2. Every other red scan check shall stay `security` as before this card: no step line for the check, a null step, a failed step not on the list, an empty list, two step lines for the check with one not on the list, a malformed step line naming the check or naming no readable check, two job records or two gate records of the check, records of the check that disagree on its conclusion, an unresolved red gate line, an aggregate wrapper named for a scan; raw gitleaks output (`leaks found: N`, `RuleID:`) in the log text and an unparsed red gate line naming a scan are hits of their own and keep the class `security`.
+  - R3. `ProjectConfig` shall have a field `ci.scanSetupSteps` (non-blank strings) whose default is `["Install gitleaks (pinned version, checksum verified)"]`, the step of the shipped `security-scanners.yml` that installs the scanner before its scan step; `templates/aidlc.config.json` and `aidlc.config.json` carry it, and the card runner's CI gate and `aidlc ci classify --log` pass it to `classifyCiFailure`.
+  - R4. WHEN the gate output of run 42467444385 attempt 1 reaches the card runner (Gitleaks red at step 3, the install step, after `curl: (22) The requested URL returned error: 504`), the runner shall stop with STOP/ci, not STOP/risk, persist no rerun intent, and journal CI_CLASSIFIED with class `unknown`.
+  - R5. `docs/OPERATIONS.md` (the security class paragraph), `docs/ARCHITECTURE.md` (the outcome map's security clause, with the R1 conditions, the default list and the two readers of the configured list) and the CHANGELOG Unreleased section shall state R1 to R3.
+acceptance:
+  - 1. `tests/core/ci-policy.test.ts`: the gate and step lines of run 42467444385 attempt 1 classify as `unknown` under the default list, with no `security:` evidence and the `scan-setup:` evidence entry last. Fails before the fix. [R1] [R3] [dod arm 1]
+  - 2. Same file: each R2 case stays `security`, with no `scan-setup:` evidence where the check itself is not exempt and with it where raw gitleaks output is the remaining hit. [R2] [dod arm 1]
+  - 3. Same file: a scan setup failure whose step is also on `transientSteps` is `transient`; one beside a second red check with an `AssertionError` in the log is `code-defect`, also when that other check's records disagree on its conclusion; one beside a second red scan check stays `security` and keeps its `scan-setup:` evidence; `aidlc ci classify --log` on the run's gate output prints `unknown` under the default config and `security` under a config with `ci.scanSetupSteps` empty. [R1] [R3] [dod arm 1]
+  - 4. `tests/scenarios/ci-rerun.test.ts`: the card runner given the run's gate output stops with STOP/ci, persists no rerun intent and journals CI_CLASSIFIED class `unknown`; the existing R7 security tests pass unchanged. Fails before the fix. [R4] [dod arm 1]
+  - 5. `tests/surface/templates.test.ts`: every default `ci.scanSetupSteps` entry names a step of the shipped `security-scanners.yml` that comes before the step running `gitleaks git`, and `templates/aidlc.config.json` and `aidlc.config.json` parse to that default. [R3] [dod arm 1]
+  - 6. The docs and CHANGELOG state R1 to R3 (reviewer-verified against the diff). [R5]
+depends_on: []
+budget: 220
+tdd: true
+diagnosis:
+  root_cause: "`classifyCiFailure` (src/core/ci-policy.ts:189 and :203 at 19b0da8) counts every red check whose name matches `SECURITY_CHECK_NAME` as a security hit from the name alone; the `[CI-GATE-STEP]` line that places the failure in the install step is read only as transient evidence, so a Gitleaks job that never scanned is `security` and the card runner (src/loop/card-runner.ts:2832) stops with STOP/risk."
+  repro: "PR 236, run 42467444385 attempt 1: job `Gitleaks (committed history)` failed at step 3 `Install gitleaks (pinned version, checksum verified)` (curl error 504 downloading the binary) and step 4 `Scan committed history` was skipped; T1-FINDING-REPRO stopped with STOP/risk \"security gate red\". At 19b0da8 `aidlc ci classify --log` on that gate line, its step line and the curl line prints class `security`. The user's rerun of the job scanned 1275 commits with no leaks."
+  same_class: "Each push into `securityHits` in `classifyCiFailure` (a failed independent job, a red gate check, an unparsed red gate line, raw gitleaks output) and `aidlc ci classify --log`; list each in the attempt evidence as covered by R1, kept by R2, or not affected."
+sweep: "grep -n \"SECURITY_CHECK_NAME\\|securityHits\\|transientSteps\" src. Lines are from main at 19b0da8; read them again at PREPARE."
+forbid: [weakening or skipping a test to go green, granting a rerun to a scan check other than through `ci.transientSteps` as any check gets one, treating a failed scan step as setup, editing .aidlc state by hand]
+non_goals: [adding the install step to `ci.transientSteps`, changing the step lines the GitHub ship path prints, changing `security-scanners.yml`, a new CI failure class]
+hygiene: "`tests/infra/github-ship.test.ts` changes only where it builds a `ci` config, which gains the new field. A step line names only the first failed step of a job, so list a setup step only when its failure skips the scan (a scan step without `if: always()`); the docs state that limit. Outside text in the evidence is a JSON string (T0-NARRATION-QUOTE)."
+doc_sync: docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md
+---
+
+# T0-SCAN-SETUP-STEP
+
+## Deliverable
+A Gitleaks job that fails while installing the scanner, before any scan, no longer stops the card as a security finding (STOP/risk, "remove the finding"); it is classified by its other evidence and, with none, stops as an unknown CI failure (STOP/ci) for diagnosis.
+
+## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
+```powershell
+npm run typecheck && node --test tests/core/ci-policy.test.ts tests/scenarios/ci-rerun.test.ts tests/surface/templates.test.ts
+```
+- Expected exit code: 0
+- Assertion: every acceptance test above passes.
