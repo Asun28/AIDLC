@@ -59,6 +59,7 @@ RED 5a358a9 (tests only, `node --test tests/infra/board.test.ts tests/scenarios/
 - acceptance 4 (owner lease) fails at `assert.match(out, /^- \*\*Arc\*\*: verdict=wait /m)` with the Arc line `verdict=stop workers=2 wave=- ready=-`.
 - acceptance 2 and acceptance 4 (no owners) pass before the change: they pin the behaviour R3 keeps.
 - acceptance 3 passes before the change: the dispatch already read the card lease once and the board read none; the test fails if the board reads the lease a second time during `controller.next`.
+- RED 57be235 (acceptance 6, on 49b5885 plus the test): fails at `tests/scenarios/ownership-wait.test.ts:201` `assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text))` with the row `| [-] | T1-HELLO | STOP (lease live) | ... ; the goal waits on owner win-B until 2026-09-11T00:10:00.000Z |` after the goal was cancelled under the live card lease.
 - After RED, the expected row literal of acceptance 4 (owner lease) was corrected to the Deadline cell `2026-09-11T13:00:00.000Z` that `makeCardRun` gives every run; the RED failure was the Arc assertion before that line.
 
 | Item | Proof | Result |
@@ -68,5 +69,6 @@ RED 5a358a9 (tests only, `node --test tests/infra/board.test.ts tests/scenarios/
 | 3 | same file, "acceptance 3": `fx.leases.read` wrapped, one `controller.next` reads the card lease key exactly once | pass |
 | 4 | `tests/infra/board.test.ts` "board owner wait": with an owner the full row and `verdict=wait`; without, `[S]`, `STOP`, `verdict=stop`; existing tests unchanged | pass |
 | 5 | `docs/OPERATIONS.md` STOP reasons `ownership` row and `CHANGELOG.md` Unreleased state R1 and R3 under T0-BOARD-OWNER-WAIT | reviewer-verified |
+| 6 | `tests/scenarios/ownership-wait.test.ts` "T0-BOARD-OWNER-WAIT acceptance 6": goal cancelled with the card lease still live, `writeBoard(goal)` shows `| [S] | T1-HELLO | STOP |` and no `lease live` or `waits on owner` | pass |
 
 Same class: `outcomeOf` is unchanged; `cardOutcomes` is unchanged and `nextInRun` overrides its `stopped` outcome with the decision of `liveOwners`, the function the board uses. `renderWatch` is not affected: it prints the run state and the live lease rows separately and computes no verdict.

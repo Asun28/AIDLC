@@ -316,10 +316,12 @@ export class GoalController {
   /**
    * The live owner of each projected card whose run is in STOP for `ownership`, not merged, under a card lease that is
    * unreleased and not expired at `now`: the one decision the dispatch's wait and the board share (card
-   * T0-BOARD-OWNER-WAIT R2). A lease that cannot be read keeps that card stopped.
+   * T0-BOARD-OWNER-WAIT R2). A lease that cannot be read keeps that card stopped. A goal that is terminal or in STOP or
+   * DONE has no live owners: `next` returns its stop or done, so its board shows the run as before (R1).
    */
   private liveOwners(goal: Goal, cards: Card[], runs: CardRun[], now: string): Map<string, Lease> {
     const owners = new Map<string, Lease>();
+    if (goal.terminal || goal.state === 'STOP' || goal.state === 'DONE') return owners;
     for (const r of runs) {
       const card = cards.find((c) => c.id === r.cardId);
       if (!card || !goal.cards.includes(r.cardId) || r.state !== 'STOP' || r.stop?.reason !== 'ownership' || outcomeOf(r, card) !== 'stopped') continue;
