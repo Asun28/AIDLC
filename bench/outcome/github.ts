@@ -208,6 +208,8 @@ export function reverts(runner: SyncRunner, base: string): Read {
  * R4: for each pull request merged into `base`, the commits reachable from its head and not from the first parent of
  * its merge commit, which is the base before the merge; `merge` is true for a commit with more than one parent. A pull request that is not merged, or merged into another
  * branch, is not read. A merged one without a 40-hex `headSha` and `mergeCommitSha` is an error row and no git call.
+ * So is one whose `headSha` is its `mergeCommitSha`, compared in lower case: the first parent of that commit is the branch
+ * commit before it and not the base, so every branch commit but the last would be left out.
  */
 export function branchCommits(runner: SyncRunner, base: string, pulls: Row[]): Read {
   const read: Read = { rows: [], errors: [] };
@@ -216,6 +218,10 @@ export function branchCommits(runner: SyncRunner, base: string, pulls: Row[]): R
     const [head, merge] = [lower(text(p['headSha'])) ?? '', lower(text(p['mergeCommitSha'])) ?? ''];
     if (!SHA.test(head) || !SHA.test(merge)) {
       read.errors.push({ command: 'git log', exit: null, stderr: '', problem: `merged pull request ${String(p['number'])} has no 40-hex headSha and mergeCommitSha` });
+      continue;
+    }
+    if (head === merge) {
+      read.errors.push({ command: 'git log', exit: null, stderr: '', problem: `merged pull request ${String(p['number'])} has the same headSha and mergeCommitSha (a fast-forward or indirect merge): the base before the merge cannot be read from git` });
       continue;
     }
     const log = gitLog(runner, ['--end-of-options', head, `^${merge}^1`, '--']);

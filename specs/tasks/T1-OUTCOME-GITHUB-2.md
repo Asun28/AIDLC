@@ -70,7 +70,7 @@ npm run typecheck && node --test tests/surface/outcome-github.test.ts tests/surf
 
 Attempt 1. Merge commit a669e7b1 (main at 93f7d494 into 42b211cc), then e21e49d4 (the amendment 6488e748). No RED commit; proved by mutants (the third run of item 12 by mutant e): a correct merge already has the behaviour of item 12, so its test passed when written. Items 1 to 11 are carried from 42b211cc; their detailed evidence and mutant table are in `specs/tasks/T1-OUTCOME-GITHUB.md`.
 
-DoD: `npm run typecheck` exit 0; the three test files exit 0 with `DUCKDB_BIN` (29 tests, 29 pass) and exit 0 without it (29 tests, 24 pass, 5 skipped `no duckdb binary`).
+DoD: `npm run typecheck` exit 0; the three test files exit 0 with `DUCKDB_BIN` (31 tests, 31 pass) and exit 0 without it (31 tests, 25 pass, 6 skipped `no duckdb binary`).
 
 | Item | Test (`outcome-github.test.ts` unless named) | Result |
 |---|---|---|
@@ -85,6 +85,7 @@ DoD: `npm run typecheck` exit 0; the three test files exit 0 with `DUCKDB_BIN` (
 | 10 | tests of items 2, 3, 4, 5 and 6 | pass (item 6 part with `DUCKDB_BIN`) |
 | 11 | tests of items 2, 3, 5 and 6 | pass (item 6 part with `DUCKDB_BIN`) |
 | 12 | `T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone ...`, three runs: `--no-usage`; both flags; neither flag with empty `--claude-dir` and `--codex-dir` | pass with `DUCKDB_BIN`, else skipped |
+| 13 | `T1-OUTCOME-GITHUB-2 acceptance 13: branchCommits gives a merged pull request whose headSha equals its mergeCommitSha ...` and `acceptance 13 through run.ts ...` | pass; the second with `DUCKDB_BIN`, else skipped |
 | 8 | `outcome-ingest.test.ts` (both flags) and `outcome-usage.test.ts` (`--no-github`), spawn arguments only | pass, view tests skipped without `DUCKDB_BIN` |
 
 Mutants of `run.ts` against the test of item 12, one expression each, file restored after each:
@@ -100,3 +101,7 @@ Mutants of `run.ts` against the test of item 12, one expression each, file resto
 | g. `20-cost.sql` left out when both stages run | killed by the run with neither flag: no cost view |
 
 Findings left by the owner's ruling of 2026-11-11: api-history-truncation at `bench/outcome/github.ts:90` (the check runs of a commit with more than 1000 check suites) and at `:110` (a workflow-run list past the 1000 results GitHub returns). Both are in `non_goals`; that code is unchanged from 42b211cc.
+
+Attempt 2, R3 decision 1, finding F1 (premerge-base-misidentified at `bench/outcome/github.ts:221`). RED: commit 731b4b17 (test only), both tests of item 13 failed on their assertions: `branchCommits` returned `ff2` alone with `modelCoAuthor` true and no error row, and `summary_pr_success` had `accepted_strict` 1 and `unknown_noHumanCommit` 0. Fix: `branchCommits` gives a merged pull request whose `headSha` is its `mergeCommitSha` (both in lower case) one `github_errors` row and makes no git call. `30-github.sql` is unchanged: `noHumanCommit` is `bool_and` over the rows of the pull request, which is null over no rows, never true. Mutants of the fix: the check removed, killed by both tests; the shas compared as given, killed by the upper-case pull request of the first test; the error row left out, killed by both.
+
+Class sweep, what `git log <head> ^<merge>^1` lists per merge shape: a squash merge and a merge commit have the base before the merge as first parent, so every branch commit is listed; a rebase merge has new shas on the base, so the original commits of the head are all listed (checked in a scratch repository); a head that is an ancestor of `<merge>^1` lists nothing, which is null and not true; a head merged through another branch's merge commit lists more commits, never fewer. Only the equal shape drops a commit, so nothing else changed.
