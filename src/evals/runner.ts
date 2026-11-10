@@ -141,10 +141,10 @@ export async function runEval(evalCase: EvalCase, provider: ModelProvider, optio
       result = await runInWorkspace(ws, options.cwd);
     }
   } catch (err) {
-    const left = closeWorkspace(ws, options.cwd);
+    const left = await closeWorkspace(ws, options.cwd);
     throw left ? new Error(`${(err as Error).message}; ${left}`, { cause: err }) : err;
   }
-  const left = closeWorkspace(ws, options.cwd);
+  const left = await closeWorkspace(ws, options.cwd);
   return left ? { ...result, detail: left } : result;
 
   async function runInWorkspace(w: Workspace, root: string): Promise<EvalResult> {
@@ -321,7 +321,7 @@ function openWorkspace(w: Workspace, root: string, ref: string): void {
 export interface RemoveDirDeps {
   remove?: (dir: string) => void;
   now?: () => number;
-  wait?: (ms: number) => void;
+  wait?: (ms: number) => void | Promise<void>;
 }
 
 /** Error codes of a removal that can succeed once another process lets go of the directory (on Windows, a process whose working directory is inside it). */
@@ -329,20 +329,15 @@ const BUSY_CODES = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY']);
 const REMOVE_RETRY_MS = 200;
 const REMOVE_LIMIT_MS = 10_000;
 
-/** Blocks the thread for `ms`. */
-function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 /**
  * Removes one directory. A call that throws EBUSY, EPERM or ENOTEMPTY is followed, 200 ms later, by another, until a
  * call succeeds or a busy call ends at or after 10000 ms on the clock since the first call; any other error ends the
- * calls at once. Returns whether a remove call returned without throwing.
+ * calls at once. The default wait is a timer it awaits. Resolves to whether a remove call returned without throwing.
  */
-export function removeDir(dir: string, deps: RemoveDirDeps = {}): boolean {
+export async function removeDir(dir: string, deps: RemoveDirDeps = {}): Promise<boolean> {
   const remove = deps.remove ?? ((d: string) => rmSync(d, { recursive: true, force: true }));
   const now = deps.now ?? Date.now;
-  const wait = deps.wait ?? sleepSync;
+  const wait = deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const start = now();
   for (;;) {
     try {
@@ -352,12 +347,12 @@ export function removeDir(dir: string, deps: RemoveDirDeps = {}): boolean {
       const code = (err as NodeJS.ErrnoException | undefined)?.code;
       if (!code || !BUSY_CODES.has(code) || now() - start >= REMOVE_LIMIT_MS) return false;
     }
-    wait(REMOVE_RETRY_MS);
+    await wait(REMOVE_RETRY_MS);
   }
 }
 
 /** Removes the link, the checkout (pruning when the remove fails) and the state directory, the holder and the state directory through `removeDir`, each with its own 10 s; returns what is left, if anything. */
-function closeWorkspace(w: Workspace, root: string): string | undefined {
+async function closeWorkspace(w: Workspace, root: string): Promise<string | undefined> {
   const left: string[] = [];
   let linkRemoved = true;
   if (w.link) {
@@ -373,7 +368,7 @@ function closeWorkspace(w: Workspace, root: string): string | undefined {
     // A link that is still there would let a recursive removal reach the main checkout's node_modules.
     if (linkRemoved) {
       const removed = git(['worktree', 'remove', '--force', checkout], root);
-      removeDir(w.holder); // reported below
+      await removeDir(w.holder); // reported below
       const pruned = removed?.exitCode === 0 || git(['worktree', 'prune'], root)?.exitCode === 0;
       const listed = git(['worktree', 'list', '--porcelain'], root);
       const named = !listed || listed.exitCode !== 0 || listed.stdout.split(/\r?\n/).some((l) => l.startsWith('worktree ') && samePath(l.slice('worktree '.length), checkout));
@@ -383,7 +378,7 @@ function closeWorkspace(w: Workspace, root: string): string | undefined {
     }
   }
   if (w.stateDir) {
-    removeDir(w.stateDir); // reported below
+    await removeDir(w.stateDir); // reported below
     if (existsSync(w.stateDir)) left.push(`state directory ${w.stateDir} not removed`);
   }
   return left.length ? left.join('; ') : undefined;

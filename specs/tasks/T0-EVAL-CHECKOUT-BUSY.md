@@ -46,14 +46,3 @@ npm run typecheck && node --test tests/surface/evals.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
-
-## Attempt evidence
-RED receipt: `79511eb:1`. At 79511eb, where `removeDir` makes one remove call with no retry, `node --test tests/surface/evals.test.ts` runs 31 tests, 28 pass, 3 fail, each on its assertion: acceptance 1 got 1 call, no wait and false (expected 3 calls, waits [200, 200], true), acceptance 2 with an always-EBUSY remove got 1 call at t=0 (expected 51 calls at t=0, 200, ..., 10000), and acceptance 3 on Windows got the holder directory present and `detail` `checkout ...\aidlc-eval-uMUNIh\checkout not removed`; the EACCES and succeeding-remove cases of acceptance 2 pass there, since they pin behaviour the stub already has.
-
-| Item | Proof | Result |
-| --- | --- | --- |
-| 1 | tests/surface/evals.test.ts `T0-EVAL-CHECKOUT-BUSY acceptance 1`: a remove throwing EBUSY twice then returning, a clock fixed at 0 and a recording wait: `removeDir` returns true after 3 calls and waits [200, 200] | pass |
-| 2 | Same file, three `acceptance 2` tests: always EBUSY with a clock advancing 200 ms per wait returns false with calls at t=0, 200, ..., 10000 (51 calls, the last the first at or after 10000) and 50 waits of 200 ms; EACCES returns false after 1 call and no wait; a succeeding remove returns true after 1 call and no wait | pass |
-| 3 | Same file, `acceptance 3`: a model-backed case whose provider spawns a detached `node -e "setTimeout(()=>{},1500)"` with its cwd in the temporary checkout: after `runEval` the case passes, the holder directory does not exist, `git worktree list --porcelain` does not name the checkout and `detail` has no `not removed` (test duration 2150 ms on Windows, so the removal waited for the child) | pass |
-| 4 | docs/OPERATIONS.md, Evals, the temporary-checkout paragraph: the retry on EBUSY, EPERM or ENOTEMPTY every 200 ms for up to 10 s per directory, the Windows cause, and that only a directory still present after that is named in `detail`; CHANGELOG.md Unreleased entry `T0-EVAL-CHECKOUT-BUSY (bugfix)` states R1 and R2 | reviewer |
-| DoD | `npm run typecheck && node --test tests/surface/evals.test.ts`: exit 0, `# tests 31`, `# pass 31`, `# fail 0`; also `node --test tests/surface/eval-test-temp.test.ts tests/surface/command-lines.test.ts`: exit 0, 16 pass, 0 fail, and tests/surface/templates.test.ts with claude-md-size.test.ts: 42 pass, 0 fail | pass |

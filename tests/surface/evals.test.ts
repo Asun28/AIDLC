@@ -210,10 +210,10 @@ function fakeRemoval(outcome: (call: number) => NodeJS.ErrnoException | undefine
   return { deps: { remove, now, wait }, callTimes, waits };
 }
 
-test('T0-EVAL-CHECKOUT-BUSY acceptance 1: a remove that throws EBUSY twice and then succeeds is called three times with two waits of 200 ms, and the directory counts as removed [R1]', () => {
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 1: a remove that throws EBUSY twice and then succeeds is called three times with two waits of 200 ms, and the directory counts as removed [R1]', async () => {
   let calls = 0;
   const waits: number[] = [];
-  const removed = removeDir('/no/such/dir', {
+  const removed = await removeDir('/no/such/dir', {
     remove: () => {
       calls += 1;
       if (calls <= 2) throw fsError('EBUSY');
@@ -226,23 +226,23 @@ test('T0-EVAL-CHECKOUT-BUSY acceptance 1: a remove that throws EBUSY twice and t
   assert.deepEqual({ removed, calls, waits }, { removed: true, calls: 3, waits: [200, 200] });
 });
 
-test('T0-EVAL-CHECKOUT-BUSY acceptance 2: a remove that always throws EBUSY is called every 200 ms until the first call at or after 10000 ms, and the directory counts as not removed [R1]', () => {
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that always throws EBUSY is called every 200 ms until the first call at or after 10000 ms, and the directory counts as not removed [R1]', async () => {
   const f = fakeRemoval(() => fsError('EBUSY'));
-  const removed = removeDir('/no/such/dir', f.deps);
+  const removed = await removeDir('/no/such/dir', f.deps);
   // Calls at t = 0, 200, ..., 10000: 51 calls, 50 waits of 200 ms.
   const expectedTimes = Array.from({ length: 51 }, (_, i) => i * 200);
   assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: expectedTimes, waits: expectedTimes.slice(1).map(() => 200) });
 });
 
-test('T0-EVAL-CHECKOUT-BUSY acceptance 2: a remove that throws EACCES is called once with no wait, and the directory counts as not removed [R1]', () => {
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that throws EACCES is called once with no wait, and the directory counts as not removed [R1]', async () => {
   const f = fakeRemoval(() => fsError('EACCES'));
-  const removed = removeDir('/no/such/dir', f.deps);
+  const removed = await removeDir('/no/such/dir', f.deps);
   assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: [0], waits: [] });
 });
 
-test('T0-EVAL-CHECKOUT-BUSY acceptance 2: a remove that succeeds is called once with no wait, and the directory counts as removed [R1]', () => {
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that succeeds is called once with no wait, and the directory counts as removed [R1]', async () => {
   const f = fakeRemoval(() => undefined);
-  const removed = removeDir('/no/such/dir', f.deps);
+  const removed = await removeDir('/no/such/dir', f.deps);
   assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: true, callTimes: [0], waits: [] });
 });
 
@@ -258,7 +258,7 @@ async function processGone(pid: number, polls: number): Promise<void> {
   }
 }
 
-test('T0-EVAL-CHECKOUT-BUSY acceptance 3: a process the provider started with its working directory in the temporary checkout, exiting 1500 ms later, leaves no holder directory, no worktree entry and nothing named in detail [R2]', async () => {
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 3: a process the provider started with its working directory in the temporary checkout, exiting 1500 ms later, leaves no holder directory, no worktree entry and nothing named in detail [R2]', async () => {
   const { cwd } = setup();
   const seen: { cwd?: string; pid?: number } = {};
   const provider: ModelProvider = {
