@@ -656,13 +656,17 @@ export class CardRunner {
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
+    // A recorded worktree counts only while its directory exists, so a run whose worktree was never made or is gone goes
+    // back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record alone
+    // counts, as before (R3).
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || existsSync(run.worktree) : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,
       unknownOperations: unknownOps.filter((o) => o.status === 'UNKNOWN').map((o) => o.id),
       runningOperation: runningOp?.id,
       terminal: run.stop,
-      prepared: Boolean(run.worktree) && Boolean(lease && !lease.released && lease.owner.session === me.session),
+      prepared: worktreeReady && Boolean(lease && !lease.released && lease.owner.session === me.session),
       mergeVerified: run.mergeVerified,
       // A run persisted as DONE keeps its closure complete: DONE is derived from a verified merge and a complete closure and never patched, so a record that predates the lessons predicate stays DONE.
       closureComplete: run.state === 'DONE' || Object.values(run.closure).every(Boolean),
@@ -913,7 +917,11 @@ export class CardRunner {
       return { run: stopped, directive: { kind: 'stop', cardId: card.id, stop, narration: decision.reason } };
     }
     const lessons = readLessons(this.lessonsFile());
-    const next = this.save({ ...run, state: 'BUILD', worktree: decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
+    // A start leaves the worktree to the agent or the scaffold: the run stays in PREPARE and records no worktree path, so
+    // the next `card next` decides again (card T0-PREPARE-WORKTREE R1). An attach, and either decision of the dry-run ship
+    // path, which makes no worktree (R3), records the path and opens BUILD.
+    const start = decision.action === 'start' && this.config.shipPath !== 'dry-run';
+    const next = this.save({ ...run, state: start ? 'PREPARE' : 'BUILD', worktree: start ? undefined : decision.path, branch: card.id, ownerGeneration: claim.lease.generation, stop: undefined, blocker: undefined });
     return {
       run: next,
       directive: {

@@ -51,3 +51,22 @@ npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+Attempt 1. RED at 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 failed on main's code: acceptance 1 got state `BUILD`, acceptance 2 and 3 got `build`; acceptance 4 passed, as a guard on unchanged behaviour should). The bug showed live when this goal started: the first `card next` returned `prepare` action `start` with the run already stored as `BUILD` at D:\wt\AIDLC\T0-PREPARE-WORKTREE.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
+| 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
+| 3 | prepare-worktree.test.ts, acceptance 3 test (stored BUILD, REVIEW_FIX and SHIP) | pass |
+| 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
+| 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
+| 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
+
+Readers of `run.worktree` (diagnosis.same_class):
+- Ship path: covered by R2. `CardRunner.ship` passes no worktree path to the ship path (the github adapter finds the worktree by card id), and SHIP is selected only when `prepared`, which now requires the directory.
+- `card close --cleanup` and `--all`: not affected. They run in CLOSE, which precedes PREPARE, so a merged run whose worktree the cleanup removed goes to CLOSE or DONE as before; `reclaimWorktree` reads `git worktree list`, not `run.worktree`.
+- `reviewCheckout` (card-runner.ts) and `card mutants` (cli/main.ts): not affected; both already check that the directory exists.
+- Board `outcomeOf` (state/board.ts): not affected; a run in PREPARE with no worktree path maps to `todo`, the outcome it had before its first `card next`, and the goal dispatches the same card again.
+- A git worktree entry whose directory is gone: `decideWorktree` decides `attach` (its decision is a non-goal), the run is saved in BUILD with that path, and the next `card next` gets `prepare` again under R2, so no `build` names the missing directory.
