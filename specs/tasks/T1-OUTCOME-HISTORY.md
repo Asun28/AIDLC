@@ -11,6 +11,7 @@ allow_paths:
   - bench/outcome/run.ts
   - bench/outcome/README.md
   - tests/surface/outcome-history.test.ts
+  - tests/surface/outcome-ingest.test.ts
   - specs/tasks/T1-OUTCOME-HISTORY.md
 dod_command: npm run typecheck && node --test tests/surface/outcome-history.test.ts tests/surface/outcome-ingest.test.ts
 dod_exit: 0
@@ -21,7 +22,7 @@ requirements:
   - R4. The `predates` value shall be `unknown` when the file, `first` or `at` is missing or either commit is not in the repository; with a line, `true` when the commit `git blame -L <line>,<line> <at> -- <file>` names is `first` or an ancestor of it and `false` otherwise (`unknown` when the blame fails, as for a line past the end of the file); with no line, `true` when `git diff --quiet <first> <at> -- <file>` exits 0 and `file-changed` when it exits 1.
   - R5. `findingFixes(runner, tables)` shall return one row per finding that has a `file` and a `candidateSha`, with `changedAfter`: `true` when the file differs between that commit and the `candidateSha` of the next entry of the same run and stage with outcome `pass` or `block` and another `candidateSha`, `false` when it does not differ, and `unknown` when there is no such entry or a commit is not in the repository.
   - R6. A git command that fails in a way R4 and R5 do not name shall add one `history_errors` row with `command`, `exit` and the first line of its stderr, and the row it was computing takes `unknown`.
-  - R7. `run.ts` shall take `--no-history` and write `rulings.jsonl`, `ruling_set.jsonl`, `repeat_blocks.jsonl`, `finding_fixes.jsonl` and `history_errors.jsonl` beside the other tables through `writeTables` with the read-only directories `run.ts` already passes.
+  - R7. `run.ts` shall take `--no-history` and write `rulings.jsonl`, `ruling_set.jsonl`, `repeat_blocks.jsonl`, `finding_fixes.jsonl` and `history_errors.jsonl` beside the other tables through `writeTables` with the read-only directories `run.ts` already passes; the `run.ts` spawns of `tests/surface/outcome-ingest.test.ts` pass `--no-history`, so that test reads no history of the checkout it runs in.
   - R8. `views/40-history.sql` shall define `summary_repeat_blocks` (the count and share of each `predates` value, and the count where `predates` is `true` and `outsideDelta` is not true or the reverse), `summary_true_defects` (per stage and perspective: findings raised, disputed, re-raised, and those on a card with a `mergeVerified` run that have `resolvedAt` and `changedAfter` `true`) and `summary_rulings` (rulings per calendar month, rulings per `on` value, card attempts per ruling, and the share of cards with `superseded_by` that are the `predecessor` of a ruling).
   - R9. `bench/outcome/README.md` shall state the ruling match, the `predates` rule with its four values, the true-defect proxy and that it cannot show whether a test or another reviewer would have caught the same defect.
 acceptance:
@@ -32,6 +33,7 @@ acceptance:
   - 5. Same file: a runner that exits 128 with `fatal: boom` on the blame of an existing line gives one `history_errors` row holding `fatal: boom` and `predates` `unknown` for that finding, with the other findings still classified. [R6] [dod arm 2]
   - 6. Same file, when a DuckDB binary is found, else skipped with the reason `no duckdb binary`: `run.ts` over the fixture prints `summary_repeat_blocks`, `summary_true_defects` and `summary_rulings` with hand-computed values, and `--no-history` writes none of the five files and exits 0. [R7] [R8] [dod arm 2]
   - 7. The README states R1 to R8 (reviewer-verified against the diff). [R9]
+  - 8. `tests/surface/outcome-ingest.test.ts` passes unchanged apart from `--no-history` in its `run.ts` spawns, with and without a DuckDB binary. [R7] [dod arm 2]
 depends_on: [T1-OUTCOME-INGEST]
 budget: 450
 sweep: "New files, plus `bench/outcome/run.ts` and the README. `git log -i --grep=\"user's ruling\"` on main at 8156bf5 returns 23 commits, the recent ones titled `card: <A> replaces <B> by the user's ruling on <what>`. `ReviewFinding` (src/core/types.ts:503) holds `file`, `candidateSha`, `round`, `outsideDelta` and `resolvedAt`; the cited line is in `reason` as `@ file:line`. Git runs through the injectable runner, as `src/probes/git.ts` does."
