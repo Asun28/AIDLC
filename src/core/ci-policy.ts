@@ -194,8 +194,9 @@ function parsePayload(payload: string): unknown {
 
 /**
  * Whether a `[CI-GATE-RED]` payload is exactly what the GitHub ship path prints (`checksJson` in src/delivery/github-ship.ts):
- * a JSON array of `name`, `conclusion` (a string or null) and `status` only when it is a string other than `completed`, in that
- * order, with no other or repeated key, no other spacing, names in the printed encoding (card T0-SCAN-SETUP-STEP-2).
+ * a JSON array of `name` and `conclusion` (a string or null), in that order, with no other or repeated key, no other spacing,
+ * names in the printed encoding (card T0-SCAN-SETUP-STEP-2). The gate prints a red line only for completed check runs, whose
+ * status `checksJson` omits, so a printed red element has no `status`, whatever its value.
  */
 function isPrintedRed(payload: string): boolean {
   const v = parsePayload(payload);
@@ -203,15 +204,16 @@ function isPrintedRed(payload: string): boolean {
   const printed: unknown[] = [];
   for (const c of v) {
     if (!isRecord(c) || !isPrintedName(c.name) || (typeof c.conclusion !== 'string' && c.conclusion !== null)) return false;
-    printed.push({ name: c.name, conclusion: c.conclusion, ...(typeof c.status === 'string' && c.status !== 'completed' ? { status: c.status } : {}) });
+    printed.push({ name: c.name, conclusion: c.conclusion });
   }
   return payload === printedPayload(printed);
 }
 
 /**
  * Whether a `[CI-GATE-STEP]` payload is exactly what the GitHub ship path prints (`gateStepLine` in src/delivery/github-ship.ts):
- * the JSON of `check`, `job` (a job id of digits) and `step` (null, or a positive integer `number`, a `name` and a
- * `conclusion`), in that order, with no other or repeated key, no other spacing, names in the printed encoding. Any other form
+ * the JSON of `check`, `job` (a job id of digits) and `step` (null, or a positive integer `number`, a `name` and the
+ * conclusion `failure`, since it names the first step whose conclusion is `failure`), in that order, with no other or repeated
+ * key, no other spacing, names in the printed encoding. Any other form
  * denies every scan setup exemption of the text (card T0-SCAN-SETUP-STEP-2); a change to the printed form makes every red
  * scan check `security` again until this follows it.
  */
@@ -222,7 +224,7 @@ function isPrintedStep(payload: string): boolean {
   if (v.step !== null) {
     if (!isRecord(v.step)) return false;
     const { number, name, conclusion } = v.step;
-    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || !isPrintedName(name) || typeof conclusion !== 'string') return false;
+    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || !isPrintedName(name) || conclusion !== 'failure') return false;
     step = { number, name, conclusion };
   }
   return payload === printedPayload({ check: v.check, job: v.job, step });
