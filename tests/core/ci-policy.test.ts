@@ -566,12 +566,12 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
     });
     assert.deepEqual(exempted, [], 'each form denies the exemption: security, with no scan-setup evidence');
     // The lines as the GitHub ship path prints them: names through encodeUntrusted, `/` written `\/`.
-    const printedRed = (name: string) => `[CI-GATE-RED] ${JSON.stringify([{ name: encodeUntrusted(name), conclusion: 'failure' }]).replace(/\//g, '\/')}`;
-    const printedStep = (check: string, name: string) => `[CI-GATE-STEP] ${JSON.stringify({ check: encodeUntrusted(check), job: '1', step: { number: 3, name: encodeUntrusted(name), conclusion: 'failure' } }).replace(/\//g, '\/')}`;
+    const printedRed = (name: string) => `[CI-GATE-RED] ${JSON.stringify([{ name: encodeUntrusted(name), conclusion: 'failure' }]).replace(/\//g, '\\/')}`;
+    const printedStep = (check: string, name: string) => `[CI-GATE-STEP] ${JSON.stringify({ check: encodeUntrusted(check), job: '1', step: { number: 3, name: encodeUntrusted(name), conclusion: 'failure' } }).replace(/\//g, '\\/')}`;
     const check = 'Gitleaks [x] 100% /runs';
     const install = 'Install [gitleaks] 100% /tmp';
     const printed = [printedRed(check), printedStep(check, install)].join('\n');
-    assert.ok(printed.includes('%5Bx%5D 100%25 \/runs') && printed.includes('%5Bgitleaks%5D 100%25 \/tmp'), printed);
+    assert.ok(printed.includes('%5Bx%5D 100%25 \\/runs') && printed.includes('%5Bgitleaks%5D 100%25 \\/tmp'), printed);
     const c = ship(printed, { scanSetupSteps: [install] });
     assert.equal(c.class, 'unknown', c.evidence.join(' | '));
     assert.equal(c.evidence.at(-1), `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(install)} before its scan`);

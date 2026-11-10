@@ -73,8 +73,6 @@ export const DEFAULT_SCAN_SETUP_STEPS: readonly string[] = ['Install gitleaks (p
 interface GateStep {
   check: string;
   step: { name: string; conclusion: string } | null;
-  /** The line is exactly what the GitHub ship path prints, the only form a scan setup exemption reads (card T0-SCAN-SETUP-STEP). */
-  exact: boolean;
 }
 const JSON_PAYLOAD = /^\[CI-GATE-(?:RED|TIMEOUT)\][^\[]*(\[[\s\S]*\])\s*$/;
 
@@ -91,8 +89,11 @@ interface GateRead {
   log: string;
   /** The `[CI-GATE-STEP]` lines, decoded: the structured evidence of a transient failure. */
   steps: GateStep[];
-  /** The check each malformed `[CI-GATE-STEP]` line names, decoded, or null when no check can be read from it. */
-  invalidSteps: Array<string | null>;
+  /**
+   * A `[CI-GATE-RED]` or `[CI-GATE-STEP]` line in another form than the GitHub ship path prints, or a `[CI-GATE-TIMEOUT]` line:
+   * no scan setup exemption is read from such text, whatever check the line names (card T0-SCAN-SETUP-STEP-2).
+   */
+  foreignGate: boolean;
 }
 
 /**
@@ -109,7 +110,7 @@ function readGate(text: string): GateRead {
   const ambiguousRed: string[] = [];
   const log: string[] = [];
   const steps: GateStep[] = [];
-  const invalidSteps: Array<string | null> = [];
+  let foreignGate = false;
   let structured = false;
   let unresolvedRed = false;
   for (const line of text.split(/\r?\n/)) {
@@ -119,13 +120,14 @@ function readGate(text: string): GateRead {
       continue;
     }
     if (line.startsWith('[CI-GATE-WAIT]')) continue;
-    // A step line is structured evidence and never log text; one that does not parse is no transient evidence, and it is
-    // kept by the check it names so it can deny a scan setup exemption (card T0-SCAN-SETUP-STEP).
+    if (line.startsWith('[CI-GATE-TIMEOUT]') || (line.startsWith('[CI-GATE-RED]') && !isPrintedRed(line.slice('[CI-GATE-RED]'.length)))) foreignGate = true;
+    // A step line is structured evidence and never log text; one that does not parse is no transient evidence. A step line
+    // in another form than the ship path prints denies every scan setup exemption (card T0-SCAN-SETUP-STEP-2).
     if (line.startsWith('[CI-GATE-STEP]')) {
       const payload = line.slice('[CI-GATE-STEP]'.length);
       const step = readStep(payload);
-      if (step) steps.push({ ...step, exact: isShipStepPayload(payload) });
-      else invalidSteps.push(readStepCheck(payload));
+      if (step) steps.push(step);
+      if (!isPrintedStep(payload)) foreignGate = true;
       continue;
     }
     const m = line.match(JSON_PAYLOAD);
@@ -164,53 +166,73 @@ function readGate(text: string): GateRead {
     if (line.startsWith('[CI-GATE-TIMEOUT]')) unresolvedRed = true;
     log.push(line);
   }
-  return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps, invalidSteps };
+  return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps, foreignGate };
 }
 
-/** The check a malformed `[CI-GATE-STEP]` payload names, decoded, or null when it names none that can be read (a blank check included). */
-function readStepCheck(payload: string): string | null {
+/** A name as the GitHub ship path writes it (`encodeUntrusted` in src/delivery/ship.ts): brackets and percent signs encoded. */
+function encodeCheckName(name: string): string {
+  return name.replace(/%/g, '%25').replace(/\[/g, '%5B').replace(/\]/g, '%5D');
+}
+
+/** A non-blank name in the encoding the ship path prints: no `[` or `]`, and every `%` one of `%25`, `%5B` and `%5D`. */
+const isPrintedName = (name: unknown): name is string => typeof name === 'string' && name.trim() !== '' && encodeCheckName(decodeCheckName(name)) === name;
+
+/** A plain JSON object, not an array. */
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/** The payload of a gate line as the ship path prints it: one space, then the JSON with U+2028, U+2029 and `/` escaped. */
+const printedPayload = (value: unknown): string => ` ${JSON.stringify(value).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029').replace(/\//g, '\\/')}`;
+
+/** Parse a gate line payload; undefined when it is not JSON. */
+function parsePayload(payload: string): unknown {
   try {
-    const v: unknown = JSON.parse(payload.trim());
-    const check = typeof v === 'object' && v !== null ? (v as { check?: unknown }).check : undefined;
-    return typeof check === 'string' && check.trim() ? decodeCheckName(check) : null;
+    return JSON.parse(payload);
   } catch {
-    return null;
+    return undefined;
   }
 }
 
 /**
- * Whether a `[CI-GATE-STEP]` payload is exactly what the GitHub ship path prints (`gateStepLine` in src/delivery/github-ship.ts):
- * one space, then the JSON of `check` (non-blank), `job` (a job id of digits) and `step` (null, or a positive integer `number`,
- * a `name` and a `conclusion`), in that order, with no other or repeated key, no other spacing, U+2028, U+2029 and `/` escaped.
- * Any other form names no step a scan setup exemption reads (card T0-SCAN-SETUP-STEP); a change to the printed form makes
- * every red scan check `security` again until this follows it.
+ * Whether a `[CI-GATE-RED]` payload is exactly what the GitHub ship path prints (`checksJson` in src/delivery/github-ship.ts):
+ * a JSON array of `name`, `conclusion` (a string or null) and `status` only when it is a string other than `completed`, in that
+ * order, with no other or repeated key, no other spacing, names in the printed encoding (card T0-SCAN-SETUP-STEP-2).
  */
-function isShipStepPayload(payload: string): boolean {
-  let v: unknown;
-  try {
-    v = JSON.parse(payload);
-  } catch {
-    return false;
+function isPrintedRed(payload: string): boolean {
+  const v = parsePayload(payload);
+  if (!Array.isArray(v)) return false;
+  const printed: unknown[] = [];
+  for (const c of v) {
+    if (!isRecord(c) || !isPrintedName(c.name) || (typeof c.conclusion !== 'string' && c.conclusion !== null)) return false;
+    printed.push({ name: c.name, conclusion: c.conclusion, ...(typeof c.status === 'string' && c.status !== 'completed' ? { status: c.status } : {}) });
   }
-  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
-  const { check, job, step } = v as Record<string, unknown>;
-  if (typeof check !== 'string' || !check.trim() || typeof job !== 'string' || !/^\d+$/.test(job)) return false;
-  let printed: { number: number; name: string; conclusion: string } | null = null;
-  if (step !== null) {
-    if (typeof step !== 'object' || step === undefined || Array.isArray(step)) return false;
-    const { number, name, conclusion } = step as Record<string, unknown>;
-    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || typeof name !== 'string' || typeof conclusion !== 'string') return false;
-    printed = { number, name, conclusion };
+  return payload === printedPayload(printed);
+}
+
+/**
+ * Whether a `[CI-GATE-STEP]` payload is exactly what the GitHub ship path prints (`gateStepLine` in src/delivery/github-ship.ts):
+ * the JSON of `check`, `job` (a job id of digits) and `step` (null, or a positive integer `number`, a `name` and a
+ * `conclusion`), in that order, with no other or repeated key, no other spacing, names in the printed encoding. Any other form
+ * denies every scan setup exemption of the text (card T0-SCAN-SETUP-STEP-2); a change to the printed form makes every red
+ * scan check `security` again until this follows it.
+ */
+function isPrintedStep(payload: string): boolean {
+  const v = parsePayload(payload);
+  if (!isRecord(v) || !isPrintedName(v.check) || typeof v.job !== 'string' || !/^\d+$/.test(v.job)) return false;
+  let step: { number: number; name: string; conclusion: string } | null = null;
+  if (v.step !== null) {
+    if (!isRecord(v.step)) return false;
+    const { number, name, conclusion } = v.step;
+    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || !isPrintedName(name) || typeof conclusion !== 'string') return false;
+    step = { number, name, conclusion };
   }
-  const json = JSON.stringify({ check, job, step: printed }).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029').replace(/\//g, '\\/');
-  return payload === ` ${json}`;
+  return payload === printedPayload({ check: v.check, job: v.job, step });
 }
 
 /**
  * A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed,
  * a blank check included, since it names no check (card T0-SCAN-SETUP-STEP).
  */
-function readStep(payload: string): Omit<GateStep, 'exact'> | undefined {
+function readStep(payload: string): GateStep | undefined {
   try {
     const v: unknown = JSON.parse(payload.trim());
     if (typeof v !== 'object' || v === null || typeof (v as { check?: unknown }).check !== 'string' || !(v as { check: string }).check.trim()) return undefined;
@@ -235,7 +257,8 @@ export interface CiClassification {
  * on `transientSteps`. Log text never grants a rerun: a text-only transient is `unknown` (no rerun, STOP/ci), its matches
  * kept as evidence. Red checks include independent jobs and gate checks; only explicitly marked aggregate wrappers are excluded.
  * Security and code-defect evidence keep their precedence. A red scan check is no security hit when it failed in a step on
- * `scanSetupSteps` before its scan (card T0-SCAN-SETUP-STEP): it is then classified as any other red check is.
+ * `scanSetupSteps` before its scan, read only from gate lines in the form the ship path prints (cards T0-SCAN-SETUP-STEP
+ * and -2): it is then classified as any other red check is.
  */
 export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { transientSteps?: readonly string[]; scanSetupSteps?: readonly string[] } = {}): CiClassification {
   const transientSteps = options.transientSteps ?? DEFAULT_TRANSIENT_STEPS;
@@ -251,7 +274,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   const gateChecked: CiJob[] = [];
   const gateRecords: CiJob[] = [];
   const steps: GateStep[] = [];
-  const invalidSteps: Array<string | null> = [];
+  let foreignGate = false;
   let gateStructured = false;
   let unresolvedRed = false;
   for (const { raw, inspectLog } of texts) {
@@ -259,7 +282,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     gateChecked.push(...gate.redChecks);
     gateRecords.push(...gate.checks);
     steps.push(...gate.steps);
-    invalidSteps.push(...gate.invalidSteps);
+    foreignGate ||= gate.foreignGate;
     unresolvedRed ||= gate.unresolvedRed;
     gateStructured ||= gate.structured || gate.checks.length > 0;
     for (const c of gate.checks) if (isFailure(c.conclusion) && SECURITY_CHECK_NAME.test(c.name)) securityHits.push({ hit: c.name, check: c.name });
@@ -301,19 +324,21 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
   });
   const red = gateStructured ? [...gateChecked, ...independentFailed.filter((j) => !gateChecked.some((c) => c.name === j.name && c.conclusion?.toLowerCase() === j.conclusion?.toLowerCase()))] : independentFailed;
   const evidenced = (c: CiJob) => c.name.trim().length > 0 && ((c.conclusion ?? '').toLowerCase() === 'startup_failure' || steps.some((s) => s.check === c.name && s.step !== null && s.step.conclusion === 'failure' && transientSteps.includes(s.step.name)));
-  // A scan check that failed installing its scanner did not scan (card T0-SCAN-SETUP-STEP). Fails closed: no red line is
-  // unresolved; the check has at most one job record and one gate record, counted before they are matched, which agree on its
-  // conclusion, and is one red check; no step line naming it, or naming no readable check, is malformed; and every step line
-  // naming it names a failed listed step. Records of other checks never decide this check.
+  // A scan check that failed installing its scanner did not scan (cards T0-SCAN-SETUP-STEP and -2). Fails closed: every red and
+  // step gate line of the text is in the form the ship path prints and none is a timeout line, so no identity is read from a
+  // line it does not print; no red line is unresolved; the check has at most one job record and one gate record, counted
+  // before they are matched, which agree on its conclusion, and is one red check; and exactly one step line names it, at a
+  // failed listed step.
   const setupStep = (check: string): string | undefined => {
+    if (foreignGate || unresolvedRed) return undefined;
     const jobRecords = independent.filter((j) => j.name === check);
     const gateRecordsOf = gateRecords.filter((c) => c.name === check);
-    if (unresolvedRed || jobRecords.length > 1 || gateRecordsOf.length > 1 || red.filter((c) => c.name === check).length !== 1) return undefined;
+    if (jobRecords.length > 1 || gateRecordsOf.length > 1 || red.filter((c) => c.name === check).length !== 1) return undefined;
     if (new Set([...jobRecords, ...gateRecordsOf].map((c) => c.conclusion?.toLowerCase())).size !== 1) return undefined;
-    if (invalidSteps.some((c) => c === null || c === check)) return undefined;
     const placed = steps.filter((s) => s.check === check);
-    if (!placed.length || !placed.every((s) => s.exact && s.step !== null && s.step.conclusion === 'failure' && scanSetupSteps.includes(s.step.name))) return undefined;
-    return placed[0]!.step!.name;
+    if (placed.length !== 1) return undefined;
+    const step = placed[0]!.step;
+    return step !== null && step.conclusion === 'failure' && scanSetupSteps.includes(step.name) ? step.name : undefined;
   };
   const setupFailures = new Map<string, string>();
   const findings = securityHits.filter(({ check }) => {
