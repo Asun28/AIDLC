@@ -15,13 +15,14 @@ FROM card_runs r LEFT JOIN cards c ON c.id = r.cardId
 GROUP BY r.cardId;
 
 -- Each card with the last card of its superseded_by chain (itself when it has none) and the number of steps to it.
--- A name the registry does not hold ends the chain; 50 steps end a chain that loops.
+-- The walk has no step limit. A name the registry does not hold is the last card. The walk stops before an id it has
+-- already visited, so a chain that loops ends on the card before the repeat.
 CREATE OR REPLACE VIEW card_family AS
-WITH RECURSIVE chain(id, last_card, steps) AS (
-  SELECT id, id, 0 FROM cards
+WITH RECURSIVE chain(id, last_card, steps, seen) AS (
+  SELECT id, id, 0, [id] FROM cards
   UNION ALL
-  SELECT chain.id, c.superseded_by, chain.steps + 1 FROM chain JOIN cards c ON c.id = chain.last_card
-  WHERE c.superseded_by IS NOT NULL AND chain.steps < 50
+  SELECT chain.id, c.superseded_by, chain.steps + 1, list_append(chain.seen, c.superseded_by) FROM chain JOIN cards c ON c.id = chain.last_card
+  WHERE c.superseded_by IS NOT NULL AND NOT list_contains(chain.seen, c.superseded_by)
 )
 SELECT id, arg_max(last_card, steps) AS last_card, max(steps) AS steps FROM chain GROUP BY id;
 

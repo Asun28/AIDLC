@@ -1,6 +1,6 @@
 // Card T1-OUTCOME-INGEST: the outcome tables read from the state directory (card runs, goal journals) and the card registry.
 // Dev-only measurement: files are read, never written, and each record that cannot be read becomes an `ingest_errors` row.
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { CardRun } from '../../src/core/types.ts';
@@ -19,9 +19,9 @@ export type TableName = keyof typeof COLUMNS;
 export type Row = Record<string, unknown>;
 export type Tables = Record<TableName, Row[]>;
 
-/** The entries of `dir` in name order: its directories, or its files ending in `suffix`. A missing directory has none. */
-function entries(dir: string, suffix?: string): string[] {
-  if (!existsSync(dir)) return [];
+/** The entries of `dir` in name order: its directories, or its files ending in `suffix`. Undefined when `dir` is absent or not a directory. */
+function entries(dir: string, suffix?: string): string[] | undefined {
+  if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return undefined;
   const all = readdirSync(dir, { withFileTypes: true });
   return all.filter((e) => (suffix === undefined ? e.isDirectory() : e.isFile() && e.name.endsWith(suffix))).map((e) => e.name).sort();
 }
@@ -42,8 +42,10 @@ const text = (value: unknown): string | null => (typeof value === 'string' ? val
 export function ingestState(input: { stateDir: string; cardsDir: string }): Tables {
   const t: Tables = { cards: [], card_runs: [], review_decisions: [], findings: [], state_spans: [], attempts: [], ingest_errors: [] };
   const problem = (source: string, file: string, what: string, line: number | null = null): void => void t.ingest_errors.push({ source, path: file, line, problem: what });
+  /** The entries of a source directory; one that is absent or not a directory is an error row and no entries. */
+  const source = (name: string, dir: string, suffix?: string): string[] => entries(dir, suffix) ?? (problem(name, dir, 'missing directory'), []);
 
-  for (const name of entries(input.cardsDir, '.md')) {
+  for (const name of source('card', input.cardsDir, '.md')) {
     if (name.startsWith('_')) continue;
     const file = path.join(input.cardsDir, name);
     const parsed = parseCardText(readFileSync(file, 'utf8'), file);
@@ -52,8 +54,9 @@ export function ingestState(input: { stateDir: string; cardsDir: string }): Tabl
   }
 
   const runsDir = path.join(input.stateDir, 'cards');
-  for (const goal of entries(runsDir)) {
-    for (const name of entries(path.join(runsDir, goal), '.json')) {
+  for (const goal of source('card_run', runsDir)) {
+    // A goal directory without card-run files is a normal empty result.
+    for (const name of entries(path.join(runsDir, goal), '.json') ?? []) {
       const file = path.join(runsDir, goal, name);
       const raw = parseJson(readFileSync(file, 'utf8'));
       const parsed = raw && CardRun.safeParse(raw.value);
@@ -67,7 +70,7 @@ export function ingestState(input: { stateDir: string; cardsDir: string }): Tabl
   const openSpan = new Map<string, Row>();
   const started = new Map<string, string | null>();
   const journalDir = path.join(input.stateDir, 'journal');
-  for (const name of entries(journalDir, '.jsonl')) {
+  for (const name of source('journal', journalDir, '.jsonl')) {
     const file = path.join(journalDir, name);
     readFileSync(file, 'utf8').split('\n').forEach((line, index) => {
       if (line.trim() === '') return;
@@ -105,14 +108,40 @@ function addRun(t: Tables, run: CardRun): void {
   }
 }
 
+/** The canonical path of `p`: its nearest existing ancestor (a link itself counts as existing) resolved through every link, then the missing remainder. */
+function canonicalPath(p: string): string {
+  let head = path.resolve(p);
+  const rest: string[] = [];
+  while (!lstatSync(head, { throwIfNoEntry: false }) && path.dirname(head) !== head) {
+    rest.unshift(path.basename(head));
+    head = path.dirname(head);
+  }
+  return path.join(realpathSync.native(head), ...rest);
+}
+
+/** Throws when `outDir` is one of the `readOnly` directories or under one, by canonical path. The one place that decides where output may be written. */
+function assertWritable(outDir: string, readOnly: string[]): void {
+  const target = canonicalPath(outDir);
+  for (const dir of readOnly) {
+    const rel = path.relative(canonicalPath(dir), target);
+    const outside = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
+    if (!outside) throw new Error(`refusing to write to ${outDir}: it is inside ${dir}, which the outcome scripts only read`);
+  }
+}
+
 /**
  * Writes `<table>.jsonl` under `outDir`, one row per line: the keys in the order of `COLUMNS` (a missing one as null) and
  * the lines sorted by UTF-16 code unit, so the order the rows are given in changes no byte. An empty table is an empty file.
+ * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
+ * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables, outDir: string): void {
+export function writeTables(tables: Tables, outDir: string, readOnly: string[] = []): void {
+  assertWritable(outDir, readOnly);
   mkdirSync(outDir, { recursive: true });
   for (const name of Object.keys(COLUMNS) as TableName[]) {
     const lines = tables[name].map((row) => JSON.stringify(Object.fromEntries(COLUMNS[name].map((column) => [column, row[column] ?? null])))).sort();
-    writeFileSync(path.join(outDir, `${name}.jsonl`), lines.map((line) => `${line}\n`).join(''));
+    const file = path.join(outDir, `${name}.jsonl`);
+    rmSync(file, { force: true });
+    writeFileSync(file, lines.map((line) => `${line}\n`).join(''), { flag: 'wx' });
   }
 }

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadProjectConfig } from '../../src/config.ts';
-import { canonical, resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
+import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
 import { COLUMNS, ingestState, writeTables, type Row, type TableName } from './ingest.ts';
 
 const viewsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'views');
@@ -14,25 +14,21 @@ const viewsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'views'
 /** The DuckDB binary could not be started; exit code 2. */
 class NoDuckdb extends Error {}
 
-/** `child` is `parent` or a path under it, compared by canonical path where the path exists and by resolved path where not. */
-function within(child: string, parent: string): boolean {
-  const rel = path.relative(canonical(parent), canonical(child));
-  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
-}
-
 function main(): number {
   const { values } = parseArgs({ options: { state: { type: 'string' }, cards: { type: 'string' }, out: { type: 'string' }, duckdb: { type: 'string' } } });
   const mainRoot = (): string => resolveRepoIdentity().mainRoot;
   const stateDir = path.resolve(values.state ?? resolveStatePaths().root);
   const cardsDir = path.resolve(values.cards ?? path.join(mainRoot(), loadProjectConfig(mainRoot()).config.cardsDir));
   const outDir = path.resolve(values.out ?? path.join(mainRoot(), '_local', 'outcome'));
-  if (within(outDir, stateDir) || within(outDir, cardsDir)) throw new Error(`--out ${outDir} is inside the state directory or the registry, which this script only reads`);
 
   const tables = ingestState({ stateDir, cardsDir });
-  writeTables(tables, outDir);
+  // The only write of this script: writeTables refuses an outDir inside either directory before it creates anything.
+  writeTables(tables, outDir, [stateDir, cardsDir]);
   process.stderr.write(`outcome: ${(Object.keys(COLUMNS) as TableName[]).map((name) => `${name} ${tables[name].length}`).join(', ')}; written to ${outDir}\n`);
 
-  const bin = values.duckdb ?? 'duckdb';
+  // A given path (absolute, or holding a separator) is resolved here, against the invocation directory, since the child
+  // runs in outDir. A bare name is left to the lookup of the operating system.
+  const bin = values.duckdb !== undefined && /[\\/]/.test(values.duckdb) ? path.resolve(values.duckdb) : (values.duckdb ?? 'duckdb');
   const views = readdirSync(viewsDir).filter((name) => name.endsWith('.sql')).sort().map((name) => readFileSync(path.join(viewsDir, name), 'utf8')).join('\n');
   /** One DuckDB process on an in-memory database: every view file, then `select`, whose rows it prints as a JSON array. */
   const query = (select: string): Row[] => {

@@ -10,14 +10,24 @@ node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckd
 
 - `--state`: the state directory. Default: the one aidlc resolves for the checkout (`AIDLC_STATE_DIR`, else `<main checkout>/.aidlc`).
 - `--cards`: the card registry. Default: the configured `cardsDir` under the main checkout.
-- `--out`: where the tables are written. Default: `_local/outcome` under the main checkout. A path inside the state directory or the registry is refused (exit 1); the check compares canonical paths where the path exists and resolved paths where not.
-- `--duckdb`: the DuckDB binary. Default: `duckdb` on PATH.
+- `--out`: where the tables are written. Default: `_local/outcome` under the main checkout. A path that is the state directory or the registry, or under one of them, is refused before anything is created (exit 1, `refusing to write`).
+- `--duckdb`: the DuckDB binary. Default: `duckdb` on PATH. A value that is absolute or holds a path separator is resolved against the invocation directory. A bare name is left to the operating system's lookup, which on Windows tries the child's working directory (`--out`) before PATH.
+
+`--state`, `--cards` and `--out` are resolved against the invocation directory too, before the DuckDB child starts in `--out`.
 
 The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
 
 ## Tables (`ingest.ts`)
 
 `ingestState({ stateDir, cardsDir })` returns the tables as arrays of plain rows and reads files only. A field the record does not carry is null. `writeTables(tables, outDir)` writes the keys in the column order below and sorts the lines by UTF-16 code unit, so the same rows given in any order write the same bytes; an empty table writes an empty file.
+
+Where output may be written is decided in one place, `writeTables(tables, outDir, readOnly)`, the only write these scripts make (`run.ts` passes the state directory and the registry as `readOnly`):
+- `outDir` and each `readOnly` directory are compared by canonical path: the nearest existing ancestor resolved through every link, then the missing remainder. `outDir` equal to a `readOnly` directory or under one throws before anything is created. A name that only begins with `..` (`<state>/..out`) is inside; only the segment `..` leads outside.
+- Each `<table>.jsonl` replaces the entry of its name: the entry is removed and the file is created exclusively, so a symbolic or hard link at that name is removed and never written through.
+
+Absent inputs:
+- The registry directory, `<state>/cards` and `<state>/journal`: each one that is absent or not a directory is one `ingest_errors` row (`source` `card`, `card_run`, `journal`; `path` the directory; `problem` `missing directory`), and the rows of the others are still returned. An absent state directory therefore gives two rows.
+- A goal directory under `<state>/cards` without card-run files, a card run without review entries or findings, and a journal without the three event types are normal empty results and give no row.
 
 | Table | One row per | Columns |
 |---|---|---|
@@ -38,7 +48,7 @@ Limit seen on the records of 2026-11-10: the journal holds a `CARD_STATE` event 
 The file first defines each table as a view over its JSONL file with explicit columns.
 
 - `card_attempts`: one row per card with at least one run (`cardId`, `runs`); `merged` when a run has `mergeVerified`; `failed` when the card's `superseded_by` is set.
-- `card_family`: each card (`id`) with the last card of its `superseded_by` chain (`last_card`, itself when it has none) and the `steps` to it. A name the registry does not hold ends the chain; 50 steps end a chain that loops.
+- `card_family`: each card (`id`) with the last card of its `superseded_by` chain (`last_card`, itself when it has none) and the `steps` to it. The walk has no step limit. A name the registry does not hold is the last card. The walk stops before an id it has already visited, so a chain that loops ends on the card before the repeat.
 - `summary_successor_rate`: `card_attempts`, `failed`, `merged` (row counts of `card_attempts`) and `successor_rate` = `failed` / `card_attempts`.
 - `summary_review_convergence`: over cards with at least one formal entry whose outcome is `pass` or `block` (`cards`): `first_decision_pass_share`, the share with a `pass` and no merge-blocking `block`; `two_or_more_blocks_share`, the share with two or more merge-blocking blocks; `mean_decisions_to_pass`, the mean of merge-blocking blocks plus one among cards with a `pass`; `stop_review_share`, the share of cards with a formal entry carrying `stopReview`. A `block` with `mergeBlocking` absent counts as merge-blocking. Entries are counted per card over all of its runs.
 - `summary_lead_time`: rows `lead_p50` and `lead_p90`, the hours from `startedAt` to the start of the first `CLOSE` or `DONE` span for runs with `mergeVerified` (`n` runs that have such a span); and one row `state_total` per `state`, the total hours over all spans with an `endTs` (`n` spans).
@@ -46,4 +56,4 @@ The file first defines each table as a view over its JSONL file with explicit co
 
 ## Tests
 
-`tests/surface/outcome-ingest.test.ts` covers the tables, the writer and the exit 2 path everywhere. The view tests are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
+`tests/surface/outcome-ingest.test.ts` covers the tables, the writer, the output rule, the `--duckdb` path and the exit 2 path everywhere. The view tests (acceptance 5 and 11) are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
