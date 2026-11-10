@@ -573,6 +573,10 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
       // The step a printed step line names is the first whose conclusion is `failure`.
       ['the step line of the check with the conclusion FAILURE', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n')],
       ['the step line of the check with the conclusion FAILURE, the setup step on transientSteps', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n'), allowlisted],
+      // A sweep of both printers: a passing run is never on a red line, and the job id prints as the check run id does.
+      ['beside them, a red line whose element for another check has the conclusion success', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'success' }])}`].join('\n')],
+      ['the step line of the check with the job 0128690143221', [redLine(SCAN), stepLine(SCAN, INSTALL, 'failure', '0128690143221')].join('\n')],
+      ['beside them, an empty red line', [RUN_42467444385, '[CI-GATE-RED] []'].join('\n')],
     ];
     const exempted = cases.flatMap(([label, text, options]) => {
       const c = ship(text, options);
