@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.ts';
@@ -69,6 +69,8 @@ function shipped(fx: Fixture, shipOf: (goalId: string) => ShipPath, options: { r
   assert.equal(r.directive.kind, 'build', r.directive.narration);
   const sha = options.candidateSha === null ? undefined : (options.candidateSha ?? HEAD);
   const built = dry.recordAttempt(fx.goal(goal.id), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: sha });
+  // A prepared run on the github ship path has its worktree (card T0-PREPARE-WORKTREE R5); the dry-run path made none.
+  mkdirSync(built.worktree!, { recursive: true });
   const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config: { ...fx.config, shipPath: options.shipPath ?? 'github', repository: options.repository }, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: shipOf(goal.id), now: fx.now, runner: options.exec ?? scriptedRunner({}) });
   const out = runner.next(fx.goal(goal.id), card, built);
   const ops = fx.ops.list({ goalId: goal.id, cardId: 'T1-SHIP', kind: 'merge' });
