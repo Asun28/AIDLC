@@ -158,7 +158,9 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
   const wt = path.join(tempDir(), 'wt');
   const day = (d: number, time: string): string => `2026-01-0${d}T${time}:00Z`;
   const tables = {
-    card_runs: [{ goalId: 'g-1', cardId: 'T1-X', startedAt: day(2, '00:00'), updatedAt: day(2, '12:00') }, { goalId: 'g-2', cardId: 'T1-X', startedAt: day(3, '00:00'), updatedAt: day(3, '12:00') }],
+    card_runs: [{ goalId: 'g-1', cardId: 'T1-X', startedAt: day(2, '00:00'), updatedAt: day(2, '12:00') }, { goalId: 'g-2', cardId: 'T1-X', startedAt: day(3, '00:00'), updatedAt: day(3, '12:00') },
+      // Two runs of T1-W: the window of the first holds day 3, the later one ended before it.
+      { goalId: 'g-5', cardId: 'T1-W', startedAt: day(2, '00:00'), updatedAt: day(4, '00:00') }, { goalId: 'g-6', cardId: 'T1-W', startedAt: day(2, '06:00'), updatedAt: day(2, '07:00') }],
     attempts: [{ goalId: 'g-1', cardId: 'T1-X', startTs: day(2, '01:00'), endTs: day(2, '02:00') }, { goalId: 'g-1', cardId: 'T1-Y', startTs: day(2, '01:30'), endTs: day(2, '03:00') }, { goalId: 'g-1', cardId: 'T1-Y', startTs: null, endTs: day(2, '01:20') }],
     state_spans: [{ goalId: 'g-1', cardId: 'T1-X', state: 'BUILD', startTs: day(2, '04:00'), endTs: day(2, '05:00') }, { goalId: 'g-1', cardId: 'T1-Y', state: 'BUILD', startTs: day(2, '04:30'), endTs: day(2, '06:00') }, { goalId: 'g-1', cardId: 'T1-Y', state: 'DONE', startTs: day(2, '06:00'), endTs: null }],
   };
@@ -168,6 +170,7 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
     [codex(path.join(wt, 'T1-X', 'src'), day(3, '01:00')), 'T1-X', 'g-2', 'review'],
     [codex(path.join(wt, 'T1-X'), day(2, '20:00')), 'T1-X', 'g-1', 'review'],
     [codex(path.join(wt, 'T1-X-2'), day(3, '01:00')), 'T1-X-2', null, 'review'],
+    [codex(path.join(wt, 'T1-W'), day(3, '01:00')), 'T1-W', 'g-5', 'review'],
     [codex(wt, day(3, '01:00')), null, null, 'unattributed'],
     [codex(path.join(wt, '..', 'T1-X'), day(3, '01:00')), null, null, 'unattributed'],
     [claudeRow({ agentId: 'a1', agentType: 'implementer', agentCard: 'T1-X-2', ts: day(2, '01:10') }), 'T1-X-2', null, 'implement'],
@@ -175,6 +178,7 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
     [claudeRow({ agentId: 'b2', ts: day(2, '01:45') }), null, null, 'unattributed'],
     [claudeRow({ ts: day(2, '04:10') }), 'T1-X', 'g-1', 'coordinate'],
     [claudeRow({ ts: day(2, '04:45') }), null, null, 'unattributed'],
+    [claudeRow({ ts: day(2, '05:30') }), 'T1-Y', null, 'coordinate'],
     [claudeRow({ ts: day(2, '07:00') }), null, null, 'unattributed'],
   ];
   const attributed = attribute(cases.map(([row]) => ({ ...row, text: X })), tables, wt);
@@ -217,6 +221,10 @@ test('T1-OUTCOME-USAGE acceptance 12: writeTables writes the tables and the erro
   assert.match(readFileSync(path.join(out, 'usage.jsonl'), 'utf8'), /^\{"source":"codex","sessionId":"cx1"/);
   assert.throws(() => writeTables(tables, path.join(f.claudeDir, 'new', 'out'), [f.stateDir, f.claudeDir, f.codexDir], resolve), /refusing to write/);
   assert.equal(existsSync(path.join(f.claudeDir, 'new')), false);
+  // With no ancestor that resolves, as on a drive that is gone, the paths are compared as given.
+  writeTables(tables, path.join(f.dir, 'out-2'), [f.claudeDir], denied);
+  assert.equal(existsSync(path.join(f.dir, 'out-2', 'usage_errors.jsonl')), true);
+  assert.throws(() => writeTables(tables, path.join(f.claudeDir, 'new'), [f.claudeDir], denied), /refusing to write/);
 });
 
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);

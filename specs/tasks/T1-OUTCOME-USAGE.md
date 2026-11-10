@@ -67,36 +67,53 @@ npm run typecheck && node --test tests/surface/outcome-usage.test.ts tests/surfa
 - Assertion: every acceptance test above passes; item 8 is skipped only where no DuckDB binary is found.
 
 ## Attempt evidence
-Attempt 1 (candidate 9c22c4f): failed with the cause "card conflict"; RED 18c8e9b. Attempt 2 (candidate d1a2fa78, after the amendments 75fadf7 and 5f24887b): RED ea564ff4 and d873eb1f; R3 decision 1 blocked it on six classes.
-Attempt 3 (repair of R3 decision 1, after the amendment 878a6e66): RED a69f7ac4, the new assertions against candidate d1a2fa78 with the `Prices` type and an unused `list` parameter added so they compile: over both DoD test files, 6 failed, 9 passed and 3 skipped without `DUCKDB_BIN`; 6 failed and 12 passed with it (acceptance 1, 2, 3, 4, 6 and 7; every failure an assertion).
+Attempt 1 (candidate 9c22c4f): failed with the cause "card conflict"; RED 18c8e9b. Attempt 2 (candidate d1a2fa78): RED ea564ff4 and d873eb1f; R3 decision 1 blocked it on six classes. Attempt 3 (candidate cc7bbea1): RED a69f7ac4; R3 decision 2 did not raise those six again and blocked on two new classes.
+Attempt 4 (repair of R3 decision 2, after the amendment 221ca993): RED 7df7815a, the new assertions against candidate cc7bbea1 with the resolving function passed through `writeTables` unchanged in behaviour: over both DoD test files, `acceptance 12` failed with the EACCES of the resolver (the defect itself) and 15 passed, 3 skipped without `DUCKDB_BIN`; 1 failed and 18 passed with it. `acceptance 8, 10 and 11` passed at RED because the pricing line of `run.ts` already existed; mutant M11 below proves it now fails without that line.
 
 | Item | Proof | Result |
 |---|---|---|
-| 1 | `node --test tests/surface/outcome-usage.test.ts`, test `acceptance 1` | pass |
-| 2 | same file, test `acceptance 2` | pass |
-| 3 | same file, test `acceptance 3` | pass |
-| 4 | same file, test `acceptance 4`, ten error rows | pass |
-| 5 | same file, test `acceptance 5` | pass |
-| 6 | same file, test `acceptance 6` | pass |
-| 7 | same file, test `acceptance 7` | pass |
-| 8 | same file, test `acceptance 8 and 10`, with `DUCKDB_BIN` set to the local duckdb.exe; skipped with `no duckdb binary` without it | pass |
-| 9 | `bench/outcome/README.md`: Command (R8), Usage tables (R1 to R7), Cost views (R9) | reviewer-verified against the diff |
-| 10 | the DoD: 18 tests, 18 passed with `DUCKDB_BIN`; 15 passed and 3 skipped without it. The ingest test differs from main by `--no-usage` in its two spawn helpers. The fixture of item 8 holds a log of 250 tokens matched by the Codex row (200 + 50) and one of 999 that matches none | pass |
+| 1 to 7 | `node --test tests/surface/outcome-usage.test.ts`, tests `acceptance 1` to `acceptance 7` (ten error rows in `acceptance 4`) | pass |
+| 8 | same file, test `acceptance 8, 10 and 11`, with `DUCKDB_BIN` set to the local duckdb.exe; skipped with `no duckdb binary` without it | pass |
+| 9 | `bench/outcome/README.md`: Command (R8), Tables (the output rule, R11), Usage tables (R1 to R7), Cost views (R9) | reviewer-verified against the diff |
+| 10 | the DoD: 19 tests, 19 passed with `DUCKDB_BIN`; 16 passed and 3 skipped without it. The ingest test differs from main by `--no-usage` in its two spawn helpers. The fixture of item 8 holds two logs matched by a Codex row (250 = 200 + 50 on the merged card, 330 = 300 + 30 on the superseded one) and one of 999 that matches none | pass |
+| 11 | same test: the fixture rows carry `claude-opus-5-5` and `gpt-5.6-sol`; the `costUsd` of each of the eight row kinds is read from the `usage.jsonl` `run.ts` wrote, before any other step, and compared with the cost worked out in the comment above it; the three cost views are asserted from the same values. The test no longer rewrites `usage.jsonl` | pass |
+| 12 | same file, test `acceptance 12` (runs without DuckDB) | pass |
 
-Findings of R3 decision 1 and the test that proves each repair:
-- `merges-requestless-lines`: test `acceptance 1`, two lines with one `message.id` and no `requestId` give two rows. The key of such a line is its file and line number.
-- `traversal-discards-siblings`: test `acceptance 4`, a listing function that throws EACCES for `s1/subagents` gives one error naming that directory and the two rows of `s1.jsonl` beside it. The listing function is the third parameter of `claudeUsage`, with `readdirSync` as its default; no failing `readdir` can be made on every platform.
-- `uncaught-metadata-stat`: test `acceptance 4`, a directory named `agent-b2.meta.json` gives one `unreadable` error naming it, and the row of `b2` with null `agentType`. The meta file is no longer stat-ed: it is read, and only ENOENT is an absent file.
-- `last-marker-not-last-pair`: test `acceptance 3`, `tokens used`, `42`, `tokens used`, `unfinished` gives 42, and a marker as the last line leaves 43.
-- `attribution-field-passthrough`: test `acceptance 6`, every one of the twelve rows (reviewer log, Codex, subagent, session) is given with an extra `text` field and comes back without it. One helper, `named`, builds both return paths from the usage columns.
-- `zero-priced-cache-writes`: test `acceptance 7`, a Codex row with 1 M cache-write tokens is priced at the shorter tier, and each of the six models of `prices.json` has five prices above zero and its two tier durations.
+Findings of R3 decision 2 and the test that proves each repair:
+- `persisted-pricing-untested`: test `acceptance 8, 10 and 11` as item 11 states; mutant M11.
+- `source-guard-aborts-export`: test `acceptance 12`. With a resolving function that throws EACCES for the Claude directory, `usage.jsonl` and `usage_errors.jsonl` (one row naming that directory) are written to a separate directory and an output directory inside the Claude directory is refused with nothing created. With one that throws for every path, the same two results hold. The ingest tests `acceptance 8` and `9` pass unchanged.
 
-Class sweep of the repair:
-- A filesystem error that leaves a reader (classes 2 and 3). `usage.ts` has three filesystem calls. `statSync` of a source directory: a throw is an `unreadable` row naming it. The listing of a directory (`readdirSync` unless injected): a throw is an `unreadable` row naming that directory, and the walk goes on. `readFileSync` of a log, a meta file or a reviewer log: a throw is an `unreadable` row naming the file, except ENOENT on a meta file, which is the normal absent case. There is no other call; the `Dirent` type tests read no disk. `run.ts` therefore always reaches `writeTables` with the errors of all three readers. Outside the readers, `run.ts` reads `prices.json` of the repository; a failure there is exit 1 with its message.
-- The last entry wins but the last is malformed (class 4). Codex `token_count`: a later line without `info.total_token_usage` already left the earlier one in place; now tested in `acceptance 2`. Codex `turn_context`: found, a later line without a `model` set the model to null; it now keeps the last line that names one (same test). Codex `session_meta`: the first line is used, so a later one changes nothing (same test). Reviewer log: the header is line 1 only, and the first `model:` line with a value is used, so a `model:` line without a value is passed over.
-- A key that merges distinct entries (class 1). The only dedup key of the module is the (`message.id`, `requestId`) map of `claudeUsage`. `attribute` and the readers of Codex and reviewer logs group nothing: one row per file.
-- A row built by spreading an input (class 5). The three readers build each row as an object of named fields. `attribute` uses `named`. `run.ts` sets `costUsd` on the rows `attribute` returned instead of spreading them, and `writeTables` writes only the declared columns.
+Mutants, one production expression changed at a time, `tests/surface/outcome-usage.test.ts` run with `DUCKDB_BIN`, the file written back after each:
 
-Input forms and what each becomes (README, Usage tables), with the test: an absent directory of each source, a line that is not JSON, a usage line without a `message.id`, a meta file that is not JSON, the two Codex files without a usable `token_count` line, a directory named as a source file (`acceptance 4`, the ten rows); a directory that cannot be listed and a meta file that cannot be read (`acceptance 4`, after the ten rows); an absent meta file, a log without a number, a log directly under `review` (`acceptance 1` and `3`); a usage line without a `requestId` (`acceptance 1`). Without a fixture: a file over the string limit of Node (the real run has one, a Codex file) and a failing `statSync` of a source directory; both take the `unreadable` path the other fixtures cover.
+| Mutant | Requirement | Change | Result |
+|---|---|---|---|
+| M1 | R1 | `cache_read_input_tokens` read from another key | killed by acceptance 1, 4, 8 |
+| M2 | R1 | every line a row of its own (no pair key) | killed by 1, 4, 5 |
+| M3 | R2 | `input - cached` to `input` | killed by 2, 8 |
+| M4 | R3 | thousands separators kept | killed by 3 |
+| M5 | R4 | no error row for a directory that cannot be listed | killed by 4, 12 |
+| M6 | R4 | no `no token_count line` row | killed by 4, 5 |
+| M7 | R5 | `attribute` returns every key of the row | killed by 6 |
+| M8 | R6 | a span holds every `ts` after its start | survived without DuckDB (killed only by 8); case added (a session row inside one span after another ended); killed by 6 |
+| M9 | R6 | the goal of the latest earlier run, not of the run whose window holds the `ts` | survived; case added (two runs of T1-W); killed by 6 |
+| M10 | R7 | the 1-hour part not taken off the shorter tier | killed by 7, 8 |
+| M11 | R8 | `costUsd` not set in `run.ts` | killed by 8 |
+| M12 | R8 | the log directories not added to the read-only list | killed by 8 |
+| M13 | R8 | `--no-usage` still runs `20-cost.sql` | killed by 8 |
+| M14 | R9 | a matched log kept in `summary_superseded_spend` | killed by 8 |
+| M15 | R9 | a matched log kept in `summary_cost_by_stage` | killed by 8 |
+| M16 | R9 | the matching sum with `cacheReadTokens` added | killed by 8 |
+| M17 | R11 | a resolve error other than ENOENT thrown; and, separately, a throw when no ancestor resolves | each killed by 12 |
 
-Real run on 2026-11-10 after the repair (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, default Claude and Codex directories, `--out` outside the repository and every source), exit 0 in 13 s: usage 12170 rows (claude-code 11707, codex 323, review-log 140), usage_errors 1 (`unreadable: ERR_STRING_TOO_LONG`, a Codex file). List-price cost in USD by stage, merged cards: coordinate 202.37, implement 117.51, review 152.42, subagent 34.63; superseded cards: coordinate 72.62, implement 86.42, review 83.55, subagent 20.95. `summary_superseded_spend`: 33 cards, 2050 requests, 447305397 tokens, 263.54 USD, 15 unpriced requests. `summary_cost_per_card`: 91 families, 90 priced, p50 4.93, p90 20.73, max 71.54 USD. `summary_unattributed`: 6118 rows, 50.3% of rows and 55.7% of tokens; `review_log_same_as_codex` 125 rows, 8683264 tokens; unpriced: 140 reviewer-log rows, 5 of `codex-auto-review`, 2 of `<synthetic>`. No cost number moved against the run of attempt 2: no Codex row carries cache-write tokens, so the new OpenAI cache-write prices apply to nothing yet, and the two real lines without a `requestId` have different message ids. The row counts grew by the sessions written since (this card's own). `usage.jsonl` holds the 21 columns of `USAGE_COLUMNS`; its longest string is a 68-character `cwd`.
+R10 is prose (item 9). The same filter in `summary_cost_per_card` has no mutant that a test can kill: a reviewer-log row never has a cost.
+
+Errors that reach disk, traced from each reader through `run.ts` to `writeTables`:
+- Every kind of `usage_errors` row (`missing directory`, `unreadable`, `not JSON`, `usage line without message.id`, `no token_count line`) is returned by its reader, none of which throws (the sweep of attempt 3).
+- The read-only list: `canonicalPath` no longer throws for any path, resolvable or not (`acceptance 12`, both resolvers). Found here and repaired: a path with no resolvable ancestor, such as a drive that is gone, still threw.
+- `attribute` and `priceOf` read fields of rows only (`Date.parse`, `path.relative`, `Object.hasOwn`, arithmetic) and call no filesystem function.
+- `prices.json`, the configuration and the git call that give the worktree root are read before or apart from the source directories, so they fail or succeed the same for any source input.
+- `writeTables` then throws only for the output directory itself: inside a read-only directory, or not creatable.
+
+Earlier repairs and decisions stand as the evidence of attempt 3 stated them: the six classes of decision 1 have their tests in `acceptance 1`, `2`, `3`, `4`, `6` and `7`; `usage.ts` has three filesystem calls, each inside a try; the only dedup key is the (`message.id`, `requestId`) map; rows are built from named fields. Without a fixture: a file over the string limit of Node (the real run has one) and a failing `statSync` of a source directory.
+
+Real run on 2026-11-10 after this repair (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, default Claude and Codex directories, `--out` outside the repository and every source), exit 0 in 11 s: usage 12201 rows (claude-code 11737, codex 324, review-log 140), usage_errors 1 (`unreadable: ERR_STRING_TOO_LONG`, a Codex file). List-price cost in USD by stage, merged cards: coordinate 202.37, implement 117.51, review 152.42, subagent 34.63; superseded cards: coordinate 72.62, implement 86.42, review 83.55, subagent 20.95. `summary_superseded_spend`: 33 cards, 2050 requests, 447305397 tokens, 263.54 USD, 15 unpriced requests. `summary_cost_per_card`: 91 families, 90 priced, p50 4.93, p90 21.53, max 71.54 USD. `summary_unattributed`: 6122 rows, 50.2% of rows and 55.6% of tokens; `review_log_same_as_codex` 125 rows, 8683264 tokens. Against the run of attempt 3, `summary_cost_by_stage` and `summary_superseded_spend` are equal to six decimals; p90 moved from 20.73 to 21.53 because this card's own family grew from 18.15 to 26.62 USD with the sessions of this attempt. `usage.jsonl` holds the 21 columns of `USAGE_COLUMNS`; its longest string is a 68-character `cwd`.

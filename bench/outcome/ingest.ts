@@ -1,6 +1,6 @@
 // Card T1-OUTCOME-INGEST: the outcome tables read from the state directory (card runs, goal journals) and the card registry.
 // Dev-only measurement: files are read, never written, and each record that cannot be read becomes an `ingest_errors` row.
-import { lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseCardText } from '../../src/artifacts/card.ts';
 import { CardRun } from '../../src/core/types.ts';
@@ -113,15 +113,24 @@ function addRun(t: Tables, run: CardRun): void {
   }
 }
 
-/** The canonical path of `p`: its nearest existing ancestor (a link itself counts as existing) resolved through every link, then the missing remainder. */
+/**
+ * The canonical path of `p`: its nearest ancestor that `resolve` resolves through every link, then the remainder. An entry
+ * that is absent or cannot be resolved for any other reason (EACCES on it or on an ancestor) is part of the remainder, so
+ * a directory that cannot be reached is still compared, by the path it would have. With no ancestor that resolves (a drive
+ * that is gone) the path is compared as given, so this never throws.
+ */
 function canonicalPath(p: string, resolve: (p: string) => string): string {
   let head = path.resolve(p);
   const rest: string[] = [];
-  while (!lstatSync(head, { throwIfNoEntry: false }) && path.dirname(head) !== head) {
+  for (;;) {
+    try {
+      return path.join(resolve(head), ...rest);
+    } catch {
+      if (path.dirname(head) === head) return path.resolve(p);
+    }
     rest.unshift(path.basename(head));
     head = path.dirname(head);
   }
-  return path.join(resolve(head), ...rest);
 }
 
 /** Throws when `outDir` is one of the `readOnly` directories or under one, by canonical path. The one place that decides where output may be written. */
