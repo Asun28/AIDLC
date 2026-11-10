@@ -59,3 +59,18 @@ npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+Attempt 1 continues the branch line of T0-PREPARE-WORKTREE at 054ec11, merged with main at 95cb3bc. RED: 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 failed on main's code), and each R3 repair added a test that failed on the candidate before it (F1 on 123855d, F2 on 2f50b22; repros recorded on T0-PREPARE-WORKTREE). Input forms, the class sweep and the readers of `run.worktree` are listed in the attempt evidence of specs/tasks/T0-PREPARE-WORKTREE.md.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
+| 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
+| 3 | prepare-worktree.test.ts, the four acceptance 3 tests | pass |
+| 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
+| 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
+| 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
+| 7 | merge-unconfirmed, audit and narration-quote tests in the DoD; each diff adds one `mkdirSync` of the recorded worktree and changes no assertion | pass |
+
+054ec11 gives the real-repository fixture a canonical main root (`realpathSync.native(fx.tmp)`): Windows CI on PR 250 failed acceptance 2 and the prunable-or-locked acceptance 3 test under the runner's 8.3 temp path, reproduced locally with TMP set to an 8.3 path; 7 of 7 pass under the short and the normal temp directory.
