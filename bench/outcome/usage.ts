@@ -192,8 +192,10 @@ export function attribute(rows: Row[], tables: Pick<Tables, 'card_runs' | 'attem
     let cardId: string | null = null;
     let stage = 'unattributed';
     if (row['source'] === 'codex') {
-      // The first segment of the cwd below the worktree root; only the segment `..` leads outside.
-      const rel = str(row['cwd']) === null ? '' : path.relative(worktreeRoot, String(row['cwd']));
+      // The first segment of the cwd below the worktree root; only the segment `..` leads outside. A cwd that is
+      // empty or relative stays unattributed: path.relative would resolve it against the invocation directory.
+      const cwd = str(row['cwd']) ?? '';
+      const rel = path.isAbsolute(cwd) ? path.relative(worktreeRoot, cwd) : '';
       const first = rel.split(path.sep)[0]!;
       if (first !== '' && first !== '..' && !path.isAbsolute(rel)) [cardId, stage] = [first, 'review'];
     } else if (row['agentId'] !== null) {

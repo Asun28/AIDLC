@@ -78,7 +78,7 @@ Normal results that give no row: an absent meta file (null `agentType` and `agen
 
 `attribute(rows, tables, worktreeRoot)` returns rows built from the usage columns each given row carries (any other field of a row it is given is dropped) and sets `cardId`, `goalId` and `stage` by the first rule that applies:
 1. A `review-log` row keeps the goal and card of its path; `stage` `review`.
-2. A `codex` row whose `cwd` is `<worktreeRoot>/<cardId>` or below takes that card; `stage` `review`.
+2. A `codex` row whose `cwd` is `<worktreeRoot>/<cardId>` or below takes that card; `stage` `review`. The `cwd` must be an absolute path: an empty or relative one is not resolved against the invocation directory and the row is `unattributed`.
 3. A `claude-code` row with an `agentId` takes its `agentCard`, else the card of the one attempt that holds its `ts` when exactly one attempt of any card does; `stage` `implement` when `agentType` is `implementer`, else `subagent`. The lines of a subagent carry the `cwd` of the session, not of the worktree, so the `cwd` is not used.
 4. A `claude-code` row without an `agentId` takes the card of the one state span that holds its `ts` when exactly one span of any card does; `stage` `coordinate`.
 5. Every other row has a null `cardId` and `stage` `unattributed`.
