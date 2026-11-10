@@ -75,6 +75,7 @@ test('T1-OUTCOME-GITHUB acceptance 2: checkRuns gives a check run of a workflow 
 });
 
 /** Real git in `dir`, through the runner the readers take. */
+const LOG = 'git log --format=%H %cI%n%P%n%B%x00';
 const gitIn = (dir: string): SyncRunner => (command, args, options) => runSync(command, args, { ...options, cwd: dir });
 let built: { dir: string; sha: Record<string, string> } | undefined;
 
@@ -82,7 +83,7 @@ let built: { dir: string; sha: Record<string, string> } | undefined;
  * A real repository, built once. main: `c0`, then per branch its squash commit (`mA`, `mR`, `mV`, `mF`), then reverts of `mV`
  * after 2 days, `mA` after 15 days, `c0` after 3 days and `f1` (not on main), a commit whose subject starts with Revert and
  * whose body holds a sha without the reverts line, and a merge of branch side, whose one commit reverts `mR`.
- * Branches from main: T1-A (`a1`), T1-RED (`r1`), T1-REV (`v1`), feature-x (`f1`, `f2`). It also holds the configuration
+ * Branches from main: T1-A (`a1`, then `n1` lands on main and `aM` merges main into the branch), T1-RED (`r1`), T1-REV (`v1`), feature-x (`f1`, `f2`). It also holds the configuration
  * and the stand-in for `gh` that run.ts reads when started there.
  */
 function repo(): { dir: string; sha: Record<string, string> } {
@@ -98,16 +99,23 @@ function repo(): { dir: string; sha: Record<string, string> } {
     git(['commit', '-q', '--allow-empty', '-m', message], date);
     sha[name] = git(['rev-parse', 'HEAD']);
   };
-  const branch = (name: string, commits: [name: string, message: string][], squash: string, mergedAt: string): void => {
+  const branch = (name: string, commits: [name: string, message: string][], squash: string, mergedAt: string, baseMerge?: string): void => {
     git(['checkout', '-q', '-b', name]);
     for (const [commitName, message] of commits) commit(commitName, at(1, '00:30'), message);
     git(['checkout', '-q', 'main']);
+    if (baseMerge !== undefined) {
+      commit('n1', at(1, '00:40'), 'on main while the branch is open');
+      git(['checkout', '-q', name]);
+      git(['merge', '-q', '--no-ff', '-m', 'Merge main into the branch', 'main'], at(1, '00:45'));
+      sha[baseMerge] = git(['rev-parse', 'HEAD']);
+      git(['checkout', '-q', 'main']);
+    }
     commit(squash, mergedAt, `squash ${name}`);
   };
   git(['init', '-q', '-b', 'main']);
   for (const [key, value] of [['user.name', 'Test'], ['user.email', 'test@example.com'], ['commit.gpgsign', 'false']]) git(['config', key!, value!]);
   commit('c0', at(1), 'init');
-  branch('T1-A', [['a1', 'a1\n\nCo-Authored-By: Claude Fable <noreply@anthropic.com>']], 'mA', at(1, '02:00'));
+  branch('T1-A', [['a1', 'a1\n\nCo-Authored-By: Claude Fable <noreply@anthropic.com>']], 'mA', at(1, '02:00'), 'aM');
   branch('T1-RED', [['r1', 'r1\n\nCo-Authored-By: Codex <codex@example.com>']], 'mR', at(2, '10:00'));
   branch('T1-REV', [['v1', 'v1\n\nCo-authored-by: GPT-6 <gpt@example.com>']], 'mV', at(4, '06:00'));
   branch('feature-x', [['f1', 'f1\n\nco-authored-by: CLAUDE <c@example.com>'], ['f2', 'f2\n\nPaired with Claude.\n\nCo-Authored-By: A Human <h@example.com>']], 'mF', at(5));
@@ -138,15 +146,15 @@ test('T1-OUTCOME-GITHUB acceptance 3: reverts finds a revert made 3 days after i
   });
   const missing = reverts(gitIn(dir), 'no-such-branch');
   assert.deepEqual(missing.rows, []);
-  assert.deepEqual(missing.errors.map((e) => [e['command'], e['exit'], e['problem']]), [['git log --format=%H %cI%n%B%x00 --first-parent no-such-branch --', 128, 'did not exit 0']]);
+  assert.deepEqual(missing.errors.map((e) => [e['command'], e['exit'], e['problem']]), [[`${LOG} --first-parent no-such-branch --`, 128, 'did not exit 0']]);
   assert.match(String(missing.errors[0]!['stderr']), /^fatal: /);
 });
 
-test('T1-OUTCOME-GITHUB acceptance 4: branchCommits lists the commits of each merged branch that were not on the base before the merge, modelCoAuthor by the Co-Authored-By trailer in any letter case [R4] [R5]', () => {
+test('T1-OUTCOME-GITHUB acceptance 4: branchCommits lists the commits of each merged branch that were not on the base before the merge, merge true for a merge of the base into the branch, modelCoAuthor by the Co-Authored-By trailer in any letter case [R4] [R5]', () => {
   const { dir, sha } = repo();
   const s = (name: string): string => sha[name]!;
   const pulls = [
-    prRow(11, 'T1-RED', s('a1'), at(1, '02:00'), s('mA')),
+    prRow(11, 'T1-RED', s('aM'), at(1, '02:00'), s('mA')),
     prRow(20, 'still-open', s('f2'), null, null, { state: 'open' }),
     prRow(21, 'merged-elsewhere', s('f2'), at(5), s('mF'), { baseRef: 'release' }),
     prRow(22, 'head-gone', '0'.repeat(40), at(5), s('mF')),
@@ -156,10 +164,10 @@ test('T1-OUTCOME-GITHUB acceptance 4: branchCommits lists the commits of each me
     prRow(15, 'feature-x', s('f2'), at(5), s('mF')),
   ];
   const got = branchCommits(gitIn(dir), 'main', pulls);
-  const row = (number: number, name: string, modelCoAuthor: boolean): Row => ({ number, sha: s(name), date: '2026-01-01T00:30:00.000Z', modelCoAuthor });
-  assert.deepEqual(got.rows, [row(11, 'a1', true), row(12, 'r1', true), row(13, 'v1', true), row(15, 'f2', false), row(15, 'f1', true)]);
+  const row = (number: number, name: string, modelCoAuthor: boolean, merge = false): Row => ({ number, sha: s(name), date: merge ? '2026-01-01T00:45:00.000Z' : '2026-01-01T00:30:00.000Z', merge, modelCoAuthor });
+  assert.deepEqual(got.rows, [row(11, 'aM', false, true), row(11, 'a1', true), row(12, 'r1', true), row(13, 'v1', true), row(15, 'f2', false), row(15, 'f1', true)]);
   assert.deepEqual(got.errors.map((e) => [e['command'], e['exit'], e['problem']]), [
-    [`git log --format=%H %cI%n%B%x00 ${'0'.repeat(40)} --not ${s('mF')}^1 --`, 128, 'did not exit 0'],
+    [`${LOG} ${'0'.repeat(40)} --not ${s('mF')}^1 --`, 128, 'did not exit 0'],
     ['git log', null, 'merged pull request 23 has no 40-hex headSha and mergeCommitSha'],
   ]);
   assert.match(String(got.errors[0]!['stderr']), /^fatal: /);
@@ -207,7 +215,8 @@ test('T1-OUTCOME-GITHUB acceptance 5: a runner exit of 1, a timeout, output that
   ]);
 });
 
-// run.ts over a fixture of four cards: T1-A (accepted, joined by prNumber to a pull request whose headRef names T1-RED),
+// run.ts over a fixture of four cards: T1-A (accepted, joined by prNumber to a pull request whose headRef names T1-RED,
+// its only branch commit without a trailer a merge of the base),
 // T1-RED (merged, required check ci red on the merge commit and green on the head), T1-REV (merged, joined by headRef, reverted
 // after 2 days, two runs) and T1-D (a stopReview, a mergeVerified run, its pull request closed unmerged, superseded).
 const cardText = (id: string, extra = ''): string => `---\nid: ${id}\ntitle: ${id}\nstatus: todo\nallow_paths:\n  - src/x.ts\ndod_command: npm test\n${extra}---\n\n# ${id}\n`;
@@ -233,15 +242,15 @@ function state(prOfA = 11, verifiedD = true): string {
 }
 
 /** What the stand-in gh answers per endpoint: seven pull requests on two pages (17 is a second, later merged one of T1-REV), and the check runs of seven of the eight commits. */
-function answers(s: Record<string, string>, scanOnA = true, headOfA = s['a1']!): Record<string, unknown> {
+function answers(s: Record<string, string>, scanOnA = true, headOfA = s['aM']!): Record<string, unknown> {
   const green = [check('ci', 'success', at(5)), check('scan', 'success', at(5))];
   return {
     [PULLS]: [
       [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
       [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!)],
     ],
-    [checksOf(s['a1']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900), check('ci', 'success', at(1, '01:30'), 900), check('scan', 'success', at(1, '01:10')))],
-    [runsOf(s['a1']!)]: [{ total_count: 1, workflow_runs: [{ id: 900, run_attempt: 2 }] }],
+    [checksOf(s['aM']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900), check('ci', 'success', at(1, '01:30'), 900), check('scan', 'success', at(1, '01:10')))],
+    [runsOf(s['aM']!)]: [{ total_count: 1, workflow_runs: [{ id: 900, run_attempt: 2 }] }],
     [checksOf(s['mA']!)]: [checkPage(check('ci', 'failure', at(1, '02:01')), check('ci', 'success', at(1, '02:05')), check('docs', 'failure', at(1, '02:01')), ...(scanOnA ? [check('scan', 'success', at(1, '02:01'))] : []))],
     [checksOf(s['r1']!)]: [checkPage(...green, check('docs', 'failure', at(2)), check('lint', 'success', at(2), 901))],
     [runsOf(s['r1']!)]: [{ total_count: 1, workflow_runs: [{ id: 901, run_attempt: 1 }] }],
@@ -274,7 +283,7 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
   assert.deepEqual(GITHUB_FILES.filter((name) => !existsSync(path.join(r.out, name))), [], 'the six files are written before DuckDB is started');
   const failed =`repos/${REPO}/commits/${sha['f2']}/check-runs?filter=all&per_page=100`;
   assert.deepEqual(lines(r.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(failed), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [7, 20, 4, 7, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [7, 20, 4, 8, 1, 2]);
   assert.deepEqual(lines(r.out, 'required_checks.jsonl'), ['{"name":"ci"}', '{"name":"scan"}']);
   assert.equal(lines(r.out, 'card_runs.jsonl').length, 5);
   assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [11, 11], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check');
@@ -293,13 +302,14 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
 const views = (stdout: string): Map<string, Row[]> => new Map(stdout.trim().split('\n').map((line) => JSON.parse(line) as { view: string; rows: Row[] }).map((v) => [v.view, v.rows]));
 
-test('T1-OUTCOME-GITHUB acceptance 6: run.ts prints the PR success rate, the PR lead time, the CI shares and the reconciliation of the four-card fixture, and --no-github writes none of the six files [R6] [R7] [R8]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+test('T1-OUTCOME-GITHUB acceptance 6 and 9: run.ts prints the PR success rate, the PR lead time, the CI shares and the reconciliation of the four-card fixture, noHumanCommit true, null and false, and --no-github writes none of the six files [R6] [R7] [R8]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
   const { sha } = repo();
   const r = outcome(['--duckdb', duckdb!]);
   assert.equal(r.status, 0, r.stderr);
   const got = views(r.stdout);
-  const success = (rest: Row): Row[] => [{ card_attempts: 4, accepted: 0, pr_success_rate: 0, failing_merged: 1, failing_checksGreen: 1, failing_notReverted: 1, failing_noHumanCommit: 0, failing_noRuling: 1, ...rest }];
-  assert.deepEqual(got.get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25 }));
+  const success = (rest: Row): Row[] => [{ card_attempts: 4, accepted: 0, pr_success_rate: 0, accepted_strict: 0, pr_success_rate_strict: 0, failing_merged: 1, failing_checksGreen: 1, failing_notReverted: 1, failing_noHumanCommit: 0, failing_noRuling: 1, unknown_noHumanCommit: 0, ...rest }];
+  // Acceptance 9, first case: the merge of the base on T1-A's branch has no trailer and T1-A is accepted under both rates.
+  assert.deepEqual(got.get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25, accepted_strict: 1, pr_success_rate_strict: 0.25 }));
   // Hours from the earliest run to mergedAt: T1-A 2, T1-RED 10, T1-REV 30 (6 from its later run). T1-D has a mergeVerified run and no merged pull request.
   assert.deepEqual(got.get('summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 1 }]);
   // Of the five merged pull requests, 11 has a head check on attempt 2 and 12 one on attempt 1, and 11 (ci) and 13 (scan) a required check whose first run failed.
@@ -310,9 +320,10 @@ test('T1-OUTCOME-GITHUB acceptance 6: run.ts prints the PR success rate, the PR 
     { kind: 'merged_pr_without_mergeVerified', cardId: 'T1-REV', n: 2 },
   ]);
 
-  // One change each, so that T1-A fails exactly one more boolean: it succeeds a card with a stopReview; its pull request
-  // is the one with a commit that has no model co-author; its merge commit has no run of the required check scan; the
-  // head of its pull request is a commit the repository does not hold, so no branch commit is read.
+  // One change each to T1-A: it succeeds a card with a stopReview; its pull request is the one with a commit that is
+  // no merge and has no model co-author (acceptance 9: neither accepted nor acceptedStrict); its merge commit has no run
+  // of the required check scan; the head of its pull request is a commit the repository does not hold, so its branch
+  // commits cannot be read (acceptance 9: noHumanCommit null, accepted, not acceptedStrict, in the null count).
   const variant = (over: Parameters<typeof outcome>[1], view = 'summary_pr_success'): Row[] | undefined => {
     const v = outcome(['--duckdb', duckdb!], over);
     assert.equal(v.status, 0, v.stderr);
@@ -321,7 +332,7 @@ test('T1-OUTCOME-GITHUB acceptance 6: run.ts prints the PR success rate, the PR 
   assert.deepEqual(variant({ cards: cards('T1-A') }), success({ failing_noRuling: 2 }));
   assert.deepEqual(variant({ state: state(15) }), success({ failing_noHumanCommit: 1 }));
   assert.deepEqual(variant({ answers: answers(sha, false) }), success({ failing_checksGreen: 2 }));
-  assert.deepEqual(variant({ answers: answers(sha, true, '0'.repeat(40)) }), success({ failing_noHumanCommit: 1 }));
+  assert.deepEqual(variant({ answers: answers(sha, true, '0'.repeat(40)) }), success({ accepted: 1, pr_success_rate: 0.25, unknown_noHumanCommit: 1 }));
   // Without a mergeVerified run T1-D is not a merged card, so no merged card lacks a pull request.
   assert.deepEqual(variant({ state: state(11, false) }, 'summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 0 }]);
 
