@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
@@ -9,12 +9,24 @@ import { EvalCase, loadEvals, realPathRule, runEval, runSuite, runTrials } from 
 import { MockProvider } from '../../src/providers/mock.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
+import { cleanup } from '../infra/helpers.ts';
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
 
+const temps: string[] = [];
+/** A new directory under the OS temporary directory, removed after the file's tests, also when a test fails. */
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  temps.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of temps) cleanup(dir);
+});
+
 /** A git repository with `note.txt` committed: a model-backed case runs in a temporary checkout of its HEAD. */
 function setup() {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-'));
+  const cwd = tempDir('aidlc-evals-');
   const evalsDir = path.join(cwd, 'evals');
   writeFileSync(path.join(cwd, 'note.txt'), 'hello world', 'utf8');
   git(cwd, 'init', '-q');
@@ -220,7 +232,7 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 8: loadEvals refuses an absolute cwd, a ..
 
 test('T1-EVAL-TRANSCRIPT-2 acceptance 8: a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async () => {
   const { cwd } = setup();
-  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-outside-'));
+  const outside = tempDir('aidlc-evals-outside-');
   writeFileSync(path.join(outside, 'secret.txt'), 'hello secret', 'utf8');
   // A junction needs no privilege on Windows and a symlink always works on Linux: a creation error fails the test.
   symlinkSync(outside, path.join(cwd, 'out'), 'junction');
@@ -411,7 +423,7 @@ test('T1-EVAL-VARIANT acceptance 3: --variant with --skip-model and a ref that n
 });
 
 test('T1-EVAL-VARIANT acceptance 3: the CLI refuses --trials 0, --trials 21 and --variant with --skip-model, running no case [R1]', () => {
-  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  const state = tempDir('aidlc-evals-state-');
   const { cwd } = twoCommits();
   const refused: Array<[string[], string]> = [
     [['--trials', '0'], '--trials must be an integer from 1 to 20, not "0"'],
@@ -433,7 +445,7 @@ test('T1-EVAL-VARIANT acceptance 4: with neither option, the example case gives 
     mkdirSync(path.join(cwd, 'evals'));
     writeFileSync(path.join(cwd, 'evals', 'example-regression.json'), example);
     writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', private: true, scripts: { test: `node -e "process.exit(${exit})"` } }));
-    const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+    const state = tempDir('aidlc-evals-state-');
     const r = spawnSync(process.execPath, [cliMain, 'evals', 'run', '--skip-model', '--threshold', '0.9', '--json'], { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
     assert.equal(r.status, exit, r.stderr);
     const suite = JSON.parse(r.stdout) as { results: Array<Record<string, unknown>> };
