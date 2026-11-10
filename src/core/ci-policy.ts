@@ -73,6 +73,8 @@ export const DEFAULT_SCAN_SETUP_STEPS: readonly string[] = ['Install gitleaks (p
 interface GateStep {
   check: string;
   step: { name: string; conclusion: string } | null;
+  /** The line is exactly what the GitHub ship path prints, the only form a scan setup exemption reads (card T0-SCAN-SETUP-STEP). */
+  exact: boolean;
 }
 const JSON_PAYLOAD = /^\[CI-GATE-(?:RED|TIMEOUT)\][^\[]*(\[[\s\S]*\])\s*$/;
 
@@ -122,7 +124,7 @@ function readGate(text: string): GateRead {
     if (line.startsWith('[CI-GATE-STEP]')) {
       const payload = line.slice('[CI-GATE-STEP]'.length);
       const step = readStep(payload);
-      if (step) steps.push(step);
+      if (step) steps.push({ ...step, exact: isShipStepPayload(payload) });
       else invalidSteps.push(readStepCheck(payload));
       continue;
     }
@@ -177,10 +179,38 @@ function readStepCheck(payload: string): string | null {
 }
 
 /**
+ * Whether a `[CI-GATE-STEP]` payload is exactly what the GitHub ship path prints (`gateStepLine` in src/delivery/github-ship.ts):
+ * one space, then the JSON of `check` (non-blank), `job` (a job id of digits) and `step` (null, or a positive integer `number`,
+ * a `name` and a `conclusion`), in that order, with no other or repeated key, no other spacing, U+2028, U+2029 and `/` escaped.
+ * Any other form names no step a scan setup exemption reads (card T0-SCAN-SETUP-STEP); a change to the printed form makes
+ * every red scan check `security` again until this follows it.
+ */
+function isShipStepPayload(payload: string): boolean {
+  let v: unknown;
+  try {
+    v = JSON.parse(payload);
+  } catch {
+    return false;
+  }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return false;
+  const { check, job, step } = v as Record<string, unknown>;
+  if (typeof check !== 'string' || !check.trim() || typeof job !== 'string' || !/^\d+$/.test(job)) return false;
+  let printed: { number: number; name: string; conclusion: string } | null = null;
+  if (step !== null) {
+    if (typeof step !== 'object' || step === undefined || Array.isArray(step)) return false;
+    const { number, name, conclusion } = step as Record<string, unknown>;
+    if (typeof number !== 'number' || !Number.isSafeInteger(number) || number < 1 || typeof name !== 'string' || typeof conclusion !== 'string') return false;
+    printed = { number, name, conclusion };
+  }
+  const json = JSON.stringify({ check, job, step: printed }).replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029').replace(/\//g, '\\/');
+  return payload === ` ${json}`;
+}
+
+/**
  * A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed,
  * a blank check included, since it names no check (card T0-SCAN-SETUP-STEP).
  */
-function readStep(payload: string): GateStep | undefined {
+function readStep(payload: string): Omit<GateStep, 'exact'> | undefined {
   try {
     const v: unknown = JSON.parse(payload.trim());
     if (typeof v !== 'object' || v === null || typeof (v as { check?: unknown }).check !== 'string' || !(v as { check: string }).check.trim()) return undefined;
@@ -282,7 +312,7 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     if (new Set([...jobRecords, ...gateRecordsOf].map((c) => c.conclusion?.toLowerCase())).size !== 1) return undefined;
     if (invalidSteps.some((c) => c === null || c === check)) return undefined;
     const placed = steps.filter((s) => s.check === check);
-    if (!placed.length || !placed.every((s) => s.step !== null && s.step.conclusion === 'failure' && scanSetupSteps.includes(s.step.name))) return undefined;
+    if (!placed.length || !placed.every((s) => s.exact && s.step !== null && s.step.conclusion === 'failure' && scanSetupSteps.includes(s.step.name))) return undefined;
     return placed[0]!.step!.name;
   };
   const setupFailures = new Map<string, string>();

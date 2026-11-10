@@ -516,6 +516,34 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP)', () => {
       assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
     }
     assert.equal(classifyCiFailure([{ name: SCAN, conclusion: 'failure' }, gate]).class, 'unknown', 'one job record corroborates one gate record');
+    // The only step line of the check names the install step, in a form the GitHub ship path never prints.
+    const install = { number: 3, name: INSTALL, conclusion: 'failure' };
+    const forms: Array<[string, string]> = [
+      ['no job and no number', JSON.stringify({ check: SCAN, step: { name: INSTALL, conclusion: 'failure' } })],
+      ['job null and number "bad"', JSON.stringify({ check: SCAN, job: null, step: { number: 'bad', name: INSTALL, conclusion: 'failure' } })],
+      ['a numeric job', JSON.stringify({ check: SCAN, job: 128690143221, step: install })],
+      ['a job that is not digits', JSON.stringify({ check: SCAN, job: 'abc', step: install })],
+      ['step number 0', JSON.stringify({ check: SCAN, job: '1', step: { ...install, number: 0 } })],
+      ['step number 3.5', JSON.stringify({ check: SCAN, job: '1', step: { ...install, number: 3.5 } })],
+      ['another top-level key', JSON.stringify({ check: SCAN, job: '1', step: install, extra: 1 })],
+      ['another step key', JSON.stringify({ check: SCAN, job: '1', step: { ...install, extra: 1 } })],
+      ['a repeated key', `{"check":${JSON.stringify(SCAN)},"check":${JSON.stringify(SCAN)},"job":"1","step":${JSON.stringify(install)}}`],
+      ['another key order', JSON.stringify({ job: '1', check: SCAN, step: install })],
+      ['other spacing', JSON.stringify({ check: SCAN, job: '1', step: install }).replace('"job":', '"job": ')],
+    ];
+    for (const [label, payload] of forms) {
+      for (const transientSteps of [undefined, ['Set up job', 'Complete job', INSTALL]]) {
+        for (const line of [`[CI-GATE-STEP] ${payload}`, ...(label === 'other spacing' ? [`[CI-GATE-STEP]  ${JSON.stringify({ check: SCAN, job: '1', step: install })}`] : [])]) {
+          const c = ship([redLine(SCAN), line].join('\n'), { ...(transientSteps ? { transientSteps } : {}) });
+          assert.equal(c.class, 'security', `${label}${transientSteps ? ', the setup step on transientSteps' : ''}: ${c.evidence.join(' | ')}`);
+          assert.ok(!c.evidence.some((e) => e.startsWith('scan-setup:')), `${label}: no scan-setup evidence`);
+        }
+      }
+    }
+    const slashed = { scanSetupSteps: ['Install a/b'] };
+    const escaped = `[CI-GATE-STEP] {"check":${JSON.stringify(SCAN)},"job":"1","step":{"number":3,"name":"Install a\\/b","conclusion":"failure"}}`;
+    assert.equal(ship([redLine(SCAN), escaped].join('\n'), slashed).class, 'unknown', 'a step name with / written as \\/, as the ship path prints it');
+    assert.equal(ship([redLine(SCAN), escaped.replace('a\\/b', 'a/b')].join('\n'), slashed).class, 'security', 'a / the ship path would have escaped');
   });
 
   test('acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list [R1] [R3]', () => {
