@@ -1,7 +1,7 @@
 ---
 id: T0-BOARD-OWNER-WAIT
 title: "The board shows a card stopped for ownership under a live card lease as the goal's wait on its owner, from the same lease decision `aidlc next` uses, so its Arc line agrees with the directive"
-status: todo
+status: merged
 branch: T0-BOARD-OWNER-WAIT
 worktree: D:\wt\AIDLC\T0-BOARD-OWNER-WAIT
 allow_paths:
