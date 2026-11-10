@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-WORDING
 title: "The trials total line counts case runs, and the evals docs say that a recorded empty tool-call list passes the negative tool-call checks"
-status: todo
+status: merged
 branch: T0-EVAL-WORDING
 worktree: D:\wt\AIDLC\T0-EVAL-WORDING
 allow_paths:
@@ -44,3 +44,14 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/comma
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `7e862e5:1`. At 7e862e5, `node --test tests/surface/evals.test.ts` runs 34 tests, 32 pass, 2 fail, each on its total-line assertion: acceptance 1 got `total over 3 trials: HEAD 6/3 (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0/3 (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds`, and acceptance 2 got `HEAD 5/3` where it expects `HEAD 5 of 5 case runs`; acceptance 3 passes there, since it pins the check results that R2 documents.
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/surface/evals.test.ts `T0-EVAL-WORDING acceptance 1`: a hand-built `EvalTrialsReport` of two cases over three trials against `main` prints the total line given in the card verbatim, and the two case lines keep `HEAD 3/3` and `"main" 0/3` | pass |
+| 2 | Same file, `acceptance 2`: a report without a variant whose cases ran 3 and 2 trials, all passing, prints a total line starting `total over 3 trials: HEAD 5 of 5 case runs ` | pass |
+| 3 | Same file, `acceptance 3`: through `runEval` with the four tool-call checks, a `MockProvider` result with `toolCalls: []` gives read-file false, ran-command false, not-ran-command true, not-wrote-path true; a result with no `toolCalls` gives all four `[false, 'no tool calls recorded']` | pass |
+| 4 | DoD arm 2: tests/surface/command-lines.test.ts passes, including `T1-EVALS-NO-KEY acceptance 2`, which asserts `templates/evals/README.md` equals `evals/README.md` | pass |
+| 5 | The diff: docs/OPERATIONS.md Evals section drops `A tool-call check never passes without tool calls` and states the three cases (no model run, no `toolCalls`, `toolCalls: []`), and states the printed total line; the comment above the tool-call checks in `runEval` and both evals READMEs state the same three cases; CHANGELOG Unreleased opens `- T0-EVAL-WORDING: ` with R1 and mentions R2. DoD `npm run typecheck && node --test tests/surface/evals.test.ts tests/surface/command-lines.test.ts`: exit 0, 46 tests, 46 pass, 0 fail; tests/surface/eval-test-temp.test.ts 4 of 4 pass (one `mkdtempSync(` in evals.test.ts); `npm test` exit 0, 2998 tests, 2984 pass, 0 fail, 14 skipped | reviewer |

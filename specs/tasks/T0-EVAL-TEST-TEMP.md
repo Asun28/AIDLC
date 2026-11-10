@@ -1,7 +1,7 @@
 ---
 id: T0-EVAL-TEST-TEMP
 title: "The eval tests remove every temporary directory they create, so a test run leaves no `aidlc-evals-*` directory in the OS temp directory"
-status: todo
+status: merged
 branch: T0-EVAL-TEST-TEMP
 worktree: D:\wt\AIDLC\T0-EVAL-TEST-TEMP
 allow_paths:
@@ -46,3 +46,14 @@ npm run typecheck && node --test tests/surface/eval-test-temp.test.ts tests/surf
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `dfe040f:1`. At dfe040f, `tests/surface/eval-test-temp.test.ts` runs 4 tests, 1 pass, 3 fail, each on its leak assertion: acceptance 1 matched exit 0, pass 4 and fail 0 but left 9 entries (5 `aidlc-evals-`, 1 `aidlc-evals-outside-`, 3 `aidlc-evals-state-`), acceptance 2 left 6 (`main`, `repo`, `wt`, 3 `state`), and acceptance 3 counted `mkdtempSync(` 4 times, not 1; acceptance 4 passes there, since it tests the new file's own TEMP helper.
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/surface/eval-test-temp.test.ts `T0-EVAL-TEST-TEMP acceptance 1`: child `node --test --test-reporter=tap` on tests/surface/evals.test.ts with the four patterns named in the card (all four names match the file as it is), TEMP, TMP and TMPDIR set to a new `aidlc-evtemp-` directory (realpathSync.native), NODE_TEST_CONTEXT removed: exit 0, `# pass 4`, `# fail 0`, no `aidlc-eval*` entry left | pass |
+| 2 | Same file, `acceptance 2`: the same for tests/surface/command-lines.test.ts with `T1-EVAL-TRANSCRIPT-2 acceptance 9`: exit 0, `# pass 3`, `# fail 0`, no `aidlc-eval*` entry left (the `main` repo and the `aidlc-evals-wt-` holder are both recorded) | pass |
+| 3 | Same file, `acceptance 3`: the source of tests/surface/evals.test.ts contains `mkdtempSync(` once, inside `tempDir`, which records each directory for the module-level `after` hook that removes it with `cleanup` | pass |
+| 4 | Same file, `acceptance 4`: the `inTemp` helper that sets TEMP removes its directory in a `finally`; a run whose assertion fails and a run that passes both leave their directory removed | pass |
+| 5 | DoD: tests/surface/evals.test.ts 26 tests before and after, tests/surface/command-lines.test.ts 12 before and after, all pass; the diff changes no `test(` line and no assertion | pass |

@@ -1,0 +1,103 @@
+---
+id: T1-OUTCOME-INGEST
+title: "`node bench/outcome/run.ts` writes the card, card-run, review, finding, state-span and attempt tables from the state directory and the registry as JSONL and runs the card and review views through the DuckDB CLI"
+status: merged
+branch: T1-OUTCOME-INGEST
+worktree: D:\wt\AIDLC\T1-OUTCOME-INGEST
+plan_ref: plans/reliability-baseline.md#order-of-work
+allow_paths:
+  - bench/outcome/ingest.ts
+  - bench/outcome/run.ts
+  - bench/outcome/views/10-cards.sql
+  - bench/outcome/README.md
+  - tests/surface/outcome-ingest.test.ts
+  - specs/tasks/T1-OUTCOME-INGEST.md
+dod_command: npm run typecheck && node --test tests/surface/outcome-ingest.test.ts
+dod_exit: 0
+requirements:
+  - R1. `ingestState({ stateDir, cardsDir })` in `bench/outcome/ingest.ts` shall return the tables `cards`, `card_runs`, `review_decisions`, `findings`, `state_spans`, `attempts` and `ingest_errors` as arrays of plain rows, reading files only.
+  - R2. The `cards` table shall hold one row per card file that `parseCardText` accepts (files starting with `_` left out), with `id`, `status`, `superseded_by`, `depends_on`, `tdd` and `budget`.
+  - R3. The `card_runs` table shall hold one row per persisted card run that parses under `CardRun`, with `goalId`, `cardId`, `startedAt`, `state`, `mergeVerified`, `prNumber`, `stopReason`, `stopDetail`, `substantiveDecisions`, `substantiveBlocks` and `updatedAt`.
+  - R4. The `review_decisions` table shall hold one row per `review.invocations` entry (`stage` `formal`) and per `preReview.rounds` entry (`stage` `pre`) with `goalId`, `cardId`, `stage`, `outcome`, `mergeBlocking`, `reviewer`, `requestedAt`, `candidateSha`, `secondPass`, `baseSync`, `stopReview` (true when the entry carries one), `decision`, `round`, `cycle`, and `angles` (the `{ angle, outcome }` of each perspective of a pre round, else an empty array).
+  - R5. The `findings` table shall hold one row per `findings` entry with `goalId`, `cardId`, `id`, `stage`, `round`, `cycle`, `perspective`, `file`, `class`, `candidateSha`, `raisedAt`, `disposition`, `disputes` (count), `reraises` (count), `resolvedAt`, `advisory`, `outsideDelta` and `reason`.
+  - R6. The `state_spans` table shall hold one row per `CARD_STATE` journal event with `goalId`, `cardId`, `state` (its `to`), `startTs` and `endTs` (the timestamp of the next `CARD_STATE` of that goal and card, null for the last), and the `attempts` table one row per `ATTEMPT_FINISHED` event with `goalId`, `cardId`, `outcome`, `endTs` and `startTs` (the nearest earlier `ATTEMPT_STARTED` of that goal and card, null when there is none).
+  - R7. A card file `parseCardText` rejects, a card-run file that is not JSON or fails `CardRun`, and a journal line that is not JSON shall each become one `ingest_errors` row with `source`, `path`, `line` (journal only) and `problem`, with every other row still returned.
+  - R8. `writeTables(tables, outDir)` shall write `<table>.jsonl` per table with rows in a fixed sort order and keys in a fixed order, so the same rows given in any order write the same bytes, and an empty table writes an empty file.
+  - R9. `node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>]` shall default to the state directory aidlc resolves for the checkout, the configured `cardsDir` and `_local/outcome`, write the tables, run every `bench/outcome/views/*.sql` in name order through the DuckDB binary (`--duckdb`, else `duckdb` on PATH) with the output directory as its working directory, print each view named `summary_*` as JSON, and exit 2 with a message naming `winget install DuckDB.cli` when the binary cannot be started, after the tables are written.
+  - R10. `views/10-cards.sql` shall define `card_attempts` (one row per card with at least one run; `merged` when a run has `mergeVerified`; `failed` when `superseded_by` is set), `card_family` (each card with the last card of its `superseded_by` chain, where the walk has no step limit and stops on a repeated id or on a name the registry does not hold), `summary_successor_rate`, `summary_review_convergence`, `summary_lead_time` and `summary_stop_reasons`.
+  - R11. `summary_review_convergence` shall report, over cards with at least one formal entry whose outcome is `pass` or `block`, the share with a `pass` and no merge-blocking `block` (first-decision pass), the share with two or more merge-blocking blocks, the mean of merge-blocking blocks plus one among cards with a `pass`, and the share of cards with an entry carrying `stopReview`; a `block` with `mergeBlocking` absent counts as merge-blocking.
+  - R12. `summary_lead_time` shall report the p50 and p90 hours from `startedAt` to the start of the first `CLOSE` or `DONE` span for runs with `mergeVerified`, and the total hours per state over all spans with an `endTs`.
+  - R13. `bench/outcome/README.md` shall state the command, each table with its columns, each view with its definition, and that the view tests are skipped where no DuckDB binary is found.
+  - R14. `ingestState` shall add one `ingest_errors` row with `problem` `missing directory` for each of the registry directory (`source` `card`), `<state>/cards` (`card_run`) and `<state>/journal` (`journal`) that is absent or not a directory, with the rows of the other directories still returned and no row for a goal directory without card-run files.
+  - R15. `writeTables(tables, outDir, readOnly)` shall throw before creating anything when `outDir`, compared by the canonical path of its nearest existing ancestor plus the missing remainder, is a `readOnly` directory or under one (a name that only begins with `..` is inside), and otherwise replace each `<table>.jsonl` by removing the entry of that name and creating the file exclusively, so a link there is never written through, with `run.ts` passing the state directory and the registry and exiting 1 on the refusal.
+  - R16. `run.ts` shall resolve a `--duckdb` value that is absolute or holds a path separator against the invocation directory before the DuckDB child starts in the output directory, and leave a bare name to the operating system's lookup.
+acceptance:
+  - 1. `tests/surface/outcome-ingest.test.ts`: over a temporary state directory and registry holding a merged run (one formal pass), a stopped run (two merge-blocking formal blocks, the second with `stopReview`, three findings of which one disputed and one re-raised) and a run with one pre round of three angles, `ingestState` returns the rows of R2 to R6, asserted field by field. [R1] [R2] [R3] [R4] [R5] [R6] [dod arm 2]
+  - 2. Same file: a card file with no `id`, a card-run file holding `{`, a card-run file holding `{}` and a journal file whose second line is `not json` give four `ingest_errors` rows naming each path (and line 2), and the valid rows of the same directories are still returned. [R7] [dod arm 2]
+  - 3. Same file: `writeTables` writes identical bytes for the same rows in reversed order, and a zero-byte file for an empty table. [R8] [dod arm 2]
+  - 4. Same file: `run.ts --duckdb <missing path>` exits 2, its stderr names `winget install DuckDB.cli`, and `cards.jsonl` exists under `--out`. [R9] [dod arm 2]
+  - 5. Same file, when a DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), else skipped with the reason `no duckdb binary`: `run.ts` over the fixture of item 1, with the stopped card superseded by the merged one, prints a successor rate of 1 of 2, a first-decision pass share of 0.5, a two-or-more-blocks share of 0.5, a mean of 1 decision among passed cards, a `stopReview` share of 0.5, and the lead time the fixture timestamps give. [R9] [R10] [R11] [R12] [dod arm 2]
+  - 6. The README states R1 to R12 (reviewer-verified against the diff). [R13]
+  - 7. Same file: with an absent state directory `ingestState` returns two `missing directory` rows naming `<state>/cards` and `<state>/journal` beside the card rows, with a registry path that is a file it returns one such row beside the card-run, span and attempt rows, and a goal directory without card runs adds no row. [R14] [dod arm 2]
+  - 8. Same file: `run.ts` exits 1 with `refusing to write` and creates nothing for `--out <state>/..out`, `--out <registry>/..out`, `--out <junction to the state directory>/new/deeper` and `--out <state>`, and writes `cards.jsonl` for a directory named `state..out` beside the state directory. [R15] [dod arm 2]
+  - 9. Same file: with `<out>/cards.jsonl` a hard link to a card file and `<out>/attempts.jsonl` a symbolic link to a card-run file (that link skipped only on Windows when its creation fails with EPERM), `writeTables` leaves both files unchanged and writes the tables as regular files. [R15] [dod arm 2]
+  - 10. Same file: `run.ts` started in the directory of the Node binary with `--duckdb ./<node binary name>` exits 1 and its stderr does not name `winget install`, since the binary was started. [R16] [dod arm 2]
+  - 11. Same file, skipped as item 5 is: `card_family` over a chain of 60 cards gives the 60th as the last card of the first with 59 steps, gives each card of a two-card cycle the other one with 1 step, gives a card superseded by itself itself with 0 steps, and gives a card superseded by a name the registry does not hold that name. [R10] [dod arm 2]
+  - 12. The README states R14 to R16 and the `card_family` rule of R10 (reviewer-verified against the diff). [R13]
+depends_on: []
+budget: 660
+sweep: "New files only: `git ls-files bench/outcome` is empty on main at 8156bf5. Readers reused, not copied: `parseCardText` (src/artifacts/card.ts:83), the `CardRun` schema (src/core/types.ts:847), the state-directory resolution the CLI uses. `tsconfig.test.json` already includes `bench/**/*.ts`, so the typecheck covers the new files."
+forbid: [any change under src/ templates/ or .claude/, a write under the state directory or the registry, a dependency added to package.json, a network call]
+non_goals: [usage and cost (T1-OUTCOME-USAGE), GitHub data (T1-OUTCOME-GITHUB), git history (T1-OUTCOME-HISTORY), migrating a card run written by an older version (it parses through the schema defaults or becomes an error row), journal event types other than CARD_STATE ATTEMPT_STARTED and ATTEMPT_FINISHED (ignored)]
+hygiene: "The view test is skipped in CI, which has no DuckDB. Run it once locally with `DUCKDB_BIN` set and paste the output in the attempt evidence."
+doc_sync: bench/outcome/README.md
+---
+
+# T1-OUTCOME-INGEST
+
+## Deliverable
+The state and registry tables as JSONL, the runner, and the card and review views. No usage, GitHub or git data yet.
+
+## Why
+82 of 263 cards carry `superseded_by` and nothing reports the rate, the review decisions behind it or the time spent per state. The persisted card runs already hold every decision and finding (`aidlc review stats` reads them); this card puts them in tables that SQL can join with the later sources.
+
+## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
+```powershell
+npm run typecheck && node --test tests/surface/outcome-ingest.test.ts
+```
+- Expected exit code: 0
+- Assertion: every acceptance test above passes; items 5 and 11 are skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+RED, attempt 1: commit 8af61e5 (the test against seam modules that return empty tables): 4 failed and 1 skipped without `DUCKDB_BIN`, 5 failed with it.
+RED, attempt 2 (repair of R3 decision 1): commit 3d49100 (tests 7 to 11 against candidate d55991f): 5 passed and 5 failed with `DUCKDB_BIN`; 4 passed, 4 failed and 2 skipped without it.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `node --test tests/surface/outcome-ingest.test.ts`, test `acceptance 1` | pass |
+| 2 | same file, test `acceptance 2` | pass |
+| 3 | same file, test `acceptance 3` | pass |
+| 4 | same file, test `acceptance 4` | pass |
+| 5 | same file, test `acceptance 5`, with `DUCKDB_BIN` set to the local duckdb.exe (v1.5.6): `# tests 10`, `# pass 10`, `# fail 0`, `# skipped 0`; without it: `# pass 8`, `# skipped 2`, both `# SKIP no duckdb binary` | pass |
+| 6 | `bench/outcome/README.md`, sections Command (R9), Tables (R1 to R8), Views (R10 to R12), Tests (R13) | reviewer-verified against the diff |
+| 7 | same file, test `acceptance 7` | pass |
+| 8 | same file, test `acceptance 8` | pass |
+| 9 | same file, test `acceptance 9`; on this Windows account the hard link ran and the file symlink was skipped (EPERM, printed as a diagnostic) | pass |
+| 10 | same file, test `acceptance 10` | pass |
+| 11 | same file, test `acceptance 11`, with `DUCKDB_BIN` set | pass |
+| 12 | `bench/outcome/README.md`, Command (R15 refusal, R16), Tables (the output rule R15, absent inputs R14), Views (`card_family`) | reviewer-verified against the diff |
+
+Findings of R3 decision 1 and the test that proves each repair:
+- F1 (`..out` accepted): test `acceptance 8`, cases `<state>/..out` and `<registry>/..out`, and the sibling `state..out` that is still written.
+- F2 (missing output directory under a link): test `acceptance 8`, case `<junction>/new/deeper`.
+- F3 (link at an output name): test `acceptance 9`.
+- F4 (relative `--duckdb`): test `acceptance 10`.
+- F5 (chain cut at 50 steps): test `acceptance 11`.
+- F6 (absent source directory): test `acceptance 7`.
+
+Class sweep of the repair:
+- Where output is written (F1 to F3). Checked every write of the card: `writeTables` (`mkdirSync` and one `writeFileSync` per table) is the only one; `run.ts` writes to stdout and stderr only and starts DuckDB on an in-memory database. Found: the path comparison lived in `run.ts` and the write in `ingest.ts`. Now one function, `assertWritable` inside `writeTables`, decides, and `run.ts` holds no path comparison.
+- An absent input (F6). Checked every reader of `ingest.ts`: the registry directory, `<state>/cards`, `<state>/journal` (each absent or not a directory: one error row), a goal directory (listed from its parent; without card-run files it is an empty result), the state directory itself (no read of its own; absent gives the two rows of its directories). An entry of `<state>/cards` that is not a directory, and a file without the expected suffix, are not sources and are left out.
+- A path argument used after the working directory changes (F4). Checked `--state`, `--cards` and `--out` (each `path.resolve`d in the parent before the child starts) and the views directory (absolute, from the script's own URL). Found only `--duckdb`. Left as it is and stated in the README: a bare name goes to the operating system's lookup, which on Windows tries the child's working directory before PATH.
+
+Runs on the main checkout's state on 2026-11-10 (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, `--out` outside the repository), both exit 0. Attempt 1: cards 268 (82 with `superseded_by`), card_runs 271, review_decisions 1047, findings 733, state_spans 918, attempts 677, ingest_errors 0. Attempt 2: cards 268 (file identical), card_runs 271, review_decisions 1048, findings 739, state_spans 919, attempts 678, ingest_errors 0; the differences are this card's own R3 decision 1 (one decision, six findings) and its journal events, written between the runs. `card_family` on that run: 268 rows, 82 with a successor, longest chain 6 steps. The README states the limit the first run showed in the `CARD_STATE` events.

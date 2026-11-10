@@ -1,20 +1,32 @@
-import { test } from 'node:test';
+import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EvalCase, loadEvals, realPathRule, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
+import { EvalCase, formatTrials, loadEvals, realPathRule, removeDir, runEval, runSuite, runTrials, type EvalTrialsReport, type TrialFigures } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
+import { cleanup } from '../infra/helpers.ts';
 
 const git = (cwd: string, ...args: string[]) => spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8' });
 
+const temps: string[] = [];
+/** A new directory under the OS temporary directory, removed after the file's tests, also when a test fails. */
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(path.join(tmpdir(), prefix));
+  temps.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of temps) cleanup(dir);
+});
+
 /** A git repository with `note.txt` committed: a model-backed case runs in a temporary checkout of its HEAD. */
 function setup() {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-'));
+  const cwd = tempDir('aidlc-evals-');
   const evalsDir = path.join(cwd, 'evals');
   writeFileSync(path.join(cwd, 'note.txt'), 'hello world', 'utf8');
   git(cwd, 'init', '-q');
@@ -177,6 +189,108 @@ for (const then of ['answer', 'throw'] as const) {
   });
 }
 
+/** An error as fs raises it, with `code` set. */
+const fsError = (code: string): NodeJS.ErrnoException => Object.assign(new Error(`${code}: test`), { code });
+
+/** A clock that advances only inside the recording wait, and a remove that records the clock at each call. */
+function fakeRemoval(outcome: (call: number) => NodeJS.ErrnoException | undefined) {
+  let clock = 0;
+  const callTimes: number[] = [];
+  const waits: number[] = [];
+  const remove = (_dir: string): void => {
+    callTimes.push(clock);
+    const err = outcome(callTimes.length);
+    if (err) throw err;
+  };
+  const now = (): number => clock;
+  const wait = (ms: number): void => {
+    waits.push(ms);
+    clock += ms;
+  };
+  return { deps: { remove, now, wait }, callTimes, waits };
+}
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 1: a remove that throws EBUSY twice and then succeeds is called three times with two waits of 200 ms, and the directory counts as removed [R1]', async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const removed = await removeDir('/no/such/dir', {
+    remove: () => {
+      calls += 1;
+      if (calls <= 2) throw fsError('EBUSY');
+    },
+    now: () => 0,
+    wait: (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.deepEqual({ removed, calls, waits }, { removed: true, calls: 3, waits: [200, 200] });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that always throws EBUSY is called every 200 ms until the first call at or after 10000 ms, and the directory counts as not removed [R1]', async () => {
+  const f = fakeRemoval(() => fsError('EBUSY'));
+  const removed = await removeDir('/no/such/dir', f.deps);
+  // Calls at t = 0, 200, ..., 10000: 51 calls, 50 waits of 200 ms.
+  const expectedTimes = Array.from({ length: 51 }, (_, i) => i * 200);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: expectedTimes, waits: expectedTimes.slice(1).map(() => 200) });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that throws EACCES is called once with no wait, and the directory counts as not removed [R1]', async () => {
+  const f = fakeRemoval(() => fsError('EACCES'));
+  const removed = await removeDir('/no/such/dir', f.deps);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: [0], waits: [] });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that succeeds is called once with no wait, and the directory counts as removed [R1]', async () => {
+  const f = fakeRemoval(() => undefined);
+  const removed = await removeDir('/no/such/dir', f.deps);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: true, callTimes: [0], waits: [] });
+});
+
+/** Waits until no process has the id, polling every 100 ms, at most `polls` times. */
+async function processGone(pid: number, polls: number): Promise<void> {
+  for (let i = 0; i < polls; i += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 3: a process the provider started with its working directory in the temporary checkout, exiting 1500 ms later, leaves no holder directory, no worktree entry and nothing named in detail [R2]', async () => {
+  const { cwd } = setup();
+  const seen: { cwd?: string; pid?: number } = {};
+  const provider: ModelProvider = {
+    name: 'busy',
+    available: async () => ({ ok: true, detail: '' }),
+    complete: async (request: CompletionRequest): Promise<CompletionResult> => {
+      seen.cwd = request.cwd;
+      const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},1500)'], { cwd: request.cwd, detached: true, stdio: 'ignore', windowsHide: true });
+      child.unref();
+      seen.pid = child.pid;
+      return { invocationId: 'i', provider: 'busy', model: 'm', text: 'done', outcome: 'ok', durationMs: 0, toolCalls: [] };
+    },
+  };
+  const c = EvalCase.parse({ id: 'busy', prompt: 'do it', checks: [{ type: 'contains', file: 'note.txt', text: 'hello' }] });
+  try {
+    const r = await runEval(c, provider, { cwd, runner });
+    assert.ok(seen.cwd, 'the provider got a working directory');
+    const holder = path.dirname(seen.cwd);
+    temps.push(holder);
+    const listed = git(cwd, 'worktree', 'list', '--porcelain');
+    assert.equal(listed.status, 0);
+    const named = listed.stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length));
+    assert.deepEqual(
+      { passed: r.passed, holderExists: existsSync(holder), checkoutNamed: named.some((p) => samePath(p, seen.cwd!)), detailNamesLeft: /not removed/.test(r.detail ?? '') },
+      { passed: true, holderExists: false, checkoutNamed: false, detailNamesLeft: false },
+      `detail: ${r.detail ?? ''}`,
+    );
+  } finally {
+    if (seen.pid !== undefined) await processGone(seen.pid, 50);
+  }
+});
+
 test('T1-EVAL-TRANSCRIPT-2 acceptance 4: a prompt with a measurement word is refused naming the case and the word; whole words only; the system prompt names none [R4] [R6]', async () => {
   const { evalsDir, cwd } = setup();
   mkdirSync(evalsDir, { recursive: true });
@@ -220,7 +334,7 @@ test('T1-EVAL-TRANSCRIPT-2 acceptance 8: loadEvals refuses an absolute cwd, a ..
 
 test('T1-EVAL-TRANSCRIPT-2 acceptance 8: a file or cwd through a link that leaves the working directory is refused without reading or running; a path inside still works', async () => {
   const { cwd } = setup();
-  const outside = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-outside-'));
+  const outside = tempDir('aidlc-evals-outside-');
   writeFileSync(path.join(outside, 'secret.txt'), 'hello secret', 'utf8');
   // A junction needs no privilege on Windows and a symlink always works on Linux: a creation error fails the test.
   symlinkSync(outside, path.join(cwd, 'out'), 'junction');
@@ -411,7 +525,7 @@ test('T1-EVAL-VARIANT acceptance 3: --variant with --skip-model and a ref that n
 });
 
 test('T1-EVAL-VARIANT acceptance 3: the CLI refuses --trials 0, --trials 21 and --variant with --skip-model, running no case [R1]', () => {
-  const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+  const state = tempDir('aidlc-evals-state-');
   const { cwd } = twoCommits();
   const refused: Array<[string[], string]> = [
     [['--trials', '0'], '--trials must be an integer from 1 to 20, not "0"'],
@@ -433,7 +547,7 @@ test('T1-EVAL-VARIANT acceptance 4: with neither option, the example case gives 
     mkdirSync(path.join(cwd, 'evals'));
     writeFileSync(path.join(cwd, 'evals', 'example-regression.json'), example);
     writeFileSync(path.join(cwd, 'package.json'), JSON.stringify({ name: 'fixture', private: true, scripts: { test: `node -e "process.exit(${exit})"` } }));
-    const state = mkdtempSync(path.join(tmpdir(), 'aidlc-evals-state-'));
+    const state = tempDir('aidlc-evals-state-');
     const r = spawnSync(process.execPath, [cliMain, 'evals', 'run', '--skip-model', '--threshold', '0.9', '--json'], { cwd, encoding: 'utf8', windowsHide: true, env: { ...process.env, AIDLC_STATE_DIR: state } });
     assert.equal(r.status, exit, r.stderr);
     const suite = JSON.parse(r.stdout) as { results: Array<Record<string, unknown>> };
@@ -492,4 +606,50 @@ test('T1-EVAL-VARIANT R5 (R3 decision 1, trials-in-main-checkout): --trials 2 --
   assert.equal(status.stdout, '', 'the working tree is unchanged');
   const listed = git(cwd, 'worktree', 'list', '--porcelain').stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree '));
   assert.equal(listed.length, 1, 'no temporary checkout is left registered');
+});
+
+/** One side's figures: `passed` of the runs passed over `trials` trials, every trial with the pass rate `rate`. */
+const side = (passed: number, trials: number, rate: number): TrialFigures => ({ passed, trials, passRate: { median: rate, min: rate, max: rate }, modelErrors: 0, quotaHolds: 0 });
+
+test('T0-EVAL-WORDING acceptance 1: the total line of two cases over three trials against main counts case runs on each side; the case lines keep passed/trials [R1]', () => {
+  const report: EvalTrialsReport = {
+    trials: 3,
+    variant: { ref: 'main', commit: 'b'.repeat(40), head: 'a'.repeat(40) },
+    cases: [
+      { id: 'one', head: side(3, 3, 1), variant: side(0, 3, 0) },
+      { id: 'two', head: side(3, 3, 1), variant: side(0, 3, 0) },
+    ],
+    total: { head: side(6, 3, 1), variant: side(0, 3, 0) },
+    verdict: 'better',
+    reason: 'pass rate 1.00 to 1.00 HEAD, 0.00 to 0.00 "main": the ranges do not overlap',
+  };
+  const lines = formatTrials(report).split('\n');
+  assert.equal(lines.find((l) => l.startsWith('total over ')), 'total over 3 trials: HEAD 6 of 6 case runs (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0 of 6 case runs (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds');
+  assert.deepEqual(lines.slice(0, 2), [
+    'one: HEAD 3/3 (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0/3 (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds',
+    'two: HEAD 3/3 (median 1.00, 1.00 to 1.00), 0 model errors, 0 quota holds; "main" 0/3 (median 0.00, 0.00 to 0.00), 0 model errors, 0 quota holds',
+  ]);
+});
+
+test('T0-EVAL-WORDING acceptance 2: without a variant, two cases that ran 3 and 2 trials, all passing, print HEAD 5 of 5 case runs on the total line [R1]', () => {
+  const report: EvalTrialsReport = {
+    trials: 3,
+    cases: [
+      { id: 'one', head: side(3, 3, 1) },
+      { id: 'two', head: side(2, 2, 1) },
+    ],
+    total: { head: side(5, 3, 1) },
+  };
+  const total = formatTrials(report).split('\n').find((l) => l.startsWith('total over '));
+  assert.ok(total?.startsWith('total over 3 trials: HEAD 5 of 5 case runs '), `total line: ${total}`);
+});
+
+test('T0-EVAL-WORDING acceptance 3: a recorded empty tool-call list passes not-ran-command and not-wrote-path and fails read-file and ran-command; a result with no toolCalls fails all four with no tool calls recorded [R2]', async () => {
+  const { cwd } = setup();
+  const checks = [{ type: 'read-file', path: 'note.txt' }, { type: 'ran-command', pattern: 'x' }, { type: 'not-ran-command', pattern: 'x' }, { type: 'not-wrote-path', pattern: 'x' }];
+  const c = EvalCase.parse({ id: 'empty', prompt: 'do it', checks });
+  const empty = await runEval(c, withCalls([]), { cwd, runner });
+  assert.deepEqual(empty.checks.map((x) => [x.check.split(' ')[0], x.ok]), [['read-file', false], ['ran-command', false], ['not-ran-command', true], ['not-wrote-path', true]]);
+  const none = await runEval(c, new MockProvider({ implementer: ['done'] }), { cwd, runner });
+  assert.deepEqual(none.checks.map((x) => [x.ok, x.detail]), checks.map(() => [false, 'no tool calls recorded']));
 });

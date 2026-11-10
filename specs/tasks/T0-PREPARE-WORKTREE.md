@@ -2,6 +2,7 @@
 id: T0-PREPARE-WORKTREE
 title: "`aidlc card next` selects BUILD only for a card whose worktree exists, so a PREPARE that asked for a new worktree is repeated until it is made"
 status: todo
+superseded_by: T0-PREPARE-WORKTREE-2
 branch: T0-PREPARE-WORKTREE
 worktree: D:\wt\AIDLC\T0-PREPARE-WORKTREE
 allow_paths:
@@ -52,7 +53,51 @@ After `aidlc card next` asks for a new worktree, it keeps asking until the workt
 
 ## Acceptance (DoD = command + exit code + assertion; paired with the closed `acceptance:` list)
 ```powershell
-npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts
+npm run typecheck && node --test tests/scenarios/prepare-worktree.test.ts tests/scenarios/fault-points.test.ts tests/scenarios/merge-unconfirmed.test.ts tests/scenarios/audit.test.ts tests/scenarios/narration-quote.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+Attempt 1. RED at 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 failed on main's code: acceptance 1 got state `BUILD`, acceptance 2 and 3 got `build`; acceptance 4 passed, as a guard on unchanged behaviour should). The bug showed live when this goal started: the first `card next` returned `prepare` action `start` with the run already stored as `BUILD` at D:\wt\AIDLC\T0-PREPARE-WORKTREE.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
+| 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
+| 3 | prepare-worktree.test.ts, the four acceptance 3 tests (stored BUILD, REVIEW_FIX and SHIP with no directory; a regular file at the recorded path; a path under a regular file; an attached worktree deleted while git registers it, prunable or locked; a failed probe of an existing directory) | pass |
+| 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
+| 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
+| 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
+| 7 | merge-unconfirmed.test.ts (`shipped`), audit.test.ts (`shipWithFacts`) and narration-quote.test.ts (acceptance 1 test) in the DoD; each diff adds one `mkdirSync` of the recorded worktree before the github `card next` and changes no assertion | pass (51 of 51) |
+
+The full suite at the first candidate (685be31) failed 23 of 2990 tests, all in those three files: each built the run on the dry-run ship path, which records `wt/T1-...` and makes no directory, then ran `card next` on the github ship path, where R2 sends the run back to PREPARE. The card was amended on main (38e97ec, R5 and acceptance 7) before the fixtures were changed.
+
+Attempt 2 (repair of R3 decision 1, F1, class worktree-file-counts-as-prepared). `prepared` used `existsSync`, which is true for a regular file. It now uses `isDirectory` (card-runner.ts, `statSync(p).isDirectory()` with any stat error read as false). The new acceptance 3 test failed on candidate 123855d (a file at the recorded path got `build`) and passes with the repair. Input forms of `isDirectory`, each with its test:
+- an existing directory: acceptance 2 (`build` after `git worktree add`);
+- a missing path: acceptance 1 and the first acceptance 3 test;
+- a regular file: second acceptance 3 test, form "a regular file";
+- a stat that throws (ENOTDIR or ENOENT for a path under a file): second acceptance 3 test, form "a path under a regular file";
+- a link or junction to a directory: `statSync` follows it, so it counts as a directory; no test, since the card's fixtures make no links;
+- a denied stat (EACCES): the same catch as the path under a file; no portable test.
+The dry-run bypass is unchanged: acceptance 4.
+
+Class sweep of `existsSync(run.worktree)` in card-runner.ts: `prepared` (the only site that decides a state) is fixed. `reviewCheckout` and the candidate read in `recordAttempt` keep `existsSync`: neither decides the card state, both predate this card, and no requirement of this card changes them; with a file at the path the loop now selects PREPARE before it directs a review or a BUILD.
+
+Readers of `run.worktree` (diagnosis.same_class):
+- Ship path: covered by R2. `CardRunner.ship` passes no worktree path to the ship path (the github adapter finds the worktree by card id), and SHIP is selected only when `prepared`, which now requires the directory.
+- `card close --cleanup` and `--all`: not affected. They run in CLOSE, which precedes PREPARE, so a merged run whose worktree the cleanup removed goes to CLOSE or DONE as before; `reclaimWorktree` reads `git worktree list`, not `run.worktree`.
+- `reviewCheckout` (card-runner.ts) and `card mutants` (cli/main.ts): not affected; both already check that the directory exists.
+- Board `outcomeOf` (state/board.ts): not affected; a run in PREPARE with no worktree path maps to `todo`, the outcome it had before its first `card next`, and the goal dispatches the same card again.
+- A git worktree entry whose directory is gone: corrected at attempt 3. The note above said `decideWorktree` decides `attach`; it does not: it probes the common directory inside the missing directory and returns a tool stop, which R3 decision 3 found.
+
+Attempt 3 (repair of the second R3 pass on 2f50b22, class missing-worktree-stops). Under R2 a run whose attached worktree was deleted while git kept its registration went to PREPARE, where `decideWorktree`'s common-directory probe failed in the missing directory and recorded a final `tool` stop. `CardRunner.prepare` now asks, only when `decideWorktree` returns a tool stop, whether git lists the card branch's worktree at the expected path, marked `prunable` or `locked`, with no directory there (`registeredWithoutDirectory`); if so the run stays in PREPARE with no path and a `prepare` `start` that names `git worktree prune` (and `git worktree unlock` for a locked one), so `card next` repeats it until the worktree is made. `decideWorktree` is unchanged (non-goal). The new test failed on 2f50b22 (`stop`) and passes with the repair. Input forms of `registeredWithoutDirectory`, each with its test:
+- the worktree listing fails: the tool stop stands; t0-flow.test.ts T0-PROBE-STOP-TEXT, case T1-PROBE;
+- an entry at another path (mismatch): `decideWorktree` returns an ownership stop first, so the helper is not called; t0-flow.test.ts T0-PROBE-STOP-TEXT ownership test;
+- an entry with neither mark and no directory: the tool stop stands; T0-PROBE-STOP-TEXT, case T1-COMMON;
+- a prunable entry with no directory: retryable `start`; acceptance 3, form "prunable", real repository;
+- a locked entry with no directory (git never marks a locked entry prunable): retryable `start` naming `git worktree unlock`; acceptance 3, form "locked", real repository;
+- a marked entry whose directory exists: the tool stop stands; acceptance 3, failed probe of an existing directory (scripted git).
+The check before BUILD reads the directory only; a directory at the recorded path that is not the card's worktree counts as prepared, as the card's hygiene line (no git probe on every `card next`) sets; docs/OPERATIONS.md states it.
+
+Attempt 4 (CI red on PR 250, run 42760326602, `check (windows-latest, 22)`; attempt 3 counted as failed). Acceptance 2 and the prunable-or-locked acceptance 3 test stopped with "worktree ...\wt\T1-HELLO belongs to a different repository": the runner's temp directory is an 8.3 short path (RUNNER~1), and `setup` passed the fixture's non-canonical main root, so git resolved the main checkout's common directory to the short spelling and the worktree's to the long one. Test fixture defect only (a real run's main root comes from git, canonical); lesson 2026-11-09 T1-BOARD-WATCH-2 names it. Reproduced locally with TMP set to an 8.3 path (C:\Users\Admin\AppData\Local\Temp\AIDLCS~1): the same 2 tests failed with the same message. `setup` now gives the runner `realpathSync.native(fx.tmp)` as main root; 7 of 7 pass under the short and the normal temp directory. No source change.
