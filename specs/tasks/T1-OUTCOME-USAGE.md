@@ -72,7 +72,7 @@ Attempt 2 (after the amendment 75fadf7, merged into the branch): RED ea564ff4, t
 | 1 | `node --test tests/surface/outcome-usage.test.ts`, test `acceptance 1` (with `cacheWrite1hTokens` 3 of 8, 0 of 4 and 0 for a usage without `cache_creation`) | pass |
 | 2 | same file, test `acceptance 2` | pass |
 | 3 | same file, test `acceptance 3` | pass |
-| 4 | same file, test `acceptance 4`, eight error rows | pass |
+| 4 | same file, test `acceptance 4`, ten error rows; the two directories named as a source file give `unreadable: EISDIR` and the file inside each gives no row (RED d873eb1f: acceptance 4 and 5 failed, since such a directory was walked into) | pass |
 | 5 | same file, test `acceptance 5` | pass |
 | 6 | same file, test `acceptance 6` | pass |
 | 7 | same file, test `acceptance 7` | pass |
@@ -80,7 +80,7 @@ Attempt 2 (after the amendment 75fadf7, merged into the branch): RED ea564ff4, t
 | 9 | `bench/outcome/README.md`: Command (R8), Usage tables (R1 to R7), Cost views (R9) | reviewer-verified against the diff |
 | 10 | the DoD: 18 tests, 18 passed with `DUCKDB_BIN`; 15 passed and 3 skipped without it. `git diff main -- tests/surface/outcome-ingest.test.ts` is `--no-usage` in its two spawn helpers. The fixture of item 8 holds a log of 250 tokens matched by the Codex row (200 + 50) and one of 999 that matches none; `summary_cost_by_stage` shows `totalTokens` 999 | pass |
 
-Input forms and what each becomes (README, Usage tables). Tested by `acceptance 4`: an absent directory of each source, a line that is not JSON, a usage line without a `message.id`, a meta file that is not JSON, a Codex file without a `token_count` line and one whose `token_count` line has no `info.total_token_usage`. Tested by `acceptance 1` and `acceptance 3`: an absent meta file and a log without a `tokens used` number give no error. Handled and not tested, since no fixture can make one on every platform: a directory or file that cannot be read is one `unreadable: <code>` row (the real run has one, a Codex file over the string limit of Node). Not named by the card: a usage line without a `requestId` (two real lines, model `<synthetic>`) is a row keyed by its `message.id`; a span or attempt without both ends holds no `ts`, and an end is exclusive.
+Input forms and what each becomes (README, Usage tables). Tested by `acceptance 4`: an absent directory of each source, a line that is not JSON, a usage line without a `message.id`, a meta file that is not JSON, a Codex file without a `token_count` line and one whose `token_count` line has no `info.total_token_usage`, and a directory named as a source file (`unreadable`). Tested by `acceptance 1` and `acceptance 3`: an absent meta file and a log without a `tokens used` number give no error. A file over the string limit of Node takes the same `unreadable` path and has no fixture (the real run has one, a Codex file). Not named by the card: a usage line without a `requestId` (two real lines, model `<synthetic>`) is a row keyed by its `message.id`; a span or attempt without both ends holds no `ts`, and an end is exclusive.
 
 Points where the card and the code differ:
 - R9 and acceptance 10 give the double-count rule as `inputTokens + cacheReadTokens + outputTokens` equal to `totalTokens`. On the real run that sum matches 0 of 140 reviewer logs. `inputTokens + outputTokens` (input minus cached, plus output) matches 125 of 140, each with exactly one Codex row of the same card; the other 15 logs have no Codex row of their card at all. The view uses `inputTokens + outputTokens`.

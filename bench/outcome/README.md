@@ -69,7 +69,7 @@ One `usage` row per model request. Only the fields below leave a log: no message
 
 Inputs that cannot be read (each is one `usage_errors` row, and every other row is still returned):
 - A Claude directory, the Codex directory or `<state>/evidence` that is absent or not a directory: `missing directory`.
-- A directory or file that cannot be read: `unreadable: <error code>`. A file over the string limit of Node (about 512 MB) is one of these.
+- A directory or file that cannot be read: `unreadable: <error code>`. A file over the string limit of Node (about 512 MB) is one of these, and so is a directory with the name of a source file (`s.jsonl`, `rollout-x.jsonl`, `x.log`), which is not walked into.
 - A line that is not JSON: `not JSON (line <n>)`. A meta file that is not JSON: `not JSON`, and the rows of its subagent keep null `agentType` and `agentCard`.
 - A usage line without a `message.id`: `usage line without message.id (line <n>)`. A line without a `requestId` is a row.
 - A Codex file with no `token_count` line that carries `info.total_token_usage`: `no token_count line`.

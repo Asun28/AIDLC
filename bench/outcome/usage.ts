@@ -24,11 +24,19 @@ function reader(source: string, errors: Row[]) {
       return void problem(file, cause(err));
     }
   };
-  /** The files at any depth under `dir` whose name matches, in path order. Links are not followed. */
+  /**
+   * The entries at any depth under `dir` whose name matches, in path order. A directory with such a name is returned as one
+   * (reading it gives its error row) and is not walked into. Links are not followed.
+   */
   const files = (dir: string, name: RegExp): string[] => {
+    const walk = (at: string): string[] => readdirSync(at, { withFileTypes: true }).flatMap((e) => {
+      const entry = path.join(at, e.name);
+      if (name.test(e.name)) return e.isFile() || e.isDirectory() ? [entry] : [];
+      return e.isDirectory() ? walk(entry) : [];
+    });
     try {
       if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return problem(dir, 'missing directory'), [];
-      return readdirSync(dir, { withFileTypes: true, recursive: true }).filter((e) => e.isFile() && name.test(e.name)).map((e) => path.join(e.parentPath, e.name)).sort();
+      return walk(dir).sort();
     } catch (err) {
       return problem(dir, cause(err)), [];
     }
