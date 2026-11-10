@@ -1,16 +1,11 @@
 // Card T1-OUTCOME-USAGE: one usage row per model request, from Claude Code session logs, Codex session logs and reviewer logs.
-// Files are read, never written. Only the fields of USAGE_COLUMNS leave a log: no message text, prompt, tool input or tool output.
+// Files are read, never written. Only the fields of USAGE_COLUMNS (ingest.ts) leave a log: no message text, prompt, tool input or tool output.
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { Row, Tables } from './ingest.ts';
 
-/** The two tables of this module with their columns, in the key order `writeTables` writes. `costUsd` is `priceOf` of the row. */
-export const USAGE_COLUMNS = {
-  usage: ['source', 'sessionId', 'ts', 'model', 'cwd', 'sidechain', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'totalTokens', 'durationMs', 'invocation', 'agentId', 'agentType', 'agentCard', 'goalId', 'cardId', 'stage', 'costUsd'],
-  usage_errors: ['source', 'path', 'problem'],
-} as const;
 export type Usage = { rows: Row[]; errors: Row[] };
-/** USD per million tokens of each kind, by model id, with the page the numbers were read from and the date they were read. */
+/** USD per million tokens of each kind (cache writes kept 5 minutes and 1 hour apart), by model id, with the page the numbers were read from and the date they were read. */
 export type Prices = Record<string, { input: number; cacheRead: number; cacheWrite5m: number; cacheWrite1h: number; output: number; source: string; date: string; note?: string }>;
 
 const str = (value: unknown): string | null => (typeof value === 'string' ? value : null);
@@ -95,7 +90,7 @@ export function claudeUsage(dirs: string[], cardIds: string[]): Usage {
         if (str(message['id']) === null) return r.problem(file, `usage line without message.id (line ${n})`);
         rows.set(JSON.stringify([message['id'], str(line['requestId'])]), {
           source: 'claude-code', sessionId: str(line['sessionId']), ts: str(line['timestamp']), model: str(message['model']), cwd: str(line['cwd']), sidechain: line['isSidechain'] === true,
-          inputTokens: num(usage['input_tokens']), outputTokens: num(usage['output_tokens']), cacheReadTokens: num(usage['cache_read_input_tokens']), cacheWriteTokens: num(usage['cache_creation_input_tokens']),
+          inputTokens: num(usage['input_tokens']), outputTokens: num(usage['output_tokens']), cacheReadTokens: num(usage['cache_read_input_tokens']), cacheWriteTokens: num(usage['cache_creation_input_tokens']), cacheWrite1hTokens: num(obj(usage['cache_creation'])['ephemeral_1h_input_tokens']) ?? 0,
           agentId, agentType, agentCard,
         });
       });
@@ -183,11 +178,15 @@ export function attribute(rows: Row[], tables: Pick<Tables, 'card_runs' | 'attem
   });
 }
 
-/** R7. List-price cost in USD; null for a model without an entry and for a row without `inputTokens`. A token kind the row lacks counts as 0. */
+/**
+ * R7. List-price cost in USD; null for a model without an entry and for a row without `inputTokens`. A token kind the row
+ * lacks counts as 0. `cacheWrite1hTokens` are priced as 1-hour cache writes and the rest of `cacheWriteTokens` as 5-minute ones.
+ */
 export function priceOf(row: Row, prices: Prices): number | null {
   const model = String(row['model']);
   if (!Object.hasOwn(prices, model) || typeof row['inputTokens'] !== 'number') return null;
   const p = prices[model]!;
-  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [row['cacheWriteTokens'], p.cacheWrite5m], [row['outputTokens'], p.output]];
+  const oneHour = num(row['cacheWrite1hTokens']) ?? 0;
+  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [(num(row['cacheWriteTokens']) ?? 0) - oneHour, p.cacheWrite5m], [oneHour, p.cacheWrite1h], [row['outputTokens'], p.output]];
   return kinds.reduce((sum, [tokens, perMillion]) => sum + (num(tokens) ?? 0) * perMillion, 0) / 1e6;
 }

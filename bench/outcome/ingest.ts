@@ -15,6 +15,11 @@ export const COLUMNS = {
   attempts: ['goalId', 'cardId', 'outcome', 'endTs', 'startTs'],
   ingest_errors: ['source', 'path', 'line', 'problem'],
 } as const;
+/** The tables of bench/outcome/usage.ts (card T1-OUTCOME-USAGE). `writeTables` writes each one it is given. */
+export const USAGE_COLUMNS = {
+  usage: ['source', 'sessionId', 'ts', 'model', 'cwd', 'sidechain', 'inputTokens', 'outputTokens', 'cacheReadTokens', 'cacheWriteTokens', 'cacheWrite1hTokens', 'totalTokens', 'durationMs', 'invocation', 'agentId', 'agentType', 'agentCard', 'goalId', 'cardId', 'stage', 'costUsd'],
+  usage_errors: ['source', 'path', 'problem'],
+} as const;
 export type TableName = keyof typeof COLUMNS;
 export type Row = Record<string, unknown>;
 export type Tables = Record<TableName, Row[]>;
@@ -135,11 +140,13 @@ function assertWritable(outDir: string, readOnly: string[]): void {
  * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
  * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables, outDir: string, readOnly: string[] = []): void {
+export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS, Row[]>>, outDir: string, readOnly: string[] = []): void {
   assertWritable(outDir, readOnly);
   mkdirSync(outDir, { recursive: true });
-  for (const name of Object.keys(COLUMNS) as TableName[]) {
-    const lines = tables[name].map((row) => JSON.stringify(Object.fromEntries(COLUMNS[name].map((column) => [column, row[column] ?? null])))).sort();
+  for (const [name, columns] of Object.entries({ ...COLUMNS, ...USAGE_COLUMNS })) {
+    const rows = tables[name as keyof typeof tables];
+    if (rows === undefined) continue;
+    const lines = rows.map((row) => JSON.stringify(Object.fromEntries(columns.map((column) => [column, row[column] ?? null])))).sort();
     const file = path.join(outDir, `${name}.jsonl`);
     rmSync(file, { force: true });
     writeFileSync(file, lines.map((line) => `${line}\n`).join(''), { flag: 'wx' });

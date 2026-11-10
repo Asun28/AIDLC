@@ -1,15 +1,15 @@
 // node bench/outcome/run.ts (cards T1-OUTCOME-INGEST and T1-OUTCOME-USAGE): writes the outcome tables as JSONL, runs bench/outcome/views/*.sql
 // in name order through the DuckDB CLI and prints each view named summary_* as one JSON line. See bench/outcome/README.md.
 import { spawnSync } from 'node:child_process';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
-import { COLUMNS, ingestState, writeTables, type Row, type Tables } from './ingest.ts';
-import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, USAGE_COLUMNS, type Prices } from './usage.ts';
+import { ingestState, writeTables, type Row } from './ingest.ts';
+import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, type Prices } from './usage.ts';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewsDir = path.join(here, 'views');
@@ -24,27 +24,23 @@ function main(): number {
   const cardsDir = path.resolve(values.cards ?? path.join(mainRoot(), loadProjectConfig(mainRoot()).config.cardsDir));
   const outDir = path.resolve(values.out ?? path.join(mainRoot(), '_local', 'outcome'));
 
-  const state = ingestState({ stateDir, cardsDir });
-  const tables: Record<string, Row[]> = state;
+  const tables: Parameters<typeof writeTables>[0] = ingestState({ stateDir, cardsDir });
   const readOnly = [stateDir, cardsDir];
   if (!values['no-usage']) {
     const worktreeRoot = path.resolve(resolveWorktreeRoot(loadProjectConfig(mainRoot()).config, mainRoot()));
     // Claude Code keeps the logs of a directory under its absolute path with every character but letters and digits as "-".
-    const projectDir = (dir: string): string => path.join(os.homedir(), '.claude', 'projects', path.resolve(dir).replace(/[^A-Za-z0-9]/g, '-'));
-    const worktrees = (): string[] => (statSync(worktreeRoot, { throwIfNoEntry: false })?.isDirectory() ? readdirSync(worktreeRoot, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => path.join(worktreeRoot, e.name)).sort() : []);
-    const claudeDirs = values['claude-dir']?.map((dir) => path.resolve(dir)) ?? [mainRoot(), ...worktrees()].map(projectDir);
+    const projectDir = (): string => path.join(os.homedir(), '.claude', 'projects', path.resolve(mainRoot()).replace(/[^A-Za-z0-9]/g, '-'));
+    const claudeDirs = values['claude-dir']?.map((dir) => path.resolve(dir)) ?? [projectDir()];
     const codexDir = path.resolve(values['codex-dir'] ?? path.join(os.homedir(), '.codex', 'sessions'));
-    const read = [claudeUsage(claudeDirs, state.cards.map((card) => String(card['id']))), codexUsage(codexDir), reviewLogUsage(stateDir)];
+    const read = [claudeUsage(claudeDirs, tables.cards.map((card) => String(card['id']))), codexUsage(codexDir), reviewLogUsage(stateDir)];
     const prices = JSON.parse(readFileSync(path.join(here, 'prices.json'), 'utf8')) as Prices;
-    tables['usage'] = attribute(read.flatMap((u) => u.rows), state, worktreeRoot).map((row) => ({ ...row, costUsd: priceOf(row, prices) }));
-    tables['usage_errors'] = read.flatMap((u) => u.errors);
-    // writeTables writes the tables COLUMNS names, so the two usage tables are added to it for this run.
-    Object.assign(COLUMNS, USAGE_COLUMNS);
+    tables.usage = attribute(read.flatMap((u) => u.rows), tables, worktreeRoot).map((row) => ({ ...row, costUsd: priceOf(row, prices) }));
+    tables.usage_errors = read.flatMap((u) => u.errors);
     readOnly.push(...claudeDirs, codexDir);
   }
   // The only write of this script: writeTables refuses an outDir inside a directory this run reads before it creates anything.
-  writeTables(tables as Tables, outDir, readOnly);
-  process.stderr.write(`outcome: ${Object.entries(tables).map(([name, rows]) => `${name} ${rows.length}`).join(', ')}; written to ${outDir}\n`);
+  writeTables(tables, outDir, readOnly);
+  process.stderr.write(`outcome: ${Object.entries(tables as Record<string, Row[]>).map(([name, rows]) => `${name} ${rows.length}`).join(', ')}; written to ${outDir}\n`);
 
   // A given path (absolute, or holding a separator) is resolved here, against the invocation directory, since the child
   // runs in outDir. A bare name is left to the lookup of the operating system.
