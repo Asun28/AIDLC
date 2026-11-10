@@ -1,5 +1,6 @@
 // Card T1-OUTCOME-GITHUB: the outcome tables read through `gh` and git on an injected runner. Read-only: every gh call is
-// `gh api --paginate --slurp <GET endpoint>`, every git call is `git log`. Each command runs once; one that fails, or
+// `gh api --paginate --slurp <GET endpoint>`, every git call is `rev-parse`, `log`, `merge-base` or `show`, and every
+// revision or sha handed to git follows `--end-of-options`. Each command runs once; one that fails, or
 // whose output is not the expected shape, becomes one `github_errors` row, and the rows of every other command are kept.
 import type { SyncRunner } from '../../src/probes/exec.ts';
 import type { GithubTable, Row } from './ingest.ts';
@@ -9,10 +10,13 @@ export type Read = { rows: Row[]; errors: Row[] };
 
 const TIMEOUT_MS = 120_000;
 const SHA = /^[0-9a-f]{40}$/;
-/** A `Co-Authored-By:` line that names Claude, Codex or GPT, in any letter case. */
-const MODEL_TRAILER = /^co-authored-by:.*(claude|codex|gpt)/im;
-/** One `git log` record: the sha and the strict ISO commit date on the first line, the parent shas on the second, then the message, then a NUL. */
-const LOG_FORMAT = '--format=%H %cI%n%P%n%B%x00';
+/** A `Co-Authored-By` trailer value that names Claude, Codex or GPT, in any letter case. */
+const MODEL = /claude|codex|gpt/i;
+/**
+ * One `git log` record: the sha and the strict ISO commit date on the first line, the parent shas on the second, the values of
+ * the `Co-Authored-By` trailers as git parses the trailer block on the third (joined by commas), then the message, then a NUL.
+ */
+const LOG_FORMAT = '--format=%H %cI%n%P%n%(trailers:key=Co-Authored-By,valueonly,unfold,separator=%x2C)%n%B%x00';
 
 type Json = Record<string, unknown>;
 const object = (value: unknown): Json | undefined => (typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Json) : undefined);
@@ -20,7 +24,7 @@ const object = (value: unknown): Json | undefined => (typeof value === 'object' 
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 
 /** One command, run once. `problems` collects what is wrong with it; `close` adds one `github_errors` row when there is any. */
-interface Command { out: string | undefined; problems: string[]; close: (errors: Row[]) => void }
+interface Command { out: string | undefined; exit: number | null; problems: string[]; close: (errors: Row[]) => void }
 
 function start(runner: SyncRunner, command: string, args: string[]): Command {
   const r = runner(command, args, { timeoutMs: TIMEOUT_MS });
@@ -29,7 +33,7 @@ function start(runner: SyncRunner, command: string, args: string[]): Command {
     if (problems.length > 0) errors.push({ command: [command, ...args].join(' '), exit: r.exitCode, stderr: r.stderr.trim().split(/\r?\n/)[0] ?? '', problem: problems.join('; ') });
   };
   // The output of a command that failed is not read.
-  return { out: problems.length === 0 ? r.stdout : undefined, problems, close };
+  return { out: problems.length === 0 ? r.stdout : undefined, exit: r.exitCode, problems, close };
 }
 
 /** `gh api --paginate --slurp <endpoint>`: the pages, with their numbers counted from 1. Output that is not a JSON array of at least one page is a problem and no page. */
@@ -72,7 +76,10 @@ export function pullRequests(runner: SyncRunner, repository: string): Read {
  * R2: every check run of each commit, each commit read once (`filter=all`, so the runs of earlier attempts are listed).
  * `runAttempt` is the `run_attempt` of the workflow run the check run's `details_url` names, read from the workflow runs
  * of the commit (one more call, made only when a check run names one). It is null for a check run that names no
- * workflow run, and for one whose workflow run could not be read, which is a problem of that call.
+ * workflow run, and for one whose workflow run could not be read, which is a problem of that call. For a workflow run
+ * with more than one attempt the jobs of each attempt are read (one call per attempt): a check run has the id of its
+ * job, so it gets the attempt whose jobs hold it. One that no attempt holds, or whose jobs call failed, keeps the
+ * run's `run_attempt`, with an error row.
  */
 export function checkRuns(runner: SyncRunner, repository: string, shas: string[]): Read {
   const read: Read = { rows: [], errors: [] };
@@ -94,6 +101,8 @@ export function checkRuns(runner: SyncRunner, repository: string, shas: string[]
     c.close(read.errors);
 
     const attempts = new Map<string, number>();
+    /** Check run (job) id to the attempt whose jobs hold it, for workflow runs with more than one attempt. */
+    const jobAttempt = new Map<string, number>();
     const named = new Set(found.flatMap((f) => (f.workflowRun === undefined ? [] : [f.workflowRun])));
     if (named.size > 0) {
       const w = ghPages(runner, `repos/${repository}/actions/runs?head_sha=${sha}&per_page=100`);
@@ -110,45 +119,84 @@ export function checkRuns(runner: SyncRunner, repository: string, shas: string[]
         }
       }
       for (const id of named) if (!attempts.has(id)) w.problems.push(`workflow run ${id} is not listed`);
+      for (const id of named) {
+        const last = attempts.get(id) ?? 1;
+        let allRead = last > 1;
+        for (let attempt = 1; last > 1 && attempt <= last; attempt++) {
+          const j = ghPages(runner, `repos/${repository}/actions/runs/${id}/attempts/${attempt}/jobs?per_page=100`);
+          for (const [n, page] of j.pages) {
+            const list = object(page)?.['jobs'];
+            if (!Array.isArray(list)) {
+              j.problems.push(`page ${n} has no jobs array`);
+              continue;
+            }
+            for (const entry of list) {
+              const job = object(entry) ?? {};
+              if (typeof job['id'] === 'number') jobAttempt.set(String(job['id']), attempt);
+              else j.problems.push(`page ${n} holds a job without an id`);
+            }
+          }
+          if (j.problems.length > 0) allRead = false;
+          j.close(read.errors);
+        }
+        // Only when every attempt was read is a check run that none holds a problem of its own.
+        for (const f of found) if (allRead && f.workflowRun === id && !jobAttempt.has(String(f.run['id']))) w.problems.push(`check run ${String(f.run['id'])} is in no attempt of workflow run ${id}`);
+      }
       w.close(read.errors);
     }
     for (const { run, workflowRun } of found) {
-      read.rows.push({ sha, name: run['name'], status: text(run['status']), conclusion: text(run['conclusion']), startedAt: text(run['started_at']), completedAt: text(run['completed_at']), runAttempt: workflowRun === undefined ? null : (attempts.get(workflowRun) ?? null) });
+      read.rows.push({ sha, name: run['name'], status: text(run['status']), conclusion: text(run['conclusion']), startedAt: text(run['started_at']), completedAt: text(run['completed_at']), runAttempt: workflowRun === undefined ? null : (jobAttempt.get(String(run['id'])) ?? attempts.get(workflowRun) ?? null) });
     }
   }
   return read;
 }
 
-interface Commit { sha: string; date: string; time: number; parents: number; message: string }
+interface Commit { sha: string; date: string; time: number; parents: number; coAuthors: string; message: string }
 
-/** The commits of one `git log` call, in the order git lists them, the date as UTC ISO. A record that is not a sha, a date, a line of parents and a message is a problem and no commit. */
+/** The commits of one `git log` call, in the order git lists them, the date as UTC ISO. A record that is not a sha, a date, a line of parents, a line of trailer values and a message is a problem and no commit. */
 function gitLog(runner: SyncRunner, args: string[]): { commits: Commit[]; close: Command['close'] } {
   const c = start(runner, 'git', ['log', LOG_FORMAT, ...args]);
   const commits: Commit[] = [];
   for (const record of (c.out ?? '').split('\0')) {
     if (record.trim() === '') continue;
-    const m = /^\n?([0-9a-f]{40}) (\S+)\n([0-9a-f ]*)\n([\s\S]*)$/.exec(record);
+    const m = /^\n?([0-9a-f]{40}) (\S+)\n([0-9a-f ]*)\n([^\n]*)\n([\s\S]*)$/.exec(record);
     const time = m ? Date.parse(m[2]!) : Number.NaN;
-    if (!m || Number.isNaN(time)) c.problems.push('a record is not "<sha> <date>", a line of parents and a message');
-    else commits.push({ sha: m[1]!, date: new Date(time).toISOString(), time, parents: m[3]!.split(' ').filter((parent) => parent !== '').length, message: m[4]! });
+    if (!m || Number.isNaN(time)) c.problems.push('a record is not "<sha> <date>", a line of parents, a line of trailer values and a message');
+    else commits.push({ sha: m[1]!, date: new Date(time).toISOString(), time, parents: m[3]!.split(' ').filter((parent) => parent !== '').length, coAuthors: m[4]!, message: m[5]! });
   }
   return { commits, close: c.close };
 }
 
 /**
  * R3: the first-parent commits of `base` whose message holds `This reverts commit <40 hex>` (the first such line of a
- * message). `daysAfter` is the commit-date difference in days, null when the reverted sha is not a first-parent commit of `base`.
+ * message). `base` is first resolved to a commit; one that does not resolve is one error row and no further git call.
+ * `daysAfter` is the commit-date difference in days to the reverted commit, read with `git show` when it is an ancestor
+ * of the base (a commit merged through a second parent included), else null. `merge-base --is-ancestor` exits 1 for a
+ * commit that is no ancestor, which is no error; any other failure of it is an error row and null.
  */
 export function reverts(runner: SyncRunner, base: string): Read {
   const read: Read = { rows: [], errors: [] };
-  const log = gitLog(runner, ['--first-parent', base, '--']);
+  const resolved = start(runner, 'git', ['rev-parse', '--verify', '--end-of-options', `${base}^{commit}`]);
+  const tip = (resolved.out ?? '').trim();
+  if (resolved.out !== undefined && !SHA.test(tip)) resolved.problems.push('not a commit sha');
+  resolved.close(read.errors);
+  if (!SHA.test(tip)) return read;
+  const log = gitLog(runner, ['--first-parent', '--end-of-options', tip, '--']);
   log.close(read.errors);
-  const times = new Map(log.commits.map((c) => [c.sha, c.time]));
   for (const c of log.commits) {
     const revertedSha = /This reverts commit ([0-9a-f]{40})\b/.exec(c.message)?.[1];
     if (revertedSha === undefined) continue;
-    const target = times.get(revertedSha);
-    read.rows.push({ sha: c.sha, date: c.date, revertedSha, daysAfter: target === undefined ? null : (c.time - target) / 86_400_000 });
+    let daysAfter: number | null = null;
+    const ancestor = start(runner, 'git', ['merge-base', '--is-ancestor', '--end-of-options', revertedSha, tip]);
+    if (ancestor.exit !== 1) ancestor.close(read.errors);
+    if (ancestor.out !== undefined) {
+      const shown = start(runner, 'git', ['show', '-s', '--format=%cI', '--end-of-options', revertedSha]);
+      const time = Date.parse((shown.out ?? '').trim());
+      if (shown.out !== undefined && Number.isNaN(time)) shown.problems.push('not a date');
+      shown.close(read.errors);
+      if (!Number.isNaN(time)) daysAfter = (c.time - time) / 86_400_000;
+    }
+    read.rows.push({ sha: c.sha, date: c.date, revertedSha, daysAfter });
   }
   return read;
 }
@@ -167,9 +215,9 @@ export function branchCommits(runner: SyncRunner, base: string, pulls: Row[]): R
       read.errors.push({ command: 'git log', exit: null, stderr: '', problem: `merged pull request ${String(p['number'])} has no 40-hex headSha and mergeCommitSha` });
       continue;
     }
-    const log = gitLog(runner, [head, '--not', `${merge}^1`, '--']);
+    const log = gitLog(runner, ['--end-of-options', head, `^${merge}^1`, '--']);
     log.close(read.errors);
-    for (const c of log.commits) read.rows.push({ number: p['number'], sha: c.sha, date: c.date, merge: c.parents > 1, modelCoAuthor: MODEL_TRAILER.test(c.message) });
+    for (const c of log.commits) read.rows.push({ number: p['number'], sha: c.sha, date: c.date, merge: c.parents > 1, modelCoAuthor: MODEL.test(c.coAuthors) });
   }
   return read;
 }

@@ -17,14 +17,21 @@ CREATE OR REPLACE VIEW card_merge AS
 SELECT cardId, arg_min(number, mergedAt) AS number, min(mergedAt) AS mergedAt, arg_min(mergeCommitSha, mergedAt) AS mergeCommitSha
 FROM run_prs WHERE mergedAt IS NOT NULL GROUP BY cardId;
 
--- Per commit with a run of a required check. green: every required name has a run, and each name's runs with its
--- latest startedAt all concluded success. first_failed: a run with the earliest startedAt of its name did not.
+-- Per commit with a run of a required check. A run is pending when its status is not completed or it has no startedAt;
+-- a pending run is not a success. The last runs of a name are its pending ones when it has any, else those with its
+-- latest startedAt. green: every required name has a run and each name's last runs are all a success. The first runs
+-- of a name are those with its earliest startedAt (all of them when none has one). first_failed: a first run is no success.
 CREATE OR REPLACE VIEW commit_checks AS
 WITH runs AS (
-  SELECT c.sha, c.name, c.conclusion IS NOT DISTINCT FROM 'success' AS success,
-    c.startedAt = min(c.startedAt) OVER name_runs AS first_run, c.startedAt = max(c.startedAt) OVER name_runs AS last_run
-  FROM checks c WHERE c.name IN (SELECT name FROM required_checks)
-  WINDOW name_runs AS (PARTITION BY c.sha, c.name)
+  SELECT sha, name, success,
+    coalesce(startedAt = min(startedAt) OVER name_runs, min(startedAt) OVER name_runs IS NULL) AS first_run,
+    CASE WHEN bool_or(pending) OVER name_runs THEN pending ELSE startedAt = max(startedAt) OVER name_runs END AS last_run
+  FROM (
+    SELECT c.sha, c.name, c.startedAt, c.status IS DISTINCT FROM 'completed' OR c.startedAt IS NULL AS pending,
+      c.conclusion IS NOT DISTINCT FROM 'success' AND c.status IS NOT DISTINCT FROM 'completed' AND c.startedAt IS NOT NULL AS success
+    FROM checks c WHERE c.name IN (SELECT name FROM required_checks)
+  )
+  WINDOW name_runs AS (PARTITION BY sha, name)
 )
 SELECT sha,
   count(DISTINCT name) FILTER (WHERE last_run) = (SELECT count(DISTINCT name) FROM required_checks) AND count(*) FILTER (WHERE last_run AND NOT success) = 0 AS green,
@@ -77,8 +84,9 @@ SELECT count(*) AS merged_prs,
   avg(coalesce(g.first_failed, false)::INT) AS first_attempt_failed_share
 FROM prs p LEFT JOIN commit_checks g ON g.sha = p.headSha WHERE p.mergedAt IS NOT NULL;
 
--- Per card: runs with mergeVerified and no merged pull request; merged pull requests whose headRef is the id of a card
--- that has no mergeVerified run; pull requests of its runs that were closed unmerged.
+-- Per card: runs with mergeVerified and no merged pull request (run_prs); merged pull requests whose headRef is the id
+-- of a card that has no mergeVerified run; closed unmerged pull requests that a run of the card names by prNumber or
+-- whose headRef is the id of a registry card, each card and pull request pair once.
 CREATE OR REPLACE VIEW summary_reconcile AS
 SELECT * FROM (
   SELECT 'mergeVerified_without_merged_pr' AS kind, r.cardId, count(*) AS n FROM card_runs r
@@ -86,5 +94,8 @@ SELECT * FROM (
   UNION ALL SELECT 'merged_pr_without_mergeVerified', p.headRef, count(*) FROM prs p
   WHERE p.mergedAt IS NOT NULL AND p.headRef IN (SELECT id FROM cards UNION SELECT cardId FROM card_runs)
     AND NOT EXISTS (SELECT 1 FROM card_runs r WHERE r.cardId = p.headRef AND r.mergeVerified) GROUP BY p.headRef
-  UNION ALL SELECT 'closed_unmerged', cardId, count(DISTINCT number) FROM run_prs WHERE mergedAt IS NULL AND closedAt IS NOT NULL GROUP BY cardId
+  UNION ALL SELECT 'closed_unmerged', cardId, count(*) FROM (
+    SELECT r.cardId, p.number FROM card_runs r JOIN prs p ON p.number = r.prNumber WHERE p.mergedAt IS NULL AND p.closedAt IS NOT NULL
+    UNION SELECT c.id, p.number FROM cards c JOIN prs p ON p.headRef = c.id WHERE p.mergedAt IS NULL AND p.closedAt IS NOT NULL
+  ) GROUP BY cardId
 ) ORDER BY kind, cardId;

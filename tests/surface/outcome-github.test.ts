@@ -237,10 +237,10 @@ test('T1-OUTCOME-GITHUB acceptance 5: a runner exit of 1, a timeout, output that
   }
   const partial = recording({
     [gh(checksOf('s1'))]: { stdout: JSON.stringify([rateLimited, checkPage({ status: 'queued' }, check('ci', 'success', at(1), 900), check('lint', 'success', at(1), 901))]) },
-    [gh(runsOf('s1'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 901, run_attempt: 3 }, { id: 'x' }] }]) },
+    [gh(runsOf('s1'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 901, run_attempt: 1 }, { id: 'x' }] }]) },
   });
   const checks = checkRuns(partial.runner, REPO, ['s1']);
-  assert.deepEqual(checks.rows.map((r) => [r['name'], r['runAttempt']]), [['ci', null], ['lint', 3]]);
+  assert.deepEqual(checks.rows.map((r) => [r['name'], r['runAttempt']]), [['ci', null], ['lint', 1]]);
   assert.deepEqual(checks.errors, [
     error(checksOf('s1'), 0, '', 'page 1 has no check_runs array; page 2 holds a check run without a name'),
     error(runsOf('s1'), 0, '', 'page 1 holds a workflow run without id or run_attempt; workflow run 900 is not listed'),
@@ -266,6 +266,7 @@ function state(prOfA = 11, verifiedD = true): string {
   const formal = { invocationId: 'i1', candidateDigest: 'd1', base: 'main', policyVersion: '1', reviewer: 'codex', requestedAt: at(5, '01:00'), outcome: 'pass' };
   run('g-a', 'T1-A', at(1), { mergeVerified: true, pr: { number: prOfA, state: 'MERGED' }, review: { substantiveDecisions: 1, invocations: [formal] } });
   run('g-r', 'T1-RED', at(2), { mergeVerified: true, pr: { number: 12, state: 'MERGED' } });
+  run('g-r0', 'T1-RED', at(2, '05:00'), { pr: { number: 20, state: 'CLOSED' } });
   run('g-v0', 'T1-REV', at(3));
   run('g-v1', 'T1-REV', at(4));
   run('g-d', 'T1-D', at(5), { mergeVerified: verifiedD, pr: { number: 14, state: 'CLOSED' }, review: { substantiveDecisions: 1, substantiveBlocks: 1, invocations: [{ ...formal, outcome: 'block', stopReview: 'F1 raised again' }] } });
@@ -279,7 +280,7 @@ function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', '
   return {
     [PULLS]: [
       [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
-      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!), pr(18, 'T1-RED', s['c0']!, null, null), pr(19, 'T1-NEXT', s['c0']!, null, null)],
+      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!), pr(18, 'T1-RED', s['c0']!, null, null), pr(19, 'T1-NEXT', s['c0']!, null, null), pr(20, 'retry-branch', s['c0']!, null, null)],
     ],
     [checksOf(s['aM']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900, 1), check('ci', 'success', at(1, '01:30'), 900, 2), check('scan', 'success', at(1, '01:10')))],
     [runsOf(s['aM']!)]: [{ total_count: 1, workflow_runs: [{ id: 900, run_attempt: 2 }] }],
@@ -317,9 +318,9 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
   assert.deepEqual(GITHUB_FILES.filter((name) => !existsSync(path.join(r.out, name))), [], 'the six files are written before DuckDB is started');
   const failed =`repos/${REPO}/commits/${sha['f2']}/check-runs?filter=all&per_page=100`;
   assert.deepEqual(lines(r.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(failed), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [9, 20, 5, 8, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [10, 20, 5, 8, 1, 2]);
   assert.deepEqual(lines(r.out, 'required_checks.jsonl'), ['{"name":"ci"}', '{"name":"scan"}']);
-  assert.equal(lines(r.out, 'card_runs.jsonl').length, 5);
+  assert.equal(lines(r.out, 'card_runs.jsonl').length, 6);
   assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [13, 13], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check, one jobs call per attempt of the rerun');
 
   const noPulls = outcome(['--duckdb', missingBin()], { answers: {} });
@@ -350,10 +351,10 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 5, rerun_share: 0.2, first_attempt_failed_share: 0.4 }]);
   assert.deepEqual(got.get('summary_reconcile'), [
     // Closed unmerged: 14 of T1-D by its run's prNumber and by headRef, counted once; 19 of T1-NEXT, a registry card with no
-    // run; 18 of T1-RED, whose run names pull request 12.
+    // run; 18 of T1-RED by headRef, its merged run naming 12, and 20 by the prNumber of its other run, its headRef no card id.
     { kind: 'closed_unmerged', cardId: 'T1-D', n: 1 },
     { kind: 'closed_unmerged', cardId: 'T1-NEXT', n: 1 },
-    { kind: 'closed_unmerged', cardId: 'T1-RED', n: 1 },
+    { kind: 'closed_unmerged', cardId: 'T1-RED', n: 2 },
     { kind: 'mergeVerified_without_merged_pr', cardId: 'T1-D', n: 1 },
     { kind: 'merged_pr_without_mergeVerified', cardId: 'T1-REV', n: 2 },
   ]);
@@ -373,6 +374,8 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   // Acceptance 10: an earlier success of scan and a queued rerun of it, which has no startedAt, is not green.
   const queued = { name: 'scan', status: 'queued', conclusion: null, started_at: null, completed_at: null, details_url: null };
   assert.deepEqual(variant({ answers: answers(sha, [check('scan', 'success', at(1, '02:01')), queued]) }), success({ failing_checksGreen: 2 }));
+  // The same for a queued run that carries a startedAt earlier than the success: its status alone makes it the latest.
+  assert.deepEqual(variant({ answers: answers(sha, [check('scan', 'success', at(1, '02:01')), { ...queued, started_at: at(1, '01:00') }]) }), success({ failing_checksGreen: 2 }));
   assert.deepEqual(variant({ answers: answers(sha, undefined, '0'.repeat(40)) }), success({ accepted: 1, pr_success_rate: 0.25, unknown_noHumanCommit: 1 }));
   // Without a mergeVerified run T1-D is not a merged card, so no merged card lacks a pull request.
   assert.deepEqual(variant({ state: state(11, false) }, 'summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 0 }]);
