@@ -62,3 +62,54 @@ npm run typecheck && node --test tests/surface/outcome-history.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; item 6 is skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+
+Attempt 1. RED commit d2f58ca9 (a seam with the final signatures and empty results): 7 tests, 0 pass, 7 fail, each on its assertion. After RED the ids of the three findings of the second fixture run changed from G1 to G3 to F1 to F3, since `CardRun` accepts only `F<digits>`, and acceptance 9 got one more entry (mutant R6c).
+
+DoD: `npm run typecheck` exit 0; the four test files exit 0 with `DUCKDB_BIN` (39 tests, 39 pass) and exit 0 without it (39 tests, 31 pass, 8 skipped `no duckdb binary`).
+
+| Item | Test or command | Result |
+|---|---|---|
+| 1 | `outcome-history.test.ts` `acceptance 1: rulings returns the first-parent commits ...` | pass |
+| 2 | `acceptance 2: rulingSet joins a ruling to the last run of its predecessor ...` | pass |
+| 3 | `acceptance 3: repeatBlocks classifies each formal finding of round 2 or later ...` | pass |
+| 4 | `acceptance 4: findingFixes is true for a file the next reviewed commit ... changed ...` | pass |
+| 5 | `acceptance 5: a blame that exits 128 on an existing line is one history_errors row ...` | pass |
+| 6 | `acceptance 6: run.ts prints the repeat blocks per predates value ...` | pass with DuckDB, else skipped |
+| 7 | README sections `History tables (history.ts)` and `Views (views/40-history.sql)` | for the reviewer |
+| 8 | the three other test files, changed only in `run.ts` spawn arguments and the assertions of item 10 | pass, both ways |
+| 9 | `acceptance 9: a base of --output=x writes no file and is one history_errors row ...` | pass |
+| 10 | `outcome-github.test.ts` `T1-OUTCOME-GITHUB-2 acceptance 12`, the run with neither flag | pass with DuckDB, else skipped |
+
+Item 10 changed two assertions of that run, not one: the file list, and the list of printed views, which now holds the three history views.
+
+Mutants (one expression changed, `outcome-history.test.ts` run with DuckDB, the file restored):
+
+| Req | Mutant | Result |
+|---|---|---|
+| R1 | `log` without `--first-parent` | killed (1, 6) |
+| R2 | last run by `<=` on `startedAt` | killed (2) |
+| R3 | round `>= 1` | killed (3, 5, 6) |
+| R4 | `merge-base --is-ancestor` with its arguments swapped; `first` from the first formal entry of any outcome | killed (3, 5, 6), both |
+| R5 | next entry without "another `candidateSha`"; entries of the formal stage for every finding | killed (4), both |
+| R6 | no 40-hex check of `at` in `predates`; no error row for exit 128; no 40-hex check of `at` in `findingFixes` | killed (9); killed (5, 9); survived, then killed (9) after an entry with a commit of the repository was added behind the finding's |
+| R7 | `40-history.sql` run with `--no-history` | killed (6) |
+| R8 | `fixed` without `resolvedAt`; without `mergeVerified`; `outsideDelta IS DISTINCT FROM false`; share by `successor` | killed (6), all four |
+
+Where the eight review points are applied:
+1. Option-shaped values: `rulings` passes the base after `--end-of-options`; `predates` and `findingFixes` test `SHA` before any git call; every file follows `--`, with `--literal-pathspecs` for `grep` and `diff` (acceptance 9).
+2. Failures: `gitOn` in `history.ts` never throws and adds the `history_errors` row. Answers by exit code: `rev-parse --verify --quiet` 0 held, 1 not held; `grep -c` 0 with the line count, 1 no line or no file; `merge-base --is-ancestor` 0 ancestor, 1 not; `diff --quiet` 0 same, 1 differs. `blame` has no negative answer: a line past the end is found by `grep -c` first, so any blame failure is an error row.
+3. Invocation directory: `run.ts` gives a runner with `cwd` the main checkout; `history.ts` calls no `path` function and reads no file.
+5. Mutants: the table above. 6. Fixtures: two runs of T1-A with different stops, read in the other order than they started; rulings in two months (1 and 2) and two `on` groups (2 and 1); `first` differs from the first stored entry; three files with different histories.
+7. Determinism: rulings in git log order, the other tables in `tables.findings` order, `writeTables` sorts the lines, each view has an `ORDER BY`; no clock is read; fixture commits set both git dates.
+8. README: each sentence was checked against the code; the real run below agrees with it.
+
+4. Null handling in `40-history.sql`:
+- `summary_repeat_blocks`: `GROUP BY predates` and `ORDER BY predates NULLS LAST`: a null is its own group, last. `predates IS NOT DISTINCT FROM 'true'`: a null is not `true`. `outsideDelta IS NOT DISTINCT FROM true`: a null is not true. `share`: the denominator is the row count, never 0 in a row that exists.
+- `summary_true_defects`: `GROUP BY stage, perspective`, both `NULLS LAST`: a null of either is its own group. `disputes > 0`, `reraises > 0`: a null count is not counted. `resolvedAt IS NOT NULL`. `x.changedAfter = 'true'`: no `finding_fixes` row, or a null, is not fixed. `cardId IN (... WHERE mergeVerified)`: a null `cardId` or `mergeVerified` is not fixed.
+- `summary_rulings`: `substr(date, 1, 7)`: a null `date` is its own group with a null key. `GROUP BY "on"`: a null is its own group. `nullif(count, 0)` in both ratios: a 0 denominator gives null. `r.predecessor = c.id`: a null predecessor matches no card. `ORDER BY metric, key NULLS LAST`.
+- Not stated by R8, and read as above: a null `perspective`, a null `date`, a null `disputes`, `reraises`, `outsideDelta`, `cardId` or `mergeVerified`; that "card attempts per ruling" is rows of `card_attempts` over rulings; where a null `predecessor` is "a group of its own" (it is only compared here, never grouped).
+
+Real run (read-only, main checkout state, `--no-usage --no-github`, exit 0, about 70 s): rulings 30, ruling_set 30, repeat_blocks 178, finding_fixes 774, history_errors 0. `git log --first-parent -i --grep="user's ruling" --grep="user ruling"` on main also gives 30.
+

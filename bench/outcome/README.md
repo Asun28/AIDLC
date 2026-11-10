@@ -1,11 +1,11 @@
 # bench/outcome: outcome tables and views
 
-Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory, the card registry, Claude Code session logs and Codex session logs and, unless `--no-github` is given, GitHub and the git history of the main checkout, and write only under `--out`. Table and view names may change with the scripts.
+Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory, the card registry, Claude Code session logs and Codex session logs and, unless `--no-github` is given, GitHub and the git history of the main checkout, and, unless `--no-history` is given, that git history for the history tables, and write only under `--out`. Table and view names may change with the scripts.
 
 ## Command
 
 ```bash
-node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>] [--claude-dir <dir>]... [--codex-dir <dir>] [--no-usage] [--no-github]
+node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>] [--claude-dir <dir>]... [--codex-dir <dir>] [--no-usage] [--no-github] [--no-history]
 ```
 
 - `--state`: the state directory. Default: the one aidlc resolves for the checkout (`AIDLC_STATE_DIR`, else `<main checkout>/.aidlc`).
@@ -16,11 +16,12 @@ node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckd
 - `--codex-dir`: the Codex session directory. Default: `~/.codex/sessions`.
 - `--no-usage`: reads no session or reviewer log, writes no usage table and leaves out `views/20-cost.sql`.
 - `--no-github`: no `gh` or git call is made, the six GitHub tables are not written and `views/30-github.sql` is not run. Files of those names that an earlier run left in `--out` stay as they are.
-- `--no-usage` and `--no-github` together: only the tables of `ingest.ts` are written and only `views/10-cards.sql` is run.
+- `--no-history`: no git call of `history.ts` is made, the five history tables are not written and `views/40-history.sql` is not run. Files of those names that an earlier run left in `--out` stay as they are.
+- `--no-usage`, `--no-github` and `--no-history` together: only the tables of `ingest.ts` are written and only `views/10-cards.sql` is run.
 
 `--state`, `--cards`, `--out`, `--claude-dir` and `--codex-dir` are resolved against the invocation directory too, before the DuckDB child starts in `--out`.
 
-The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` in name order through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
+The run writes `<table>.jsonl` per table, prints the row counts on stderr, runs every `bench/outcome/views/*.sql` that no flag leaves out, in name order, through the DuckDB binary with `--out` as its working directory (an in-memory database, so nothing else is written), and prints each view named `summary_*` on stdout as one line `{"view": "<name>", "rows": [...]}`, in name order. Exit codes: 0; 1 when an argument, a read or a view fails; 2 when the DuckDB binary cannot be started, after the tables are written. The message of exit 2 names `winget install DuckDB.cli`.
 
 ## Tables (`ingest.ts`)
 
@@ -166,8 +167,46 @@ The file first defines each GitHub table as a view over its JSONL file with expl
 
 Every boolean is computed from the tables as read: when `github_errors` has rows, the pull requests, commits or checks they name are missing from the views, which makes `checksGreen` false and `noHumanCommit` null, and can leave `notReverted` true.
 
+## History tables (`history.ts`)
+
+Without `--no-history`, `run.ts` reads `base` from the `aidlc.config.json` of the main checkout and runs every git child of `history.ts` in the main checkout, whatever the invocation directory. The calls only read: `rev-parse`, `log`, `grep`, `blame`, `merge-base --is-ancestor` and `diff --quiet`, each with a 120 s timeout, and each of the three readers runs one command line once. Nothing is fetched, so a commit the local repository does not hold stays unknown. The columns are `HISTORY_COLUMNS` in `ingest.ts`, and the tables are written through `writeTables` with the same read-only directories.
+
+| Table | One row per | Columns |
+|---|---|---|
+| `rulings` | first-parent commit of `base` whose message holds the ruling match | `sha`, `date` (commit date, UTC), `subject`, `cards`, `successor`, `predecessor`, `on` |
+| `ruling_set` | ruling | the columns of `rulings`, then `stopReason`, `stopDetail`, `candidateSha`, `outcome`, `decision`, `findings` (a list of `id`, `class`, `file`, `reason`), `successorMerged` |
+| `repeat_blocks` | formal finding raised at round 2 or later | `goalId`, `cardId`, `id`, `file`, `line`, `outsideDelta`, `predates` |
+| `finding_fixes` | finding, of either stage, with a `file` and a `candidateSha` | `goalId`, `cardId`, `id`, `file`, `candidateSha`, `changedAfter` |
+| `history_errors` | git command that failed | `command`, `exit` (null when the command has no exit code, as when it could not be started), `stderr` (its first line) |
+
+**Ruling match (R1).** `rulings(runner, base)` resolves the base with `git rev-parse --verify --end-of-options <base>^{commit}` and reads `git log --first-parent --format=%H %cI%n%B%x00 --end-of-options <base commit> --`. A commit is a ruling when its message, subject or body, holds `user's ruling` or `user ruling` in any letter case. A commit that the base reaches only through the second parent of a merge is not read. `cards` are the card ids in the subject, in order (`T<digits>-` then groups of capitals and digits joined by `-`). `successor` and `predecessor` are set when the subject holds `<card id> replaces <card id>`, else both are null, as for `T1-X-4 replaces -3`. `on` is the subject text after the first `ruling on ` (any letter case) to the end of the subject, else null. Rows are in the order git lists them, newest first. Not found: a ruling recorded only in chat or in a card body.
+
+**Ruling set (R2).** `rulingSet(rulings, tables)` joins each ruling to the last run of its `predecessor`, else of the first of its `cards`: the run with the latest `startedAt`, and of runs with the same one the one read last. `stopReason` and `stopDetail` are that run's; `candidateSha`, `outcome` and `decision` are those of the last formal entry the run stores; `findings` are the findings of that run, of either stage, that have no `resolvedAt` in the run file as read (the tables do not hold the time an entry was decided, so a finding resolved after the last formal entry is not listed). `successorMerged` is true when a run of the `successor` has `mergeVerified`, false when none has, and null without a `successor`. A ruling whose card has no run, or that names no card, has null in all seven fields, `successorMerged` included.
+
+**The `predates` rule (R3, R4).** `first` is the `candidateSha` of the first formal entry the run stores with outcome `pass` or `block`, `at` is the finding's `candidateSha`, and `line` is the number after the first `@ <file>:` in the reason (the first line of a range), else null. The four values:
+- `unknown`: the finding has no `file`, or `first` or `at` is missing or not 40 lower-case hex characters (no git call is made), or `git rev-parse --verify --quiet --end-of-options <sha>^{commit}` exits 1 for either, which is how git answers for a commit it does not hold. With a line, also when the line is 0 or past the end of the file, or the file is not in `at`: `git --literal-pathspecs grep -a -c -e $ <at> -- <file>` exits 0 and prints the line count, and exits 1 for a file that has no line or is not in the commit, so no blame is run for such a line. Also after a git failure, see below.
+- `true`: with a line, the commit that `git blame --porcelain -L <line>,<line> <at> -- <file>` names is `first`, or `git merge-base --is-ancestor <that commit> <first>` exits 0. With no line, `git --literal-pathspecs diff --quiet --no-ext-diff --end-of-options <first> <at> -- <file>` exits 0, which it also does for a file neither commit holds.
+- `false`: with a line, `merge-base --is-ancestor` exits 1: the line was last changed after the first reviewed commit.
+- `file-changed`: with no line, the `diff --quiet` exits 1.
+
+**Findings followed by a change (R5).** The entry of a finding is the first entry of its run and stage, in stored order, with the finding's `candidateSha`; the next one is the first later entry with outcome `pass` or `block` and another `candidateSha`. `changedAfter` is `true` when the `diff --quiet` above, between the finding's commit and that one, exits 1, `false` when it exits 0, and `unknown` when there is no such entry (a finding of the last reviewed commit, later entries that repeat the commit, a `candidateSha` no entry holds), when either sha is not 40 lower-case hex characters, when the repository does not hold a commit, and after a git failure.
+
+**Failures (R6).** No git failure leaves a function. A command that times out, cannot be started, or exits with a code other than those named above as answers (0 for `rev-parse` of the base, `log` and `blame`; 0 and 1 for the others) is one `history_errors` row, and the value being computed is `unknown`; every other row is still returned. A base that is not a revision of the repository, a name that starts with `-` included, is one row for its `rev-parse` and no other git call for `rulings`. The base follows `--end-of-options`, a file follows `--` (and `grep` and `diff` do not read it as a pathspec pattern), and a commit id from the state directory reaches git only after the 40-hex check.
+
+## Views (`views/40-history.sql`)
+
+The file defines the five tables as views over their JSONL files and reads the views of `10-cards.sql`. Each summary is ordered by its grouping columns, a null after every value.
+
+- `summary_repeat_blocks`: per `predates` value: `n`, `share` (`n` over all repeat blocks) and `differs_from_outsideDelta`, the rows of the group where the repository side and the review side differ: `predates` is `true` and `outsideDelta` is false or null, or `predates` is another value and `outsideDelta` is true. A null `predates` would be a group of its own and counts as not `true`. With no repeat block the view has no row.
+- `summary_true_defects`: per `stage` and `perspective` (a null one of either is a group of its own; formal findings have no perspective): `raised`, the findings; `disputed`, those with at least one dispute; `reraised`, those raised again at least once; `fixed`, those with a `resolvedAt` whose `finding_fixes` row has `changedAfter` `true` and whose card has a run with `mergeVerified`. A finding without a `finding_fixes` row (no `file` or no `candidateSha`) is never `fixed`. The join is on `goalId`, `cardId` and `id`.
+- `summary_rulings`: rows `metric`, `key`, `value`. `rulings_per_month`: the rulings per UTC calendar month of the commit date (`key` `YYYY-MM`). `rulings_per_on`: the rulings per `on` value; those without one are the row with a null `key`. `card_attempts_per_ruling`: the rows of `card_attempts` (cards with at least one run) divided by the rulings, null when there is no ruling. `superseded_predecessor_share`: of the cards with `superseded_by`, the share whose id is the `predecessor` of a ruling, null when no card has `superseded_by`; a ruling with a null `predecessor` matches no card.
+
+**The true-defect proxy.** `fixed` stands in for "the finding named a real defect": the author changed the cited file before the next reviewed commit, the reviewer then stopped raising the finding, and the card merged. It is a proxy and not a label: a file can change for another reason, and a real defect can be fixed in another file. It cannot show whether a test or another reviewer would have caught the same defect.
+
 ## Tests
 
-`tests/surface/outcome-usage.test.ts` covers the readers, the error rows, the returned keys, attribution and `priceOf` everywhere, over hand-written fixtures that keep the structure of real files with a marker in every text field; its view test (acceptance 8, 10 and 11) is skipped as below, and every `run.ts` it starts is given `--no-github`. `tests/surface/outcome-ingest.test.ts` covers the tables, the writer, the output rule, the `--duckdb` path and the exit 2 path everywhere. The view tests (acceptance 5 and 11) are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
+`tests/surface/outcome-usage.test.ts` covers the readers, the error rows, the returned keys, attribution and `priceOf` everywhere, over hand-written fixtures that keep the structure of real files with a marker in every text field; its view test (acceptance 8, 10 and 11) is skipped as below, and every `run.ts` it starts is given `--no-github` and `--no-history`. `tests/surface/outcome-ingest.test.ts` covers the tables, the writer, the output rule, the `--duckdb` path and the exit 2 path everywhere, and every `run.ts` it starts is given `--no-usage`, `--no-github` and `--no-history`. The view tests (acceptance 5 and 11) are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
 
-`tests/surface/outcome-github.test.ts` covers the four readers with a scripted runner and a real temporary git repository, and `run.ts` started in that repository with a stand-in for `gh` first on PATH; no test calls the real `gh`, and every `run.ts` it starts is given `--no-usage`, or `--claude-dir` and `--codex-dir` with empty directories of the test, so it reads no session log of the machine. Its view tests (acceptance 6 and 12) are skipped in the same way.
+`tests/surface/outcome-github.test.ts` covers the four readers with a scripted runner and a real temporary git repository, and `run.ts` started in that repository with a stand-in for `gh` first on PATH; no test calls the real `gh`, and every `run.ts` it starts is given `--no-usage`, or `--claude-dir` and `--codex-dir` with empty directories of the test, so it reads no session log of the machine. Every such run is given `--no-history` too, but the one run of acceptance 12 with neither `--no-usage` nor `--no-github`, which has every stage on and reads the history of the fixture repository. Its view tests (acceptance 6 and 12) are skipped in the same way.
+
+`tests/surface/outcome-history.test.ts` covers `rulings`, `rulingSet`, `repeatBlocks` and `findingFixes` over a real temporary git repository with fixed commit dates, a blame that fails through a runner that answers for it, and an option-shaped base and commit id; its view test (acceptance 6) starts `run.ts` in that repository with `--no-usage` and `--no-github` and is skipped in the same way.

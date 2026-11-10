@@ -378,7 +378,7 @@ function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', '
 
 /**
  * `node bench/outcome/run.ts` started in a subdirectory of the fixture repository, with the stand-in gh first on PATH and no variable aidlc reads.
- * It is given `--no-usage`, or the `usage` arguments in its place.
+ * It is given `--no-usage` and `--no-history`, or the `usage` arguments in their place: that run has every stage on.
  */
 function outcome(args: string[], over: { state?: string; cards?: string; answers?: Record<string, unknown>; usage?: string[] } = {}): { status: number | null; stdout: string; stderr: string; out: string; ghCalls: string[] } {
   const { dir, sha } = repo();
@@ -386,7 +386,7 @@ function outcome(args: string[], over: { state?: string; cards?: string; answers
   const map = put(path.join(tempDir(), 'gh.json'), JSON.stringify(over.answers ?? answers(sha)));
   const kept = Object.entries(process.env).filter(([k]) => !/^(AIDLC_.*|NODE_OPTIONS|PATH)$/i.test(k));
   const env = { ...Object.fromEntries(kept), PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, FAKE_GH: map };
-  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, ...(over.usage ?? ['--no-usage']), ...args], { cwd: path.join(dir, 'sub'), env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, ...(over.usage ?? ['--no-usage', '--no-history']), ...args], { cwd: path.join(dir, 'sub'), env, encoding: 'utf8', windowsHide: true });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out, ghCalls: existsSync(`${map}.log`) ? readFileSync(`${map}.log`, 'utf8').trim().split('\n') : [] };
 }
 
@@ -551,7 +551,8 @@ test('T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone run.ts writes the
   const [claudeDir, codexDir] = [tempDir(), tempDir()];
   const all = outcome(['--duckdb', duckdb!], { usage: ['--claude-dir', claudeDir, '--codex-dir', codexDir] });
   assert.equal(all.status, 0, all.stderr);
-  assert.deepEqual([...GITHUB_FILES, ...USAGE_FILES].filter((name) => existsSync(path.join(all.out, name))), [...GITHUB_FILES, ...USAGE_FILES]);
-  assert.deepEqual([...views(all.stdout).keys()], [...CARD_VIEWS, ...GITHUB_VIEWS, ...COST_VIEWS].sort(), 'the views of the three files');
+  const HISTORY_FILES = ['rulings', 'ruling_set', 'repeat_blocks', 'finding_fixes', 'history_errors'].map((name) => `${name}.jsonl`);
+  assert.deepEqual([...GITHUB_FILES, ...USAGE_FILES, ...HISTORY_FILES].filter((name) => existsSync(path.join(all.out, name))), [...GITHUB_FILES, ...USAGE_FILES, ...HISTORY_FILES]);
+  assert.deepEqual([...views(all.stdout).keys()], [...CARD_VIEWS, ...GITHUB_VIEWS, ...COST_VIEWS, 'summary_repeat_blocks', 'summary_rulings', 'summary_true_defects'].sort(), 'the views of the four files');
   assert.deepEqual(all.ghCalls.length, alone.ghCalls.length);
 });

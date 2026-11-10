@@ -95,7 +95,7 @@ const cardText = (id: string, extra = ''): string => `---\nid: ${id}\ntitle: ${i
  * The registry: T1-A (superseded, the predecessor of ruling r1), T1-A-2, T1-B and T1-E (superseded, in no ruling). The state:
  * - `g-1/T1-A`, the last run of T1-A though it is read first: formal entries no-verdict on `c0`, then blocks on `k1`, `k2`,
  *   `k2` again and `k3`; pre rounds on `k1` twice; findings F1 to F9 and the pre finding F11, all resolved but F9.
- * - `g-2/T1-A`, an earlier run with another stop. `g-3/T1-A-2`, merged: pre rounds on `k1` and `k2`, findings G1 to G3.
+ * - `g-2/T1-A`, an earlier run with another stop. `g-3/T1-A-2`, merged: pre rounds on `k1` and `k2`, its own findings F1 to F3.
  */
 function fixture(sha: Record<string, string>): { stateDir: string; cardsDir: string } {
   const dir = tempDir();
@@ -134,9 +134,9 @@ function fixture(sha: Record<string, string>): { stateDir: string; cardsDir: str
     review: { substantiveDecisions: 1, invocations: [formal(1, 'pass', k2, { decision: 1 })] },
     preReview: { rounds: [round(1, 'block', k1), round(2, 'pass', k2)] },
     findings: [
-      f('G1', 1, 'fixed @ a.ts:2', { stage: 'pre', perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
-      f('G2', 1, 'left alone @ c.ts:1', { stage: 'pre', perspective: 'bugs', file: 'c.ts', candidateSha: k1 }),
-      f('G3', 1, 'not resolved @ a.ts:2', { stage: 'pre', perspective: 'security', file: 'a.ts', candidateSha: k1, resolvedAt: undefined, disputes: [{ at: at(1, 2, '06:00'), note: 'intended' }] }),
+      f('F1', 1, 'fixed @ a.ts:2', { stage: 'pre', perspective: 'bugs', file: 'a.ts', candidateSha: k1 }),
+      f('F2', 1, 'left alone @ c.ts:1', { stage: 'pre', perspective: 'bugs', file: 'c.ts', candidateSha: k1 }),
+      f('F3', 1, 'not resolved @ a.ts:2', { stage: 'pre', perspective: 'security', file: 'a.ts', candidateSha: k1, resolvedAt: undefined, disputes: [{ at: at(1, 2, '06:00'), note: 'intended' }] }),
     ],
   });
   mkdirSync(path.join(stateDir, 'journal'));
@@ -191,9 +191,9 @@ test('T1-OUTCOME-HISTORY acceptance 4: findingFixes is true for a file the next 
       fix('T1-A', 'F7', 'a.ts', 'gone', 'unknown'),
       fix('T1-A', 'F9', 'a.ts', 'k3', 'unknown'), // the last reviewed commit
       fix('T1-A', 'F11', 'a.ts', 'k1', 'unknown'), // the only later pre round repeats k1; the formal entries are another stage
-      fix('T1-A-2', 'G1', 'a.ts', 'k1', 'true'),
-      fix('T1-A-2', 'G2', 'c.ts', 'k1', 'false'),
-      fix('T1-A-2', 'G3', 'a.ts', 'k1', 'true'),
+      fix('T1-A-2', 'F1', 'a.ts', 'k1', 'true'),
+      fix('T1-A-2', 'F2', 'c.ts', 'k1', 'false'),
+      fix('T1-A-2', 'F3', 'a.ts', 'k1', 'true'),
     ],
     errors: [],
   });
@@ -213,8 +213,9 @@ test('T1-OUTCOME-HISTORY acceptance 9: a base of --output=x writes no file and i
   const { runner, calls } = recordingGit(dir);
   const read = rulings(runner, '--output=x');
   assert.deepEqual([read.rows, read.errors.map((e) => e['command']), calls], [[], ['git rev-parse --verify --end-of-options --output=x^{commit}'], ['git rev-parse --verify --end-of-options --output=x^{commit}']]);
+  // The entry after the finding's has a commit the repository holds, so only the 40-hex check keeps git from being called.
   const entry = (candidateSha: string): Row => ({ goalId: 'g', cardId: 'T1-A', stage: 'formal', outcome: 'block', candidateSha });
-  const tables: Tables = { cards: [], card_runs: [], state_spans: [], attempts: [], ingest_errors: [], review_decisions: [entry(sha['k1']!), entry('--output=x')], findings: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', stage: 'formal', round: 2, file: 'a.ts', candidateSha: '--output=x', outsideDelta: null, reason: 'x @ a.ts:1' }] };
+  const tables: Tables = { cards: [], card_runs: [], state_spans: [], attempts: [], ingest_errors: [], review_decisions: [entry(sha['k1']!), entry('--output=x'), entry(sha['k2']!)], findings: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', stage: 'formal', round: 2, file: 'a.ts', candidateSha: '--output=x', outsideDelta: null, reason: 'x @ a.ts:1' }] };
   assert.deepEqual(repeatBlocks(runner, tables), { rows: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', file: 'a.ts', line: 1, outsideDelta: null, predates: 'unknown' }], errors: [] });
   assert.deepEqual(findingFixes(runner, tables), { rows: [{ goalId: 'g', cardId: 'T1-A', id: 'F1', file: 'a.ts', candidateSha: '--output=x', changedAfter: 'unknown' }], errors: [] });
   assert.equal(calls.length, 1, 'a git call was made for a candidateSha that is not 40 hex');
@@ -243,7 +244,7 @@ test('T1-OUTCOME-HISTORY acceptance 6: run.ts prints the repeat blocks per preda
     { predates: 'true', n: 3, share: 0.375, differs_from_outsideDelta: 1 },
     { predates: 'unknown', n: 3, share: 0.375, differs_from_outsideDelta: 0 },
   ]);
-  // fixed: G1 alone. F1 and F5 are resolved and changed after, on a card without a merged run; G3 is not resolved; G2 was left alone.
+  // fixed: F1 of T1-A-2 alone; its F3 is not resolved and its F2 was left alone. F1 and F5 of T1-A are resolved and changed after, on a card without a merged run.
   assert.deepEqual(r.views.get('summary_true_defects'), [
     { stage: 'formal', perspective: null, raised: 9, disputed: 1, reraised: 1, fixed: 0 },
     { stage: 'pre', perspective: 'bugs', raised: 3, disputed: 0, reraised: 0, fixed: 1 },
