@@ -2,6 +2,7 @@
 id: T1-OUTCOME-USAGE
 title: "The outcome bench writes one usage row per model request from Claude Code session logs, Codex session logs and reviewer logs, prices it at list price, attributes it to a card and stage, and reports cost per stage and the cache-read share"
 status: todo
+superseded_by: T1-OUTCOME-USAGE-2
 branch: T1-OUTCOME-USAGE
 worktree: D:\wt\AIDLC\T1-OUTCOME-USAGE
 plan_ref: plans/reliability-baseline.md#order-of-work
