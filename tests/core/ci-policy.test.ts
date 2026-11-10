@@ -555,7 +555,8 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
     const scanStep = { number: 4, name: 'Scan committed history', conclusion: 'failure' };
     const repeated = `[CI-GATE-STEP] {"check":${JSON.stringify(SCAN)},"check":"build","job":"2","step":${JSON.stringify(scanStep)}}`;
     const bracket = 'Install [gitleaks]';
-    const cases: Array<[string, string, { scanSetupSteps?: string[] }?]> = [
+    const allowlisted = { transientSteps: ['Set up job', 'Complete job', INSTALL] };
+    const cases: Array<[string, string, { transientSteps?: string[]; scanSetupSteps?: string[] }?]> = [
       ['a step line naming build whose check key repeats, the scan check first', [RUN_42467444385, repeated].join('\n')],
       ['the same line with its step conclusion null', [RUN_42467444385, repeated.replace('"conclusion":"failure"', '"conclusion":null')].join('\n')],
       ['a raw [ in the step name, listed as written', [redLine(SCAN), stepLine(SCAN, bracket)].join('\n'), { scanSetupSteps: [bracket] }],
@@ -564,6 +565,14 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
       ['a legacy red line for another check', [RUN_42467444385, '[CI-GATE-RED] build=failure'].join('\n')],
       ['a timeout line', [RUN_42467444385, `[CI-GATE-TIMEOUT] 1 pending checks: ${JSON.stringify([{ name: 'build', conclusion: null, status: 'queued' }])}`].join('\n')],
       ['a second step line of the check at the same listed step', [RUN_42467444385, stepLine(SCAN, INSTALL, 'failure', '2')].join('\n')],
+      // R3 decision 1: the gate prints a red line only for completed check runs, so no printed element has a status.
+      ['the red line of the check with status "" on its element', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: '' }])}`, stepLine(SCAN, INSTALL)].join('\n')],
+      ['the red line of the check with status "" on its element, the setup step on transientSteps', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: '' }])}`, stepLine(SCAN, INSTALL)].join('\n'), allowlisted],
+      ['the red line of the check with status queued on its element', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: 'queued' }])}`, stepLine(SCAN, INSTALL)].join('\n')],
+      ['beside them, a red line with status "" on the element of another check', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', status: '' }])}`].join('\n')],
+      // The step a printed step line names is the first whose conclusion is `failure`.
+      ['the step line of the check with the conclusion FAILURE', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n')],
+      ['the step line of the check with the conclusion FAILURE, the setup step on transientSteps', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n'), allowlisted],
     ];
     const exempted = cases.flatMap(([label, text, options]) => {
       const c = ship(text, options);
