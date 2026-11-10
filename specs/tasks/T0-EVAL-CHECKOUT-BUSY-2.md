@@ -47,3 +47,16 @@ npm run typecheck && node --test tests/surface/evals.test.ts tests/infra/update-
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+RED receipt: `b06b61b:1`. At b06b61b, the merge of origin/main 52cb545 into the carried candidate 6f16f88, `node --test tests/infra/update-json.test.ts` runs 17 tests, 16 pass, 1 fails: `one lock primitive in src (T1-STORE-CAS-2 acceptance 2)`, on its subtest that allows `sleepSync` and `Atomics.wait` only in src/state/store.ts and the ship's CI poll, since `src/evals/runner.ts` defined `sleepSync` with `Atomics.wait`.
+
+History, carried from T0-EVAL-CHECKOUT-BUSY (same branch line, 6f16f88): RED 79511eb:1 (acceptance 1, 2 always-EBUSY and 3 on Windows); R3 passed twice; PR 251 CI failed in T1-STORE-CAS-2 acceptance 2 (Atomics.wait outside the store)
+
+| Item | Proof | Result |
+| --- | --- | --- |
+| 1 | tests/surface/evals.test.ts `T0-EVAL-CHECKOUT-BUSY-2 acceptance 1`: `await removeDir` with a remove that throws `EBUSY` twice and then returns, a clock fixed at 0 and a recording wait resolves to true after 3 calls and waits `[200, 200]` | pass |
+| 2 | Same file, the three `acceptance 2` tests: always `EBUSY` with a clock that advances 200 ms inside the wait resolves to false with calls at 0, 200, ..., 10000 (51 calls, 50 waits of 200 ms); `EACCES` resolves to false after 1 call and no wait; a remove that returns resolves to true after 1 call and no wait | pass |
+| 3 | Same file, `acceptance 3`: a provider that starts a detached `node` with its working directory in the temporary checkout, exiting 1500 ms later; after `runEval` the holder directory is gone, `git worktree list` does not name the checkout and `detail` is undefined (Windows 11, Node 22.23.1; the predecessor's RED 79511eb showed it failing there without the retry) | pass |
+| 4 | tests/infra/update-json.test.ts: 17 tests, 17 pass, including `one lock primitive in src (T1-STORE-CAS-2 acceptance 2)`; `grep -n 'Atomics.wait\|sleepSync' src/evals/runner.ts` prints nothing; the test file is unchanged | pass |
+| 5 | CHANGELOG Unreleased entry `T0-EVAL-CHECKOUT-BUSY-2 (bugfix, replaces T0-EVAL-CHECKOUT-BUSY)` states the async function, the awaited 200 ms timer, the 10000 ms limit, the busy codes and the awaited `closeWorkspace`; the docs/OPERATIONS.md Evals paragraph (from the predecessor, unchanged) states the 200 ms retries for up to 10 s per directory and does not call the wait synchronous (reviewer-verified against the diff) | pass |

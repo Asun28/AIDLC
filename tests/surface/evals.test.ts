@@ -1,11 +1,11 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { EvalCase, loadEvals, realPathRule, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
+import { EvalCase, loadEvals, realPathRule, removeDir, runEval, runSuite, runTrials } from '../../src/evals/runner.ts';
 import { MockProvider } from '../../src/providers/mock.ts';
 import { runSync, scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import type { CompletionRequest, CompletionResult, ModelProvider, ToolCall } from '../../src/providers/types.ts';
@@ -188,6 +188,108 @@ for (const then of ['answer', 'throw'] as const) {
     assert.equal(named.some((p) => samePath(p, seen.cwd!)), false, 'git worktree list does not name the checkout');
   });
 }
+
+/** An error as fs raises it, with `code` set. */
+const fsError = (code: string): NodeJS.ErrnoException => Object.assign(new Error(`${code}: test`), { code });
+
+/** A clock that advances only inside the recording wait, and a remove that records the clock at each call. */
+function fakeRemoval(outcome: (call: number) => NodeJS.ErrnoException | undefined) {
+  let clock = 0;
+  const callTimes: number[] = [];
+  const waits: number[] = [];
+  const remove = (_dir: string): void => {
+    callTimes.push(clock);
+    const err = outcome(callTimes.length);
+    if (err) throw err;
+  };
+  const now = (): number => clock;
+  const wait = (ms: number): void => {
+    waits.push(ms);
+    clock += ms;
+  };
+  return { deps: { remove, now, wait }, callTimes, waits };
+}
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 1: a remove that throws EBUSY twice and then succeeds is called three times with two waits of 200 ms, and the directory counts as removed [R1]', async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const removed = await removeDir('/no/such/dir', {
+    remove: () => {
+      calls += 1;
+      if (calls <= 2) throw fsError('EBUSY');
+    },
+    now: () => 0,
+    wait: (ms) => {
+      waits.push(ms);
+    },
+  });
+  assert.deepEqual({ removed, calls, waits }, { removed: true, calls: 3, waits: [200, 200] });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that always throws EBUSY is called every 200 ms until the first call at or after 10000 ms, and the directory counts as not removed [R1]', async () => {
+  const f = fakeRemoval(() => fsError('EBUSY'));
+  const removed = await removeDir('/no/such/dir', f.deps);
+  // Calls at t = 0, 200, ..., 10000: 51 calls, 50 waits of 200 ms.
+  const expectedTimes = Array.from({ length: 51 }, (_, i) => i * 200);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: expectedTimes, waits: expectedTimes.slice(1).map(() => 200) });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that throws EACCES is called once with no wait, and the directory counts as not removed [R1]', async () => {
+  const f = fakeRemoval(() => fsError('EACCES'));
+  const removed = await removeDir('/no/such/dir', f.deps);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: false, callTimes: [0], waits: [] });
+});
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 2: a remove that succeeds is called once with no wait, and the directory counts as removed [R1]', async () => {
+  const f = fakeRemoval(() => undefined);
+  const removed = await removeDir('/no/such/dir', f.deps);
+  assert.deepEqual({ removed, callTimes: f.callTimes, waits: f.waits }, { removed: true, callTimes: [0], waits: [] });
+});
+
+/** Waits until no process has the id, polling every 100 ms, at most `polls` times. */
+async function processGone(pid: number, polls: number): Promise<void> {
+  for (let i = 0; i < polls; i += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return;
+    }
+    await new Promise((r) => setTimeout(r, 100));
+  }
+}
+
+test('T0-EVAL-CHECKOUT-BUSY-2 acceptance 3: a process the provider started with its working directory in the temporary checkout, exiting 1500 ms later, leaves no holder directory, no worktree entry and nothing named in detail [R2]', async () => {
+  const { cwd } = setup();
+  const seen: { cwd?: string; pid?: number } = {};
+  const provider: ModelProvider = {
+    name: 'busy',
+    available: async () => ({ ok: true, detail: '' }),
+    complete: async (request: CompletionRequest): Promise<CompletionResult> => {
+      seen.cwd = request.cwd;
+      const child = spawn(process.execPath, ['-e', 'setTimeout(()=>{},1500)'], { cwd: request.cwd, detached: true, stdio: 'ignore', windowsHide: true });
+      child.unref();
+      seen.pid = child.pid;
+      return { invocationId: 'i', provider: 'busy', model: 'm', text: 'done', outcome: 'ok', durationMs: 0, toolCalls: [] };
+    },
+  };
+  const c = EvalCase.parse({ id: 'busy', prompt: 'do it', checks: [{ type: 'contains', file: 'note.txt', text: 'hello' }] });
+  try {
+    const r = await runEval(c, provider, { cwd, runner });
+    assert.ok(seen.cwd, 'the provider got a working directory');
+    const holder = path.dirname(seen.cwd);
+    temps.push(holder);
+    const listed = git(cwd, 'worktree', 'list', '--porcelain');
+    assert.equal(listed.status, 0);
+    const named = listed.stdout.split(/\r?\n/).filter((l) => l.startsWith('worktree ')).map((l) => l.slice('worktree '.length));
+    assert.deepEqual(
+      { passed: r.passed, holderExists: existsSync(holder), checkoutNamed: named.some((p) => samePath(p, seen.cwd!)), detailNamesLeft: /not removed/.test(r.detail ?? '') },
+      { passed: true, holderExists: false, checkoutNamed: false, detailNamesLeft: false },
+      `detail: ${r.detail ?? ''}`,
+    );
+  } finally {
+    if (seen.pid !== undefined) await processGone(seen.pid, 50);
+  }
+});
 
 test('T1-EVAL-TRANSCRIPT-2 acceptance 4: a prompt with a measurement word is refused naming the case and the word; whole words only; the system prompt names none [R4] [R6]', async () => {
   const { evalsDir, cwd } = setup();
