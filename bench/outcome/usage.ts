@@ -11,7 +11,7 @@ export const USAGE_COLUMNS = {
 } as const;
 export type Usage = { rows: Row[]; errors: Row[] };
 /** USD per million tokens of each kind, by model id, with the page the numbers were read from and the date they were read. */
-export type Prices = Record<string, { input: number; cacheRead: number; cacheWrite: number; output: number; source: string; date: string }>;
+export type Prices = Record<string, { input: number; cacheRead: number; cacheWrite5m: number; cacheWrite1h: number; output: number; source: string; date: string; note?: string }>;
 
 const str = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const num = (value: unknown): number | null => (typeof value === 'number' ? value : null);
@@ -188,6 +188,6 @@ export function priceOf(row: Row, prices: Prices): number | null {
   const model = String(row['model']);
   if (!Object.hasOwn(prices, model) || typeof row['inputTokens'] !== 'number') return null;
   const p = prices[model]!;
-  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [row['cacheWriteTokens'], p.cacheWrite], [row['outputTokens'], p.output]];
+  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [row['cacheWriteTokens'], p.cacheWrite5m], [row['outputTokens'], p.output]];
   return kinds.reduce((sum, [tokens, perMillion]) => sum + (num(tokens) ?? 0) * perMillion, 0) / 1e6;
 }

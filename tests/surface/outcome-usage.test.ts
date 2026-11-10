@@ -29,10 +29,10 @@ function put(file: string, lines: string[]): string {
   return file;
 }
 
-type Tokens = [input: number, output: number, cacheRead: number, cacheWrite: number];
-/** A Claude Code log line with the keys of a real one. `tokens` undefined gives a line without `message.usage`. */
+type Tokens = [input: number, output: number, cacheRead: number, cacheWrite: number, cacheWrite1h?: number];
+/** A Claude Code log line with the keys of a real one. `tokens` undefined gives a line without `message.usage`, and no fifth number a usage without `cache_creation`. */
 const claudeLine = (type: string, id: string, tokens: Tokens | undefined, ts = '2026-01-02T01:00:00.000Z', extra: object = {}): string => {
-  const usage = tokens && { input_tokens: tokens[0], output_tokens: tokens[1], cache_read_input_tokens: tokens[2], cache_creation_input_tokens: tokens[3], service_tier: X, cache_creation: { ephemeral_5m_input_tokens: tokens[3] } };
+  const usage = tokens && { input_tokens: tokens[0], output_tokens: tokens[1], cache_read_input_tokens: tokens[2], cache_creation_input_tokens: tokens[3], service_tier: X, ...(tokens[4] === undefined ? {} : { cache_creation: { ephemeral_5m_input_tokens: tokens[3] - tokens[4], ephemeral_1h_input_tokens: tokens[4] } }) };
   const message = { id, type: 'message', role: type, model: 'model-a', content: [{ type: 'text', text: X }, { type: 'tool_use', name: X, input: { command: X } }], stop_reason: X, usage };
   return JSON.stringify({ type, uuid: X, parentUuid: X, sessionId: 's1', timestamp: ts, cwd: 'C:\\repo', gitBranch: X, isSidechain: false, version: X, requestId: `req-${id}`, message, toolUseResult: { stdout: X }, ...extra });
 };
@@ -41,30 +41,32 @@ const tokenCount = (input: number, cached: number, output: number, ts?: string):
 const codexSession = (id: string, cwd: string, counts: string[]): string[] => [codexLine('session_meta', { id, cwd, originator: X, instructions: X }), codexLine('turn_context', { model: 'model-old', cwd, summary: X }), codexLine('event_msg', { type: 'user_message', message: X }), ...counts.slice(0, -1), codexLine('turn_context', { model: 'model-b', cwd, summary: X }), codexLine('event_msg', { type: 'agent_message', message: X }), ...counts.slice(-1)];
 const reviewLog = (durationMs: number, tail: string[]): string[] => [`# review codex exit=0 timedOut=false durationMs=${durationMs} outputSha256=ab12 outcome=pass runStatus=success`, 'workdir: C:\\wt\\T1-X', 'model: model-b', `session id: ${X}`, X, ...tail, X];
 
-/** A session with two requests (the first streamed over three lines) and two subagents, one with a meta file; a Codex session; a reviewer log with a token count and one without. */
+/** A session with two requests (the first streamed over three lines) and two subagents, one with a meta file; a Codex session; a reviewer log with two token counts, one directly under `review` and one without a count. */
 function fixture(): { claudeDir: string; codexDir: string; stateDir: string; dir: string } {
   const dir = tempDir();
   const [claudeDir, codexDir, stateDir] = [path.join(dir, 'claude'), path.join(dir, 'codex'), path.join(dir, 'state')];
-  put(path.join(claudeDir, 's1.jsonl'), [claudeLine('user', 'u1', undefined), claudeLine('assistant', 'm1', [9, 9, 9, 9]), claudeLine('assistant', 'm1', [8, 8, 8, 8]), JSON.stringify({ type: 'system', content: X, sessionId: 's1', timestamp: '2026-01-02T01:00:00.000Z' }), claudeLine('assistant', 'm1', [1, 2, 3, 4]), claudeLine('assistant', 'm2', [5, 6, 7, 8], '2026-01-02T01:05:00.000Z')]);
+  put(path.join(claudeDir, 's1.jsonl'), [claudeLine('user', 'u1', undefined), claudeLine('assistant', 'm1', [9, 9, 9, 9]), claudeLine('assistant', 'm1', [8, 8, 8, 8]), JSON.stringify({ type: 'system', content: X, sessionId: 's1', timestamp: '2026-01-02T01:00:00.000Z' }), claudeLine('assistant', 'm1', [1, 2, 3, 4, 0]), claudeLine('assistant', 'm2', [5, 6, 7, 8, 3], '2026-01-02T01:05:00.000Z')]);
   const subagents = path.join(claudeDir, 's1', 'subagents');
   put(path.join(subagents, 'agent-a1.jsonl'), [claudeLine('assistant', 'm3', [1, 2, 3, 4], undefined, { isSidechain: true, agentId: 'a1' })]);
   put(path.join(subagents, 'agent-a1.meta.json'), [JSON.stringify({ agentType: 'implementer', description: `${X} T1-X-2 ${X}`, effort: X, toolUseId: X })]);
   put(path.join(subagents, 'agent-b2.jsonl'), [claudeLine('assistant', 'm4', [1, 2, 3, 4], undefined, { isSidechain: true, agentId: 'b2' })]);
   put(path.join(codexDir, '2026', '01', '02', 'rollout-2026-01-02T03-00-00-cx1.jsonl'), codexSession('cx1', 'C:\\wt\\T1-X', [tokenCount(1000, 500, 5), tokenCount(277568, 234368, 9000, '2026-01-02T03:04:00.000Z')]));
-  put(path.join(stateDir, 'evidence', 'g-a', 'review', 'T1-X', 'T1-X.r3.1.abc.log'), reviewLog(55024, ['tokens used', '44,031']));
+  put(path.join(stateDir, 'evidence', 'g-a', 'review', 'T1-X', 'T1-X.r3.1.abc.log'), reviewLog(55024, ['tokens used', '9', X, 'tokens used', '44,031']));
+  put(path.join(stateDir, 'evidence', 'g-a', 'review', 'loose.log'), reviewLog(7, ['tokens used', '7']));
   put(path.join(stateDir, 'evidence', 'g-a', 'review', 'T1-X', 'T1-X.r3.2.def.log'), reviewLog(100, []));
   return { claudeDir, codexDir, stateDir, dir };
 }
 
-const claudeRow = (rest: Row): Row => ({ source: 'claude-code', sessionId: 's1', ts: '2026-01-02T01:00:00.000Z', model: 'model-a', cwd: 'C:\\repo', sidechain: false, inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, agentId: null, agentType: null, agentCard: null, ...rest });
+const claudeRow = (rest: Row): Row => ({ source: 'claude-code', sessionId: 's1', ts: '2026-01-02T01:00:00.000Z', model: 'model-a', cwd: 'C:\\repo', sidechain: false, inputTokens: 1, outputTokens: 2, cacheReadTokens: 3, cacheWriteTokens: 4, cacheWrite1hTokens: 0, agentId: null, agentType: null, agentCard: null, ...rest });
 const codexRow: Row = { source: 'codex', sessionId: 'cx1', cwd: 'C:\\wt\\T1-X', ts: '2026-01-02T03:04:00.000Z', model: 'model-b', inputTokens: 43200, cacheReadTokens: 234368, cacheWriteTokens: 12, outputTokens: 9000 };
 const logRow: Row = { source: 'review-log', goalId: 'g-a', cardId: 'T1-X', invocation: 'T1-X.r3.1.abc', totalTokens: 44031, durationMs: 55024, model: 'model-b' };
+const looseLogRow: Row = { ...logRow, cardId: null, invocation: 'loose', totalTokens: 7, durationMs: 7 };
 
 test('T1-OUTCOME-USAGE acceptance 1: claudeUsage returns one row per (message.id, requestId) with the values of the last line, and reads a subagent file with its meta file [R1]', () => {
   const usage = claudeUsage([fixture().claudeDir], ['T1-X', 'T1-X-2']);
   assert.deepEqual(usage.rows, [
     claudeRow({}),
-    claudeRow({ ts: '2026-01-02T01:05:00.000Z', inputTokens: 5, outputTokens: 6, cacheReadTokens: 7, cacheWriteTokens: 8 }),
+    claudeRow({ ts: '2026-01-02T01:05:00.000Z', inputTokens: 5, outputTokens: 6, cacheReadTokens: 7, cacheWriteTokens: 8, cacheWrite1hTokens: 3 }),
     claudeRow({ sidechain: true, agentId: 'a1', agentType: 'implementer', agentCard: 'T1-X-2' }),
     claudeRow({ sidechain: true, agentId: 'b2' }),
   ]);
@@ -75,41 +77,44 @@ test('T1-OUTCOME-USAGE acceptance 2: codexUsage returns one row per rollout file
   assert.deepEqual(codexUsage(fixture().codexDir), { rows: [codexRow], errors: [] });
 });
 
-test('T1-OUTCOME-USAGE acceptance 3: reviewLogUsage reads the number after the tokens used line, and gives no row and no error for a log without it [R3]', () => {
-  assert.deepEqual(reviewLogUsage(fixture().stateDir), { rows: [logRow], errors: [] });
+test('T1-OUTCOME-USAGE acceptance 3: reviewLogUsage reads the number after the last tokens used line, gives a log directly under review a null card, and gives no row and no error for a log without the line [R3]', () => {
+  assert.deepEqual(reviewLogUsage(fixture().stateDir), { rows: [logRow, looseLogRow], errors: [] });
 });
 
-/** The fixture with a line and a meta file that are not JSON and a Codex file without a token count, read with one absent directory per source. */
+/** The fixture with a line and a meta file that are not JSON, a usage line without a message id and two Codex files without a usable token count, read with one absent directory per source. */
 function withErrors(): { rows: Row[]; errors: Row[]; expected: Row[] } {
   const f = fixture();
   const gone = path.join(f.dir, 'gone');
-  const badLine = put(path.join(f.claudeDir, 's2.jsonl'), ['{', claudeLine('assistant', 'm5', [1, 2, 3, 4])]);
+  const badLine = put(path.join(f.claudeDir, 's2.jsonl'), ['{', claudeLine('assistant', 'm9', [1, 2, 3, 4]).replace('"id":"m9",', ''), claudeLine('assistant', 'm5', [1, 2, 3, 4])]);
   put(path.join(f.claudeDir, 's1', 'subagents', 'agent-c3.jsonl'), [claudeLine('assistant', 'm6', [1, 2, 3, 4], undefined, { isSidechain: true, agentId: 'c3' })]);
   const badMeta = put(path.join(f.claudeDir, 's1', 'subagents', 'agent-c3.meta.json'), ['{']);
+  const noInfo = put(path.join(f.codexDir, 'rollout-noinfo.jsonl'), codexSession('cx3', 'C:\\wt', [codexLine('event_msg', { type: 'token_count', info: null, rate_limits: { plan_type: X } })]));
   const noCount = put(path.join(f.codexDir, 'rollout-none.jsonl'), codexSession('cx2', 'C:\\wt', []));
   const all = [claudeUsage([gone, f.claudeDir], ['T1-X', 'T1-X-2']), codexUsage(gone), codexUsage(f.codexDir), reviewLogUsage(gone), reviewLogUsage(f.stateDir)];
   const expected = [
     { source: 'claude-code', path: gone, problem: 'missing directory' },
     { source: 'claude-code', path: badMeta, problem: 'not JSON' },
     { source: 'claude-code', path: badLine, problem: 'not JSON (line 1)' },
+    { source: 'claude-code', path: badLine, problem: 'usage line without message.id (line 2)' },
     { source: 'codex', path: gone, problem: 'missing directory' },
+    { source: 'codex', path: noInfo, problem: 'no token_count line' },
     { source: 'codex', path: noCount, problem: 'no token_count line' },
     { source: 'review-log', path: path.join(gone, 'evidence'), problem: 'missing directory' },
   ];
   return { rows: all.flatMap((u) => u.rows), errors: all.flatMap((u) => u.errors), expected };
 }
 
-test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line and a meta file that are not JSON and a Codex file without a token_count line give six usage_errors rows beside the valid rows [R4]', () => {
+test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line and a meta file that are not JSON, a usage line without a message id and two Codex files without a usable token_count line give eight usage_errors rows beside the valid rows [R4]', () => {
   const { rows, errors, expected } = withErrors();
   assert.deepEqual(errors, expected);
-  assert.deepEqual(rows.map((r) => `${String(r['source'])} ${String(r['agentId'] ?? r['sessionId'] ?? r['invocation'])}`), ['claude-code s1', 'claude-code s1', 'claude-code a1', 'claude-code b2', 'claude-code c3', 'claude-code s1', 'codex cx1', 'review-log T1-X.r3.1.abc']);
+  assert.deepEqual(rows.map((r) => `${String(r['source'])} ${String(r['agentId'] ?? r['sessionId'] ?? r['invocation'])}`), ['claude-code s1', 'claude-code s1', 'claude-code a1', 'claude-code b2', 'claude-code c3', 'claude-code s1', 'codex cx1', 'review-log T1-X.r3.1.abc', 'review-log loose']);
   assert.deepEqual(rows[4], claudeRow({ sidechain: true, agentId: 'c3' }), 'the row of a subagent whose meta file is not JSON');
 });
 
 test('T1-OUTCOME-USAGE acceptance 5: every row has only the keys the card names, and no row or error holds the text of a fixture [R5]', () => {
   const { rows, errors } = withErrors();
   const keys: Record<string, Row> = { 'claude-code': claudeRow({}), codex: codexRow, 'review-log': logRow };
-  assert.deepEqual([rows.length, errors.length], [8, 6]);
+  assert.deepEqual([rows.length, errors.length], [9, 8]);
   for (const row of rows) assert.deepEqual(Object.keys(row).sort(), Object.keys(keys[String(row['source'])]!).sort());
   for (const row of errors) assert.deepEqual(Object.keys(row), ['source', 'path', 'problem']);
   assert.equal(readFileSync(path.join(fixture().claudeDir, 's1.jsonl'), 'utf8').includes(X), true, 'the fixture holds the marker');
@@ -143,29 +148,30 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
   assert.deepEqual(attributed, cases.map(([row, cardId, goalId, stage]) => ({ ...row, cardId, goalId, stage })));
 });
 
-test('T1-OUTCOME-USAGE acceptance 7: priceOf returns the list-price cost of a row, null for an unknown model and for a review-log row, and prices.json names a source and a date on every entry [R7]', () => {
+test('T1-OUTCOME-USAGE acceptance 7: priceOf returns the list-price cost of a row with 5-minute and 1-hour cache writes, null for an unknown model and for a review-log row, and prices.json holds the six models with five prices, a source and the date read [R7]', () => {
   const prices: Prices = {
-    'model-a': { input: 3, cacheRead: 0.5, cacheWrite: 4, output: 15, source: 'https://example.com/a', date: '2026-01-01' },
-    'model-b': { input: 1, cacheRead: 0.25, cacheWrite: 2, output: 8, source: 'https://example.com/b', date: '2026-01-01' },
+    'model-a': { input: 3, cacheRead: 0.5, cacheWrite5m: 4, cacheWrite1h: 6, output: 15, source: 'https://example.com/a', date: '2026-01-01' },
+    'model-b': { input: 1, cacheRead: 0.25, cacheWrite5m: 2, cacheWrite1h: 3, output: 8, source: 'https://example.com/b', date: '2026-01-01' },
   };
-  // 1 M input at 3, 2 M cache read at 0.5, 0.5 M cache write at 4, 0.1 M output at 15: 3 + 1 + 2 + 1.5.
-  assert.equal(priceOf(claudeRow({ inputTokens: 1_000_000, cacheReadTokens: 2_000_000, cacheWriteTokens: 500_000, outputTokens: 100_000 }), prices), 7.5);
+  // 1 M input at 3, 2 M cache read at 0.5, 0.5 M cache write (0.3 M 5-minute at 4, 0.2 M 1-hour at 6), 0.1 M output at 15: 3 + 1 + 1.2 + 1.2 + 1.5.
+  assert.equal(priceOf(claudeRow({ inputTokens: 1_000_000, cacheReadTokens: 2_000_000, cacheWriteTokens: 500_000, cacheWrite1hTokens: 200_000, outputTokens: 100_000 }), prices), 7.9);
   // 2 M input at 1, 4 M cache read at 0.25, no cache write, 0.25 M output at 8: 2 + 1 + 0 + 2.
   assert.equal(priceOf({ ...codexRow, inputTokens: 2_000_000, cacheReadTokens: 4_000_000, cacheWriteTokens: 0, outputTokens: 250_000 }, prices), 5);
   assert.equal(priceOf(claudeRow({ model: 'model-c' }), prices), null);
   assert.equal(priceOf(claudeRow({ model: 'constructor' }), prices), null);
   assert.equal(priceOf({ ...logRow, model: 'model-a' }, prices), null);
   const stored = JSON.parse(readFileSync(path.join(root, 'bench', 'outcome', 'prices.json'), 'utf8')) as Prices;
+  assert.deepEqual(Object.keys(stored).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-5.6-sol', 'gpt-6-astra']);
   for (const [model, entry] of Object.entries(stored)) {
-    assert.deepEqual([typeof entry.input, typeof entry.cacheRead, typeof entry.cacheWrite, typeof entry.output], ['number', 'number', 'number', 'number'], model);
+    assert.deepEqual([entry.input, entry.cacheRead, entry.cacheWrite5m, entry.cacheWrite1h, entry.output].map((price) => typeof price), ['number', 'number', 'number', 'number', 'number'], model);
     assert.match(entry.source, /^https:\/\/\S+$/, model);
-    assert.match(entry.date, /^\d{4}-\d{2}-\d{2}$/, model);
+    assert.equal(entry.date, '2026-11-10', model);
   }
 });
 
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
 
-test('T1-OUTCOME-USAGE acceptance 8: run.ts prints the five cost views of the fixture, writes no usage table with --no-usage, and refuses an --out under a --claude-dir [R8] [R9]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+test('T1-OUTCOME-USAGE acceptance 8 and 10: run.ts prints the five cost views of the fixture without the reviewer log that is a Codex session, writes no usage table with --no-usage, and refuses an --out under a --claude-dir [R8] [R9]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
   const dir = tempDir();
   const [stateDir, cardsDir, claudeDir, codexDir] = ['state', 'tasks', 'claude', 'codex'].map((name) => path.join(dir, name)) as [string, string, string, string];
   const mainRoot = resolveRepoIdentity(root).mainRoot;
@@ -184,9 +190,10 @@ test('T1-OUTCOME-USAGE acceptance 8: run.ts prints the five cost views of the fi
   put(path.join(claudeDir, 's1.jsonl'), [claudeLine('assistant', 'm1', [100, 10, 300, 100]), claudeLine('assistant', 'm2', [200, 5, 0, 0], '2026-01-03T00:30:00.000Z'), claudeLine('assistant', 'm3', [20, 5, 60, 20], '2026-01-05T00:00:00.000Z'), claudeLine('assistant', 'm5', [0, 0, 0, 0]).replace('"model-a"', '"model-zero"')]);
   put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.jsonl'), [claudeLine('assistant', 'm4', [200, 40, 600, 0], '2026-01-03T00:20:00.000Z', { isSidechain: true })]);
   put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.meta.json'), [JSON.stringify({ agentType: 'implementer', description: `${X} T1-STOPPED ${X}` })]);
-  // The reviewer's Codex session (200 input, 800 cached, 50 output) ends one minute into the two minutes of the reviewer log, which counts the same 1050 tokens.
+  // The Codex session of the reviewer (200 input after 800 cached, 50 output) and the log of the same review, which counts its 200 + 50 tokens; a second log matches no session.
   put(path.join(codexDir, 'rollout-cx1.jsonl'), codexSession('cx1', worktree, [tokenCount(1000, 800, 50, '2026-01-02T03:01:00.000Z')]));
-  put(path.join(stateDir, 'evidence', 'g-b', 'review', 'T1-MERGED', 'T1-MERGED.r3.1.abc.log'), reviewLog(120000, ['tokens used', '1,050']));
+  put(path.join(stateDir, 'evidence', 'g-b', 'review', 'T1-MERGED', 'T1-MERGED.r3.1.abc.log'), reviewLog(120000, ['tokens used', '250']));
+  put(path.join(stateDir, 'evidence', 'g-b', 'review', 'T1-MERGED', 'T1-MERGED.r3.2.def.log'), reviewLog(120000, ['tokens used', '999']));
 
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('AIDLC_') && k.toUpperCase() !== 'NODE_OPTIONS'));
   const spawnRun = (out: string, ...more: string[]): { status: number | null; stderr: string; views: Map<string, Row[]> } => {
@@ -197,18 +204,18 @@ test('T1-OUTCOME-USAGE acceptance 8: run.ts prints the five cost views of the fi
   const r = spawnRun(out);
   assert.equal(r.status, 0, r.stderr);
   const stage = (cards: string, name: string, requests: number, [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens]: Tokens, totalTokens: number | null): Row => ({ cards, stage: name, requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, totalTokens, cost_usd: null, unpriced_requests: requests });
-  assert.deepEqual(r.views.get('summary_cost_by_stage'), [stage('merged', 'coordinate', 2, [100, 10, 300, 100], null), stage('merged', 'review', 2, [200, 50, 800, 12], 1050), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null), stage('superseded', 'implement', 1, [200, 40, 600, 0], null)]);
+  assert.deepEqual(r.views.get('summary_cost_by_stage'), [stage('merged', 'coordinate', 2, [100, 10, 300, 100], null), stage('merged', 'review', 2, [200, 50, 800, 12], 999), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null), stage('superseded', 'implement', 1, [200, 40, 600, 0], null)]);
   // The superseded card: 205 tokens of its coordinator request and 840 of its subagent.
   assert.deepEqual(r.views.get('summary_superseded_spend'), [{ cards: 1, requests: 2, tokens: 1045, cost_usd: null, unpriced_requests: 2 }]);
   // Claude Code: 300 + 0 + 60 + 600 cache-read tokens of 500 + 200 + 100 + 800 input-side tokens. Codex: 800 of 200 + 800 + 12.
   assert.deepEqual(r.views.get('summary_cache_share'), [{ source: 'claude-code', model: 'model-a', requests: 4, cache_read_share: 0.6 }, { source: 'claude-code', model: 'model-zero', requests: 1, cache_read_share: null }, { source: 'codex', model: 'model-b', requests: 1, cache_read_share: 800 / 1012 }]);
   assert.deepEqual(r.views.get('summary_cost_per_card'), [{ families: 1, priced_families: 0, p50_usd: null, p90_usd: null, max_usd: null }]);
-  // Seven rows of 510, 205, 105, 840, 0, 1062 and 1050 tokens; the request outside every span is the unattributed one.
+  // Eight rows of 510, 205, 105, 840, 0, 1062, 250 and 999 tokens; the request outside every span is the unattributed one, and the log of 250 is the Codex session.
   assert.deepEqual(r.views.get('summary_unattributed'), [
-    { measure: 'codex_sessions_in_review_log', key: null, requests: 1, tokens: 1062, request_share: null, token_share: null },
-    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 7, token_share: 105 / 3772 },
+    { measure: 'review_log_same_as_codex', key: null, requests: 1, tokens: 250, request_share: null, token_share: null },
+    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 8, token_share: 105 / 3971 },
     { measure: 'unpriced', key: 'model-a', requests: 4, tokens: 1660, request_share: null, token_share: null },
-    { measure: 'unpriced', key: 'model-b', requests: 2, tokens: 2112, request_share: null, token_share: null },
+    { measure: 'unpriced', key: 'model-b', requests: 3, tokens: 2311, request_share: null, token_share: null },
     { measure: 'unpriced', key: 'model-zero', requests: 1, tokens: 0, request_share: null, token_share: null },
   ]);
   const usage = readFileSync(path.join(out, 'usage.jsonl'), 'utf8');
