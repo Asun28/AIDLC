@@ -185,6 +185,20 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
   assert.deepEqual(attributed, cases.map(([row, cardId, goalId, stage]) => ({ ...row, cardId, goalId, stage })));
 });
 
+test('T1-OUTCOME-USAGE acceptance 6: a codex row with an empty or a relative cwd is unattributed when the process runs in a directory under <worktreeRoot>/T1-X [R6]', () => {
+  const wt = path.join(tempDir(), 'wt');
+  const inCard = path.join(wt, 'T1-X', 'src');
+  mkdirSync(inCard, { recursive: true });
+  const rows = ['', '.', 'src'].map((cwd): Row => ({ ...codexRow, cwd }));
+  const before = process.cwd();
+  process.chdir(inCard);
+  try {
+    assert.deepEqual(attribute(rows, { card_runs: [], attempts: [], state_spans: [] }, wt), rows.map((row) => ({ ...row, cardId: null, goalId: null, stage: 'unattributed' })));
+  } finally {
+    process.chdir(before);
+  }
+});
+
 test('T1-OUTCOME-USAGE acceptance 7: priceOf returns the list-price cost of a row with 5-minute and 1-hour cache writes, null for an unknown model and for a review-log row, and prices.json holds the six models with five prices, a source and the date read [R7]', () => {
   const prices: Prices = {
     'model-a': { input: 3, cacheRead: 0.5, cacheWrite: 4, cacheWriteLong: 6, output: 15, cacheWriteTier: '5 minutes', cacheWriteLongTier: '1 hour', source: 'https://example.com/a', date: '2026-01-01' },
