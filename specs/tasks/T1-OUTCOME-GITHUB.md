@@ -2,6 +2,7 @@
 id: T1-OUTCOME-GITHUB
 title: "The outcome bench reads pull requests, check runs and reverts through `gh` and git, and reports accepted changes, the PR success rate and every mismatch between card runs and GitHub"
 status: todo
+superseded_by: T1-OUTCOME-GITHUB-2
 branch: T1-OUTCOME-GITHUB
 worktree: D:\wt\AIDLC\T1-OUTCOME-GITHUB
 plan_ref: plans/reliability-baseline.md#order-of-work
