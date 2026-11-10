@@ -317,6 +317,24 @@ function openWorkspace(w: Workspace, root: string, ref: string): void {
   w.link = link;
 }
 
+/** The removal, clock and wait `removeDir` uses; each defaults to the real one. */
+export interface RemoveDirDeps {
+  remove?: (dir: string) => void;
+  now?: () => number;
+  wait?: (ms: number) => void;
+}
+
+/** Removes one directory; returns whether the remove call returned without throwing. */
+export function removeDir(dir: string, deps: RemoveDirDeps = {}): boolean {
+  const remove = deps.remove ?? ((d: string) => rmSync(d, { recursive: true, force: true }));
+  try {
+    remove(dir);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Removes the link, the checkout (pruning when the remove fails) and the state directory; returns what is left, if anything. */
 function closeWorkspace(w: Workspace, root: string): string | undefined {
   const left: string[] = [];
