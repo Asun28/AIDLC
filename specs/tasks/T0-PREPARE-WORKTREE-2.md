@@ -1,7 +1,7 @@
 ---
 id: T0-PREPARE-WORKTREE-2
 title: "`aidlc card next` selects BUILD only for a card whose worktree is an existing directory, so a PREPARE that asked for a new worktree is repeated until it is made"
-status: todo
+status: merged
 branch: T0-PREPARE-WORKTREE-2
 worktree: D:\wt\AIDLC\T0-PREPARE-WORKTREE-2
 allow_paths:
