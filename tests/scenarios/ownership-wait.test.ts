@@ -10,6 +10,7 @@ import { hostName } from '../../src/state/paths.ts';
 import { DEFAULT_LEASE_TTL_MS, resourceKeys } from '../../src/coordination/lease.ts';
 import { MINUTE_MS, addMs, type Goal } from '../../src/core/types.ts';
 import { dispatchHook } from '../../src/hooks/entry.ts';
+import { makeStop } from '../../src/core/stop.ts';
 import { verifyAudit } from '../../src/audit/verifier.ts';
 
 /**
@@ -126,7 +127,7 @@ test('T0-CARD-LEASE-HEARTBEAT acceptance 5: the owner keeps its lease through a 
 const arcLine = (text: string): string => text.split('\n').find((l) => l.startsWith('- **Arc**:')) ?? '';
 const helloRow = (text: string): string => text.split('\n').find((l) => l.includes('| T1-HELLO |')) ?? '';
 
-test('T0-BOARD-OWNER-WAIT acceptance 1: under a live card lease the board written by next, by writeBoard(goal) and by writeBoard(goal, cards) shows the wait on the owner [R1] [R2]', () => {
+test('T0-BOARD-OWNER-WAIT acceptance 1: under a live card lease, also at the instant it expires, the board written by next, by writeBoard(goal) and by writeBoard(goal, cards) shows the wait on the owner [R1] [R2]', () => {
   const { fx, goal } = stoppedForOwnership(MINUTE_MS);
   try {
     const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'))!;
@@ -146,9 +147,25 @@ test('T0-BOARD-OWNER-WAIT acceptance 1: under a live card lease the board writte
     setActorForTests(actorA);
     fx.cleanup();
   }
+  // the boundary: at the clock equal to the lease's expiresAt the lease is still live, for the dispatch and the board
+  const edge = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = edge;
+    const lease = fx.leases.read(resourceKeys.card(fx.repo.key, 'T1-HELLO'))!;
+    fx.clock.now = lease.expiresAt;
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'wait', d.narration);
+    if (d.kind === 'wait') assert.equal(d.on, 'T1-HELLO:owner:win-B');
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [-] | T1-HELLO | STOP (lease live) |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=wait /);
+  } finally {
+    setActorForTests(actorA);
+    edge.fx.cleanup();
+  }
 });
 
-test('T0-BOARD-OWNER-WAIT acceptance 2: with the card lease expired or malformed, writeBoard(goal) shows the stop as before this card [R2] [R3]', () => {
+test('T0-BOARD-OWNER-WAIT acceptance 2: with the card lease expired or malformed, or a live lease over a run stopped for another reason or a merged card, writeBoard(goal) shows the stop as before this card and the dispatch does not wait on an owner [R2] [R3]', () => {
   const expired = stoppedForOwnership(DEFAULT_LEASE_TTL_MS + MINUTE_MS);
   try {
     const text = expired.fx.controller.writeBoard(expired.fx.goal(expired.goal.id));
@@ -168,6 +185,36 @@ test('T0-BOARD-OWNER-WAIT acceptance 2: with the card lease expired or malformed
   } finally {
     setActorForTests(actorA);
     malformed.fx.cleanup();
+  }
+  // a run stopped for a reason other than ownership while its owner's card lease is live
+  const review = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = review;
+    const run = fx.store.getCardRun(goal.id, 'T1-HELLO')!;
+    fx.store.saveCardRun({ ...run, stop: makeStop('review', 'second substantive block', 'adjudicate', { at: fx.now(), global: false }) });
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(helloRow(text).startsWith('| [S] | T1-HELLO | STOP |'), helloRow(text));
+    assert.match(arcLine(text), /verdict=stop /);
+    const d = fx.controller.next(goal.id);
+    assert.equal(d.kind, 'stop', d.narration);
+  } finally {
+    setActorForTests(actorA);
+    review.fx.cleanup();
+  }
+  // a merged card whose run is stopped for ownership under a live card lease is closed, not an owner's work
+  const merged = stoppedForOwnership(MINUTE_MS);
+  try {
+    const { fx, goal } = merged;
+    writeCard(fx, { id: 'T1-HELLO', title: 'print hello', status: 'merged' });
+    const text = fx.controller.writeBoard(fx.goal(goal.id));
+    assert.ok(!text.includes('lease live'), helloRow(text));
+    assert.ok(!text.includes('waits on owner'), helloRow(text));
+    const d = fx.controller.next(goal.id);
+    assert.notEqual(d.kind, 'wait', d.narration);
+    assert.ok(!JSON.stringify(d).includes(':owner:'), d.narration);
+  } finally {
+    setActorForTests(actorA);
+    merged.fx.cleanup();
   }
 });
 
