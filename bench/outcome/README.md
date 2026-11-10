@@ -141,7 +141,9 @@ Failures (`github_errors`), each beside the rows of every other command:
 
 A pull request that is not merged, or merged into another branch than `base`, has no `branch_commits` rows and is no error. The tables are written through `writeTables` with the same read-only directories. Their columns are `GITHUB_COLUMNS` in `ingest.ts`, beside `COLUMNS` and `USAGE_COLUMNS`, and `writeTables` writes each of these tables that it is given and touches no file of the others.
 
-Not detected: a revert made by a pull request that edits files without the `This reverts commit` line; a second `This reverts commit` line in one message; for a rebase merge of several commits, every branch commit but the last (the first parent of the merge commit is then the commit before it).
+Not detected: a revert made by a pull request that edits files without the `This reverts commit` line; a second `This reverts commit` line in one message.
+
+Branch commits by merge shape: a squash merge, a merge commit and a rebase merge each list every branch commit (after a rebase merge the commits on `base` have new shas, so the original commits of the head are the ones listed). A fast-forward or indirect merge, where `headSha` equals `mergeCommitSha`, is one `github_errors` row and a null `noHumanCommit`, as stated under Failures. A head that `base` already held before the merge lists no commit and has no error row, so its `noHumanCommit` is null too.
 
 ## Views (`views/30-github.sql`)
 
