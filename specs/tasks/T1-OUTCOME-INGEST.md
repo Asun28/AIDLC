@@ -1,7 +1,7 @@
 ---
 id: T1-OUTCOME-INGEST
 title: "`node bench/outcome/run.ts` writes the card, card-run, review, finding, state-span and attempt tables from the state directory and the registry as JSONL and runs the card and review views through the DuckDB CLI"
-status: todo
+status: merged
 branch: T1-OUTCOME-INGEST
 worktree: D:\wt\AIDLC\T1-OUTCOME-INGEST
 plan_ref: plans/reliability-baseline.md#order-of-work
