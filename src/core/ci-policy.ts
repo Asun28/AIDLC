@@ -165,22 +165,25 @@ function readGate(text: string): GateRead {
   return { checks, redChecks, structured, ambiguousRed, unresolvedRed, log: log.join('\n'), steps, invalidSteps };
 }
 
-/** The check a malformed `[CI-GATE-STEP]` payload names, decoded, or null when it names none that can be read. */
+/** The check a malformed `[CI-GATE-STEP]` payload names, decoded, or null when it names none that can be read (a blank check included). */
 function readStepCheck(payload: string): string | null {
   try {
     const v: unknown = JSON.parse(payload.trim());
     const check = typeof v === 'object' && v !== null ? (v as { check?: unknown }).check : undefined;
-    return typeof check === 'string' ? decodeCheckName(check) : null;
+    return typeof check === 'string' && check.trim() ? decodeCheckName(check) : null;
   } catch {
     return null;
   }
 }
 
-/** A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed. */
+/**
+ * A `[CI-GATE-STEP]` payload: `{check, job, step: {number, name, conclusion} | null}`, names decoded; undefined when malformed,
+ * a blank check included, since it names no check (card T0-SCAN-SETUP-STEP).
+ */
 function readStep(payload: string): GateStep | undefined {
   try {
     const v: unknown = JSON.parse(payload.trim());
-    if (typeof v !== 'object' || v === null || typeof (v as { check?: unknown }).check !== 'string') return undefined;
+    if (typeof v !== 'object' || v === null || typeof (v as { check?: unknown }).check !== 'string' || !(v as { check: string }).check.trim()) return undefined;
     const s = (v as { step?: unknown }).step;
     if (s === null) return { check: decodeCheckName((v as { check: string }).check), step: null };
     if (typeof s !== 'object' || s === undefined || typeof (s as { name?: unknown }).name !== 'string' || typeof (s as { conclusion?: unknown }).conclusion !== 'string') return undefined;

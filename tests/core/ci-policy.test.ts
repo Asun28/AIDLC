@@ -486,6 +486,17 @@ describe('scan setup steps (T0-SCAN-SETUP-STEP)', () => {
       ['a malformed step line naming no readable check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null'].join('\n')],
       ['a step line of valid JSON naming no check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null}'].join('\n')],
       ['a step line whose check is not a string', [RUN_42467444385, '[CI-GATE-STEP] {"check":7,"job":"2","step":null}'].join('\n')],
+      ...['', '  '].flatMap((blank): Array<[string, string, { scanSetupSteps?: string[] }?]> => {
+        const malformed = `[CI-GATE-STEP] ${JSON.stringify({ check: blank, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`;
+        const wellFormed = stepLine(blank, 'Scan committed history', 'failure', '2');
+        const allowlisted = { transientSteps: ['Set up job', 'Complete job', INSTALL] } as { scanSetupSteps?: string[] };
+        return [
+          [`a malformed step line with the blank check ${JSON.stringify(blank)}`, [RUN_42467444385, malformed].join('\n')],
+          [`a malformed step line with the blank check ${JSON.stringify(blank)}, the setup step on transientSteps`, [RUN_42467444385, malformed].join('\n'), allowlisted],
+          [`a step line with the blank check ${JSON.stringify(blank)}`, [RUN_42467444385, wellFormed].join('\n')],
+          [`a step line with the blank check ${JSON.stringify(blank)}, the setup step on transientSteps`, [RUN_42467444385, wellFormed].join('\n'), allowlisted],
+        ];
+      }),
     ];
     /** Raw gitleaks output is a hit of its own: the check itself is exempt and keeps its note. */
     const ownHit = new Set(['raw gitleaks output', 'a RuleID line']);

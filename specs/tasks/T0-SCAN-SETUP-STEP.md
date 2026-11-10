@@ -67,7 +67,7 @@ Attempt 1 (effort medium). RED receipt `3db5358`: acceptance 1, 3, 4 and 5 faile
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/core/ci-policy.test.ts` "acceptance 1: a scan check red at its listed install step is no security finding and says why" | pass |
-| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (18 gate cases, 3 direct-record cases, the note only on the two raw-output cases) | pass |
+| 2 | `tests/core/ci-policy.test.ts` "acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step" (26 gate cases, 3 direct-record cases, the note only on the two raw-output cases) | pass |
 | 3 | `tests/core/ci-policy.test.ts` "acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list" (also: another check with disagreeing records, a second red scan check keeping the note) | pass |
 | 4 | `tests/scenarios/ci-rerun.test.ts` "T0-SCAN-SETUP-STEP acceptance 4" and the R7 security tests unchanged | pass |
 | 5 | `tests/surface/templates.test.ts` "T0-SCAN-SETUP-STEP acceptance 5" | pass |
@@ -96,3 +96,7 @@ Input forms and failure paths of the repair hunks, each with its test (`tests/co
 - an aggregate wrapper named for a scan: its hit is never exempt (acceptance 2, direct case 3).
 - an exempt check beside another red scan check: class `security`, evidence starts with the other hit and ends with the note (acceptance 3). F4.
 - the docs: docs/ARCHITECTURE.md outcome map clause and docs/OPERATIONS.md paragraph state every R1 condition, the default list and the two readers (acceptance 6). F5.
+
+Attempt 3 (effort medium), repair of R3 decision 2 (F1, re:F1 of decision 1): a step line whose `check` is blank or whitespace was read as naming the check `""`, so a malformed one did not deny the exemption. `readStep` now refuses a blank check and `readStepCheck` maps it to null, so such a line, malformed or not, names no readable check and denies every exemption. Regression RED before the repair: acceptance 2 returned `unknown` for "a malformed step line with the blank check \"\"".
+
+Input forms of the repair hunks, each with its test (acceptance 2 in `tests/core/ci-policy.test.ts`): a malformed step line with check `""` or `"  "` (null conclusion), with the default lists and with the install step on `transientSteps`; a well-formed step line with check `""` or `"  "` naming the scan step, under the same two configurations. Each stays `security` with no `scan-setup:` line. A blank check was never transient evidence, since a red check with a blank name is never evidenced (test "successor R3: unnamed independent failures cannot earn a rerun", unchanged and passing).
