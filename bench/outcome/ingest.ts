@@ -114,21 +114,21 @@ function addRun(t: Tables, run: CardRun): void {
 }
 
 /** The canonical path of `p`: its nearest existing ancestor (a link itself counts as existing) resolved through every link, then the missing remainder. */
-function canonicalPath(p: string): string {
+function canonicalPath(p: string, resolve: (p: string) => string): string {
   let head = path.resolve(p);
   const rest: string[] = [];
   while (!lstatSync(head, { throwIfNoEntry: false }) && path.dirname(head) !== head) {
     rest.unshift(path.basename(head));
     head = path.dirname(head);
   }
-  return path.join(realpathSync.native(head), ...rest);
+  return path.join(resolve(head), ...rest);
 }
 
 /** Throws when `outDir` is one of the `readOnly` directories or under one, by canonical path. The one place that decides where output may be written. */
-function assertWritable(outDir: string, readOnly: string[]): void {
-  const target = canonicalPath(outDir);
+function assertWritable(outDir: string, readOnly: string[], resolve: (p: string) => string): void {
+  const target = canonicalPath(outDir, resolve);
   for (const dir of readOnly) {
-    const rel = path.relative(canonicalPath(dir), target);
+    const rel = path.relative(canonicalPath(dir, resolve), target);
     const outside = rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel);
     if (!outside) throw new Error(`refusing to write to ${outDir}: it is inside ${dir}, which the outcome scripts only read`);
   }
@@ -140,8 +140,8 @@ function assertWritable(outDir: string, readOnly: string[]): void {
  * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
  * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS, Row[]>>, outDir: string, readOnly: string[] = []): void {
-  assertWritable(outDir, readOnly);
+export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS, Row[]>>, outDir: string, readOnly: string[] = [], resolve: (p: string) => string = realpathSync.native): void {
+  assertWritable(outDir, readOnly, resolve);
   mkdirSync(outDir, { recursive: true });
   for (const [name, columns] of Object.entries({ ...COLUMNS, ...USAGE_COLUMNS })) {
     const rows = tables[name as keyof typeof tables];

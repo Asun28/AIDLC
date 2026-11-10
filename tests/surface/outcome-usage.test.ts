@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadProjectConfig, resolveWorktreeRoot } from '../../src/config.ts';
 import { resolveRepoIdentity } from '../../src/state/paths.ts';
-import type { Row } from '../../bench/outcome/ingest.ts';
+import { writeTables, type Row } from '../../bench/outcome/ingest.ts';
 import { attribute, claudeUsage, codexUsage, priceOf, reviewLogUsage, type Prices } from '../../bench/outcome/usage.ts';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -203,13 +203,32 @@ test('T1-OUTCOME-USAGE acceptance 7: priceOf returns the list-price cost of a ro
   }
 });
 
+test('T1-OUTCOME-USAGE acceptance 12: writeTables writes the tables and the error of a Claude directory whose path cannot be resolved, and still refuses an output directory inside it [R4] [R11]', () => {
+  const f = fixture();
+  const denied = (): never => {
+    throw Object.assign(new Error('denied'), { code: 'EACCES' });
+  };
+  const claude = claudeUsage([f.claudeDir], [], (dir) => (dir === f.claudeDir ? denied() : readdirSync(dir, { withFileTypes: true })));
+  const tables = { cards: [], card_runs: [], review_decisions: [], findings: [], state_spans: [], attempts: [], ingest_errors: [], usage: codexUsage(f.codexDir).rows, usage_errors: claude.errors };
+  const resolve = (p: string): string => (p === f.claudeDir ? denied() : realpathSync.native(p));
+  const out = path.join(f.dir, 'out');
+  writeTables(tables, out, [f.stateDir, f.claudeDir, f.codexDir], resolve);
+  assert.deepEqual(readFileSync(path.join(out, 'usage_errors.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Row), [{ source: 'claude-code', path: f.claudeDir, problem: 'unreadable: EACCES' }]);
+  assert.match(readFileSync(path.join(out, 'usage.jsonl'), 'utf8'), /^\{"source":"codex","sessionId":"cx1"/);
+  assert.throws(() => writeTables(tables, path.join(f.claudeDir, 'new', 'out'), [f.stateDir, f.claudeDir, f.codexDir], resolve), /refusing to write/);
+  assert.equal(existsSync(path.join(f.claudeDir, 'new')), false);
+});
+
 const duckdb = process.env['DUCKDB_BIN'] ?? (spawnSync('duckdb', ['--version'], { windowsHide: true }).status === 0 ? 'duckdb' : undefined);
 
-test('T1-OUTCOME-USAGE acceptance 8 and 10: run.ts prints the five cost views of the fixture without the reviewer log that is a Codex session, writes no usage table with --no-usage, and refuses an --out under a --claude-dir [R8] [R9]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+test('T1-OUTCOME-USAGE acceptance 8, 10 and 11: run.ts writes the list-price cost of each row and prints the five cost views of the fixture without the reviewer logs that are a Codex session, writes no usage table with --no-usage, and refuses an --out under a --claude-dir [R8] [R9]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
   const dir = tempDir();
   const [stateDir, cardsDir, claudeDir, codexDir] = ['state', 'tasks', 'claude', 'codex'].map((name) => path.join(dir, name)) as [string, string, string, string];
   const mainRoot = resolveRepoIdentity(root).mainRoot;
-  const worktree = path.join(resolveWorktreeRoot(loadProjectConfig(mainRoot).config, mainRoot), 'T1-MERGED');
+  const worktreeRoot = resolveWorktreeRoot(loadProjectConfig(mainRoot).config, mainRoot);
+  // The models prices.json prices, USD per million tokens: claude-opus-5-5 at 4 input, 0.2 cache read, 5 and 8 cache write, 20 output; gpt-5.6-sol at 4, 0.4, 5 and 20.
+  const opus = (line: string): string => line.replace('"model-a"', '"claude-opus-5-5"');
+  const sol = (lines: string[]): string[] => lines.map((line) => line.replace('"model-b"', '"gpt-5.6-sol"'));
   // A merged card and the card it supersedes; one formal review of the merged card at 03:00 on day 2.
   const card = (id: string, extra: string): string[] => ['---', `id: ${id}`, `title: ${id}`, 'status: todo', 'allow_paths:', '  - src/x.ts', 'dod_command: npm test', ...(extra ? [extra] : []), '---', '', `# ${id}`];
   put(path.join(cardsDir, 'T1-MERGED.md'), card('T1-MERGED', ''));
@@ -221,11 +240,13 @@ test('T1-OUTCOME-USAGE acceptance 8 and 10: run.ts prints the five cost views of
   const state = (ts: string, goalId: string, cardId: string, to: string): string => JSON.stringify({ seq: 0, ts, type: 'CARD_STATE', goalId, cardId, generation: 0, data: { to } });
   put(path.join(stateDir, 'journal', 'g.jsonl'), [state('2026-01-02T00:30:00Z', 'g-b', 'T1-MERGED', 'BUILD'), state('2026-01-02T02:30:00Z', 'g-b', 'T1-MERGED', 'DONE'), state('2026-01-03T00:00:00Z', 'g-c', 'T1-STOPPED', 'BUILD'), state('2026-01-03T01:00:00Z', 'g-c', 'T1-STOPPED', 'STOP')]);
   // Coordinator requests inside the BUILD span of each card (one of them with no tokens, as a synthetic reply has) and one outside every span; an implementer subagent of the superseded card.
-  put(path.join(claudeDir, 's1.jsonl'), [claudeLine('assistant', 'm1', [100, 10, 300, 100]), claudeLine('assistant', 'm2', [200, 5, 0, 0], '2026-01-03T00:30:00.000Z'), claudeLine('assistant', 'm3', [20, 5, 60, 20], '2026-01-05T00:00:00.000Z'), claudeLine('assistant', 'm5', [0, 0, 0, 0]).replace('"model-a"', '"model-zero"')]);
-  put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.jsonl'), [claudeLine('assistant', 'm4', [200, 40, 600, 0], '2026-01-03T00:20:00.000Z', { isSidechain: true })]);
+  put(path.join(claudeDir, 's1.jsonl'), [opus(claudeLine('assistant', 'm1', [100, 10, 300, 100, 40])), opus(claudeLine('assistant', 'm2', [200, 5, 0, 0], '2026-01-03T00:30:00.000Z')), opus(claudeLine('assistant', 'm3', [20, 5, 60, 20], '2026-01-05T00:00:00.000Z')), claudeLine('assistant', 'm5', [0, 0, 0, 0]).replace('"model-a"', '"model-zero"')]);
+  put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.jsonl'), [opus(claudeLine('assistant', 'm4', [200, 40, 600, 0], '2026-01-03T00:20:00.000Z', { isSidechain: true }))]);
   put(path.join(claudeDir, 's1', 'subagents', 'agent-a1.meta.json'), [JSON.stringify({ agentType: 'implementer', description: `${X} T1-STOPPED ${X}` })]);
-  // The Codex session of the reviewer (200 input after 800 cached, 50 output) and the log of the same review, which counts its 200 + 50 tokens; a second log matches no session.
-  put(path.join(codexDir, 'rollout-cx1.jsonl'), codexSession('cx1', worktree, [tokenCount(1000, 800, 50, '2026-01-02T03:01:00.000Z')]));
+  // The Codex session of a review of each card (200 input after 800 cached and 50 output; 300 after 100 and 30) and the log of the same review, which counts 200 + 50 and 300 + 30 tokens; a third log matches no session.
+  put(path.join(codexDir, 'rollout-cx1.jsonl'), sol(codexSession('cx1', path.join(worktreeRoot, 'T1-MERGED'), [tokenCount(1000, 800, 50, '2026-01-02T03:01:00.000Z')])));
+  put(path.join(codexDir, 'rollout-cx2.jsonl'), sol(codexSession('cx2', path.join(worktreeRoot, 'T1-STOPPED'), [tokenCount(400, 100, 30, '2026-01-03T00:40:00.000Z')])));
+  put(path.join(stateDir, 'evidence', 'g-c', 'review', 'T1-STOPPED', 'T1-STOPPED.r3.1.abc.log'), reviewLog(120000, ['tokens used', '330']));
   put(path.join(stateDir, 'evidence', 'g-b', 'review', 'T1-MERGED', 'T1-MERGED.r3.1.abc.log'), reviewLog(120000, ['tokens used', '250']));
   put(path.join(stateDir, 'evidence', 'g-b', 'review', 'T1-MERGED', 'T1-MERGED.r3.2.def.log'), reviewLog(120000, ['tokens used', '999']));
 
@@ -237,31 +258,32 @@ test('T1-OUTCOME-USAGE acceptance 8 and 10: run.ts prints the five cost views of
   const out = path.join(dir, 'out');
   const r = spawnRun(out);
   assert.equal(r.status, 0, r.stderr);
-  const stage = (cards: string, name: string, requests: number, [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens]: Tokens, totalTokens: number | null): Row => ({ cards, stage: name, requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, totalTokens, cost_usd: null, unpriced_requests: requests });
-  assert.deepEqual(r.views.get('summary_cost_by_stage'), [stage('merged', 'coordinate', 2, [100, 10, 300, 100], null), stage('merged', 'review', 2, [200, 50, 800, 12], 999), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null), stage('superseded', 'implement', 1, [200, 40, 600, 0], null)]);
-  // The superseded card: 205 tokens of its coordinator request and 840 of its subagent.
-  assert.deepEqual(r.views.get('summary_superseded_spend'), [{ cards: 1, requests: 2, tokens: 1045, cost_usd: null, unpriced_requests: 2 }]);
-  // Claude Code: 300 + 0 + 60 + 600 cache-read tokens of 500 + 200 + 100 + 800 input-side tokens. Codex: 800 of 200 + 800 + 12.
-  assert.deepEqual(r.views.get('summary_cache_share'), [{ source: 'claude-code', model: 'model-a', requests: 4, cache_read_share: 0.6 }, { source: 'claude-code', model: 'model-zero', requests: 1, cache_read_share: null }, { source: 'codex', model: 'model-b', requests: 1, cache_read_share: 800 / 1012 }]);
-  assert.deepEqual(r.views.get('summary_cost_per_card'), [{ families: 1, priced_families: 0, p50_usd: null, p90_usd: null, max_usd: null }]);
-  // Eight rows of 510, 205, 105, 840, 0, 1062, 250 and 999 tokens; the request outside every span is the unattributed one, and the log of 250 is the Codex session.
+  /** `rows` with the given cost columns rounded to 9 decimals, since a price such as 0.2 is not a binary fraction. */
+  const usd = (rows: Row[] | undefined, ...keys: string[]): Row[] | undefined => rows?.map((row) => ({ ...row, ...Object.fromEntries(keys.map((key) => [key, typeof row[key] === 'number' ? Number(row[key].toFixed(9)) : row[key]])) }));
+  // The cost run.ts wrote, read before anything else touches the output. m1: (100 x 4 + 300 x 0.2 + 60 x 5 + 40 x 8 + 10 x 20) / 1e6; m2: (200 x 4 + 5 x 20) / 1e6;
+  // m3: (20 x 4 + 60 x 0.2 + 20 x 5 + 5 x 20) / 1e6; m4: (200 x 4 + 600 x 0.2 + 40 x 20) / 1e6; cx1: (200 x 4 + 800 x 0.4 + 12 x 5 + 50 x 20) / 1e6; cx2: (300 x 4 + 100 x 0.4 + 12 x 5 + 30 x 20) / 1e6.
+  const usage = readFileSync(path.join(out, 'usage.jsonl'), 'utf8');
+  const written = usd(usage.trim().split('\n').map((line) => JSON.parse(line) as Row), 'costUsd')!;
+  assert.deepEqual(Object.fromEntries(written.map((row) => [`${String(row['source'])} ${String(row['stage'])} ${String(row['inputTokens'])}`, row['costUsd']])), {
+    'claude-code coordinate 100': 0.00128, 'claude-code coordinate 200': 0.0009, 'claude-code unattributed 20': 0.000292, 'claude-code implement 200': 0.00172, 'claude-code coordinate 0': null,
+    'codex review 200': 0.00218, 'codex review 300': 0.0019, 'review-log review null': null,
+  });
+  const stage = (cards: string, name: string, requests: number, [inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens]: Tokens, totalTokens: number | null, cost_usd: number, unpriced_requests: number): Row => ({ cards, stage: name, requests, inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, totalTokens, cost_usd, unpriced_requests });
+  assert.deepEqual(usd(r.views.get('summary_cost_by_stage'), 'cost_usd'), [stage('merged', 'coordinate', 2, [100, 10, 300, 100], null, 0.00128, 1), stage('merged', 'review', 2, [200, 50, 800, 12], 999, 0.00218, 1), stage('superseded', 'coordinate', 1, [200, 5, 0, 0], null, 0.0009, 0), stage('superseded', 'implement', 1, [200, 40, 600, 0], null, 0.00172, 0), stage('superseded', 'review', 1, [300, 30, 100, 12], null, 0.0019, 0)]);
+  // The superseded card: 205 tokens of its coordinator request, 840 of its subagent and 442 of its Codex session, without the 330 of the log of that session; 0.0009 + 0.00172 + 0.0019.
+  assert.deepEqual(usd(r.views.get('summary_superseded_spend'), 'cost_usd'), [{ cards: 1, requests: 3, tokens: 1487, cost_usd: 0.00452, unpriced_requests: 0 }]);
+  // Claude Code: 300 + 0 + 60 + 600 cache-read tokens of 500 + 200 + 100 + 800 input-side tokens. Codex: 800 + 100 of (200 + 800 + 12) + (300 + 100 + 12).
+  assert.deepEqual(r.views.get('summary_cache_share'), [{ source: 'claude-code', model: 'claude-opus-5-5', requests: 4, cache_read_share: 0.6 }, { source: 'claude-code', model: 'model-zero', requests: 1, cache_read_share: null }, { source: 'codex', model: 'gpt-5.6-sol', requests: 2, cache_read_share: 900 / 1424 }]);
+  // Both cards are one family: 0.00128 + 0.00218 (merged) + 0.0009 + 0.00172 + 0.0019 (superseded).
+  assert.deepEqual(usd(r.views.get('summary_cost_per_card'), 'p50_usd', 'p90_usd', 'max_usd'), [{ families: 1, priced_families: 1, p50_usd: 0.00798, p90_usd: 0.00798, max_usd: 0.00798 }]);
+  // Ten rows of 510, 205, 105, 840, 0, 1062, 442, 250, 330 and 999 tokens; the request outside every span is the unattributed one, and the logs of 250 and 330 are Codex sessions.
   assert.deepEqual(r.views.get('summary_unattributed'), [
-    { measure: 'review_log_same_as_codex', key: null, requests: 1, tokens: 250, request_share: null, token_share: null },
-    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 8, token_share: 105 / 3971 },
-    { measure: 'unpriced', key: 'model-a', requests: 4, tokens: 1660, request_share: null, token_share: null },
-    { measure: 'unpriced', key: 'model-b', requests: 3, tokens: 2311, request_share: null, token_share: null },
+    { measure: 'review_log_same_as_codex', key: null, requests: 2, tokens: 580, request_share: null, token_share: null },
+    { measure: 'unattributed', key: null, requests: 1, tokens: 105, request_share: 1 / 10, token_share: 105 / 4743 },
+    { measure: 'unpriced', key: 'model-b', requests: 3, tokens: 1579, request_share: null, token_share: null },
     { measure: 'unpriced', key: 'model-zero', requests: 1, tokens: 0, request_share: null, token_share: null },
   ]);
-  const usage = readFileSync(path.join(out, 'usage.jsonl'), 'utf8');
   assert.equal(usage.includes(X) || readFileSync(path.join(out, 'usage_errors.jsonl'), 'utf8') !== '', false, 'no fixture text and no error row is written');
-
-  // The same rows priced at one USD per 100 input tokens, since prices.json prices no fixture model: the views sum costUsd.
-  writeFileSync(path.join(out, 'usage.jsonl'), usage.trim().split('\n').map((line) => JSON.parse(line) as Row).map((row) => `${JSON.stringify({ ...row, costUsd: typeof row['inputTokens'] === 'number' ? row['inputTokens'] / 100 : null })}\n`).join(''));
-  const sql = ['10-cards.sql', '20-cost.sql'].map((name) => readFileSync(path.join(root, 'bench', 'outcome', 'views', name), 'utf8')).join('\n');
-  const priced = spawnSync(duckdb!, ['-json', '-bail'], { cwd: out, input: `${sql}\nSELECT (SELECT list(cost_usd ORDER BY cards, stage) FROM summary_cost_by_stage) AS by_stage, (SELECT cost_usd FROM summary_superseded_spend) AS superseded, (SELECT [p50_usd, p90_usd, max_usd] FROM summary_cost_per_card) AS family;\n`, encoding: 'utf8', windowsHide: true });
-  assert.equal(priced.status, 0, priced.stderr);
-  // Both cards are one family: 1 + 2 (merged) + 2 + 2 (superseded) = 7.
-  assert.deepEqual(JSON.parse(priced.stdout), [{ by_stage: [1, 2, 2, 2], superseded: 4, family: [7, 7, 7] }]);
 
   const noUsage = spawnRun(path.join(dir, 'out-no-usage'), '--no-usage');
   assert.equal(noUsage.status, 0, noUsage.stderr);
