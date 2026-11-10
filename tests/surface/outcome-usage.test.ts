@@ -189,11 +189,18 @@ test('T1-OUTCOME-USAGE acceptance 6: a codex row with an empty or a relative cwd
   const wt = path.join(tempDir(), 'wt');
   const inCard = path.join(wt, 'T1-X', 'src');
   mkdirSync(inCard, { recursive: true });
-  const rows = ['', '.', 'src'].map((cwd): Row => ({ ...codexRow, cwd }));
+  const card = path.join(wt, 'T1-X');
+  const cases: [cwd: string, cardId: string | null][] = [['', null], ['.', null], ['src', null], [card + path.sep, 'T1-X']];
+  // Only a Windows path has a drive: without it the path has a root and takes the drive of the invocation directory.
+  if (process.platform === 'win32') {
+    const drive = card[0]!;
+    cases.push([card.slice(2), null], [(drive === drive.toLowerCase() ? drive.toUpperCase() : drive.toLowerCase()) + card.slice(1), 'T1-X']);
+  }
+  const rows = cases.map(([cwd]): Row => ({ ...codexRow, cwd }));
   const before = process.cwd();
   process.chdir(inCard);
   try {
-    assert.deepEqual(attribute(rows, { card_runs: [], attempts: [], state_spans: [] }, wt), rows.map((row) => ({ ...row, cardId: null, goalId: null, stage: 'unattributed' })));
+    assert.deepEqual(attribute(rows, { card_runs: [], attempts: [], state_spans: [] }, wt), rows.map((row, i) => ({ ...row, cardId: cases[i]![1], goalId: null, stage: cases[i]![1] === null ? 'unattributed' : 'review' })));
   } finally {
     process.chdir(before);
   }
