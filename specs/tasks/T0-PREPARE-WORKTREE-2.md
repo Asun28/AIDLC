@@ -82,3 +82,7 @@ Attempt 2 (repair of R3 decision 1 on 7674f61: F1 stat-error-treated-as-absence,
 - a prunable or a locked entry with nothing at its path: retryable `start`; acceptance 3, forms "prunable" and "locked", real repository;
 - an entry with neither mark, a mismatch, no entry: `decideWorktree` decides as before; t0-flow.test.ts T0-PROBE-STOP-TEXT (T1-COMMON, ownership) and acceptance 1;
 - `prepared` reads `pathKind(...) === 'directory'`: a regular file, a path under a file and a missing path are not prepared; acceptance 3, first two tests.
+
+Attempt 3 (repair of R3 decision 2 on 1d5125a: F3 re F2, a failed first listing followed by a successful listing still lost the stop; F4 registered-file-stops, a registration whose path holds a regular file reached the final stop). `staleRegistration` now returns a PREPARE decision: its own failed listing is the tool stop decideWorktree records for one (same detail), so no later listing can replace it; a marked entry whose path holds something that is not a directory is a retryable `start` that says to move or delete it; a stat that cannot tell still goes to decideWorktree. Both new forms failed on 1d5125a and pass with the repair:
+- a failed listing, then a successful listing with no entry of the card: tool stop; test "a failed listing is the tool stop", first form;
+- a prunable registration with a regular file at its path: retryable `start` naming "move or delete it", then attach and build after the file is removed and the registration pruned; acceptance 3, form "a file at the path", real repository.

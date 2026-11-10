@@ -122,8 +122,8 @@ test('T0-PREPARE-WORKTREE acceptance 3: a run stored in BUILD whose recorded wor
   }
 });
 
-test('T0-PREPARE-WORKTREE acceptance 3: an attached worktree whose directory is deleted while git still registers it, prunable or locked, gets a retryable prepare start naming how to clear the registration, never a stop, and builds again once it is made [R2]', () => {
-  for (const form of ['prunable', 'locked'] as const) {
+test('T0-PREPARE-WORKTREE acceptance 3: an attached worktree whose directory is deleted or replaced by a file while git still registers it, prunable or locked, gets a retryable prepare start naming how to clear the registration, never a stop, and builds again once it is made [R2]', () => {
+  for (const form of ['prunable', 'locked', 'a file at the path'] as const) {
     const { fx, worktree, next } = setup('github');
     try {
       next();
@@ -132,6 +132,7 @@ test('T0-PREPARE-WORKTREE acceptance 3: an attached worktree whose directory is 
       assert.equal(next().directive.kind, 'build', `${form}: setup, the attached worktree builds`);
       if (form === 'locked') git(fx.tmp, ['worktree', 'lock', worktree]);
       rmSync(worktree, { recursive: true, force: true });
+      if (form === 'a file at the path') writeFileSync(worktree, 'not a worktree\n');
       for (const call of ['first', 'second']) {
         const r = next();
         assert.equal(r.directive.kind, 'prepare', `${form}, ${call} card next after the delete: ${r.directive.narration}`);
@@ -140,12 +141,14 @@ test('T0-PREPARE-WORKTREE acceptance 3: an attached worktree whose directory is 
           assert.equal(r.directive.worktree, worktree, `${form}, ${call}`);
           assert.ok(r.directive.narration.includes('git worktree prune'), `${form}, ${call}: ${r.directive.narration}`);
           if (form === 'locked') assert.ok(r.directive.narration.includes('git worktree unlock'), `${form}, ${call}: ${r.directive.narration}`);
+          if (form === 'a file at the path') assert.ok(r.directive.narration.includes('move or delete it'), `${form}, ${call}: ${r.directive.narration}`);
         }
         assert.equal(r.run.state, 'PREPARE', `${form}, ${call}`);
         assert.equal(r.run.stop, undefined, `${form}, ${call}: no stop is recorded`);
         assert.equal(r.run.worktree, undefined, `${form}, ${call}: no worktree path is recorded`);
       }
       if (form === 'locked') git(fx.tmp, ['worktree', 'unlock', worktree]);
+      if (form === 'a file at the path') rmSync(worktree, { force: true });
       git(fx.tmp, ['worktree', 'prune']);
       git(fx.tmp, ['worktree', 'add', '-q', worktree, CARD]);
       const attach = next();
@@ -178,9 +181,9 @@ test('T0-PREPARE-WORKTREE acceptance 3: a common-directory probe that fails for 
   }
 });
 
-test('T0-PREPARE-WORKTREE-2 acceptance 3: a stale registration is read only from a listing that succeeds and a stat that finds nothing, so a failed first listing and a stat that cannot tell (EACCES) keep the tool stop [R2]', () => {
+test('T0-PREPARE-WORKTREE-2 acceptance 3: a failed listing is the tool stop even when a later listing succeeds, and a stat that cannot tell (EACCES) keeps the tool stop [R2]', () => {
   const failing = (code: string) => Object.assign(new Error(`${code}: injected`), { code });
-  for (const form of ['the first listing fails, the second shows a stale registration', 'the locked worktree directory cannot be read (EACCES)'] as const) {
+  for (const form of ['the first listing fails, the second lists no worktree of the card', 'the locked worktree directory cannot be read (EACCES)'] as const) {
     const fx = makeFixture();
     const realStat = fs.statSync;
     try {
@@ -192,7 +195,9 @@ test('T0-PREPARE-WORKTREE-2 acceptance 3: a stale registration is read only from
       const listing = `worktree ${fx.repo.mainRoot}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\nworktree ${worktree}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/${CARD}\n${mark}\n\n`;
       let lists = 0;
       const script = scriptedRunner({
-        'git worktree list --porcelain': () => (lists++ === 0 && form.startsWith('the first') ? { exitCode: 128, stderr: 'fatal: Unable to read the worktree list' } : { stdout: listing }),
+        // The first form: a failed listing, then one that succeeds and lists no worktree of the card, on which decideWorktree
+        // would decide start; the failure must stay the tool stop.
+        'git worktree list --porcelain': () => (form.startsWith('the first') ? (lists++ === 0 ? { exitCode: 128, stderr: 'fatal: Unable to read the worktree list' } : { stdout: `worktree ${fx.repo.mainRoot}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\n` }) : { stdout: listing }),
         'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: cannot change to the worktree directory' },
       });
       if (form.startsWith('the locked')) {

@@ -920,20 +920,13 @@ export class CardRunner {
     if (this.config.shipPath === 'dry-run') {
       decision = { action: run.worktree ? 'attach' : 'start', path: path.join(worktreeRoot, card.id), head: '', reason: 'dry-run' } as ReturnType<typeof decideWorktree>;
     } else {
-      // A worktree git still registers for the card branch at the expected path, whose directory is gone (deleted after an
-      // attach, or a locked worktree on a drive that is not mounted), would fail decideWorktree's common-directory probe inside
-      // the missing directory as a final tool stop. It is read first, from one successful listing and a stat that reports
-      // nothing there: the run stays in PREPARE with a start that names the registration, so `card next` asks again until the
-      // worktree is there (card T0-PREPARE-WORKTREE R2). Anything else goes to decideWorktree unchanged, so a failed listing,
-      // a stat that cannot tell and every other probe failure keep their tool stop; no stop is ever rewritten.
+      // A worktree git still registers for the card branch at the expected path with no directory there (deleted after an
+      // attach, replaced by a file, or a locked worktree on a drive that is not mounted) would fail decideWorktree's
+      // common-directory probe as a final tool stop. It is read first (card T0-PREPARE-WORKTREE R2): a failed listing is the
+      // tool stop decideWorktree records for one; a stale registration is a start that names it, so the run stays in PREPARE
+      // and `card next` asks again; anything else goes to decideWorktree unchanged.
       const expected = path.join(worktreeRoot, card.id);
-      const stale = this.staleRegistration(card.id, expected);
-      if (stale) {
-        const clear = stale === 'locked' ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\` from the main checkout` : 'run `git worktree prune` from the main checkout';
-        decision = { action: 'start', path: expected, reason: `git still registers a worktree of branch ${card.id} at this path, but the directory does not exist: ${clear}, then make the worktree with \`git worktree add "${expected}" ${card.id}\`, since the branch exists` };
-      } else {
-        decision = decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
-      }
+      decision = this.staleRegistration(card.id, expected) ?? decideWorktree(this.git, { mainRoot: this.repo.mainRoot, worktreeRoot, cardId: card.id, lease: claim.lease, session: currentActor().session });
     }
     if (decision.action === 'stop') {
       // A failed probe is a tool stop nothing lifts (issue 111); an ownership stop is lifted by the owner's `card next`.
@@ -963,21 +956,25 @@ export class CardRunner {
   }
 
   /**
-   * How git registers the one worktree of branch `cardId` at `expected` when nothing is at its path (card
-   * T0-PREPARE-WORKTREE R2): `prunable`, or `locked`, which git never marks prunable. A listing that fails, no entry, a
-   * mismatch, an entry with neither mark, and a path where stat finds something or cannot tell (any error but ENOENT and
-   * ENOTDIR) give undefined, and decideWorktree decides as before this card.
+   * The PREPARE decision for a stale worktree registration of branch `cardId` (card T0-PREPARE-WORKTREE R2). A listing that
+   * fails is the tool stop decideWorktree records for one. One entry at `expected`, marked `prunable` or `locked` (git never
+   * marks a locked entry prunable), with nothing at its path or something that is not a directory, is a start that names how
+   * to clear it. No entry, a mismatch, an entry with neither mark, a directory, and a stat that cannot tell (any error but
+   * ENOENT and ENOTDIR) give undefined, and decideWorktree decides as before this card.
    */
-  private staleRegistration(cardId: string, expected: string): 'prunable' | 'locked' | undefined {
+  private staleRegistration(cardId: string, expected: string): ReturnType<typeof decideWorktree> | undefined {
     let found: ReturnType<GitProbe['findWorktree']>;
     try {
       found = this.git.findWorktree(this.repo.mainRoot, cardId, expected);
-    } catch {
-      return undefined;
+    } catch (err) {
+      return { action: 'stop', reason: `worktree probe failed: ${(err as Error).message}`, stopReason: 'tool' };
     }
     const { entry, mismatch } = found;
-    if (!entry || mismatch || !(entry.locked || entry.prunable) || pathKind(entry.path) !== 'absent') return undefined;
-    return entry.locked ? 'locked' : 'prunable';
+    const kind = entry && !mismatch && (entry.locked || entry.prunable) ? pathKind(entry.path) : undefined;
+    if (kind !== 'absent' && kind !== 'other') return undefined;
+    const obstruction = kind === 'other' ? 'something that is not a directory is at this path: move or delete it, then ' : '';
+    const clear = entry!.locked ? `make the locked worktree's directory available again, or run \`git worktree unlock "${expected}"\` and \`git worktree prune\`` : 'run `git worktree prune`';
+    return { action: 'start', path: expected, reason: `git still registers a worktree of branch ${cardId} at this path, but no directory is there: ${obstruction}${clear} from the main checkout, then make the worktree with \`git worktree add "${expected}" ${cardId}\`, since the branch exists` };
   }
 
   /** Companion skills for BUILD: the test-quality reference always, the diagnosis loop on bugfix evidence (goal kind or a card diagnosis). */
