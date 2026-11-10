@@ -12,22 +12,24 @@ CREATE OR REPLACE VIEW run_prs AS
 SELECT r.goalId, r.cardId, p.number, p.mergedAt, p.closedAt, p.mergeCommitSha
 FROM card_runs r JOIN prs p ON CASE WHEN r.prNumber IS NOT NULL THEN p.number = r.prNumber ELSE p.headRef = r.cardId END;
 
--- The merged pull request of a card: the one merged first among the pull requests of its runs.
+-- The merged pull request of a card: the one merged first among the pull requests of its runs. Its fields are read
+-- from that one pull request by number, since arg_min would skip a null mergeCommitSha and take another's.
 CREATE OR REPLACE VIEW card_merge AS
-SELECT cardId, arg_min(number, mergedAt) AS number, min(mergedAt) AS mergedAt, arg_min(mergeCommitSha, mergedAt) AS mergeCommitSha
-FROM run_prs WHERE mergedAt IS NOT NULL GROUP BY cardId;
+SELECT c.cardId, p.number, p.mergedAt, p.mergeCommitSha
+FROM (SELECT cardId, arg_min(number, mergedAt) AS number FROM run_prs WHERE mergedAt IS NOT NULL GROUP BY cardId) c JOIN prs p ON p.number = c.number;
 
 -- Per commit with a run of a required check. A run is pending when its status is not completed or it has no startedAt;
 -- a pending run is not a success. The last runs of a name are its pending ones when it has any, else those with its
 -- latest startedAt. green: every required name has a run and each name's last runs are all a success. The first runs
--- of a name are those with its earliest startedAt (all of them when none has one). first_failed: a first run is no success.
+-- of a name are those with its lowest runAttempt; among runs without a runAttempt, when none has one, those without a
+-- startedAt before any that has one, else those with the earliest startedAt. first_failed: a first run is no success.
 CREATE OR REPLACE VIEW commit_checks AS
 WITH runs AS (
   SELECT sha, name, success,
-    coalesce(startedAt = min(startedAt) OVER name_runs, min(startedAt) OVER name_runs IS NULL) AS first_run,
+    rank() OVER (PARTITION BY sha, name ORDER BY runAttempt ASC NULLS LAST, startedAt ASC NULLS FIRST) = 1 AS first_run,
     CASE WHEN bool_or(pending) OVER name_runs THEN pending ELSE startedAt = max(startedAt) OVER name_runs END AS last_run
   FROM (
-    SELECT c.sha, c.name, c.startedAt, c.status IS DISTINCT FROM 'completed' OR c.startedAt IS NULL AS pending,
+    SELECT c.sha, c.name, c.startedAt, c.runAttempt, c.status IS DISTINCT FROM 'completed' OR c.startedAt IS NULL AS pending,
       c.conclusion IS NOT DISTINCT FROM 'success' AND c.status IS NOT DISTINCT FROM 'completed' AND c.startedAt IS NOT NULL AS success
     FROM checks c WHERE c.name IN (SELECT name FROM required_checks)
   )

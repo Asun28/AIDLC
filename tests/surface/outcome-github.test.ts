@@ -333,7 +333,7 @@ function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', '
   return {
     [PULLS]: [
       [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
-      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!), pr(18, 'T1-RED', s['c0']!, null, null), pr(19, 'T1-NEXT', s['c0']!, null, null), pr(20, 'retry-branch', s['c0']!, null, null)],
+      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!), pr(18, 'T1-RED', s['c0']!, null, null), pr(19, 'T1-NEXT', s['c0']!, null, null), pr(20, 'retry-branch', s['c0']!, null, null), pr(21, 'other', s['c0']!, at(6), s['mF']!)],
     ],
     [checksOf(s['aM']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900, 1), check('ci', 'success', at(1, '01:30'), 900, 2), check('scan', 'success', at(1, '01:10')))],
     [runsOf(s['aM']!)]: [{ total_count: 1, workflow_runs: [{ id: 900, run_attempt: 2 }] }],
@@ -346,7 +346,13 @@ function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', '
     [jobsOf(905, 1)]: [{ total_count: 1, jobs: [{ id: 51 }] }],
     [jobsOf(905, 2)]: [{ total_count: 1, jobs: [{ id: 52 }] }],
     [checksOf(s['mR']!)]: [checkPage(check('ci', 'success', at(2, '10:01')), check('ci', 'failure', at(2, '10:05')), check('scan', 'success', at(2, '10:01')))],
-    [checksOf(s['v1']!)]: [checkPage(check('ci', 'success', at(3)), check('scan', 'failure', at(3)))],
+    // scan on the head of 13, no workflow run: cancelled with no startedAt, then green. The run without a startedAt is the first.
+    [checksOf(s['v1']!)]: [checkPage(check('ci', 'success', at(3)), { name: 'scan', status: 'completed', conclusion: 'cancelled', started_at: null, completed_at: null, details_url: null }, check('scan', 'success', at(3)))],
+    // ci on the head of 21: green on attempt 1, cancelled with no startedAt on attempt 2. The first attempt is the success.
+    [checksOf(s['c0']!)]: [checkPage(check('ci', 'success', at(6), 906, 61), { id: 62, name: 'ci', status: 'completed', conclusion: 'cancelled', started_at: null, completed_at: null, details_url: `https://github.com/${REPO}/actions/runs/906/job/62` }, check('scan', 'success', at(6)))],
+    [runsOf(s['c0']!)]: [{ total_count: 1, workflow_runs: [{ id: 906, run_attempt: 2 }] }],
+    [jobsOf(906, 1)]: [{ total_count: 1, jobs: [{ id: 61 }] }],
+    [jobsOf(906, 2)]: [{ total_count: 1, jobs: [{ id: 62 }] }],
     [checksOf(s['mV']!)]: [checkPage(...green)],
     [checksOf(s['mF']!)]: [checkPage(...green)],
   };
@@ -374,10 +380,10 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
   assert.deepEqual(GITHUB_FILES.filter((name) => !existsSync(path.join(r.out, name))), [], 'the six files are written before DuckDB is started');
   const failed =`repos/${REPO}/commits/${sha['f2']}/check-runs?filter=all&per_page=100`;
   assert.deepEqual(lines(r.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(failed), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [10, 21, 6, 8, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [11, 25, 6, 8, 1, 2]);
   assert.deepEqual(lines(r.out, 'required_checks.jsonl'), ['{"name":"ci"}', '{"name":"scan"}']);
   assert.equal(lines(r.out, 'card_runs.jsonl').length, 6);
-  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [15, 15], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check, one jobs call per attempt of the two reruns');
+  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [19, 19], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check, one jobs call per attempt of the three reruns');
 
   const noPulls = outcome(['--duckdb', missingBin()], { answers: {} });
   assert.equal(noPulls.status, 2, noPulls.stderr);
@@ -403,9 +409,10 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(got.get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25, accepted_strict: 1, pr_success_rate_strict: 0.25 }));
   // Hours from the earliest run to mergedAt: T1-A 2, T1-RED 10, T1-REV 30 (6 from its later run). T1-D has a mergeVerified run and no merged pull request.
   assert.deepEqual(got.get('summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 1 }]);
-  // Of the five merged pull requests, 11 and 12 have a head check on attempt 2; 11 (ci failed first), 12 (ci cancelled on
-  // attempt 1 with no startedAt, acceptance 11) and 13 (scan) a required check whose first run failed.
-  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 5, rerun_share: 0.4, first_attempt_failed_share: 0.6 }]);
+  // Of the six merged pull requests, 11, 12 and 21 have a head check on attempt 2. 21 is no first-attempt failure: its ci
+  // was green on attempt 1 and its run without a startedAt is attempt 2. The others: 11 (ci failed first), 12 (ci cancelled on
+  // attempt 1 with no startedAt, acceptance 11) and 13 (scan cancelled with no startedAt and no attempt, then green) a required check whose first run was no success.
+  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 6, rerun_share: 0.5, first_attempt_failed_share: 0.5 }]);
   assert.deepEqual(got.get('summary_reconcile'), [
     // Closed unmerged: 14 of T1-D by its run's prNumber and by headRef, counted once; 19 of T1-NEXT, a registry card with no
     // run; 18 of T1-RED by headRef, its merged run naming 12, and 20 by the prNumber of its other run, its headRef no card id.
