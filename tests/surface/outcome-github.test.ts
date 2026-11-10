@@ -365,7 +365,7 @@ function outcome(args: string[], over: { state?: string; cards?: string; answers
   const map = put(path.join(tempDir(), 'gh.json'), JSON.stringify(over.answers ?? answers(sha)));
   const kept = Object.entries(process.env).filter(([k]) => !/^(AIDLC_.*|NODE_OPTIONS|PATH)$/i.test(k));
   const env = { ...Object.fromEntries(kept), PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, FAKE_GH: map };
-  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, ...args], { cwd: path.join(dir, 'sub'), env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, '--no-usage', ...args], { cwd: path.join(dir, 'sub'), env, encoding: 'utf8', windowsHide: true });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out, ghCalls: existsSync(`${map}.log`) ? readFileSync(`${map}.log`, 'utf8').trim().split('\n') : [] };
 }
 
@@ -459,4 +459,24 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(GITHUB_FILES.filter((name) => existsSync(path.join(off.out, name))), []);
   assert.deepEqual([...views(off.stdout).keys()], ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate']);
   assert.deepEqual(off.ghCalls, []);
+});
+
+const USAGE_FILES = ['usage.jsonl', 'usage_errors.jsonl'];
+const CARD_VIEWS = ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate'];
+const GITHUB_VIEWS = ['summary_ci', 'summary_lead_time_pr', 'summary_pr_success', 'summary_reconcile'];
+
+test('T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone run.ts writes the six GitHub files and no usage table, and with --no-usage --no-github it writes neither set and exits 0 [R6]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  // `outcome` gives every run --no-usage.
+  const alone = outcome(['--duckdb', duckdb!]);
+  assert.equal(alone.status, 0, alone.stderr);
+  assert.deepEqual(GITHUB_FILES.filter((name) => existsSync(path.join(alone.out, name))), GITHUB_FILES);
+  assert.deepEqual(USAGE_FILES.filter((name) => existsSync(path.join(alone.out, name))), []);
+  assert.deepEqual([...views(alone.stdout).keys()], [...CARD_VIEWS, ...GITHUB_VIEWS].sort(), 'the views of 10-cards.sql and 30-github.sql, none of 20-cost.sql');
+
+  const both = outcome(['--duckdb', duckdb!, '--no-github']);
+  assert.equal(both.status, 0, both.stderr);
+  assert.deepEqual([...GITHUB_FILES, ...USAGE_FILES].filter((name) => existsSync(path.join(both.out, name))), []);
+  assert.equal(existsSync(path.join(both.out, 'cards.jsonl')), true);
+  assert.deepEqual([...views(both.stdout).keys()], CARD_VIEWS);
+  assert.deepEqual(both.ghCalls, []);
 });

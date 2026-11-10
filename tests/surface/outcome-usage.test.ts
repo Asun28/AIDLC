@@ -281,7 +281,7 @@ test('T1-OUTCOME-USAGE acceptance 8, 10 and 11: run.ts writes the list-price cos
 
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('AIDLC_') && k.toUpperCase() !== 'NODE_OPTIONS'));
   const spawnRun = (out: string, ...more: string[]): { status: number | null; stderr: string; views: Map<string, Row[]> } => {
-    const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', stateDir, '--cards', cardsDir, '--claude-dir', claudeDir, '--codex-dir', codexDir, '--out', out, '--duckdb', duckdb!, ...more], { cwd: root, env, encoding: 'utf8', windowsHide: true });
+    const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', stateDir, '--cards', cardsDir, '--claude-dir', claudeDir, '--codex-dir', codexDir, '--out', out, '--duckdb', duckdb!, '--no-github', ...more], { cwd: root, env, encoding: 'utf8', windowsHide: true });
     return { status: r.status, stderr: r.stderr, views: new Map(r.stdout.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line) as { view: string; rows: Row[] }).map((v) => [v.view, v.rows])) };
   };
   const out = path.join(dir, 'out');

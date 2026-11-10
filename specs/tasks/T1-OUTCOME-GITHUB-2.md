@@ -64,3 +64,36 @@ npm run typecheck && node --test tests/surface/outcome-github.test.ts tests/surf
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; item 6 is skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+
+Attempt 1. Merge commit a669e7b1 (main at 93f7d494 into 42b211cc). No RED commit; proved by mutants: a correct merge already has the behaviour of item 12, so its test passed when written. Items 1 to 11 are carried from 42b211cc; their detailed evidence and mutant table are in `specs/tasks/T1-OUTCOME-GITHUB.md`.
+
+DoD: `npm run typecheck` exit 0; the three test files exit 0 with `DUCKDB_BIN` (29 tests, 29 pass) and exit 0 without it (29 tests, 24 pass, 5 skipped `no duckdb binary`).
+
+| Item | Test (`outcome-github.test.ts` unless named) | Result |
+|---|---|---|
+| 1 | `acceptance 1: pullRequests returns the rows of both pages ...` | pass |
+| 2 | `acceptance 2: checkRuns gives a check run of a workflow run on attempt 2 ...` | pass |
+| 3 | `acceptance 3: reverts finds a revert made 3 days after its target ...` | pass |
+| 4 | `acceptance 4: branchCommits lists the commits of each merged branch ...` | pass |
+| 5 | `acceptance 5: a runner exit of 1, a timeout ...`, `acceptance 5 and 10 ...`, `acceptance 5 through run.ts ...` | pass |
+| 6 | `acceptance 6, 9 and 10: run.ts prints the PR success rate ...` | pass with `DUCKDB_BIN`, else skipped |
+| 7 | `bench/outcome/README.md`, sections GitHub tables and Views (`views/30-github.sql`) | reviewer-verified |
+| 9 | same test as item 6 | pass with `DUCKDB_BIN`, else skipped |
+| 10 | tests of items 2, 3, 4, 5 and 6 | pass (item 6 part with `DUCKDB_BIN`) |
+| 11 | tests of items 2, 3, 5 and 6 | pass (item 6 part with `DUCKDB_BIN`) |
+| 12 | `T1-OUTCOME-GITHUB-2 acceptance 12: with --no-usage alone ...` | pass with `DUCKDB_BIN`, else skipped |
+| 8 | `outcome-ingest.test.ts` (both flags) and `outcome-usage.test.ts` (`--no-github`), spawn arguments only | pass, view tests skipped without `DUCKDB_BIN` |
+
+Mutants of `run.ts` against the test of item 12, one expression each, file restored after each:
+
+| Mutant | Result |
+|---|---|
+| a. `--no-github` ignored when `--no-usage` is given | killed: the six GitHub files exist in the run with both flags |
+| b. the view filter keeps `20-cost.sql` under `--no-usage` | killed: exit 1 |
+| c. empty `usage` and `usage_errors` tables written under `--no-usage` | killed: both files exist |
+| d. the view filter keeps `30-github.sql` when both flags are given | killed: exit 1 |
+| e. usage read only when `--no-github` is also given | survived: it changes only runs without `--no-usage`, which this file never starts (R6) |
+
+Findings left by the owner's ruling of 2026-11-11: api-history-truncation at `bench/outcome/github.ts:90` (the check runs of a commit with more than 1000 check suites) and at `:110` (a workflow-run list past the 1000 results GitHub returns). Both are in `non_goals`; that code is unchanged from 42b211cc.
