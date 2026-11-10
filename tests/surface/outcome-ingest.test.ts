@@ -139,7 +139,7 @@ function runOutcome(duckdb: string): { status: number | null; stdout: string; st
   const { stateDir, cardsDir } = fixture();
   const out = path.join(tempDir(), 'out');
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('AIDLC_') && k.toUpperCase() !== 'NODE_OPTIONS'));
-  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', stateDir, '--cards', cardsDir, '--out', out, '--duckdb', duckdb, '--no-usage'], { cwd: root, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', stateDir, '--cards', cardsDir, '--out', out, '--duckdb', duckdb, '--no-usage', '--no-github'], { cwd: root, env, encoding: 'utf8', windowsHide: true });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out };
 }
 
@@ -177,7 +177,7 @@ const missingBin = (): string => path.join(tempDir(), 'missing-duckdb.exe');
 /** `node bench/outcome/run.ts <args>` from `cwd`, in the environment of `runOutcome`. */
 function spawnRun(args: string[], cwd: string = root): { status: number | null; stderr: string } {
   const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.toUpperCase().startsWith('AIDLC_') && k.toUpperCase() !== 'NODE_OPTIONS'));
-  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), ...args, '--no-usage'], { cwd, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), ...args, '--no-usage', '--no-github'], { cwd, env, encoding: 'utf8', windowsHide: true });
   return { status: r.status, stderr: r.stderr };
 }
 
