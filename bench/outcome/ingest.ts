@@ -35,6 +35,17 @@ export const GITHUB_COLUMNS = {
 } as const;
 export type GithubTable = keyof typeof GITHUB_COLUMNS;
 
+/** The tables of bench/outcome/history.ts (card T1-OUTCOME-HISTORY) with their columns. `writeTables` writes each one it is given. */
+const RULING = ['sha', 'date', 'subject', 'cards', 'successor', 'predecessor', 'on'] as const;
+export const HISTORY_COLUMNS = {
+  rulings: RULING,
+  ruling_set: [...RULING, 'stopReason', 'stopDetail', 'candidateSha', 'outcome', 'decision', 'findings', 'successorMerged'],
+  repeat_blocks: ['goalId', 'cardId', 'id', 'file', 'line', 'outsideDelta', 'predates'],
+  finding_fixes: ['goalId', 'cardId', 'id', 'file', 'candidateSha', 'changedAfter'],
+  history_errors: ['command', 'exit', 'stderr'],
+} as const;
+export type HistoryTable = keyof typeof HISTORY_COLUMNS;
+
 /** The entries of `dir` in name order: its directories, or its files ending in `suffix`. Undefined when `dir` is absent or not a directory. */
 function entries(dir: string, suffix?: string): string[] | undefined {
   if (!statSync(dir, { throwIfNoEntry: false })?.isDirectory()) return undefined;
@@ -157,14 +168,14 @@ function assertWritable(outDir: string, readOnly: string[], resolve: (p: string)
 /**
  * Writes `<table>.jsonl` under `outDir`, one row per line: the keys in the order of `COLUMNS` (a missing one as null) and
  * the lines sorted by UTF-16 code unit, so the order the rows are given in changes no byte. An empty table is an empty file.
- * A table of `USAGE_COLUMNS` or `GITHUB_COLUMNS` is written the same way when `tables` holds it, and no file of its name is touched when it does not.
+ * A table of `USAGE_COLUMNS`, `GITHUB_COLUMNS` or `HISTORY_COLUMNS` is written the same way when `tables` holds it, and no file of its name is touched when it does not.
  * `outDir` is checked against `readOnly` before anything is created. Each file replaces the entry of its name: the entry is
  * removed and the file created exclusively, so a symbolic or hard link at that name is never written through.
  */
-export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS | GithubTable, Row[]>>, outDir: string, readOnly: string[] = [], resolve: (p: string) => string = realpathSync.native): void {
+export function writeTables(tables: Tables & Partial<Record<keyof typeof USAGE_COLUMNS | GithubTable | HistoryTable, Row[]>>, outDir: string, readOnly: string[] = [], resolve: (p: string) => string = realpathSync.native): void {
   assertWritable(outDir, readOnly, resolve);
   mkdirSync(outDir, { recursive: true });
-  for (const [name, columns] of Object.entries({ ...COLUMNS, ...USAGE_COLUMNS, ...GITHUB_COLUMNS })) {
+  for (const [name, columns] of Object.entries({ ...COLUMNS, ...USAGE_COLUMNS, ...GITHUB_COLUMNS, ...HISTORY_COLUMNS })) {
     const rows = tables[name as keyof typeof tables];
     if (rows === undefined) continue;
     const lines = rows.map((row) => JSON.stringify(Object.fromEntries(columns.map((column) => [column, row[column] ?? null])))).sort();
