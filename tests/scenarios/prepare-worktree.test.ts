@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards } from './_harness.ts';
 import { CardRunner } from '../../src/loop/card-runner.ts';
@@ -174,6 +175,43 @@ test('T0-PREPARE-WORKTREE acceptance 3: a common-directory probe that fails for 
     assert.ok(r.run.stop?.detail.includes('cannot verify common git directory'), r.run.stop?.detail);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('T0-PREPARE-WORKTREE-2 acceptance 3: a stale registration is read only from a listing that succeeds and a stat that finds nothing, so a failed first listing and a stat that cannot tell (EACCES) keep the tool stop [R2]', () => {
+  const failing = (code: string) => Object.assign(new Error(`${code}: injected`), { code });
+  for (const form of ['the first listing fails, the second shows a stale registration', 'the locked worktree directory cannot be read (EACCES)'] as const) {
+    const fx = makeFixture();
+    const realStat = fs.statSync;
+    try {
+      writeCard(fx, { id: CARD, title: 'say hello' });
+      const goal = goalForCards(fx, [CARD]);
+      const config = { ...fx.config, shipPath: 'github' as const };
+      const worktree = path.join(resolveWorktreeRoot(config, fx.repo.mainRoot), CARD);
+      const mark = form.startsWith('the locked') ? 'locked' : 'prunable gitdir file points to non-existent location';
+      const listing = `worktree ${fx.repo.mainRoot}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/main\n\nworktree ${worktree}\nHEAD ${'1'.repeat(40)}\nbranch refs/heads/${CARD}\n${mark}\n\n`;
+      let lists = 0;
+      const script = scriptedRunner({
+        'git worktree list --porcelain': () => (lists++ === 0 && form.startsWith('the first') ? { exitCode: 128, stderr: 'fatal: Unable to read the worktree list' } : { stdout: listing }),
+        'git rev-parse --git-common-dir': { exitCode: 128, stderr: 'fatal: cannot change to the worktree directory' },
+      });
+      if (form.startsWith('the locked')) {
+        mkdirSync(worktree, { recursive: true });
+        (fs as unknown as Record<string, unknown>)['statSync'] = ((p: fs.PathLike, ...rest: unknown[]) => {
+          if (path.resolve(String(p)) === path.resolve(worktree)) throw failing('EACCES');
+          return (realStat as unknown as (...a: unknown[]) => unknown)(p, ...rest);
+        }) as typeof fs.statSync;
+        syncBuiltinESMExports();
+      }
+      const runner = new CardRunner({ paths: fx.paths, repo: fx.repo, config, store: fx.store, leases: fx.leases, queue: fx.queue, ops: fx.ops, shipPath: new DryRunShipPath(['merged']), now: fx.now, git: new GitProbe(script) });
+      const r = runner.next(fx.goal(goal.id), fx.card(CARD), fx.controller.ensureCardRun(fx.goal(goal.id), CARD));
+      assert.equal(r.directive.kind, 'stop', `${form}: ${r.directive.narration}`);
+      assert.equal(r.run.stop?.reason, 'tool', form);
+    } finally {
+      (fs as unknown as Record<string, unknown>)['statSync'] = realStat;
+      syncBuiltinESMExports();
+      fx.cleanup();
+    }
   }
 });
 
