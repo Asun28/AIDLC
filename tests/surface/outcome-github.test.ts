@@ -495,6 +495,36 @@ test('T1-OUTCOME-GITHUB-2 acceptance 13 through run.ts: a card whose merged pull
   assert.equal(lines(r.out, 'github_errors.jsonl').includes(JSON.stringify(sameSha(11))), true, 'the error row of pull request 11');
 });
 
+test('T1-OUTCOME-GITHUB-2 acceptance 14: on a merge commit a required check cancelled with no startedAt on attempt 1 and green on attempt 2 is green, and one with an earlier success and a queued rerun is not [R7]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  const { sha } = repo();
+  const mA = sha['mA']!;
+  const success = (rest: Row = {}): Row[] => [{ card_attempts: 4, accepted: 1, pr_success_rate: 0.25, accepted_strict: 1, pr_success_rate_strict: 0.25, failing_merged: 1, failing_checksGreen: 1, failing_notReverted: 1, failing_noHumanCommit: 0, failing_noRuling: 1, unknown_noHumanCommit: 0, ...rest }];
+  const notGreen = success({ accepted: 0, pr_success_rate: 0, accepted_strict: 0, pr_success_rate_strict: 0, failing_checksGreen: 2 });
+  /** `summary_pr_success` with the given runs of the required check scan on the merge commit of T1-A, and what gh answers for their workflow runs. */
+  const withScan = (scan: object[], more: Record<string, unknown> = {}): Row[] | undefined => {
+    const r = outcome(['--duckdb', duckdb!], { answers: { ...answers(sha, scan), ...more } });
+    assert.equal(r.status, 0, r.stderr);
+    return views(r.stdout).get('summary_pr_success');
+  };
+  const cancelled = (run?: number, id = 71): object => ({ id, name: 'scan', status: 'completed', conclusion: 'cancelled', started_at: null, completed_at: null, details_url: run === undefined ? null : `https://github.com/${REPO}/actions/runs/${run}/job/${id}` });
+  const twoAttempts = { [runsOf(mA)]: [{ total_count: 1, workflow_runs: [{ id: 910, run_attempt: 2 }] }], [jobsOf(910, 1)]: [{ total_count: 1, jobs: [{ id: 71 }] }], [jobsOf(910, 2)]: [{ total_count: 1, jobs: [{ id: 72 }] }] };
+  const oneAttempt = { [runsOf(mA)]: [{ total_count: 1, workflow_runs: [{ id: 910, run_attempt: 1 }] }] };
+
+  // Cancelled before it started on attempt 1, green on attempt 2: the completed run of the highest attempt is the latest.
+  assert.deepEqual(withScan([cancelled(910), check('scan', 'success', at(1, '02:10'), 910, 72)], twoAttempts), success());
+  // The reverse, green on attempt 1 and cancelled before it started on attempt 2, is not green.
+  assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01'), 910, 71), cancelled(910, 72)], twoAttempts), notGreen);
+  // No attempt on either run: the run with no startedAt is earlier than the one that has one.
+  assert.deepEqual(withScan([cancelled(), check('scan', 'success', at(1, '02:10'))]), success());
+  // A completed run with an attempt is later than one with none, whatever their startedAt.
+  assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01'), 910), check('scan', 'failure', at(1, '02:30'))], oneAttempt), success());
+  assert.deepEqual(withScan([check('scan', 'failure', at(1, '02:01'), 910), check('scan', 'success', at(1, '02:30'))], oneAttempt), notGreen);
+  // A run that is not completed is the latest, with or without a startedAt and after a success of a higher attempt.
+  const queued = { id: 73, name: 'scan', status: 'queued', conclusion: null, started_at: null, completed_at: null, details_url: null };
+  assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01')), queued]), notGreen);
+  assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01'), 910, 72), queued], twoAttempts), notGreen);
+});
+
 const USAGE_FILES = ['usage.jsonl', 'usage_errors.jsonl'];
 const CARD_VIEWS = ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate'];
 const GITHUB_VIEWS = ['summary_ci', 'summary_lead_time_pr', 'summary_pr_success', 'summary_reconcile'];
