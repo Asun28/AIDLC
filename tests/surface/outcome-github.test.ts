@@ -113,7 +113,7 @@ let built: { dir: string; sha: Record<string, string> } | undefined;
  * after 2 days, `mA` after 15 days, `c0` after 3 days and `f1` (not on main), a commit whose subject starts with Revert and
  * whose body holds a sha without the reverts line, a merge of branch side, whose one commit reverts `mR`, and a revert of
  * that commit, which reached main through the merge's second parent, after 3 days, and a revert of `mR` after 20 days that
- * writes its sha in upper case. `f2` quotes a Co-Authored-By line in prose.
+ * writes its sha in upper case, and last the two commits of branch ff (`ff1` without a trailer, `ff2` with one), which main reaches by a fast-forward. `f2` quotes a Co-Authored-By line in prose.
  * Branches from main: T1-A (`a1`, then `n1` lands on main and `aM` merges main into the branch), T1-RED (`r1`), T1-REV (`v1`), feature-x (`f1`, `f2`). It also holds the configuration
  * and the stand-in for `gh` that run.ts reads when started there.
  */
@@ -161,6 +161,11 @@ function repo(): { dir: string; sha: Record<string, string> } {
   git(['merge', '-q', '--no-ff', '-m', 'Merge side', 'side'], at(9));
   commit('revSide', at(12), `Revert "side"\n\nThis reverts commit ${sha['sideRevert']}.`);
   commit('revUpper', at(22, '10:00'), `Revert "squash T1-RED"\n\nThis reverts commit ${sha['mR']!.toUpperCase()}.`);
+  git(['checkout', '-q', '-b', 'ff']);
+  commit('ff1', at(23), 'ff1');
+  commit('ff2', at(23, '01:00'), 'ff2\n\nCo-Authored-By: Claude <c@example.com>');
+  git(['checkout', '-q', 'main']);
+  git(['merge', '-q', '--ff-only', 'ff'], at(23, '02:00'));
   put(path.join(dir, 'aidlc.config.json'), JSON.stringify({ repository: REPO, base: 'main', github: { requiredChecks: ['ci', 'scan'] } }));
   // The stand-in for gh: a copy of node named gh, which run.ts starts in this directory as `gh api ...`, so node runs api.js.
   // It answers an endpoint from the JSON file FAKE_GH names, else as gh does for HTTP 404, and logs each call.
@@ -209,6 +214,19 @@ test('T1-OUTCOME-GITHUB acceptance 4: branchCommits lists the commits of each me
     ['git log', null, 'merged pull request 23 has no 40-hex headSha and mergeCommitSha'],
   ]);
   assert.match(String(got.errors[0]!['stderr']), /^fatal: /);
+});
+
+/** The `github_errors` row of a merged pull request whose head is its merge commit. */
+const sameSha = (number: number): Row => ({ command: 'git log', exit: null, stderr: '', problem: `merged pull request ${number} has the same headSha and mergeCommitSha (a fast-forward or indirect merge): the base before the merge cannot be read from git` });
+
+test('T1-OUTCOME-GITHUB-2 acceptance 13: branchCommits gives a merged pull request whose headSha equals its mergeCommitSha, in either letter case, one github_errors row, no rows and no git call [R4]', () => {
+  const { dir, sha } = repo();
+  const ff2 = sha['ff2']!;
+  // ff1 has no trailer and ff2 has one: `git log ff2 ^ff2^1` lists ff2 alone, which would read as a branch of model commits only.
+  const git = recordingGit(dir);
+  const got = branchCommits(git.runner, 'main', [prRow(30, 'ff', ff2, at(23, '02:00'), ff2), prRow(31, 'ff', ff2.toUpperCase(), at(23, '02:00'), ff2), prRow(13, 'T1-REV', sha['v1']!, at(4, '06:00'), sha['mV']!)]);
+  assert.deepEqual(got, { rows: [{ number: 13, sha: sha['v1'], date: '2026-01-01T00:30:00.000Z', merge: false, modelCoAuthor: true }], errors: [sameSha(30), sameSha(31)] });
+  assert.equal(git.calls.length, 1, 'only the pull request with two shas is read from git');
 });
 
 test('T1-OUTCOME-GITHUB acceptance 5: a runner exit of 1, a timeout, output that is not JSON and a 429 body each give one github_errors row beside the rows of the other commands, each command run once [R5]', () => {
@@ -462,6 +480,19 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(GITHUB_FILES.filter((name) => existsSync(path.join(off.out, name))), []);
   assert.deepEqual([...views(off.stdout).keys()], ['summary_lead_time', 'summary_review_convergence', 'summary_stop_reasons', 'summary_successor_rate']);
   assert.deepEqual(off.ghCalls, []);
+});
+
+test('T1-OUTCOME-GITHUB-2 acceptance 13 through run.ts: a card whose merged pull request has one sha as head and merge commit has noHumanCommit null, is accepted, is not acceptedStrict and is in the null count [R4] [R7] [R8]', { skip: duckdb === undefined ? 'no duckdb binary' : false }, () => {
+  const { sha } = repo();
+  const ff2 = sha['ff2']!;
+  // Pull request 11 of T1-A is the fast-forward of branch ff: its required checks are green on ff2 and nothing reverts it.
+  const given = answers(sha);
+  const [first, second] = given[PULLS] as object[][];
+  const r = outcome(['--duckdb', duckdb!], { answers: { ...given, [PULLS]: [[pr(11, 'T1-RED', ff2, at(1, '02:00'), ff2), ...first!.slice(1)], second], [checksOf(ff2)]: [checkPage(check('ci', 'success', at(23, '03:00')), check('scan', 'success', at(23, '03:00')))] } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(views(r.stdout).get('summary_pr_success'), [{ card_attempts: 4, accepted: 1, pr_success_rate: 0.25, accepted_strict: 0, pr_success_rate_strict: 0, failing_merged: 1, failing_checksGreen: 1, failing_notReverted: 1, failing_noHumanCommit: 0, failing_noRuling: 1, unknown_noHumanCommit: 1 }]);
+  assert.deepEqual(lines(r.out, 'branch_commits.jsonl').filter((line) => (JSON.parse(line) as Row)['number'] === 11), []);
+  assert.equal(lines(r.out, 'github_errors.jsonl').includes(JSON.stringify(sameSha(11))), true, 'the error row of pull request 11');
 });
 
 const USAGE_FILES = ['usage.jsonl', 'usage_errors.jsonl'];
