@@ -68,6 +68,9 @@ Attempt 1. RED at 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 fa
 | 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
 | 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
 | 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
+| 7 | merge-unconfirmed.test.ts (`shipped`), audit.test.ts (`shipWithFacts`) and narration-quote.test.ts (acceptance 1 test) in the DoD; each diff adds one `mkdirSync` of the recorded worktree before the github `card next` and changes no assertion | pass (51 of 51) |
+
+The full suite at the first candidate (685be31) failed 23 of 2990 tests, all in those three files: each built the run on the dry-run ship path, which records `wt/T1-...` and makes no directory, then ran `card next` on the github ship path, where R2 sends the run back to PREPARE. The card was amended on main (38e97ec, R5 and acceptance 7) before the fixtures were changed.
 
 Readers of `run.worktree` (diagnosis.same_class):
 - Ship path: covered by R2. `CardRunner.ship` passes no worktree path to the ship path (the github adapter finds the worktree by card id), and SHIP is selected only when `prepared`, which now requires the directory.

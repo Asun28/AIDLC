@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -218,7 +218,10 @@ test('T1-AUDIT-FACTS acceptance 4: aidlc audit verify --claim-full is BLOCKED na
       const dry = fx.runner();
       let r = dry.next(fx.goal(goalId), card, fx.controller.ensureCardRun(fx.goal(goalId), cardId));
       r = dry.next(fx.goal(goalId), card, r.run);
-      r = github.next(fx.goal(goalId), card, dry.recordAttempt(fx.goal(goalId), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: head }));
+      const built = dry.recordAttempt(fx.goal(goalId), card, r.run, { outcome: 'success', dodReceipt: 'dod:1', redReceipt: 'red:1', candidateSha: head });
+      // A prepared run on the github ship path has its worktree (card T0-PREPARE-WORKTREE R5); the dry-run path made none.
+      mkdirSync(built.worktree!, { recursive: true });
+      r = github.next(fx.goal(goalId), card, built);
       assert.equal(r.directive.kind, 'close', r.directive.narration);
     };
     shipWithFacts(after.id, 'T1-FACTS');
