@@ -1,13 +1,19 @@
-// node bench/outcome/run.ts (card T1-OUTCOME-INGEST): writes the outcome tables as JSONL, runs bench/outcome/views/*.sql
-// in name order through the DuckDB CLI and prints each view named summary_* as one JSON line. See bench/outcome/README.md.
+// node bench/outcome/run.ts (cards T1-OUTCOME-INGEST, T1-OUTCOME-GITHUB): writes the outcome tables as JSONL, runs
+// bench/outcome/views/*.sql in name order through the DuckDB CLI and prints each view named summary_* as one JSON line.
+// See bench/outcome/README.md.
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { loadProjectConfig } from '../../src/config.ts';
+import { runSync, type SyncRunner } from '../../src/probes/exec.ts';
 import { resolveRepoIdentity, resolveStatePaths } from '../../src/state/paths.ts';
-import { COLUMNS, ingestState, writeTables, type Row, type TableName } from './ingest.ts';
+import { GITHUB_COLUMNS, githubTables } from './github.ts';
+import { COLUMNS, ingestState, writeTables, type Row, type Tables } from './ingest.ts';
+
+/** The view file that reads the GitHub tables; not run with --no-github, which does not write them. */
+const GITHUB_VIEWS = '30-github.sql';
 
 const viewsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'views');
 
@@ -15,21 +21,31 @@ const viewsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), 'views'
 class NoDuckdb extends Error {}
 
 function main(): number {
-  const { values } = parseArgs({ options: { state: { type: 'string' }, cards: { type: 'string' }, out: { type: 'string' }, duckdb: { type: 'string' } } });
+  const { values } = parseArgs({ options: { state: { type: 'string' }, cards: { type: 'string' }, out: { type: 'string' }, duckdb: { type: 'string' }, 'no-github': { type: 'boolean' } } });
+  const github = values['no-github'] !== true;
   const mainRoot = (): string => resolveRepoIdentity().mainRoot;
   const stateDir = path.resolve(values.state ?? resolveStatePaths().root);
   const cardsDir = path.resolve(values.cards ?? path.join(mainRoot(), loadProjectConfig(mainRoot()).config.cardsDir));
   const outDir = path.resolve(values.out ?? path.join(mainRoot(), '_local', 'outcome'));
 
-  const tables = ingestState({ stateDir, cardsDir });
+  let tables: Record<string, Row[]> = ingestState({ stateDir, cardsDir });
+  if (github) {
+    // The main checkout is resolved here, in the invocation directory, and every gh and git child runs in it.
+    const repoRoot = mainRoot();
+    const config = loadProjectConfig(repoRoot).config;
+    const runner: SyncRunner = (command, args, options) => runSync(command, args, { ...options, cwd: repoRoot });
+    tables = { ...tables, ...githubTables(runner, config.repository, config.base, config.github.requiredChecks) };
+    // writeTables writes the tables COLUMNS names, and ingest.ts is outside this card: the six tables are added to it here.
+    Object.assign(COLUMNS, GITHUB_COLUMNS);
+  }
   // The only write of this script: writeTables refuses an outDir inside either directory before it creates anything.
-  writeTables(tables, outDir, [stateDir, cardsDir]);
-  process.stderr.write(`outcome: ${(Object.keys(COLUMNS) as TableName[]).map((name) => `${name} ${tables[name].length}`).join(', ')}; written to ${outDir}\n`);
+  writeTables(tables as Tables, outDir, [stateDir, cardsDir]);
+  process.stderr.write(`outcome: ${Object.keys(COLUMNS).map((name) => `${name} ${tables[name]!.length}`).join(', ')}; written to ${outDir}\n`);
 
   // A given path (absolute, or holding a separator) is resolved here, against the invocation directory, since the child
   // runs in outDir. A bare name is left to the lookup of the operating system.
   const bin = values.duckdb !== undefined && /[\\/]/.test(values.duckdb) ? path.resolve(values.duckdb) : (values.duckdb ?? 'duckdb');
-  const views = readdirSync(viewsDir).filter((name) => name.endsWith('.sql')).sort().map((name) => readFileSync(path.join(viewsDir, name), 'utf8')).join('\n');
+  const views = readdirSync(viewsDir).filter((name) => name.endsWith('.sql') && (github || name !== GITHUB_VIEWS)).sort().map((name) => readFileSync(path.join(viewsDir, name), 'utf8')).join('\n');
   /** One DuckDB process on an in-memory database: every view file, then `select`, whose rows it prints as a JSON array. */
   const query = (select: string): Row[] => {
     const r = spawnSync(bin, ['-json', '-bail'], { cwd: outDir, input: `${views}\n${select}\n`, encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 });

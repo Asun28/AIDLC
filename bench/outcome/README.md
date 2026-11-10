@@ -1,17 +1,18 @@
 # bench/outcome: outcome tables and views
 
-Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory and the card registry and write only under `--out`. Table and view names may change with the scripts.
+Dev-only measurement scripts (plan `plans/reliability-baseline.md`). They read the state directory, the card registry and, unless `--no-github` is given, GitHub and the git history of the main checkout, and write only under `--out`. Table and view names may change with the scripts.
 
 ## Command
 
 ```bash
-node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>]
+node bench/outcome/run.ts [--state <dir>] [--cards <dir>] [--out <dir>] [--duckdb <path>] [--no-github]
 ```
 
 - `--state`: the state directory. Default: the one aidlc resolves for the checkout (`AIDLC_STATE_DIR`, else `<main checkout>/.aidlc`).
 - `--cards`: the card registry. Default: the configured `cardsDir` under the main checkout.
 - `--out`: where the tables are written. Default: `_local/outcome` under the main checkout. A path that is the state directory or the registry, or under one of them, is refused before anything is created (exit 1, `refusing to write`).
 - `--duckdb`: the DuckDB binary. Default: `duckdb` on PATH. A value that is absolute or holds a path separator is resolved against the invocation directory. A bare name is left to the operating system's lookup, which on Windows tries the child's working directory (`--out`) before PATH.
+- `--no-github`: no `gh` or git call is made, the six GitHub tables are not written and `views/30-github.sql` is not run. Files of those names that an earlier run left in `--out` stay as they are.
 
 `--state`, `--cards` and `--out` are resolved against the invocation directory too, before the DuckDB child starts in `--out`.
 
@@ -54,6 +55,64 @@ The file first defines each table as a view over its JSONL file with explicit co
 - `summary_lead_time`: rows `lead_p50` and `lead_p90`, the hours from `startedAt` to the start of the first `CLOSE` or `DONE` span for runs with `mergeVerified` (`n` runs that have such a span); and one row `state_total` per `state`, the total hours over all spans with an `endTs` (`n` spans).
 - `summary_stop_reasons`: `stopReason` and `runs`, the card runs that carry a stop record, per reason.
 
+## GitHub tables (`github.ts`)
+
+Without `--no-github`, `run.ts` reads `repository`, `base` and `github.requiredChecks` from the `aidlc.config.json` of the main checkout, which it resolves in the invocation directory before any child starts, and runs every `gh` and git child in the main checkout. The calls only read:
+
+- `gh api --paginate --slurp "repos/<repository>/pulls?state=all&per_page=100"`, once.
+- `gh api --paginate --slurp "repos/<repository>/commits/<sha>/check-runs?filter=all&per_page=100"`, once per distinct head sha and merge commit sha of a merged pull request. `filter=all` lists the check runs of earlier attempts too.
+- `gh api --paginate --slurp "repos/<repository>/actions/runs?head_sha=<sha>&per_page=100"`, once per such commit that has a check run whose `details_url` names a workflow run (`/actions/runs/<id>`).
+- `git log --format=%H %cI%n%B%x00 --first-parent <base> --`, once, and `git log --format=%H %cI%n%B%x00 <headSha> --not <mergeCommitSha>^1 --`, once per pull request merged into `base`.
+
+Each command runs once with a 120 s timeout. Nothing is retried, a rate limit (HTTP 403 or 429) included, and nothing is cached.
+
+| Table | One row per | Columns |
+|---|---|---|
+| `prs` | pull request of the repository, in any state | `number`, `headRef` (`head.ref`), `baseRef` (`base.ref`), `state`, `createdAt`, `mergedAt`, `closedAt`, `mergeCommitSha`, `headSha` (`head.sha`) |
+| `checks` | check run of a head or merge commit of a merged pull request | `sha`, `name`, `status`, `conclusion`, `startedAt`, `completedAt`, `runAttempt` |
+| `reverts` | first-parent commit of `base` whose message holds `This reverts commit <40 hex>` | `sha`, `date` (commit date, UTC), `revertedSha` (the first such line of the message), `daysAfter` |
+| `branch_commits` | commit reachable from the head of a pull request merged into `base` and not from the first parent of its merge commit | `number`, `sha`, `date`, `modelCoAuthor` |
+| `github_errors` | command that failed, or input that could not be read | `command`, `exit`, `stderr` (its first line), `problem` |
+| `required_checks` | name in `github.requiredChecks` | `name` |
+
+- `runAttempt` is the `run_attempt` of the workflow run the check run names. GitHub reports one number per workflow run, its latest attempt, so the check runs of an earlier attempt of a rerun carry the same number. It is null for a check run that names no workflow run, and for one whose workflow run could not be read, which `github_errors` names.
+- `daysAfter` is the commit-date difference in days, as a fraction; null when the reverted sha is not a first-parent commit of `base`.
+- `modelCoAuthor` is true when a line of the message starts with `Co-Authored-By:` and names Claude, Codex or GPT, in any letter case.
+- A field GitHub gives as null or leaves out is null.
+
+Failures (`github_errors`), each beside the rows of every other command:
+- A command that times out (`problem` `timeout`) or does not exit 0 (`did not exit 0`: what `gh` gives for HTTP 403, 429 and every other error status, and what a `gh` that cannot be started gives, with `exit` null). Its output is not read.
+- `gh` output that is not JSON (`not JSON`, an empty output included) or not an array of at least one page (`not an array of pages`); a page that is not an array of pull requests, or has no `check_runs` or `workflow_runs` array; a pull request without a number, a check run without a name, a workflow run without `id` or `run_attempt`; a workflow run a check run names that the list does not hold; a `git log` record that is not a sha, a date and a message. The page or entry is left out, the others are kept, and the command has one row whose `problem` joins what was left out with `; `.
+- A merged pull request of `base` without a 40-hex `headSha` and `mergeCommitSha`: one row with `command` `git log` and `exit` null, and no git call.
+- No `repository` in `aidlc.config.json`: one row with `command` `gh api`, no `gh` call, and `reverts` is still read.
+
+A pull request that is not merged, or merged into another branch than `base`, has no `branch_commits` rows and is no error. The tables are written through `writeTables` with the same read-only directories; `run.ts` adds their columns to `COLUMNS` for that.
+
+Not detected: a revert made by a pull request that edits files without the `This reverts commit` line; a second `This reverts commit` line in one message; for a rebase merge of several commits, every branch commit but the last (the first parent of the merge commit is then the commit before it).
+
+## Views (`views/30-github.sql`)
+
+The file first defines each GitHub table as a view over its JSONL file with explicit columns.
+
+- `run_prs`: the pull requests of a card run. A run with a `prNumber` has the pull request of that number and no other; a run without one has every pull request whose `headRef` equals the card id.
+- `card_merge`: per card, the pull request merged first among those of its runs.
+- `commit_checks`: per commit with a run of a required check (a check has several runs on a commit after a rerun). `green`: every required name has a run, and each name's runs with its latest `startedAt` all concluded `success`. `first_failed`: a run with the earliest `startedAt` of its name did not conclude `success`.
+- `accepted_changes`: one row per card attempt (a row of `card_attempts`: a card with at least one run), with `prNumber` and the booleans below. An accepted change is a card attempt for which all five hold (`accepted`).
+  - `merged`: the card has a merged pull request (`card_merge`). This is GitHub's answer, not `mergeVerified`; `summary_reconcile` lists where the two differ.
+  - `checksGreen`: every check named in `required_checks` is `green` on the merge commit. A required check without a run there is not green.
+  - `notReverted`: no `reverts` row names the merge commit with `daysAfter` of 14 or less. For a merge younger than 14 days the window is still open, so a true value can become false later.
+  - `noHumanCommit`: the pull request has at least one `branch_commits` row and every one has `modelCoAuthor`. This is a trailer check and not proof of authorship: a person can write the trailer, and a commit the loop or a base merge made without it counts as a human commit.
+  - `noRuling`: no formal review entry of any run of the card carries `stopReview`, and no card that names this card in `superseded_by` has one.
+  - `checksGreen`, `notReverted` and `noHumanCommit` are null for a card attempt without a merged pull request, which is not accepted.
+- `summary_pr_success`: `card_attempts`, `accepted`, `pr_success_rate` = `accepted` / `card_attempts`, and `failing_merged`, `failing_checksGreen`, `failing_notReverted`, `failing_noHumanCommit`, `failing_noRuling`, the card attempts for which that boolean is false.
+- `summary_lead_time_pr`: `p50_hours` and `p90_hours` from the `startedAt` of the earliest run of a card to the `mergedAt` of its merged pull request, over the `n` cards that have one; `merged_cards_without_pr`, the cards with a `mergeVerified` run and no merged pull request.
+- `summary_ci`: over the `merged_prs` merged pull requests, `rerun_share`, the share whose head has a check run with `runAttempt` above 1, and `first_attempt_failed_share`, the share whose head has a required check with `first_failed`. A head without check runs counts in neither.
+- `summary_reconcile`: rows `kind`, `cardId`, `n`. `mergeVerified_without_merged_pr`: the runs of the card with `mergeVerified` and no merged pull request in `run_prs`. `merged_pr_without_mergeVerified`: the merged pull requests whose `headRef` is the id of a card (in the registry or with a run) that has no `mergeVerified` run. `closed_unmerged`: the pull requests of the card's runs that are closed and not merged.
+
+Every boolean is computed from the tables as read: when `github_errors` has rows, the pull requests, commits or checks they name are missing from the views, which makes `checksGreen` and `noHumanCommit` false and can leave `notReverted` true.
+
 ## Tests
 
 `tests/surface/outcome-ingest.test.ts` covers the tables, the writer, the output rule, the `--duckdb` path and the exit 2 path everywhere. The view tests (acceptance 5 and 11) are skipped with the reason `no duckdb binary` where no DuckDB binary is found (`DUCKDB_BIN`, else `duckdb` on PATH), which includes CI; run them locally with `DUCKDB_BIN` set.
+
+`tests/surface/outcome-github.test.ts` covers the four readers with a scripted runner and a real temporary git repository, and `run.ts` started in that repository with a stand-in for `gh` first on PATH; no test calls the real `gh`. Its view test (acceptance 6) is skipped in the same way.

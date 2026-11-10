@@ -80,7 +80,8 @@ let built: { dir: string; sha: Record<string, string> } | undefined;
 
 /**
  * A real repository, built once. main: `c0`, then per branch its squash commit (`mA`, `mR`, `mV`, `mF`), then reverts of `mV`
- * after 2 days, `mA` after 15 days, `c0` after 3 days and `f1` (not on main), then a commit whose subject starts with Revert.
+ * after 2 days, `mA` after 15 days, `c0` after 3 days and `f1` (not on main), a commit whose subject starts with Revert and
+ * whose body holds a sha without the reverts line, and a merge of branch side, whose one commit reverts `mR`.
  * Branches from main: T1-A (`a1`), T1-RED (`r1`), T1-REV (`v1`), feature-x (`f1`, `f2`). It also holds the configuration
  * and the stand-in for `gh` that run.ts reads when started there.
  */
@@ -114,12 +115,16 @@ function repo(): { dir: string; sha: Record<string, string> } {
   commit('revA', at(16, '02:00'), `Revert "squash T1-A"\n\nThis reverts commit ${sha['mA']}.`);
   commit('rev0', at(4), `Revert "init"\n\nThis reverts commit ${sha['c0']}.`);
   commit('revGone', at(7), `Revert "f1"\n\nThis reverts commit ${sha['f1']}.`);
-  commit('plain', at(8), 'Revert the plan\n\nThis names no commit.');
+  commit('plain', at(8), `Revert the plan\n\nSee ${sha['c0']}.`);
+  git(['checkout', '-q', '-b', 'side']);
+  commit('sideRevert', at(9), `Revert "squash T1-RED"\n\nThis reverts commit ${sha['mR']}.`);
+  git(['checkout', '-q', 'main']);
+  git(['merge', '-q', '--no-ff', '-m', 'Merge side', 'side'], at(9));
   put(path.join(dir, 'aidlc.config.json'), JSON.stringify({ repository: REPO, base: 'main', github: { requiredChecks: ['ci', 'scan'] } }));
   // The stand-in for gh: a copy of node named gh, which run.ts starts in this directory as `gh api ...`, so node runs api.js.
   // It answers an endpoint from the JSON file FAKE_GH names, else as gh does for HTTP 404, and logs each call.
   put(path.join(dir, 'api.js'), "const fs = require('node:fs');\nconst endpoint = process.argv[process.argv.length - 1];\nfs.appendFileSync(process.env.FAKE_GH + '.log', process.argv.slice(2).join(' ') + '\\n');\nconst answer = JSON.parse(fs.readFileSync(process.env.FAKE_GH, 'utf8'))[endpoint];\nif (answer === undefined) {\n  process.stderr.write('gh: Not Found (HTTP 404)\\n');\n  process.exit(1);\n}\nprocess.stdout.write(JSON.stringify(answer));\n");
-  mkdirSync(path.join(dir, 'bin'));
+  for (const name of ['bin', 'sub']) mkdirSync(path.join(dir, name));
   copyFileSync(process.execPath, path.join(dir, 'bin', process.platform === 'win32' ? 'gh.exe' : 'gh'));
   return (built = { dir, sha });
 }
@@ -214,31 +219,32 @@ function cards(successorOfD = 'T1-NEXT'): string {
   return dir;
 }
 
-function state(prOfA = 11): string {
+function state(prOfA = 11, verifiedD = true): string {
   const dir = path.join(tempDir(), 'state');
   const run = (goalId: string, cardId: string, startedAt: string, extra: object = {}): string => put(path.join(dir, 'cards', goalId, `${cardId}.json`), JSON.stringify({ goalId, cardId, cardRevision: 0, goalGeneration: 0, state: 'DONE', startedAt, deadline: at(30), updatedAt: at(9), ...extra }));
-  run('g-a', 'T1-A', at(1), { mergeVerified: true, pr: { number: prOfA, state: 'MERGED' } });
+  const formal = { invocationId: 'i1', candidateDigest: 'd1', base: 'main', policyVersion: '1', reviewer: 'codex', requestedAt: at(5, '01:00'), outcome: 'pass' };
+  run('g-a', 'T1-A', at(1), { mergeVerified: true, pr: { number: prOfA, state: 'MERGED' }, review: { substantiveDecisions: 1, invocations: [formal] } });
   run('g-r', 'T1-RED', at(2), { mergeVerified: true, pr: { number: 12, state: 'MERGED' } });
   run('g-v0', 'T1-REV', at(3));
   run('g-v1', 'T1-REV', at(4));
-  const stopped = { invocationId: 'i1', candidateDigest: 'd1', base: 'main', policyVersion: '1', reviewer: 'codex', requestedAt: at(5, '01:00'), outcome: 'block', stopReview: 'F1 raised again' };
-  run('g-d', 'T1-D', at(5), { mergeVerified: true, review: { substantiveDecisions: 1, substantiveBlocks: 1, invocations: [stopped] } });
+  run('g-d', 'T1-D', at(5), { mergeVerified: verifiedD, review: { substantiveDecisions: 1, substantiveBlocks: 1, invocations: [{ ...formal, outcome: 'block', stopReview: 'F1 raised again' }] } });
   mkdirSync(path.join(dir, 'journal'));
   return dir;
 }
 
-/** What the stand-in gh answers per endpoint: six pull requests on two pages, and the check runs of seven of the eight commits. */
-function answers(s: Record<string, string>, scanOnA = true): Record<string, unknown> {
+/** What the stand-in gh answers per endpoint: seven pull requests on two pages (17 is a second, later merged one of T1-REV), and the check runs of seven of the eight commits. */
+function answers(s: Record<string, string>, scanOnA = true, headOfA = s['a1']!): Record<string, unknown> {
   const green = [check('ci', 'success', at(5)), check('scan', 'success', at(5))];
   return {
     [PULLS]: [
-      [pr(11, 'T1-RED', s['a1']!, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
-      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null })],
+      [pr(11, 'T1-RED', headOfA, at(1, '02:00'), s['mA']!), pr(12, 'T1-RED', s['r1']!, at(2, '10:00'), s['mR']!), pr(13, 'T1-REV', s['v1']!, at(4, '06:00'), s['mV']!)],
+      [pr(14, 'T1-D', s['c0']!, null, null), pr(15, 'feature-x', s['f2']!, at(5), s['mF']!), pr(16, 'T1-D', s['c0']!, null, null, { state: 'open', closed_at: null }), pr(17, 'T1-REV', s['f2']!, at(6), s['mF']!)],
     ],
     [checksOf(s['a1']!)]: [checkPage(check('ci', 'failure', at(1, '01:10'), 900), check('ci', 'success', at(1, '01:30'), 900), check('scan', 'success', at(1, '01:10')))],
     [runsOf(s['a1']!)]: [{ total_count: 1, workflow_runs: [{ id: 900, run_attempt: 2 }] }],
     [checksOf(s['mA']!)]: [checkPage(check('ci', 'failure', at(1, '02:01')), check('ci', 'success', at(1, '02:05')), check('docs', 'failure', at(1, '02:01')), ...(scanOnA ? [check('scan', 'success', at(1, '02:01'))] : []))],
-    [checksOf(s['r1']!)]: [checkPage(...green, check('docs', 'failure', at(2)))],
+    [checksOf(s['r1']!)]: [checkPage(...green, check('docs', 'failure', at(2)), check('lint', 'success', at(2), 901))],
+    [runsOf(s['r1']!)]: [{ total_count: 1, workflow_runs: [{ id: 901, run_attempt: 1 }] }],
     [checksOf(s['mR']!)]: [checkPage(check('ci', 'success', at(2, '10:01')), check('ci', 'failure', at(2, '10:05')), check('scan', 'success', at(2, '10:01')))],
     [checksOf(s['v1']!)]: [checkPage(check('ci', 'success', at(3)), check('scan', 'failure', at(3)))],
     [checksOf(s['mV']!)]: [checkPage(...green)],
@@ -246,14 +252,14 @@ function answers(s: Record<string, string>, scanOnA = true): Record<string, unkn
   };
 }
 
-/** `node bench/outcome/run.ts` started in the fixture repository, with the stand-in gh first on PATH and no variable aidlc reads. */
+/** `node bench/outcome/run.ts` started in a subdirectory of the fixture repository, with the stand-in gh first on PATH and no variable aidlc reads. */
 function outcome(args: string[], over: { state?: string; cards?: string; answers?: Record<string, unknown> } = {}): { status: number | null; stdout: string; stderr: string; out: string; ghCalls: string[] } {
   const { dir, sha } = repo();
   const out = path.join(tempDir(), 'out');
   const map = put(path.join(tempDir(), 'gh.json'), JSON.stringify(over.answers ?? answers(sha)));
   const kept = Object.entries(process.env).filter(([k]) => !/^(AIDLC_.*|NODE_OPTIONS|PATH)$/i.test(k));
   const env = { ...Object.fromEntries(kept), PATH: `${path.join(dir, 'bin')}${path.delimiter}${process.env['PATH'] ?? ''}`, FAKE_GH: map };
-  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, ...args], { cwd: dir, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(process.execPath, [path.join(root, 'bench', 'outcome', 'run.ts'), '--state', over.state ?? state(), '--cards', over.cards ?? cards(), '--out', out, ...args], { cwd: path.join(dir, 'sub'), env, encoding: 'utf8', windowsHide: true });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr, out, ghCalls: existsSync(`${map}.log`) ? readFileSync(`${map}.log`, 'utf8').trim().split('\n') : [] };
 }
 
@@ -268,10 +274,10 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
   assert.deepEqual(GITHUB_FILES.filter((name) => !existsSync(path.join(r.out, name))), [], 'the six files are written before DuckDB is started');
   const failed =`repos/${REPO}/commits/${sha['f2']}/check-runs?filter=all&per_page=100`;
   assert.deepEqual(lines(r.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(failed), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [6, 19, 4, 5, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [7, 20, 4, 7, 1, 2]);
   assert.deepEqual(lines(r.out, 'required_checks.jsonl'), ['{"name":"ci"}', '{"name":"scan"}']);
   assert.equal(lines(r.out, 'card_runs.jsonl').length, 5);
-  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [10, 10], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call');
+  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [11, 11], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check');
 
   const noPulls = outcome(['--duckdb', missingBin()], { answers: {} });
   assert.equal(noPulls.status, 2, noPulls.stderr);
@@ -296,24 +302,28 @@ test('T1-OUTCOME-GITHUB acceptance 6: run.ts prints the PR success rate, the PR 
   assert.deepEqual(got.get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25 }));
   // Hours from the earliest run to mergedAt: T1-A 2, T1-RED 10, T1-REV 30 (6 from its later run). T1-D has a mergeVerified run and no merged pull request.
   assert.deepEqual(got.get('summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 1 }]);
-  // Of the four merged pull requests, 11 has a head check on attempt 2, and 11 (ci) and 13 (scan) a required check whose first run failed.
-  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 4, rerun_share: 0.25, first_attempt_failed_share: 0.5 }]);
+  // Of the five merged pull requests, 11 has a head check on attempt 2 and 12 one on attempt 1, and 11 (ci) and 13 (scan) a required check whose first run failed.
+  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 5, rerun_share: 0.2, first_attempt_failed_share: 0.4 }]);
   assert.deepEqual(got.get('summary_reconcile'), [
     { kind: 'closed_unmerged', cardId: 'T1-D', n: 1 },
     { kind: 'mergeVerified_without_merged_pr', cardId: 'T1-D', n: 1 },
-    { kind: 'merged_pr_without_mergeVerified', cardId: 'T1-REV', n: 1 },
+    { kind: 'merged_pr_without_mergeVerified', cardId: 'T1-REV', n: 2 },
   ]);
 
   // One change each, so that T1-A fails exactly one more boolean: it succeeds a card with a stopReview; its pull request
-  // is the one with a commit that has no model co-author; its merge commit has no run of the required check scan.
-  const variant = (over: Parameters<typeof outcome>[1]): Row[] | undefined => {
+  // is the one with a commit that has no model co-author; its merge commit has no run of the required check scan; the
+  // head of its pull request is a commit the repository does not hold, so no branch commit is read.
+  const variant = (over: Parameters<typeof outcome>[1], view = 'summary_pr_success'): Row[] | undefined => {
     const v = outcome(['--duckdb', duckdb!], over);
     assert.equal(v.status, 0, v.stderr);
-    return views(v.stdout).get('summary_pr_success');
+    return views(v.stdout).get(view);
   };
   assert.deepEqual(variant({ cards: cards('T1-A') }), success({ failing_noRuling: 2 }));
   assert.deepEqual(variant({ state: state(15) }), success({ failing_noHumanCommit: 1 }));
   assert.deepEqual(variant({ answers: answers(sha, false) }), success({ failing_checksGreen: 2 }));
+  assert.deepEqual(variant({ answers: answers(sha, true, '0'.repeat(40)) }), success({ failing_noHumanCommit: 1 }));
+  // Without a mergeVerified run T1-D is not a merged card, so no merged card lacks a pull request.
+  assert.deepEqual(variant({ state: state(11, false) }, 'summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 0 }]);
 
   const off = outcome(['--duckdb', duckdb!, '--no-github']);
   assert.equal(off.status, 0, off.stderr);
