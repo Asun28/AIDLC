@@ -80,6 +80,7 @@ DoD on the final candidate, real `gh` on PATH, no stand-in: exit 0 without `DUCK
 | 6 | `acceptance 6 and 9: run.ts prints the PR success rate, the PR lead time, the CI shares and the reconciliation ...` | pass with `DUCKDB_BIN`, skipped without |
 | 7 | README sections "GitHub tables (`github.ts`)" and "Views (`views/30-github.sql`)" | reviewer-verified against the diff |
 | 8 | `outcome-ingest.test.ts`, changed only by `'--no-github'` in `runOutcome` and `spawnRun` | 10 pass with `DUCKDB_BIN`; 8 pass, 2 skipped without |
+| 10 | `acceptance 2` (attempts 1 and 2 of one workflow run), `acceptance 3` (the second-parent target, the base `--output=x`), `acceptance 4` (`f2`, a quoted `Co-Authored-By: Claude` line followed by prose), `acceptance 6, 9 and 10` (the queued rerun, the closed pull requests of T1-RED and T1-NEXT) | pass; the last with `DUCKDB_BIN`, skipped without |
 | 9 | the same test as item 6. T1-A's only branch commit without a trailer is the merge `aM`: accepted and acceptedStrict 1 of 4. Head of its pull request not in the repository: `accepted` 1, `accepted_strict` 0, `unknown_noHumanCommit` 1, `failing_noHumanCommit` 0. Its pull request holding `f2`, no merge and no trailer: `accepted` 0, `accepted_strict` 0, `failing_noHumanCommit` 1, `unknown_noHumanCommit` 0 | pass with `DUCKDB_BIN`, skipped without |
 
 ### Inputs and failure paths
@@ -124,6 +125,38 @@ First sweep (before the second amendment): 52 single replacements, each run agai
 
 The two survivors are equivalent: without a merged pull request `checksGreen` and `notReverted` are null, so neither conjunction is ever true.
 
+### Repair of R3 decision 1 (attempt 2)
+RED: commit 36613b9f (test changes only); 5 of 7 failed on assertions with `DUCKDB_BIN` (acceptance 2, 3, 4, 5 through run.ts, and 6, 9 and 10), 4 failed and 1 was skipped without it. One fixture line of acceptance 5 changed with the fix (a listed workflow run on attempt 3 became attempt 1, since attempt 3 now means three jobs calls the script does not hold).
+
+| Class | Repair | Test | Mutants |
+|---|---|---|---|
+| git-revision-option-injection | the base is resolved first with `git rev-parse --verify --end-of-options <base>^{commit}`; one that does not resolve is one error row and no further git call; the log reads the resolved sha; every sha follows `--end-of-options` | acceptance 3: base `--output=x` gives no file `x`, one error row, one git call | no early return: killed; `--end-of-options` dropped from the branch log: killed (the command line is asserted); the log given the base instead of the resolved sha: survived, equivalent once the base has resolved |
+| workflow-attempt-misattribution | for a workflow run with `run_attempt` above 1, the jobs of each attempt are read and a check run gets the attempt whose jobs hold its id | acceptance 2: ids 11 and 12 of run 900 give 1 and 2; a run with one attempt makes no jobs call; a failed jobs call and an id in no attempt keep the run's attempt with one error row each | job map ignored; `allRead` dropped; `allRead` true for a failed call; every job mapped to the last attempt: killed |
+| revert-target-ancestry-truncated | the target is tested with `git merge-base --is-ancestor` against the resolved base and its date read with `git show` | acceptance 3: `revSide` reverts a commit that reached main through the merge's second parent, `daysAfter` 3; `f1`, no ancestor, stays null without an error row | arguments swapped; exit 1 reported as an error; the date read for a non-ancestor: killed |
+| body-text-treated-as-trailer | `modelCoAuthor` tests the values of `%(trailers:key=Co-Authored-By,valueonly,unfold)` of the same `git log` call | acceptance 4: `f2` quotes `Co-Authored-By: Claude <...>` followed by a line of prose and is false; `a1`, `r1`, `v1`, `f1` have real trailers and are true | the message tested instead: killed |
+| queued-check-hidden-by-success | a run is pending when its status is not completed or it has no `startedAt`; a name's last runs are its pending ones when it has any; a pending run is no success | acceptance 6, 9 and 10: scan success plus a queued rerun without `startedAt` on T1-A's merge commit gives `failing_checksGreen` 2 and `accepted` 0 | pending rule dropped; `OR` to `AND` in pending: killed |
+| closed-pr-reconciliation-omission | closed unmerged pull requests belong to a card by a run's `prNumber` or by `headRef` equal to a registry card id, pairs deduplicated | acceptance 6, 9 and 10: 18 for T1-RED by `headRef` (its merged run names 12) and 20 by the `prNumber` of its other run, 19 for T1-NEXT (no run), 14 for T1-D once (named by its run and by `headRef`) | `UNION ALL`; no `headRef` branch; no `prNumber` branch: killed |
+
+16 mutants, each run against the test file with `DUCKDB_BIN`: 15 killed, 1 equivalent (named in the table). Two survived a first run (`OR` to `AND` in pending; no `prNumber` branch) and the fixture gained a queued run with an earlier `startedAt` and pull request 20, named by a second run of T1-RED with a `headRef` that is no card id; both are killed.
+
+Sweeps:
+- git argv carrying an outside value: `rev-parse` (base, from the configuration), the first-parent `log` (the resolved sha), `merge-base` and `show` (the reverted sha, 40 hex from a commit message, and the resolved sha), the branch `log` (head and merge commit sha from GitHub, each checked as 40 hex). All five follow `--end-of-options`. No other git call exists in `github.ts`.
+- ordering by `startedAt` and `runAttempt` in the views: `green` and `first_failed` are in `commit_checks` and now place a run without `startedAt`; `rerun_share` takes `max(runAttempt) > 1`, where a null `runAttempt` (no workflow run) is no rerun, which is intended.
+- the pull-request join: `accepted_changes`, `card_merge` and `mergeVerified_without_merged_pr` use `run_prs` (a run's `prNumber`, else `headRef` equal to the card id), as R7 states; `merged_pr_without_mergeVerified` uses `headRef` equal to a card id of the registry or of a run; `closed_unmerged` uses `prNumber` or `headRef` equal to a registry card id.
+
+Inputs and failure paths of the repair hunks:
+| Input | Decision | Test |
+|---|---|---|
+| a base that is not a revision, or starts with `-` | one row, no further git call | acceptance 3 |
+| a reverted sha that is no ancestor (`merge-base` exit 1) | null, no row | acceptance 3 (`f1`) |
+| `merge-base` failing otherwise (a sha the repository does not hold, a timeout) | null and one row | not tested |
+| `git show` failing or printing no date | null and one row | not tested |
+| a jobs call that fails | one row, the run's attempt for its check runs | acceptance 2 |
+| a check run in no attempt's jobs | the run's attempt, one row on the workflow-run call | acceptance 2 |
+| a jobs page without a `jobs` array, a job without an id | left out, named in the row of the call | not tested |
+| a message without a `Co-Authored-By` trailer | an empty trailer line, `modelCoAuthor` false | acceptance 4 |
+| a check run with a status other than completed, or without `startedAt` | pending: last of its name, no success | acceptance 6, 9 and 10 (null `startedAt`); the status alone is not tested |
+
 ### Real run
 `node bench/outcome/run.ts --duckdb <path> --state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks --out <temp>` from this worktree on 2026-11-10, twice: before the second amendment (exit 0 in 9 min 8 s) and after it (exit 0 in 8 min 57 s). Each run made 773 `gh` calls (1 for pull requests, 386 for check runs, 386 for workflow runs; derived from the tables) and 194 `git log` calls. The numbers below are from the second run; `summary_lead_time_pr`, `summary_ci` and `summary_reconcile` printed the same bytes in both.
 
@@ -133,3 +166,4 @@ The two survivors are equivalent: without a merged pull request `checksGreen` an
 - `summary_lead_time_pr`: p50 0.65 h, p90 6.55 h, n 178, `merged_cards_without_pr` 0.
 - `summary_ci`: 193 merged pull requests, `rerun_share` 0.0052, `first_attempt_failed_share` 0.0052.
 - `summary_reconcile`: `merged_pr_without_mergeVerified` 24 cards, `closed_unmerged` 15 cards, `mergeVerified_without_merged_pr` none.
+- Third run, after the repair of R3 decision 1 (exit 0 in 9 min 3 s, 775 `gh` calls: two more, the jobs of attempts 1 and 2 of the one workflow run that was rerun): `summary_pr_success`, `summary_ci`, `summary_lead_time_pr` and `summary_reconcile` print the same values as the second run. In `checks` one check run of the rerun workflow moved from `runAttempt` 2 to 1 (1881 rows on attempt 1, 1 on attempt 2); the head still has a check on attempt 2, so `rerun_share` is unchanged. The one revert targets a first-parent commit, no required check on a merge commit was pending, no body line was read as a trailer before (708 `modelCoAuthor` rows in both runs), and the 15 closed unmerged pull requests were already found through their runs. `github_errors`: the same 52.
