@@ -66,4 +66,38 @@ The state and registry tables as JSONL, the runner, and the card and review view
 npm run typecheck && node --test tests/surface/outcome-ingest.test.ts
 ```
 - Expected exit code: 0
-- Assertion: every acceptance test above passes; item 5 is skipped only where no DuckDB binary is found.
+- Assertion: every acceptance test above passes; items 5 and 11 are skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+RED, attempt 1: commit 8af61e5 (the test against seam modules that return empty tables): 4 failed and 1 skipped without `DUCKDB_BIN`, 5 failed with it.
+RED, attempt 2 (repair of R3 decision 1): commit 3d49100 (tests 7 to 11 against candidate d55991f): 5 passed and 5 failed with `DUCKDB_BIN`; 4 passed, 4 failed and 2 skipped without it.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `node --test tests/surface/outcome-ingest.test.ts`, test `acceptance 1` | pass |
+| 2 | same file, test `acceptance 2` | pass |
+| 3 | same file, test `acceptance 3` | pass |
+| 4 | same file, test `acceptance 4` | pass |
+| 5 | same file, test `acceptance 5`, with `DUCKDB_BIN` set to the local duckdb.exe (v1.5.6): `# tests 10`, `# pass 10`, `# fail 0`, `# skipped 0`; without it: `# pass 8`, `# skipped 2`, both `# SKIP no duckdb binary` | pass |
+| 6 | `bench/outcome/README.md`, sections Command (R9), Tables (R1 to R8), Views (R10 to R12), Tests (R13) | reviewer-verified against the diff |
+| 7 | same file, test `acceptance 7` | pass |
+| 8 | same file, test `acceptance 8` | pass |
+| 9 | same file, test `acceptance 9`; on this Windows account the hard link ran and the file symlink was skipped (EPERM, printed as a diagnostic) | pass |
+| 10 | same file, test `acceptance 10` | pass |
+| 11 | same file, test `acceptance 11`, with `DUCKDB_BIN` set | pass |
+| 12 | `bench/outcome/README.md`, Command (R15 refusal, R16), Tables (the output rule R15, absent inputs R14), Views (`card_family`) | reviewer-verified against the diff |
+
+Findings of R3 decision 1 and the test that proves each repair:
+- F1 (`..out` accepted): test `acceptance 8`, cases `<state>/..out` and `<registry>/..out`, and the sibling `state..out` that is still written.
+- F2 (missing output directory under a link): test `acceptance 8`, case `<junction>/new/deeper`.
+- F3 (link at an output name): test `acceptance 9`.
+- F4 (relative `--duckdb`): test `acceptance 10`.
+- F5 (chain cut at 50 steps): test `acceptance 11`.
+- F6 (absent source directory): test `acceptance 7`.
+
+Class sweep of the repair:
+- Where output is written (F1 to F3). Checked every write of the card: `writeTables` (`mkdirSync` and one `writeFileSync` per table) is the only one; `run.ts` writes to stdout and stderr only and starts DuckDB on an in-memory database. Found: the path comparison lived in `run.ts` and the write in `ingest.ts`. Now one function, `assertWritable` inside `writeTables`, decides, and `run.ts` holds no path comparison.
+- An absent input (F6). Checked every reader of `ingest.ts`: the registry directory, `<state>/cards`, `<state>/journal` (each absent or not a directory: one error row), a goal directory (listed from its parent; without card-run files it is an empty result), the state directory itself (no read of its own; absent gives the two rows of its directories). An entry of `<state>/cards` that is not a directory, and a file without the expected suffix, are not sources and are left out.
+- A path argument used after the working directory changes (F4). Checked `--state`, `--cards` and `--out` (each `path.resolve`d in the parent before the child starts) and the views directory (absolute, from the script's own URL). Found only `--duckdb`. Left as it is and stated in the README: a bare name goes to the operating system's lookup, which on Windows tries the child's working directory before PATH.
+
+Runs on the main checkout's state on 2026-11-10 (`--state D:\Projects\AIDLC\.aidlc --cards D:\Projects\AIDLC\specs\tasks`, `--out` outside the repository), both exit 0. Attempt 1: cards 268 (82 with `superseded_by`), card_runs 271, review_decisions 1047, findings 733, state_spans 918, attempts 677, ingest_errors 0. Attempt 2: cards 268 (file identical), card_runs 271, review_decisions 1048, findings 739, state_spans 919, attempts 678, ingest_errors 0; the differences are this card's own R3 decision 1 (one decision, six findings) and its journal events, written between the runs. `card_family` on that run: 268 rows, 82 with a successor, longest chain 6 steps. The README states the limit the first run showed in the `CARD_STATE` events.
