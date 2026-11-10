@@ -66,3 +66,19 @@ npm run typecheck && node --test tests/surface/outcome-usage.test.ts tests/surfa
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; item 8 is skipped only where no DuckDB binary is found.
+
+## Attempt evidence
+Attempt 1 carries f03dda67, the candidate of T1-OUTCOME-USAGE that R3 decision 3 passed, merged with main at 1fd06e0b for the card files. No file under `bench/` or `tests/` differs from f03dda67. RED: 18c8e9b (acceptance 1 to 8 against a seam module without behaviour), ea564ff4, d873eb1f, a69f7ac4 and 7df7815a, each on this branch line; this card adds no behaviour, so it has no RED of its own.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 to 7 | `node --test tests/surface/outcome-usage.test.ts`, tests `acceptance 1` to `acceptance 7` | pass |
+| 8 | same file, test `acceptance 8, 10 and 11`, with `DUCKDB_BIN` set to the local duckdb.exe; skipped with `no duckdb binary` without it | pass |
+| 9 | `bench/outcome/README.md`: Command (R8), Tables (the output rule, R11), Usage tables (R1 to R7), Cost views (R9) | reviewer-verified against the diff |
+| 10 | the DoD: 19 tests, 19 passed with `DUCKDB_BIN`; 16 passed and 3 skipped without it; the ingest test differs from main by `--no-usage` in its two spawn helpers | pass |
+| 11 | test `acceptance 8, 10 and 11`: the `costUsd` of each row kind is read from the `usage.jsonl` that `run.ts` wrote and compared with the hand-computed cost | pass |
+| 12 | same file, test `acceptance 12` (runs without DuckDB) | pass |
+
+The mutant table (M1 to M17), the trace of errors that reach disk and the real run of 2026-11-10 are in the `## Attempt evidence` section of `specs/tasks/T1-OUTCOME-USAGE.md` and hold for this candidate, since the code is the same.
+
+Left by the user's ruling of 2026-11-11 and named in `non_goals`: the two findings of the second R3 pass on f03dda67. `request-pair-test-confounded`: every fixture derives `requestId` from `message.id`, so the tests do not tell the pair key from a key on either field. `percentile-test-confounded`: the percentile fixture has one card family, so p50, p90 and max are the same number.
