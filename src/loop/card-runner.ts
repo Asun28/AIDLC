@@ -194,6 +194,18 @@ function pinFailure(thrown: unknown): string {
   }
 }
 
+/**
+ * Whether `p` names an existing directory, a link to one included (card T0-PREPARE-WORKTREE R2). A missing path, a regular
+ * file and a path whose stat fails (a parent that is a file, a denied read) are not one.
+ */
+function isDirectory(p: string): boolean {
+  try {
+    return statSync(p).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 export class CardRunner {
   readonly paths: StatePaths;
   readonly repo: RepoIdentity;
@@ -656,10 +668,10 @@ export class CardRunner {
         ? `remote autonomous delivery needs a blocking independent review path: card ${card.id} is tier ${card.tier ?? 'computed'} under an advisory ReviewGate, so the ship could merge a known defect before this loop reads the verdict; set gateRequired=true (ReviewGate='required') or run a pre-ship blocking review`
         : undefined;
 
-    // A recorded worktree counts only while its directory exists, so a run whose worktree was never made or is gone goes
-    // back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record alone
-    // counts, as before (R3).
-    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || existsSync(run.worktree) : false;
+    // A recorded worktree counts only while it is a directory, so a run whose worktree was never made, is gone or is a file
+    // goes back to PREPARE (card T0-PREPARE-WORKTREE R2); the dry-run ship path makes no worktree, and there the record
+    // alone counts, as before (R3).
+    const worktreeReady = run.worktree ? this.config.shipPath === 'dry-run' || isDirectory(run.worktree) : false;
     const evidence: CardEvidence = {
       now,
       deadline: run.deadline,

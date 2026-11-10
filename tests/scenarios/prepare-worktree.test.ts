@@ -97,6 +97,23 @@ test('T0-PREPARE-WORKTREE acceptance 3: a run stored in BUILD, REVIEW_FIX or SHI
   }
 });
 
+test('T0-PREPARE-WORKTREE acceptance 3: a run stored in BUILD whose recorded worktree path is a regular file, or lies under one so that its stat fails, gets prepare with action start [R2]', () => {
+  for (const form of ['a regular file', 'a path under a regular file'] as const) {
+    const { fx, goalId, worktree, next } = setup('github');
+    try {
+      next();
+      writeFileSync(worktree, 'not a worktree\n');
+      const recorded = form === 'a regular file' ? worktree : path.join(worktree, 'nested');
+      fx.store.updateCardRun(goalId, CARD, (current) => ({ ...(current as CardRun), state: 'BUILD', worktree: recorded, branch: CARD }));
+      const r = next();
+      assert.equal(r.directive.kind, 'prepare', `${form}: ${r.directive.narration}`);
+      if (r.directive.kind === 'prepare') assert.equal(r.directive.action, 'start', form);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
 test('T0-PREPARE-WORKTREE acceptance 4: with shipPath dry-run, a first card next returns prepare with action start and a second returns build, as before this card [R3]', () => {
   const { fx, worktree, next } = setup('dry-run');
   try {

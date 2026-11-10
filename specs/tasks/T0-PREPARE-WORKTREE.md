@@ -64,13 +64,24 @@ Attempt 1. RED at 254462f (`tests/scenarios/prepare-worktree.test.ts`, 3 of 4 fa
 |---|---|---|
 | 1 | prepare-worktree.test.ts, acceptance 1 test | pass |
 | 2 | prepare-worktree.test.ts, acceptance 2 test | pass |
-| 3 | prepare-worktree.test.ts, acceptance 3 test (stored BUILD, REVIEW_FIX and SHIP) | pass |
+| 3 | prepare-worktree.test.ts, both acceptance 3 tests (stored BUILD, REVIEW_FIX and SHIP with no directory; a regular file at the recorded path; a path under a regular file) | pass |
 | 4 | prepare-worktree.test.ts, acceptance 4 test | pass |
 | 5 | fault-points.test.ts in the DoD; the PREPARE start write is named under Not covered in .claude/skills/verify-card-run-writes/SKILL.md; the sync commit moves at CLOSE | pass; sync commit open until CLOSE |
 | 6 | docs/OPERATIONS.md paragraph after the T0 bugfix walk-through; CHANGELOG Unreleased entry | reviewer-verified |
 | 7 | merge-unconfirmed.test.ts (`shipped`), audit.test.ts (`shipWithFacts`) and narration-quote.test.ts (acceptance 1 test) in the DoD; each diff adds one `mkdirSync` of the recorded worktree before the github `card next` and changes no assertion | pass (51 of 51) |
 
 The full suite at the first candidate (685be31) failed 23 of 2990 tests, all in those three files: each built the run on the dry-run ship path, which records `wt/T1-...` and makes no directory, then ran `card next` on the github ship path, where R2 sends the run back to PREPARE. The card was amended on main (38e97ec, R5 and acceptance 7) before the fixtures were changed.
+
+Attempt 2 (repair of R3 decision 1, F1, class worktree-file-counts-as-prepared). `prepared` used `existsSync`, which is true for a regular file. It now uses `isDirectory` (card-runner.ts, `statSync(p).isDirectory()` with any stat error read as false). The new acceptance 3 test failed on candidate 123855d (a file at the recorded path got `build`) and passes with the repair. Input forms of `isDirectory`, each with its test:
+- an existing directory: acceptance 2 (`build` after `git worktree add`);
+- a missing path: acceptance 1 and the first acceptance 3 test;
+- a regular file: second acceptance 3 test, form "a regular file";
+- a stat that throws (ENOTDIR or ENOENT for a path under a file): second acceptance 3 test, form "a path under a regular file";
+- a link or junction to a directory: `statSync` follows it, so it counts as a directory; no test, since the card's fixtures make no links;
+- a denied stat (EACCES): the same catch as the path under a file; no portable test.
+The dry-run bypass is unchanged: acceptance 4.
+
+Class sweep of `existsSync(run.worktree)` in card-runner.ts: `prepared` (the only site that decides a state) is fixed. `reviewCheckout` and the candidate read in `recordAttempt` keep `existsSync`: neither decides the card state, both predate this card, and no requirement of this card changes them; with a file at the path the loop now selects PREPARE before it directs a review or a BUILD.
 
 Readers of `run.worktree` (diagnosis.same_class):
 - Ship path: covered by R2. `CardRunner.ship` passes no worktree path to the ship path (the github adapter finds the worktree by card id), and SHIP is selected only when `prepared`, which now requires the directory.
