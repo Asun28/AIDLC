@@ -1,12 +1,12 @@
 // Card T1-OUTCOME-USAGE: one usage row per model request, from Claude Code session logs, Codex session logs and reviewer logs.
 // Files are read, never written. Only the fields of USAGE_COLUMNS (ingest.ts) leave a log: no message text, prompt, tool input or tool output.
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync, type Dirent } from 'node:fs';
 import path from 'node:path';
 import type { Row, Tables } from './ingest.ts';
 
 export type Usage = { rows: Row[]; errors: Row[] };
 /** USD per million tokens of each kind (cache writes kept 5 minutes and 1 hour apart), by model id, with the page the numbers were read from and the date they were read. */
-export type Prices = Record<string, { input: number; cacheRead: number; cacheWrite5m: number; cacheWrite1h: number; output: number; source: string; date: string; note?: string }>;
+export type Prices = Record<string, { input: number; cacheRead: number; cacheWrite: number; cacheWriteLong: number; output: number; cacheWriteTier: string; cacheWriteLongTier: string; source: string; date: string; note?: string }>;
 
 const str = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const num = (value: unknown): number | null => (typeof value === 'number' ? value : null);
@@ -69,7 +69,7 @@ function holdsToken(text: string, id: string): boolean {
 }
 
 /** R1. Rows are in the order their (`message.id`, `requestId`) first appears: directories as given, files in path order. */
-export function claudeUsage(dirs: string[], cardIds: string[]): Usage {
+export function claudeUsage(dirs: string[], cardIds: string[], _list?: (dir: string) => Dirent[]): Usage {
   const errors: Row[] = [];
   const r = reader('claude-code', errors);
   const rows = new Map<string, Row>();
@@ -195,6 +195,6 @@ export function priceOf(row: Row, prices: Prices): number | null {
   if (!Object.hasOwn(prices, model) || typeof row['inputTokens'] !== 'number') return null;
   const p = prices[model]!;
   const oneHour = num(row['cacheWrite1hTokens']) ?? 0;
-  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [(num(row['cacheWriteTokens']) ?? 0) - oneHour, p.cacheWrite5m], [oneHour, p.cacheWrite1h], [row['outputTokens'], p.output]];
+  const kinds: [unknown, number][] = [[row['inputTokens'], p.input], [row['cacheReadTokens'], p.cacheRead], [(num(row['cacheWriteTokens']) ?? 0) - oneHour, p.cacheWrite], [oneHour, p.cacheWriteLong], [row['outputTokens'], p.output]];
   return kinds.reduce((sum, [tokens, perMillion]) => sum + (num(tokens) ?? 0) * perMillion, 0) / 1e6;
 }

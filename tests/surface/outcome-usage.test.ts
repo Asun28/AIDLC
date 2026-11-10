@@ -3,7 +3,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync, type Dirent } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,14 +71,27 @@ test('T1-OUTCOME-USAGE acceptance 1: claudeUsage returns one row per (message.id
     claudeRow({ sidechain: true, agentId: 'b2' }),
   ]);
   assert.deepEqual(usage.errors, []);
+  // Two lines without a requestId are two requests, even with one message id.
+  const bare = claudeLine('assistant', 'm8', [1, 2, 3, 4]).replace('"requestId":"req-m8",', '');
+  assert.deepEqual(claudeUsage([path.dirname(put(path.join(tempDir(), 'claude', 's3.jsonl'), [bare, bare]))], []).rows, [claudeRow({}), claudeRow({})]);
 });
 
 test('T1-OUTCOME-USAGE acceptance 2: codexUsage returns one row per rollout file from its last token_count line [R2]', () => {
-  assert.deepEqual(codexUsage(fixture().codexDir), { rows: [codexRow], errors: [] });
+  const f = fixture();
+  assert.deepEqual(codexUsage(f.codexDir), { rows: [codexRow], errors: [] });
+  // A token_count line without totals, a turn_context without a model and a second session_meta after the valid lines change nothing.
+  const session = path.join(f.codexDir, '2026', '01', '02', 'rollout-2026-01-02T03-00-00-cx1.jsonl');
+  put(session, [...readFileSync(session, 'utf8').trim().split('\n'), codexLine('event_msg', { type: 'token_count', info: null }), codexLine('turn_context', { cwd: 'C:\\wt' }), codexLine('session_meta', { id: 'cx9', cwd: 'C:\\other' })]);
+  assert.deepEqual(codexUsage(f.codexDir), { rows: [codexRow], errors: [] });
 });
 
 test('T1-OUTCOME-USAGE acceptance 3: reviewLogUsage reads the number after the last tokens used line, gives a log directly under review a null card, and gives no row and no error for a log without the line [R3]', () => {
   assert.deepEqual(reviewLogUsage(fixture().stateDir), { rows: [logRow, looseLogRow], errors: [] });
+  // A marker followed by no number, as a later line or as the last line, leaves the earlier pair in place.
+  const stateDir = path.join(tempDir(), 'state');
+  put(path.join(stateDir, 'evidence', 'g-a', 'review', 'T1-X', 'a.log'), reviewLog(5, ['tokens used', '42', 'tokens used', 'unfinished']));
+  put(path.join(stateDir, 'evidence', 'g-a', 'review', 'T1-X', 'b.log'), [...reviewLog(5, ['tokens used', '43']).slice(0, -1), 'tokens used']);
+  assert.deepEqual(reviewLogUsage(stateDir).rows.map((row) => [row['invocation'], row['totalTokens']]), [['a', 42], ['b', 43]]);
 });
 
 /** The fixture with a line and a meta file that are not JSON, a usage line without a message id and two Codex files without a usable token count, read with one absent directory per source. */
@@ -115,6 +128,20 @@ test('T1-OUTCOME-USAGE acceptance 4: an absent directory of each source, a line 
   assert.deepEqual(errors.map((e) => ({ ...e, problem: String(e['problem']).replace(/^unreadable: .+$/, 'unreadable') })), expected);
   assert.deepEqual(rows.map((r) => `${String(r['source'])} ${String(r['agentId'] ?? r['sessionId'] ?? r['invocation'])}`), ['claude-code s1', 'claude-code s1', 'claude-code a1', 'claude-code b2', 'claude-code c3', 'claude-code s1', 'codex cx1', 'review-log T1-X.r3.1.abc', 'review-log loose']);
   assert.deepEqual(rows[4], claudeRow({ sidechain: true, agentId: 'c3' }), 'the row of a subagent whose meta file is not JSON');
+  // A directory that cannot be listed is one error naming it, beside the rows of its sibling file.
+  const f = fixture();
+  const subagents = path.join(f.claudeDir, 's1', 'subagents');
+  const list = (dir: string): Dirent[] => {
+    if (dir === subagents) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return readdirSync(dir, { withFileTypes: true });
+  };
+  const listed = claudeUsage([f.claudeDir], [], list);
+  assert.deepEqual([listed.rows.map((row) => row['agentId']), listed.errors], [[null, null], [{ source: 'claude-code', path: subagents, problem: 'unreadable: EACCES' }]]);
+  // A meta file that cannot be read (here a directory of its name) is one error naming it, and its subagent keeps its row.
+  mkdirSync(path.join(subagents, 'agent-b2.meta.json'));
+  const unreadableMeta = claudeUsage([f.claudeDir], ['T1-X-2']);
+  assert.deepEqual(unreadableMeta.rows.map((row) => [row['agentId'], row['agentType']]), [[null, null], [null, null], ['a1', 'implementer'], ['b2', null]]);
+  assert.deepEqual(unreadableMeta.errors.map((e) => [e['path'], String(e['problem']).split(':')[0]]), [[path.join(subagents, 'agent-b2.meta.json'), 'unreadable']]);
 });
 
 test('T1-OUTCOME-USAGE acceptance 5: every row has only the keys the card names, and no row or error holds the text of a fixture [R5]', () => {
@@ -150,26 +177,27 @@ test('T1-OUTCOME-USAGE acceptance 6: attribute sets the card, goal and stage of 
     [claudeRow({ ts: day(2, '04:45') }), null, null, 'unattributed'],
     [claudeRow({ ts: day(2, '07:00') }), null, null, 'unattributed'],
   ];
-  const attributed = attribute(cases.map(([row]) => row), tables, wt);
+  const attributed = attribute(cases.map(([row]) => ({ ...row, text: X })), tables, wt);
   assert.deepEqual(attributed, cases.map(([row, cardId, goalId, stage]) => ({ ...row, cardId, goalId, stage })));
 });
 
 test('T1-OUTCOME-USAGE acceptance 7: priceOf returns the list-price cost of a row with 5-minute and 1-hour cache writes, null for an unknown model and for a review-log row, and prices.json holds the six models with five prices, a source and the date read [R7]', () => {
   const prices: Prices = {
-    'model-a': { input: 3, cacheRead: 0.5, cacheWrite5m: 4, cacheWrite1h: 6, output: 15, source: 'https://example.com/a', date: '2026-01-01' },
-    'model-b': { input: 1, cacheRead: 0.25, cacheWrite5m: 2, cacheWrite1h: 3, output: 8, source: 'https://example.com/b', date: '2026-01-01' },
+    'model-a': { input: 3, cacheRead: 0.5, cacheWrite: 4, cacheWriteLong: 6, output: 15, cacheWriteTier: '5 minutes', cacheWriteLongTier: '1 hour', source: 'https://example.com/a', date: '2026-01-01' },
+    'model-b': { input: 1, cacheRead: 0.25, cacheWrite: 2, cacheWriteLong: 3, output: 8, cacheWriteTier: '30 minutes', cacheWriteLongTier: '12 hours', source: 'https://example.com/b', date: '2026-01-01' },
   };
   // 1 M input at 3, 2 M cache read at 0.5, 0.5 M cache write (0.3 M 5-minute at 4, 0.2 M 1-hour at 6), 0.1 M output at 15: 3 + 1 + 1.2 + 1.2 + 1.5.
   assert.equal(priceOf(claudeRow({ inputTokens: 1_000_000, cacheReadTokens: 2_000_000, cacheWriteTokens: 500_000, cacheWrite1hTokens: 200_000, outputTokens: 100_000 }), prices), 7.9);
-  // 2 M input at 1, 4 M cache read at 0.25, no cache write, 0.25 M output at 8: 2 + 1 + 0 + 2.
-  assert.equal(priceOf({ ...codexRow, inputTokens: 2_000_000, cacheReadTokens: 4_000_000, cacheWriteTokens: 0, outputTokens: 250_000 }, prices), 5);
+  // A Codex row names no duration: 2 M input at 1, 4 M cache read at 0.25, 1 M cache write at the shorter tier 2, 0.25 M output at 8: 2 + 1 + 2 + 2.
+  assert.equal(priceOf({ ...codexRow, inputTokens: 2_000_000, cacheReadTokens: 4_000_000, cacheWriteTokens: 1_000_000, outputTokens: 250_000 }, prices), 7);
   assert.equal(priceOf(claudeRow({ model: 'model-c' }), prices), null);
   assert.equal(priceOf(claudeRow({ model: 'constructor' }), prices), null);
   assert.equal(priceOf({ ...logRow, model: 'model-a' }, prices), null);
   const stored = JSON.parse(readFileSync(path.join(root, 'bench', 'outcome', 'prices.json'), 'utf8')) as Prices;
   assert.deepEqual(Object.keys(stored).sort(), ['claude-fable-5-2', 'claude-haiku-5-5', 'claude-opus-5-5', 'claude-sonnet-5-5', 'gpt-5.6-sol', 'gpt-6-astra']);
   for (const [model, entry] of Object.entries(stored)) {
-    assert.deepEqual([entry.input, entry.cacheRead, entry.cacheWrite5m, entry.cacheWrite1h, entry.output].map((price) => typeof price), ['number', 'number', 'number', 'number', 'number'], model);
+    assert.deepEqual([entry.input, entry.cacheRead, entry.cacheWrite, entry.cacheWriteLong, entry.output].map((price) => typeof price === 'number' && price > 0), [true, true, true, true, true], model);
+    assert.deepEqual([entry.cacheWriteTier, entry.cacheWriteLongTier], model.startsWith('claude-') ? ['5 minutes', '1 hour'] : ['30 minutes', '12 hours'], model);
     assert.match(entry.source, /^https:\/\/\S+$/, model);
     assert.equal(entry.date, '2026-11-10', model);
   }
