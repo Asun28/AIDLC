@@ -52,7 +52,7 @@ const checkPage = (...check_runs: object[]): object => ({ total_count: check_run
 
 test('T1-OUTCOME-GITHUB acceptance 1: pullRequests returns the rows of both pages with the nine fields, a pull request with a null merged_at included [R1]', () => {
   const [a, b, c, d, e] = ['a', 'b', 'c', 'd', 'e'].map((ch) => ch.repeat(40)) as [string, string, string, string, string];
-  const pages = [[pr(1, 'T1-A', a, at(1, '02:00'), b), pr(2, 'T1-B', c, null, null, { state: 'open', closed_at: null })], [pr(3, 'x', d, at(3), e, { base: { ref: 'release' } })]];
+  const pages = [[pr(1, 'T1-A', a, at(1, '02:00'), b), pr(2, 'T1-B', c, null, null, { state: 'open', closed_at: null })], [pr(3, 'x', d.toUpperCase(), at(3), e.toUpperCase(), { base: { ref: 'release' } })]];
   const { runner, calls } = recording({ [gh(PULLS)]: { stdout: JSON.stringify(pages) } });
   assert.deepEqual(pullRequests(runner, REPO), { rows: [prRow(1, 'T1-A', a, at(1, '02:00'), b), prRow(2, 'T1-B', c, null, null, { state: 'open', closedAt: null }), prRow(3, 'x', d, at(3), e, { baseRef: 'release' })], errors: [] });
   assert.deepEqual(calls, [gh(PULLS)]);
@@ -66,7 +66,7 @@ test('T1-OUTCOME-GITHUB acceptance 2: checkRuns gives a check run of a workflow 
     [gh(runsOf('s1'))]: { stdout: JSON.stringify([{ total_count: 2, workflow_runs: [{ id: 901, run_attempt: 1 }, { id: 900, run_attempt: 2 }] }]) },
     [gh(checksOf('s2'))]: { stdout: JSON.stringify([checkPage(check('ext', 'success', at(2)))]) },
   });
-  assert.deepEqual(checkRuns(runner, REPO, ['s1', 's2', 's1']), {
+  assert.deepEqual(checkRuns(runner, REPO, ['s1', 's2', 'S1']), {
     rows: [
       { sha: 's1', name: 'ci', status: 'completed', conclusion: 'failure', startedAt: at(1, '01:00'), completedAt: '2026-01-01T01:00:59Z', runAttempt: 1 },
       { sha: 's1', name: 'ci', status: 'completed', conclusion: 'success', startedAt: at(1, '01:20'), completedAt: '2026-01-01T01:20:59Z', runAttempt: 2 },
@@ -78,19 +78,23 @@ test('T1-OUTCOME-GITHUB acceptance 2: checkRuns gives a check run of a workflow 
   });
   assert.deepEqual(calls, [gh(checksOf('s1')), gh(runsOf('s1')), gh(jobsOf(900, 1)), gh(jobsOf(900, 2)), gh(checksOf('s2'))], 'the jobs are read for the run with two attempts only');
 
-  // A jobs call that fails, and a check run that is in no attempt's jobs: the run's attempt, and one error row each.
+  // `a` is in the jobs of attempt 1, which was read, though attempt 2 failed. `c` is in no attempt of a run whose attempts were
+  // all read, and `d` in none while attempt 1 answered HTTP 429: null, never the run's latest attempt, and one error row each.
   const partial = recording({
-    [gh(checksOf('s3'))]: { stdout: JSON.stringify([checkPage(check('a', 'success', at(1), 900, 11), check('b', 'success', at(1), 902, 21), check('c', 'success', at(1), 902, 22))]) },
-    [gh(runsOf('s3'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 900, run_attempt: 2 }, { id: 902, run_attempt: 2 }] }]) },
+    [gh(checksOf('s3'))]: { stdout: JSON.stringify([checkPage(check('a', 'success', at(1), 900, 11), check('b', 'success', at(1), 902, 21), check('c', 'success', at(1), 902, 22), check('d', 'success', at(1), 904, 41))]) },
+    [gh(runsOf('s3'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 900, run_attempt: 2 }, { id: 902, run_attempt: 2 }, { id: 904, run_attempt: 2 }] }]) },
     [gh(jobsOf(900, 1))]: { stdout: JSON.stringify([{ jobs: [{ id: 11 }] }]) },
     [gh(jobsOf(900, 2))]: { exitCode: 1, stderr: 'gh: Not Found (HTTP 404)' },
     [gh(jobsOf(902, 1))]: { stdout: JSON.stringify([{ jobs: [{ id: 21 }] }]) },
     [gh(jobsOf(902, 2))]: { stdout: JSON.stringify([{ jobs: [{ id: 99 }] }]) },
+    [gh(jobsOf(904, 1))]: { exitCode: 1, stdout: '{"message":"API rate limit exceeded","status":"429"}', stderr: 'gh: API rate limit exceeded (HTTP 429)' },
+    [gh(jobsOf(904, 2))]: { stdout: JSON.stringify([{ jobs: [{ id: 97 }] }]) },
   });
   const fallback = checkRuns(partial.runner, REPO, ['s3']);
-  assert.deepEqual(fallback.rows.map((r) => [r['name'], r['runAttempt']]), [['a', 1], ['b', 1], ['c', 2]]);
+  assert.deepEqual(fallback.rows.map((r) => [r['name'], r['runAttempt']]), [['a', 1], ['b', 1], ['c', null], ['d', null]]);
   assert.deepEqual(fallback.errors, [
     { command: gh(jobsOf(900, 2)), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' },
+    { command: gh(jobsOf(904, 1)), exit: 1, stderr: 'gh: API rate limit exceeded (HTTP 429)', problem: 'did not exit 0' },
     { command: gh(runsOf('s3')), exit: 0, stderr: '', problem: 'check run 22 is in no attempt of workflow run 902' },
   ]);
 });
@@ -108,7 +112,8 @@ let built: { dir: string; sha: Record<string, string> } | undefined;
  * A real repository, built once. main: `c0`, then per branch its squash commit (`mA`, `mR`, `mV`, `mF`), then reverts of `mV`
  * after 2 days, `mA` after 15 days, `c0` after 3 days and `f1` (not on main), a commit whose subject starts with Revert and
  * whose body holds a sha without the reverts line, a merge of branch side, whose one commit reverts `mR`, and a revert of
- * that commit, which reached main through the merge's second parent, after 3 days. `f2` quotes a Co-Authored-By line in prose.
+ * that commit, which reached main through the merge's second parent, after 3 days, and a revert of `mR` after 20 days that
+ * writes its sha in upper case. `f2` quotes a Co-Authored-By line in prose.
  * Branches from main: T1-A (`a1`, then `n1` lands on main and `aM` merges main into the branch), T1-RED (`r1`), T1-REV (`v1`), feature-x (`f1`, `f2`). It also holds the configuration
  * and the stand-in for `gh` that run.ts reads when started there.
  */
@@ -155,6 +160,7 @@ function repo(): { dir: string; sha: Record<string, string> } {
   git(['checkout', '-q', 'main']);
   git(['merge', '-q', '--no-ff', '-m', 'Merge side', 'side'], at(9));
   commit('revSide', at(12), `Revert "side"\n\nThis reverts commit ${sha['sideRevert']}.`);
+  commit('revUpper', at(22, '10:00'), `Revert "squash T1-RED"\n\nThis reverts commit ${sha['mR']!.toUpperCase()}.`);
   put(path.join(dir, 'aidlc.config.json'), JSON.stringify({ repository: REPO, base: 'main', github: { requiredChecks: ['ci', 'scan'] } }));
   // The stand-in for gh: a copy of node named gh, which run.ts starts in this directory as `gh api ...`, so node runs api.js.
   // It answers an endpoint from the JSON file FAKE_GH names, else as gh does for HTTP 404, and logs each call.
@@ -168,7 +174,7 @@ test('T1-OUTCOME-GITHUB acceptance 3: reverts finds a revert made 3 days after i
   const { dir, sha } = repo();
   const row = (name: string, date: string, target: string, daysAfter: number | null): Row => ({ sha: sha[name], date, revertedSha: sha[target], daysAfter });
   assert.deepEqual(reverts(gitIn(dir), 'main'), {
-    rows: [row('revSide', '2026-01-12T00:00:00.000Z', 'sideRevert', 3), row('revGone', '2026-01-07T00:00:00.000Z', 'f1', null), row('rev0', '2026-01-04T00:00:00.000Z', 'c0', 3), row('revA', '2026-01-16T02:00:00.000Z', 'mA', 15), row('revV', '2026-01-06T06:00:00.000Z', 'mV', 2)],
+    rows: [row('revUpper', '2026-01-22T10:00:00.000Z', 'mR', 20), row('revSide', '2026-01-12T00:00:00.000Z', 'sideRevert', 3), row('revGone', '2026-01-07T00:00:00.000Z', 'f1', null), row('rev0', '2026-01-04T00:00:00.000Z', 'c0', 3), row('revA', '2026-01-16T02:00:00.000Z', 'mA', 15), row('revV', '2026-01-06T06:00:00.000Z', 'mV', 2)],
     errors: [],
   });
   const missing = reverts(gitIn(dir), 'no-such-branch');
@@ -249,13 +255,13 @@ test('T1-OUTCOME-GITHUB acceptance 5: a runner exit of 1, a timeout, output that
 
 test('T1-OUTCOME-GITHUB acceptance 5 and 10: a failing ancestry or date call of a revert target, and a malformed jobs page, each give one github_errors row and keep the other rows [R2] [R3] [R5]', () => {
   const tip = 'f'.repeat(40);
-  const targets = ['1', '2', '3', '4', '5'].map((digit) => digit.repeat(40));
+  const targets = ['1', '2', '3', '4', '5', '6'].map((digit) => digit.repeat(40));
   const record = (index: number): string => `${String(index).repeat(39)}a 2026-01-05T00:00:00+00:00\n${tip}\n\nRevert\n\nThis reverts commit ${targets[index - 1]}.\n\0\n`;
-  const ancestry = (index: number): string => `git merge-base --is-ancestor --end-of-options ${targets[index - 1]} ${tip}`;
+  const ancestry = (index: number): string => `git rev-list --max-count=1 --end-of-options ${targets[index - 1]} ^${tip}`;
   const shown = (index: number): string => `git show -s --format=%cI --end-of-options ${targets[index - 1]}`;
   const git = recording({
     'git rev-parse': { stdout: `${tip}\n` },
-    'git log': { stdout: [1, 2, 3, 4, 5].map(record).join('') },
+    'git log': { stdout: [1, 2, 3, 4, 5, 6].map(record).join('') },
     [ancestry(1)]: { exitCode: 128, stderr: 'fatal: Not a valid commit name 1\n' },
     [ancestry(2)]: { exitCode: null, timedOut: true },
     [ancestry(3)]: {},
@@ -264,9 +270,12 @@ test('T1-OUTCOME-GITHUB acceptance 5 and 10: a failing ancestry or date call of 
     [shown(4)]: { stdout: '\n' },
     [ancestry(5)]: {},
     [shown(5)]: { stdout: '2026-01-03T00:00:00+00:00\n' },
+    // Not an ancestor: the call exits 0 and prints the commit that the base does not hold. Its date would give 4 days.
+    [ancestry(6)]: { stdout: `${targets[5]}\n` },
+    [shown(6)]: { stdout: '2026-01-01T00:00:00+00:00\n' },
   });
   const got = reverts(git.runner, 'main');
-  assert.deepEqual(got.rows.map((r) => [r['revertedSha'], r['daysAfter']]), [[targets[0], null], [targets[1], null], [targets[2], null], [targets[3], null], [targets[4], 2]]);
+  assert.deepEqual(got.rows.map((r) => [r['revertedSha'], r['daysAfter']]), [[targets[0], null], [targets[1], null], [targets[2], null], [targets[3], null], [targets[4], 2], [targets[5], null]]);
   assert.deepEqual(got.errors, [
     { command: ancestry(1), exit: 128, stderr: 'fatal: Not a valid commit name 1', problem: 'did not exit 0' },
     { command: ancestry(2), exit: null, stderr: '', problem: 'timeout' },
@@ -274,7 +283,7 @@ test('T1-OUTCOME-GITHUB acceptance 5 and 10: a failing ancestry or date call of 
     { command: shown(4), exit: 0, stderr: '', problem: 'not a date' },
   ]);
 
-  // A jobs page without a jobs array, and a job without an id: left out, one row for the call, the run's attempt kept.
+  // A jobs page without a jobs array, and a job without an id: left out, one row for the call, the attempt unknown.
   const jobs = recording({
     [gh(checksOf('s1'))]: { stdout: JSON.stringify([checkPage(check('a', 'success', at(1), 900, 11), check('b', 'success', at(1), 903, 31))]) },
     [gh(runsOf('s1'))]: { stdout: JSON.stringify([{ workflow_runs: [{ id: 900, run_attempt: 2 }, { id: 903, run_attempt: 2 }] }]) },
@@ -284,7 +293,7 @@ test('T1-OUTCOME-GITHUB acceptance 5 and 10: a failing ancestry or date call of 
     [gh(jobsOf(903, 2))]: { stdout: JSON.stringify([{ jobs: [{ id: 99 }] }]) },
   });
   const checks = checkRuns(jobs.runner, REPO, ['s1']);
-  assert.deepEqual(checks.rows.map((r) => [r['name'], r['runAttempt']]), [['a', 2], ['b', 2]]);
+  assert.deepEqual(checks.rows.map((r) => [r['name'], r['runAttempt']]), [['a', null], ['b', null]]);
   assert.deepEqual(checks.errors, [
     { command: gh(jobsOf(900, 1)), exit: 0, stderr: '', problem: 'page 1 has no jobs array' },
     { command: gh(jobsOf(903, 1)), exit: 0, stderr: '', problem: 'page 1 holds a job without an id' },
@@ -331,8 +340,11 @@ function answers(s: Record<string, string>, scanOnA: object[] = [check('scan', '
     [jobsOf(900, 1)]: [{ total_count: 1, jobs: [{ id: 1 }] }],
     [jobsOf(900, 2)]: [{ total_count: 1, jobs: [{ id: 2 }] }],
     [checksOf(s['mA']!)]: [checkPage(check('ci', 'failure', at(1, '02:01')), check('ci', 'success', at(1, '02:05')), check('docs', 'failure', at(1, '02:01')), ...scanOnA)],
-    [checksOf(s['r1']!)]: [checkPage(...green, check('docs', 'failure', at(2)), check('lint', 'success', at(2), 901))],
-    [runsOf(s['r1']!)]: [{ total_count: 1, workflow_runs: [{ id: 901, run_attempt: 1 }] }],
+    // ci on the head of 12: cancelled on attempt 1 with no startedAt, green on attempt 2.
+    [checksOf(s['r1']!)]: [checkPage({ id: 51, name: 'ci', status: 'completed', conclusion: 'cancelled', started_at: null, completed_at: null, details_url: `https://github.com/${REPO}/actions/runs/905/job/51` }, check('ci', 'success', at(2), 905, 52), check('scan', 'success', at(2)), check('docs', 'failure', at(2)), check('lint', 'success', at(2), 901))],
+    [runsOf(s['r1']!)]: [{ total_count: 2, workflow_runs: [{ id: 901, run_attempt: 1 }, { id: 905, run_attempt: 2 }] }],
+    [jobsOf(905, 1)]: [{ total_count: 1, jobs: [{ id: 51 }] }],
+    [jobsOf(905, 2)]: [{ total_count: 1, jobs: [{ id: 52 }] }],
     [checksOf(s['mR']!)]: [checkPage(check('ci', 'success', at(2, '10:01')), check('ci', 'failure', at(2, '10:05')), check('scan', 'success', at(2, '10:01')))],
     [checksOf(s['v1']!)]: [checkPage(check('ci', 'success', at(3)), check('scan', 'failure', at(3)))],
     [checksOf(s['mV']!)]: [checkPage(...green)],
@@ -362,19 +374,19 @@ test('T1-OUTCOME-GITHUB acceptance 5 through run.ts: a failing gh call is a row 
   assert.deepEqual(GITHUB_FILES.filter((name) => !existsSync(path.join(r.out, name))), [], 'the six files are written before DuckDB is started');
   const failed =`repos/${REPO}/commits/${sha['f2']}/check-runs?filter=all&per_page=100`;
   assert.deepEqual(lines(r.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(failed), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [10, 20, 5, 8, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(r.out, name).length), [10, 21, 6, 8, 1, 2]);
   assert.deepEqual(lines(r.out, 'required_checks.jsonl'), ['{"name":"ci"}', '{"name":"scan"}']);
   assert.equal(lines(r.out, 'card_runs.jsonl').length, 6);
-  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [13, 13], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check, one jobs call per attempt of the rerun');
+  assert.deepEqual([r.ghCalls.length, new Set(r.ghCalls).size], [15, 15], 'one pulls call, one check-runs call per commit of a merged pull request, one workflow-run call per commit with a workflow check, one jobs call per attempt of the two reruns');
 
   const noPulls = outcome(['--duckdb', missingBin()], { answers: {} });
   assert.equal(noPulls.status, 2, noPulls.stderr);
   assert.deepEqual(lines(noPulls.out, 'github_errors.jsonl'), [JSON.stringify({ command: gh(PULLS), exit: 1, stderr: 'gh: Not Found (HTTP 404)', problem: 'did not exit 0' })]);
-  assert.deepEqual(GITHUB_FILES.map((name) => lines(noPulls.out, name).length), [0, 0, 5, 0, 1, 2]);
+  assert.deepEqual(GITHUB_FILES.map((name) => lines(noPulls.out, name).length), [0, 0, 6, 0, 1, 2]);
   assert.equal(lines(noPulls.out, 'cards.jsonl').length, 5);
 
   const unconfigured = githubTables(gitIn(repo().dir), undefined, 'main', ['ci']);
-  assert.deepEqual([unconfigured.prs, unconfigured.checks, unconfigured.reverts.length, unconfigured.required_checks], [[], [], 5, [{ name: 'ci' }]]);
+  assert.deepEqual([unconfigured.prs, unconfigured.checks, unconfigured.reverts.length, unconfigured.required_checks], [[], [], 6, [{ name: 'ci' }]]);
   assert.deepEqual(unconfigured.github_errors, [{ command: 'gh api', exit: null, stderr: '', problem: 'no repository in aidlc.config.json: pull requests and check runs are not read' }]);
 });
 
@@ -391,8 +403,9 @@ test('T1-OUTCOME-GITHUB acceptance 6, 9 and 10: run.ts prints the PR success rat
   assert.deepEqual(got.get('summary_pr_success'), success({ accepted: 1, pr_success_rate: 0.25, accepted_strict: 1, pr_success_rate_strict: 0.25 }));
   // Hours from the earliest run to mergedAt: T1-A 2, T1-RED 10, T1-REV 30 (6 from its later run). T1-D has a mergeVerified run and no merged pull request.
   assert.deepEqual(got.get('summary_lead_time_pr'), [{ p50_hours: 10, p90_hours: 26, n: 3, merged_cards_without_pr: 1 }]);
-  // Of the five merged pull requests, 11 has a head check on attempt 2 and 12 one on attempt 1, and 11 (ci) and 13 (scan) a required check whose first run failed.
-  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 5, rerun_share: 0.2, first_attempt_failed_share: 0.4 }]);
+  // Of the five merged pull requests, 11 and 12 have a head check on attempt 2; 11 (ci failed first), 12 (ci cancelled on
+  // attempt 1 with no startedAt, acceptance 11) and 13 (scan) a required check whose first run failed.
+  assert.deepEqual(got.get('summary_ci'), [{ merged_prs: 5, rerun_share: 0.4, first_attempt_failed_share: 0.6 }]);
   assert.deepEqual(got.get('summary_reconcile'), [
     // Closed unmerged: 14 of T1-D by its run's prNumber and by headRef, counted once; 19 of T1-NEXT, a registry card with no
     // run; 18 of T1-RED by headRef, its merged run naming 12, and 20 by the prNumber of its other run, its headRef no card id.
