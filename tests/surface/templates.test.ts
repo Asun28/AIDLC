@@ -85,7 +85,7 @@ describe('templates (Q14 packaging)', () => {
     assert.ok(!live.includes('continue-on-error'), 'the gitleaks step must block the job');
   });
 
-  test('T0-SCAN-SETUP-STEP acceptance 5: each default scan setup step is a step of the shipped scanner workflow before its scan, and both configs carry the default [R3]', () => {
+  test('T0-SCAN-SETUP-STEP-2 acceptance 6: each default scan setup step is a step of the shipped scanner workflow before its scan, and both configs carry the default [R4]', () => {
     const lines = readFileSync(path.join(tpl, 'github', 'workflows', 'security-scanners.yml'), 'utf8').split(/\r?\n/);
     const scanAt = lines.findIndex((l) => l.trim().startsWith('run: gitleaks git '));
     assert.ok(scanAt > 0, 'the scan step runs gitleaks git');

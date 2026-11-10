@@ -188,7 +188,7 @@ test('R7: a red secret scan is STOP/risk with no rerun intent and no repair atte
 /** The gate output of run 42467444385 attempt 1 (PR 236): Gitleaks red at its install step on a 504; the scan step was skipped. */
 const SCAN_SETUP = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"Gitleaks (committed history)","job":"128690143221","step":{"number":3,"name":"Install gitleaks (pinned version, checksum verified)","conclusion":"failure"}}\ncurl: (22) The requested URL returned error: 504\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
 
-test('T0-SCAN-SETUP-STEP acceptance 4: a secret scan red at its install step is STOP/ci with no rerun intent, not STOP/risk [R4]', () => {
+test('T0-SCAN-SETUP-STEP-2 acceptance 5: a secret scan red at its install step is STOP/ci with no rerun intent, not STOP/risk [R5]', () => {
   const fx = makeFixture();
   try {
     const { goal, runner, card, run1 } = start(fx, new InjectedShipPath(['ci-red'], SCAN_SETUP));

@@ -10,6 +10,7 @@ import { spawnSync } from 'node:child_process';
 import { scriptedRunner, type ExecReceipt } from '../../src/probes/exec.ts';
 import { CardRunner, hasConflictDiagnostic } from '../../src/loop/card-runner.ts';
 import { makeFixture, writeCard, goalForCards } from '../scenarios/_harness.ts';
+import { classifyCiFailure } from '../../src/core/ci-policy.ts';
 
 const HEAD = 'a'.repeat(40);
 const BASE_OID = 'd'.repeat(40);
@@ -430,6 +431,22 @@ describe('GitHubShipPath required checks and config (T1-LOOP-GATES R8)', () => {
     const line = outputLines(encoded).find((l) => l.startsWith('[CI-GATE-STEP] '))!;
     assert.ok(!line.includes('[SAGA-DONE]') && !line.includes('runs/'), `names are encoded: ${line}`);
     assert.deepEqual(stepLines(encoded), [{ check: 'check %5Bx%5D runs/2', job: '456', step: { number: 2, name: 'Run %5BSAGA-DONE%5D x/runs/1', conclusion: 'failure' } }]);
+  });
+
+  test('T0-SCAN-SETUP-STEP-2 acceptance 7: the receipt of a red scan job at a listed setup step is exempt in the form this path prints, names with brackets, percent signs and slashes included [R1] [R2]', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const check = 'Gitleaks [x] 100% /runs';
+    const install = 'Install [gitleaks] 100% /tmp';
+    const { r } = logged(f, job([{ name: 'install', title: install, at: 3, lines: ['curl: (22) The requested URL returned error: 504'], failed: true }]), [actionsJob(check, 123, 456)]);
+    const text = `${r.receipt.stdout}\n${r.receipt.stderr}`;
+    assert.ok(text.includes('[CI-GATE-RED] ') && text.includes('[CI-GATE-STEP] '), text);
+    const gate = (scanSetupSteps: string[]) => classifyCiFailure([{ name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: text }], undefined, { scanSetupSteps });
+    const listed = gate([install]);
+    assert.equal(listed.class, 'unknown', listed.evidence.join(' | '));
+    assert.equal(listed.evidence.at(-1), `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(install)} before its scan`);
+    const empty = gate([]);
+    assert.equal(empty.class, 'security', empty.evidence.join(' | '));
   });
 
   test('T0-CI-RED-LOGS-2 acceptance 1: a red Actions job puts its failed step on the gate output: from its header, no exit or post-step line, no timestamp, the last 60 lines capped and encoded, and no log text is read as a sentinel, a PR number or a run id', () => {
