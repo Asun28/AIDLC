@@ -185,6 +185,30 @@ test('R7: a red secret scan is STOP/risk with no rerun intent and no repair atte
   }
 });
 
+/** The gate output of run 42467444385 attempt 1 (PR 236): Gitleaks red at its install step on a 504; the scan step was skipped. */
+const SCAN_SETUP = '[CI-GATE-RED] [{"name":"Gitleaks (committed history)","conclusion":"failure"}]\n[CI-GATE-STEP] {"check":"Gitleaks (committed history)","job":"128690143221","step":{"number":3,"name":"Install gitleaks (pinned version, checksum verified)","conclusion":"failure"}}\ncurl: (22) The requested URL returned error: 504\n[SAGA-FAIL]\n[SAGA-RESUME] aidlc card next T1-HELLO';
+
+test('T0-SCAN-SETUP-STEP acceptance 4: a secret scan red at its install step is STOP/ci with no rerun intent, not STOP/risk [R4]', () => {
+  const fx = makeFixture();
+  try {
+    const { goal, runner, card, run1 } = start(fx, new InjectedShipPath(['ci-red'], SCAN_SETUP));
+    const r = runner.next(fx.goal(goal.id), card, run1);
+    assert.equal(r.directive.kind, 'stop', r.directive.narration);
+    assert.equal(r.run.stop?.reason, 'ci');
+    assert.equal(r.run.ci.reruns.length, 0, 'no rerun intent');
+    assert.equal(fx.events(goal.id).find((e) => e.type === 'CI_CLASSIFIED')?.data['class'], 'unknown');
+  } finally {
+    fx.cleanup();
+  }
+  const empty = makeFixture({ config: { ci: { scanSetupSteps: [] } } });
+  try {
+    const { goal, runner, card, run1 } = start(empty, new InjectedShipPath(['ci-red'], SCAN_SETUP));
+    assert.equal(runner.next(empty.goal(goal.id), card, run1).run.stop?.reason, 'risk', 'the runner reads the configured list');
+  } finally {
+    empty.cleanup();
+  }
+});
+
 const SECURITY_NATIVE = '[CI-GATE-RED] [{"name":"secret_scan","conclusion":"failure"}]\nnpm ERR! network read ECONNRESET\n[SAGA-FAIL]';
 
 test('R7: a native secret_scan job with transient noise is STOP/risk, never a rerun', () => {

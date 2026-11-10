@@ -447,3 +447,67 @@ describe('security class (T1-LOOP-GATES R7)', () => {
     assert.match(d.reason, /security gate/);
   });
 });
+
+describe('scan setup steps (T0-SCAN-SETUP-STEP)', () => {
+  const SCAN = 'Gitleaks (committed history)';
+  const INSTALL = 'Install gitleaks (pinned version, checksum verified)';
+  /** A step line for a check, as the GitHub ship path prints it from the job record. */
+  const stepLine = (check: string, name: string | null, conclusion = 'failure', job = '128690143221') => `[CI-GATE-STEP] ${JSON.stringify({ check, job, step: name === null ? null : { number: 3, name, conclusion } })}`;
+  const redLine = (...names: string[]) => `[CI-GATE-RED] ${JSON.stringify(names.map((name) => ({ name, conclusion: 'failure' })))}`;
+  /** The gate output of run 42467444385 attempt 1 (PR 236): the install step failed on a 504 and the scan step was skipped. */
+  const RUN_42467444385 = [redLine(SCAN), stepLine(SCAN, INSTALL), 'curl: (22) The requested URL returned error: 504'].join('\n');
+  const ship = (text: string, options?: { transientSteps?: string[]; scanSetupSteps?: string[] }) => classifyCiFailure([{ name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: text }], undefined, options);
+
+  test('acceptance 1: a scan check red at its listed install step is no security finding and says why [R1] [R3]', () => {
+    const c = ship(RUN_42467444385);
+    assert.equal(c.class, 'unknown');
+    assert.ok(!c.evidence.some((e) => e.startsWith('security:')), c.evidence.join(' | '));
+    assert.equal(c.evidence.at(-1), 'scan-setup: "Gitleaks (committed history)" failed at "Install gitleaks (pinned version, checksum verified)" before its scan');
+    assert.equal(classifyCiFailure([{ name: SCAN, conclusion: 'failure', logExcerpt: stepLine(SCAN, INSTALL) }]).class, 'unknown', 'a failed job passed in directly with its step line');
+  });
+
+  test('acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step [R2]', () => {
+    const cases: Array<[string, string, { scanSetupSteps?: string[] }?]> = [
+      ['no step line', [redLine(SCAN), 'curl: (22) The requested URL returned error: 504'].join('\n')],
+      ['a null step', [redLine(SCAN), stepLine(SCAN, null)].join('\n')],
+      ['the scan step', [redLine(SCAN), stepLine(SCAN, 'Scan committed history')].join('\n')],
+      ['a listed step that did not fail', [redLine(SCAN), stepLine(SCAN, INSTALL, 'success')].join('\n')],
+      ['a step line of another check', [redLine(SCAN), stepLine('build', INSTALL)].join('\n')],
+      ['an empty list', RUN_42467444385, { scanSetupSteps: [] }],
+      ['a second step line naming the scan step', [RUN_42467444385, stepLine(SCAN, 'Scan committed history', 'failure', '2')].join('\n')],
+      ['a duplicate red check name', [redLine(SCAN, SCAN), stepLine(SCAN, INSTALL)].join('\n')],
+      ['the check red on two gate lines', [RUN_42467444385, redLine(SCAN)].join('\n')],
+      ['an unresolved red line', [RUN_42467444385, '[CI-GATE-RED] unreadable'].join('\n')],
+      ['raw gitleaks output', [RUN_42467444385, '1:23PM WRN leaks found: 2'].join('\n')],
+      ['a RuleID line', [RUN_42467444385, 'RuleID:      generic-api-key'].join('\n')],
+      ['an unparsed red line naming a scan', [RUN_42467444385, '[CI-GATE-RED] Gitleaks (committed history),linux=failure'].join('\n')],
+    ];
+    for (const [label, text, options] of cases) {
+      const c = ship(text, options);
+      assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
+      assert.ok(!c.evidence.some((e) => e.startsWith('scan-setup:')), `${label}: no scan-setup evidence`);
+    }
+  });
+
+  test('acceptance 3: the exempt check takes the class its other evidence gives, and ci classify reads the configured list [R1] [R3]', () => {
+    assert.equal(ship(RUN_42467444385, { transientSteps: ['Set up job', 'Complete job', INSTALL] }).class, 'transient', 'a setup step also on transientSteps earns the rerun any check earns');
+    const beside = [redLine('check (ubuntu-latest, 22)', SCAN), stepLine(SCAN, INSTALL), 'AssertionError: expected 1 to equal 2'].join('\n');
+    assert.equal(ship(beside).class, 'code-defect', 'a failing test beside the scan setup failure is a code defect');
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-scan-'));
+    try {
+      const file = path.join(dir, 'ci.log');
+      writeFileSync(file, RUN_42467444385);
+      const cli = path.resolve(import.meta.dirname, '../../src/cli/main.ts');
+      const classify = (): string => {
+        const out = spawnSync(process.execPath, [cli, 'ci', 'classify', '--log', file, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
+        assert.equal(out.status, 0, out.stderr);
+        return (JSON.parse(out.stdout) as { class: string }).class;
+      };
+      assert.equal(classify(), 'unknown', 'the default list');
+      writeFileSync(path.join(dir, 'aidlc.config.json'), JSON.stringify({ ci: { scanSetupSteps: [] } }));
+      assert.equal(classify(), 'security', 'an empty configured list');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
