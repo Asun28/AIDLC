@@ -516,6 +516,8 @@ test('T1-OUTCOME-GITHUB-2 acceptance 14: on a merge commit a required check canc
   assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01'), 910, 71), cancelled(910, 72)], twoAttempts), notGreen);
   // No attempt on either run: the run with no startedAt is earlier than the one that has one.
   assert.deepEqual(withScan([cancelled(), check('scan', 'success', at(1, '02:10'))]), success());
+  // A completed success with no startedAt is a success.
+  assert.deepEqual(withScan([{ ...(cancelled() as Row), conclusion: 'success' }]), success());
   // A completed run with an attempt is later than one with none, whatever their startedAt.
   assert.deepEqual(withScan([check('scan', 'success', at(1, '02:01'), 910), check('scan', 'failure', at(1, '02:30'))], oneAttempt), success());
   assert.deepEqual(withScan([check('scan', 'failure', at(1, '02:01'), 910), check('scan', 'success', at(1, '02:30'))], oneAttempt), notGreen);

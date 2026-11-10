@@ -18,19 +18,22 @@ CREATE OR REPLACE VIEW card_merge AS
 SELECT c.cardId, p.number, p.mergedAt, p.mergeCommitSha
 FROM (SELECT cardId, arg_min(number, mergedAt) AS number FROM run_prs WHERE mergedAt IS NOT NULL GROUP BY cardId) c JOIN prs p ON p.number = c.number;
 
--- Per commit with a run of a required check. A run is pending when its status is not completed or it has no startedAt;
--- a pending run is not a success. The last runs of a name are its pending ones when it has any, else those with its
--- latest startedAt. green: every required name has a run and each name's last runs are all a success. The first runs
--- of a name are those with its lowest runAttempt; among runs without a runAttempt, when none has one, those without a
--- startedAt before any that has one, else those with the earliest startedAt. first_failed: a first run is no success.
+-- Per commit with a run of a required check. A run is pending when its status is not completed, whatever its
+-- startedAt; a pending run is not a success, and a completed one is a success by its conclusion alone. The last runs
+-- of a name are its pending ones when it has any, else its completed runs with the highest runAttempt, else, when none
+-- has a runAttempt, those with the latest startedAt, a run without a startedAt being earlier than any that has one.
+-- green: every required name has a run and each name's last runs are all a success. The first runs of a name are
+-- those with its lowest runAttempt; among runs without a runAttempt, when none has one, those without a startedAt
+-- before any that has one, else those with the earliest startedAt. first_failed: a first run is no success.
+-- Runs of one runAttempt are ordered by startedAt in the same way, for the first and for the last.
 CREATE OR REPLACE VIEW commit_checks AS
 WITH runs AS (
   SELECT sha, name, success,
     rank() OVER (PARTITION BY sha, name ORDER BY runAttempt ASC NULLS LAST, startedAt ASC NULLS FIRST) = 1 AS first_run,
-    CASE WHEN bool_or(pending) OVER name_runs THEN pending ELSE startedAt = max(startedAt) OVER name_runs END AS last_run
+    CASE WHEN bool_or(pending) OVER name_runs THEN pending ELSE rank() OVER (PARTITION BY sha, name ORDER BY runAttempt DESC NULLS LAST, startedAt DESC NULLS LAST) = 1 END AS last_run
   FROM (
-    SELECT c.sha, c.name, c.startedAt, c.runAttempt, c.status IS DISTINCT FROM 'completed' OR c.startedAt IS NULL AS pending,
-      c.conclusion IS NOT DISTINCT FROM 'success' AND c.status IS NOT DISTINCT FROM 'completed' AND c.startedAt IS NOT NULL AS success
+    SELECT c.sha, c.name, c.startedAt, c.runAttempt, c.status IS DISTINCT FROM 'completed' AS pending,
+      c.conclusion IS NOT DISTINCT FROM 'success' AND c.status IS NOT DISTINCT FROM 'completed' AS success
     FROM checks c WHERE c.name IN (SELECT name FROM required_checks)
   )
   WINDOW name_runs AS (PARTITION BY sha, name)
