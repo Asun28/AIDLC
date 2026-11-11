@@ -1,7 +1,7 @@
 ---
 id: T0-LOCK-EPERM-RETRY
 title: A lock acquisition of updateJson retries an exclusive create refused with EPERM while the lock path is absent at most twice, after the loop's wait and within its deadline, and the third such refusal propagates as that EPERM
-status: todo
+status: merged
 branch: T0-LOCK-EPERM-RETRY
 worktree: D:\wt\AIDLC\T0-LOCK-EPERM-RETRY
 size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: about 18 changed lines in src/state/store.ts (the acquisition loop and the replaced deadline clause of the JSDoc); about 175 in tests/infra/update-json.test.ts (the error helper, the throughFs union, an import, a local event-trace helper, the acceptance 15 edit and four new tests: two retry tests, four deadline rows, six rows of other failures); about 10 in tests/infra/journal-lock.test.ts (the event trace of the absent half); 5 in tests/scenarios/journal-lock-refusal.test.ts; 4 in docs/OPERATIONS.md (two sentences replaced); 4 in CHANGELOG.md (the entry and the parenthetical in the T0-JOURNAL-APPEND-LOCK entry); about 4 in .claude/skills/verify-card-run-writes/SKILL.md at CLOSE; about 110 lines of attempt evidence (RED receipts, the revert table, the doc-pin run); about 330 in all"
@@ -196,3 +196,7 @@ Coordinator verification:
 - At d89e774d, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/infra/update-json.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 33, pass 33, fail 0, skipped 0.
 - Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1870 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+## Planner ruling at CLOSE (2026-11-12)
+
+The hygiene of this card asks, at CLOSE, to move the sync commit of .claude/skills/verify-card-run-writes/SKILL.md to the merge commit and to add to its Bounds list that a lock acquisition of `updateJson` retries an exclusive create refused with EPERM while the lock path is absent at most twice and that the check injects no lock refusal. The sync commit is moved. The Bounds statement is not added: the skill file is 7963 bytes and its cap is 8000 (tests/surface/templates.test.ts, "the skill exists, is ASCII and at most 8000 bytes"), so the line does not fit, and the file stays true without it: its Bounds section already defines a fault as a throw from `fs.renameSync` onto the card-run record or from `fs.appendFileSync` onto the goal journal, which excludes a lock refusal and any write this card does not make. The check itself was run at CLOSE on main: tests/scenarios/fault-points.test.ts is in the DoD rerun at the merge commit, and this card adds, removes and reorders no write (outcome: in sync). Making room in the skill file is a card of its own.
