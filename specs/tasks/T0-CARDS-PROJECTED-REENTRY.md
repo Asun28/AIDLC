@@ -4,7 +4,7 @@ title: "After VERIFY_ARC a new card enters a goal only through the repair cycle 
 status: todo
 branch: T0-CARDS-PROJECTED-REENTRY
 worktree: D:\wt\AIDLC\T0-CARDS-PROJECTED-REENTRY
-size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 45 source lines (src/loop/controller.ts about 42, src/core/goal-machine.ts 3); the rest is about 255 test lines (the merge-predicate table, the per-state refusals, the T2 re-approval, the run-driver regression), about 20 doc lines and about 25 lines of attempt evidence in this card"
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 45 source lines (src/loop/controller.ts about 42, src/core/goal-machine.ts 3); the rest is about 255 test lines (the merge-predicate table, the per-state refusals, the T2 re-approval, the run-driver regression), about 20 doc lines and about 25 lines of attempt evidence in this card; raised from 350 to 460 by the coordinator on the candidate 8639c3ff, which is 436 changed lines: 39 source lines, 331 lines of the acceptance tests and 45 lines of attempt evidence"
 allow_paths:
   - src/loop/controller.ts
   - src/core/goal-machine.ts
@@ -40,7 +40,7 @@ acceptance:
   - 7. The files that report `arc-verified` (24 sites in 9 files: amendment, audit, goal-close-stages, intake-target, release, release-publication, run-driver, t0-flow, two-windows) and `tests/scenarios/t1-arc.test.ts` ("Q10: integrated acceptance failure opens one bounded repair cycle ...", `arc-failed`) pass unchanged; among them t0-flow.test.ts "Q1/Q8/Q10/Q15: a T0 card flows ..." reports `arc-verified` with a run in CLOSE that has `mergeVerified`. [R2] [R3] [R8] [dod arm 1]
   - 8. `tests/surface/templates.test.ts` passes (both arc.md copies identical, ASCII, under 4500 bytes); the item text is reviewer-verified against the diff. [R10] [dod arm 1]
   - 9. The docs and the CHANGELOG state R11 (reviewer-verified against the diff). [R11]
-budget: 350
+budget: 460
 diagnosis:
   root_cause: "Two causes. `report('cards-projected')` (src/loop/controller.ts:545) calls `transitionGoal(goal, 'CARDS', now, { repairCycleAvailable: true })` for VERIFY_ARC and DELIVER without reading or spending `counters.integrationRepairCycles`, so the guard that bounds the repair cycle (src/core/goal-machine.ts:55) is told the cycle is available every time. `report('revision')` (:633-638) moves only RUN and WAIT back to PLAN, and `arc-verified` (:595-600) checks only the goal state, so a card a revision adds in VERIFY_ARC is never dispatched and the arc is verified without it. Reproduced by audit probe `probe2.test.ts` P4 and P12 on main."
   same_class: "Every report result that changes `goal.cards` (cards-projected, arc-failed, revision, the carried revision of resume), every write of state CARDS or PLAN (cards-projected, arc-failed, resume, extendDeadline, the revision), and every decision that cards are finished (`cardOutcomes` and `selectArc` for RUN -> VERIFY_ARC, `nextInClose` reading `mergeVerified`, the R3 predicate). Each is listed in the attempt evidence as covered, not affected or out of scope."
