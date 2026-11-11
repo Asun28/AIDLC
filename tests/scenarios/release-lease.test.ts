@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsRunner, candidateShaFor, actorA, actorB, T0 } from './_harness.ts';
@@ -409,9 +409,9 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
   });
 });
 
-/** A child process environment: no inherited variable whose name starts with GIT_, and git stopped above the fixture. */
+/** A child process environment: no inherited NODE_OPTIONS and no variable whose name starts with GIT_, and git stopped above the fixture. */
 function childEnv(fx: Fx, extra: Record<string, string>): NodeJS.ProcessEnv {
-  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_')));
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith('GIT_') && name.toUpperCase() !== 'NODE_OPTIONS'));
   return { ...inherited, GIT_CEILING_DIRECTORIES: path.dirname(fx.tmp), ...extra };
 }
 
@@ -682,7 +682,7 @@ test("another attempt's unresolved operation on the environment keeps its lease"
   });
 });
 
-test('a ledger entry that is listed and cannot be read keeps every lease', (t) => {
+test('a ledger entry that is listed and cannot be read keeps every lease', async (t) => {
   // Each planted entry is a file or link the test creates inside the fixture's operations directory.
   const plants: [string, (dir: string) => void, string][] = [
     ['an entry that is not JSON', (dir) => writeFileSync(path.join(dir, 'op-bad.json'), '{'), 'MALFORMED_JSON'],
@@ -701,29 +701,18 @@ test('a ledger entry that is listed and cannot be read keeps every lease', (t) =
       assert.equal(held(fx, STAGING), true, label);
     });
   }
-  if (process.platform !== 'win32' && process.getuid?.() !== 0) {
-    inFixture(t, (fx) => {
-      // A directory with read and no search permission: it lists its entries, and `existsSync` answers false for each of them.
-      const attempt = stored(fx, 'DONE');
-      hold(fx, 'staging', `release:${attempt.id}`);
-      record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'running' });
-      chmodSync(fx.paths.operations, 0o600);
-      try {
-        const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
-        assertRetryNamed(r.directive, attempt.id, 'operation ledger', 'every environment lease of the attempt kept');
-        assert.equal(held(fx, STAGING), true, 'a directory without search permission');
-      } finally {
-        chmodSync(fx.paths.operations, 0o755);
-      }
-    });
-    // A directory without read permission (its listing fails with EACCES), and an entry without read permission.
-    const entry = (fx: Fx) => path.join(fx.paths.operations, 'op-locked.json');
-    const modes: [string, (fx: Fx) => void, (fx: Fx) => void][] = [
-      ['a directory without read permission', (fx) => chmodSync(fx.paths.operations, 0o300), (fx) => chmodSync(fx.paths.operations, 0o755)],
-      ['an entry without read permission', (fx) => chmodSync(entry(fx), 0o000), (fx) => chmodSync(entry(fx), 0o644)],
-    ];
-    for (const [label, lock, unlock] of modes) {
-      inFixture(t, (fx) => {
+  // POSIX permission bits: each case is a subtest that skips, with its reason, where the bits do not apply.
+  const skip = process.platform === 'win32' ? 'POSIX permission bits do not apply on Windows' : process.getuid?.() === 0 ? 'root reads and lists regardless of permission bits' : false;
+  const entry = (fx: Fx) => path.join(fx.paths.operations, 'op-locked.json');
+  const modes: [string, (fx: Fx) => void, (fx: Fx) => void][] = [
+    // Read and no search permission: the directory lists its entries, and `existsSync` answers false for each of them.
+    ['a directory with read and no search permission', (fx) => chmodSync(fx.paths.operations, 0o600), (fx) => chmodSync(fx.paths.operations, 0o755)],
+    ['a directory without read permission (its listing fails with EACCES)', (fx) => chmodSync(fx.paths.operations, 0o300), (fx) => chmodSync(fx.paths.operations, 0o755)],
+    ['an entry without read permission', (fx) => chmodSync(entry(fx), 0o000), (fx) => chmodSync(entry(fx), 0o644)],
+  ];
+  for (const [label, lock, unlock] of modes) {
+    await t.test(label, { skip }, (st) => {
+      inFixture(st, (fx) => {
         const attempt = stored(fx, 'DONE');
         hold(fx, 'staging', `release:${attempt.id}`);
         const id = record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'staging', status: 'succeeded' });
@@ -737,7 +726,7 @@ test('a ledger entry that is listed and cannot be read keeps every lease', (t) =
           unlock(fx);
         }
       });
-    }
+    });
   }
   inFixture(t, (fx) => {
     const attempt = stored(fx, 'DONE');
@@ -797,5 +786,101 @@ test('the stops T0-RELEASE-REPORT-STEP added release the leases: a failed recove
     assert.deepEqual({ state: r.attempt.state, reason: r.attempt.stop?.reason, detail: r.attempt.stop?.detail }, { state: 'STOP', reason: 'release-health', detail: 'recovery verification failed' });
     assert.ok(fx.leases.read(PRODUCTION), 'the RECOVER step claimed env:production');
     assert.deepEqual({ production: released(fx, PRODUCTION), staging: released(fx, STAGING) }, { production: true, staging: true }, 'the STOP of a failed recover-verify releases both leases');
+  });
+});
+
+// Acceptance 17: the proofs the pre-review of 4f117f50 found missing.
+test('an unresolved record of the attempt on another environment keeps every lease', (t) => {
+  for (const by of ['releaseAttempt', 'the exact step key'] as const) {
+    inFixture(t, (fx) => {
+      const attempt = stored(fx, 'DONE', { target: 'production' });
+      record(fx, 2, { goalId: attempt.goalId, releaseAttempt: attempt.id, idempotencyKey: `${attempt.id}:stage-deploy:c1`, target: 'staging', status: 'succeeded' });
+      record(fx, 1, { goalId: attempt.goalId, ...(by === 'releaseAttempt' ? { releaseAttempt: attempt.id } : { idempotencyKey: `${attempt.id}:apply-deploy:c1` }), target: 'production', status: 'running' });
+      hold(fx, 'production', `release:${attempt.id}`);
+      hold(fx, 'staging', `release:${attempt.id}`);
+      releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+      assert.deepEqual({ production: held(fx, PRODUCTION), staging: held(fx, STAGING) }, { production: true, staging: true }, `a running production record of the attempt by ${by}`);
+    });
+  }
+});
+
+test('two spellings of one environment are one lease', (t) => {
+  // Attempt A's operation runs on `ops\prod`; attempt B of this session renews the same lease file for `ops/prod`, then fails.
+  inFixture(t, (fx) => {
+    const b = stored(fx, 'STAGE', { environment: 'ops/prod' });
+    const aId = `${b.id}-A`;
+    hold(fx, 'ops\\prod', `release:${aId}`);
+    record(fx, 1, { goalId: b.goalId, releaseAttempt: aId, target: 'ops\\prod', status: 'running' });
+    const r = releaseRunner(fx, { runner: scriptedRunner({ 'deploy-cmd': { stdout: 'FAILED', exitCode: 1 } }) }).next(fx.goal(b.goalId), b);
+    assert.equal(r.attempt.stop?.reason, 'release-health', r.directive.narration);
+    assert.equal(fx.leases.read('env:ops/prod')?.operation, `release:${b.id}`, 'B renewed the one lease');
+    assert.equal(fx.leases.read('env:ops/prod')?.released, false, "B's cleanup keeps the lease under A's running operation on ops\\prod");
+  });
+  // The attempt's environment `ops\prod` and its record's target `ops/prod` are one lease, decided in one section.
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'DONE', { environment: 'ops\\prod' });
+    record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, target: 'ops/prod', status: 'succeeded' });
+    hold(fx, 'ops\\prod', `release:${attempt.id}`);
+    writeFileSync(`${fx.leases.file('env:ops/prod')}.lock`, `pid=${process.pid} at=${T0} nonce=held`);
+    const r = releaseRunner(fx, { leases: new LeaseStore(fx.paths.leases, { timeoutMs: 50 }) }).next(fx.goal(attempt.goalId), attempt);
+    assert.equal((r.directive.narration.match(/LOCKED/g) ?? []).length, 1, `one failed section for the one lease: ${r.directive.narration}`);
+  });
+});
+
+test('a refused admission leaves the goal journal unchanged', (t) => {
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'STOP');
+    let intervened = false;
+    const leases = new (class extends LeaseStore {
+      override claim(key: string, options: Parameters<LeaseStore['claim']>[1] = {}): ReturnType<LeaseStore['claim']> {
+        const claimed = super.claim(key, options);
+        if (key === STAGING && !intervened) {
+          intervened = true;
+          releaseRunner(fx).next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
+        }
+        return claimed;
+      }
+    })(fx.paths.leases);
+    const stale = ReleaseAttempt.parse({ ...attempt, state: 'STAGE', stop: undefined, disposition: 'pending' });
+    const before = fx.events(attempt.goalId).length;
+    const r = releaseRunner(fx, { leases, opsLoad: opsConfigured({ asyncDeploy: true }) }).next(fx.goal(attempt.goalId), stale);
+    assert.ok(intervened);
+    assert.equal(fx.events(attempt.goalId).length, before, `the refused admission appends no journal event: ${r.directive.narration}`);
+  });
+});
+
+test('the attempt section writes no record', (t) => {
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'STOP');
+    hold(fx, 'staging', `release:${attempt.id}`);
+    releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(released(fx, STAGING), true);
+    assert.equal(existsSync(fx.leases.file(`release-attempt:${attempt.id}`)), false, 'no release-attempt record after a cleanup');
+  });
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'STAGE');
+    const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(r.directive.kind, 'stage', r.directive.narration);
+    assert.equal(existsSync(fx.leases.file(`release-attempt:${attempt.id}`)), false, 'no release-attempt record after an admission');
+  });
+});
+
+test('a name that is not a ledger entry is not read', (t) => {
+  for (const name of ['op-x.json.tmp-1-abcdef12', 'op-bad.JSON']) {
+    inFixture(t, (fx) => {
+      const attempt = stored(fx, 'DONE');
+      hold(fx, 'staging', `release:${attempt.id}`);
+      writeFileSync(path.join(fx.paths.operations, name), '{');
+      releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+      assert.equal(released(fx, STAGING), true, `${name} is not a ledger entry`);
+    });
+  }
+  inFixture(t, (fx) => {
+    const attempt = stored(fx, 'DONE');
+    hold(fx, 'staging', `release:${attempt.id}`);
+    writeFileSync(path.join(fx.paths.operations, 'op-bad.json'), '{');
+    const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assertRetryNamed(r.directive, attempt.id, 'operation ledger', /MALFORMED_JSON/);
+    assert.equal(held(fx, STAGING), true, 'a malformed op-bad.json keeps the lease');
   });
 });
