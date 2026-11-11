@@ -131,7 +131,7 @@ npm run typecheck && node --test tests/infra/update-json.test.ts tests/infra/jou
 
 ## Attempt evidence
 
-Base 6bb167bc. Commits: 74659df7 (RED tests only), 47ebf4d0 (source and documents), then this evidence commit (card file only).
+Base 6bb167bc. Commits: 74659df7 (RED tests only), 47ebf4d0 (source and documents), e1fb2054 (evidence); repair round after the pre-review of e1fb2054: fec354b0 (merge of origin/main at 98c532a9, the planner rulings), dd30f06c (rulings 1 and 2: CHANGELOG parenthetical, held clock in acceptance 1 and 3), then this evidence commit (card file only).
 
 ### RED, measured on 74659df7 (src/state/store.ts as on main)
 `node --test tests/infra/update-json.test.ts tests/infra/journal-lock.test.ts tests/scenarios/journal-lock-refusal.test.ts`: exit 1, tests 33, pass 28, fail 5. Each failure is an assertion with the actual trace `['create']`:
@@ -142,7 +142,7 @@ Base 6bb167bc. Commits: 74659df7 (RED tests only), 47ebf4d0 (source and document
 - acceptance 7: absent half trace actual `['create']`, expected `['create', 'wait', 'create', 'wait', 'create']`.
 - acceptance 5 passes on main (as the card states); acceptance 8 passes on main with `armed = false;` deleted.
 
-### Revert table, measured on 47ebf4d0: 17/17 red
+### Revert table, measured on 47ebf4d0 (17/17 red) and rerun whole on dd30f06c (18/18 red, the same red tests per row M1 to M16, plus M17)
 Script: one mutation of src/state/store.ts per row, the named tests run, the file restored; after the last row `git diff --stat` was empty and the file byte-identical.
 
 | # | Mutation (requirement) | Tests run | Red tests |
@@ -163,10 +163,11 @@ Script: one mutation of src/state/store.ts per row, the named tests run, the fil
 | M14 | deadline not checked after the wait of a counted refusal (R2) | update-json | acc 4 |
 | M15 | deadline checked before the wait (R2) | update-json, goal-store | acc 4 |
 | M16 | `refusal` kept across creates, so a held create at the deadline throws the earlier EPERM (R2) | update-json | acc 4 |
+| M17 | no bound: every absent-path EPERM retried (R1); on the held clock create 11 throws the guard error | update-json | acc 2 (deadline), acc 3 (guard, no hang) |
 | T1 | test side: `armed = false;` put back in journal-lock-refusal.test.ts, R1 applied (R5 (c)) | journal-lock-refusal | (a), (b), (c) (fail 3) |
 
-### DoD, measured on 47ebf4d0 (clean tree)
-`dod_command` exit 0: typecheck clean; tests 224, suites 21, pass 221, fail 0, cancelled 0, skipped 3 (the three POSIX mode-bit subtests of tests/surface/incident.test.ts, skipped on Windows as on main), todo 0. Output digest sha256 ce1742f2e87dab53 (first 16 hex). Windows 11, Node as installed; not run on Linux here (the WSL Ubuntu has no node).
+### DoD, measured on dd30f06c (clean tree)
+`dod_command` exit 0: typecheck clean; tests 224, suites 21, pass 221, fail 0, cancelled 0, skipped 3 (the three POSIX mode-bit subtests of tests/surface/incident.test.ts, skipped on Windows as on main), todo 0. Output digest sha256 3fffa5e394a8553f (first 16 hex); the same counts on 47ebf4d0 (digest ce1742f2e87dab53). Windows 11, Node as installed; not run on Linux here (the WSL Ubuntu has no node).
 
 ### Writes (acceptance 10)
 tests/scenarios/fault-points.test.ts passes unchanged (ok 14 in the DoD run). The change adds, removes and reorders no write: on the path with no refusal the acquisition runs the same `createExclusive`, change, ownership-checked write and release; a retry repeats only the exclusive create, which on main would have thrown before any write. `.claude/skills/verify-card-run-writes/SKILL.md` is not edited (CLOSE only).
@@ -183,5 +184,10 @@ tests/scenarios/fault-points.test.ts passes unchanged (ok 14 in the DoD run). Th
 
 docs/ARCHITECTURE.md is not in the diff. CHANGELOG entry inserted directly above `- T0-PREPARE-WORKTREE (bugfix)`, followed by a blank line.
 
+### Repair round (planner rulings of 2026-11-12), on dd30f06c
+- Ruling 1: the parenthetical in the T0-JOURNAL-APPEND-LOCK entry is now the R6 (f) text word for word. The new CHANGELOG entry ("when it has passed after the wait that follows such a refusal, that `EPERM` is thrown") and the two OPERATIONS sentences ("or one after whose wait the 2 s have run out") already name the deadline case: unchanged.
+- Ruling 2: acceptance 1 and 3 run under `onHeldClock` (`mock.timers` `Date` held at 2026-11-12T12:00:00.000Z for the whole test, `mock.timers.reset()` in `finally`), with no `timeoutMs` (default 2 s that never passes); each hook calls `runaway(n)`, which throws a non-EPERM error at create 11. Acceptance 2, 4 and 5 unchanged. Rows these tests carry (M1, M5, M6, M7, M8, M9, M10, M11, M17) all red on dd30f06c.
+- No source change since 47ebf4d0. The Linux run and the document-reader run are the coordinator's step.
+
 ### Changed lines
-`git diff --shortstat 6bb167bc...47ebf4d0`: 6 files changed, 240 insertions(+), 24 deletions(-) (store.ts +17 -5, update-json.test.ts +193 -5, journal-lock.test.ts +20 -6, journal-lock-refusal.test.ts +5 -5, OPERATIONS.md +2 -2, CHANGELOG.md +3 -1). With this section: 7 files changed, 297 insertions(+), 24 deletions(-), 321 changed lines against the budget of 360.
+`git diff --shortstat 6bb167bc...47ebf4d0`: 6 files changed, 240 insertions(+), 24 deletions(-) (store.ts +17 -5, update-json.test.ts +193 -5, journal-lock.test.ts +20 -6, journal-lock-refusal.test.ts +5 -5, OPERATIONS.md +2 -2, CHANGELOG.md +3 -1). After the repair round, `git diff --shortstat origin/main...HEAD` on the evidence commit: 7 files changed, 317 insertions(+), 24 deletions(-), 341 changed lines against the budget of 360 (update-json.test.ts +207 -5, CHANGELOG.md +3 -1, card file +63).
