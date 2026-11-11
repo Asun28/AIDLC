@@ -74,7 +74,7 @@ npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/upda
 
 Attempt 1, effort high. RED commit efdc00cd (tests only; at that commit the file fails to load because `IncidentLedgerFile` is not exported by src/core/types.ts, so the per-test RED receipt was taken with a throwaway stub export, not committed: 12 of 23 tests failed, first assertion lines below). GREEN commits follow it; tests added after RED are marked "added after RED".
 
-DoD (after the pre-review repairs): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 47 tests, 44 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip). Of the first attempt (111aecf8): 42 tests, 40 pass, 2 skipped.
+DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 52 tests, 49 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 35 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped.
 
 RED receipt (stub export in types.ts, other code as main), first failing assertion per test:
 
@@ -93,7 +93,7 @@ RED receipt (stub export in types.ts, other code as main), first failing asserti
 | aidlc monitor check files the two sides | `Expected "actual" to be strictly unequal to:` |
 | aidlc monitor check refiles one breach after its window | `Expected "actual" to be strictly unequal to:` |
 
-Passing on main by design (controls, as the card allows): the five tests of main; "a ledger path under a regular file ..." (its Windows branch only: on POSIX it fails on main, which read such a ledger as `{}`); "the intent directory classes"; "aidlc monitor check without --file-intent does not read the ledger"; "aidlc monitor check with an intent write that fails ..." (on main a directory at `<slug>.md` makes `writeFileSync` throw EISDIR, so exit 1 with nothing attached holds there too and must keep holding). Added after RED: "a ledger written by main ... reads back unchanged and the library exports the schema names" (passes on main code with the new schema: compatibility control), "with every name but <slug>-999.md taken the write returns <slug>-999.md" (fails on main), the array-ledger row of the CLI read-first test, the `write` row under the failing rename, the absent-ledger-directory row of "written whole". The final file run against main's incident.ts and main.ts (new types.ts kept): 12 fail, 11 pass, 2 skipped.
+Passing on main by design (controls, as the card allows): the five tests of main; "a ledger path under a regular file ..." (its Windows branch only: on POSIX it fails on main, which read such a ledger as `{}`); "the intent directory classes"; "aidlc monitor check without --file-intent does not read the ledger"; "aidlc monitor check with an intent write that fails ..." (on main a directory at `<slug>.md` makes `writeFileSync` throw EISDIR, so exit 1 with nothing attached holds there too and must keep holding). Added after RED: "a ledger written by main ... reads back unchanged and the library exports the schema names" (passes on main code with the new schema: compatibility control), "with every name but <slug>-999.md taken the write returns <slug>-999.md" (fails on main), the array-ledger row of the CLI read-first test, the `write` row under the failing rename, the absent-ledger-directory row of "written whole". The test file run against main's incident.ts and main.ts (new types.ts kept): at 43f3736d (25 tests) 12 fail, 11 pass, 2 skipped; at 3faa963e (35 tests) 18 fail, 14 pass, 3 skipped.
 
 ### One row per acceptance item
 
@@ -104,7 +104,7 @@ Passing on main by design (controls, as the card allows): the five tests of main
 | 3 | "the ledger is written whole and only in a form a read accepts" | pass |
 | 4 | "an intent file name that exists is never overwritten", "a directory named <slug>.md ...", "with <slug>.md and <slug>-2.md to <slug>-999.md present ...", "an exclusive create whose write fails ..." | pass |
 | 5 | "aidlc monitor check reads the ledger first ..." (rows: propose breach, no breach, log-only breach, array ledger), "files the two sides ...", "refiles one breach after its dedupe window ...", "with an intent write that fails ..." | pass |
-| 6 | the five tests of main unchanged (git diff removes only the two import lines of the test file); `node --test tests/infra/update-json.test.ts` | pass |
+| 6 | the five tests of main unchanged (at 3faa963e `git diff origin/main...HEAD -- tests/surface/incident.test.ts` removes three lines: the two import lines it extends and the spawn line of the first CLI test, whose only change is its `env` option, now `childEnv(...)`; no assertion is removed); `node --test tests/infra/update-json.test.ts` | pass |
 | 7 | docs, reviewer-verified | see the R6 row below |
 
 ### Clause by clause (point A)
@@ -122,6 +122,9 @@ Passing on main by design (controls, as the card allows): the five tests of main
 | R2 unreadable file or directory is READ_FAILED | readJson | directory row, injected EACCES row; mode 0o000 row (POSIX only) |
 | R2 a stat error other than ENOENT (ENOTDIR under a regular file on POSIX, EACCES for an unreadable parent) is READ_FAILED naming the file, before readJson and before any write | `present()` throws `StoreError('READ_FAILED', this.file, ...)` | injected ENOTDIR, EACCES, EPERM, ELOOP through the four methods; real path under a regular file (POSIX: READ_FAILED, Windows: absent); directory mode 0o000 (POSIX only); CLI rows for no breach, log-only and propose-tier breach |
 | R2 an own `__proto__` key at the top level, in a record or deeper is SCHEMA_VIOLATION naming the file | `protoKeyPath` in the `IncidentLedgerFile` schema | the `__proto__` test (four depths, four methods, `write`, issue path asserted), four CLI rows; keys that merely contain the text are kept |
+| R2 the `__proto__` search does not recurse on the call stack (6,000 levels deep) | explicit stack in `protoKeyPath` | the 6,000-level test (read, refusal, issue path) and its CLI test; revert row `recursive search` |
+| R2 a path that exists and is not a regular file is READ_FAILED from the stat result, before any read | `if (!stats.isFile()) throw ...` in `present()` | injected stat with a read counter, real directory, CLI rows |
+| R3 the value handed to a write is validated before it is serialized | `IncidentLedgerFile.parse(data)` before `atomicWriteJson` | "written whole" (count 0, disposition closed), `__proto__` test (`write`) |
 | R3 shouldFile, attachIntent, triage read through R2 first | `this.read()` in each | each of the four methods in every row; per-method revert rows below |
 | R3 write parses | `IncidentLedgerFile.parse(data)` | "written whole": count 0 and disposition closed writes throw, file bytes same |
 | R3 write is atomic | `atomicWriteJson` | "written whole": rename onto the ledger fails for `shouldFile` and for `write`, bytes same, no `.tmp-` file |
@@ -216,7 +219,7 @@ Two rows survived on the first run and were fixed: `count` (the script had chang
 
 | call | absent | directory where a file is expected | path under a regular file | unreadable parent | content that does not parse |
 |---|---|---|---|---|---|
-| ledger read (`present()` stat, then `readJson`) | `{}`, nothing created (stat ENOENT) | READ_FAILED | POSIX: READ_FAILED (stat ENOTDIR), refused before any write; Windows: stat ENOENT, so absent: `{}`, and the write throws | POSIX: READ_FAILED (stat EACCES, gated test); file mode 0o000: READ_FAILED (gated test); injected stat errors and EACCES: READ_FAILED on every platform | MALFORMED_JSON, SCHEMA_VIOLATION (an own `__proto__` key included) |
+| ledger read (`present()` stat, then `readJson`) | `{}`, nothing created (stat ENOENT) | READ_FAILED from the stat result (`!isFile()`), before any read (injected stat and real directory; CLI) | POSIX: READ_FAILED (stat ENOTDIR), refused before any write; Windows: stat ENOENT, so absent: `{}`, and the write throws | POSIX: READ_FAILED (stat EACCES, gated test); file mode 0o000: READ_FAILED (gated test); injected stat errors and EACCES: READ_FAILED on every platform | MALFORMED_JSON, SCHEMA_VIOLATION (an own `__proto__` key included) |
 | ledger write (`atomicWriteJson`) | directory created (row in "written whole") | n/a (the target is read first) | Windows: throws (a non-`StoreError` error), file unchanged; POSIX: not reached (the read refused) | not reached on POSIX (the read refused) | refused before any write |
 | intent write (`createExclusive`) | directory created | `<slug>.md` a directory: name taken, next suffix | throws, file unchanged | throws, nothing written (gated) | n/a |
 
@@ -224,7 +227,7 @@ A ledger path under a regular file is READ_FAILED on POSIX and absent on Windows
 
 ### forbid and non_goals, one line each
 
-- weakening or skipping a test: `git diff origin/main...HEAD -- tests` removes two lines, both import lines; the only skips are the two POSIX-only tests, with the reason in the skip.
+- weakening or skipping a test: at 3faa963e `git diff origin/main...HEAD -- tests` removes three lines (the two import lines and the `env` option of the first CLI test's spawn; no assertion); the only skips are the three POSIX-only tests, with the reason in the skip.
 - dedupe rule and `breachIdentity`: `src/maintain/bands.ts` is not in the diff and the `shouldFile` body is untouched (grep of the incident.ts diff for `withinWindow` and `existing.count` finds only context).
 - store.ts or an exclusive create outside it: `git diff --name-only origin/main...HEAD` lists no src/state file; `grep -rln "'wx'" src` prints only src/state/store.ts; tests/infra/update-json.test.ts passes in the DoD.
 - repairing, renaming or deleting an existing ledger or intent: the src diff has no unlink, rename, rmSync, repair or retry of mine; tests compare the ledger and intent bytes after a refusal.
@@ -243,7 +246,7 @@ One run of the two DoD test files leaves 4 `aidlc-*` directories in the OS temp 
 
 ### Doc-reading run
 
-After the pre-review repairs (commit 92215c0a): 78 test files read ARCHITECTURE.md, OPERATIONS.md or CHANGELOG.md; one `node --test` call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0. (First attempt: 1863 tests, one failure, `T0-EXEC-TREE-KILL run on real processes` in tests/infra/exec.test.ts, a 6 s timing bound that passed alone with exec-sync-tree.test.ts, 84 pass; machine load.)
+After the first pre-review repairs (commit 92215c0a): 78 test files read ARCHITECTURE.md, OPERATIONS.md or CHANGELOG.md; one `node --test` call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0. (First attempt: 1863 tests, one failure, `T0-EXEC-TREE-KILL run on real processes` in tests/infra/exec.test.ts, a 6 s timing bound that passed alone with exec-sync-tree.test.ts, 84 pass; machine load.)
 
 ### After the pre-review
 
@@ -259,5 +262,54 @@ Six points of the pre-review of 111aecf8, repaired in commit 92215c0a. The card 
 6. Date. The child process of every CLI test of the new tests gets a fixed clock through `--import` of a `data:` URL that replaces the no-argument `new Date()` with 2026-09-11T12:00:00.000Z (`Date.now` and `Date.parse` stay real), so the date of an intent name cannot change during a run. The exhaustion test no longer learns the slug in another process: the slug is the literal `incident-error-rate-we1-2026-09-11`, which the two-sides test asserts as the first filed name (`<slug>.md`, then `<slug>-2.md`). With the shim removed the tests fail (revert table). The first, existing CLI test does not depend on the date and is unchanged apart from the environment.
 
 Not run here: the POSIX-only branches (three tests skipped on this Windows machine; no Node in the WSL image of this machine). They are written to the POSIX behaviour (ENOTDIR and EACCES from `statSync`); the stat classification itself runs on every platform through the injected-error test.
+
+After the second pre-review repairs (commit 3faa963e): the same 78 test files, one `node --test` call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0.
+
+### After the second pre-review
+
+Six points of the second pre-review of a70ed789, repaired in commit 3faa963e (code, docs, tests) on top of the merge ac309437 of main (c15a6f9d: R2 refuses a non-file path from the stat and searches `__proto__` without recursion; R3 states what a write validates). Current figures of this candidate are in the DoD paragraph at the top; every figure of an earlier candidate carries its SHA.
+
+1. Search without recursion (R2). `protoKeyPath` in src/core/types.ts uses an explicit stack. The search as code:
+
+```ts
+function protoKeyPath(root: unknown): string[] | undefined {
+  type Step = { key: string; up: Step | undefined };
+  const stack: Array<{ value: unknown; at: Step | undefined }> = [{ value: root, at: undefined }];
+  const pathOf = (at: Step | undefined): string[] => {
+    const keys: string[] = [];
+    for (let step = at; step; step = step.up) keys.push(step.key);
+    return keys.reverse();
+  };
+  while (stack.length > 0) {
+    const { value, at } = stack.pop()!;
+    if (typeof value !== 'object' || value === null) continue;
+    if (Object.hasOwn(value, '__proto__')) return [...pathOf(at), '__proto__'];
+    const entries = Object.entries(value);
+    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at } });
+  }
+  return undefined;
+}
+```
+
+   Children are pushed in reverse so the first offending key in key order is named (test: `{"a":{"__proto__":1},"b":{"__proto__":1}}` names `a.__proto__`). The path is a linked list built once at the hit, so a 6,000-level path costs 6,000 steps, not 18 million copies.
+   - Depth result on this machine (Node 22.23.1), measured, not assumed: `JSON.parse` reads 20,000 levels; the zod parse of the kept keys (`z.looseObject` copies unnamed keys, it does not walk them) accepts 20,000 levels; the search handles 6,000. The store's serializer does not: `stableStringify` (`sortKeys`, recursive, src/state/store.ts) throws `RangeError` from depth 1,739 (largest depth that serializes: 1,738), and `JSON.stringify` itself throws `RangeError` at 6,000. So a ledger nested 6,000 deep is read, and refused when it holds `__proto__`, with a `StoreError` naming the file; a write (or a `shouldFile` that must rewrite it) of such a value throws a raw `RangeError` from the store's serializer before the temporary file is created, and the previous ledger is unchanged. That limit is in src/state/store.ts, which this card does not change, and is stack-size dependent; the card does not claim a deep value can be written. The test asserts: read of the deep value works; a write either lands and reads back or throws leaving the previous bytes and no `.tmp-` file; a 500-level value is written and read back.
+   - Tests: "a ledger whose note is nested 6,000 levels deep is read like a shallow one, and the search for __proto__ never overflows the stack" (read, schema, write outcome, 500-level write, `__proto__` at the bottom through all four methods and `write`, issue path of 6,003 steps ending at the key, not a `RangeError`); "aidlc monitor check reads a ledger nested 6,000 levels deep like a shallow one and refuses one with a __proto__ key at the bottom" (CLI).
+2. Isolation, `git init`. The `git init` child of the isolation test gets `cleanEnv()`, and the test asserts that `other/.git` is a directory before the CLI runs. Check with `GIT_DIR` set in the environment of the test run: with the fix the test passes; with the inherited environment restored on that spawn it fails (pass 0, fail 1).
+3. Case-insensitive selectors. `cleanEnv()` drops every environment name whose upper case is in the selector list, on every platform; `childEnv` and the `git init` child use it. Test: "the lowercase and mixed-case names of the git selector variables are removed from a child environment" sets `git_dir`, `Git_Work_Tree` and `GIT_INDEX_FILE` in the parent, asserts that `childEnv` holds no selector in any case and that a real child process lists none. The assertion is the same on both platforms: on Windows the three names are the selectors themselves; on POSIX `git_dir` and `Git_Work_Tree` are other variables that git ignores and are removed all the same (the policy is a case-insensitive match, so that no platform keeps a name that another would treat as a selector).
+4. Not a regular file (R2). `present()` keeps the stat result and throws `READ_FAILED` naming the file when `!stats.isFile()`, before any read. Tests: "a path that exists and is not a regular file is READ_FAILED from the stat result, before any read, through all four methods" (stat injected to say not a file over a ledger whose content is valid, the read counter stays 0; and a real directory) and "aidlc monitor check with a directory at the ledger path refuses with READ_FAILED for every breach" (no breach, log-only, propose-tier: exit 1, `filed` empty, no intent, journal unchanged).
+5. Wording (R3). docs/OPERATIONS.md and the CHANGELOG entry now say "The value handed to a ledger write is validated with the schema before it is serialized, and is then written to a temporary file that is renamed into place" (OPERATIONS adds: so a write that fails before the rename leaves the previous ledger); the `write` comment says the same. No sentence says anything about the bytes on disk afterwards. `grep -n "a read accepts\|a read would refuse\|never written"` over docs, the CHANGELOG and src finds none of the old phrases (the one hit, in src/coordination/review-queue.ts, is unrelated). The card's own test title of acceptance 3 keeps its words.
+6. Evidence. Every historical figure in this section carries its candidate SHA: RED (efdc00cd, 23 tests, 12 fail), the run against main code (43f3736d, 25 tests: 12 fail, 11 pass, 2 skipped; 3faa963e, 35 tests: 18 fail, 14 pass, 3 skipped), the DoD (111aecf8: 42 tests, 40 pass, 2 skipped; a70ed789: 47 tests, 44 pass, 3 skipped; current: below), the removed test lines (three at 3faa963e: the two import lines and the `env` option of the first CLI test's spawn, whose assertions are untouched), the skips (three POSIX-only tests at 3faa963e), the doc runs.
+
+Revert rows added or changed in this round (each: one hunk reverted, `tests/surface/incident.test.ts` run, file restored; all FAIL):
+
+| hunk | first test that fails | result |
+|---|---|---|
+| types: recursive search instead of the explicit stack | the 6,000-level test and its CLI test (RangeError) | FAILS |
+| types: children pushed first-to-last | the `__proto__` test (two offending keys name `a.__proto__`) | FAILS |
+| types: issue path loses its prefix (`up: undefined`) | the `__proto__` test, the 6,000-level test (path length 6,003) | FAILS |
+| types: the `__proto__` key missing from the path | same two tests | FAILS |
+| incident: `!stats.isFile()` check removed | "a path that exists and is not a regular file ..." (the injected stat must be refused before the read) | FAILS |
+| test: `cleanEnv` matches selectors case-sensitively | "the lowercase and mixed-case names ..." | FAILS |
+| test: `git init` child gets the inherited environment | "a GIT_DIR and GIT_WORK_TREE ..." (run with `GIT_DIR` in the environment; the `.git` assertion fails) | FAILS (checked by hand, not by the table script) |
 
 Coordinator verification:
