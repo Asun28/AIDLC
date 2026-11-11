@@ -61,6 +61,20 @@ function countingWaits<T>(body: () => T): { result: { value?: T; error?: unknown
   }
 }
 
+/** Run `body` pushing `wait` onto `trace` at each lock wait (`Atomics.wait`), as `countingWaits` counts them. */
+function tracingWaits<T>(trace: string[], body: () => T): { result: { value?: T; error?: unknown } } {
+  const real = Atomics.wait;
+  Atomics.wait = ((...args: Parameters<typeof Atomics.wait>) => {
+    trace.push('wait');
+    return real(...args);
+  }) as typeof Atomics.wait;
+  try {
+    return { result: settle(body) };
+  } finally {
+    Atomics.wait = real;
+  }
+}
+
 const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM', syscall: 'open' });
 const errno = (code: string): Error => Object.assign(new Error(`${code}: simulated`), { code });
 const isLocked = (err: unknown): boolean => err instanceof StoreError && err.code === 'LOCKED';
@@ -203,7 +217,7 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     unlinkSync(lock);
   });
 
-  it('an EPERM on the lock path is retried while the path exists and propagates at once while it is absent [R2]', () => {
+  it('an EPERM on the lock path is retried while the path exists, and while it is absent is retried twice and then propagates [R2] [T0-LOCK-EPERM-RETRY R1]', () => {
     const j = journalWith(1);
     const lock = lockOf(j);
     // Another writer's lock is being deleted: its path exists until the deletion completes after the second refusal.
@@ -222,18 +236,18 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     assert.deepEqual({ creates, waits: present.waits }, { creates: 3, waits: 2 }, 'the create was retried after each EPERM, with a wait before each retry');
     assert.equal(existsSync(lock), false);
 
-    // Absent path: counted calls, not elapsed time, show that it propagates at once.
+    // Absent path: the order of creates and waits, not elapsed time, shows that it propagates at the third refusal.
     const before = readFileSync(j.file, 'utf8');
-    creates = 0;
-    const absent = countingWaits(() => throughFs('openSync', (real, args) => {
+    const trace: string[] = [];
+    const absent = tracingWaits(trace, () => throughFs('openSync', (real, args) => {
       if (String(args[0]) === lock && args[1] === 'wx') {
-        creates++;
+        trace.push('create');
         throw eperm();
       }
       return real(...args);
     }, () => j.append({ type: 'NOTE', actor: ME })));
     assert.equal((absent.result.error as NodeJS.ErrnoException | undefined)?.code, 'EPERM', `the EPERM propagates: ${String(absent.result.error)}`);
-    assert.deepEqual({ creates, waits: absent.waits }, { creates: 1, waits: 0 }, 'one create, no retry and no wait for the deadline');
+    assert.deepEqual(trace, ['create', 'wait', 'create', 'wait', 'create'], 'two retries after a wait each, then the third refusal propagates with no wait for the deadline');
     assert.equal(readFileSync(j.file, 'utf8'), before, 'the journal is unchanged');
     assert.equal(existsSync(lock), false);
   });

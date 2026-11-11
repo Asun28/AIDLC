@@ -1,8 +1,8 @@
 /**
  * Card T0-JOURNAL-APPEND-LOCK acceptance 9: a refused journal append leaves the writes its caller made before it, and the
  * command docs/OPERATIONS.md names recovers each. The refusal is the EPERM of the exclusive create of an absent lock path,
- * which the journal lock propagates at once (R2), injected at the `wx` open of `<journal file>.append.lock` during the
- * append of one event type.
+ * injected at every `wx` open of `<journal file>.append.lock` during the append of one event type, so every exclusive
+ * create of that append is refused and the journal lock propagates the third refusal (R2, card T0-LOCK-EPERM-RETRY).
  */
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
@@ -26,8 +26,9 @@ const POOL = 'default';
 const cli = (fx: Fixture, ...args: string[]) => spawnSync(process.execPath, [MAIN, ...args], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000, windowsHide: true });
 
 /**
- * Run `body` with the journal lock of the first append of `type` refused: the `wx` open of the journal's lock path throws EPERM
- * while no lock file exists. Appends of other types and every later append are untouched.
+ * Run `body` with the journal lock of the first append of `type` refused: every `wx` open of the journal's lock path in that
+ * append throws EPERM while no lock file exists, and the third refusal propagates. Appends of other types and every later
+ * append are untouched.
  */
 function refusedAt<T>(type: JournalEventType, body: () => T): { value?: T; error?: unknown; refused: boolean } {
   const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
@@ -37,7 +38,6 @@ function refusedAt<T>(type: JournalEventType, body: () => T): { value?: T; error
   let refused = false;
   target['openSync'] = (...args: unknown[]) => {
     if (armed && args[1] === 'wx' && String(args[0]).endsWith('.jsonl.append.lock')) {
-      armed = false;
       refused = true;
       throw Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM', syscall: 'open', path: String(args[0]) });
     }

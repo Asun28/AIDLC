@@ -1,4 +1,4 @@
-import { after, describe, it } from 'node:test';
+import { after, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { existsSync, readdirSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
@@ -33,10 +33,10 @@ function onExclusiveCreate<T>(lock: string, before: () => void, body: () => T): 
   }
 }
 
-const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM' });
+const eperm = (): Error => Object.assign(new Error('EPERM: operation not permitted, open'), { code: 'EPERM', syscall: 'open' });
 
 /** Route one `node:fs` function through `wrap` while `body` runs: the boundary every lock step passes. */
-function throughFs<T>(name: 'readFileSync' | 'statSync' | 'unlinkSync' | 'openSync' | 'writeSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
+function throughFs<T>(name: 'readFileSync' | 'statSync' | 'unlinkSync' | 'openSync' | 'writeSync' | 'mkdirSync' | 'closeSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T {
   const target = fs as unknown as Record<string, (...args: unknown[]) => unknown>;
   const real = target[name]!;
   target[name] = (...args: unknown[]) => wrap(real, args);
@@ -61,6 +61,35 @@ function settle<T>(body: () => T): { value?: T; error?: unknown } {
 /** The text of a file, undefined when it is gone. */
 const textOf = (file: string): string | undefined => (existsSync(file) ? readFileSync(file, 'utf8') : undefined);
 const errno = (code: string) => Object.assign(new Error(`${code}: simulated`), { code });
+
+/**
+ * The outcome of `body` and the order of the lock steps it took: `create` at each exclusive create (`wx`) of `lock`, pushed
+ * before `onCreate` runs for it (which may throw an injected error or write or remove a lock file), and `wait` at each lock
+ * wait (`Atomics.wait`), pushed before `onWait` runs for it and the real wait follows.
+ */
+function traced<T>(lock: string, onCreate: (n: number) => void, body: () => T, onWait: (n: number) => void = () => {}): { result: { value?: T; error?: unknown }; trace: string[] } {
+  const trace: string[] = [];
+  let creates = 0;
+  let waits = 0;
+  const realWait = Atomics.wait;
+  Atomics.wait = ((...args: Parameters<typeof Atomics.wait>) => {
+    trace.push('wait');
+    onWait(++waits);
+    return realWait(...args);
+  }) as typeof Atomics.wait;
+  try {
+    const result = settle(() => throughFs('openSync', (real, args) => {
+      if (String(args[0]) === lock && args[1] === 'wx') {
+        trace.push('create');
+        onCreate(++creates);
+      }
+      return real(...args);
+    }, body));
+    return { result, trace };
+  } finally {
+    Atomics.wait = realWait;
+  }
+}
 
 describe('state/store updateJson (T1-STORE-CAS-2 acceptance 1)', () => {
   const dir = tmpDir();
@@ -293,14 +322,18 @@ describe('state/store updateJson lock ownership (T1-STORE-CAS-2)', () => {
     if (existsSync(lock)) unlinkSync(lock);
   });
 
-  it('acceptance 15: an exclusive create that fails with EPERM while the lock path does not exist propagates at once [R9]', () => {
+  it('acceptance 15: an exclusive create that fails with EPERM while the lock path does not exist is retried twice and the third refusal propagates [R9] [T0-LOCK-EPERM-RETRY R1]', () => {
     const file = seed('eperm-absent.json');
     const lock = `${file}.lock`;
     const started = Date.now();
-    const outcome = settle(() => onExclusiveCreate(lock, () => { throw eperm(); }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 1_000 })));
+    const refusals: Error[] = [];
+    const { result: outcome, trace } = traced(lock, () => { refusals.push(eperm()); throw refusals.at(-1)!; }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 1_000 }));
     assert.equal((outcome.error as NodeJS.ErrnoException | undefined)?.code, 'EPERM', `the EPERM propagates: ${String(outcome.error)}`);
     assert.ok(Date.now() - started < 900, 'without waiting for the deadline');
     assert.equal(readFileSync(file, 'utf8'), STORED);
+    assert.deepEqual(trace, ['create', 'wait', 'create', 'wait', 'create'], 'a wait before each of two retries, and none after the third refusal');
+    assert.equal(outcome.error, refusals[2], 'the third refusal is the error thrown');
+    assert.equal(existsSync(lock), false, 'no lock file');
   });
 
   it('acceptance 15: a lock whose stat fails with EPERM exists (Windows, being deleted): the waiter treats it as held and refuses with LOCKED [R9]', () => {
@@ -357,5 +390,174 @@ describe('state/store updateJson: the refusal and the EPERM scope (T1-STORE-CAS-
         onExclusiveCreate(lock, () => { throw eperm(); }, () => updateJson(file, Rec, (current) => ({ ...current!, n: 2 }), { timeoutMs: 50 }))));
     assert.ok(isCode('LOCKED')(outcome.error), `busy, not the EPERM: ${String(outcome.error)}`);
     assert.equal(readFileSync(file, 'utf8'), STORED);
+  });
+});
+
+describe('state/store updateJson: the absent-path EPERM retry (T0-LOCK-EPERM-RETRY)', () => {
+  const dir = tmpDir();
+  after(() => cleanup(dir));
+  const seed = (name: string): string => {
+    const file = path.join(dir, name);
+    writeFileSync(file, STORED, 'utf8');
+    return file;
+  };
+  const HELD = `pid=${process.pid} at=2026-11-12T00:00:00.000Z nonce=held`;
+  const bump = (current: z.infer<typeof Rec> | undefined) => ({ ...current!, n: current!.n + 1 });
+  /** Run `body` with `Date` held at one fixed time, so no deadline passes; the timers are restored on every path. */
+  const onHeldClock = <T>(body: () => T): T => {
+    mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-12T12:00:00.000Z') });
+    try {
+      return body();
+    } finally {
+      mock.timers.reset();
+    }
+  };
+  /** An eleventh create throws an error that is not an EPERM, so an acquisition that never stops fails instead of hanging. */
+  const runaway = (n: number): void => {
+    if (n === 11) throw new Error('an eleventh exclusive create: the acquisition did not stop');
+  };
+
+  it("T0-LOCK-EPERM-RETRY: one or two absent-path EPERM refusals are retried after the loop's wait, and the record is written [R1]", () => onHeldClock(() => {
+    const file = seed('retried.json');
+    const lock = `${file}.lock`;
+    const one = traced(lock, (n) => { runaway(n); if (n <= 1) throw eperm(); }, () => updateJson(file, Rec, bump));
+    assert.deepEqual(one.result, { value: { id: 'x', n: 2 } }, `one refusal, then the lock is taken: ${String(one.result.error)}`);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { id: 'x', n: 2 });
+    assert.deepEqual(one.trace, ['create', 'wait', 'create']);
+    assert.equal(existsSync(lock), false, 'the lock is released');
+    const two = traced(lock, (n) => { runaway(n); if (n <= 2) throw eperm(); }, () => updateJson(file, Rec, bump));
+    assert.deepEqual(two.result, { value: { id: 'x', n: 3 } }, `two refusals, then the lock is taken: ${String(two.result.error)}`);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { id: 'x', n: 3 });
+    assert.deepEqual(two.trace, ['create', 'wait', 'create', 'wait', 'create']);
+    assert.equal(existsSync(lock), false, 'the lock is released');
+  }));
+
+  it('T0-LOCK-EPERM-RETRY: a create that finds the lock held gives no refusal back [R1]', () => onHeldClock(() => {
+    const file = seed('held-between.json');
+    const lock = `${file}.lock`;
+    const refusals: Error[] = [];
+    const refuse = (): never => { refusals.push(eperm()); throw refusals.at(-1)!; };
+    const { result, trace } = traced(lock, (n) => {
+      runaway(n);
+      if (n === 2) return writeFileSync(lock, HELD, 'utf8');
+      if (n === 3) unlinkSync(lock);
+      refuse();
+    }, () => updateJson(file, Rec, bump));
+    assert.deepEqual(trace, ['create', 'wait', 'create', 'wait', 'create', 'wait', 'create'], 'refusal, held, refusal, refusal: the held create does not reset the count');
+    assert.equal(result.error, refusals[2], 'the object of create 4, the third refusal, is thrown');
+    assert.equal(readFileSync(file, 'utf8'), STORED);
+    assert.equal(existsSync(lock), false, 'no lock file');
+  }));
+
+  it('T0-LOCK-EPERM-RETRY: the deadline crossed inside a wait ends the acquisition with no further create, by the EPERM after a counted refusal and by LOCKED after a held create [R2]', () => {
+    const T = Date.parse('2026-11-12T12:00:00.000Z');
+    /** One acquisition on the mocked clock: `onCreate` as in `traced`, and wait number `crossing` moves the clock to the deadline. */
+    const row = (name: string, crossing: number, onCreate: (n: number) => void) => {
+      const file = seed(`${name}.json`);
+      mock.timers.enable({ apis: ['Date'], now: T });
+      try {
+        const out = traced(`${file}.lock`, onCreate, () => updateJson(file, Rec, bump), (n) => { if (n === crossing) mock.timers.setTime(T + 2_000); });
+        return { ...out, file, lock: `${file}.lock` };
+      } finally {
+        mock.timers.reset();
+      }
+    };
+    const lockedByHeld = (err: unknown) => isCode('LOCKED')(err) && String((err as Error).message).includes(`locked by another writer (${HELD})`);
+
+    const a: Error[] = [];
+    const rowA = row('deadline-a', 1, () => { a.push(eperm()); throw a.at(-1)!; });
+    assert.deepEqual(rowA.trace, ['create', 'wait'], '(a)');
+    assert.equal(rowA.result.error, a[0], '(a) the EPERM of create 1');
+    assert.ok(!(rowA.result.error instanceof StoreError), '(a) not a StoreError');
+    assert.equal((rowA.result.error as NodeJS.ErrnoException).code, 'EPERM');
+    assert.equal(readFileSync(rowA.file, 'utf8'), STORED);
+    assert.equal(existsSync(rowA.lock), false, '(a) no lock file');
+
+    const b: Error[] = [];
+    const rowB = row('deadline-b', 2, () => { b.push(eperm()); throw b.at(-1)!; });
+    assert.deepEqual(rowB.trace, ['create', 'wait', 'create', 'wait'], '(b)');
+    assert.equal(rowB.result.error, b[1], '(b) the EPERM of create 2');
+    assert.equal(readFileSync(rowB.file, 'utf8'), STORED);
+    assert.equal(existsSync(rowB.lock), false, '(b) no lock file');
+
+    const rowC = row('deadline-c', 2, (n) => {
+      if (n === 1) throw eperm();
+      writeFileSync(path.join(dir, 'deadline-c.json.lock'), HELD, 'utf8');
+    });
+    assert.deepEqual(rowC.trace, ['create', 'wait', 'create', 'wait'], '(c)');
+    assert.ok(lockedByHeld(rowC.result.error), `(c) LOCKED naming the held lock: ${String(rowC.result.error)}`);
+    assert.equal(textOf(rowC.lock), HELD, '(c) the lock text is unchanged');
+    assert.equal(readFileSync(rowC.file, 'utf8'), STORED);
+    unlinkSync(rowC.lock);
+
+    writeFileSync(path.join(dir, 'deadline-d.json.lock'), HELD, 'utf8');
+    const rowD = row('deadline-d', 1, () => {});
+    assert.deepEqual(rowD.trace, ['create', 'wait'], '(d)');
+    assert.ok(lockedByHeld(rowD.result.error), `(d) LOCKED naming the held lock: ${String(rowD.result.error)}`);
+    assert.equal(textOf(rowD.lock), HELD, '(d) the lock text is unchanged');
+    assert.equal(readFileSync(rowD.file, 'utf8'), STORED);
+    unlinkSync(rowD.lock);
+  });
+
+  it('T0-LOCK-EPERM-RETRY: any other failure of the create propagates at once with no wait [R3]', () => {
+    const withSyscall = (code: string, syscall: string): Error => Object.assign(new Error(`${code}: simulated, ${syscall}`), { code, syscall });
+    /** One acquisition with `timeoutMs: 50`: the injected error is thrown, the trace is `trace` and the record is unchanged. */
+    const expect = (label: string, file: string, injected: Error, outcome: { result: { error?: unknown }; trace: string[] }, trace: string[]) => {
+      assert.equal(outcome.result.error, injected, `${label}: the injected error: ${String(outcome.result.error)}`);
+      assert.deepEqual(outcome.trace, trace, label);
+      assert.equal(readFileSync(file, 'utf8'), STORED, label);
+    };
+    const update = (file: string) => () => updateJson(file, Rec, bump, { timeoutMs: 50 });
+
+    const fileA = seed('other-eacces.json');
+    const eacces = withSyscall('EACCES', 'open');
+    expect('EACCES of the open', fileA, eacces, traced(`${fileA}.lock`, () => { throw eacces; }, update(fileA)), ['create']);
+
+    const fileB = seed('other-no-syscall.json');
+    const bare = errno('EPERM');
+    expect('EPERM with no syscall', fileB, bare, traced(`${fileB}.lock`, () => { throw bare; }, update(fileB)), ['create']);
+
+    const fileC = seed('other-mkdir.json');
+    const mkdirRefusal = withSyscall('EPERM', 'mkdir');
+    let mkdirs = 0;
+    const onMkdir = (real: (...args: unknown[]) => unknown, args: unknown[]) => {
+      if (String(args[0]) === path.dirname(`${fileC}.lock`)) {
+        mkdirs++;
+        throw mkdirRefusal;
+      }
+      return real(...args);
+    };
+    expect('EPERM of mkdir', fileC, mkdirRefusal, traced(`${fileC}.lock`, () => {}, () => throughFs('mkdirSync', onMkdir, update(fileC))), []);
+    assert.equal(mkdirs, 1, 'one mkdirSync of the lock directory');
+
+    const fileD = seed('other-stat.json');
+    const statRefusal = withSyscall('EACCES', 'stat');
+    const onStat = (real: (...args: unknown[]) => unknown, args: unknown[]) => {
+      if (String(args[0]) === `${fileD}.lock`) throw statRefusal;
+      return real(...args);
+    };
+    expect('EACCES of the stat in present', fileD, statRefusal, traced(`${fileD}.lock`, () => { throw eperm(); }, () => throughFs('statSync', onStat, update(fileD))), ['create']);
+
+    /** Run `body` with `fn` of the lock's descriptor (the fd of the exclusive create of `lock`) routed through `wrap`. */
+    const onLockFd = <T>(lock: string, fn: 'writeSync' | 'closeSync', wrap: (real: (...args: unknown[]) => unknown, args: unknown[]) => unknown, body: () => T): T => {
+      const fds = new Set<unknown>();
+      return throughFs('openSync', (real, args) => {
+        const fd = real(...args);
+        if (String(args[0]) === lock && args[1] === 'wx') fds.add(fd);
+        return fd;
+      }, () => throughFs(fn, (real, args) => (fds.has(args[0]) ? wrap(real, args) : real(...args)), body));
+    };
+
+    const fileE = seed('other-write.json');
+    const writeRefusal = withSyscall('EPERM', 'write');
+    expect('EPERM of write', fileE, writeRefusal, onLockFd(`${fileE}.lock`, 'writeSync', () => { throw writeRefusal; }, () => traced(`${fileE}.lock`, () => {}, update(fileE))), ['create']);
+    assert.equal(textOf(`${fileE}.lock`), '', 'the empty lock file this call created stays');
+    unlinkSync(`${fileE}.lock`);
+
+    const fileF = seed('other-close.json');
+    const closeRefusal = withSyscall('EPERM', 'close');
+    expect('EPERM of close', fileF, closeRefusal, onLockFd(`${fileF}.lock`, 'closeSync', (real, args) => { real(...args); throw closeRefusal; }, () => traced(`${fileF}.lock`, () => {}, update(fileF))), ['create']);
+    assert.match(textOf(`${fileF}.lock`) ?? '', new RegExp(`^pid=${process.pid} at=\\S+ nonce=[0-9a-f]{8}$`), 'the lock file with its owner text stays');
+    unlinkSync(`${fileF}.lock`);
   });
 });
