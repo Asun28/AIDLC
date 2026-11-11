@@ -472,3 +472,8 @@ Coordinator verification:
 - At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
 - Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At b5e9278c, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 23, pass 23, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 3 changed documents: # tests 1883 # pass 1871 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
