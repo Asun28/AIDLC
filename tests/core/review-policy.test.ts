@@ -765,21 +765,21 @@ describe('dispute kinds (T1-REVIEW-RESPONSES)', () => {
   });
 });
 
-describe('parseVerdict run_status (T0-AUDIT-FIXES R2)', () => {
+describe('parseVerdictDocument run_status (T0-AUDIT-FIXES R2)', () => {
   test('a run_status member outside the five values is read as malformed, never dropped, so no reader takes it as success', () => {
     for (const run_status of ['failed', '', 'SUCCESS', ' success', null, 0, true, {}, []]) {
-      const v = parseVerdict({ verdict: 'pass', reasons: [], sha: SHA, run_status });
+      const v = policy.parseVerdictDocument({ verdict: 'pass', reasons: [], sha: SHA, run_status });
       assert.equal(v?.run_status, 'malformed', JSON.stringify(run_status));
       const c = classifyVerdict(v, { candidateSha: SHA, tier: 'S' });
       assert.equal(c.outcome, 'no-verdict', JSON.stringify(run_status));
       assert.equal(c.runStatus, 'malformed');
     }
     // A document without the member has no run_status, and each of the five values is kept as written.
-    assert.equal(parseVerdict({ verdict: 'pass', reasons: [] })?.run_status, undefined);
-    assert.equal('run_status' in parseVerdict({ verdict: 'pass', reasons: [] })!, false);
+    assert.equal('run_status' in policy.parseVerdictDocument({ verdict: 'pass', reasons: [] })!, false);
+    assert.equal(policy.parseVerdictDocument({ verdict: 'nope', run_status: 'failed' }), undefined);
     for (const run_status of ['success', 'timeout', 'no_output', 'malformed', 'tool_error']) {
-      assert.equal(parseVerdict({ verdict: 'pass', reasons: [], run_status })?.run_status, run_status);
+      assert.equal(policy.parseVerdictDocument({ verdict: 'pass', reasons: [], run_status })?.run_status, run_status);
     }
-    assert.equal(classifyVerdict(parseVerdict({ verdict: 'pass', reasons: [], sha: SHA, run_status: 'success' }), { candidateSha: SHA, tier: 'S' }).outcome, 'pass');
+    assert.equal(classifyVerdict(policy.parseVerdictDocument({ verdict: 'pass', reasons: [], sha: SHA, run_status: 'success' }), { candidateSha: SHA, tier: 'S' }).outcome, 'pass');
   });
 });

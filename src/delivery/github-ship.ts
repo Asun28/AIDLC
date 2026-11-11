@@ -18,7 +18,7 @@ import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { GitProbe } from '../probes/git.ts';
 import { GhProbe, type CheckRun, type JobStep } from '../probes/gh.ts';
 import { nulList } from '../core/parse-guard.ts';
-import { parseVerdict } from '../core/review-policy.ts';
+import { parseVerdictDocument } from '../core/review-policy.ts';
 import { classifyShipOutput, encodeUntrusted, thrownText, type ShipPath, type ShipRequest, type ShipResult } from './ship.ts';
 import { PrInfo, type Verdict } from '../core/types.ts';
 
@@ -271,15 +271,17 @@ export class GitHubShipPath implements ShipPath {
     const head = this.git.head(wt);
     // verdict (fresh, candidate-bound) before any remote effect
     const v = this.readVerdict(req.cardId);
-    // A block verdict is never waived: requireVerdict false only tolerates a missing or stale verdict, not a blocking one.
-    if (v.verdict?.verdict === 'block' && (!v.verdict.sha || v.verdict.sha === head)) return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
     if (this.options.requireVerdict !== false) {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
-      if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
       // A review that timed out, printed nothing, printed a malformed document or failed in a tool decided nothing, whatever
-      // its verdict field says: `classifyVerdict` reads it as no verdict, and so does the gate, before any remote effect.
+      // its verdict and sha fields say, so its status is read first: a block or a stale sha of such a file is no verdict
+      // either. `readVerdict` keeps a `run_status` member outside the five values as `malformed`, so a value this
+      // gate does not know is not success.
       if (v.verdict.run_status && v.verdict.run_status !== 'success') return fail('[R3-NO-VERDICT-JSON]', `verdict at ${v.file} has run_status ${v.verdict.run_status}: the review did not complete`);
     }
+    // A block verdict is never waived: requireVerdict false only tolerates a missing or stale verdict, not a blocking one.
+    if (v.verdict?.verdict === 'block' && (!v.verdict.sha || v.verdict.sha === head)) return fail('[R3-SPEC-BLOCK]', v.verdict.reasons.join('; '));
+    if (this.options.requireVerdict !== false && v.verdict?.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
     // The base name, normalised exactly once: the branch the PR targets and the ref the sync fetches and tests.
     const base = req.base.replace(/^origin\//, '');
     // Read-only PR reconciliation before the sync: a branch whose PR is already merged ends here (the runner verifies
@@ -589,7 +591,7 @@ export class GitHubShipPath implements ShipPath {
     if (!existsSync(file)) return { file };
     const raw = readFileSync(file, 'utf8');
     try {
-      return { verdict: parseVerdict(JSON.parse(raw)), raw, file };
+      return { verdict: parseVerdictDocument(JSON.parse(raw)), raw, file };
     } catch {
       return { raw, file };
     }

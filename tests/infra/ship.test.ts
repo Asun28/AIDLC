@@ -217,6 +217,18 @@ describe('delivery/ship ScaffoldShipPath (file contracts)', () => {
     assert.deepEqual(ship.readVerdict('T2-NONE'), { file: path.join(worktreeRoot, 'T2-NONE', '.review', 'T2-NONE.json'), rounds: undefined });
   });
 
+  it('readVerdict keeps a run_status outside the five values as malformed, never as a review that completed', () => {
+    const review = path.join(worktreeRoot, 'T1-STATUS', '.review');
+    mkdirSync(review, { recursive: true });
+    const ship = new ScaffoldShipPath({ mainRoot, worktreeRoot });
+    for (const run_status of ['failed', '', null, 0]) {
+      writeFileSync(path.join(review, 'T1-STATUS.json'), JSON.stringify({ verdict: 'pass', reasons: [], sha: 'abc', run_status }), 'utf8');
+      assert.equal(ship.readVerdict('T1-STATUS').verdict?.run_status, 'malformed', JSON.stringify(run_status));
+    }
+    writeFileSync(path.join(review, 'T1-STATUS.json'), JSON.stringify({ verdict: 'pass', reasons: [], sha: 'abc' }), 'utf8');
+    assert.equal(ship.readVerdict('T1-STATUS').verdict?.run_status, undefined);
+  });
+
   it('readRedReceipt reads the RED phase receipt', () => {
     const review = path.join(worktreeRoot, 'T1-RED', '.review');
     mkdirSync(review, { recursive: true });

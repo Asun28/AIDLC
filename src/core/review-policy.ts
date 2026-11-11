@@ -39,6 +39,18 @@ export interface ClassifyOptions {
   receipt?: { exitCode: number | null; stdout: string; stderr: string };
 }
 
+/**
+ * A verdict document as the readers of a verdict file or of a reviewer's output take it. `parseVerdict` drops a
+ * `run_status` member outside its five values, and a verdict without one reads as a review that completed; here such
+ * a member is kept as `malformed`, so a status no reader knows is never success. A document without the member is
+ * read as `parseVerdict` reads it.
+ */
+export function parseVerdictDocument(raw: unknown): Verdict | undefined {
+  const verdict = parseVerdict(raw);
+  if (!verdict || verdict.run_status !== undefined) return verdict;
+  return Object.hasOwn(raw as object, 'run_status') ? { ...verdict, run_status: 'malformed' } : verdict;
+}
+
 /** Parse a raw verdict document. Returns undefined when it does not satisfy the enforced field. */
 export function parseVerdict(raw: unknown): Verdict | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
