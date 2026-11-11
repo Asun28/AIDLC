@@ -1139,6 +1139,27 @@ export const HealthResult = z.enum(['PASS', 'BREACH', 'INSUFFICIENT_DATA']);
 export type HealthResult = z.infer<typeof HealthResult>;
 
 // ---------------------------------------------------------------------------
+// Incident ledger (`incidents/incidents.json`)
+// ---------------------------------------------------------------------------
+
+/** One breach identity of the incident ledger; a key the schema does not name is kept as read. */
+export const IncidentRecord = z.looseObject({
+  identity: z.string().min(1),
+  firstSeen: IsoTimestamp,
+  lastSeen: IsoTimestamp,
+  count: z.number().int().positive(),
+  intentFile: z.string().optional(),
+  /** When the latest intent was attached: the start of the dedupe window. A record written before this field has none, and `firstSeen` stands in. */
+  filedAt: IsoTimestamp.optional(),
+  disposition: z.enum(['open', 'fix-now', 'scheduled', 'dismissed']),
+  dismissReason: z.string().optional(),
+});
+export type IncidentRecord = z.infer<typeof IncidentRecord>;
+
+export const IncidentLedgerFile = z.record(z.string(), IncidentRecord);
+export type IncidentLedgerFile = z.infer<typeof IncidentLedgerFile>;
+
+// ---------------------------------------------------------------------------
 // Utility
 // ---------------------------------------------------------------------------
 

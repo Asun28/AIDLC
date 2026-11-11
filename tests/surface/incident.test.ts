@@ -8,6 +8,7 @@ import path from 'node:path';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../../src/maintain/incident.ts';
 import { breachIdentity, type BandBreach } from '../../src/maintain/bands.ts';
 import { parseIntent } from '../../src/artifacts/intent.ts';
+import * as lib from '../../src/index.ts';
 import { IncidentLedgerFile, type IncidentRecord } from '../../src/core/types.ts';
 import { StoreError } from '../../src/state/store.ts';
 import { Journal } from '../../src/state/journal.ts';
@@ -265,6 +266,20 @@ test('a ledger that does not parse is an error naming the file, and nothing is r
   assert.equal(existsSync(path.dirname(absent.file)), false);
 });
 
+test('a ledger written by main (JSON.stringify with two spaces, ISO times from toISOString, no filedAt on an old record) reads back unchanged and the library exports the schema names', () => {
+  const written = {
+    'a:WE1:above:3sigma': { identity: 'a:WE1:above:3sigma', firstSeen: '2026-09-11T00:00:00.000Z', lastSeen: '2026-09-11T05:59:59.999Z', count: 4, intentFile: 'intent/x.md', disposition: 'open' },
+    'a:WE2:below:2sigma': { identity: 'a:WE2:below:2sigma', firstSeen: '2026-09-11T01:02:03.004Z', lastSeen: '2026-09-11T01:02:03.004Z', count: 1, filedAt: '2026-09-11T01:02:03.004Z', disposition: 'dismissed', dismissReason: 'known flaky' },
+  };
+  const ledger = new IncidentLedger(scratch());
+  writeFileSync(ledger.file, JSON.stringify(written, null, 2) + '\n', 'utf8');
+  assert.deepEqual(ledger.read(), written);
+  assert.equal(ledger.triage('a:WE1:above:3sigma', 'scheduled')?.disposition, 'scheduled');
+  assert.equal(JSON.parse(bytesOf(ledger.file))['a:WE2:below:2sigma'].dismissReason, 'known flaky');
+  assert.equal(typeof lib.IncidentRecord.safeParse, 'function');
+  assert.equal(lib.IncidentLedgerFile.safeParse(written).success, true);
+});
+
 test('a ledger under a regular file reads as absent and no write lands: the write throws and the file keeps its bytes', () => {
   const file = path.join(scratch(), 'plain');
   writeFileSync(file, 'plain text');
@@ -310,7 +325,10 @@ test('the ledger is written whole and only in a form a read accepts', () => {
   withFs('renameSync', (real) => (from, to, ...rest) => {
     if (String(to) === ledger.file) throw errno('EPERM');
     return real(from, to, ...rest);
-  }, () => assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0), /EPERM/));
+  }, () => {
+    assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0), /EPERM/);
+    assert.throws(() => ledger.write({ [id]: rec({ identity: id, count: 9 }) }), /EPERM/);
+  });
   assert.deepEqual(readFileSync(ledger.file), before);
   assert.deepEqual(readdirSync(dir).filter((name) => name.includes('.tmp-')), []);
   // A successful change leaves no temporary file and keeps a key the schema does not name.
@@ -367,6 +385,17 @@ test('with <slug>.md and <slug>-2.md to <slug>-999.md present the write throws n
   assert.throws(() => writeIncidentIntent(dir, intent), (err: unknown) => err instanceof Error && err.message.includes(dir) && err.message.includes(intent.slug));
   assert.equal(readdirSync(dir).length, 999);
   assert.equal(bytesOf(path.join(dir, `${intent.slug}-999.md`)), 'n999');
+});
+
+test('with every name but <slug>-999.md taken the write returns <slug>-999.md', () => {
+  const dir = path.join(scratch(), 'intent');
+  const intent = intentFromBreach(breach, diagnosis, t0);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, `${intent.slug}.md`), 'one');
+  for (let n = 2; n <= 998; n++) writeFileSync(path.join(dir, `${intent.slug}-${n}.md`), `n${n}`);
+  const file = writeIncidentIntent(dir, intent);
+  assert.equal(path.basename(file), `${intent.slug}-999.md`);
+  assert.equal(parseIntent(bytesOf(file)).intent?.slug, `${intent.slug}-999`);
 });
 
 test('an exclusive create whose write fails leaves the new name taken, keeps the earlier intents and propagates; the next write takes the next suffix', () => {
@@ -444,11 +473,17 @@ const hostJournalText = (fx: Fx): string | null => {
 const filedOf = (stdout: string): string[] => (JSON.parse(stdout) as { filed: string[] }).filed;
 
 test('aidlc monitor check reads the ledger first: a ledger that does not parse stops the command with the breach output, whatever the breaches', () => {
-  for (const [label, recent, breachCount] of [['a propose-tier breach', ABOVE, 1], ['no breach', NONE, 0], ['only a log-tier breach', LOG_ONLY, 1]] as Array<[string, number[], number]>) {
+  const rows: Array<[string, number[], number, string, string]> = [
+    ['a propose-tier breach', ABOVE, 1, '{', 'MALFORMED_JSON'],
+    ['no breach', NONE, 0, '{', 'MALFORMED_JSON'],
+    ['only a log-tier breach', LOG_ONLY, 1, '{', 'MALFORMED_JSON'],
+    ['a ledger that is an array', ABOVE, 1, '[]', 'SCHEMA_VIOLATION'],
+  ];
+  for (const [label, recent, breachCount, content, code] of rows) {
     const fx = makeFixture();
     try {
       const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
-      writeFileSync(ledgerFile, '{', 'utf8');
+      writeFileSync(ledgerFile, content, 'utf8');
       const journalBefore = hostJournalText(fx);
       const result = monitor(fx, recent);
       assert.equal(result.status, 1, `${label}: ${result.stderr}`);
@@ -456,8 +491,8 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
       assert.equal(printed.breaches.length, breachCount, `${label}: ${result.stdout}`);
       assert.deepEqual(printed.filed, [], label);
       assert.ok(result.stderr.startsWith('aidlc: '), `${label}: ${result.stderr}`);
-      assert.ok(result.stderr.includes('MALFORMED_JSON') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
-      assert.equal(bytesOf(ledgerFile), '{', label);
+      assert.ok(result.stderr.includes(code) && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+      assert.equal(bytesOf(ledgerFile), content, label);
       assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent directory`);
       assert.equal(hostJournalText(fx), journalBefore, `${label}: the host journal is as it was`);
     } finally {

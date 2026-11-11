@@ -4,22 +4,11 @@
  * Findings are deduplicated by breach identity within the configured window; dismissals tune
  * the bands. No hidden watcher is installed after development DONE (plan LC10).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { renderIntent, slugify, type Intent } from '../artifacts/intent.ts';
+import { IncidentLedgerFile, type IncidentRecord } from '../core/types.ts';
+import { atomicWriteJson, createExclusive, readJson } from '../state/store.ts';
 import { breachIdentity, type BandBreach } from './bands.ts';
-
-export interface IncidentRecord {
-  identity: string;
-  firstSeen: string;
-  lastSeen: string;
-  count: number;
-  intentFile?: string;
-  /** When the latest intent was attached: the start of the dedupe window. A record written before this field has none, and `firstSeen` stands in. */
-  filedAt?: string;
-  disposition: 'open' | 'fix-now' | 'scheduled' | 'dismissed';
-  dismissReason?: string;
-}
 
 export class IncidentLedger {
   readonly file: string;
@@ -28,18 +17,14 @@ export class IncidentLedger {
     this.file = path.join(dir, 'incidents.json');
   }
 
-  read(): Record<string, IncidentRecord> {
-    if (!existsSync(this.file)) return {};
-    try {
-      return JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, IncidentRecord>;
-    } catch {
-      return {};
-    }
+  /** The ledger as stored; an absent file is an empty ledger and a file that does not parse throws a `StoreError` naming it (never read as empty). */
+  read(): IncidentLedgerFile {
+    return readJson(this.file, IncidentLedgerFile) ?? {};
   }
 
-  write(data: Record<string, IncidentRecord>): void {
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  /** Writes `data` whole through a temporary file renamed into place, and only in a form `read` accepts. */
+  write(data: IncidentLedgerFile): void {
+    atomicWriteJson(this.file, IncidentLedgerFile.parse(data));
   }
 
   /** Returns true when a new intent should be filed (not deduplicated / not dismissed). */
@@ -103,9 +88,12 @@ export function intentFromBreach(breach: BandBreach, diagnosis: { summary: strin
   };
 }
 
+/** Writes the intent to `<slug>.md`, else `<slug>-2.md` to `<slug>-999.md`, never over an existing path; returns the path it created. */
 export function writeIncidentIntent(intentDir: string, intent: Intent): string {
-  mkdirSync(intentDir, { recursive: true });
-  const file = path.join(intentDir, `${intent.slug}.md`);
-  writeFileSync(file, renderIntent(intent), 'utf8');
-  return file;
+  for (let n = 1; n <= 999; n++) {
+    const slug = n === 1 ? intent.slug : `${intent.slug}-${n}`;
+    const file = path.join(intentDir, `${slug}.md`);
+    if (createExclusive(file, renderIntent({ ...intent, slug }))) return file;
+  }
+  throw new Error(`no free name for intent ${intent.slug} in ${intentDir} (-2 to -999 are taken)`);
 }
