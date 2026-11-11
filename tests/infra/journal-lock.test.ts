@@ -3,7 +3,7 @@
  * (`<journal file>.append.lock`, taken through `updateJson` on a record path that is never written), so appenders in
  * separate processes keep one hash chain, and every way the lock refuses leaves the journal as it was.
  */
-import { after, describe, it } from 'node:test';
+import { after, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs, { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -300,5 +300,29 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     assert.equal(waiting.seq, landed.seq + 1);
     assert.ok(Date.parse(waiting.ts) >= Date.parse(landed.ts), `the waiting append's ts ${waiting.ts} is no earlier than ${landed.ts}`);
     assert.equal(k.verify().ok, true);
+  });
+
+  it('an implicit ts never moves back with the clock, and an explicit ts is recorded as given [R1]', () => {
+    const j = new Journal(path.join(dir, 'clock.jsonl'));
+    // The clock is the boundary: Date is mocked, so each append reads the time the test sets.
+    mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-11T12:00:00.000Z') });
+    const at = (iso: string, data: Record<string, unknown>, ts?: string) => {
+      mock.timers.setTime(Date.parse(iso));
+      return j.append({ type: 'NOTE', actor: ME, data, ...(ts ? { ts } : {}) }).ts;
+    };
+    try {
+      assert.equal(at('2026-11-11T12:00:00.000Z', { c: 'no head' }), '2026-11-11T12:00:00.000Z', 'no head: the first event takes the clock reading');
+      assert.equal(at('2026-11-11T11:59:00.000Z', { c: 'clock earlier' }), '2026-11-11T12:00:00.000Z', "the clock reads earlier than the head: the head's ts is used");
+      assert.equal(at('2026-11-11T12:05:00.000Z', { c: 'clock later' }), '2026-11-11T12:05:00.000Z', 'the clock reads later: used as read');
+      assert.equal(at('2026-11-11T12:05:00.000Z', { c: 'equal' }), '2026-11-11T12:05:00.000Z', 'equal readings: the same ts');
+      assert.equal(at('2026-11-11T12:06:00.000Z', { c: 'explicit earlier' }, '2026-11-11T11:00:00.000Z'), '2026-11-11T11:00:00.000Z', 'an explicit ts is recorded as given, earlier than the head included');
+      assert.equal(at('2026-11-11T11:30:00.000Z', { c: 'after explicit' }), '2026-11-11T11:30:00.000Z', 'the clock is compared with the head event only');
+    } finally {
+      mock.timers.reset();
+    }
+    // verify() checks seq, prevHash and hashes, not ts order: the chain with the explicit earlier ts verifies.
+    const v = j.verify();
+    assert.deepEqual(v.problems, []);
+    assert.equal(v.events, 6);
   });
 });

@@ -161,7 +161,7 @@ function countingRunner(): { runner: SyncRunner; runs: Record<string, number> } 
   return { runner, runs };
 }
 
-test('(c) a refused OPERATION_INTENT of a release step leaves the operation intended and the command not run; release next waits naming aidlc ops reconcile, and after the reconcile settles the step by its record [R6]', () => {
+test('(c) a refused OPERATION_INTENT of a release step leaves the operation intended and the command not run; release next waits naming aidlc ops reconcile; the reconcile settles the step by its record and a new attempt after goal resume deploys once [R6]', () => {
   inFixture((fx) => {
     const { runner, runs } = countingRunner();
     const release = new ReleaseRunner({ paths: fx.paths, repo: fx.repo, store: fx.store, ops: fx.ops, leases: fx.leases, runner, opsLoad: opsConfigured(), now: fx.now, signals: () => [] });
@@ -190,14 +190,32 @@ test('(c) a refused OPERATION_INTENT of a release step leaves the operation inte
 
     const reconciled = cli(fx, 'ops', 'reconcile', opId, '--status', 'cancelled');
     assert.equal(reconciled.status, 0, reconciled.stderr);
-    // Card deviation, reported for a ruling: acceptance 9 (c) says the command then runs once. The step's cancelled record
-    // becomes the step (T0-RELEASE-OP-REISSUE, ReleaseRunner.settleStep), so release next stops the attempt and runs nothing.
+    // The step's cancelled record becomes the step (T0-RELEASE-OP-REISSUE R7, ReleaseRunner.settleStep): failed, so release next
+    // stops the attempt and issues nothing again.
     const after = release.next(fx.goal(goalId), fx.store.getRelease(attemptId)!);
     assert.equal(after.directive.kind, 'stop', after.directive.narration);
     assert.equal(after.attempt.stop?.reason, 'release-health');
     assert.equal(after.attempt.stop?.detail, 'staging deployment failed');
     assert.equal(runs['deploy-cmd'], undefined, 'after the reconcile the step is settled by its record and the command is not run');
     assert.deepEqual(fx.ops.list({ goalId, kind: 'deploy' }).map((o) => [o.id, o.status]), [[opId, 'cancelled']], 'no second operation');
+
+    // The deploy that never ran is retried by a new release attempt after a resume. `aidlc release next` reports a stopped
+    // attempt to the goal (src/cli/main.ts, release next), which stops the goal; `aidlc goal resume <goalId> --reason <text>`
+    // makes the `resume` report below (src/cli/main.ts, goal resume). Both are called in process: the CLI reads the real
+    // clock, and this fixture's goal deadline is on the fixed clock.
+    const stopped = fx.controller.report({ goalId, generation: 0, result: 'release-result', attemptId, data: { attempt: after.attempt } });
+    assert.deepEqual([stopped.goal.state, stopped.goal.terminal], ['STOP', true], 'the reported stop makes the goal terminal, which resume requires');
+    const resumed = fx.controller.report({ goalId, generation: 0, result: 'resume', data: { reason: 'the deploy never ran' } });
+    assert.equal(resumed.goal.generation, 1);
+    assert.equal(resumed.directive.kind, 'verify-arc', resumed.directive.narration);
+    const arc = fx.controller.report({ goalId, generation: 1, result: 'arc-verified', data: {} });
+    const retryId = arc.directive.kind === 'release' ? arc.directive.attemptId : '';
+    assert.ok(retryId && retryId !== attemptId, `a new release attempt: ${arc.directive.narration}`);
+    release.setCandidate(fx.goal(goalId), fx.store.getRelease(retryId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    fx.controller.report({ goalId, generation: 1, result: 'approved', data: { kind: 'staging', by: 'user', candidateDigest: 'c1', environment: 'staging' } });
+    release.next(fx.goal(goalId), fx.store.getRelease(retryId)!);
+    assert.equal(runs['deploy-cmd'], 1, 'the new attempt runs the deploy once');
+    assert.deepEqual(fx.ops.list({ goalId, kind: 'deploy' }).map((o) => o.releaseAttempt).sort(), [attemptId, retryId].sort(), 'one operation per attempt');
     assert.equal(fx.journal(goalId).verify().ok, true);
   });
 });
