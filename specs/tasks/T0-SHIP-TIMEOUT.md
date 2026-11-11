@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-TIMEOUT
 title: Every subprocess call of the GitHub ship path has a timeout, and a push, PR create or merge that timed out leaves its operation UNKNOWN to be reconciled, never repeated as a failure
-status: todo
+status: merged
 branch: T0-SHIP-TIMEOUT
 worktree: D:\wt\AIDLC\T0-SHIP-TIMEOUT
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 70 source lines in src/delivery/github-ship.ts, src/delivery/ship.ts and src/loop/card-runner.ts; the rest is the receipt matrix of the seven calls, the classifier precedence table, the reconcile rows for five statuses on the remote and local paths, the failed-step rows of the owed result on a current, a superseded and a stopped run, the reader rows, docs and about 25 lines of attempt evidence; raised from 560 to 700 by the coordinator on the candidate d01076dd, which is 673 changed lines: 67 source lines in three files, 508 lines of the acceptance tests, 88 lines of attempt evidence with its 42-row revert table, the rest docs"
