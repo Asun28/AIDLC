@@ -208,6 +208,7 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
       ['C:ops', 'C:ops'],
       ['c:ops', 'c:ops'],
       ['C:', 'C:'],
+      ['a NUL character', 'ops\u0000x'],
     ];
     for (const [name, cwd] of refused) {
       const r = load(cwd, name.replace(/\W/g, '-'));
@@ -233,10 +234,22 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const read = (file: string) => readFileSync(path.resolve(file), 'utf8').replace(/\r\n/g, '\n');
     const [repository, template] = [read('docs/DELIVERY-OPS.md'), read('templates/docs/DELIVERY-OPS.md')];
     assert.equal(template, repository);
-    const copies: [string, string][] = [['docs/DELIVERY-OPS.md', repository], ['templates/docs/DELIVERY-OPS.md', template]];
+    const copies: [string, string][] = [['docs/DELIVERY-OPS.md', repository], ['templates/docs/DELIVERY-OPS.md', template], ['docs/OPERATIONS.md', read('docs/OPERATIONS.md')]];
+    const clauses = [
+      'refuses, on every platform, a `cwd` that is not a string',
+      'and one that holds a NUL character (U+0000)',
+      'the role is bound, the step has no ledger record yet and the publication check passes',
+      'it stops with `release-config` before the intent is recorded',
+      'A step that already has a ledger record is settled, an unbound role stops NOT CONFIGURED and an unauthorized publication stops `release-auth`, as before',
+    ];
     for (const [name, text] of copies) {
-      for (const clause of ['- `cwd` (optional): the directory the command and its status lookup run in, both the same one.', 'refuses, on every platform, a `cwd` that is not a string', 'stops with `release-config` before the intent is recorded']) assert.ok(text.includes(clause), `${name} holds: ${clause}`);
+      for (const clause of [...clauses, ...(name === 'docs/OPERATIONS.md' ? [] : ['- `cwd` (optional): the directory the command and its status lookup run in, both the same one.'])]) assert.ok(text.includes(clause), `${name} holds: ${clause}`);
     }
+    const changelog = read('CHANGELOG.md');
+    const start = changelog.indexOf('## Unreleased');
+    assert.ok(start >= 0, 'CHANGELOG.md has an Unreleased section');
+    const unreleased = changelog.slice(start, changelog.indexOf('\n## ', start + 1));
+    for (const clause of ['and one that holds a NUL character (U+0000)', 'the role is bound, the step has no ledger record yet and the publication check passes', 'an unauthorized publication stops `release-auth`, as before']) assert.ok(unreleased.includes(clause), `CHANGELOG.md holds: ${clause}`);
   });
 
   it('the command and the status lookup of one binding run in one directory', () => {
