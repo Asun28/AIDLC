@@ -1,7 +1,7 @@
 ---
 id: T0-DIRTY-SUCCESS-2
 title: (replaces T0-DIRTY-SUCCESS) A success recorded on a worktree with uncommitted or untracked changes is refused before any write, naming the changed paths, so the implementer commits or ignores them and records it again without a counted failure
-status: todo
+status: merged
 branch: T0-DIRTY-SUCCESS-2
 worktree: D:\wt\AIDLC\T0-DIRTY-SUCCESS-2
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget 480 on the candidate carried from T0-DIRTY-SUCCESS at 610d4640 (434 changed lines: 21 source lines in two files, 400 lines of acceptance tests, the rest docs and attempt evidence) plus the repair of R9"
