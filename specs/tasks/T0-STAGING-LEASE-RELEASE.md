@@ -149,3 +149,6 @@ Doc-reading run (Windows): the 78 test files that `grep -rlE "ARCHITECTURE\.md|O
 DoD (`npm run typecheck && node --test tests/scenarios/release-lease.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/release-reissue.test.ts tests/infra/lease.test.ts`, Windows): exit 0; `tsc -p tsconfig.test.json --noEmit` clean; `# tests 49`, `# pass 49`, `# fail 0`, `# skipped 0` (8 tests in the new file, 41 in the four existing files).
 
 Coordinator verification:
+- At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
