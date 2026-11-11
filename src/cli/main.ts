@@ -19,7 +19,7 @@ import { hookWiringReport } from '../probes/hook-wiring.ts';
 import { GhProbe } from '../probes/gh.ts';
 import { run, runSync, type Runner } from '../probes/exec.ts';
 import { Journal, currentActor, resolveSessionId } from '../state/journal.ts';
-import { StoreError, createExclusive } from '../state/store.ts';
+import { StoreError, createExclusive, interruptedWritesReport } from '../state/store.ts';
 import { GoalController } from '../loop/controller.ts';
 import { runGoal } from '../loop/run-driver.ts';
 import { CardRunner } from '../loop/card-runner.ts';
@@ -263,6 +263,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         config: c.configFound ? 'aidlc.config.json' : 'defaults (run aidlc init)',
         shipPath: c.config.shipPath,
         stateDir: c.paths.root,
+        interruptedWrites: interruptedWritesReport(c.paths),
         cards: `${registry.cards.length} cards, ${registry.errors.length} unparseable, ${blocking} blocking findings`,
         deliveryOps: ops.status === 'configured' ? `configured (${ops.config.operations.length} operations)` : ops.status === 'unreadable' ? `UNREADABLE: ${ops.error}` : 'NOT CONFIGURED (development-only is fine)',
         provider: `${provider.name}: ${avail.ok ? 'ok' : avail.detail}`,
