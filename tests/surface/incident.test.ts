@@ -562,6 +562,63 @@ const hostJournalText = (fx: Fx): string | null => {
 };
 const filedOf = (stdout: string): string[] => (JSON.parse(stdout) as { filed: string[] }).filed;
 
+test('aidlc monitor check refuses rules: threshold before any evaluation or write', () => {
+  const MESSAGE = JSON.stringify('rules: the only supported value is western_electric');
+  const run = (fx: Fx, bandsText: string, dataText: string, flags: string[], stateDir: string) => {
+    writeFileSync(path.join(fx.tmp, 'bands.yaml'), bandsText, 'utf8');
+    writeFileSync(path.join(fx.tmp, 'data.json'), dataText, 'utf8');
+    return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...flags], { cwd: fx.tmp, env: childEnv(stateDir, fx.tmp), encoding: 'utf8', timeout: 60_000 });
+  };
+  const bandsText = `${BANDS}rules: threshold\n`;
+  const dataText = JSON.stringify({ baseline: BASELINE, recent: ABOVE.map((value, i) => ({ at: `2026-09-11T00:0${i}:00.000Z`, value })) });
+  const snapshot = (dir: string): Record<string, string | null> => {
+    const out: Record<string, string | null> = {};
+    for (const entry of readdirSync(dir, { recursive: true, encoding: 'utf8' }).sort()) {
+      const file = path.join(dir, entry);
+      out[entry] = statSync(file).isFile() ? readFileSync(file, 'utf8') : null;
+    }
+    return out;
+  };
+  const refused = (result: ReturnType<typeof run>, label: string): void => {
+    assert.equal(result.status, 1, `${label}: ${result.stdout}${result.stderr}`);
+    assert.equal(result.stdout, '', label);
+    assert.ok(result.stderr.startsWith('aidlc: '), `${label}: ${result.stderr}`);
+    assert.ok(result.stderr.includes(MESSAGE), `${label}: ${result.stderr}`);
+  };
+  for (const flags of [['--file-intent'], []]) {
+    const fx = fixture();
+    const before = snapshot(fx.paths.root);
+    refused(run(fx, bandsText, dataText, flags, fx.paths.root), `flags: ${flags.join(' ')}`);
+    assert.deepEqual(snapshot(fx.paths.root), before, 'the state root is as it was');
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, 'no intent directory');
+  }
+  {
+    const fx = fixture();
+    refused(run(fx, bandsText, '{', ['--file-intent'], fx.paths.root), 'data that is not JSON');
+  }
+  {
+    const fx = fixture();
+    const missing = path.join(fx.tmp, 'no-such-state');
+    refused(run(fx, bandsText, dataText, ['--file-intent'], missing), 'a state directory that does not exist');
+    assert.equal(existsSync(missing), false, 'the state directory is not created');
+  }
+  {
+    const fx = fixture();
+    const id = 'error_rate:WE1:above:3sigma';
+    new IncidentLedger(fx.paths.incidents).write({ [id]: rec({ identity: id }) });
+    Journal.host(fx.paths.journal).append({ type: 'NOTE', ts: t0 });
+    const intentDir = path.join(fx.tmp, 'intent');
+    mkdirSync(intentDir);
+    writeFileSync(path.join(intentDir, `${SLUG}.md`), 'fixed text', 'utf8');
+    const before = snapshot(fx.paths.root);
+    const intentBefore = snapshot(intentDir);
+    refused(run(fx, bandsText, dataText, ['--file-intent'], fx.paths.root), 'an existing ledger, journal and intent');
+    assert.deepEqual(snapshot(fx.paths.root), before, 'ledger and journal are byte-identical');
+    assert.deepEqual(snapshot(intentDir), intentBefore);
+    assert.deepEqual(readdirSync(intentDir), [`${SLUG}.md`]);
+  }
+});
+
 test('aidlc monitor check reads the ledger first: a ledger that does not parse stops the command with the breach output, whatever the breaches', () => {
   const rows: Array<[string, number[], number, string, string]> = [
     ['a propose-tier breach', ABOVE, 1, '{', 'MALFORMED_JSON'],
