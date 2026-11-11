@@ -271,3 +271,8 @@ Rows red/total: 16/16. The synthetic matcher controls are asserted in the same f
 
 ### Size
 `git diff --shortstat origin/main...HEAD` before this section: 7 files, 167 insertions, 9 deletions (176 changed lines); this section adds about 35; budget 250. src/core/types.ts diff: comment text only (the three StopReason lines changed by a trailing comment).
+
+Coordinator verification:
+- At 486a7aa4, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/types.test.ts, tests/surface/config.test.ts, tests/surface/module-map.test.ts): tests 77, pass 77, fail 0, skipped 0.
+- Windows, docpins: 76 test files reading 3 changed documents: # tests 1844 # pass 1832 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
