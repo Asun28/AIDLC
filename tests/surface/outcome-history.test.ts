@@ -276,6 +276,15 @@ test('T1-OUTCOME-HISTORY acceptance 11, on: a subject holding overruling on x gi
   assert.deepEqual(read.rows.map((row) => [row['sha'], row['on']]), [[s1, null], [s2, 'y']]);
 });
 
+test('T1-OUTCOME-HISTORY acceptance 13: a file b/../a.ts is classified as a.ts is, a file ../x is unknown with no git call, and every git call is made with lazy fetching disabled [R3] [R6]', () => {
+  const { dir, sha } = repo();
+  const seen: { line: string; lazy: string | undefined }[] = [];
+  const runner: SyncRunner = (command, args, options) => (seen.push({ line: [command, ...args].join(' '), lazy: options?.env?.['GIT_NO_LAZY_FETCH'] }), runSync(command, args, { ...options, cwd: dir }));
+  const t = historyTables(runner, 'main', oneRun([sha['k1']!, sha['k2']!, sha['k3']!], [['F1', 2, 'a.ts', sha['k2']!, 'old @ a.ts:1'], ['F2', 2, 'b/../a.ts', sha['k2']!, 'old @ ./a.ts:1'], ['F3', 2, '../x', sha['k2']!, 'outside @ ../x:1']]));
+  assert.deepEqual([values(t.repeat_blocks, 'predates'), values(t.finding_fixes, 'changedAfter'), t.history_errors], [[['F1', 'true'], ['F2', 'true'], ['F3', 'unknown']], [['F1', 'false'], ['F2', 'false'], ['F3', 'unknown']], []]);
+  assert.deepEqual([seen.filter((call) => call.line.includes('../')), seen.filter((call) => call.lazy !== '1'), seen.length > 0], [[], [], true]);
+});
+
 // Each setting is written to the configuration of the fixture repository with the real `git config`, and removed after the test.
 for (const key of ['grep.patternType', 'color.grep', 'color.ui', 'log.showSignature', 'blame.ignoreRevsFile']) {
   test(`T1-OUTCOME-HISTORY acceptance 12: with ${key} set in the repository the rulings and every predates value are what they are without it, with no history_errors row [R6]`, () => {
