@@ -395,3 +395,6 @@ Revert rows of this round (one hunk reverted, file restored):
 The last row stays green on this machine and is the instruction of the coordinator kept as written: git normalises the entries of `GIT_CEILING_DIRECTORIES` itself (measured with a junction: both the linked and the real parent stopped the search with either entry alone), so no input here tells the two forms apart. The second form costs nothing and covers a path that a runner reports in its short form.
 
 Coordinator verification:
+- At 721d4cb9, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/incident.test.ts): tests 39, pass 39, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
