@@ -313,3 +313,8 @@ Temporary directories and cleanup in the three test files of this branch, by gre
 | tests/infra/journal-lock.child.ts | none (it appends to the journal path its parent passes) | none |
 
 No `mkdtempSync` in the three files. The `finally` blocks of the two test files restore what a test replaced (a function of `node:fs`, `Journal.prototype.append`, `Atomics.wait`, the mocked timers, environment variables, the test actor); none removes a temporary directory.
+
+Coordinator verification:
+- At 44f73045, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1856 # fail 2 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
