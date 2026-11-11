@@ -100,3 +100,7 @@ Coordinator verification:
 - At a9eb060e, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/workflow-permissions.test.ts): tests 3, pass 3, fail 0, skipped 0.
 - Windows, docpins: 73 test files reading 1 changed documents: # tests 1802 # pass 1791 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### After R3 decision 1 (block: the first CI run of the pull request is not in the evidence)
+
+R3 decision 1 blocked this candidate on one finding: the Attempt evidence did not hold the first pull-request CI run and its cache restore and save outcomes, which R1 and the hygiene asked for. That run cannot exist before the review: the ship opens the pull request after R3 passes. The planner amended R1 and the hygiene on main (the confirmation is the pull request's required checks, which run ci.yml with the new block, fail when a setup-node cache step or `npm ci` fails, and gate the merge; the coordinator records that run's cache lines at CLOSE). This evidence therefore states, and does not claim more: the statement that `actions/setup-node@v4` with `cache: npm` and `npm ci` need no token scope beyond `contents: read` is taken from the documentation of the two actions (both recommend `contents: read`), it is not yet observed in this repository, and the merge of this card is gated on the run that observes it. No source, test or workflow change since the candidate R3 read.
