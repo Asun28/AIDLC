@@ -100,3 +100,11 @@ Document sentences:
 | CHANGELOG: other errors kept, type narrows, BandBreach keeps threshold | unchanged code | acc 3, 4 |
 
 Changed lines: `git diff --shortstat 0274ca33...HEAD` before this section: 5 files, 145 insertions, 2 deletions, against budget 220.
+
+### Repair round (after the pre-review of fed24b5b), measured on d0b0e35b
+- New acceptance 1 rows (`""`, `Western_Electric`, `" western_electric"`): red on main source by assertion (zod's generic message in place of the fixed one), green now.
+- Acceptance 5 row (e) (no `data.json`, no `--file-intent`): main source fails on the missing data file (`aidlc: ENOENT ... data.json`, probed by hand), so the rules-message assertion is red there; green now. The helper removes every `NODE_OPTIONS` spelling from the child environment; `childEnv` and `monitor` unchanged.
+- CHANGELOG: the two conditions are worded as in R4; the OPERATIONS paragraph is unchanged and matches R4.
+- Revert table, 6 rows, 6 red, source restored (`git diff --stat src` empty): schema hunk back to the enum (acc 1, 2, 5); fixed message alone (acc 1, 2, 5); `.default` dropped (bands.test.ts and 11 incident tests); `'threshold'` out of `BandBreach.rule` (typecheck error); `z.literal` to `z.string()` (acc 1, 2, 5); new row: trim and lower-case before comparing (acc 1 red).
+- DoD: typecheck exit 0; 4 files: tests 104, pass 101, fail 0, skipped 3.
+- Changed lines, `git diff --shortstat origin/main...HEAD` before this subsection: 184 insertions, 2 deletions, budget 220.
