@@ -770,3 +770,32 @@ test("an attempt without an environment is issued as on main, every time: next t
     });
   }
 });
+
+// Acceptance 16: the STOPs T0-RELEASE-REPORT-STEP added pass the exit. A package attempt claims no environment lease (it never
+// enters STAGE, APPLY or RECOVER), so its failed run proof has no lease to release and no case here.
+test('the stops T0-RELEASE-REPORT-STEP added release the leases: a failed stage-verify report', (t) => {
+  inFixture(t, (fx) => {
+    const release = releaseRunner(fx);
+    const { goalId, attemptId } = delivering(fx, 'staging', release);
+    const staged = step(fx, release, goalId, attemptId);
+    assert.equal(staged.directive.kind, 'stage', staged.directive.narration);
+    assert.equal(held(fx, STAGING), true, 'the staging deploy claimed env:staging');
+    const r = release.next(fx.goal(goalId), release.reportStep(fx.goal(goalId), staged.attempt, 'stage-verify', 'failed'));
+    assert.deepEqual({ state: r.attempt.state, reason: r.attempt.stop?.reason, detail: r.attempt.stop?.detail }, { state: 'STOP', reason: 'release-health', detail: 'staging verification failed' });
+    assert.equal(released(fx, STAGING), true, 'the STOP of a failed stage-verify releases env:staging');
+  });
+});
+
+test('the stops T0-RELEASE-REPORT-STEP added release the leases: a failed recover-verify report', (t) => {
+  inFixture(t, (fx) => {
+    const release = releaseRunner(fx);
+    const attempt = stored(fx, 'RECOVER', { target: 'production', steps: [{ name: 'recover', status: 'succeeded' }] });
+    record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, idempotencyKey: `${attempt.id}:stage-deploy:c1`, target: 'staging', status: 'succeeded' });
+    hold(fx, 'staging', `release:${attempt.id}`);
+    const reported = release.reportStep(fx.goal(attempt.goalId), attempt, 'recover-verify', 'failed');
+    const r = release.next(fx.goal(attempt.goalId), reported);
+    assert.deepEqual({ state: r.attempt.state, reason: r.attempt.stop?.reason, detail: r.attempt.stop?.detail }, { state: 'STOP', reason: 'release-health', detail: 'recovery verification failed' });
+    assert.ok(fx.leases.read(PRODUCTION), 'the RECOVER step claimed env:production');
+    assert.deepEqual({ production: released(fx, PRODUCTION), staging: released(fx, STAGING) }, { production: true, staging: true }, 'the STOP of a failed recover-verify releases both leases');
+  });
+});
