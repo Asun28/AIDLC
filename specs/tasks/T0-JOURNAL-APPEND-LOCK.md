@@ -74,3 +74,47 @@ npm run typecheck && node --test tests/infra/journal-lock.test.ts tests/scenario
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+
+Attempt 1 (effort high). RED commit `e0c5aaab` (tests only); fix commit `af92d983`. Source change: `src/state/journal.ts` only (`Journal.append`); `src/state/store.ts` is unchanged.
+
+| Acceptance | Test or command | Result |
+|---|---|---|
+| 1 | journal-lock.test.ts "four processes appending to one journal keep one hash chain" | pass; on main fails "the chain verifies" (sequence gaps from line 9) |
+| 2 | journal-lock.test.ts "an append started while another holds the lock between its head read and its append is refused" | pass; on main fails: the child returned 1 append, no `LOCKED` |
+| 3 | journal-lock.test.ts "a held journal lock refuses with LOCKED after the deadline and is left in place" | pass; on main fails "LOCKED: undefined" (the append returned) |
+| 4 | journal-lock.test.ts "an EPERM on the lock path is retried while the path exists and propagates at once while it is absent" | pass; on main fails "the create was retried after each EPERM" (2 !== -1) |
+| 5 | journal-lock.test.ts "a malformed head releases the journal lock"; regression control "a failed append releases the journal lock" | pass; both pass on main too (the card labels only the second a control; the first has no lock to leave on main) |
+| 6 | journal-lock.test.ts "an append reached from inside another append of the same process is refused" | pass; on main fails "the inner append is refused with LOCKED: undefined" |
+| 7 | journal-lock.test.ts "the actor is resolved before the lock and ts is read inside it" | pass; on main fails: order `['session-default']`, no lock created |
+| 8 | journal.test.ts, update-json.test.ts (17/17), two-windows, fault-points, op-intent-dup, ship-throw, review-admit-strand, candidate-pins, second-pass, side-write-faults, candidate-withdraw, journal-owed: unchanged | pass in the DoD run below |
+| 9 | journal-lock-refusal.test.ts (a), (b), (c) | pass; on main each fails "the journal lock was refused" (no lock to refuse). (c) deviates from the card, see below |
+| 10 | docs/OPERATIONS.md (Audit, two new paragraphs), docs/ARCHITECTURE.md (journal row, `journal.ts` sentence), CHANGELOG.md (above `- T1-BOUND-STATS:`) | reviewer |
+
+Acceptance 9 (c), deviation for a ruling: the card says that after the reconcile `release next` runs the command once. It cannot: after `aidlc ops reconcile <id> --status cancelled`, `ReleaseRunner.issue` finds the step's record by its key and `settleStep` (src/loop/release-runner.ts, T0-RELEASE-OP-REISSUE) takes the cancelled record as the step, `failed`, so `release next` stops the attempt with `release-health` "staging deployment failed" and runs no command; no other status makes the step run again (an open status waits, a terminal one settles it). Reporting the stopped attempt makes the goal terminal. The test asserts this observed outcome (stop, command not run, one operation, `cancelled`) and docs/OPERATIONS.md states it; the sweep's recovery text for release-runner.ts:314 ("then aidlc release next <attemptId>") is accurate as a command, not as a recovery of the step. A change to that behaviour is outside `allow_paths`.
+
+Seams: (a) to (c) arm the refusal for one event type by wrapping `Journal.prototype.append` (it calls the real method; it only arms the `wx` open of `<journal>.append.lock` to throw the absent-path `EPERM`). (b) runs the fixture under an actor whose pid is a process that has exited, on this host, so `aidlc review release` accepts the request as the operator's recovery after the shipping process ended. The interleave of acceptance 2 is deterministic: the child runs inside the patched head read, while the lock is held.
+
+Revert check (each hunk of `Journal.append` reverted on its own in the worktree, then restored; tests: journal-lock.test.ts and journal-lock-refusal.test.ts):
+
+| Hunk | Fails | Result |
+|---|---|---|
+| H1 actor resolved before the lock (moved into the section) | acc 7 "session-default is written before the lock file is created" | red (1 of 11) |
+| H2 the `updateJson` section (head read and append run with no lock) | acc 1 "the chain verifies", 2, 3, 4, 6, 7, 9 (a) (b) (c) "the journal lock was refused" | red (9 of 11) |
+| H3 `ts` read inside the section (moved before the lock) | acc 7 "the waiting append's ts ... is no earlier than ..." (case added after the RED commit for this row) | red (1 of 11) |
+| H4 the change returns the record it received (returning a new record writes `<journal>.append`) | acc 1 "the lock record is never written", acc 7 | red (2 of 11) |
+
+Platforms: every case of both new files runs on Windows and Linux; none is gated on `process.platform`. The absent-path `EPERM` (acceptance 4, 9) and the present-path `EPERM` (acceptance 4) are injected at `fs.openSync`, so they do not depend on the OS. Acceptance 1 accepts an unforced absent-path `EPERM` (`syscall` `open`, path the lock file) as a refusal; it arises only on Windows. No OS error message is asserted. Run here on Windows only; the coordinator runs Linux.
+
+Contention probe (the child of acceptance 1, four processes of 150 appends, three runs on Windows under the load of other agents): returned 600, 598 (2 absent-path `EPERM`) and 598 (1 `LOCKED`, 1 absent-path `EPERM`); the probe counts only, and each run of the test itself, which verifies the chain, passed. The test asserts the chain, the count of returned appends (at least 300) and the allowed codes, never the number of refusals.
+
+verify-card-run-writes: covered file changed since sync commit 34d741ef: `src/state/journal.ts` only. The change adds a lock file create and remove around each append; no card-run record write or journal append is added, removed or reordered. tests/scenarios/fault-points.test.ts passes in the DoD run with no pin added. Outcome: in sync; the sync commit and the Bounds line move at CLOSE as the hygiene says (SKILL.md not edited in this attempt). The skill's "Keeping in sync" command still names f1344090 while its Sync commit line names 34d741ef.
+
+DoD (`dod_command` exactly as above, Windows, on af92d983 plus the uncommitted docs): exit 0; tests 260, suites 18, pass 260, fail 0, cancelled 0, skipped 0; duration 215.5 s. tests/infra/update-json.test.ts on its own: 17 of 17 pass ("one lock primitive in src" included: no `wx`, `sleepSync` or `Atomics.wait` outside src/state/store.ts).
+
+Doc-reading run (every test file that names ARCHITECTURE.md, OPERATIONS.md, CHANGELOG.md or SKILL.md: 81 files, one `node --test` call, Windows): exit 0; tests 1905, suites 151, pass 1893, fail 0, skipped 12 (existing platform skips). One sentence of the new Audit paragraphs (the card takeover recovery) was corrected after that run started; the four files that slice the Audit section or pin docs prose (journal-owed, bench, verifier, prose) were run again after it: 84 of 84 pass.
+
+Budget: the diff exceeds `budget: 450` (see the line counts in the report); the source change is 31 added and 17 removed lines in src/state/journal.ts, the rest is the tests the card names, the docs and this evidence.
+
+Coordinator verification:
