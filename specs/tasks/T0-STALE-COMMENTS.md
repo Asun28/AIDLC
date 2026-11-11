@@ -1,7 +1,7 @@
 ---
 id: T0-STALE-COMMENTS
 title: Six code comments that describe a removed cache reset, an unmerged card, decisions where the code counts blocks, a rule the code does not follow, a misplaced doc comment and a missing closure predicate state what the code does
-status: todo
+status: merged
 branch: T0-STALE-COMMENTS
 worktree: D:\wt\AIDLC\T0-STALE-COMMENTS
 allow_paths:
