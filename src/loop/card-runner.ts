@@ -1048,7 +1048,15 @@ export class CardRunner {
     // A marker means a source file may hold a mutant (card T1-VERIFY-MUTANTS-PROMPT), so nothing is recorded, not even an owed event.
     // Only whether something is at the path counts: no marker is read, and a dangling link is still something there.
     const mutantMarker = mutantsMarkerPath(this.reviewCheckout(run), card.id);
-    if (lstatSync(mutantMarker, { throwIfNoEntry: false })) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
+    // ENOTDIR (the worktree path is a regular file; POSIX says so where Windows reports no entry) is no marker (card
+    // T0-DIRTY-SUCCESS-2 R9); every other error propagates.
+    let markerStat: ReturnType<typeof lstatSync> | undefined;
+    try {
+      markerStat = lstatSync(mutantMarker, { throwIfNoEntry: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTDIR') throw err;
+    }
+    if (markerStat) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
