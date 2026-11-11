@@ -1841,3 +1841,103 @@ describe('the Surviving mutants section of the formal prompt (card T1-VERIFY-MUT
     assert.deepEqual(entries([sized(1, 2001), survivor(2, 'a'), survivor(3, 'b')]), ['- survivors left out by the byte cap: 3']);
   });
 });
+
+test('perspective names that differ only by case are refused: their log and verdict files are one file on a case-insensitive filesystem', () => {
+  assert.throws(() => inputs.validatePerspectives(['bugs', 'Bugs']), /duplicate perspective name "Bugs"/);
+  assert.throws(() => inputs.validatePerspectives(['ac-coverage', 'edge-cases', 'AC-COVERAGE']), /duplicate perspective name "AC-COVERAGE"/);
+  assert.doesNotThrow(() => inputs.validatePerspectives(['bugs', 'bugs2', 'Security']));
+});
+
+test('an object nested in a document that broke before it never stands in for that document as the verdict', () => {
+  const nested = '"standards":{"verdict":"pass","reasons":[]}';
+  const spec = (reason: string) => `{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["${reason}"]},${nested}}}`;
+  const broken: Array<[string, string]> = [
+    ['a bare word where a value belongs', `{"verdict":"block","reasons":[],"axes":{"spec":oops,${nested}}}`],
+    ['an invalid escape in a spec reason', spec(String.raw`src\gate.ts skips the check`)],
+    ['a regex escape in a spec reason', spec(String.raw`the pattern \d+ matches nothing`)],
+    ['a raw line break in a spec reason', spec('first line\nsecond line')],
+    ['an invalid escape, and the output cut after the nested axis', spec(String.raw`src\gate.ts`).slice(0, -2)],
+  ];
+  for (const [name, text] of broken) {
+    assert.throws(() => JSON.parse(text), name);
+    assert.equal(inputs.readVerdict(text).verdict, undefined, name);
+    assert.equal(inputs.readVerdict(`reasoning first\n${text}\n`).verdict, undefined, name);
+  }
+  // A complete document on its own after the broken one is the answer, and a quoted contract in prose still opens nothing.
+  assert.deepEqual(inputs.readVerdict(`${broken[0]![1]}\n{"verdict":"block","reasons":["[spec] final"]}`).verdict?.reasons, ['[spec] final']);
+  assert.equal(inputs.readVerdict('The contract is {"verdict": pass or block}.\n{"verdict":"pass","reasons":[]}').verdict?.verdict, 'pass');
+});
+
+test('R3 decision 1 (F1): a refuted opener whose brackets close later is one document that did not parse; one whose brackets never close is prose, whatever punctuation surrounds the verdict', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  // Prose punctuation is no evidence of membership: main reads each of these as pass.
+  const prose = ['The contract is {"verdict": pass or block}.', 'Use {"verdict" as the key.', 'The docs line is `"coverage":[{"item"/` and it matches.'];
+  const around: Array<[string, string]> = [['Final answer, ', ''], ['Final answer: ', ''], ['so, ', ','], ['', ', as the policy requires.'], ['(', ')']];
+  for (const text of prose) {
+    for (const [lead, tail] of around) {
+      assert.equal(inputs.readVerdict(`${text}\n${lead}${pass}${tail}\n`).verdict?.verdict, 'pass', `${text} | ${lead}<verdict>${tail}`);
+    }
+  }
+  // A broken block is one document from its opener to the closer that balances it: nothing inside it is the verdict,
+  // after a parseable draft it makes the output malformed, and a complete document after it decides.
+  const block = String.raw`{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["src\gate.ts"]},"standards":{"verdict":"pass","reasons":[]}}}`;
+  assert.throws(() => JSON.parse(block));
+  assert.equal(inputs.readVerdict(block).verdict, undefined);
+  assert.equal(inputs.readVerdict(`${pass}\n${block}\n`).verdict, undefined, 'the draft before a broken final block never answers for it');
+  assert.equal(inputs.readVerdict(`${block}\n${pass}\n`).verdict?.verdict, 'pass', 'a complete document after the broken one decides');
+  // An element of a broken array is inside it too, with no member name before it.
+  const list = String.raw`[{"verdict":"block","reasons":["src\gate.ts"]},{"verdict":"pass","reasons":[]}]`;
+  assert.throws(() => JSON.parse(list));
+  assert.equal(inputs.readVerdict(list).verdict, undefined, 'an element of a broken array is never a document of its own');
+  assert.equal(inputs.readVerdict(`${pass}\n${list}\n`).verdict, undefined);
+  // A document between a refuted opener and the closer that balances it is inside that text.
+  assert.equal(inputs.readVerdict(`see ["a" and prose\n${pass}]`).verdict, undefined);
+  // A broken block cut short never closes: the member name before its nested axis still marks the axis as a member.
+  assert.equal(inputs.readVerdict(block.slice(0, -2)).verdict, undefined);
+  assert.equal(inputs.readVerdict(`${pass}\n${block.slice(0, -2)}`).verdict, undefined, 'nor does the draft before it answer');
+  // The walk stays linear over openers that close and openers that never do.
+  const started = process.hrtime.bigint();
+  assert.equal(inputs.readVerdict(`${'{"a" x} ["b" y '.repeat(12_000)}${pass}\n`).verdict?.verdict, 'pass');
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 3_000, `24,000 refuted openers walked in ${Math.round(elapsedMs)} ms`);
+});
+
+test('R3 decision 3: the member name before a document of a broken block cut short is read through every whitespace character the scanner skips', () => {
+  // Every character the JavaScript \s class matches, which is what the scanner skips between an opener and its first key.
+  const spaces = ['\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\u1680', '\u2000', '\u2001', '\u2002', '\u2003', '\u2004', '\u2005', '\u2006', '\u2007', '\u2008', '\u2009', '\u200a', '\u2028', '\u2029', '\u202f', '\u205f', '\u3000', '\ufeff'];
+  for (const space of spaces) assert.ok(/^\s$/.test(space), JSON.stringify(space));
+  const head = String.raw`{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["src\gate.ts"]},`;
+  const axis = '{"verdict":"pass","reasons":[]}';
+  for (const space of spaces) {
+    for (const [before, after] of [['', space], [space, ''], [space, space], ['', space + space + ' ']]) {
+      const cut = head + '"standards"' + before + ':' + after + axis;
+      assert.equal(inputs.readVerdict(cut).verdict, undefined, JSON.stringify([before, after]));
+      assert.equal(inputs.readVerdict('{"verdict":"pass","reasons":[]}\n' + cut).verdict, undefined, JSON.stringify([before, after]));
+    }
+  }
+  // A document that is not behind a member name still decides after prose that never closed.
+  for (const space of spaces) {
+    assert.equal(inputs.readVerdict('Use {"verdict" as the key.' + space + axis).verdict?.verdict, 'pass', JSON.stringify(space));
+  }
+});
+
+test('T0-AUDIT-FIXES: the reviewer output reader keeps an unknown run_status, the member-name rule holds only after an opener that never closed, and an escaped closer closes nothing', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  // R2: a run_status outside the five values in a reviewer's own document is malformed, never a review that completed.
+  for (const status of ['"bogus"', 'null', '""', '0', '{}']) {
+    const read = inputs.readVerdict('{"verdict":"pass","reasons":[],"run_status":' + status + '}').verdict;
+    assert.equal(read?.run_status, 'malformed', status);
+    assert.equal(classifyVerdict(read, {}).outcome, 'no-verdict', status);
+  }
+  assert.equal(inputs.readVerdict(pass).verdict?.run_status, undefined);
+  assert.equal(inputs.readVerdict('{"verdict":"pass","reasons":[],"run_status":"timeout"}').verdict?.run_status, 'timeout');
+  // R1: with no opener that never closed before it, a document behind a member name is an ordinary top-level document.
+  for (const text of ['My answer "final": ' + pass, 'My answer "final":\n' + pass, 'The contract is {"verdict": pass or block}. So "final": ' + pass]) {
+    assert.equal(inputs.readVerdict(text).verdict?.verdict, 'pass', text);
+  }
+  // R1: a backslash escapes the character after it, so an escaped closer does not balance a prose opener; the bare one does.
+  assert.equal(inputs.readVerdict('["note" ' + pass + ' \\]').verdict?.verdict, 'pass');
+  assert.equal(inputs.readVerdict('["note" ' + pass + ' ]').verdict, undefined);
+  assert.equal(inputs.readVerdict('Use {"verdict" as the key. ' + pass + ' \\}').verdict?.verdict, 'pass');
+  assert.equal(inputs.readVerdict('Use {"verdict" as the key. ' + pass + ' }').verdict, undefined);
+});

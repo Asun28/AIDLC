@@ -741,7 +741,10 @@ export class CardRunner {
         return this.ship(goal, card, next);
       case 'REVIEW_FIX': {
         // The repair is a counted attempt of the same episode (MA2): start it here so `aidlc card attempt` can finish it.
-        let episode = next.effort;
+        // A dispute the gate settled leaves the episode succeeded; once the author accepts the finding the block stands
+        // again, and a succeeded episode would answer `done`: no attempt opens and none can be recorded. It reopens here,
+        // as the pre-review hand-back reopens it; the review budget, not the ladder, paid for the block.
+        let episode = next.effort?.terminal === 'succeeded' ? reopenAfterReviewBlock(next.effort, 'review block still pending') : next.effort;
         let attemptNote = '';
         let started: OwedEvent | undefined;
         if (episode && !episode.attempts.some((a) => a.outcome === 'running')) {

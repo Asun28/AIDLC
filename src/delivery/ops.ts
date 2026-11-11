@@ -17,6 +17,22 @@ import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 export const OperationRole = z.enum(['build', 'package', 'deploy', 'status', 'environment', 'health', 'recover', 'migration-status', 'migration-apply', 'backup-verify', 'restore']);
 export type OperationRole = z.infer<typeof OperationRole>;
 
+/**
+ * A pattern of a binding: not blank, and a regular expression under the `m` flag it is matched with. One that does not
+ * compile is refused when the file loads, so the command whose output it reads is never run first.
+ */
+const pattern = z
+  .string()
+  .regex(/\S/, 'must not be blank')
+  .refine((source) => {
+    try {
+      new RegExp(source, 'm');
+      return true;
+    } catch {
+      return false;
+    }
+  }, 'must be a regular expression');
+
 export const OperationBinding = z.object({
   role: OperationRole,
   /** argv array, never a shell string. */
@@ -33,11 +49,11 @@ export const OperationBinding = z.object({
   statusLookup: z.array(z.string()).optional(),
   idempotencyKeyArg: z.string().optional(),
   /** Regex capturing the provider operation id from stdout. */
-  operationIdPattern: z.string().regex(/\S/, 'must not be blank').optional(),
+  operationIdPattern: pattern.optional(),
   /** Interpretation: exit 0 alone is not completion for async operations. */
   async: z.boolean().default(false),
-  successPattern: z.string().regex(/\S/, 'must not be blank').optional(),
-  failurePattern: z.string().regex(/\S/, 'must not be blank').optional(),
+  successPattern: pattern.optional(),
+  failurePattern: pattern.optional(),
   evidenceDir: z.string().optional(),
   /** Whether this operation triggers external publication (tag/release CD). */
   triggersPublication: z.boolean().default(false),

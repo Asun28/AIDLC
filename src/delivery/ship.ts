@@ -10,7 +10,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { runSync, type ExecReceipt, type SyncRunner } from '../probes/exec.ts';
 import { normaliseCause } from '../core/effort.ts';
-import { parseVerdict } from '../core/review-policy.ts';
+import { parseVerdictDocument } from '../core/review-policy.ts';
 import type { Verdict } from '../core/types.ts';
 
 export type ShipOutcomeClass =
@@ -290,7 +290,7 @@ export class ScaffoldShipPath implements ShipPath {
     if (!existsSync(file)) return { file, rounds };
     const raw = readFileSync(file, 'utf8');
     try {
-      return { verdict: parseVerdict(JSON.parse(raw)), raw, file, rounds };
+      return { verdict: parseVerdictDocument(JSON.parse(raw)), raw, file, rounds };
     } catch {
       return { raw, file, rounds };
     }

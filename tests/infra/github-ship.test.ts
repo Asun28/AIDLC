@@ -106,6 +106,59 @@ describe('GitHubShipPath', () => {
     assert.equal(new GitHubShipPath({ mainRoot: blocked.root, worktreeRoot: blocked.wtRoot, repository: 'o/r', runner: runnerWith(), sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'review-blocked');
   });
 
+  test('a pass verdict whose run_status is not success is no verdict: nothing is pushed or merged', () => {
+    for (const run_status of ['tool_error', 'timeout', 'no_output', 'malformed']) {
+      const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD, run_status });
+      dirs.push(f.root);
+      const calls: string[] = [];
+      const base = runnerWith();
+      const runner: typeof base = (cmd, args, o) => {
+        calls.push([cmd, ...args].join(' '));
+        return base(cmd, args, o);
+      };
+      const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      assert.equal(r.outcome, 'review-no-verdict', `${run_status}: ${r.receipt.stdout}`);
+      assert.ok(r.receipt.stdout.includes(`run_status ${run_status}`), r.receipt.stdout);
+      assert.ok(!calls.some((c) => c.startsWith('git push') || c.startsWith('gh pr merge')), `${run_status}: ${calls.join('\n')}`);
+    }
+    const done = fixture({ verdict: 'pass', reasons: [], sha: HEAD, run_status: 'success' });
+    dirs.push(done.root);
+    assert.equal(new GitHubShipPath({ mainRoot: done.root, worktreeRoot: done.wtRoot, repository: 'o/r', runner: runnerWith(), sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged');
+  });
+
+  test('R3 decision 1: a run_status member that is not the string success is no verdict whatever its value, and it is read before the block and the stale sha', () => {
+    const shipWith = (verdict: Record<string, unknown>, requireVerdict?: boolean) => {
+      const f = fixture(verdict);
+      dirs.push(f.root);
+      const calls: string[] = [];
+      const base = runnerWith();
+      const runner: typeof base = (cmd, args, o) => {
+        calls.push([cmd, ...args].join(' '));
+        return base(cmd, args, o);
+      };
+      const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {}, requireVerdict }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      return { out: r.receipt.stdout, outcome: r.outcome, remote: calls.filter((c) => c.startsWith('git push') || c.startsWith('gh pr ')) };
+    };
+    // A value outside the five a review writes is not success: a word, a blank, another letter case, null, a number, an object.
+    for (const run_status of ['failed', '', 'SUCCESS', null, 0, {}]) {
+      const r = shipWith({ verdict: 'pass', reasons: [], sha: HEAD, run_status });
+      assert.equal(r.outcome, 'review-no-verdict', `${JSON.stringify(run_status)}: ${r.out}`);
+      assert.ok(r.out.includes('[R3-NO-VERDICT-JSON]'), r.out);
+      assert.deepEqual(r.remote, [], JSON.stringify(run_status));
+    }
+    // The status is read first: a current block and a stale pass of a review that did not complete are no verdict.
+    const block = shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD, run_status: 'timeout' });
+    assert.ok(block.out.includes('[R3-NO-VERDICT-JSON]') && !block.out.includes('[R3-SPEC-BLOCK]'), block.out);
+    const stale = shipWith({ verdict: 'pass', reasons: [], sha: 'b'.repeat(40), run_status: 'timeout' });
+    assert.ok(stale.out.includes('[R3-NO-VERDICT-JSON]') && !stale.out.includes('[R3-STALE-VERDICT-SHA]'), stale.out);
+    assert.deepEqual([...block.remote, ...stale.remote], []);
+    // Without the member the file is read as before: a current block blocks, a stale pass is stale.
+    assert.ok(shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD }).out.includes('[R3-SPEC-BLOCK]'));
+    assert.ok(shipWith({ verdict: 'pass', reasons: [], sha: 'b'.repeat(40) }).out.includes('[R3-STALE-VERDICT-SHA]'));
+    // With requireVerdict off a current block is still never waived, whatever its run_status.
+    assert.ok(shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD, run_status: 'timeout' }, false).out.includes('[R3-SPEC-BLOCK]'));
+  });
+
   test('auth failure is auth-failed, never a silent local merge', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);
@@ -1048,6 +1101,17 @@ describe('GitHubShipPath base sync (T0-SHIP-BASE-SYNC)', () => {
     assert.equal(pushFail.prNumber, 8, 'the resolved open PR is the identity of the push failure');
     const noPr = pathFor(f, recording({ [MERGE_TREE]: { exitCode: 1, stdout: CONFLICT_TREE }, [SYNC_MERGE]: { exitCode: 1, stdout: CONFLICT_MERGE } }).runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
     assert.equal(noPr.prNumber, undefined, 'no PR resolved, no number');
+  });
+
+  test('a PR closed without a merge stops before any sync, push or CI wait, and the result names it', () => {
+    const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
+    dirs.push(f.root);
+    const closed = recording({ 'gh pr list': { stdout: JSON.stringify([{ number: 3, state: 'CLOSED', headRefOid: HEAD, baseRefName: 'main' }]) } });
+    const r = pathFor(f, closed.runner).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+    assert.equal(r.outcome, 'pr-failed', r.receipt.stdout);
+    assert.equal(r.prNumber, 3);
+    assert.ok(r.receipt.stdout.includes('[SHIP-PR-BASE-UNKNOWN] PR #3 for T1-A is closed without merge; not a new start'), r.receipt.stdout);
+    assert.ok(!closed.calls.some((c) => c.key.startsWith('git fetch') || c.key.startsWith('git merge') || c.key.startsWith('git push') || c.key.startsWith('gh pr merge') || c.key.startsWith('gh api repos')), closed.calls.map((c) => c.key).join('\n'));
   });
 
   test('R3 decision 1 (-2): a failed or malformed PR listing is [SHIP-PR-BASE-UNKNOWN] before any sync, never an exception', () => {

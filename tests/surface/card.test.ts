@@ -194,6 +194,26 @@ test('registry: dangling depends_on, parallel overlap, computed tier and declare
   assert.deepEqual(findings.get('T0-OLD'), []);
 });
 
+test('registry: a card id carried by two files is a block on the active card, and no card overwrites the findings of another', () => {
+  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const tasks = path.join(dir, 'tasks');
+  const archive = path.join(dir, 'archive');
+  mkdirSync(tasks);
+  mkdirSync(archive);
+  writeFileSync(path.join(tasks, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', depends_on: '\n  - T1-MISSING' }), 'utf8');
+  writeFileSync(path.join(tasks, 'T1-OK.md'), templateCard({ id: 'T1-OK', branch: 'T1-OK', worktree: 'C:\\wt\\T1-OK', allow_paths: '\n  - src/ok/' }), 'utf8');
+  // An archived copy of the active card loads last: it must not replace the active card's blocks with its empty list.
+  writeFileSync(path.join(archive, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', status: 'merged' }), 'utf8');
+  const findings = validateRegistry(loadCardRegistry(tasks, archive));
+  const b = findings.get('T1-B')!;
+  assert.ok(b.some((f) => f.sentinel === '[CARD-REF-DANGLING]' && f.severity === 'block'), JSON.stringify(b));
+  const duplicate = b.filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]');
+  assert.equal(duplicate.length, 1, JSON.stringify(b));
+  assert.equal(duplicate[0]!.severity, 'block');
+  assert.ok(duplicate[0]!.message.includes(path.join(archive, 'T1-B.md')), duplicate[0]!.message);
+  assert.ok(!findings.get('T1-OK')!.some((f) => f.severity === 'block'), 'a card with its own id is untouched');
+});
+
 test('renderCard output re-parses with zero blocking findings', () => {
   const text = renderCard({
     id: 'T2-NEW',
@@ -428,4 +448,47 @@ describe('[CARD-SIZE] (T0-CARD-SIZE)', () => {
       assert.equal(lines[at + 1], line, `${rel}: the size_exception line follows the budget line`);
     }
   });
+});
+
+test('R3 decision 3: a card is archived by the directory it was read from, never by a path prefix, so a duplicate id blocks in every directory layout', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const card = (dir: string, extra: Record<string, string> = {}) => {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', ...extra }), 'utf8');
+  };
+  const duplicates = (tasks: string, archive: string) => (validateRegistry(loadCardRegistry(tasks, archive)).get('T1-B') ?? []).filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]' && f.severity === 'block');
+  const dangling = (tasks: string, archive: string) => (validateRegistry(loadCardRegistry(tasks, archive)).get('T1-B') ?? []).filter((f) => f.sentinel === '[CARD-REF-DANGLING]');
+  // The active directory is a sibling of the archive whose name starts with the archive's name.
+  const sibling = { tasks: path.join(root, 'a', 'archive', 'tasks-active'), archive: path.join(root, 'a', 'archive', 'tasks') };
+  // The active directory lies inside the archive directory.
+  const nested = { tasks: path.join(root, 'b', 'archive', 'active'), archive: path.join(root, 'b', 'archive') };
+  // The archive directory lies inside the active directory.
+  const inner = { tasks: path.join(root, 'c', 'tasks'), archive: path.join(root, 'c', 'tasks', 'archive') };
+  for (const layout of [sibling, nested, inner]) {
+    card(layout.tasks, { depends_on: '\n  - T1-MISSING' });
+    card(layout.archive, { status: 'merged' });
+    assert.equal(duplicates(layout.tasks, layout.archive).length, 1, layout.tasks);
+    assert.equal(dangling(layout.tasks, layout.archive).length, 1, 'the active card keeps its own checks: ' + layout.tasks);
+  }
+  // One directory named as both holds each card once: reading it twice is no second file.
+  const same = path.join(root, 'd', 'tasks');
+  card(same);
+  assert.equal(duplicates(same, same).length, 0);
+});
+
+test('T0-AUDIT-FIXES: a registry without the archive record reads a card as archived only when its file lies inside the archive directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const tasks = path.join(root, 'specs', 'tasks-active');
+  const archive = path.join(root, 'specs', 'tasks');
+  for (const [dir, extra] of [[tasks, { depends_on: '\n  - T1-MISSING' }], [archive, { status: 'merged' }]] as Array<[string, Record<string, string>]>) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', ...extra }), 'utf8');
+  }
+  // A registry built by hand carries no record of where each card was read.
+  const registry = loadCardRegistry(tasks, archive);
+  for (const parsed of registry.cards) delete parsed.archived;
+  const found = validateRegistry(registry).get('T1-B') ?? [];
+  assert.equal(found.filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]' && f.severity === 'block').length, 1, JSON.stringify(found));
+  assert.equal(found.filter((f) => f.sentinel === '[CARD-REF-DANGLING]').length, 1, 'the card beside the archive keeps its own checks');
+  assert.ok(found.find((f) => f.sentinel === '[CARD-ID-DUPLICATE]')!.message.includes(path.join(archive, 'T1-B.md')));
 });

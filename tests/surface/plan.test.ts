@@ -71,6 +71,43 @@ test('open TODO fails but a closed [TBD: question] passes', () => {
   assert.equal(tbd.gates.find((g) => g.gateId === 3)?.verdict, 'pass');
 });
 
+test('a closed [TBD: question] exempts only itself: an open marker beside it still fails', () => {
+  const mixed = evaluatePlanReadiness(renderPlan({ ...base, risks: ['cache size [TBD: which cache backend?]', 'TODO decide the eviction rule'] }), { light: true });
+  const gate = mixed.gates.find((g) => g.gateId === 3);
+  assert.equal(gate?.verdict, 'fail');
+  assert.equal(gate?.finding, 'open marker "TODO"');
+  assert.equal(mixed.overall, 'needs-clarification');
+  const openTbd = evaluatePlanReadiness(renderPlan({ ...base, risks: ['cache size [TBD: which cache backend?]', 'eviction rule TBD'] }), { light: true });
+  assert.equal(openTbd.gates.find((g) => g.gateId === 3)?.finding, 'open marker "TBD"');
+});
+
+test('a ??? marker fails wherever it stands, beside a word or alone', () => {
+  for (const risk of ['the cache backend is ???', '??? which cache backend', 'cache backend??? unknown']) {
+    const r = evaluatePlanReadiness(renderPlan({ ...base, risks: [risk] }), { light: true });
+    assert.equal(r.gates.find((g) => g.gateId === 3)?.finding, 'open marker "???"', risk);
+  }
+});
+
+test('R3 decision 1: text removed before the marker search leaves a gap, so a marker directly beside a closed question or a code fence still fails and no removal makes a marker', () => {
+  const gate3 = (risk: string) => evaluatePlanReadiness(renderPlan({ ...base, risks: [risk] }), { light: true }).gates.find((g) => g.gateId === 3);
+  const beside: Array<[string, string]> = [
+    ['TODO[TBD: which backend?]cache', 'TODO'],
+    ['cache[TBD: which backend?]TODO', 'TODO'],
+    ['[TBD: which backend?]TBD', 'TBD'],
+    ['TBD[TBD: which backend?]', 'TBD'],
+    ['FIXME```js\nconst a = 1;\n```later', 'FIXME'],
+    ['sooner```js\nconst a = 1;\n```FIXME', 'FIXME'],
+  ];
+  for (const [risk, marker] of beside) {
+    assert.equal(gate3(risk)?.finding, `open marker "${marker}"`, risk);
+  }
+  // The two halves of a word on the sides of removed text are not one marker, nor are the words of a phrase marker:
+  // the gap is a line break, which no marker contains.
+  for (const risk of ['TO[TBD: which backend?]DO', 'TO```js\nconst a = 1;\n```DO', 'cache [TBD: which backend?] size', 'not[TBD: which backend?]sure', 'decide[TBD: which backend?]later', 'to be[TBD: which backend?]determined', 'to[TBD: which backend?]be determined', 'not```js\nconst a = 1;\n```sure']) {
+    assert.equal(gate3(risk)?.verdict, 'pass', risk);
+  }
+});
+
 test('fileExists resolver flags missing existing files but not (new) ones', () => {
   const r = evaluatePlanReadiness(renderPlan(base), { light: true, fileExists: (p) => p !== 'claims-api/routes/status.py' });
   const g6 = r.gates.find((g) => g.gateId === 6)!;

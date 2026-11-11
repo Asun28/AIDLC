@@ -58,7 +58,10 @@ export interface PlanReadiness {
   questions: string[];
 }
 
-const MARKERS = /\b(TBD|TODO|XXX|FIXME|\?\?\?|not sure|decide later|to be determined|placeholder)\b/i;
+/** `???` stands outside the word group: `\b` needs a word character beside it, which a punctuation marker does not have. */
+const MARKERS = /\b(TBD|TODO|XXX|FIXME|not sure|decide later|to be determined|placeholder)\b|\?\?\?/i;
+/** A closed question, `[TBD: which backend?]`: the one marker a ready plan may carry. */
+const CLOSED_TBD = /\[TBD:[^\]]+\]/g;
 
 /** Definition-of-Ready for a plan: pure gates, block on fail. */
 export function evaluatePlanReadiness(text: string, options: { fileExists?: (p: string) => boolean; light?: boolean } = {}): PlanReadiness {
@@ -66,7 +69,9 @@ export function evaluatePlanReadiness(text: string, options: { fileExists?: (p: 
   const body = doc?.body ?? text;
   const sections = sectionMap(body);
   const gates: DorGate[] = [];
-  const stripped = body.replace(/```[\s\S]*?```/g, '');
+  // Removed text leaves a line break: with no gap the words on its two sides would join, hiding a marker or making one,
+  // and no marker contains a line break.
+  const stripped = body.replace(/```[\s\S]*?```/g, '\n');
 
   const files = (sections.get('files that change') ?? '').split('\n').map((l) => l.replace(/^\s*-\s*/, '').trim()).filter((l) => l && !l.startsWith('('));
   gates.push({ gateId: 1, name: 'files named', verdict: files.length ? 'pass' : 'fail', severity: 'block', finding: files.length ? undefined : 'no files listed under "Files that change"', clarificationQuestion: files.length ? undefined : 'Which files change?' });
@@ -74,9 +79,10 @@ export function evaluatePlanReadiness(text: string, options: { fileExists?: (p: 
   const order = (sections.get('order of work') ?? '').split('\n').filter((l) => /^\s*\d+\./.test(l) && !/\(first bounded step\)/.test(l));
   gates.push({ gateId: 2, name: 'order of work', verdict: order.length >= 1 && order.length <= 20 ? 'pass' : 'fail', severity: 'block', finding: order.length ? (order.length > 20 ? 'more than 20 steps; split the plan' : undefined) : 'no ordered steps', clarificationQuestion: order.length ? undefined : 'What is the order of work?' });
 
-  const marker = stripped.match(MARKERS);
-  const tbdClosed = /\[TBD:[^\]]+\]/.test(stripped);
-  gates.push({ gateId: 3, name: 'no open markers', verdict: marker && !tbdClosed ? 'fail' : 'pass', severity: 'block', finding: marker && !tbdClosed ? `open marker "${marker[0]}"` : undefined, clarificationQuestion: marker && !tbdClosed ? `Resolve "${marker[0]}" or convert it to a closed [TBD: question]` : undefined });
+  // Each closed question is removed before the search, so it exempts itself and no other marker of the plan. It leaves a
+  // line break, as a fence does: a space would join `not` and `sure` on its two sides into the marker `not sure`.
+  const marker = stripped.replace(CLOSED_TBD, '\n').match(MARKERS);
+  gates.push({ gateId: 3, name: 'no open markers', verdict: marker ? 'fail' : 'pass', severity: 'block', finding: marker ? `open marker "${marker[0]}"` : undefined, clarificationQuestion: marker ? `Resolve "${marker[0]}" or convert it to a closed [TBD: question]` : undefined });
 
   const proof = (sections.get('proof') ?? '').split('\n').map((l) => l.replace(/^\s*-\s*/, '').trim()).filter((l) => l && !l.startsWith('('));
   gates.push({ gateId: 4, name: 'proof stated', verdict: proof.length ? 'pass' : 'fail', severity: 'block', finding: proof.length ? undefined : 'no proof (tests/screenshots/measurements) declared', clarificationQuestion: proof.length ? undefined : 'What proves the change works?' });

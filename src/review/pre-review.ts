@@ -22,7 +22,7 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { detectQuotaHold, nulList, quotaOutput } from '../core/parse-guard.ts';
-import { ADVISORY_TAG, findingLocation, parseVerdict } from '../core/review-policy.ts';
+import { ADVISORY_TAG, findingLocation, parseVerdictDocument } from '../core/review-policy.ts';
 import { CoverageEntry } from '../core/types.ts';
 import type { ReviewLessons } from '../artifacts/lessons.ts';
 import type { Card, CoverageEntry as CoverageEntryType, MutantResult, FindingDisposition, FindingRepro, PreReviewOutcome, RoundCoverage, RunStatus, Verdict } from '../core/types.ts';
@@ -491,16 +491,21 @@ export function readVerdict(output: string): { verdict?: Verdict; rejected: Reje
   // top-level documents are the candidates and the last decides (an array is a document that is not a verdict). The output
   // is malformed when a document after the decisive one closed without parsing, or when a document never closes (a block
   // cut short after a nested axis is never its last axis; an unfinished enclosing array never yields its nested object).
-  const { spans, unfinished } = topLevelDocuments(output);
+  // A document that broke and whose brackets close later is one document that closed without parsing, so nothing inside
+  // it is a document of its own: the `standards` axis of a block whose `spec` axis carries a bad escape is not the verdict.
+  const { spans, unfinished, unclosed } = topLevelDocuments(output);
   const parseable = spans.filter((s) => s.parses);
   const decisive = parseable[parseable.length - 1];
   if (!decisive) return { rejected: NO_REJECTS };
+  // A broken document cut short never closes, so the scan reads it as prose and resumes inside it: the object it then
+  // finds directly after a member name (`"standards":`) is that document's member, never the verdict.
+  if (unclosed !== undefined && unclosed < decisive.start && followsMemberName(output, decisive.start)) return { rejected: NO_REJECTS };
   if (spans.some((s) => s.start > decisive.start && !s.parses)) return { rejected: NO_REJECTS };
   if (unfinished !== undefined) return { rejected: NO_REJECTS };
   if (inUnclosedFence(output, decisive.start, decisive.end)) return { rejected: NO_REJECTS };
   try {
     const document: unknown = JSON.parse(output.slice(decisive.start, decisive.end + 1));
-    const verdict = parseVerdict(document);
+    const verdict = parseVerdictDocument(document);
     if (!verdict) return { rejected: NO_REJECTS };
     const coverage = parseCoverage(document);
     return coverage ? { verdict: { ...verdict, coverage: coverage.entries }, rejected: coverage.rejected } : { verdict, rejected: NO_REJECTS };
@@ -591,10 +596,19 @@ function inUnclosedFence(text: string, start: number, end: number): boolean {
  * that follows still decides. Everything between the opener and that character was inside the discarded text, so the
  * scan never re-reads it and the walk stays linear in the size of the output. A prose opener with no document after it
  * leaves the output malformed, so a final document corrupt in its interior is never answered by an earlier draft.
+ *
+ * That holds for an opener whose brackets never close. One whose brackets do close later (`bracketBalance`: from the
+ * refuting character on, with quoted text skipped, the closers outnumber the openers by the containers open at that
+ * character) is a document that broke in its interior: it is one span that does not parse, from the opener to that
+ * closer, and the scan resumes after it, so an object nested after the break is never a document of its own. Whether
+ * a document stands inside a broken one is read from the brackets alone, never from the punctuation beside it.
+ * `unclosed` is the first opener whose brackets never close.
  */
-function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
+function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined; unclosed: number | undefined } {
   const spans: Array<{ start: number; end: number; parses: boolean }> = [];
   let prose: number | undefined;
+  let unclosed: number | undefined;
+  let balance: BracketBalance | undefined;
   let i = 0;
   while (i < text.length) {
     const c = text[i]!;
@@ -613,22 +627,103 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       continue;
     }
     const read = readDocument(text, i);
-    if (read.kind === 'truncated') return { spans, unfinished: i };
+    if (read.kind === 'truncated') return { spans, unfinished: i, unclosed };
     if (read.kind === 'closed') {
-      // The reader accepts exactly JSON, so a document it closed parses; the flag stays for the callers that read it.
+      // The reader accepts exactly JSON, so a document it closed parses.
       spans.push({ start: i, end: read.end, parses: true });
       i = read.end + 1;
       continue;
     }
+    balance ??= bracketBalance(text);
+    const end = closingBracket(balance, read);
+    if (end !== undefined) {
+      spans.push({ start: i, end, parses: false });
+      i = end + 1;
+      continue;
+    }
     prose = i;
+    unclosed ??= i;
     i = read.at;
   }
-  if (prose !== undefined && !spans.some((s) => s.start > prose!)) return { spans, unfinished: prose };
-  return { spans, unfinished: undefined };
+  if (prose !== undefined && !spans.some((s) => s.start > prose!)) return { spans, unfinished: prose, unclosed };
+  return { spans, unfinished: undefined, unclosed };
 }
 
-/** How a document that starts at `start` ends: closed at an index, stopped at a character JSON cannot carry there, or still open at the end of the text. */
-type DocumentEnd = { kind: 'closed'; end: number } | { kind: 'invalid'; at: number } | { kind: 'truncated' };
+/**
+ * Whether the text before `start` ends in a member name: a closing quote, a colon, and only whitespace around them.
+ * Whitespace is what the scanner skips between an opener and its first key, every character of the `\s` class, so
+ * that a document the scanner opens behind a member name is read as behind it.
+ */
+function followsMemberName(text: string, start: number): boolean {
+  const space = /\s/;
+  let i = start - 1;
+  while (i >= 0 && space.test(text[i]!)) i -= 1;
+  if (text[i] !== ':') return false;
+  i -= 1;
+  while (i >= 0 && space.test(text[i]!)) i -= 1;
+  return text[i] === '"';
+}
+
+/**
+ * The brackets of a text for both readings of its quotes, built in one pass so that every refuted opener is answered
+ * without rereading the text. `parity[i]` is the count of quotes before index `i`, modulo 2 (a backslash escapes the
+ * character after it). `net[p][i]` is the openers minus the closers before `i` among the brackets that stand where the
+ * parity is `p`, which are the brackets outside quoted text for a reader that is outside a string wherever the parity is
+ * `p`; `low[p][i]` is the least value `net[p]` takes after any character from `i` on.
+ */
+interface BracketBalance {
+  text: string;
+  parity: Uint8Array;
+  net: [Int32Array, Int32Array];
+  low: [Int32Array, Int32Array];
+}
+
+function bracketBalance(text: string): BracketBalance {
+  const n = text.length;
+  const parity = new Uint8Array(n + 1);
+  const net: [Int32Array, Int32Array] = [new Int32Array(n + 1), new Int32Array(n + 1)];
+  const low: [Int32Array, Int32Array] = [new Int32Array(n + 1), new Int32Array(n + 1)];
+  let quotes = 0;
+  let escaped = false;
+  for (let i = 0; i < n; i += 1) {
+    const c = text[i]!;
+    parity[i] = quotes;
+    const step = escaped ? 0 : c === '{' || c === '[' ? 1 : c === '}' || c === ']' ? -1 : 0;
+    net[0][i + 1] = net[0][i]! + (quotes === 0 ? step : 0);
+    net[1][i + 1] = net[1][i]! + (quotes === 1 ? step : 0);
+    if (escaped) escaped = false;
+    else if (c === '\\') escaped = true;
+    else if (c === '"') quotes ^= 1;
+  }
+  parity[n] = quotes;
+  for (const p of [0, 1] as const) {
+    low[p][n] = 2 ** 31 - 1;
+    for (let i = n - 1; i >= 0; i -= 1) low[p][i] = Math.min(net[p][i + 1]!, low[p][i + 1]!);
+  }
+  return { text, parity, net, low };
+}
+
+/** The index of the closer that balances the containers open where a document broke, or undefined when the text never closes them. */
+function closingBracket(balance: BracketBalance, broke: { at: number; depth: number; quoted: boolean }): number | undefined {
+  // The reader is outside a string where the quote parity equals the parity at the break, or the other one when the break stood inside a string.
+  const p = (broke.quoted ? balance.parity[broke.at]! ^ 1 : balance.parity[broke.at]!) as 0 | 1;
+  const net = balance.net[p];
+  const closed = net[broke.at]! - broke.depth;
+  if (balance.low[p][broke.at]! > closed) return undefined;
+  for (let i = broke.at; i < balance.text.length; i += 1) {
+    if (net[i + 1] === closed) return i;
+  }
+  return undefined;
+}
+
+/** How a string or a token that starts at an index ends. */
+type TokenEnd = { kind: 'closed'; end: number } | { kind: 'invalid'; at: number } | { kind: 'truncated' };
+
+/**
+ * How a document that starts at `start` ends: closed at an index, stopped at a character JSON cannot carry there (with
+ * `depth` containers open at that character, which stood inside a string when `quoted`), or still open at the end of the text.
+ */
+type DocumentEnd = { kind: 'closed'; end: number } | { kind: 'invalid'; at: number; depth: number; quoted: boolean } | { kind: 'truncated' };
 
 /** What the JSON grammar allows at the next character of a document. */
 type Expect = 'value' | 'value-or-close' | 'key' | 'key-or-close' | 'colon' | 'comma-or-close';
@@ -645,8 +740,10 @@ function readDocument(text: string, start: number): DocumentEnd {
   const stack: string[] = [];
   let expect: Expect = 'value';
   let i = start;
+  /** The document broke at `at`, with the containers of the stack open; `quoted` when that character stood inside a string. */
+  const broken = (at: number, quoted: boolean): DocumentEnd => ({ kind: 'invalid', at, depth: stack.length, quoted });
   const close = (opener: string, at: number): DocumentEnd | undefined => {
-    if (stack[stack.length - 1] !== opener) return { kind: 'invalid', at };
+    if (stack[stack.length - 1] !== opener) return broken(at, false);
     stack.pop();
     return stack.length ? undefined : { kind: 'closed', end: at };
   };
@@ -657,7 +754,7 @@ function readDocument(text: string, start: number): DocumentEnd {
       continue;
     }
     if (expect === 'colon') {
-      if (c !== ':') return { kind: 'invalid', at: i };
+      if (c !== ':') return broken(i, false);
       expect = 'value';
       i += 1;
       continue;
@@ -670,9 +767,9 @@ function readDocument(text: string, start: number): DocumentEnd {
         i += 1;
         continue;
       }
-      if (c !== '"') return { kind: 'invalid', at: i };
+      if (c !== '"') return broken(i, false);
       const str = readString(text, i);
-      if (str.kind !== 'closed') return str;
+      if (str.kind !== 'closed') return str.kind === 'invalid' ? broken(str.at, true) : str;
       expect = 'colon';
       i = str.end + 1;
       continue;
@@ -689,7 +786,7 @@ function readDocument(text: string, start: number): DocumentEnd {
         i += 1;
         continue;
       }
-      return { kind: 'invalid', at: i };
+      return broken(i, false);
     }
     // A value, or the closer of the container that just opened (`[]` and `{}` are values; `[1,]` is not).
     if (c === ']' && expect === 'value-or-close') {
@@ -707,13 +804,13 @@ function readDocument(text: string, start: number): DocumentEnd {
     }
     if (c === '"') {
       const str = readString(text, i);
-      if (str.kind !== 'closed') return str;
+      if (str.kind !== 'closed') return str.kind === 'invalid' ? broken(str.at, true) : str;
       expect = 'comma-or-close';
       i = str.end + 1;
       continue;
     }
     const token = readToken(text, i);
-    if (token.kind !== 'closed') return token;
+    if (token.kind !== 'closed') return token.kind === 'invalid' ? broken(token.at, false) : token;
     expect = 'comma-or-close';
     i = token.end + 1;
     continue;
@@ -722,7 +819,7 @@ function readDocument(text: string, start: number): DocumentEnd {
 }
 
 /** Read a JSON string from its opening quote at `start`. A raw control character is one JSON cannot carry, so prose that opens a quote and runs into the next line is prose. */
-function readString(text: string, start: number): DocumentEnd {
+function readString(text: string, start: number): TokenEnd {
   for (let i = start + 1; i < text.length; i += 1) {
     const c = text[i]!;
     if (c === '"') return { kind: 'closed', end: i };
@@ -749,7 +846,7 @@ const NUMBER = /^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$/;
 const NUMBER_PREFIX = /^-?(0|[1-9]\d*)?(\.\d*)?([eE][+-]?\d*)?$/;
 
 /** Read a literal or a number from `start`. A token the text ends inside is closed when it is a prefix of a real one. */
-function readToken(text: string, start: number): DocumentEnd {
+function readToken(text: string, start: number): TokenEnd {
   const match = /^[-+0-9a-zA-Z._]+/.exec(text.slice(start));
   if (!match) return { kind: 'invalid', at: start };
   const token = match[0];
@@ -996,8 +1093,9 @@ export function validatePerspectives(perspectives: string[]): void {
   const seen = new Set<string>();
   for (const p of perspectives) {
     if (!PERSPECTIVE_NAME.test(p) || p === '.' || p === '..' || p.includes('..')) throw new Error(`invalid perspective name "${p}": use letters, digits, dot, underscore or dash`);
-    if (seen.has(p)) throw new Error(`duplicate perspective name "${p}"`);
-    seen.add(p);
+    // Case is folded: two names that differ only by case write one log and one verdict file on a case-insensitive filesystem.
+    if (seen.has(p.toLowerCase())) throw new Error(`duplicate perspective name "${p}"`);
+    seen.add(p.toLowerCase());
   }
 }
 

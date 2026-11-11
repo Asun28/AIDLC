@@ -60,6 +60,14 @@ describe('release state machine (LC5 / Q16-Q22)', () => {
     assert.equal(s2.stop?.reason, 'release-config');
   });
 
+  test('the staging release-config stop names the file that binds operations and the command that lists them', () => {
+    const stopped = transitionRelease(release({ target: 'staging' }), 'STAGE', T0, { candidateVerified: true, providersConfigured: false, authorizations: [stagingAuth], effects: STAGING_EFFECTS });
+    const next = stopped.stop?.nextAction ?? '';
+    assert.ok(next.includes('aidlc.ops.json'), next);
+    assert.ok(next.includes('`aidlc release ops --target staging`'), next);
+    assert.ok(!next.includes('aidlc ops config'), `${next} names no command the CLI lacks`);
+  });
+
   test('Q17: staging authority is scoped; missing it is STOP/release-auth', () => {
     const stg = release({ target: 'staging' });
     const stopped = transitionRelease(stg, 'STAGE', T0, { candidateVerified: true, providersConfigured: true, authorizations: [prodAuth], effects: STAGING_EFFECTS });

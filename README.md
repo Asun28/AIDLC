@@ -25,7 +25,7 @@ npm run build                      # optional; bin/aidlc.js runs src/ on Node 22
 node bin/aidlc.js init             # lays intent/, specs/, plans/, .claude/, REVIEW.md, bands.yaml, evals/, aidlc.config.json over the repo
 node bin/aidlc.js doctor           # toolchain, config, state dir, card registry, provider
 node bin/aidlc.js goal new "fix the null pointer when a claim has no adjuster" --bug-evidence
-node bin/aidlc.js next             # one directive: plan | project-cards | checkpoint | run-card | verify-arc | release | wait | close | done | stop
+node bin/aidlc.js next             # one directive: ask | plan | project-cards | checkpoint | run-card | verify-arc | release | wait | close | done | stop
 node bin/aidlc.js run --goal <id> --max-steps 40  # drive a goal with the claude-code provider until attention is needed
 ```
 
@@ -167,12 +167,13 @@ src/
   maintain/      control bands (Western Electric), incident ledger -> intent
   evals/         deterministic eval runner
   audit/         evidence manifest + seal, independent verifier
+  review/        R2 pre-review and the verdict reader, reviewer bench, finding reproduction, mutants, review stats
   hooks/         Claude Code hook handlers
   loop/          typed directives, goal controller, card runner, release runner
   scaffold/      `aidlc init`
   cli/           commander entry
 templates/       files copied by `aidlc init` (.claude skills: aidlc-loop plus the tdd, diagnose, grilling and merge-conflicts companions; agents; settings; REVIEW.md; bands.yaml; artifact templates; docs incl. LESSONS and third-party notices; workflows)
-tests/           node:test suites (core, infra, surface)
+tests/           node:test suites (core, infra, scenarios, surface)
 docs/            architecture, traceability, operations, plans
 ```
 

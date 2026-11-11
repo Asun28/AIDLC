@@ -75,7 +75,7 @@ export function assertReleaseTransition(attempt: ReleaseAttempt, to: ReleaseStat
     case 'STAGE':
       if (!guards.candidateVerified) throw new ReleaseTransitionError(from, to, 'candidate not verified');
       if (attempt.target === 'package') throw new ReleaseTransitionError(from, to, 'package goal has no staging stage');
-      if (!guards.providersConfigured) return makeStop('release-config', 'required staging provider operations are NOT CONFIGURED', 'bind deployment submission/status/health operations in docs/DELIVERY-OPS.md and aidlc ops config', { at: now, global: false });
+      if (!guards.providersConfigured) return makeStop('release-config', 'required staging provider operations are NOT CONFIGURED', 'bind deployment submission/status/health operations in aidlc.ops.json (docs/DELIVERY-OPS.md); `aidlc release ops --target staging` lists what is bound', { at: now, global: false });
       {
         const auth = requireAuthority(guards.authorizations ?? [], 'staging', guards.effects ?? {}, now);
         if (auth.status === 'missing') return makeStop('release-auth', auth.detail, 'staging runs only within the already requested staging scope; record the staging authorization', { at: now, global: false });

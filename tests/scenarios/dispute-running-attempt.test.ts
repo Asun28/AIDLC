@@ -177,6 +177,28 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a disputed R3 block settles the r
   }
 });
 
+test('a dispute accepted after the gate settled the repair reopens the episode: the repair gets an attempt and can be recorded', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    s.r3.push(BLOCK);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    r = s.runner.next(s.g(), s.card, s.runner.disputeFinding(s.g(), s.card, r.run, 'F1', 'src/t0-dra.test.ts covers the empty input at line 12'));
+    assert.equal(r.run.effort!.terminal, 'succeeded', 'the dispute settled the repair and the episode is succeeded again');
+    // The author now agrees with the finding: the block stands, so the repair needs an attempt of the same episode.
+    r = s.runner.next(s.g(), s.card, s.runner.acceptFinding(s.g(), s.card, r.run, 'F1'));
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.effort!.terminal, undefined, 'the episode is open for the repair');
+    assert.equal(r.run.effort!.attempts.filter((a) => a.outcome === 'running').length, 1, 'card next opened the repair attempt');
+    const repaired = s.runner.recordAttempt(s.g(), s.card, r.run, { outcome: 'success', dodReceipt: 'dod:sha-2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(repaired.candidate?.sha, 'sha-2');
+    assert.equal(repaired.effort!.terminal, 'succeeded');
+  } finally {
+    s.fx.cleanup();
+  }
+});
+
 test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 1: a kept receipt reused because the pre-review rounds are exhausted settles nothing: the repair stays running and nothing is journaled (R3 decision 1 F1) [R1]', async () => {
   const s = setup();
   try {
@@ -349,4 +371,41 @@ test('T0-DISPUTE-RUNNING-ATTEMPT acceptance 5: docs/OPERATIONS.md and the CHANGE
   const unreleased = changelog.slice(changelog.indexOf('## Unreleased'), changelog.indexOf('\n## ', changelog.indexOf('## Unreleased') + 1));
   for (const sentence of DOC_SENTENCES) assert.ok(operations.includes(sentence), `docs/OPERATIONS.md states: ${sentence}`);
   assert.ok(unreleased.includes(CHANGELOG_SENTENCE), `CHANGELOG.md Unreleased states: ${CHANGELOG_SENTENCE}`);
+});
+
+test('a success recorded on the blocked candidate itself leaves the R3 block pending: card next opens one more repair attempt, once, and the repair on a new candidate is recorded', async () => {
+  const s = setup();
+  try {
+    let r = s.record(s.first.run, 'sha-1');
+    r = s.runner.next(s.g(), s.card, (await s.runner.preReview(s.g(), s.card, r.run)).run);
+    s.r3.push(BLOCK);
+    r = s.runner.next(s.g(), s.card, (await s.runner.formalReview(s.g(), s.card, r.run)).run);
+    assert.equal(r.run.state, 'REVIEW_FIX');
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    const running = (run: CardRun) => run.effort!.attempts.filter((a) => a.outcome === 'running').length;
+    const started = () => s.fx.events(s.goalId).filter((e) => e.type === 'ATTEMPT_STARTED').length;
+    assert.equal(running(r.run), 1, 'the block opened the repair attempt');
+    // The repair is recorded as a success on the sha the block names: nothing changed, so the block is still pending.
+    const unchanged = s.runner.recordAttempt(s.g(), s.card, r.run, { outcome: 'success', dodReceipt: 'dod:sha-1', redReceipt: 'red:1', candidateSha: 'sha-1' });
+    assert.equal(unchanged.effort!.terminal, 'succeeded');
+    const before = started();
+    r = s.runner.next(s.g(), s.card, unchanged);
+    assert.equal(r.run.state, 'REVIEW_FIX');
+    assert.equal(r.directive.kind, 'build', r.directive.narration);
+    assert.equal(r.run.effort!.terminal, undefined, 'the episode is open again for the repair the block still asks for');
+    assert.equal(running(r.run), 1);
+    assert.equal(started(), before + 1);
+    // Asking again without recording the attempt opens nothing more.
+    const idle = s.runner.next(s.g(), s.card, r.run);
+    assert.equal(idle.directive.kind, 'build');
+    assert.equal(running(idle.run), 1);
+    assert.equal(started(), before + 1);
+    assert.equal(idle.run.effort!.attempts.length, r.run.effort!.attempts.length);
+    // The repair on a new candidate is recorded and binds that candidate.
+    const repaired = s.runner.recordAttempt(s.g(), s.card, idle.run, { outcome: 'success', dodReceipt: 'dod:sha-2', redReceipt: 'red:1', candidateSha: 'sha-2' });
+    assert.equal(repaired.candidate?.sha, 'sha-2');
+    assert.equal(repaired.effort!.terminal, 'succeeded');
+  } finally {
+    s.fx.cleanup();
+  }
 });
