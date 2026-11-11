@@ -1,7 +1,7 @@
 ---
 id: T0-ASK-RECLASSIFY
 title: "A revision re-classifies the revised request text with the router and stores its ambiguity, so the ask a revision answered is not asked again"
-status: todo
+status: merged
 branch: T0-ASK-RECLASSIFY
 worktree: D:\wt\AIDLC\T0-ASK-RECLASSIFY
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 220 to 300 on the candidate d44cac7c, which is 275 changed lines; 6 source lines in src/loop/controller.ts, 247 lines of the acceptance tests for the input classes of R3 and the goal states of the revision table, the rest docs and attempt evidence"
