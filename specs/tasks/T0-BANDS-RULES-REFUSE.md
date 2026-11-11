@@ -70,3 +70,33 @@ npm run typecheck && node --test tests/surface/bands.test.ts tests/surface/incid
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing tests pass unchanged.
+
+## Attempt evidence
+
+RED, measured on f536d3af (tests only, source of main):
+- Acceptance 4: `npm run typecheck` fails: `tests/surface/bands.test.ts(178,9): error TS2322: Type '"threshold" | "western_electric"' is not assignable to type '"western_electric"'.`
+- Acceptance 1: "rules accepts only western_electric ..." not ok (assertion: threshold row parses).
+- Acceptance 2: "a refused rules value leaves the other issues ..." not ok (assertion: no issue at `rules`).
+- Acceptance 5: "aidlc monitor check refuses rules: threshold ..." not ok (expected exit 1, actual 0).
+- Acceptance 3: passes on main (pin). Acceptance 6: other tests pass (pin).
+
+Revert table (measured on 13f07df9, source restored after each, `git diff --stat` empty), 5 rows, 5 red:
+| Reverted piece | Red test |
+|---|---|
+| whole schema hunk back to the enum | acc 1, 2, 5 |
+| fixed message alone | acc 1, 2, 5 |
+| `.default('western_electric')` dropped (absent key) | acc 1 accepted rows, and 11 incident tests, bands.test.ts file |
+| `'threshold'` removed from `BandBreach.rule` | typecheck (1 error, acc 4) |
+| `z.literal` replaced by `z.string()` | acc 1, 2, 5 |
+
+DoD on 3939146e: `npm run typecheck` exit 0; node --test 4 files: tests 104, pass 101, fail 0 (3 skipped by existing platform skips); exit 0.
+
+Document sentences:
+| Sentence | Made true by | Test |
+|---|---|---|
+| OPERATIONS paragraph: one value, default when absent | `z.literal(...).default(...)` bands.ts:20 | acc 1 accepted rows |
+| refused incl. threshold, empty, case, quoted spaces, issue at `rules` | same | acc 1 |
+| exit 1, nothing on stdout, no ledger/intent/journal | throw at main.ts:1346 | acc 5 |
+| CHANGELOG: other errors kept, type narrows, BandBreach keeps threshold | unchanged code | acc 3, 4 |
+
+Changed lines: `git diff --shortstat 0274ca33...HEAD` before this section: 5 files, 145 insertions, 2 deletions, against budget 220.
