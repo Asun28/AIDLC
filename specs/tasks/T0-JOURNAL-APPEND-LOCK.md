@@ -299,3 +299,17 @@ Coordinator verification:
 - At d24ec3d2, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
 - Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### Attempt 4 (repair of R3 decision 3)
+
+Finding [standards, required-temp-cleanup-hook, re:F8] tests/scenarios/journal-lock-refusal.test.ts:73: the `after` hook of the three scenarios called `fx.cleanup()`, the fixture's own removal in tests/scenarios/_harness.ts, where the forbid entry names `cleanup` of tests/infra/helpers.ts. Done: the file imports `cleanup` from `../infra/helpers.ts` and `fixture(t, actor?)` registers `t.after(() => cleanup(fx.tmp))`; `fx.cleanup` is no longer called in the file. This replaces what the attempt 3 section and its forbid row say about `t.after(() => fx.cleanup())`. The directory is still created by `makeFixture`, which creates it with `tmpDir('aidlc-scn-')` of tests/infra/helpers.ts. No source file, document or other test changes in this attempt. The edit was made by the coordinator, as the finding states it; the checks below are the coordinator's.
+
+Temporary directories and cleanup in the three test files of this branch, by grep at this commit:
+
+| file | creates | removes |
+|---|---|---|
+| tests/infra/journal-lock.test.ts | `tmpDir()` of ./helpers.ts | `after(() => { cleanup(dir); })`, `cleanup` of ./helpers.ts |
+| tests/scenarios/journal-lock-refusal.test.ts | `makeFixture` (`tmpDir` of ../infra/helpers.ts) | `t.after(() => cleanup(fx.tmp))`, `cleanup` of ../infra/helpers.ts |
+| tests/infra/journal-lock.child.ts | none (it appends to the journal path its parent passes) | none |
+
+No `mkdtempSync` in the three files. The `finally` blocks of the two test files restore what a test replaced (a function of `node:fs`, `Journal.prototype.append`, `Atomics.wait`, the mocked timers, environment variables, the test actor); none removes a temporary directory.

@@ -12,6 +12,7 @@ import { hostname } from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { candidateShaFor, driveCardToDone, goalForCards, makeFixture, opsConfigured, opsRunner, writeCard, T0, type Fixture } from './_harness.ts';
+import { cleanup } from '../infra/helpers.ts';
 import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { ReleaseRunner, releaseOperationOf } from '../../src/loop/release-runner.ts';
 import { Journal } from '../../src/state/journal.ts';
@@ -66,11 +67,11 @@ const isEperm = (err: unknown): boolean => (err as NodeJS.ErrnoException | undef
 
 /**
  * A scenario fixture: `makeFixture` creates its directory with `tmpDir` of tests/infra/helpers.ts, and the test's `after` hook,
- * registered here where the directory is created, removes it with the fixture's `cleanup`.
+ * registered here where the directory is created, removes it with `cleanup` of tests/infra/helpers.ts (the card's forbid entry).
  */
 function fixture(t: TestContext, actor?: ActorIdentity): Fixture {
   const fx = makeFixture(actor ? { actor } : {});
-  t.after(() => fx.cleanup());
+  t.after(() => cleanup(fx.tmp));
   return fx;
 }
 
