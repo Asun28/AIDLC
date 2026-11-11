@@ -6,8 +6,8 @@ import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsRunner, candidateShaFor, T0 } from './_harness.ts';
-import { ReleaseRunner, type ReleaseDirective } from '../../src/loop/release-runner.ts';
-import { ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type OperationKind, type OperationStatus } from '../../src/core/types.ts';
+import { ReleaseRunner, releaseOperationOf, type ReleaseDirective } from '../../src/loop/release-runner.ts';
+import { OperationRecord, ReleaseAttempt, HOUR_MS, MINUTE_MS, addMs, type OperationKind, type OperationStatus } from '../../src/core/types.ts';
 import { OperationLedger } from '../../src/coordination/reconcile.ts';
 import { LeaseStore } from '../../src/coordination/lease.ts';
 import { StoreError } from '../../src/state/store.ts';
@@ -414,4 +414,30 @@ test('two callers of one step record one intent and dispatch once', () => {
     assert.equal(fx.ops.list({ goalId }).length, 1);
     assert.equal(runs['deploy-cmd'], 1);
   });
+});
+
+test('a ledger record belongs to the attempt by its releaseAttempt or by one of the attempt\'s three step keys, and only under its goal', () => {
+  const attemptWith = (candidateDigest: string | undefined) => ReleaseAttempt.parse({ id: 'rel-g1-1', goalId: 'g1', generation: 0, target: 'staging', state: 'STAGE', candidateDigest, startedAt: T0, deadline: addMs(T0, 12 * HOUR_MS), updatedAt: T0 });
+  const op = (goalId: string, releaseAttempt: string | undefined, idempotencyKey: string | undefined) => OperationRecord.parse({ id: 'op-1', kind: 'deploy', goalId, releaseAttempt, target: 'staging', idempotencyKey, ownerGeneration: 0, intentRecordedAt: T0, status: 'intended', timeoutMs: 60_000 });
+  const rows: [string, string | undefined, string | undefined, boolean][] = [
+    ["the attempt's id and no key", 'rel-g1-1', undefined, true],
+    ["another attempt's id and the stage-deploy key", 'rel-g1-0', 'rel-g1-1:stage-deploy:c1', true],
+    ["another attempt's id and the apply-deploy key", 'rel-g1-0', 'rel-g1-1:apply-deploy:c1', true],
+    ["another attempt's id and the recover key", 'rel-g1-0', 'rel-g1-1:recover:c1', true],
+    ["another attempt's id and no key", 'rel-g1-0', undefined, false],
+    ["another attempt's id and an empty key", 'rel-g1-0', '', false],
+    ["another attempt's id and another digest's key", 'rel-g1-0', 'rel-g1-1:stage-deploy:c2', false],
+    ["another attempt's id and the key in another letter case", 'rel-g1-0', 'REL-G1-1:STAGE-DEPLOY:C1', false],
+  ];
+  const attempt = attemptWith('c1');
+  for (const [label, releaseAttempt, key, belongs] of rows) {
+    assert.equal(releaseOperationOf(op('g1', releaseAttempt, key), attempt), belongs, label);
+    assert.equal(releaseOperationOf(op('g2', releaseAttempt, key), attempt), false, `${label}, under another goal`);
+  }
+  // The key `issue` builds: `na` for an absent candidate digest, an empty last part for an empty one.
+  for (const [digest, own, other] of [[undefined, 'na', ''], ['', '', 'na']] as const) {
+    assert.equal(releaseOperationOf(op('g1', 'rel-g1-0', `rel-g1-1:recover:${own}`), attemptWith(digest)), true, `digest ${String(digest)}: :${own}`);
+    assert.equal(releaseOperationOf(op('g1', 'rel-g1-0', `rel-g1-1:recover:${other}`), attemptWith(digest)), false, `digest ${String(digest)}: :${other}`);
+    assert.equal(releaseOperationOf(op('g1', 'rel-g1-0', 'rel-g1-1:recover:c1'), attemptWith(digest)), false, `digest ${String(digest)}: :c1`);
+  }
 });

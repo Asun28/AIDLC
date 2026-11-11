@@ -61,7 +61,7 @@ function releaseStepKey(attempt: ReleaseAttempt, step: ReleaseStep): string {
  * `step`: the record matches that step when it is of the attempt's goal and carries that step's key, whatever its
  * `releaseAttempt`. Keys compare as exact strings; the provider id is never read (an `intended` record has none).
  */
-function releaseOperationOf(record: OperationRecord, attempt: ReleaseAttempt, step?: ReleaseStep): boolean {
+export function releaseOperationOf(record: OperationRecord, attempt: ReleaseAttempt, step?: ReleaseStep): boolean {
   if (record.goalId !== attempt.goalId) return false;
   if (step) return record.idempotencyKey === releaseStepKey(attempt, step);
   return record.releaseAttempt === attempt.id || (Object.keys(RELEASE_STEP_KINDS) as ReleaseStep[]).some((s) => record.idempotencyKey === releaseStepKey(attempt, s));
