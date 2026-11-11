@@ -2,13 +2,13 @@
 slug: review-convergence
 title: Fewer R3 repair rounds per card, by two changes to what a later review may block on
 intent: intent/review-convergence.md
-status: draft
+status: accepted
 created: 2026-11-11T02:20:00Z
 skills_applied: []
 ---
 
 # Spec: Fewer R3 repair rounds per card
-From intent: intent/review-convergence.md. Status: draft. Skills applied: (none).
+From intent: intent/review-convergence.md. Status: accepted. Skills applied: (none).
 
 ## Requirements (EARS)
 - R1. `formalReview.missAdvisory` shall default to false in `src/config.ts`, be false in `templates/aidlc.config.json` and be true in this repository's `aidlc.config.json`.
