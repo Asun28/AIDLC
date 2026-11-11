@@ -4,7 +4,7 @@ title: aidlc doctor prints interruptedWrites, the lock files and atomic-write te
 status: todo
 branch: T0-DOCTOR-INTERRUPTED-WRITES
 worktree: D:\wt\AIDLC\T0-DOCTOR-INTERRUPTED-WRITES
-size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: a read-only check over ten kinds of state directory needs a test per directory, name pattern and class of lock text, and the Codex review of the card added a call-recording fs seam, pid rows derived from the regex of locked() with a stubbed process.kill, injected failure rows, ordering and quoting rows and three doctor runs; about 60 source lines (src/state/store.ts 57, src/cli/main.ts 3), about 390 lines of tests in one new file (tests/surface/doctor-interrupted-writes.test.ts), 4 lines of docs/OPERATIONS.md and CHANGELOG.md, 3 lines of .claude/skills/verify-card-run-writes/SKILL.md at CLOSE, and about 140 lines of attempt evidence"
+size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: a read-only check over ten kinds of state directory needs a test per directory, name pattern and class of lock text, and the Codex review of the card added a call-recording fs seam, pid rows derived from the regex of locked() with a stubbed process.kill, injected failure rows, ordering and quoting rows and three doctor runs; about 60 source lines (src/state/store.ts 57, src/cli/main.ts 3), about 390 lines of tests in one new file (tests/surface/doctor-interrupted-writes.test.ts), 4 lines of docs/OPERATIONS.md and CHANGELOG.md, 3 lines of .claude/skills/verify-card-run-writes/SKILL.md at CLOSE, and about 140 lines of attempt evidence; raised from 620 to 700 by the coordinator on 2026-11-12: the pre-review of e4727916 found three clauses of R2 without a test and the planner rulings added their rows (48 test lines); the candidate 12139612 is 632 changed lines before the evidence of that round"
 allow_paths:
   - src/state/store.ts
   - src/cli/main.ts
@@ -44,7 +44,7 @@ acceptance:
   - 16. The existing tests named in the detail pass unchanged. Passes on main and with this card. [R3] [R6] [R7] [R9] [dod arm 1] Detail: body section Acceptance detail, item 16.
   - 17. docs/OPERATIONS.md and CHANGELOG.md state R9; the texts that stay unchanged are not in the diff (reviewer-verified). [R9] Detail: body section Acceptance detail, item 17.
 depends_on: []
-budget: 620
+budget: 700
 tdd: true
 diagnosis:
   root_cause: "CLAUDE.md:126, templates/CLAUDE.aidlc.md:9 and entry check 1 of .claude/skills/aidlc-loop/SKILL.md:20-21 and of its template copy say that `aidlc doctor` checks interrupted writes, but doctor (src/cli/main.ts:257-275) prints fifteen values and reads no lock or temporary file of the state directory. The only reader of temporary files, `findInterruptedWrites` (src/state/store.ts:106-111), is called only by `GoalStore.recover` (src/state/goal-store.ts:113-123), which deletes what it finds without a liveness check and has no caller outside tests/infra/goal-store.test.ts:79-92. A lock left by a crashed writer refuses every later write of its record with `LOCKED` (store.ts:201-205) and is seen only when such a write refuses."
@@ -92,6 +92,16 @@ npm run typecheck && node --test tests/surface/doctor-interrupted-writes.test.ts
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the existing files pass unchanged.
+
+## Planner rulings of 2026-11-12 (after the pre-review of e4727916)
+
+A Codex pre-review of the candidate e4727916 found the source correct and the tests short of four clauses. These rulings add rows to the acceptance items named; where a detail below differs from them, the ruling holds; where an item number named here does not cover the clause, the row goes in the item that does. No requirement changes.
+
+1. Acceptance 1 and every other item that needs a pid that is not running: the test stubs `process.kill` for that pid (ESRCH for the dead-pid constant, as the pid rows of acceptance 3 do) and restores it; no item relies on a real pid being absent or present, except `process.pid` for the running case.
+2. Acceptance 8 (R2, the parents): two more rows through mocked listing entries. A symbolic link under `cards` and one under `evidence`, each named as a goal directory, is not enumerated (no `readdirSync` of it) and gives no row; the test fails when the scan treats a link as a directory.
+3. Acceptance 4 (R2, a matching name that is not a regular file): two more mocked entries, a FIFO and a socket (a `Dirent` whose `isFile`, `isDirectory` and `isSymbolicLink` all answer false), one with a lock name and one with a temp name: each is listed as `unreadable, not a regular file` and never opened; the test fails when the scan excludes only directories and links.
+4. Acceptance 6 (R2, `evidence/<goal>`): the names `MANIFEST.json.lock` and `manifest.json.tmp-4242-0123ABCD` (upper-case letters) are not listed and not read: the two manifest names are matched exactly, with the lower-case hexadecimal digits the store writes; the test fails when the match ignores letter case.
+5. Acceptance 13 to 15 (the child of the CLI runs): the environment the child gets has no name whose upper-cased form is `NODE_OPTIONS` (the candidate removed only the exact spelling) and none whose upper-cased form starts with `GIT_`.
 
 ## Acceptance detail
 
