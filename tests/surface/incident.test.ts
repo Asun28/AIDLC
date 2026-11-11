@@ -1,6 +1,7 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -117,29 +118,25 @@ test('intentFromBreach + writeIncidentIntent produce a parseable incident intent
 });
 
 test('aidlc monitor check --file-intent records the filing time on the incident, so the same breach inside the window files nothing', () => {
-  const fx = makeFixture();
-  try {
-    writeFileSync(path.join(fx.tmp, 'bands.yaml'), ['metric: error_rate', 'direction: above', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n'), 'utf8');
-    writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11], recent: [{ at: '2026-09-11T00:00:00.000Z', value: 14 }] }), 'utf8');
-    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: childEnv(fx.paths.root, fx.tmp), encoding: 'utf8', timeout: 60_000 });
-    const first = check();
-    assert.equal(first.status, 0, first.stderr);
-    assert.equal((JSON.parse(first.stdout) as { filed: string[] }).filed.length, 1, first.stdout);
-    const records = () => Object.values(new IncidentLedger(fx.paths.incidents).read());
-    assert.equal(records().length, 1);
-    const filed = records()[0]!;
-    assert.ok(filed.intentFile);
-    // The command passes the time of the check to the ledger: the window of the next check starts there.
-    assert.equal(typeof filed.filedAt, 'string');
-    assert.equal(filed.filedAt, filed.lastSeen);
-    const second = check();
-    assert.equal(second.status, 0, second.stderr);
-    assert.deepEqual((JSON.parse(second.stdout) as { filed: string[] }).filed, []);
-    assert.equal(records()[0]!.filedAt, filed.filedAt, 'a deduplicated check leaves the filing time as it was');
-    assert.equal(records()[0]!.count, 2);
-  } finally {
-    fx.cleanup();
-  }
+  const fx = fixture();
+  writeFileSync(path.join(fx.tmp, 'bands.yaml'), ['metric: error_rate', 'direction: above', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n'), 'utf8');
+  writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11], recent: [{ at: '2026-09-11T00:00:00.000Z', value: 14 }] }), 'utf8');
+  const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: childEnv(fx.paths.root, fx.tmp), encoding: 'utf8', timeout: 60_000 });
+  const first = check();
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal((JSON.parse(first.stdout) as { filed: string[] }).filed.length, 1, first.stdout);
+  const records = () => Object.values(new IncidentLedger(fx.paths.incidents).read());
+  assert.equal(records().length, 1);
+  const filed = records()[0]!;
+  assert.ok(filed.intentFile);
+  // The command passes the time of the check to the ledger: the window of the next check starts there.
+  assert.equal(typeof filed.filedAt, 'string');
+  assert.equal(filed.filedAt, filed.lastSeen);
+  const second = check();
+  assert.equal(second.status, 0, second.stderr);
+  assert.deepEqual((JSON.parse(second.stdout) as { filed: string[] }).filed, []);
+  assert.equal(records()[0]!.filedAt, filed.filedAt, 'a deduplicated check leaves the filing time as it was');
+  assert.equal(records()[0]!.count, 2);
 });
 
 // ---------------------------------------------------------------------------------------------
@@ -539,7 +536,7 @@ const FIXED_DATE_SHIM = `data:text/javascript,${encodeURIComponent(`const Real =
 /** The base slug of every intent these tests file: metric error_rate, rule WE1, the date of FIXED_NOW. */
 const SLUG = 'incident-error-rate-we1-2026-09-11';
 type Fx = ReturnType<typeof makeFixture>;
-/** A fixture the `after` hook below removes (each already lives under a directory `tmpDir` registered), so a failed assertion leaves none. */
+/** A fixture whose directory the `after` hook below removes with `cleanup` of tests/infra/helpers.ts, so a failed assertion leaves none. */
 const fixtures: Fx[] = [];
 const fixture = (): Fx => {
   const fx = makeFixture();
@@ -547,7 +544,7 @@ const fixture = (): Fx => {
   return fx;
 };
 after(() => {
-  for (const fx of fixtures) fx.cleanup();
+  for (const fx of fixtures) cleanup(fx.tmp);
 });
 /** One `aidlc monitor check` over `recent` values (one point per minute of 2026-09-11); the cwd is the fixture, the clock is FIXED_NOW. */
 function monitor(fx: Fx, recent: number[], extra: string[] = ['--file-intent'], dir: string = fx.tmp) {
@@ -575,23 +572,19 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
   ];
   for (const [label, recent, breachCount, content, code] of rows) {
     const fx = fixture();
-    try {
-      const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
-      writeFileSync(ledgerFile, content, 'utf8');
-      const journalBefore = hostJournalText(fx);
-      const result = monitor(fx, recent);
-      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
-      const printed = JSON.parse(result.stdout) as { breaches: unknown[]; filed: string[] };
-      assert.equal(printed.breaches.length, breachCount, `${label}: ${result.stdout}`);
-      assert.deepEqual(printed.filed, [], label);
-      assert.ok(result.stderr.startsWith('aidlc: '), `${label}: ${result.stderr}`);
-      assert.ok(result.stderr.includes(code) && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
-      assert.equal(bytesOf(ledgerFile), content, label);
-      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent directory`);
-      assert.equal(hostJournalText(fx), journalBefore, `${label}: the host journal is as it was`);
-    } finally {
-      fx.cleanup();
-    }
+    const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
+    writeFileSync(ledgerFile, content, 'utf8');
+    const journalBefore = hostJournalText(fx);
+    const result = monitor(fx, recent);
+    assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+    const printed = JSON.parse(result.stdout) as { breaches: unknown[]; filed: string[] };
+    assert.equal(printed.breaches.length, breachCount, `${label}: ${result.stdout}`);
+    assert.deepEqual(printed.filed, [], label);
+    assert.ok(result.stderr.startsWith('aidlc: '), `${label}: ${result.stderr}`);
+    assert.ok(result.stderr.includes(code) && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+    assert.equal(bytesOf(ledgerFile), content, label);
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent directory`);
+    assert.equal(hostJournalText(fx), journalBefore, `${label}: the host journal is as it was`);
   }
 });
 
@@ -599,134 +592,110 @@ test('aidlc monitor check with a ledger path under a regular file: POSIX refuses
   const rows: Array<[string, number[]]> = [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]];
   for (const [label, recent] of rows) {
     const fx = fixture();
-    try {
-      rmSync(fx.paths.incidents, { recursive: true, force: true });
-      writeFileSync(fx.paths.incidents, 'plain text', 'utf8');
-      const journalBefore = hostJournalText(fx);
-      const result = monitor(fx, recent);
-      if (process.platform !== 'win32') {
-        assert.equal(result.status, 1, `${label}: ${result.stderr}`);
-        assert.deepEqual(filedOf(result.stdout), [], label);
-        assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
-      } else if (recent === ABOVE) {
-        assert.equal(result.status, 1, `${label}: ${result.stdout}`);
-        assert.equal(result.stdout, '', label);
-      } else {
-        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
-        assert.deepEqual(filedOf(result.stdout), [], label);
-      }
-      assert.equal(bytesOf(fx.paths.incidents), 'plain text', label);
-      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent file`);
-      assert.equal(hostJournalText(fx), journalBefore, label);
-    } finally {
-      fx.cleanup();
+    renameSync(fx.paths.incidents, path.join(scratch(), 'moved-incidents'));
+    writeFileSync(fx.paths.incidents, 'plain text', 'utf8');
+    const journalBefore = hostJournalText(fx);
+    const result = monitor(fx, recent);
+    if (process.platform !== 'win32') {
+      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+      assert.deepEqual(filedOf(result.stdout), [], label);
+      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+    } else if (recent === ABOVE) {
+      assert.equal(result.status, 1, `${label}: ${result.stdout}`);
+      assert.equal(result.stdout, '', label);
+    } else {
+      assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+      assert.deepEqual(filedOf(result.stdout), [], label);
     }
+    assert.equal(bytesOf(fx.paths.incidents), 'plain text', label);
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent file`);
+    assert.equal(hostJournalText(fx), journalBefore, label);
   }
 });
 
 test('aidlc monitor check with an incidents directory that cannot be searched refuses with READ_FAILED for every breach', { skip: posixOnly }, () => {
   for (const [label, recent] of [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]] as Array<[string, number[]]>) {
     const fx = fixture();
+    writeFileSync(path.join(fx.paths.incidents, 'incidents.json'), '{}', 'utf8');
+    const journalBefore = hostJournalText(fx);
+    let result;
     try {
-      writeFileSync(path.join(fx.paths.incidents, 'incidents.json'), '{}', 'utf8');
-      const journalBefore = hostJournalText(fx);
-      let result;
-      try {
-        chmodSync(fx.paths.incidents, 0o000);
-        result = monitor(fx, recent);
-      } finally {
-        chmodSync(fx.paths.incidents, 0o755);
-      }
-      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
-      assert.deepEqual(filedOf(result.stdout), [], label);
-      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED'), `${label}: ${result.stderr}`);
-      assert.equal(bytesOf(path.join(fx.paths.incidents, 'incidents.json')), '{}', label);
-      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
-      assert.equal(hostJournalText(fx), journalBefore, label);
+      chmodSync(fx.paths.incidents, 0o000);
+      result = monitor(fx, recent);
     } finally {
-      fx.cleanup();
+      chmodSync(fx.paths.incidents, 0o755);
     }
+    assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+    assert.deepEqual(filedOf(result.stdout), [], label);
+    assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED'), `${label}: ${result.stderr}`);
+    assert.equal(bytesOf(path.join(fx.paths.incidents, 'incidents.json')), '{}', label);
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+    assert.equal(hostJournalText(fx), journalBefore, label);
   }
 });
 
 test('aidlc monitor check without --file-intent does not read the ledger', () => {
   const fx = fixture();
-  try {
-    const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
-    writeFileSync(ledgerFile, '{', 'utf8');
-    const result = monitor(fx, ABOVE, []);
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(bytesOf(ledgerFile), '{');
-  } finally {
-    fx.cleanup();
-  }
+  const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
+  writeFileSync(ledgerFile, '{', 'utf8');
+  const result = monitor(fx, ABOVE, []);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(bytesOf(ledgerFile), '{');
 });
 
 test('aidlc monitor check files the two sides of a metric on one day to two different files and leaves the first unchanged', () => {
   const fx = fixture();
-  try {
-    const one = monitor(fx, ABOVE);
-    assert.equal(one.status, 0, one.stderr);
-    const [firstFile] = filedOf(one.stdout);
-    assert.ok(firstFile);
-    assert.equal(path.basename(firstFile), `${SLUG}.md`);
-    const firstBytes = bytesOf(firstFile);
-    const two = monitor(fx, BELOW);
-    assert.equal(two.status, 0, two.stderr);
-    const [secondFile] = filedOf(two.stdout);
-    assert.ok(secondFile);
-    assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
-    assert.equal(bytesOf(firstFile), firstBytes);
-    assert.equal(parseIntent(bytesOf(secondFile)).ok, true);
-    assert.equal(parseIntent(bytesOf(secondFile)).intent?.slug, `${SLUG}-2`);
-    assert.equal(readdirSync(path.dirname(firstFile)).length, 2);
-  } finally {
-    fx.cleanup();
-  }
+  const one = monitor(fx, ABOVE);
+  assert.equal(one.status, 0, one.stderr);
+  const [firstFile] = filedOf(one.stdout);
+  assert.ok(firstFile);
+  assert.equal(path.basename(firstFile), `${SLUG}.md`);
+  const firstBytes = bytesOf(firstFile);
+  const two = monitor(fx, BELOW);
+  assert.equal(two.status, 0, two.stderr);
+  const [secondFile] = filedOf(two.stdout);
+  assert.ok(secondFile);
+  assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
+  assert.equal(bytesOf(firstFile), firstBytes);
+  assert.equal(parseIntent(bytesOf(secondFile)).ok, true);
+  assert.equal(parseIntent(bytesOf(secondFile)).intent?.slug, `${SLUG}-2`);
+  assert.equal(readdirSync(path.dirname(firstFile)).length, 2);
 });
 
 test('aidlc monitor check refiles one breach after its dedupe window to a second file and leaves the first unchanged', () => {
   const fx = fixture();
-  try {
-    const one = monitor(fx, ABOVE);
-    assert.equal(one.status, 0, one.stderr);
-    const [firstFile] = filedOf(one.stdout);
-    assert.ok(firstFile);
-    const firstBytes = bytesOf(firstFile);
-    const ledger = new IncidentLedger(fx.paths.incidents);
-    const [id] = Object.keys(ledger.read());
-    ledger.attachIntent(id!, firstFile, '2026-01-01T00:00:00.000Z');
-    const two = monitor(fx, ABOVE);
-    assert.equal(two.status, 0, two.stderr);
-    const [secondFile] = filedOf(two.stdout);
-    assert.ok(secondFile);
-    assert.equal(path.basename(firstFile), `${SLUG}.md`);
-    assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
-    assert.equal(bytesOf(firstFile), firstBytes);
-  } finally {
-    fx.cleanup();
-  }
+  const one = monitor(fx, ABOVE);
+  assert.equal(one.status, 0, one.stderr);
+  const [firstFile] = filedOf(one.stdout);
+  assert.ok(firstFile);
+  const firstBytes = bytesOf(firstFile);
+  const ledger = new IncidentLedger(fx.paths.incidents);
+  const [id] = Object.keys(ledger.read());
+  ledger.attachIntent(id!, firstFile, '2026-01-01T00:00:00.000Z');
+  const two = monitor(fx, ABOVE);
+  assert.equal(two.status, 0, two.stderr);
+  const [secondFile] = filedOf(two.stdout);
+  assert.ok(secondFile);
+  assert.equal(path.basename(firstFile), `${SLUG}.md`);
+  assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
+  assert.equal(bytesOf(firstFile), firstBytes);
 });
 
 test('aidlc monitor check with an intent write that fails exits 1 with nothing attached and nothing journaled', () => {
   const fx = fixture();
-  try {
-    const intentDir = path.join(fx.tmp, 'intent');
-    mkdirSync(path.join(intentDir, `${SLUG}.md`), { recursive: true });
-    for (let n = 2; n <= 999; n++) mkdirSync(path.join(intentDir, `${SLUG}-${n}.md`));
-    const journalBefore = hostJournalText(fx);
-    const result = monitor(fx, ABOVE);
-    assert.equal(result.status, 1, result.stdout);
-    assert.ok(result.stderr.includes(SLUG), result.stderr);
-    const records = Object.values(new IncidentLedger(fx.paths.incidents).read());
-    assert.equal(records.length, 1);
-    assert.equal(records[0]!.intentFile, undefined);
-    assert.equal(records[0]!.filedAt, undefined);
-    assert.equal(hostJournalText(fx), journalBefore);
-    assert.equal(readdirSync(intentDir).length, 999);
-  } finally {
-    fx.cleanup();
-  }
+  const intentDir = path.join(fx.tmp, 'intent');
+  mkdirSync(path.join(intentDir, `${SLUG}.md`), { recursive: true });
+  for (let n = 2; n <= 999; n++) mkdirSync(path.join(intentDir, `${SLUG}-${n}.md`));
+  const journalBefore = hostJournalText(fx);
+  const result = monitor(fx, ABOVE);
+  assert.equal(result.status, 1, result.stdout);
+  assert.ok(result.stderr.includes(SLUG), result.stderr);
+  const records = Object.values(new IncidentLedger(fx.paths.incidents).read());
+  assert.equal(records.length, 1);
+  assert.equal(records[0]!.intentFile, undefined);
+  assert.equal(records[0]!.filedAt, undefined);
+  assert.equal(hostJournalText(fx), journalBefore);
+  assert.equal(readdirSync(intentDir).length, 999);
 });
 
 test('a GIT_DIR and GIT_WORK_TREE in the caller environment do not move the intent out of the fixture', () => {
@@ -831,23 +800,19 @@ test('aidlc monitor check reads a ledger nested 64 deep, and refuses one nested 
   ];
   for (const [label, text, recent, accepted] of rows) {
     const fx = fixture();
-    try {
-      const file = path.join(fx.paths.incidents, 'incidents.json');
-      writeFileSync(file, text, 'utf8');
-      const journalBefore = hostJournalText(fx);
-      const result = monitor(fx, recent);
-      assert.equal(result.status, accepted ? 0 : 1, `${label}: ${result.stderr.slice(0, 300)}`);
-      assert.deepEqual(filedOf(result.stdout), [], label);
-      if (!accepted) {
-        assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('SCHEMA_VIOLATION') && result.stderr.includes('incidents.json') && result.stderr.includes('nesting deeper than 64 levels'), `${label}: ${result.stderr.slice(0, 300)}`);
-        assert.ok(!result.stderr.includes('RangeError'), label);
-      }
-      assert.equal(bytesOf(file), text, label);
-      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
-      assert.equal(hostJournalText(fx), journalBefore, label);
-    } finally {
-      fx.cleanup();
+    const file = path.join(fx.paths.incidents, 'incidents.json');
+    writeFileSync(file, text, 'utf8');
+    const journalBefore = hostJournalText(fx);
+    const result = monitor(fx, recent);
+    assert.equal(result.status, accepted ? 0 : 1, `${label}: ${result.stderr.slice(0, 300)}`);
+    assert.deepEqual(filedOf(result.stdout), [], label);
+    if (!accepted) {
+      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('SCHEMA_VIOLATION') && result.stderr.includes('incidents.json') && result.stderr.includes('nesting deeper than 64 levels'), `${label}: ${result.stderr.slice(0, 300)}`);
+      assert.ok(!result.stderr.includes('RangeError'), label);
     }
+    assert.equal(bytesOf(file), text, label);
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+    assert.equal(hostJournalText(fx), journalBefore, label);
   }
 });
 
@@ -892,18 +857,14 @@ test('a path that exists and is not a regular file is READ_FAILED from the stat 
 test('aidlc monitor check with a directory at the ledger path refuses with READ_FAILED for every breach', () => {
   for (const [label, recent] of [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]] as Array<[string, number[]]>) {
     const fx = fixture();
-    try {
-      mkdirSync(path.join(fx.paths.incidents, 'incidents.json'));
-      const journalBefore = hostJournalText(fx);
-      const result = monitor(fx, recent);
-      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
-      assert.deepEqual(filedOf(result.stdout), [], label);
-      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
-      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
-      assert.equal(hostJournalText(fx), journalBefore, label);
-    } finally {
-      fx.cleanup();
-    }
+    mkdirSync(path.join(fx.paths.incidents, 'incidents.json'));
+    const journalBefore = hostJournalText(fx);
+    const result = monitor(fx, recent);
+    assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+    assert.deepEqual(filedOf(result.stdout), [], label);
+    assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+    assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+    assert.equal(hostJournalText(fx), journalBefore, label);
   }
 });
 

@@ -75,7 +75,7 @@ npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/upda
 
 Attempt 1, effort high. RED commit efdc00cd (tests only; at that commit the file fails to load because `IncidentLedgerFile` is not exported by src/core/types.ts, so the per-test RED receipt was taken with a throwaway stub export, not committed: 12 of 23 tests failed, first assertion lines below). GREEN commits follow it; tests added after RED are marked "added after RED".
 
-DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 56 tests, 53 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 39 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped; at f575000a 52 tests, 49 pass, 3 skipped; at b841528e 54 tests, 51 pass, 3 skipped.
+DoD at the current candidate (the commit that carries this evidence; unchanged counts after the cleanup repair): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 56 tests, 53 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 39 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped; at f575000a 52 tests, 49 pass, 3 skipped; at b841528e 54 tests, 51 pass, 3 skipped.
 
 RED receipt (stub export in types.ts, other code as main), first failing assertion per test:
 
@@ -393,6 +393,28 @@ Revert rows of this round (one hunk reverted, file restored):
 | test: the ceiling without the `realpathSync.native` form | none | GREEN (survives) |
 
 The last row stays green on this machine and is the instruction of the coordinator kept as written: git normalises the entries of `GIT_CEILING_DIRECTORIES` itself (measured with a junction: both the linked and the real parent stopped the search with either entry alone), so no input here tells the two forms apart. The second form costs nothing and covers a path that a runner reports in its short form.
+
+### After formal review decision 1 (fixture cleanup through the helper)
+
+Decision 1 on 880cd51f blocked on one class: the forbid entry "create a temporary directory with `tmpDir` of tests/infra/helpers.ts and remove it with `cleanup` in an `after` hook" was met for `scratch()` but not for the fixtures, whose directories were removed through the harness's `fx.cleanup()`, in a `finally` or in the `after` hook. Repaired in the commit that carries this section (merged main first). Only tests/surface/incident.test.ts changed in code:
+
+- Every `fx.cleanup()` call is gone (10 `try { ... } finally { fx.cleanup(); }` wrappers unwrapped; the body is dedented, no assertion changed). The one `after` hook over the fixtures now calls `cleanup(fx.tmp)` of tests/infra/helpers.ts. The first CLI test of main ("aidlc monitor check --file-intent records the filing time ...") uses `fixture()` instead of `makeFixture()` plus a `finally`, so the file has no `fx.cleanup` at all; its spawn line (`env`) was already changed in an earlier round, nothing else of it.
+- The `finally` blocks that remain restore something that is not a directory: the `withFs` function replacements (`fs` bindings), the permission modes (`chmodSync` back to 0o644 or 0o755), and the process environment variables of two tests.
+- The added `rmSync` (the test with a ledger path under a regular file, which removed the fixture's empty `incidents` state subdirectory in order to put a file there) is replaced by `renameSync(fx.paths.incidents, <scratch>/moved-incidents)`: the directory is moved into the scratch root, which the file-level `after` removes with `cleanup`; nothing is deleted by the test.
+- The import line of main (`import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'`) is restored as it was, and the names this branch needs are a second import line (`fs, chmodSync, mkdirSync, readdirSync, realpathSync, renameSync, statSync`), so the diff against main adds no `mkdtempSync` and no `rmSync` text.
+
+Grep table at the final commit (`tests/surface/incident.test.ts`):
+
+| what | result |
+|---|---|
+| `grep -c 'fx\.cleanup'` | 0 |
+| `grep -c rmSync` | 0 |
+| `mkdtempSync` lines | 5 (the import and the 4 calls of the 5 tests of main, as on main: 5); added lines containing `mkdtempSync(`: 0 |
+| directory created by `tmpDir('aidlc-incident-t-')` (the scratch root; every `scratch()` directory, `git init` repositories, planted files and `mkdirSync` trees are inside it) | removed by `after(() => cleanup(scratchRoot))` |
+| fixtures created by `makeFixture()` inside `fixture()` (its directory is registered by `tmpDir` in the harness) | removed by the file-level `after`: `for (const fx of fixtures) cleanup(fx.tmp)` |
+| the 4 `mkdtempSync` calls of main (`aidlc-incident-` x3, `aidlc-intent-` x1; T0-TEST-TEMP-SWEEP migrates them) | not removed by their tests; the only leak |
+
+Leak check: `npm run typecheck` and the two DoD test files run with `TEMP`, `TMP` and `TMPDIR` pointing at an empty private directory (56 tests, 53 pass, 0 fail, 3 skipped); what is left: `aidlc-incident-BZifwn`, `aidlc-incident-RLMYn2`, `aidlc-incident-hBhgyR`, `aidlc-intent-BhLfXW` (the four `mkdtempSync` cases of main) and `node-compile-cache` (Node's own compile cache, created by the interpreter in `TMPDIR`, not by a test). Nothing from `tmpDir`, `makeFixture` or the scratch root remains.
 
 Coordinator verification:
 - At 721d4cb9, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/incident.test.ts): tests 39, pass 39, fail 0, skipped 0.
