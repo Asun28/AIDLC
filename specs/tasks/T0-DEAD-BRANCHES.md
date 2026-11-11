@@ -1,7 +1,7 @@
 ---
 id: T0-DEAD-BRANCHES
 title: "Remove four unreachable or redundant branches found by the audit of 2026-11-11 (effort, controller, router, ci-policy) with no change of behaviour"
-status: todo
+status: merged
 branch: T0-DEAD-BRANCHES
 worktree: D:\wt\AIDLC\T0-DEAD-BRANCHES
 allow_paths:
