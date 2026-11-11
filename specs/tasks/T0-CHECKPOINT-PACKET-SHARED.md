@@ -102,3 +102,6 @@ Doc-reading run: 78 files, `node --test` in one call: 1863 tests, 1851 pass, 0 f
 DoD: `npm run typecheck && node --test tests/scenarios/checkpoint-packet.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/run-driver.test.ts` exit 0, 65 tests, 65 pass, 0 fail. Each new test (seven in the file) removes its temp directory through `fx.cleanup()` in a `finally`; the ops file lives inside it.
 
 Coordinator verification:
+- At 0dad0b42, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/checkpoint-packet.test.ts): tests 7, pass 7, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
