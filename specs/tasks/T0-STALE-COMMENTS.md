@@ -45,3 +45,10 @@ npm run typecheck && node --test tests/scenarios/fault-points.test.ts
 ```
 - Expected exit code: 0
 - Assertion: the typecheck passes, the fault-point check passes with no pin added, and the diff changes comment lines only.
+
+## Attempt evidence
+| Acceptance | Evidence |
+|---|---|
+| 1 | R1 to R6 applied with the card's text in src/state/paths.ts, src/hooks/entry.ts, src/loop/card-runner.ts (R3, R4, R5), src/core/card-machine.ts; found by quoted text, not line number |
+| 2 | `git diff origin/main...HEAD -- src`: 6 insertions, 7 deletions, all comment lines, no blank line added or removed; typecheck exit 0 |
+| 3 | `node --test tests/scenarios/fault-points.test.ts` passes, no pin changed |
