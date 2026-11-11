@@ -62,3 +62,32 @@ npm run typecheck && node --test tests/surface/gitleaks-ignore.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: the ignore list and the allowlist are exactly the pinned values, and the other files pass unchanged.
+
+## Attempt evidence
+
+RED (commit 0f9e912f, on main sources): acceptance 1 fails by assertion (missing file read as empty list, deepEqual against the fingerprint); classifier rows pass; acceptance 2 passes (pin). Run: pass 3, fail 1.
+
+Revert table (measured on 13e45a36, `gitleaks-ignore.test.ts` failures, 1 each; files restored, `git status` clean after):
+
+| # | Mutation | Result |
+|---|----------|--------|
+| A | second entry added to .gitleaksignore | red |
+| B | commit hex upper-cased | red |
+| C | .gitleaksignore removed | red |
+| D | `useDefault = false` | red |
+| E | `paths` widened | red |
+| F | second regex added | red |
+
+6/6 red. No TOML parser in package.json or node_modules; acceptance 2 compares the exact non-comment lines of the file.
+
+DoD on 13e45a36: typecheck exit 0; `node --test` 4 files: tests 96, pass 96, fail 0, exit 0.
+
+| Document sentence | Made true by |
+|---|---|
+| .gitleaks.toml header names .gitleaksignore | header lines 4-5 (acceptance 5, reviewer) |
+| OPERATIONS paragraph (R5, word for word) | gitleaks-ignore.test.ts pins both lists; .gitleaksignore holds the one entry |
+| CHANGELOG entry | R1 to R3 files above |
+
+Acceptance 3 (gitleaks 8.30.1 over the branch history, both counts): the coordinator adds it.
+
+Changed lines: see the final report (`git diff --shortstat origin/main...HEAD`).
