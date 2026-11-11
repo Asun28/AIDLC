@@ -162,6 +162,47 @@ DoD attempt 2 (`dod_command` exactly, Windows, on 3c4b97a2 plus the uncommitted 
 
 Doc-reading run attempt 2 (81 files that name ARCHITECTURE.md, OPERATIONS.md, CHANGELOG.md or SKILL.md, one `node --test` call, Windows, under load): tests 1905, suites 151, pass 1891, fail 2, skipped 12. The two failures are tests/infra/exec.test.ts ("T0-EXEC-TREE-KILL run on real processes") and tests/infra/exec-sync-tree.test.ts ("T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes"), which read no document this card changes; run alone right after, both files pass, 84 of 84 (machine load).
 
+### Attempt 3 (repair of R3 decision 2)
+
+Finding [standards, required-temp-cleanup-hook] tests/scenarios/journal-lock-refusal.test.ts:72: the three scenarios removed their fixture in a `finally` of `inFixture`, not in an `after` hook. Done: `inFixture` is replaced by `fixture(t, actor?)`, which creates the fixture with `makeFixture` (tests/scenarios/_harness.ts, which after the merge of T0-TEST-TEMP-CLEANUP creates its directory with `tmpDir('aidlc-scn-')` of tests/infra/helpers.ts) and registers `t.after(() => fx.cleanup())` in the test that creates it. tests/infra/journal-lock.test.ts already created its one directory with `tmpDir()` and removed it with `cleanup(dir)` in the suite's `after` hook. tests/infra/journal-lock.child.ts creates no directory: it appends to a journal whose directory the parent created (`mkdirSync` of an existing directory, and the lock file inside it).
+
+Grep `mkdtempSync|mkdtemp(|finally` over the three files:
+
+| Hit | Disposition |
+|---|---|
+| mkdtempSync, mkdtemp( | none in the three files |
+| journal-lock.test.ts:34 `finally` | `throughFs` restores the patched `node:fs` export; no directory |
+| journal-lock.test.ts:268 `finally` | acceptance 7 restores `process.env` and the cached actor; no directory |
+| journal-lock.test.ts:322 `finally` | the clock test resets `mock.timers`; no directory |
+| journal-lock-refusal.test.ts:50 `finally` | the `Journal.prototype.append` wrapper disarms the refusal; no directory |
+| journal-lock-refusal.test.ts:58 `finally` | `refusedAt` restores `Journal.prototype.append` and `fs.openSync`; no directory |
+
+forbid, non_goals and the hygiene rules (card as on main at the merge 8d5bea2b):
+
+| Item | Evidence |
+|---|---|
+| forbid: weakening or skipping a test | `git diff origin/main...HEAD --name-only -- tests` lists only the three new files; no `.skip`, `.only`, `todo` or `skip:` in them (grep: 0) |
+| forbid: a change to src/state/store.ts or another file under src/state/ | `git diff origin/main...HEAD --name-only -- src` lists src/state/journal.ts only |
+| forbid: a lock primitive outside src/state/store.ts | grep `'wx'`, `sleepSync`, `Atomics.wait` in src/state/journal.ts: 0; update-json.test.ts "one lock primitive in src" passes. The test files compare `args[1] === 'wx'` to recognise the lock open they patch; they create no lock |
+| forbid: a change to the Sessions section or the README Multi-session paragraph | the Sessions section (heading to `## Watching a goal`) has the same sha256 on origin/main and HEAD (34554e0aca99...); README.md is not in the diff; prose.test.ts passes |
+| forbid: a new `mkdtempSync` in a test; `tmpDir` and `cleanup` in an `after` hook | grep above: no `mkdtempSync`; `tmpDir` + `after(cleanup)` in journal-lock.test.ts; `makeFixture` (`tmpDir`) + `t.after(fx.cleanup)` in journal-lock-refusal.test.ts (fixed in this attempt) |
+| forbid: editing .aidlc state by hand | no `.aidlc` path in the diff; no `aidlc` command was run against the repository state |
+| non_goal: a per-site catalogue | the new Audit paragraphs of docs/OPERATIONS.md name none of `card takeover`, `goal takeover`, `goal reconcile`, `REVIEW_ADMITTED`, `OPERATION_RESULT`, `evidence retain`, `audit seal`, `ops intent` (grep: 0); the CHANGELOG entry names the three cases only; the card's sweep holds no list (attempt 2) |
+| non_goal: a retry of the absent-path EPERM | store.ts unchanged; acceptance 4 asserts the EPERM is thrown in under 1 s |
+| non_goal: a configurable journal lock deadline | journal.ts passes no options to `updateJson` (grep `timeoutMs` in journal.ts: 0) |
+| non_goal: automatic removal of a lock left by an ended process | no `unlinkSync` in journal.ts (grep: 0); acceptance 3 asserts the dead owner's lock stays |
+| non_goal: a lock for the journal readers | readers unchanged; acceptance 3 checks they answer while the lock is held (R7) |
+| non_goal: the unapplied ship outcome at card-runner.ts:2815/2884 | src/loop/card-runner.ts is not in the diff |
+| non_goal: repair of a broken journal | no repair code; acceptance 5 asserts a malformed head throws and the next append succeeds only after the line is removed by the test |
+| hygiene: child processes on `process.execPath`, own `AIDLC_SESSION`, journal path as argument, no `NODE_TEST_CONTEXT` | journal-lock.test.ts `childEnv` sets `AIDLC_SESSION` and deletes `NODE_TEST_CONTEXT`; both spawns (acceptance 1 and 2) run `process.execPath` on journal-lock.child.ts with the journal path as the first argument |
+| hygiene: CHANGELOG anchor | the entry is the line directly above `- T1-BOUND-STATS:`, followed by one blank line (CHANGELOG.md:57-59) |
+| hygiene: verify-card-run-writes before SHIP; sync commit and Bounds line at CLOSE | fault-points.test.ts passes in the DoD; .claude/skills/verify-card-run-writes/SKILL.md is not in the diff (left for CLOSE) |
+| hygiene/R4: lock order, the journal lock innermost | inside the section `append` calls only `headEvent`, `nowIso`, `sha256`, `JournalEvent.parse` and `appendFileSync` (journal.ts:146-165), no other lock; acceptance 6 (a nested append is refused with `LOCKED`) |
+
+Leftover directories: the three files run with `TEMP`, `TMP` and `TMPDIR` set to an empty private directory (children inherit it) left 0 entries there (12 of 12 tests pass). A run against the shared OS temp directory (76,436 `aidlc-*` entries before) showed 9 new names during the run, all from other processes (prefixes `aidlc-base-sync-`, `aidlc-cli-` and 7 `aidlc-scn-`), and every one was gone when checked right after; none is left. tests/surface/test-temp-cleanup.test.ts: tests 5, pass 4, fail 0, skipped 1.
+
+DoD attempt 3 (`dod_command` exactly, Windows, on the merge 8d5bea2b plus the fixture change and this evidence): exit 0; tests 261, suites 18, pass 261, fail 0, cancelled 0, skipped 0; 97.3 s.
+
 Coordinator verification:
 - At 41257b4f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 11, pass 11, fail 0, skipped 0.
 - Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1854 # fail 0
