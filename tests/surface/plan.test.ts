@@ -88,6 +88,25 @@ test('a ??? marker fails wherever it stands, beside a word or alone', () => {
   }
 });
 
+test('R3 decision 1: text removed before the marker search leaves a gap, so a marker directly beside a closed question or a code fence still fails and no removal makes a marker', () => {
+  const gate3 = (risk: string) => evaluatePlanReadiness(renderPlan({ ...base, risks: [risk] }), { light: true }).gates.find((g) => g.gateId === 3);
+  const beside: Array<[string, string]> = [
+    ['TODO[TBD: which backend?]cache', 'TODO'],
+    ['cache[TBD: which backend?]TODO', 'TODO'],
+    ['[TBD: which backend?]TBD', 'TBD'],
+    ['TBD[TBD: which backend?]', 'TBD'],
+    ['FIXME```js\nconst a = 1;\n```later', 'FIXME'],
+    ['sooner```js\nconst a = 1;\n```FIXME', 'FIXME'],
+  ];
+  for (const [risk, marker] of beside) {
+    assert.equal(gate3(risk)?.finding, `open marker "${marker}"`, risk);
+  }
+  // The two halves of a word on the sides of removed text are not one marker.
+  for (const risk of ['TO[TBD: which backend?]DO', 'TO```js\nconst a = 1;\n```DO', 'cache [TBD: which backend?] size']) {
+    assert.equal(gate3(risk)?.verdict, 'pass', risk);
+  }
+});
+
 test('fileExists resolver flags missing existing files but not (new) ones', () => {
   const r = evaluatePlanReadiness(renderPlan(base), { light: true, fileExists: (p) => p !== 'claims-api/routes/status.py' });
   const g6 = r.gates.find((g) => g.gateId === 6)!;

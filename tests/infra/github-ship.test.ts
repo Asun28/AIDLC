@@ -126,6 +126,39 @@ describe('GitHubShipPath', () => {
     assert.equal(new GitHubShipPath({ mainRoot: done.root, worktreeRoot: done.wtRoot, repository: 'o/r', runner: runnerWith(), sleep: () => {} }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' }).outcome, 'merged');
   });
 
+  test('R3 decision 1: a run_status member that is not the string success is no verdict whatever its value, and it is read before the block and the stale sha', () => {
+    const shipWith = (verdict: Record<string, unknown>, requireVerdict?: boolean) => {
+      const f = fixture(verdict);
+      dirs.push(f.root);
+      const calls: string[] = [];
+      const base = runnerWith();
+      const runner: typeof base = (cmd, args, o) => {
+        calls.push([cmd, ...args].join(' '));
+        return base(cmd, args, o);
+      };
+      const r = new GitHubShipPath({ mainRoot: f.root, worktreeRoot: f.wtRoot, repository: 'o/r', runner, sleep: () => {}, requireVerdict }).ship({ cardId: 'T1-A', base: 'main', mode: 'remote' });
+      return { out: r.receipt.stdout, outcome: r.outcome, remote: calls.filter((c) => c.startsWith('git push') || c.startsWith('gh pr ')) };
+    };
+    // A value outside the five a review writes is not success: a word, a blank, another letter case, null, a number, an object.
+    for (const run_status of ['failed', '', 'SUCCESS', null, 0, {}]) {
+      const r = shipWith({ verdict: 'pass', reasons: [], sha: HEAD, run_status });
+      assert.equal(r.outcome, 'review-no-verdict', `${JSON.stringify(run_status)}: ${r.out}`);
+      assert.ok(r.out.includes('[R3-NO-VERDICT-JSON]'), r.out);
+      assert.deepEqual(r.remote, [], JSON.stringify(run_status));
+    }
+    // The status is read first: a current block and a stale pass of a review that did not complete are no verdict.
+    const block = shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD, run_status: 'timeout' });
+    assert.ok(block.out.includes('[R3-NO-VERDICT-JSON]') && !block.out.includes('[R3-SPEC-BLOCK]'), block.out);
+    const stale = shipWith({ verdict: 'pass', reasons: [], sha: 'b'.repeat(40), run_status: 'timeout' });
+    assert.ok(stale.out.includes('[R3-NO-VERDICT-JSON]') && !stale.out.includes('[R3-STALE-VERDICT-SHA]'), stale.out);
+    assert.deepEqual([...block.remote, ...stale.remote], []);
+    // Without the member the file is read as before: a current block blocks, a stale pass is stale.
+    assert.ok(shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD }).out.includes('[R3-SPEC-BLOCK]'));
+    assert.ok(shipWith({ verdict: 'pass', reasons: [], sha: 'b'.repeat(40) }).out.includes('[R3-STALE-VERDICT-SHA]'));
+    // With requireVerdict off a current block is still never waived, whatever its run_status.
+    assert.ok(shipWith({ verdict: 'block', reasons: ['[spec] 1 x @ src/a.ts:1: y -> z'], sha: HEAD, run_status: 'timeout' }, false).out.includes('[R3-SPEC-BLOCK]'));
+  });
+
   test('auth failure is auth-failed, never a silent local merge', () => {
     const f = fixture({ verdict: 'pass', reasons: [], sha: HEAD });
     dirs.push(f.root);

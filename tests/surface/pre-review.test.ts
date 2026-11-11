@@ -1867,3 +1867,37 @@ test('an object nested in a document that broke before it never stands in for th
   assert.deepEqual(inputs.readVerdict(`${broken[0]![1]}\n{"verdict":"block","reasons":["[spec] final"]}`).verdict?.reasons, ['[spec] final']);
   assert.equal(inputs.readVerdict('The contract is {"verdict": pass or block}.\n{"verdict":"pass","reasons":[]}').verdict?.verdict, 'pass');
 });
+
+test('R3 decision 1 (F1): a refuted opener whose brackets close later is one document that did not parse; one whose brackets never close is prose, whatever punctuation surrounds the verdict', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  // Prose punctuation is no evidence of membership: main reads each of these as pass.
+  const prose = ['The contract is {"verdict": pass or block}.', 'Use {"verdict" as the key.', 'The docs line is `"coverage":[{"item"/` and it matches.'];
+  const around: Array<[string, string]> = [['Final answer, ', ''], ['Final answer: ', ''], ['so, ', ','], ['', ', as the policy requires.'], ['(', ')']];
+  for (const text of prose) {
+    for (const [lead, tail] of around) {
+      assert.equal(inputs.readVerdict(`${text}\n${lead}${pass}${tail}\n`).verdict?.verdict, 'pass', `${text} | ${lead}<verdict>${tail}`);
+    }
+  }
+  // A broken block is one document from its opener to the closer that balances it: nothing inside it is the verdict,
+  // after a parseable draft it makes the output malformed, and a complete document after it decides.
+  const block = String.raw`{"verdict":"block","reasons":["[spec] 6"],"axes":{"spec":{"verdict":"block","reasons":["src\gate.ts"]},"standards":{"verdict":"pass","reasons":[]}}}`;
+  assert.throws(() => JSON.parse(block));
+  assert.equal(inputs.readVerdict(block).verdict, undefined);
+  assert.equal(inputs.readVerdict(`${pass}\n${block}\n`).verdict, undefined, 'the draft before a broken final block never answers for it');
+  assert.equal(inputs.readVerdict(`${block}\n${pass}\n`).verdict?.verdict, 'pass', 'a complete document after the broken one decides');
+  // An element of a broken array is inside it too, with no member name before it.
+  const list = String.raw`[{"verdict":"block","reasons":["src\gate.ts"]},{"verdict":"pass","reasons":[]}]`;
+  assert.throws(() => JSON.parse(list));
+  assert.equal(inputs.readVerdict(list).verdict, undefined, 'an element of a broken array is never a document of its own');
+  assert.equal(inputs.readVerdict(`${pass}\n${list}\n`).verdict, undefined);
+  // A document between a refuted opener and the closer that balances it is inside that text.
+  assert.equal(inputs.readVerdict(`see ["a" and prose\n${pass}]`).verdict, undefined);
+  // A broken block cut short never closes: the member name before its nested axis still marks the axis as a member.
+  assert.equal(inputs.readVerdict(block.slice(0, -2)).verdict, undefined);
+  assert.equal(inputs.readVerdict(`${pass}\n${block.slice(0, -2)}`).verdict, undefined, 'nor does the draft before it answer');
+  // The walk stays linear over openers that close and openers that never do.
+  const started = process.hrtime.bigint();
+  assert.equal(inputs.readVerdict(`${'{"a" x} ["b" y '.repeat(12_000)}${pass}\n`).verdict?.verdict, 'pass');
+  const elapsedMs = Number(process.hrtime.bigint() - started) / 1e6;
+  assert.ok(elapsedMs < 3_000, `24,000 refuted openers walked in ${Math.round(elapsedMs)} ms`);
+});

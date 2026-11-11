@@ -455,3 +455,45 @@ test('a staged attempt asks for its verification by the command that records it'
     fx.cleanup();
   }
 });
+
+test('R3 decision 1: `aidlc release packet` fails outside CHECKPOINT and prints the packet at CHECKPOINT, and writes nothing in either case, before and after the authority is recorded', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'production');
+    const runner = releaseRunner(fx, opsConfigured(), () => []);
+    const cli = (...args: string[]) => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), ...args], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+    const observed = () => ({ events: fx.journal(goalId).readAll().length, operations: fx.ops.list({ goalId }).length, attempt: JSON.stringify(fx.store.getRelease(attemptId)), goal: JSON.stringify(fx.goal(goalId)) });
+    let attempt = runner.setCandidate(fx.goal(goalId), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    stagingAuth(fx, goalId, 'c1');
+    // In PREPARE, with all that the staging step needs, the command refuses and the attempt stays in PREPARE.
+    let before = observed();
+    const early = cli('release', 'packet', attemptId);
+    assert.notEqual(early.status, 0, early.stdout);
+    assert.ok(early.stderr.includes('CHECKPOINT'), early.stderr);
+    assert.deepEqual(observed(), before, 'asking for the packet in PREPARE writes nothing');
+    assert.equal(fx.store.getRelease(attemptId)!.state, 'PREPARE');
+    let r = runner.next(fx.goal(goalId), attempt);
+    attempt = runner.reportStep(fx.goal(goalId), r.attempt, 'stage-verify', 'succeeded');
+    r = runner.next(fx.goal(goalId), attempt);
+    assert.equal(r.attempt.state, 'CHECKPOINT');
+    // At CHECKPOINT without the authority the packet is printed and nothing is written.
+    before = observed();
+    const waiting = cli('release', 'packet', attemptId);
+    assert.equal(waiting.status, 0, waiting.stderr);
+    const packet = JSON.parse(waiting.stdout) as { kind: string; packet: Record<string, unknown> };
+    assert.equal(packet.kind, 'checkpoint');
+    assert.equal(packet.packet['candidateDigest'], 'c1');
+    assert.equal(packet.packet['environment'], 'production');
+    assert.deepEqual(observed(), before);
+    // With the matching authority recorded the command still only reads: the attempt stays at CHECKPOINT and no operation is issued.
+    fx.controller.report({ goalId, generation: 0, result: 'approved', data: { kind: 'production', by: 'release-manager', candidateDigest: 'c1', environment: 'production', operations: ['deploy'] } });
+    before = observed();
+    const ready = cli('release', 'packet', attemptId);
+    assert.equal(ready.status, 0, ready.stderr);
+    assert.equal((JSON.parse(ready.stdout) as { kind: string }).kind, 'checkpoint');
+    assert.deepEqual(observed(), before, 'reading the packet with the authority recorded writes nothing');
+    assert.equal(fx.store.getRelease(attemptId)!.state, 'CHECKPOINT');
+  } finally {
+    fx.cleanup();
+  }
+});
