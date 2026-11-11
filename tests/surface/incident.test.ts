@@ -32,10 +32,14 @@ const t0 = '2026-09-11T00:00:00.000Z';
 const later = (h: number) => new Date(Date.parse(t0) + h * HOUR).toISOString();
 /** The variables with which git selects a repository: a child process must not inherit them from the caller (a hook, a worktree command) and find another repository than its fixture. */
 const GIT_SELECTORS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_PREFIX'];
-function childEnv(stateDir: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: stateDir };
-  for (const key of GIT_SELECTORS) delete env[key];
+/** The caller's environment without the selector variables, matched without regard to case (Windows names are case-insensitive: `git_dir` is `GIT_DIR`), on every platform. */
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) if (!GIT_SELECTORS.includes(key.toUpperCase())) env[key] = value;
   return env;
+}
+function childEnv(stateDir: string): NodeJS.ProcessEnv {
+  return { ...cleanEnv(), AIDLC_STATE_DIR: stateDir };
 }
 
 test('shouldFile files once, dedupes within the window, respects dismissal and refiles after the window', () => {
@@ -361,6 +365,10 @@ test('a ledger with an own __proto__ key at any depth is SCHEMA_VIOLATION naming
     assert.throws(() => ledger.write(JSON.parse(text) as never), /__proto__/, `${label}: write`);
     assert.equal(bytesOf(ledger.file), text, `${label}: write`);
   }
+  // With two offending keys the issue names the first in key order.
+  const twoKeys = new IncidentLedger(scratch());
+  writeFileSync(twoKeys.file, '{"a":{"__proto__":1},"b":{"__proto__":1}}');
+  refusesAll(twoKeys, 'SCHEMA_VIOLATION', 'a.__proto__: an own', 'two keys');
   const kept = { __proto__x: rec({ identity: '__proto__x' }), k: rec({ __proto__y: 1, note: { __proto__z: 2 } }) };
   const ledger = new IncidentLedger(scratch());
   writeFileSync(ledger.file, JSON.stringify(kept));
@@ -717,8 +725,9 @@ test('aidlc monitor check with an intent write that fails exits 1 with nothing a
 
 test('a GIT_DIR and GIT_WORK_TREE in the caller environment do not move the intent out of the fixture', () => {
   const other = scratch();
-  const init = spawnSync('git', ['init', '-q', other], { encoding: 'utf8' });
+  const init = spawnSync('git', ['init', '-q', other], { encoding: 'utf8', env: cleanEnv() });
   assert.equal(init.status, 0, init.stderr);
+  assert.equal(statSync(path.join(other, '.git')).isDirectory(), true, 'the other repository was initialised where the test says');
   const fx = fixture();
   const saved = { GIT_DIR: process.env['GIT_DIR'], GIT_WORK_TREE: process.env['GIT_WORK_TREE'] };
   process.env['GIT_DIR'] = path.join(other, '.git');
@@ -734,6 +743,117 @@ test('a GIT_DIR and GIT_WORK_TREE in the caller environment do not move the inte
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
+    }
+  }
+});
+
+test('a ledger whose note is nested 6,000 levels deep is read like a shallow one, and the search for __proto__ never overflows the stack', () => {
+  const deep = (bottom: string): string => JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(6000) + bottom + '}'.repeat(6000));
+  const plain = deep('1');
+  const ledger = new IncidentLedger(scratch());
+  writeFileSync(ledger.file, plain);
+  assert.deepEqual(Object.keys(ledger.read()), ['k']);
+  assert.equal(IncidentLedgerFile.safeParse(JSON.parse(plain)).success, true);
+  // The store's serializer recurses (sortKeys) and JSON.stringify has its own limit: a write of this value either lands and reads back, or throws and leaves the previous bytes; it never leaves a partial file.
+  const before = bytesOf(ledger.file);
+  try {
+    ledger.write(JSON.parse(plain) as never);
+    assert.deepEqual(Object.keys(ledger.read()), ['k']);
+  } catch {
+    assert.equal(bytesOf(ledger.file), before);
+  }
+  assert.deepEqual(readdirSync(path.dirname(ledger.file)).filter((name) => name.includes('.tmp-')), []);
+  // A shallower value (500 levels, inside the serializer's limit) is written and read back.
+  const shallow = JSON.parse(JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(500) + '1' + '}'.repeat(500))) as never;
+  ledger.write(shallow);
+  assert.deepEqual(Object.keys(ledger.read()), ['k']);
+  // With an own __proto__ key at the bottom the ledger is refused with a StoreError naming the file and the path, not a RangeError.
+  const withProto = deep('{"__proto__":1}');
+  const refused = new IncidentLedger(scratch());
+  writeFileSync(refused.file, withProto);
+  refusesAll(refused, 'SCHEMA_VIOLATION', 'x.__proto__: an own', '6,000 levels deep');
+  const issue = IncidentLedgerFile.safeParse(JSON.parse(withProto));
+  assert.equal(issue.success, false);
+  if (!issue.success) {
+    assert.equal(issue.error.issues[0]!.path.length, 6003);
+    assert.equal(issue.error.issues[0]!.path.at(-1), '__proto__');
+  }
+  assert.throws(() => refused.write(JSON.parse(withProto) as never), (err: unknown) => !(err instanceof RangeError) && /__proto__/.test((err as Error).message));
+  assert.equal(bytesOf(refused.file), withProto);
+});
+
+test('aidlc monitor check reads a ledger nested 6,000 levels deep like a shallow one and refuses one with a __proto__ key at the bottom', () => {
+  const deep = (bottom: string): string => JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(6000) + bottom + '}'.repeat(6000));
+  const fx = fixture();
+  try {
+    const file = path.join(fx.paths.incidents, 'incidents.json');
+    writeFileSync(file, deep('1'), 'utf8');
+    const ok = monitor(fx, NONE);
+    assert.equal(ok.status, 0, ok.stderr);
+    assert.deepEqual(filedOf(ok.stdout), []);
+    const withProto = deep('{"__proto__":1}');
+    writeFileSync(file, withProto, 'utf8');
+    const refused = monitor(fx, ABOVE);
+    assert.equal(refused.status, 1, refused.stderr);
+    assert.ok(refused.stderr.includes('SCHEMA_VIOLATION') && refused.stderr.includes('incidents.json') && !refused.stderr.includes('RangeError'), refused.stderr.slice(0, 300));
+    assert.equal(bytesOf(file), withProto);
+  } finally {
+    fx.cleanup();
+  }
+});
+
+test('the lowercase and mixed-case names of the git selector variables are removed from a child environment', () => {
+  const saved = ['git_dir', 'Git_Work_Tree', 'GIT_INDEX_FILE'].map((key) => [key, process.env[key]] as const);
+  process.env['git_dir'] = 'x';
+  process.env['Git_Work_Tree'] = 'y';
+  process.env['GIT_INDEX_FILE'] = 'z';
+  try {
+    const env = childEnv('state');
+    assert.deepEqual(Object.keys(env).filter((key) => GIT_SELECTORS.includes(key.toUpperCase())), []);
+    assert.equal(env['AIDLC_STATE_DIR'], 'state');
+    // The same holds in a real child: its environment holds no selector name in any case (on POSIX the lowercase names are different variables that git ignores, and they are removed all the same).
+    const child = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify(Object.keys(process.env)))'], { env, encoding: 'utf8' });
+    assert.equal(child.status, 0, child.stderr);
+    assert.deepEqual((JSON.parse(child.stdout) as string[]).filter((key) => GIT_SELECTORS.includes(key.toUpperCase())), []);
+  } finally {
+    for (const [key, value] of saved) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
+test('a path that exists and is not a regular file is READ_FAILED from the stat result, before any read, through all four methods', () => {
+  const ledger = new IncidentLedger(scratch());
+  writeFileSync(ledger.file, JSON.stringify({ k: rec() }));
+  let reads = 0;
+  withFs('readFileSync', (real) => (p, ...rest) => {
+    if (String(p) === ledger.file) reads++;
+    return real(p, ...rest);
+  }, () => withFs('statSync', (real) => (p, ...rest) => {
+    const stats = real(p, ...rest) as fs.Stats;
+    return String(p) === ledger.file ? Object.assign(Object.create(stats), { isFile: () => false }) : stats;
+  }, () => refusesAll(ledger, 'READ_FAILED', undefined, 'a stat that says not a regular file')));
+  assert.equal(reads, 0, 'the ledger was never read');
+  const dirLedger = new IncidentLedger(scratch());
+  mkdirSync(dirLedger.file);
+  refusesAll(dirLedger, 'READ_FAILED', undefined, 'a directory');
+});
+
+test('aidlc monitor check with a directory at the ledger path refuses with READ_FAILED for every breach', () => {
+  for (const [label, recent] of [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]] as Array<[string, number[]]>) {
+    const fx = fixture();
+    try {
+      mkdirSync(path.join(fx.paths.incidents, 'incidents.json'));
+      const journalBefore = hostJournalText(fx);
+      const result = monitor(fx, recent);
+      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+      assert.deepEqual(filedOf(result.stdout), [], label);
+      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+      assert.equal(hostJournalText(fx), journalBefore, label);
+    } finally {
+      fx.cleanup();
     }
   }
 });

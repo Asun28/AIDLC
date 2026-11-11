@@ -4,7 +4,7 @@
  * Findings are deduplicated by breach identity within the configured window; dismissals tune
  * the bands. No hidden watcher is installed after development DONE (plan LC10).
  */
-import { statSync } from 'node:fs';
+import { statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import { renderIntent, slugify, type Intent } from '../artifacts/intent.ts';
 import { IncidentLedgerFile, type IncidentRecord } from '../core/types.ts';
@@ -18,15 +18,17 @@ export class IncidentLedger {
     this.file = path.join(dir, 'incidents.json');
   }
 
-  /** Whether the ledger file exists: only "no entry" (ENOENT) means absent, any other stat error (a path under a regular file on POSIX, an unreadable parent) is a `READ_FAILED` that names the file. */
+  /** Whether the ledger file exists: only "no entry" (ENOENT) means absent, any other stat error (a path under a regular file on POSIX, an unreadable parent) and a path that is not a regular file (a directory) are a `READ_FAILED` that names the file, before any read. */
   private present(): boolean {
+    let stats: Stats;
     try {
-      statSync(this.file);
-      return true;
+      stats = statSync(this.file);
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
       throw new StoreError('READ_FAILED', this.file, (err as Error).message);
     }
+    if (!stats.isFile()) throw new StoreError('READ_FAILED', this.file, 'the ledger path exists and is not a regular file');
+    return true;
   }
 
   /** The ledger as stored; an absent file is an empty ledger and a file that cannot be read or does not parse throws a `StoreError` naming it (never read as empty). */
@@ -34,7 +36,7 @@ export class IncidentLedger {
     return this.present() ? (readJson(this.file, IncidentLedgerFile) ?? {}) : {};
   }
 
-  /** Writes `data` to a temporary file renamed into place, and only in a form `read` accepts. */
+  /** Validates `data` with the ledger schema before it is serialized, then writes it to a temporary file that is renamed into place. */
   write(data: IncidentLedgerFile): void {
     atomicWriteJson(this.file, IncidentLedgerFile.parse(data));
   }

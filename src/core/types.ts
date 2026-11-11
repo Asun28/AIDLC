@@ -1156,13 +1156,25 @@ export const IncidentRecord = z.looseObject({
 });
 export type IncidentRecord = z.infer<typeof IncidentRecord>;
 
-/** The path of the first own `__proto__` key of parsed JSON, at any depth: the record parse and the store's serializer drop that key, so a value held under it would vanish. */
-function protoKeyPath(value: unknown, trail: string[]): string[] | undefined {
-  if (typeof value !== 'object' || value === null) return undefined;
-  if (Object.hasOwn(value, '__proto__')) return [...trail, '__proto__'];
-  for (const [key, child] of Object.entries(value)) {
-    const found = protoKeyPath(child, [...trail, key]);
-    if (found) return found;
+/**
+ * The path of the first own `__proto__` key of parsed JSON, at any depth, or undefined: the record parse and the store's serializer drop that key, so a value held under it would vanish.
+ * An explicit stack, not recursion: a value nested thousands of levels deep (which `JSON.parse` reads) must not overflow the call stack.
+ */
+function protoKeyPath(root: unknown): string[] | undefined {
+  type Step = { key: string; up: Step | undefined };
+  const stack: Array<{ value: unknown; at: Step | undefined }> = [{ value: root, at: undefined }];
+  const pathOf = (at: Step | undefined): string[] => {
+    const keys: string[] = [];
+    for (let step = at; step; step = step.up) keys.push(step.key);
+    return keys.reverse();
+  };
+  while (stack.length > 0) {
+    const { value, at } = stack.pop()!;
+    if (typeof value !== 'object' || value === null) continue;
+    if (Object.hasOwn(value, '__proto__')) return [...pathOf(at), '__proto__'];
+    // Pushed in reverse so that the children are searched in key order, as a recursive search would.
+    const entries = Object.entries(value);
+    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at } });
   }
   return undefined;
 }
@@ -1170,7 +1182,7 @@ function protoKeyPath(value: unknown, trail: string[]): string[] | undefined {
 export const IncidentLedgerFile = z
   .unknown()
   .superRefine((value, ctx) => {
-    const at = protoKeyPath(value, []);
+    const at = protoKeyPath(value);
     if (at) ctx.addIssue({ code: 'custom', path: at, message: 'an own "__proto__" key is not allowed' });
   })
   .pipe(z.record(z.string(), IncidentRecord));
