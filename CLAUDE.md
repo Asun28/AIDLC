@@ -77,9 +77,9 @@ calls `Date.now()`.
 
 ## Configuration and environment
 
-- `aidlc.config.json` is parsed by the zod `ProjectConfig` in `src/config.ts`.
-  `templates/aidlc.config.json` is the copy `aidlc init` installs; add new
-  fields to both.
+- Each of `aidlc.config.json` and `templates/aidlc.config.json` (installed by `aidlc init`)
+  lists only what it sets. In a schema-valid configuration, a key left out has its
+  `ProjectConfig` default or none (`src/config.ts`). A card that adds a field says which file carries it.
 - `AIDLC_STATE_DIR` overrides the state directory. `AIDLC_SESSION` (else
   `CLAUDE_CODE_SESSION_ID`) identifies the session for leases and the
   journal. The hooks read `AIDLC_FIX_TASK` and `RELEASE_APPROVAL` (else

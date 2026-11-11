@@ -239,3 +239,40 @@ The reviewer checks each sentence of body section "Module map text" against the 
 
 ### Item 10
 The reviewer checks that the entry of body section "CHANGELOG text" is in Unreleased directly above the entry that begins `- T0-DIRTY-SUCCESS-2`, followed by a blank line.
+
+## Attempt evidence
+
+### RED (measured on 09d069bd, tests only)
+- tests/surface/module-map.test.ts "every source file under src/ is named in docs/ARCHITECTURE.md": fails, actual `['src/config.ts','src/core/stop.ts','src/index.ts','src/loop/context-pack.ts','src/probes/hook-wiring.ts']`, expected `[]`. The two control tests pass. Run of the three files: 77 tests, 76 pass, 1 fail.
+- Pins (pass on main, acceptance 1, 3, 4): config key-path test, types compatibility test, card-run refusal test.
+
+### Revert table (measured on 1e338683; each row reverted, test run, restored; `git status` clean after)
+| # | Mutation | Test | Result |
+|---|---|---|---|
+| 1-4 | remove the `context-pack.ts`, `stop.ts`, `hook-wiring.ts` span; remove the `src/config.ts` and `src/index.ts` spans | module-map | red 4/4 |
+| 5-9 | delete `modelVersion`, `fallback`, `authorizationRef`, `previousHealthyRelease`, `linkedAttempt` from their schema | types compat | red 5/5 |
+| 10-12 | delete `scope`, `frozen`, `migration` from `StopReason` | types compat | red 3/3 |
+| 13-14 | `cardRevision` given a default, `goalGeneration` made optional | types card run | red 2/2 |
+| 15-16 | `cardPolicy` added to the template, `preReview.rouns` added to aidlc.config.json | config key path | red 2/2 |
+
+Rows red/total: 16/16. The synthetic matcher controls are asserted in the same file.
+
+### DoD (on 1e338683, exit 0)
+`npm run typecheck && node --test <10 files>`: tests 229, pass 229, fail 0, skipped 0.
+
+### Document sentences
+| Sentence | True because | Test |
+|---|---|---|
+| CLAUDE.md rule | 76 and 46 key paths all kept by `ProjectConfig.parse`; `src/config.ts` defaults | config key-path test |
+| types.ts reserved fields | no src reader or writer (card sweep 2, 3) | types compat test |
+| types.ts provenance | `controller.ts` ensureCardRun sets both; required in schema | types card-run test |
+| types.ts stop reasons | `GLOBAL_REASONS` in stop.ts holds `frozen`; `scope`, `migration` accepted by `StopRecord` | types compat, stop.test.ts |
+| Module map: stop.ts, hook-wiring.ts, context-pack.ts, config.ts, index.ts | read against `GLOBAL_REASONS` (stop.ts:9), `hookWiringReport` (main.ts:274), `loadContextPack`, package.json `main` | module-map test (naming only) |
+
+### Size
+`git diff --shortstat origin/main...HEAD` before this section: 7 files, 167 insertions, 9 deletions (176 changed lines); this section adds about 35; budget 250. src/core/types.ts diff: comment text only (the three StopReason lines changed by a trailing comment).
+
+Coordinator verification:
+- At 486a7aa4, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/core/types.test.ts, tests/surface/config.test.ts, tests/surface/module-map.test.ts): tests 77, pass 77, fail 0, skipped 0.
+- Windows, docpins: 76 test files reading 3 changed documents: # tests 1844 # pass 1832 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

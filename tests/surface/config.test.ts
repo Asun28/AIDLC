@@ -562,3 +562,36 @@ describe('the fallback dispatch settings are its own (T0-R2-FALLBACK-2, part 2 o
     assert.deepEqual(Object.keys(PreReviewConfig.shape).sort(), [...own.filter((k) => k !== 'effort'), ...shared, 'fallback'].sort());
   });
 });
+
+describe('the shipped configs hold only keys the schema keeps (T0-AUDIT-DOC-TRUTH)', () => {
+  const root = path.resolve(import.meta.dirname, '..', '..');
+  const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+  const keyPaths = (value: unknown, prefix: string[] = []): string[][] =>
+    isObject(value) ? Object.keys(value).flatMap((k) => [[...prefix, k], ...keyPaths(value[k], [...prefix, k])]) : [];
+  const present = (parsed: unknown, keys: string[]): boolean => {
+    let at: unknown = parsed;
+    for (const k of keys) {
+      if (!isObject(at) || !Object.hasOwn(at, k)) return false;
+      at = at[k];
+    }
+    return true;
+  };
+  const dropped = (raw: unknown): string[] => {
+    const parsed = ProjectConfig.parse(raw);
+    return keyPaths(raw).filter((p) => !present(parsed, p)).map((p) => p.join('.'));
+  };
+  const rawOf = (file: string) => JSON.parse(readFileSync(path.join(root, file), 'utf8')) as Record<string, unknown>;
+
+  test('every key path of both shipped configs is present in the parsed config, and a key the schema drops is reported [T0-AUDIT-DOC-TRUTH R2]', () => {
+    for (const file of ['aidlc.config.json', 'templates/aidlc.config.json']) {
+      const raw = rawOf(file);
+      assert.ok(keyPaths(raw).length > 0, `${file}: found key paths`);
+      assert.deepEqual(dropped(raw), [], file);
+    }
+    const template = rawOf('templates/aidlc.config.json');
+    const a = { ...template, preReview: { ...(template.preReview as object), rouns: 2 }, cardPolicy: {} };
+    assert.deepEqual(dropped(a).sort(), ['cardPolicy', 'preReview.rouns']);
+    const b = Object.defineProperty({ ...template }, 'toString', { value: 1, enumerable: true, configurable: true, writable: true });
+    assert.deepEqual(dropped(b), ['toString']);
+  });
+});

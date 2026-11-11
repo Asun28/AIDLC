@@ -208,3 +208,37 @@ describe('types: ReviewEffortLevel (T1-OPUS55-R3-2 acceptance 10)', () => {
     assert.equal(ReviewEffortLevel.safeParse('low').success, false);
   });
 });
+
+describe('types: fields kept for compatibility (T0-AUDIT-DOC-TRUTH)', () => {
+  test('a release attempt, a goal role profile and a stop record keep the reserved values through parse, JSON and parse [R4] [R6]', () => {
+    const a = release({ previousHealthyRelease: 'rel-g1-1', authorizationRef: 'auth-1', linkedAttempt: 'rel-g1-2' });
+    const ra = ReleaseAttempt.parse(JSON.parse(JSON.stringify(a)));
+    assert.deepEqual(ra, a);
+    assert.equal(ra.previousHealthyRelease, 'rel-g1-1');
+    assert.equal(ra.authorizationRef, 'auth-1');
+    assert.equal(ra.linkedAttempt, 'rel-g1-2');
+    const profile = { role: 'implementer', provider: 'anthropic', model: 'claude-opus-5-5', modelVersion: '2026-09-01', supportedEfforts: ['low', 'medium'], pool: 'anthropic:default', fallback: 'claude-sonnet-5-5' };
+    const g = goal({ roleProfiles: [profile] });
+    const rg = Goal.parse(JSON.parse(JSON.stringify(g)));
+    assert.deepEqual(rg, g);
+    assert.equal(rg.roleProfiles[0]!.modelVersion, '2026-09-01');
+    assert.equal(rg.roleProfiles[0]!.fallback, 'claude-sonnet-5-5');
+    for (const reason of ['scope', 'frozen', 'migration']) {
+      const stop = StopRecord.parse({ reason, detail: 'd', nextAction: 'n', global: false, at: T0 });
+      assert.deepEqual(StopRecord.parse(JSON.parse(JSON.stringify(stop))), stop, reason);
+      assert.equal(stop.reason, reason);
+    }
+  });
+
+  test('a card run without cardRevision or goalGeneration, or with one that is not a non-negative integer, is refused [R5]', () => {
+    const run = cardRun();
+    const { cardRevision: _r, ...noRevision } = run;
+    const { goalGeneration: _g, ...noGeneration } = run;
+    assert.equal(CardRun.safeParse(noRevision).success, false, 'without cardRevision');
+    assert.equal(CardRun.safeParse(noGeneration).success, false, 'without goalGeneration');
+    for (const field of ['cardRevision', 'goalGeneration']) {
+      for (const bad of [-1, 1.5, '0']) assert.equal(CardRun.safeParse({ ...run, [field]: bad }).success, false, `${field} ${JSON.stringify(bad)}`);
+      for (const ok of [0, 3]) assert.equal(CardRun.safeParse({ ...run, [field]: ok }).success, true, `${field} ${ok}`);
+    }
+  });
+});

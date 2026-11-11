@@ -109,9 +109,9 @@ export type ReleaseState = z.infer<typeof ReleaseState>;
 export const StopReason = z.enum([
   'card',
   'capability',
-  'scope',
+  'scope', // Not selected as a new reason by built-in loop decisions. Accepted in caller-supplied or persisted STOP records and propagated, journaled and displayed by generic STOP handling.
   'risk',
-  'frozen',
+  'frozen', // Not selected as a new reason by built-in loop decisions. Accepted in caller-supplied or persisted STOP records and propagated, journaled and displayed by generic STOP handling. GLOBAL_REASONS (src/core/stop.ts) holds it, so makeStop defaults its global to true.
   'checkpoint',
   'review',
   'tool',
@@ -122,7 +122,7 @@ export const StopReason = z.enum([
   'release-config',
   'release-auth',
   'release-health',
-  'migration',
+  'migration', // Not selected as a new reason by built-in loop decisions. Accepted in caller-supplied or persisted STOP records and propagated, journaled and displayed by generic STOP handling.
   'rollback-auth',
   'audit',
   'ownership',
@@ -597,6 +597,7 @@ export const RoleProfile = z.object({
   role: Role,
   provider: z.string().min(1),
   model: z.string().min(1),
+  /** Reserved (audit item F27): `resolveRoleProfile` (src/core/roles.ts) never sets it and no code in src reads it. A stored value is kept when the goal is read and saved again, and never selects a model version. */
   modelVersion: z.string().optional(),
   supportedEfforts: z.array(EffortLevel).min(1),
   tools: z.array(z.string()).default([]),
@@ -605,6 +606,7 @@ export const RoleProfile = z.object({
   readOnly: z.boolean().default(false),
   /** Result of the representative role check, if run. */
   roleCheck: z.enum(['passed', 'failed', 'not-run']).default('not-run'),
+  /** Reserved (audit item F27): `resolveRoleProfile` never sets it and no code in src reads it; it is not the reviewer fallback of aidlc.config.json (`preReview.fallback`, `formalReview.fallback`). A stored value is kept when the goal is read and saved again, and never selects a fallback. */
   fallback: z.string().optional(),
 });
 export type RoleProfile = z.infer<typeof RoleProfile>;
@@ -847,7 +849,9 @@ export type ReviewBenchCase = z.infer<typeof ReviewBenchCase>;
 export const CardRun = z.object({
   goalId: z.string().min(1),
   cardId: CardId,
+  /** Creation provenance (audit item F27): set by name only in `GoalController.ensureCardRun` when it creates the run, from the goal's `cardRevisions` entry for the card (0 without one); a raw `card-result` patch can replace it like any field the loop does not own. Nothing in src reads it. Required: a run stored without it does not parse. */
   cardRevision: z.number().int().nonnegative(),
+  /** Creation provenance (audit item F27): set by name only in `GoalController.ensureCardRun` when it creates the run, from the goal's `generation`; a raw `card-result` patch can replace it like any field the loop does not own. Nothing in src reads it. Required: a run stored without it does not parse. */
   goalGeneration: z.number().int().nonnegative(),
   state: CardState,
   /** Fixed no later than the first PREPARE; never reset. */
@@ -910,7 +914,9 @@ export const ReleaseAttempt = z.object({
   candidateDigest: z.string().optional(),
   sourceSha: z.string().optional(),
   configDigest: z.string().optional(),
+  /** Reserved (audit item F27): no code in src sets or reads it by name. A stored value (a hand edit, or a raw `aidlc report --result release-result` patch) is kept when the attempt is read and saved again, and never names a recovery target. */
   previousHealthyRelease: z.string().optional(),
+  /** Reserved (audit item F27): no code in src sets or reads it by name. A stored value (a hand edit, or a raw `aidlc report --result release-result` patch) is kept when the attempt is read and saved again, and never establishes authority. */
   authorizationRef: z.string().optional(),
   ownerGeneration: z.number().int().nonnegative().optional(),
   steps: z
@@ -926,6 +932,7 @@ export const ReleaseAttempt = z.object({
   healthWindow: z.object({ from: IsoTimestamp, to: IsoTimestamp }).optional(),
   healthResult: z.enum(['PASS', 'BREACH', 'INSUFFICIENT_DATA']).optional(),
   disposition: z.enum(['delivered', 'recovered', 'failed', 'pending']).default('pending'),
+  /** Reserved (audit item F27): no code in src sets or reads it by name. A stored value (a hand edit, or a raw `aidlc report --result release-result` patch) is kept when the attempt is read and saved again, and links no attempt and names no recovery target. */
   linkedAttempt: z.string().optional(),
   startedAt: IsoTimestamp,
   deadline: IsoTimestamp,
