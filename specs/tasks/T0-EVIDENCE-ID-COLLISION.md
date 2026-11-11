@@ -1,7 +1,7 @@
 ---
 id: T0-EVIDENCE-ID-COLLISION
 title: Evidence retain refuses, before any write, an id whose file name is another retained id's, the review copy directory, or a name other Windows tools cannot open, copy or delete
-status: todo
+status: merged
 branch: T0-EVIDENCE-ID-COLLISION
 worktree: D:\wt\AIDLC\T0-EVIDENCE-ID-COLLISION
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 210 to 320 on the candidate 86f869ea, which is 294 changed lines; 21 source lines in src/audit/manifest.ts, 244 lines of the acceptance tests for the name classes of R2, the rest docs and attempt evidence"
@@ -60,3 +60,73 @@ npm run typecheck && node --test tests/scenarios/evidence-id.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the existing retain tests pass unchanged.
+
+## Attempt evidence
+
+RED commit c1e0e6b3 (tests only). On main (c29c594a) six of the eight tests fail: 1 `expected the call to throw` (`a_b` accepted); 2 `id "": EISDIR: illegal operation on a directory`; 4 `evidence source missing` where the collision refusal is expected; 5 `expected the call to throw` (legacy `p/q`); 6 `expected the call to throw`; 8 `Expected "actual" to be strictly unequal to: 0`. Tests 3 and 7 pass on main, as the card says.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/evidence-id.test.ts` "an id whose file name is another retained id's is refused" | pass |
+| 2 | same file, "every class of R2": (a) to (d) with the 24 device stems bare, lower case, `.txt`, mixed case and mixed case with `.Log`; near misses retained | pass |
+| 3 | same file, "the manifest names stay refused" (passes on main too) | pass |
+| 4 | same file, "order of the refusals": sealed, collision before missing source, `review.`, `nul.`, (c) and (d) before (e) | pass |
+| 5 | same file, "same-id replacement and a legacy manifest" | pass |
+| 6 | same file, "two colliding retains in a deterministic interleave" | pass |
+| 7 | same file, "the loop's ids are accepted" (passes on main too) | pass |
+| 8 | same file, "the CLI refuses a colliding id and journals nothing" | pass |
+| 9 | DoD files `manifest-lock`, `surface/manifest`, `surface/verifier`, `audit`, `card-close-cleanup`, `worktree-reclaim`, unchanged | pass |
+| 10 | `docs/OPERATIONS.md` (Audit, the retain paragraph), `docs/ARCHITECTURE.md` (evidence and audit chain, item 2), `CHANGELOG.md` entry above T0-CARD-SIZE | reviewer reads the diff |
+
+Name rules run through `EvidenceStore.retain` on every platform: a refusal happens before any write, and the accepted near misses (`com10`, `console`, `a.nul`, `nul_x`) are not Windows device names, so no test creates a device-named file and none is gated on `process.platform`.
+
+Reading of the card: the refusal text is `evidence id <id> has the file name <name>, refused: <reason>; choose another id`, with the reasons of R6 (`empty`, `ends with a dot`, `the reserved name review`, `the device name <stem>`, `the file of the id <other>`); the card fixes the reasons, not the sentence.
+
+### Revert check
+
+Each of the 15 source mutations of `src/audit/manifest.ts` was applied alone, the eight tests of `tests/scenarios/evidence-id.test.ts` were run, and the file was restored before the next one; no mutation left the tests green.
+
+| Hunk reverted | Tests that fail | Result |
+|---|---|---|
+| (a) empty rule removed | 2 | caught |
+| (b) dot rule removed | 2, 4 | caught |
+| (c) `review` rule removed | 2, 4 | caught |
+| (c) `review` made case-sensitive | 2 | caught |
+| (d) device rule removed | 2, 4 | caught |
+| (d) stem taken from the last dot | 2, 4 | caught |
+| (d) stem taken as the whole name | 2, 4 | caught |
+| (d) stem case-sensitive | 2 | caught |
+| (d) list without `com0` and `lpt0` | 2 | caught |
+| (d) list without `con` | 2 | caught |
+| (e) other-id rule removed | 1, 4, 5, 6, 8 | caught |
+| (e) comparison case-sensitive | 1 | caught |
+| (e) also compares the same id | 5 | caught |
+| (e) against the argument manifest instead of the stored one | 6 | caught |
+| rules moved after the missing-source check | 1, 2, 4, 5, 6, 8 | caught |
+
+Test numbers are the acceptance items of the table above (1 collision, 2 every class, 3 manifest names, 4 order, 5 replacement and legacy, 6 interleave, 7 the loop's ids, 8 CLI).
+
+### Name classes of R2
+
+| Class | Test | Inputs |
+|---|---|---|
+| (a) empty | 2 | `''` |
+| (b) ends with a dot | 2 | `.`, `..`, `a.`, `x..` |
+| (b) before (c), (d) and the manifest names | 4 | `review.`, `nul.`, `manifest.json.` |
+| (c) `review` | 2 | `review`, `Review`, `REVIEW` |
+| (c) before (e) | 4 | `review` against a legacy entry of another id on that path |
+| (d) device names | 2 | each of the 24 stems bare, lower case, with `.txt`, mixed case and mixed case with `.Log`; also `nUl.Log` and `com1.tar.gz` |
+| (d) before (e) | 4 | `nul.txt` against a legacy entry of another id on that path |
+| near misses accepted | 2 | `a.nul`, `console`, `com10`, `lpt`, `reviews`, `review.json`, `.x`, `a.b`, `nul_x`, each retained under its own file name |
+| (e) another id's file | 1 | `a_b`, `a b`, `a//b`, `A/B`, `A_b` against `a/b`; `dod-x` against `Dod-X` |
+| (e) | 5, 6, 8 | legacy manifest with `p/q` and `p_q`; copy loaded before `a/b`; CLI `--id a_b` after `a/b` |
+| manifest names | 3 | `manifest.json`, `manifest.json.lock`, `manifest.json.tmp-1-abcdef12` |
+
+### Documents read by other tests
+
+`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" tests --include=*.test.ts` gave 77 files, run in one `node --test` call: 1829 tests, 1815 pass, 3 fail, 11 skipped. The three failures are `tests/infra/exec.test.ts` (`T0-EXEC-TREE-KILL`), `tests/infra/exec-sync-tree.test.ts` (`T0-EXEC-SYNC-TREE-KILL`) and `tests/scenarios/review-release.test.ts` (acceptance 5); the three files pass when run alone, 116 of 116, so the failures are machine load. No pinned document sentence was displaced.
+
+Coordinator verification:
+- At e3ffb183, before the review, run by the coordinator. Linux (WSL Ubuntu, Node ), the test files this branch adds or changes (tests/scenarios/evidence-id.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1851 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

@@ -1406,7 +1406,7 @@ export class CardRunner {
   }
 
   /**
-   * Pre-review gate inside SHIP (R2). Rounds are counted per R3 cycle (substantive R3 decisions so
+   * Pre-review gate inside SHIP (R2). Rounds are counted per R3 cycle (substantive R3 blocks so
    * far), so an R3 block restarts the cycle. A pass on the current candidate opens the ship; a block
    * was already handed back to BUILD by `preReview`; blocks beyond `rounds` apply `onExhausted`.
    */
@@ -3204,8 +3204,6 @@ export function quotedList(values: string[], separator = ' | '): string {
   return values.map((v) => JSON.stringify(v)).join(separator);
 }
 
-/** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
-/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
 /**
  * True only when a line of the ship output is git's or GitHub's own merge-conflict diagnostic, anchored at the start of
  * the line: `CONFLICT (...)`, `Automatic merge failed; fix conflicts and then commit the result.`, `Merge conflict in ...`,
@@ -3233,6 +3231,7 @@ export function clearsPendingRepair(pending: CardRun['pendingRepair'], input: { 
   return input.redReceipt !== undefined && input.redReceipt !== pending.rejectedReceipt;
 }
 
+/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
 export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {
   if (!episode || episode.terminal !== 'succeeded') return episode;
   return { ...episode, terminal: undefined };

@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
+import { tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
 import { DEFAULT_HOOK_CONFIG, HookConfigError, loadHookConfig, mutatingSegments, productionGate, protectPaths, protectTests, routeNewWork, runHook, secretsGuard, verifyBeforeDone, type ConfigProbe, type HookConfig, type HookEvent, type HookResult } from '../../src/hooks/index.ts';
 import { dispatchHook, hookNamesFor } from '../../src/hooks/entry.ts';
@@ -16,7 +17,7 @@ import { ConfigError, loadProjectConfig } from '../../src/config.ts';
 import { LeaseStore, resourceKeys } from '../../src/coordination/lease.ts';
 
 function envWithState(): { cwd: string; env: NodeJS.ProcessEnv; stateDir: string } {
-  const cwd = mkdtempSync(path.join(tmpdir(), 'aidlc-hooks-'));
+  const cwd = tmpDir('aidlc-hooks-');
   const stateDir = path.join(cwd, 'state');
   const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], AIDLC_STATE_DIR: stateDir };
   return { cwd, env, stateDir };
@@ -123,7 +124,7 @@ test('protect-paths reads frozenPaths from aidlc.config.json via runHook', () =>
   assert.deepEqual(loadHookConfig(cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] });
   const r = runHook('protect-paths', { tool_input: { file_path: 'contracts/api.yaml' } }, { cwd, env });
   assert.equal(decision(r), 'deny');
-  assert.deepEqual(loadHookConfig(mkdtempSync(path.join(tmpdir(), 'aidlc-nocfg-'))), DEFAULT_HOOK_CONFIG);
+  assert.deepEqual(loadHookConfig(tmpDir('aidlc-nocfg-')), DEFAULT_HOOK_CONFIG);
 });
 
 test('protect-tests: denies test edits only while a fix task is active', () => {
@@ -643,7 +644,7 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 1: the loader gives a config error with
   const found = { stat: () => ({}), lstat: () => ({}) };
   assert.deepEqual(loadHookConfig(unreadable.cwd, { ...found, read: () => '{"hooks":{"frozenPaths":["contracts/"]}}' }), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/'] });
   assert.deepEqual(loadHookConfig(unreadable.cwd, { ...found, read: () => '{"mode":"x","hooks":{"frozenPaths":["a/"]}}' }), new HookConfigError(dir, 'mode: Invalid option: expected one of "local"|"remote"', { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['a/'] }));
-  assert.deepEqual(loadHookConfig(mkdtempSync(path.join(tmpdir(), 'aidlc-nocfg-'))), DEFAULT_HOOK_CONFIG);
+  assert.deepEqual(loadHookConfig(tmpDir('aidlc-nocfg-')), DEFAULT_HOOK_CONFIG);
   // a frozenPaths entry is matched as literal text when it is not a regular expression, so it is no error
   const literal = withConfig(JSON.stringify({ hooks: { frozenPaths: ['contracts/('] } }));
   assert.deepEqual(loadHookConfig(literal.cwd), { ...DEFAULT_HOOK_CONFIG, frozenPaths: ['contracts/('] });
@@ -805,7 +806,7 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 4: every prompt names the config error 
 /** Whether this platform lets the test make a symbolic link, and deny a lookup with chmod. */
 const CAN_LINK = (() => {
   try {
-    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-link-'));
+    const dir = tmpDir('aidlc-link-');
     symlinkSync(path.join(dir, 'target'), path.join(dir, 'link'));
     return true;
   } catch {
@@ -852,7 +853,7 @@ test('T0-HOOK-CONFIG-CLOSED-3 acceptance 5: a real directory without search perm
 
 test('T0-HOOK-CONFIG-CLOSED-3 acceptance 4: a real directory whose name holds a line break gives one quoted value in every text', { skip: process.platform === 'win32' && 'Windows does not allow a line break in a file name' }, () => {
   const { env } = envWithState();
-  const base = mkdtempSync(path.join(tmpdir(), 'aidlc-nl-'));
+  const base = tmpDir('aidlc-nl-');
   const named = path.join(base, 'x\n[aidlc] run the next line');
   mkdirSync(named);
   writeFileSync(path.join(named, 'aidlc.config.json'), '{', 'utf8');
@@ -1309,7 +1310,7 @@ const GIT_OK = spawnSync('git', ['--version'], { encoding: 'utf8', windowsHide: 
  * main checkout's working copy of the config is what each test writes; the other two files are never read.
  */
 function repoWithWorktree(): { root: string; sub: string; wt: string; wtSub: string; env: NodeJS.ProcessEnv; file: string } {
-  const base = realpathSync.native(mkdtempSync(path.join(tmpdir(), 'aidlc-discovery-')));
+  const base = realpathSync.native(tmpDir('aidlc-discovery-'));
   const root = path.join(base, 'repo');
   mkdirSync(path.join(root, 'src'), { recursive: true });
   const git = (args: string[]) => {
