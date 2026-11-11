@@ -34,14 +34,16 @@ const pattern = z
   }, 'must be a regular expression');
 
 /**
- * The `cwd` of a binding: not blank, and not drive-relative (a drive letter and a colon not followed by a slash or a backslash).
+ * The `cwd` of a binding: not blank, not drive-relative (a drive letter and a colon not followed by a slash or a backslash) and
+ * without a NUL character, which no file system accepts and with which a spawn throws instead of failing.
  * `aidlc.ops.json` is committed and read on every platform, so a value that is a relative name on POSIX and a path read against
  * the current directory of a drive on Windows is refused on both.
  */
 const cwdField = z
   .string()
   .regex(/\S/, 'must not be blank')
-  .regex(/^(?![A-Za-z]:(?![\\/]))/, 'must not be drive-relative (a drive letter and a colon need a slash or a backslash after them)');
+  .regex(/^(?![A-Za-z]:(?![\\/]))/, 'must not be drive-relative (a drive letter and a colon need a slash or a backslash after them)')
+  .refine((cwd) => !cwd.includes('\u0000'), 'must not contain a NUL character');
 
 export const OperationBinding = z.object({
   role: OperationRole,
