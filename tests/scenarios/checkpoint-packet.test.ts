@@ -93,7 +93,7 @@ test("the goal's release directive at CHECKPOINT carries the runner's packet, an
     assert.equal(d.environment, 'staging', 'the directive keeps the attempt environment');
     controller.report({ goalId, generation: 0, result: 'approved', data: { kind: 'production', by: 'release-manager', candidateDigest: d.packet['candidateDigest'], sourceSha: d.packet['sourceSha'], environment: d.packet['environment'], operations: d.packet['operations'] } });
     const applied = runner.next(fx.goal(goalId), fx.store.getRelease(attemptId)!);
-    assert.equal(applied.directive.kind, 'apply', applied.directive.narration);
+    assert.equal(applied.attempt.state, 'OBSERVE', applied.directive.narration);
     const deploys = fx.ops.list({ goalId, kind: 'deploy' }).filter((o) => o.target === 'production');
     assert.equal(deploys.length, 1);
   } finally {
