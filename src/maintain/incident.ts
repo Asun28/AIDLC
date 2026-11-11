@@ -4,22 +4,12 @@
  * Findings are deduplicated by breach identity within the configured window; dismissals tune
  * the bands. No hidden watcher is installed after development DONE (plan LC10).
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { statSync, type Stats } from 'node:fs';
 import path from 'node:path';
 import { renderIntent, slugify, type Intent } from '../artifacts/intent.ts';
+import { IncidentLedgerFile, type IncidentRecord } from '../core/types.ts';
+import { StoreError, atomicWriteJson, createExclusive, readJson } from '../state/store.ts';
 import { breachIdentity, type BandBreach } from './bands.ts';
-
-export interface IncidentRecord {
-  identity: string;
-  firstSeen: string;
-  lastSeen: string;
-  count: number;
-  intentFile?: string;
-  /** When the latest intent was attached: the start of the dedupe window. A record written before this field has none, and `firstSeen` stands in. */
-  filedAt?: string;
-  disposition: 'open' | 'fix-now' | 'scheduled' | 'dismissed';
-  dismissReason?: string;
-}
 
 export class IncidentLedger {
   readonly file: string;
@@ -28,18 +18,29 @@ export class IncidentLedger {
     this.file = path.join(dir, 'incidents.json');
   }
 
-  read(): Record<string, IncidentRecord> {
-    if (!existsSync(this.file)) return {};
+  /** Whether the ledger file exists: only "no entry" (ENOENT) means absent, any other stat error (a path under a regular file on POSIX, an unreadable parent) and a path that is not a regular file (a directory) are a `READ_FAILED` that names the file, before any read. */
+  private present(): boolean {
+    let stats: Stats;
     try {
-      return JSON.parse(readFileSync(this.file, 'utf8')) as Record<string, IncidentRecord>;
-    } catch {
-      return {};
+      stats = statSync(this.file);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw new StoreError('READ_FAILED', this.file, (err as Error).message);
     }
+    if (!stats.isFile()) throw new StoreError('READ_FAILED', this.file, 'the ledger path exists and is not a regular file');
+    return true;
   }
 
-  write(data: Record<string, IncidentRecord>): void {
-    mkdirSync(path.dirname(this.file), { recursive: true });
-    writeFileSync(this.file, JSON.stringify(data, null, 2) + '\n', 'utf8');
+  /** The ledger as stored; an absent file is an empty ledger and a file that cannot be read or does not parse throws a `StoreError` naming it (never read as empty). */
+  read(): IncidentLedgerFile {
+    return this.present() ? (readJson(this.file, IncidentLedgerFile) ?? {}) : {};
+  }
+
+  /** Validates `data` with the ledger schema before it is serialized, then writes it to a temporary file that is renamed into place. */
+  write(data: IncidentLedgerFile): void {
+    const parsed = IncidentLedgerFile.safeParse(data);
+    if (!parsed.success) throw new StoreError('SCHEMA_VIOLATION', this.file, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    atomicWriteJson(this.file, parsed.data);
   }
 
   /** Returns true when a new intent should be filed (not deduplicated / not dismissed). */
@@ -103,9 +104,12 @@ export function intentFromBreach(breach: BandBreach, diagnosis: { summary: strin
   };
 }
 
+/** Writes the intent to `<slug>.md`, else `<slug>-2.md` to `<slug>-999.md`, never over an existing path; returns the path it created. */
 export function writeIncidentIntent(intentDir: string, intent: Intent): string {
-  mkdirSync(intentDir, { recursive: true });
-  const file = path.join(intentDir, `${intent.slug}.md`);
-  writeFileSync(file, renderIntent(intent), 'utf8');
-  return file;
+  for (let n = 1; n <= 999; n++) {
+    const slug = n === 1 ? intent.slug : `${intent.slug}-${n}`;
+    const file = path.join(intentDir, `${slug}.md`);
+    if (createExclusive(file, renderIntent({ ...intent, slug }))) return file;
+  }
+  throw new Error(`no free name for intent ${intent.slug} in ${intentDir} (-2 to -999 are taken)`);
 }

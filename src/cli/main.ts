@@ -376,7 +376,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         const role = op.kind === 'deploy' ? 'deploy' : op.kind === 'rollback' ? 'recover' : op.kind === 'migrate' ? 'migration-apply' : undefined;
         const binding = load.status === 'configured' && role ? load.config.operations.find((b) => b.role === role) : undefined;
         if (binding && op.providerOperationId) {
-          const looked = lookupOperation(binding, op.providerOperationId);
+          const looked = lookupOperation(binding, op.providerOperationId, c.repo.mainRoot);
           const rec = ledger.reconcile(op.id, () => (looked.status === 'UNKNOWN' ? { status: 'UNKNOWN', detail: looked.detail } : { status: looked.status, providerOperationId: op.providerOperationId }));
           Journal.forGoal(c.paths.journal, id).append({ type: 'OPERATION_RECONCILED', goalId: id, cardId: op.cardId, data: { operationId: op.id, status: rec.status } });
           return { id: op.id, kind: op.kind, status: rec.status, via: 'provider lookup' };
@@ -1141,7 +1141,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     });
   release
     .command('report <attemptId>')
-    .description('record an externally observed release step (stage-verify, recover-verify, package-run-proof, ...)')
+    .description('record the manual release step the attempt asks for: package-run-proof (PREPARE of a package attempt), stage-verify (STAGE), recover-verify (RECOVER)')
     .option('--goal <id>')
     .requiredOption('--step <name>')
     .requiredOption('--status <s>', 'succeeded|failed|UNKNOWN')
@@ -1348,9 +1348,16 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const data = JSON.parse(readFileSync(o.data, 'utf8')) as { baseline: number[]; recent: Sample[] };
       const breaches = evaluateBands(cfg, data.baseline, data.recent);
       const filed: string[] = [];
+      let refused: string | undefined;
       if (o.fileIntent) {
         const ledger = new IncidentLedger(c.paths.incidents);
-        for (const b of breaches) {
+        // The ledger is read once, before any breach is filed, so one that does not parse stops the command whatever the breaches (card T0-INCIDENT-INTENT-LEDGER).
+        try {
+          ledger.read();
+        } catch (err) {
+          refused = (err as Error).message;
+        }
+        for (const b of refused === undefined ? breaches : []) {
           if (b.action === 'log') continue;
           const now = new Date().toISOString();
           const decision = ledger.shouldFile(b, cfg.dedupe_window_ms, now);
@@ -1362,6 +1369,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
         }
       }
       out(c, { breaches, filed }, () => (breaches.length ? breaches.map((b) => `${b.tier} ${b.rule} ${b.side} -> ${b.action}: ${b.detail}`).join('\n') + (filed.length ? `\nfiled: ${filed.join(', ')}` : '') : 'no breach'));
+      if (refused !== undefined) {
+        process.stderr.write(`aidlc: ${refused}\n`);
+        process.exitCode = 1;
+      }
     });
   program
     .command('security')

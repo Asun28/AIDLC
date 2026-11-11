@@ -37,14 +37,14 @@ describe('T0-EXEC-SYNC-TREE-KILL callers of the synchronous runner [R3] [R4]', (
 
   it("acceptance 4: executeOperation passes killTree with the binding's timeoutMs, 30 min by default", () => {
     const { runner, options } = recording();
-    executeOperation(OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'up'] }), 'staging', { runner });
-    executeOperation(OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'up'], timeoutMs: 4321 }), 'staging', { runner });
+    executeOperation(OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'up'] }), 'staging', { root: '/main', runner });
+    executeOperation(OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'up'], timeoutMs: 4321 }), 'staging', { root: '/main', runner });
     assert.deepEqual(optIn(options), [[true, 1_800_000], [true, 4321]]);
   });
 
   it('acceptance 4: lookupOperation passes killTree with its 5 min timeout', () => {
     const { runner, options } = recording('succeeded');
-    lookupOperation(OperationBinding.parse({ role: 'status', command: ['deploy-tool', 'up'], statusLookup: ['deploy-tool', 'status', '{id}'] }), 'op-1', runner);
+    lookupOperation(OperationBinding.parse({ role: 'status', command: ['deploy-tool', 'up'], statusLookup: ['deploy-tool', 'status', '{id}'] }), 'op-1', '/main', runner);
     assert.deepEqual(optIn(options), [[true, 300_000]]);
   });
 

@@ -92,7 +92,7 @@ stateDiagram-v2
   PREPARE --> STAGE: candidate verified, staging providers bound, staging authority
   PREPARE --> DONE: package target with install/run proof
   PREPARE --> WAIT
-  PREPARE --> STOP: NOT CONFIGURED (release-config) / no authority (release-auth)
+  PREPARE --> STOP: NOT CONFIGURED (release-config) / no authority (release-auth) / failed run proof (release-health)
   STAGE --> CHECKPOINT: production target, staging verified
   STAGE --> DONE: staging target, staging verified
   STAGE --> RECOVER
@@ -125,7 +125,7 @@ stateDiagram-v2
   STOP --> [*]
 ```
 
-`finalStateForTarget` fixes where each target ends: package after PREPARE, staging after STAGE, production and migration after OBSERVE. A recovered attempt closes with disposition `recovered`, never `delivered`.
+`finalStateForTarget` fixes where each target ends: package after PREPARE, staging after STAGE, production and migration after OBSERVE. A recovered attempt closes with disposition `recovered`, never `delivered`. `aidlc release report` (`ReleaseRunner.reportStep`) records only the manual step the state asks for, with `succeeded`, `failed` or `UNKNOWN` (`package-run-proof` in PREPARE of a `package` attempt whose candidate and configuration prerequisites are met, `stage-verify` in STAGE after a succeeded `stage-deploy`, `recover-verify` in RECOVER after a succeeded `recover`, none of them once stored as `failed`), refuses any other report before any write, and `release next`, once it reaches the case of the attempt's state, saves STOP/release-health on a stored failed `stage-verify` in STAGE (`staging verification failed`), `recover-verify` in RECOVER (`recovery verification failed`) or `package-run-proof` in PREPARE of a `package` attempt (`package install/run proof failed`) (card T0-RELEASE-REPORT-STEP).
 
 `ReleaseRunner.next` runs the step logic, whose nested steps call the step logic again, and then one exit that every return passes: for an attempt in DONE or STOP, inside the attempt's section (`release-attempt:<attemptId>`, taken when the attempt names an environment) the exit releases each environment lease the attempt claimed in that lease's own section, one at a time, which reads the ledger again and leaves the lease held while a record of the attempt (`releaseOperationOf`) or a record targeting that environment is `intended`, `issued`, `running` or `UNKNOWN`, and `issue` of an attempt that names an environment records a step's intent under the same two sections only while the attempt holds that lease (card T0-STAGING-LEASE-RELEASE).
 
@@ -192,7 +192,7 @@ Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all link
 | `evidence/<goalId>/manifest.json` + artifacts | retained artifacts with sha256, models, host, seal | `audit/manifest.ts` |
 | `board/<goalId>.md` (mirrored to `_local/aidlc-board.md`) | regenerated view; `aidlc board --watch` neither writes nor reads it | `state/board.ts` |
 | `releases/<attemptId>.json` | ReleaseAttempt: target, environment, candidate, steps, operations, health window/result, disposition | `loop/release-runner.ts` |
-| `incidents/incidents.json` | breach identity ledger with disposition | `maintain/incident.ts` |
+| `incidents/incidents.json` | breach identity ledger with disposition: `IncidentLedgerFile`, a map of `IncidentRecord` (`core/types.ts`); read with `readJson` after a stat in which only no entry means absent (a file that does not parse or cannot be read is an error, not an empty ledger) and written with `atomicWriteJson` | `maintain/incident.ts` |
 | `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |
 | `heartbeat/<hash>` | one marker per session holding the UTC minute window (floor(now / 60 000 ms)) of its last card lease scan; an event in that window or an earlier one does not scan (card T0-CARD-LEASE-HEARTBEAT-2) | `hooks/index.ts` |
 | `session-default` | default session token shared by processes that set no `AIDLC_SESSION` and run outside Claude Code (no `CLAUDE_CODE_SESSION_ID`) | `state/journal.ts` |

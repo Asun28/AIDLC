@@ -6,14 +6,14 @@
  * first and is reconciled by provider status lookup; health is measured, never inferred; a
  * breach routes to RECOVER only with matching recovery authority and reports `recovered`.
  */
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { assertReleaseTransition, finalStateForTarget, nextAfterObserve, transitionRelease, type ReleaseGuards } from '../core/release-machine.ts';
 import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
 import { OperationRecord, ReleaseAttempt, addMs, type Goal, type HealthSignal, type Lease, type ReleaseState } from '../core/types.ts';
-import { executeOperation, loadDeliveryOps, lookupOperation, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
+import { executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { Journal, currentActor } from '../state/journal.ts';
@@ -48,6 +48,15 @@ export type ReleaseDirective =
   | { kind: 'done'; attemptId: string; disposition: string; narration: string }
   | { kind: 'stop'; attemptId: string; stop: NonNullable<ReleaseAttempt['stop']>; narration: string };
 
+/** Whether `directory` is an existing directory; a path that is absent, a file or under a file (ENOTDIR on POSIX) is not, and none throws. */
+function isDirectory(directory: string): boolean {
+  try {
+    return statSync(directory).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /** The release steps `issue` records an operation for, and the kind of that operation. */
 const RELEASE_STEP_KINDS = { 'stage-deploy': 'deploy', 'apply-deploy': 'deploy', recover: 'rollback' } as const;
 type ReleaseStep = keyof typeof RELEASE_STEP_KINDS;
@@ -67,6 +76,11 @@ export function releaseOperationOf(record: OperationRecord, attempt: ReleaseAtte
   if (record.goalId !== attempt.goalId) return false;
   if (step) return record.idempotencyKey === releaseStepKey(attempt, step);
   return record.releaseAttempt === attempt.id || (Object.keys(RELEASE_STEP_KINDS) as ReleaseStep[]).some((s) => record.idempotencyKey === releaseStepKey(attempt, s));
+}
+
+/** The statuses `aidlc release report` records, as exact strings. */
+function isReportStatus(status: string): status is 'succeeded' | 'failed' | 'UNKNOWN' {
+  return status === 'succeeded' || status === 'failed' || status === 'UNKNOWN';
 }
 
 export class ReleaseRunner {
@@ -270,7 +284,7 @@ export class ReleaseRunner {
     for (const op of unresolved) {
       const binding = this.binding(op.kind === 'deploy' ? 'deploy' : op.kind === 'rollback' ? 'recover' : op.kind === 'migrate' ? 'migration-apply' : 'status');
       if (!binding || !op.providerOperationId) continue;
-      const looked = lookupOperation(binding, op.providerOperationId, this.runner);
+      const looked = lookupOperation(binding, op.providerOperationId, this.repo.mainRoot, this.runner);
       this.ops.reconcile(op.id, () => (looked.status === 'UNKNOWN' ? { status: 'UNKNOWN', detail: looked.detail } : { status: looked.status, providerOperationId: op.providerOperationId }), now);
       this.journal(goal.id).append({ type: 'OPERATION_RECONCILED', goalId: goal.id, generation: goal.generation, data: { operationId: op.id, status: looked.status } });
     }
@@ -301,13 +315,11 @@ export class ReleaseRunner {
 
     switch (attempt.state) {
       case 'PREPARE': {
-        const needs: string[] = [];
-        if (!attempt.candidateDigest) needs.push('immutable candidate digest (aidlc release candidate)');
-        if (!attempt.sourceSha) needs.push('source sha bound to the verified goal candidate');
-        const target = attempt.target === 'development' || attempt.target === 'operations' ? 'package' : attempt.target;
-        const roles = resolveRoles(this.opsLoad, target);
-        for (const r of roles.roles) if (r.status === 'NOT CONFIGURED') needs.push(`operation ${r.role}: NOT CONFIGURED`);
-        if (roles.problem) needs.push(roles.problem);
+        if (attempt.target === 'package' && attempt.steps.find((s) => s.name === 'package-run-proof')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'package install/run proof failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
+        const needs = this.prepareNeeds(attempt);
         if (attempt.target === 'package') {
           if (needs.length) return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs, narration: 'Package target: build/package operations and an identified package are required; report with aidlc release report.' } };
           return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs: ['install/run proof'], narration: `Run the package install/run proof and report it (aidlc release report ${attempt.id} --step package-run-proof --status succeeded).` } };
@@ -327,6 +339,10 @@ export class ReleaseRunner {
         return saved.state === 'STOP' ? stopOut(saved) : this.step(goal, saved);
       }
       case 'STAGE': {
+        if (attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'staging verification failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'stage-deploy');
         if (!done) return this.issue(goal, attempt, 'deploy', 'stage-deploy', attempt.environment!, 'stage');
         if (done.status === 'succeeded') {
@@ -390,6 +406,10 @@ export class ReleaseRunner {
         return stopOut(stopped);
       }
       case 'RECOVER': {
+        if (attempt.steps.find((s) => s.name === 'recover-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'recovery verification failed', 'escalate to the named owner with environment and data state', { at: now }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'recover');
         if (!done) return this.issue(goal, attempt, 'recover', 'recover', attempt.environment!, 'recover');
         if (done.status === 'succeeded') {
@@ -467,6 +487,8 @@ export class ReleaseRunner {
     const binding = this.binding(role);
     const unauthorizedPublication = binding?.triggersPublication && !goal.authorizations.some((a) => a.kind === 'production' && a.environment === environment);
     const idempotencyKey = releaseStepKey(attempt, stepName);
+    const directory = binding ? operationCwd(binding, this.repo.mainRoot) : undefined;
+    const directoryExists = directory !== undefined && isDirectory(directory);
     // Read the step's ledger records and, only when there is none, record the intent, in one section of the environment lease
     // lock taken inside the attempt section, and only while the attempt holds that lease (the exit of `next` releases it under
     // the same two sections); the sections write nothing, and the command runs only after them.
@@ -475,7 +497,7 @@ export class ReleaseRunner {
     let held = false;
     const admit = (): void => {
       matches = this.ops.list().filter((o) => releaseOperationOf(o, attempt, stepName));
-      if (!matches.length && binding && !unauthorizedPublication) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
+      if (!matches.length && binding && !unauthorizedPublication && directoryExists) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
     };
     if (!environment) {
       // No environment: the section and the intent as before this card (an absent name throws in `resourceKeys.environment`, an
@@ -504,9 +526,13 @@ export class ReleaseRunner {
       const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-auth', `${role} triggers external publication and no production authority names ${environment}`, 'authorize before any tag/release action that publishes', { at: now, global: false }) });
       return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
     }
+    if (!directoryExists) {
+      const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-config', `operation ${role} runs in ${directory}, which is not an existing directory`, 'create the directory or correct cwd in aidlc.ops.json', { at: now, global: false }), disposition: 'failed' });
+      return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
+    }
     const intent = recorded!;
     this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, kind: intent.kind, target: environment, step: stepName } });
-    const exec = executeOperation(binding, environment, { runner: this.runner, idempotencyKey, cwd: this.repo.mainRoot });
+    const exec = executeOperation(binding, environment, { root: this.repo.mainRoot, runner: this.runner, idempotencyKey });
     this.ops.markIssued(intent.id, exec.providerOperationId, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, providerOperationId: exec.providerOperationId, status: exec.status } });
     let status: 'succeeded' | 'failed' | 'UNKNOWN' | 'running';
@@ -523,8 +549,37 @@ export class ReleaseRunner {
     return { attempt: saved, directive: { kind: 'wait', attemptId: saved.id, on: `${phase}:${intent.id}`, narration: `${role} issued (${exec.detail}); exit zero is not completion. Reconcile via provider status lookup.` } };
   }
 
-  /** Record an externally observed step result (e.g. stage-verify, recover-verify, package proof). */
-  reportStep(goal: Goal, attempt: ReleaseAttempt, stepName: string, status: 'succeeded' | 'failed' | 'UNKNOWN', evidence?: string): ReleaseAttempt {
+  /** What PREPARE still lacks: `next` asks for these, and for the package run proof only when the list is empty. */
+  private prepareNeeds(attempt: ReleaseAttempt): string[] {
+    const needs: string[] = [];
+    if (!attempt.candidateDigest) needs.push('immutable candidate digest (aidlc release candidate)');
+    if (!attempt.sourceSha) needs.push('source sha bound to the verified goal candidate');
+    const target = attempt.target === 'development' || attempt.target === 'operations' ? 'package' : attempt.target;
+    const roles = resolveRoles(this.opsLoad, target);
+    for (const r of roles.roles) if (r.status === 'NOT CONFIGURED') needs.push(`operation ${r.role}: NOT CONFIGURED`);
+    if (roles.problem) needs.push(roles.problem);
+    return needs;
+  }
+
+  /** The manual step the attempt's state asks for, as `next` asks for it; a step stored as `failed` is final and no longer asked for. */
+  private expectedSteps(attempt: ReleaseAttempt): string[] {
+    const status = (name: string) => attempt.steps.find((s) => s.name === name)?.status;
+    let name: string | undefined;
+    if (attempt.state === 'PREPARE' && attempt.target === 'package' && this.prepareNeeds(attempt).length === 0) name = 'package-run-proof';
+    else if (attempt.state === 'STAGE' && status('stage-deploy') === 'succeeded') name = 'stage-verify';
+    else if (attempt.state === 'RECOVER' && status('recover') === 'succeeded') name = 'recover-verify';
+    return name && status(name) !== 'failed' ? [name] : [];
+  }
+
+  /**
+   * Record an externally observed manual step: only the step the attempt's state asks for, only as `succeeded`, `failed` or
+   * `UNKNOWN`. A refusal throws before any journal event or save.
+   */
+  reportStep(goal: Goal, attempt: ReleaseAttempt, stepName: string, status: string, evidence?: string): ReleaseAttempt {
+    const expected = this.expectedSteps(attempt);
+    const refuse = (what: string) => new Error(`release attempt ${attempt.id} is in ${attempt.state} and ${expected.length ? `expects a report of ${expected.join(', ')}` : 'expects no step report'}: ${what}`);
+    if (!expected.includes(stepName)) throw refuse(`step ${JSON.stringify(stepName)} is refused`);
+    if (!isReportStatus(status)) throw refuse(`status ${JSON.stringify(status)} is refused; a step is reported succeeded, failed or UNKNOWN`);
     const now = this.clock();
     const steps = [...attempt.steps.filter((s) => s.name !== stepName), { name: stepName, status }];
     const ev = evidence ? [...attempt.evidence, { id: `${stepName}-${now}`, kind: 'artifact' as const, createdAt: now, candidateDigest: attempt.candidateDigest, environment: attempt.environment, note: evidence }] : attempt.evidence;
