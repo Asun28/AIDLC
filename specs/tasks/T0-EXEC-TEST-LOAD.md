@@ -128,7 +128,7 @@ The CHANGELOG entry, one line, directly above `- T0-BOARD-OWNER-WAIT` (or above 
 
 ## Attempt evidence
 
-Seam commit 2d2b9ece (tests only), candidate code 76b15d02 (feat). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run and the loaded runs (3 on main, 3 on the candidate under `load.sh 24 150`): pending (coordinator).
+Seam commit 2d2b9ece (tests only), candidate code 76388b27 (feat 76b15d02, then 92430066 and 76388b27 for the calibrate failure rows; merged origin/main at f1cf1347). Measured on Windows 11 with other verifications running on the machine (no load script was started). Linux run and the loaded runs (3 on main, 3 on the candidate under `load.sh 24 150`): pending (coordinator).
 
 ### RED (seam 2d2b9ece, `node --test --test-name-pattern "T0-EXEC-TEST-LOAD|calibrat" tests/infra/exec.test.ts`: 2 tests, 0 pass, 2 fail)
 - Acceptance 1 fails at `scaleFor(751)`: `AssertionError expected: 2 actual: 1`.
@@ -145,16 +145,19 @@ Seam commit 2d2b9ece (tests only), candidate code 76b15d02 (feat). Measured on W
 | goneWithinMs | 3000 (:291, :452) | 3000 |
 | syncBoundMs | 6000 (:444) | 6000 |
 
-### Revert table (on 76b15d02, tests of acceptance 1 and 2, each mutation restored, `git diff --stat` empty after): 27 of 28 red
+### Revert table (acceptance 1 and 2 tests and the calibrate failure rows, code SHA 76388b27, each mutation restored, `git diff --stat` empty after): 32 of 35 red
 | Mutation | Rows | Result |
 |---|---|---|
 | scaleFor: `floor`; `round`; no lower clamp; no cap; cap 9; default 1 for a failed measurement; NaN/Infinity accepted; negative accepted | 8 | red x8 |
 | boundsAt: grace scaled; backstop scaled; slow-kill duration scaled; sync `min` removed; timeout, stay bound, goneWithin, no-kill slack not scaled | 8 | red x8 |
 | preconditions: sleeper `>=` for `>`; missing pid file passes; root `every` for `some` | 3 | red x3 |
 | fixtureEnv: case-sensitive filter; GIT_ kept; NODE_OPTIONS kept; ceiling without the realpath parent; state dir unset | 5 | red x5 |
-| calibrate: sleeper not ended; ended not recorded; returns 0 for the measure | 3 | red x3 |
-| calibrate: exit code not checked | 1 | GREEN: the missing-fixture row has no pid file either, which returns undefined by itself; no card row isolates the exit code |
-The wiring of the six tests to `boundsAt` is not revert-tested: at scale 1 their numbers equal main's, so only a loaded run shows it.
+| calibrate: exit code not checked (row: exits 3); exit code and signal both unchecked (rows: exits 3, kills itself); pid file not required (row: exits 0 without it); spawn error not handled (row: no such command); time limit ignored (row: limit 5 s); sleeper not ended; ended not recorded; returns 0 for the measure | 8 | red x8 |
+| calibrate: signal unchecked alone | 1 | GREEN, by logic: `code === 0` already implies no signal (a child ended by a signal reports a null code) |
+| calibrate: the limit does not resolve | 1 | GREEN: the root ended at the limit then exits non-zero, which gives undefined |
+| calibrate: the root not ended at the limit | 1 | GREEN: the inline child's pid file holds the child's own pid, so ending the sleeper ends it |
+The wiring of the six tests to `boundsAt` stays reviewer-verified. The DoD run on a busy machine (SHA 92430066 run: scales 2, 2, 2, 3, 3, 2; an earlier run on 76b15d02: 6, 2, 2, 4, 4, 2, all 63 tests passing) exercised it above scale 1.
+Platform results of the failure rows (Windows 11, Node 22): a child ending itself with `process.kill(process.pid, 'SIGKILL')` reports exit code 1 and signal null; the child exiting 3 reports code 3; the missing command emits `error` (ENOENT); calibrate returned undefined in every row. Row (d) uses a 5 s limit and a 30 s sleep, not 200 ms: at 200 ms a loaded machine had not yet started the child, so no pid file existed to verify (one DoD run failed on `ended.length`).
 
 ### Runs alone (`node --test tests/infra/exec.test.ts`)
 | Version | Run | tests / pass / fail | Failing title | Scales |
@@ -164,7 +167,7 @@ The wiring of the six tests to `boundsAt` is not revert-tested: at scale 1 their
 | candidate 76b15d02 | 1-5 | 63 / 63 / 0 each | none | all 6 diagnostics at scale 1 (221-512 ms) |
 | candidate 76b15d02 (the DoD run, machine busy) | DoD | 63 / 63 / 0 | none | 4180 ms scale 6; 1132 ms scale 2; 1228 ms scale 2; 2695 ms scale 4; 2586 ms scale 4; 1226 ms scale 2 |
 
-### DoD (`npm run typecheck && node --test tests/infra/exec.test.ts` on 76b15d02): exit 0, tests 63, suites 14, pass 63, fail 0, cancelled 0, skipped 0.
+### DoD (`npm run typecheck && node --test tests/infra/exec.test.ts` on 76388b27): exit 0, tests 68, suites 15, pass 68, fail 0, cancelled 0, skipped 0; diagnostics 269, 299, 680, 348, 318, 439 ms, scale 1. The runs alone above were measured on 76b15d02 (63 tests).
 
 ### CHANGELOG sentence against the code
 | Sentence | Code and test |
