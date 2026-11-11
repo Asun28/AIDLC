@@ -118,3 +118,6 @@ Doc-reading run (every test file that names ARCHITECTURE.md, OPERATIONS.md, CHAN
 Budget: the diff exceeds `budget: 450` (see the line counts in the report); the source change is 31 added and 17 removed lines in src/state/journal.ts, the rest is the tests the card names, the docs and this evidence.
 
 Coordinator verification:
+- At 41257b4f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 11, pass 11, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1854 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
