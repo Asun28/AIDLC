@@ -4,6 +4,7 @@ title: "A revision re-classifies the revised request text with the router and st
 status: todo
 branch: T0-ASK-RECLASSIFY
 worktree: D:\wt\AIDLC\T0-ASK-RECLASSIFY
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 220 to 300 on the candidate d44cac7c, which is 275 changed lines; 6 source lines in src/loop/controller.ts, 247 lines of the acceptance tests for the input classes of R3 and the goal states of the revision table, the rest docs and attempt evidence"
 depends_on: [T0-CARDS-PROJECTED-REENTRY]
 allow_paths:
   - src/loop/controller.ts
@@ -28,7 +29,7 @@ acceptance:
   - 5. Same file: `runGoal` with a `MockProvider` returns the `ask` of a still ambiguous revised goal with no provider call, and after a revision that removed the question its first directive is not `ask`. [R4] [dod arm 1]
   - 6. `tests/scenarios/arc-reentry.test.ts`, `tests/scenarios/amendment.test.ts`, `tests/core/router.test.ts` and `tests/scenarios/run-driver.test.ts` ("ask, checkpoint, release, done and stop return without provider dispatch") pass unchanged. [R2] [dod arm 1]
   - 7. The docs and the CHANGELOG state R5 (reviewer-verified against the diff). [R5]
-budget: 220
+budget: 300
 diagnosis:
   root_cause: "`computeRevision` (src/loop/controller.ts:769-799) copies `goal.routing` unchanged, and `routing.ambiguity`, which `nextInPlan` reads first (:257-259), is written only by `createGoal`; so the revision that answers the ask, as the ask's `responseRoute` (`aidlc goal amend --text`) directs, leaves the question in place and the goal asks again until it is cancelled. Reproduced by audit probe `probe2.test.ts` P13 on main."
   same_class: "Every writer of `goal.routing` (`createGoal`, now `computeRevision`), every reader of `routing.ambiguity` (`nextInPlan`; `formatRouting`, printed by `aidlc goal new` only), and every caller of `classifyRequest` (`createGoal`; the UserPromptSubmit hook at src/hooks/index.ts:780, which routes a prompt and writes no goal: not affected)."
