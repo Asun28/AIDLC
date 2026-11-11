@@ -516,3 +516,47 @@ const FAILING_LINE_DOC_SENTENCES = [
 ];
 const FAILING_LINE_CHANGELOG_SENTENCE =
   '- Ship failing line, card T0-SHIP-FAILING-LINE-2 (issue #67 item 1): the cause of a `dod-failed`, `verify-failed`, `scope-blocked` or `budget-over` ship names the failing line of the ship output (the first failing test or compile line, or the gate line) instead of one constant detail per outcome, so two ship failures on different lines no longer stop the card as same-cause-stop at the second failure; the same line twice without progress still does, as do two failures with no failing line.';
+
+describe('delivery/ship effect of unknown outcome (T0-SHIP-TIMEOUT)', () => {
+  /**
+   * main's rule (ship.ts at c29c594a) for the markers of this table, frozen: the exit-zero merge contract, then a whole-receipt
+   * timeout as unclassified, then the first matching entry of main's SENTINEL_MAP, else unclassified. Never the classifier under test.
+   */
+  const MAIN_MAP: Array<[RegExp, ShipOutcomeClass]> = [
+    [/\[SHIP-MERGE-FAIL\]/, 'merge-failed'],
+    [/\[CI-GATE-RED\]/, 'ci-red'],
+    [/\[SHIP-PUSH-FAIL\]/, 'push-failed'],
+  ];
+  const mainClass = (text: string, exitCode: number | null, timedOut: boolean): ShipOutcomeClass => {
+    const sentinels = [...text.matchAll(/\[[A-Z0-9-]+\]/g)].map((m) => m[0]);
+    if (exitCode === 0 && !timedOut) {
+      const failed = sentinels.includes('[SAGA-FAIL]') || MAIN_MAP.some(([re]) => re.test(text));
+      if (sentinels.includes('[SAGA-DONE]') && !failed) return 'merged';
+      if (/\[SAGA-DONE\]|merged_pr=|MERGED|合并/.test(text) || sentinels.length === 0 || !/\[SAGA-FAIL\]/.test(text)) return 'merge-unconfirmed';
+    }
+    if (timedOut) return 'unclassified';
+    return MAIN_MAP.find(([re]) => re.test(text))?.[1] ?? 'unclassified';
+  };
+  const LINE = '[SHIP-EFFECT-UNKNOWN] git push -u origin T1-A timed out after 300000 ms; it may have taken effect (PR #7)';
+  const BESIDE = ['', '[SAGA-DONE]', '[SAGA-FAIL]', '[SHIP-PUSH-FAIL] rejected', '[CI-GATE-RED] [{"name":"ci","conclusion":"failure"}]', '[SHIP-MERGE-FAIL] refused'];
+
+  it('effect-unknown precedence [R4]', () => {
+    const rows = [0, 1, null].flatMap((exitCode) => [true, false].flatMap((timedOut) => BESIDE.map((beside) => ({ exitCode, timedOut, beside }))));
+    assert.equal(rows.length, 36);
+    // Without the line every row is classified as main classifies it.
+    for (const { exitCode, timedOut, beside } of rows) {
+      const text = beside || 'ship output';
+      assert.equal(classifyShipOutput(receipt(text, exitCode as number, { timedOut })).outcome, mainClass(text, exitCode, timedOut), `without the line: ${JSON.stringify({ exitCode, timedOut, beside })}`);
+    }
+    for (const { exitCode, timedOut, beside } of rows) {
+      const withLine = classifyShipOutput(receipt([beside, LINE].filter(Boolean).join('\n'), exitCode as number, { timedOut }));
+      assert.deepEqual([withLine.outcome, withLine.detail], ['effect-unknown', LINE], JSON.stringify({ exitCode, timedOut, beside }));
+    }
+    // On stderr alone, with CRLF line ends, and as the second of two such lines: the detail is the first line as printed.
+    const onStderr = classifyShipOutput(receipt('[SAGA-FAIL]', 1, { stderr: `noise\r\n${LINE}\r\n` }));
+    assert.deepEqual([onStderr.outcome, onStderr.detail], ['effect-unknown', LINE]);
+    const second = '[SHIP-EFFECT-UNKNOWN] gh pr merge 7 timed out after 120000 ms; it may have taken effect (PR #7)';
+    const twice = classifyShipOutput(receipt(`${LINE}\n${second}\n[SAGA-FAIL]`, 1));
+    assert.deepEqual([twice.outcome, twice.detail, twice.prNumber], ['effect-unknown', LINE, 7]);
+  });
+});
