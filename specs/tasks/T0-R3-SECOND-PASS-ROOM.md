@@ -25,7 +25,7 @@ acceptance:
   - 3. Same file: the tests of T1-R3-SECOND-PASS for a first pass at decision 1, at decision 2 and at decision 4 pass unchanged. [R2] [dod arm 1]
   - 4. `tests/scenarios/fault-points.test.ts` passes with no pin added. At CLOSE, `.claude/skills/verify-card-run-writes/SKILL.md` moves its sync commit to the merge commit on main. [dod arm 2]
   - 5. The three documents state R1 with the figures (reviewer-verified against the diff). [R3]
-budget: 60
+budget: 80
 sweep: "git grep -n 'secondPassDue\\|MAX_R3_DECISIONS' -- src/loop/card-runner.ts on main at bcdc0665: the condition is `secondPassDue` :1647; its callers :1509 (`formalAllowance`), :1531, :1576, :1820 and :1891 read the result and need no change, since a second pass that is not due is the case they already handle after a first pass at decision 4."
 forbid: [weakening or skipping a test to go green, a change to `src/core/review-policy.ts` or to `MAX_R3_DECISIONS`, editing .aidlc state by hand]
 non_goals: [an advisory second pass, a second pass on the ship-path reviewer, a change to what the second pass sends, a change to the configuration files (the option keeps its values), a rerun of the replay]
