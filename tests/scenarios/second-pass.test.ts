@@ -302,6 +302,40 @@ test('T1-R3-SECOND-PASS acceptance 4: a first pass at decision 4 ships with no s
   });
 });
 
+test('T0-R3-SECOND-PASS-ROOM acceptance 1: a first pass at decision 3 ships with no second pass [R1]', async () => {
+  await withRepo(ON, async (fx) => {
+    const { runner, prompts } = runnerFor(fx, [block(1), block(2), PASS]);
+    const { goalId, run } = start(fx, runner);
+    let latest = run;
+    for (let n = 1; n <= 3; n++) latest = (await decide(fx, runner, goalId, latest, commitCandidate(fx, n), n)).run;
+    assert.equal(next(fx, runner, goalId, latest).directive.kind, 'close', 'the candidate goes to the ship');
+    assert.equal(prompts.length, 3);
+    const stored = fx.store.getCardRun(goalId, CARD)!;
+    assert.equal(stored.review.invocations.some((i) => i.secondPass), false);
+    assert.equal(stored.review.substantiveDecisions, 3);
+  });
+});
+
+test('T0-R3-SECOND-PASS-ROOM acceptance 2: a first pass at decision 2 gets its second pass, whose block is decision 3 and returns REVIEW_FIX, and a pass at decision 4 ships [R2]', async () => {
+  await withRepo(ON, async (fx) => {
+    const { runner, prompts } = runnerFor(fx, [block(1), PASS, block(2), PASS]);
+    const { goalId, run } = start(fx, runner);
+    const first = await decide(fx, runner, goalId, run, commitCandidate(fx, 1), 1);
+    const passed = await decide(fx, runner, goalId, first.run, commitCandidate(fx, 2), 2);
+    const due = next(fx, runner, goalId, passed.run);
+    assert.equal(due.directive.kind, 'review');
+    assert.match(String((due.directive as { narration?: string }).narration), /second R3 pass/i);
+    const blocked = await review(fx, runner, goalId, due.run);
+    assert.equal(blocked.run.state, 'REVIEW_FIX');
+    assert.equal(blocked.run.review.substantiveDecisions, 3);
+    assert.deepEqual(blocked.run.review.invocations.map((i) => [i.outcome, i.secondPass]), [['block', undefined], ['pass', undefined], ['block', true]]);
+    const repaired = await decide(fx, runner, goalId, blocked.run, commitCandidate(fx, 3), 3);
+    assert.equal(repaired.run.review.substantiveDecisions, 4);
+    assert.equal(next(fx, runner, goalId, repaired.run).directive.kind, 'close');
+    assert.equal(prompts.length, 4, 'no further review');
+  });
+});
+
 test('T1-R3-SECOND-PASS acceptance 5: a no-verdict on the second pass leaves it due, and the retry runs it [R5]', async () => {
   await withRepo(ON, async (fx) => {
     const { runner, prompts } = runnerFor(fx, [PASS, NO_VERDICT, PASS]);
