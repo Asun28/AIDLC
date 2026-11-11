@@ -74,7 +74,7 @@ npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/upda
 
 Attempt 1, effort high. RED commit efdc00cd (tests only; at that commit the file fails to load because `IncidentLedgerFile` is not exported by src/core/types.ts, so the per-test RED receipt was taken with a throwaway stub export, not committed: 12 of 23 tests failed, first assertion lines below). GREEN commits follow it; tests added after RED are marked "added after RED".
 
-DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 52 tests, 49 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 35 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped.
+DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 54 tests, 51 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 37 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped; at f575000a 52 tests, 49 pass, 3 skipped.
 
 RED receipt (stub export in types.ts, other code as main), first failing assertion per test:
 
@@ -121,8 +121,9 @@ Passing on main by design (controls, as the card allows): the five tests of main
 | R2 not an object of valid records is SCHEMA_VIOLATION with the first issue path | readJson, IncidentLedgerFile | rows `[]`, `null`, `"x"`, `3`, no count (`k.count` in message), disposition closed (`k.disposition`) |
 | R2 unreadable file or directory is READ_FAILED | readJson | directory row, injected EACCES row; mode 0o000 row (POSIX only) |
 | R2 a stat error other than ENOENT (ENOTDIR under a regular file on POSIX, EACCES for an unreadable parent) is READ_FAILED naming the file, before readJson and before any write | `present()` throws `StoreError('READ_FAILED', this.file, ...)` | injected ENOTDIR, EACCES, EPERM, ELOOP through the four methods; real path under a regular file (POSIX: READ_FAILED, Windows: absent); directory mode 0o000 (POSIX only); CLI rows for no breach, log-only and propose-tier breach |
-| R2 an own `__proto__` key at the top level, in a record or deeper is SCHEMA_VIOLATION naming the file | `protoKeyPath` in the `IncidentLedgerFile` schema | the `__proto__` test (four depths, four methods, `write`, issue path asserted), four CLI rows; keys that merely contain the text are kept |
-| R2 the `__proto__` search does not recurse on the call stack (6,000 levels deep) | explicit stack in `protoKeyPath` | the 6,000-level test (read, refusal, issue path) and its CLI test; revert row `recursive search` |
+| R2 an own `__proto__` key at the top level, in a record or deeper is SCHEMA_VIOLATION naming the file | `ledgerIssue` in the `IncidentLedgerFile` schema | the `__proto__` test (four depths, four methods, `write`, issue path asserted), four CLI rows; keys that merely contain the text are kept |
+| R2 the `__proto__` search does not recurse on the call stack | explicit stack in `ledgerIssue` | no input tells it from a recursive form once the limit bounds the depth (last revert row of the third round); the 6,000-deep rows show no `RangeError` |
+| R2 a ledger nested more than 64 deep (ledger object = 1, record = 2) is SCHEMA_VIOLATION naming the file and the path at which the limit is passed, on read and by `write` before it serializes; the first issue met is named when `__proto__` also applies | `depth > MAX_LEDGER_DEPTH` in `ledgerIssue`; `write` validates with `safeParse` and throws `StoreError('SCHEMA_VIOLATION', ...)` | the 64-deep, 65-deep and 6,000-deep tests, the ordering rows, the CLI rows; revert rows of the third round |
 | R2 a path that exists and is not a regular file is READ_FAILED from the stat result, before any read | `if (!stats.isFile()) throw ...` in `present()` | injected stat with a read counter, real directory, CLI rows |
 | R3 the value handed to a write is validated before it is serialized | `IncidentLedgerFile.parse(data)` before `atomicWriteJson` | "written whole" (count 0, disposition closed), `__proto__` test (`write`) |
 | R3 shouldFile, attachIntent, triage read through R2 first | `this.read()` in each | each of the four methods in every row; per-method revert rows below |
@@ -211,6 +212,7 @@ Two rows survived on the first run and were fixed: `count` (the script had chang
 | disposition | open, fix-now, scheduled, dismissed | Dismissed, closed, missing | table |
 | dismissReason | absent, string | number | table |
 | unnamed key | kept | | table, "written whole" |
+| nesting | up to 64 containers deep (ledger object 1, record 2), objects and arrays alike | 65 or more (SCHEMA_VIOLATION naming the path of the 65th container) | 64/65/6,000-deep tests, CLI rows |
 | own `__proto__` key | | at the top level, holding a record, in a record, deeper (SCHEMA_VIOLATION naming the key path) | `__proto__` test, CLI rows |
 | key containing the text (`__proto__x`, `__proto__y`, `__proto__z`) | kept at the top level, in a record and deeper | | `__proto__` test |
 | whole value | `{}`, object of records | array, null, string, number, record null, record string | table, does-not-parse |
@@ -269,31 +271,7 @@ After the second pre-review repairs (commit 3faa963e): the same 78 test files, o
 
 Six points of the second pre-review of a70ed789, repaired in commit 3faa963e (code, docs, tests) on top of the merge ac309437 of main (c15a6f9d: R2 refuses a non-file path from the stat and searches `__proto__` without recursion; R3 states what a write validates). Current figures of this candidate are in the DoD paragraph at the top; every figure of an earlier candidate carries its SHA.
 
-1. Search without recursion (R2). `protoKeyPath` in src/core/types.ts uses an explicit stack. The search as code:
-
-```ts
-function protoKeyPath(root: unknown): string[] | undefined {
-  type Step = { key: string; up: Step | undefined };
-  const stack: Array<{ value: unknown; at: Step | undefined }> = [{ value: root, at: undefined }];
-  const pathOf = (at: Step | undefined): string[] => {
-    const keys: string[] = [];
-    for (let step = at; step; step = step.up) keys.push(step.key);
-    return keys.reverse();
-  };
-  while (stack.length > 0) {
-    const { value, at } = stack.pop()!;
-    if (typeof value !== 'object' || value === null) continue;
-    if (Object.hasOwn(value, '__proto__')) return [...pathOf(at), '__proto__'];
-    const entries = Object.entries(value);
-    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at } });
-  }
-  return undefined;
-}
-```
-
-   Children are pushed in reverse so the first offending key in key order is named (test: `{"a":{"__proto__":1},"b":{"__proto__":1}}` names `a.__proto__`). The path is a linked list built once at the hit, so a 6,000-level path costs 6,000 steps, not 18 million copies.
-   - Depth result on this machine (Node 22.23.1), measured, not assumed: `JSON.parse` reads 20,000 levels; the zod parse of the kept keys (`z.looseObject` copies unnamed keys, it does not walk them) accepts 20,000 levels; the search handles 6,000. The store's serializer does not: `stableStringify` (`sortKeys`, recursive, src/state/store.ts) throws `RangeError` from depth 1,739 (largest depth that serializes: 1,738), and `JSON.stringify` itself throws `RangeError` at 6,000. So a ledger nested 6,000 deep is read, and refused when it holds `__proto__`, with a `StoreError` naming the file; a write (or a `shouldFile` that must rewrite it) of such a value throws a raw `RangeError` from the store's serializer before the temporary file is created, and the previous ledger is unchanged. That limit is in src/state/store.ts, which this card does not change, and is stack-size dependent; the card does not claim a deep value can be written. The test asserts: read of the deep value works; a write either lands and reads back or throws leaving the previous bytes and no `.tmp-` file; a 500-level value is written and read back.
-   - Tests: "a ledger whose note is nested 6,000 levels deep is read like a shallow one, and the search for __proto__ never overflows the stack" (read, schema, write outcome, 500-level write, `__proto__` at the bottom through all four methods and `write`, issue path of 6,003 steps ending at the key, not a `RangeError`); "aidlc monitor check reads a ledger nested 6,000 levels deep like a shallow one and refuses one with a __proto__ key at the bottom" (CLI).
+1. Search without recursion (R2). `protoKeyPath` searched with an explicit stack; the third round (below) replaces it by `ledgerIssue`, the same traversal with the nesting limit, and replaces the tests of this point. What was measured then, on Node 22.23.1: `JSON.parse` reads 20,000 levels and the zod parse accepts them, but the store's serializer (`stableStringify`, `sortKeys`, recursive, src/state/store.ts) throws `RangeError` from depth 1,739 (1,738 is the largest depth that serializes) and `JSON.stringify` throws at 6,000; that is the reason for the limit.
 2. Isolation, `git init`. The `git init` child of the isolation test gets `cleanEnv()`, and the test asserts that `other/.git` is a directory before the CLI runs. Check with `GIT_DIR` set in the environment of the test run: with the fix the test passes; with the inherited environment restored on that spawn it fails (pass 0, fail 1).
 3. Case-insensitive selectors. `cleanEnv()` drops every environment name whose upper case is in the selector list, on every platform; `childEnv` and the `git init` child use it. Test: "the lowercase and mixed-case names of the git selector variables are removed from a child environment" sets `git_dir`, `Git_Work_Tree` and `GIT_INDEX_FILE` in the parent, asserts that `childEnv` holds no selector in any case and that a real child process lists none. The assertion is the same on both platforms: on Windows the three names are the selectors themselves; on POSIX `git_dir` and `Git_Work_Tree` are other variables that git ignores and are removed all the same (the policy is a case-insensitive match, so that no platform keeps a name that another would treat as a selector).
 4. Not a regular file (R2). `present()` keeps the stat result and throws `READ_FAILED` naming the file when `!stats.isFile()`, before any read. Tests: "a path that exists and is not a regular file is READ_FAILED from the stat result, before any read, through all four methods" (stat injected to say not a file over a ledger whose content is valid, the read counter stays 0; and a real directory) and "aidlc monitor check with a directory at the ledger path refuses with READ_FAILED for every breach" (no breach, log-only, propose-tier: exit 1, `filed` empty, no intent, journal unchanged).
@@ -304,12 +282,70 @@ Revert rows added or changed in this round (each: one hunk reverted, `tests/surf
 
 | hunk | first test that fails | result |
 |---|---|---|
-| types: recursive search instead of the explicit stack | the 6,000-level test and its CLI test (RangeError) | FAILS |
-| types: children pushed first-to-last | the `__proto__` test (two offending keys name `a.__proto__`) | FAILS |
-| types: issue path loses its prefix (`up: undefined`) | the `__proto__` test, the 6,000-level test (path length 6,003) | FAILS |
-| types: the `__proto__` key missing from the path | same two tests | FAILS |
 | incident: `!stats.isFile()` check removed | "a path that exists and is not a regular file ..." (the injected stat must be refused before the read) | FAILS |
 | test: `cleanEnv` matches selectors case-sensitively | "the lowercase and mixed-case names ..." | FAILS |
 | test: `git init` child gets the inherited environment | "a GIT_DIR and GIT_WORK_TREE ..." (run with `GIT_DIR` in the environment; the `.git` assertion fails) | FAILS (checked by hand, not by the table script) |
+
+After the third pre-review repairs (commit c1d90bf2): the same 78 test files, one `node --test` call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0.
+
+### After the third pre-review (nesting limit)
+
+The card was amended on main (9bd138b0, merged as f28be39d): R2 gains a nesting limit of 64. Repaired in commit c1d90bf2.
+
+The rule: a ledger whose JSON nests objects or arrays more than 64 deep, counting the ledger object itself as 1 (a record is 2, an object-valued field of a record is 3), is refused with `SCHEMA_VIOLATION` naming the file and the path of the container that passes the limit, on read, and by `write` before it serializes. The reason, measured on Node 22.23.1: `JSON.parse` reads 20,000 levels and the zod parse accepts them, but the store's serializer (`stableStringify`, `sortKeys`, recursive, src/state/store.ts, outside this card) throws `RangeError` from depth 1,739 (1,738 is the largest depth that serializes), and `JSON.stringify` throws at 6,000; so a deep ledger could be read and every write of it threw a raw `RangeError`. With the limit a ledger the store cannot serialize is refused before any write, and every ledger main wrote (2 deep) is inside it.
+
+The search as code (src/core/types.ts; one traversal, explicit stack, depth carried with each entry):
+
+```ts
+const MAX_LEDGER_DEPTH = 64;
+
+function ledgerIssue(root: unknown): { path: string[]; message: string } | undefined {
+  type Step = { key: string; up: Step | undefined };
+  const stack: Array<{ value: unknown; at: Step | undefined; depth: number }> = [{ value: root, at: undefined, depth: 1 }];
+  const pathOf = (at: Step | undefined): string[] => {
+    const keys: string[] = [];
+    for (let step = at; step; step = step.up) keys.push(step.key);
+    return keys.reverse();
+  };
+  while (stack.length > 0) {
+    const { value, at, depth } = stack.pop()!;
+    if (typeof value !== 'object' || value === null) continue;
+    if (depth > MAX_LEDGER_DEPTH) return { path: pathOf(at), message: `nesting deeper than ${MAX_LEDGER_DEPTH} levels is not allowed` };
+    if (Object.hasOwn(value, '__proto__')) return { path: [...pathOf(at), '__proto__'], message: 'an own "__proto__" key is not allowed' };
+    const entries = Object.entries(value);
+    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at }, depth: depth + 1 });
+  }
+  return undefined;
+}
+```
+
+Order when both apply: the search is depth first in key order; at each container the limit is checked first, then an own `__proto__` key of that container, then its children. So a container at level 65 holding `__proto__` is reported for the limit; a `__proto__` in key `a` before a 65-deep value in key `b` is reported for `__proto__`, and the other way round for the limit. `IncidentLedger.write` now validates with `safeParse` and throws `StoreError('SCHEMA_VIOLATION', file, issues)` (before, a `ZodError`), so a write refusal names the file like a read refusal; the value is validated before `atomicWriteJson` serializes it.
+
+Tests (the former 6,000-level tests and their "either lands or throws" assertion are replaced; there is no either/or any more):
+- "a ledger nested exactly 64 deep is read, written by write and read back equal, and rewritten by shouldFile; objects and arrays count alike": 64 deep as objects and as arrays; read equals the parsed text; `write` of it reads back equal; `shouldFile` rewrites it, keeping the deep record, with no `.tmp-` file.
+- "a ledger nested 65 deep, or 6,000 deep, is SCHEMA_VIOLATION ...": objects and arrays at 65 and at 6,000; through `read`, `shouldFile`, `attachIntent`, `triage` (the message names the file and `k.note.x...x: nesting deeper than 64 levels`, the path of 64 keys) and through `write` (a `StoreError` `SCHEMA_VIOLATION` naming the file, not a `RangeError`); the ledger bytes are unchanged and no `.tmp-` file is left; the safeParse issue path equals the 64 keys.
+- "a __proto__ key below the nesting limit keeps its issue, and with the limit the issue named is the one the search meets first": five rows (proto at level 64, proto in the container at level 65, proto below level 65, proto-then-limit across keys, limit-then-proto across keys).
+- "aidlc monitor check reads a ledger nested 64 deep, and refuses one nested 65 or 6,000 deep ...": 64 deep with no breach exits 0; 65 deep with no breach, 65 deep with a propose-tier breach, 6,000 deep with a log-tier breach exit 1 with the breach output, `filed` empty, `aidlc: ` + `SCHEMA_VIOLATION` + `incidents.json` + `nesting deeper than 64 levels` on stderr, no `RangeError`, the ledger bytes, the intent directory and the host journal unchanged.
+
+Docs: docs/OPERATIONS.md and the CHANGELOG entry state the limit in the sentence that lists the refusals: "a JSON document that nests objects or arrays more than 64 deep (the ledger object is level 1, a record level 2; the refusal names the path at which the limit is passed, and `write` applies the same limit)" (the CHANGELOG wording: "the error names the path at which the limit is passed, and a write applies the same limit"). Each clause is pinned by a test above. Nothing is said about the serializer's own limit.
+
+Revert rows of this round (one hunk reverted, `tests/surface/incident.test.ts` run without the CLI tests, file restored; this table replaces the four `__proto__`-search rows of the second round, whose tests were replaced):
+
+| hunk | first test that fails | result |
+|---|---|---|
+| types: limit check removed | "a ledger nested 65 deep, or 6,000 deep ..." | FAILS |
+| types: limit off by one, 64 deep refused (`>=`) | "a ledger nested exactly 64 deep ..." | FAILS |
+| types: limit off by one, 65 deep accepted (`> MAX + 1`) | "a ledger nested 65 deep, or 6,000 deep ..." | FAILS |
+| types: depth not counted for arrays | "a ledger nested 65 deep ..." (the arrays rows) | FAILS |
+| types: ledger object counted as level 0 | "a ledger nested exactly 64 deep ..." and the 65-deep test | FAILS |
+| types: `__proto__` checked before the limit at one container | "a __proto__ key below the nesting limit ..." (the level 65 row) | FAILS |
+| types: children searched first-to-last | `__proto__` test (two offending keys name `a.__proto__`), the ordering rows | FAILS |
+| types: issue path loses its prefix | `__proto__` test, 65-deep test (the path keys) | FAILS |
+| types: the `__proto__` key is missing from the path | `__proto__` test, ordering rows | FAILS |
+| incident: write throws a plain Error instead of the `StoreError` | "a ledger nested 65 deep ..." (write rows) | FAILS |
+| incident: write skips the validation check | `__proto__` test (`write`), "written whole", 65-deep test | FAILS |
+| types: recursive search with the limit instead of the explicit stack | none | GREEN (survives) |
+
+The last row stays green and is not a defect of the tests: with the limit the search stops at 65 containers, so a recursive form cannot overflow the stack and no input tells it from the explicit stack. The card requires the form without recursion (R2), so the explicit stack stays; the requirement is met by the code, and what observably follows from it (no `RangeError` at 6,000 levels) is pinned by the tests above. The earlier row that did show recursion (the second round) is superseded by the limit.
 
 Coordinator verification:
