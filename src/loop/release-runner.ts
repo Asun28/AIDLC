@@ -194,7 +194,7 @@ export class ReleaseRunner {
         if (!done) return this.issue(goal, attempt, 'deploy', 'stage-deploy', attempt.environment!, 'stage');
         if (done.status === 'succeeded') {
           const verified = attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'succeeded';
-          if (!verified) return { attempt, directive: { kind: 'stage', attemptId: attempt.id, environment: attempt.environment!, operations: ['smoke', 'health', 'recovery-readiness'], narration: 'Staging deployed. Verify smoke, applicable health and recovery readiness on THIS candidate, then report stage-verify succeeded (aidlc release report --step stage-verify --status succeeded).' } };
+          if (!verified) return { attempt, directive: { kind: 'stage', attemptId: attempt.id, environment: attempt.environment!, operations: ['smoke', 'health', 'recovery-readiness'], narration: `Staging deployed. Verify smoke, applicable health and recovery readiness on THIS candidate, then report stage-verify succeeded (aidlc release report ${attempt.id} --step stage-verify --status succeeded).` } };
           if (attempt.target === 'staging') {
             const finished = transitionRelease(attempt, 'DONE', now, this.guards(goal, attempt, { stagingVerified: true }));
             const saved = this.save(finished);
