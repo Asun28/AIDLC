@@ -403,37 +403,51 @@ describe('state/store updateJson: the absent-path EPERM retry (T0-LOCK-EPERM-RET
   };
   const HELD = `pid=${process.pid} at=2026-11-12T00:00:00.000Z nonce=held`;
   const bump = (current: z.infer<typeof Rec> | undefined) => ({ ...current!, n: current!.n + 1 });
+  /** Run `body` with `Date` held at one fixed time, so no deadline passes; the timers are restored on every path. */
+  const onHeldClock = <T>(body: () => T): T => {
+    mock.timers.enable({ apis: ['Date'], now: Date.parse('2026-11-12T12:00:00.000Z') });
+    try {
+      return body();
+    } finally {
+      mock.timers.reset();
+    }
+  };
+  /** An eleventh create throws an error that is not an EPERM, so an acquisition that never stops fails instead of hanging. */
+  const runaway = (n: number): void => {
+    if (n === 11) throw new Error('an eleventh exclusive create: the acquisition did not stop');
+  };
 
-  it("T0-LOCK-EPERM-RETRY: one or two absent-path EPERM refusals are retried after the loop's wait, and the record is written [R1]", () => {
+  it("T0-LOCK-EPERM-RETRY: one or two absent-path EPERM refusals are retried after the loop's wait, and the record is written [R1]", () => onHeldClock(() => {
     const file = seed('retried.json');
     const lock = `${file}.lock`;
-    const one = traced(lock, (n) => { if (n <= 1) throw eperm(); }, () => updateJson(file, Rec, bump, { timeoutMs: 1_000 }));
+    const one = traced(lock, (n) => { runaway(n); if (n <= 1) throw eperm(); }, () => updateJson(file, Rec, bump));
     assert.deepEqual(one.result, { value: { id: 'x', n: 2 } }, `one refusal, then the lock is taken: ${String(one.result.error)}`);
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { id: 'x', n: 2 });
     assert.deepEqual(one.trace, ['create', 'wait', 'create']);
     assert.equal(existsSync(lock), false, 'the lock is released');
-    const two = traced(lock, (n) => { if (n <= 2) throw eperm(); }, () => updateJson(file, Rec, bump, { timeoutMs: 1_000 }));
+    const two = traced(lock, (n) => { runaway(n); if (n <= 2) throw eperm(); }, () => updateJson(file, Rec, bump));
     assert.deepEqual(two.result, { value: { id: 'x', n: 3 } }, `two refusals, then the lock is taken: ${String(two.result.error)}`);
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { id: 'x', n: 3 });
     assert.deepEqual(two.trace, ['create', 'wait', 'create', 'wait', 'create']);
     assert.equal(existsSync(lock), false, 'the lock is released');
-  });
+  }));
 
-  it('T0-LOCK-EPERM-RETRY: a create that finds the lock held gives no refusal back [R1]', () => {
+  it('T0-LOCK-EPERM-RETRY: a create that finds the lock held gives no refusal back [R1]', () => onHeldClock(() => {
     const file = seed('held-between.json');
     const lock = `${file}.lock`;
     const refusals: Error[] = [];
     const refuse = (): never => { refusals.push(eperm()); throw refusals.at(-1)!; };
     const { result, trace } = traced(lock, (n) => {
+      runaway(n);
       if (n === 2) return writeFileSync(lock, HELD, 'utf8');
       if (n === 3) unlinkSync(lock);
       refuse();
-    }, () => updateJson(file, Rec, bump, { timeoutMs: 1_000 }));
+    }, () => updateJson(file, Rec, bump));
     assert.deepEqual(trace, ['create', 'wait', 'create', 'wait', 'create', 'wait', 'create'], 'refusal, held, refusal, refusal: the held create does not reset the count');
     assert.equal(result.error, refusals[2], 'the object of create 4, the third refusal, is thrown');
     assert.equal(readFileSync(file, 'utf8'), STORED);
     assert.equal(existsSync(lock), false, 'no lock file');
-  });
+  }));
 
   it('T0-LOCK-EPERM-RETRY: the deadline crossed inside a wait ends the acquisition with no further create, by the EPERM after a counted refusal and by LOCKED after a held create [R2]', () => {
     const T = Date.parse('2026-11-12T12:00:00.000Z');
