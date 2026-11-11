@@ -17,7 +17,7 @@ export const BandTier = z.object({
 export const BandsConfig = z.object({
   metric: z.string().min(1),
   baseline: z.string().default('rolling_30d'),
-  rules: z.enum(['western_electric', 'threshold']).default('western_electric'),
+  rules: z.literal('western_electric', { error: 'rules: the only supported value is western_electric' }).default('western_electric'),
   /** Minimum baseline samples before any band is evaluated. */
   min_samples: z.number().int().positive().default(8),
   direction: z.enum(['both', 'above', 'below']).default('both'),
