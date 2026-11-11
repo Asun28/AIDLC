@@ -594,3 +594,6 @@ Revert check (Windows, at `ea9c4bd7`): the 45 rows of the predecessor's attempt 
 Changed lines (`git diff --shortstat origin/main...HEAD` at the commit that adds this section): 1548 changed lines (7 files, +1524 / -24; merge base `a01506e3`): tests/scenarios/release-lease.test.ts 886, this card 462 (its body and the moved evidence), src/loop/release-runner.ts 183, docs/OPERATIONS.md 10, src/cli/main.ts 3, docs/ARCHITECTURE.md 2, CHANGELOG.md 2; within, against the budget of 1560.
 
 Coordinator verification:
+- At 3cd49978, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 23, pass 23, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 3 changed documents: # tests 1883 # pass 1871 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
