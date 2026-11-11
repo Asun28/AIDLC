@@ -68,3 +68,162 @@ npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/upda
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes.
+
+## Attempt evidence
+
+Attempt 1, effort high. RED commit efdc00cd (tests only; at that commit the file fails to load because `IncidentLedgerFile` is not exported by src/core/types.ts, so the per-test RED receipt was taken with a throwaway stub export, not committed: 12 of 23 tests failed, first assertion lines below). GREEN commits follow it; tests added after RED are marked "added after RED".
+
+DoD: `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 42 tests, 40 pass, 0 fail, 2 skipped (the two POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip); output sha256 prefix 31636c8c4c1768a.
+
+RED receipt (stub export in types.ts, other code as main), first failing assertion per test:
+
+| test | first failing line |
+|---|---|
+| the ledger schema | `AssertionError: disposition Dismissed (case-sensitive)` |
+| a ledger that does not parse ... | `Missing expected exception: empty: read` |
+| the ledger is written whole ... | `Missing expected exception.` (count 0 write) |
+| an intent file name that exists is never overwritten | deepEqual: actual `<slug>.md` twice, expected `<slug>-2.md`, `<slug>-3.md` |
+| a base slug cut at 60 characters ... | actual `<slug>.md`, expected `<slug>-2.md` |
+| a directory named <slug>.md counts as taken | `EISDIR: illegal operation on a directory, open '...<slug>.md'` |
+| with <slug>.md and <slug>-2.md to <slug>-999.md present | `Missing expected exception.` |
+| an exclusive create whose write fails ... | `Missing expected exception.` |
+| an EPERM ... propagates | `Missing expected exception.` |
+| aidlc monitor check reads the ledger first | `a propose-tier breach:` (status 0, not 1) |
+| aidlc monitor check files the two sides | `Expected "actual" to be strictly unequal to:` |
+| aidlc monitor check refiles one breach after its window | `Expected "actual" to be strictly unequal to:` |
+
+Passing on main by design (controls, as the card allows): the five tests of main; "a ledger under a regular file reads as absent..."; "the intent directory classes"; "aidlc monitor check without --file-intent does not read the ledger"; "aidlc monitor check with an intent write that fails ..." (on main a directory at `<slug>.md` makes `writeFileSync` throw EISDIR, so exit 1 with nothing attached holds there too and must keep holding). Added after RED: "a ledger written by main ... reads back unchanged and the library exports the schema names" (passes on main code with the new schema: compatibility control), "with every name but <slug>-999.md taken the write returns <slug>-999.md" (fails on main), the array-ledger row of the CLI read-first test, the `write` row under the failing rename, the absent-ledger-directory row of "written whole". The final file run against main's incident.ts and main.ts (new types.ts kept): 12 fail, 11 pass, 2 skipped.
+
+### One row per acceptance item
+
+| item | test or command | result |
+|---|---|---|
+| 1 | "the ledger schema: a table of the fields R1 names" | pass; 12 accepted rows, 23 refused rows, 4 non-object whole values, `{}` accepted, extra key kept |
+| 2 | "a ledger that does not parse is an error naming the file, and nothing is rewritten" | pass; 10 content rows, directory, injected EACCES, absent; each of read, shouldFile, attachIntent, triage; bytes compared after |
+| 3 | "the ledger is written whole and only in a form a read accepts" | pass |
+| 4 | "an intent file name that exists is never overwritten", "a directory named <slug>.md ...", "with <slug>.md and <slug>-2.md to <slug>-999.md present ...", "an exclusive create whose write fails ..." | pass |
+| 5 | "aidlc monitor check reads the ledger first ..." (rows: propose breach, no breach, log-only breach, array ledger), "files the two sides ...", "refiles one breach after its dedupe window ...", "with an intent write that fails ..." | pass |
+| 6 | the five tests of main unchanged (git diff removes only the two import lines of the test file); `node --test tests/infra/update-json.test.ts` | pass |
+| 7 | docs, reviewer-verified | see the R6 row below |
+
+### Clause by clause (point A)
+
+| clause | code | test that fails without it |
+|---|---|---|
+| R1 fields identity, firstSeen, lastSeen, count, disposition, intentFile, filedAt, dismissReason | src/core/types.ts IncidentRecord | schema table (every field mutated one at a time in the revert table) |
+| R1 unnamed keys kept | `z.looseObject` | schema table last assertion; "written whole" keeps `note` |
+| R1 timestamp is a text pattern | `IsoTimestamp` reused | schema table: `2026-02-31T00:00:00Z` accepted, `+02:00` refused |
+| R1 legacy compatible | same schema | "a ledger written by main ... reads back unchanged" |
+| R1 no own interface in incident.ts, index exports the name | incident.ts imports the type; index.ts `export *` of types.ts | typecheck (tests import `IncidentRecord` from types.ts and the library); same test asserts `lib.IncidentRecord` and `lib.IncidentLedgerFile` |
+| R2 absent is `{}` | `readJson(...) ?? {}` | "does not parse" test, absent row (and no directory created) |
+| R2 not JSON (empty, whitespace, cut short, BOM) is MALFORMED_JSON naming the file | readJson | four content rows, four methods |
+| R2 not an object of valid records is SCHEMA_VIOLATION with the first issue path | readJson, IncidentLedgerFile | rows `[]`, `null`, `"x"`, `3`, no count (`k.count` in message), disposition closed (`k.disposition`) |
+| R2 unreadable file or directory is READ_FAILED | readJson | directory row, injected EACCES row; mode 0o000 row (POSIX only) |
+| R3 shouldFile, attachIntent, triage read through R2 first | `this.read()` in each | each of the four methods in every row; per-method revert rows below |
+| R3 write parses | `IncidentLedgerFile.parse(data)` | "written whole": count 0 and disposition closed writes throw, file bytes same |
+| R3 write is atomic | `atomicWriteJson` | "written whole": rename onto the ledger fails for `shouldFile` and for `write`, bytes same, no `.tmp-` file |
+| R4 never overwrites; `<slug>.md`, `-2` to `-999` | `createExclusive` loop | "never overwritten" (three writes, bytes of the first), directory row, 60-character row |
+| R4 front matter slug equals the file name | `renderIntent({ ...intent, slug })` | `parseIntent(...).intent.slug` in three tests |
+| R4 all 999 taken: error naming directory and slug, nothing written | final `throw` | 999 test: message includes both, 999 entries remain, `-999.md` bytes same |
+| R4 only `-999` free is returned | loop bound | "with every name but <slug>-999.md taken" |
+| R4 failed write leaves a partial file, propagates, name taken | `createExclusive` (not wrapped) | "an exclusive create whose write fails ..." (injected `fs.writeSync` ENOSPC) |
+| R4 EPERM with the path absent propagates | `createExclusive` (store.ts, unchanged) | "an EPERM ..." (injected `fs.openSync`) |
+| R4 base slug unchanged, first filing keeps its name | `intentFromBreach` untouched | slug literal asserted; first name `<slug>.md` |
+| R5 ledger read once before the breaches, also with no or log-only breaches | `ledger.read()` before the loop | CLI rows no breach and log-only |
+| R5 refusal prints breach output with `filed` empty, `aidlc: ` + message on stderr, exit 1, nothing written | `refused`, `process.stderr.write`, `process.exitCode = 1` | CLI rows: stdout JSON, stderr prefix, code and file name, ledger bytes, no intent directory, host journal bytes |
+| R5 distinct files for two sides and for a refile | R4 | "files the two sides" and "refiles one breach" |
+| R5 failed intent write: nothing attached or journaled | no code (the throw propagates before `attachIntent`) | "with an intent write that fails" (999 directories) |
+| R5 no ledger read without `--file-intent` | read inside `if (o.fileIntent)` | "without --file-intent does not read the ledger" |
+| R6 three documents | docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md | reviewer reads the diff; every sentence maps to a test above |
+
+### Revert check, one source hunk at a time (point 6)
+
+Each row reverts one hunk, runs `tests/surface/incident.test.ts` (unit rows without the CLI tests, CLI rows with the CLI tests only), then restores the file. Script kept outside the repository. Result column: FAILS means at least one test fails.
+
+| hunk | first test that fails | result |
+|---|---|---|
+| types: `z.looseObject` to `z.object` | schema table (unnamed key kept); "written whole" | FAILS |
+| types: identity `.min(1)` | schema table (identity empty) | FAILS |
+| types: firstSeen `IsoTimestamp` | schema table (offset, yesterday) | FAILS |
+| types: lastSeen `IsoTimestamp` | schema table (lastSeen yesterday) | FAILS |
+| types: count `.int()` | schema table (count 1.5) | FAILS |
+| types: count `.positive()` | schema table (count 0, -1); "written whole" (count 0) | FAILS |
+| types: intentFile nullable | schema table (intentFile null) | FAILS |
+| types: intentFile required | main's tests (records without intentFile) | FAILS |
+| types: filedAt `IsoTimestamp` | schema table (filedAt yesterday) | FAILS |
+| types: filedAt required | main's tests, schema table | FAILS |
+| types: disposition enum | schema table (Dismissed, closed); "does not parse" (closed row) | FAILS |
+| types: dismissReason string | schema table (dismissReason 3); main's tests | FAILS |
+| types: ledger values unchecked (`z.record(z.string(), z.any())`) | schema table (disposition, count rows); "does not parse" (record rows) | FAILS |
+| incident: read swallows errors | "does not parse" (empty row); CLI read-first | FAILS |
+| incident: read without the schema | "does not parse" (record without count) | FAILS |
+| incident: shouldFile does not read through R2 | "does not parse" shouldFile rows; main's tests | FAILS |
+| incident: attachIntent does not read through R2 | "does not parse" attachIntent rows | FAILS |
+| incident: triage does not read through R2 | "does not parse" triage rows | FAILS |
+| incident: write without parse | "written whole" (count 0 write) | FAILS |
+| incident: write not atomic (`writeFileSync`, parse kept) | "written whole" (rename row) | FAILS |
+| incident: intent write overwrites | "never overwritten" and five more | FAILS |
+| incident: first name `-2` | "never overwritten" and five more | FAILS |
+| incident: limit 998 | "with every name but <slug>-999.md taken" (added for this row; it survived before) | FAILS |
+| incident: limit 1000 | 999 test | FAILS |
+| incident: front matter slug is the base slug | "never overwritten" and two more | FAILS |
+| incident: error omits the directory | 999 test | FAILS |
+| incident: error omits the slug | 999 test; CLI failing-write test | FAILS |
+| incident: suffix on the first name too | "never overwritten" and four more | FAILS |
+| cli: no pre-read | CLI read-first | FAILS |
+| cli: breaches filed after a refusal | CLI read-first | FAILS |
+| cli: no stderr line | CLI read-first | FAILS |
+| cli: exit code 0 on refusal | CLI read-first | FAILS |
+| cli: stderr without the `aidlc: ` prefix | CLI read-first | FAILS |
+| cli: ledger read without `--file-intent` | "without --file-intent does not read the ledger" | FAILS |
+
+Two rows survived on the first run and were fixed: `count` (the script had changed another schema, a mutation of the wrong line, rerun with the unique line: both FAIL) and limit 998 (the 999 test cannot tell 998 from 999; the "-999 free" test was added). A catch of a non-`StoreError` in the CLI read was removed as unreachable (`readJson` throws only `StoreError`).
+
+### Schema field matrix (point C, R1)
+
+| field | accepted | refused | tests |
+|---|---|---|---|
+| identity | non-empty string | empty, number, missing | table |
+| firstSeen, lastSeen | text pattern incl. `2026-02-31T00:00:00Z`, 1 to 3 fraction digits | offset, `yesterday`, 4 fraction digits, missing | table |
+| count | positive integer | -1, 0, 1.5, "1", missing | table |
+| intentFile | absent, string | null, number | table |
+| filedAt | absent, timestamp | `yesterday` | table |
+| disposition | open, fix-now, scheduled, dismissed | Dismissed, closed, missing | table |
+| dismissReason | absent, string | number | table |
+| unnamed key | kept | | table, "written whole" |
+| whole value | `{}`, object of records | array, null, string, number, record null, record string | table, does-not-parse |
+
+### File-system input classes (point C)
+
+| call | absent | directory where a file is expected | path under a regular file | unreadable parent | content that does not parse |
+|---|---|---|---|---|---|
+| ledger read (`readJson`, `existsSync`) | `{}`, nothing created | READ_FAILED | `{}` (existsSync is false; the write then throws and the file keeps its bytes) | POSIX: `{}` (existsSync false), write throws, file keeps bytes (gated test); file mode 0o000: READ_FAILED (gated test), injected EACCES: READ_FAILED (all platforms) | MALFORMED_JSON, SCHEMA_VIOLATION |
+| ledger write (`atomicWriteJson`) | directory created (row in "written whole") | n/a (the target is read first) | throws, file unchanged | throws (gated) | refused before any write |
+| intent write (`createExclusive`) | directory created | `<slug>.md` a directory: name taken, next suffix | throws, file unchanged | throws, nothing written (gated) | n/a |
+
+The `{}` for a ledger under an unreadable parent or under a regular file is a property of `readJson` (`existsSync`), which this card must not change (forbid: store.ts); no write follows because the write fails.
+
+### forbid and non_goals, one line each
+
+- weakening or skipping a test: `git diff origin/main...HEAD -- tests` removes two lines, both import lines; the only skips are the two POSIX-only tests, with the reason in the skip.
+- dedupe rule and `breachIdentity`: `src/maintain/bands.ts` is not in the diff and the `shouldFile` body is untouched (grep of the incident.ts diff for `withinWindow` and `existing.count` finds only context).
+- store.ts or an exclusive create outside it: `git diff --name-only origin/main...HEAD` lists no src/state file; `grep -rln "'wx'" src` prints only src/state/store.ts; tests/infra/update-json.test.ts passes in the DoD.
+- repairing, renaming or deleting an existing ledger or intent: the src diff has no unlink, rename, rmSync, repair or retry of mine; tests compare the ledger and intent bytes after a refusal.
+- a new `mkdtempSync` call in a test: `grep -c "mkdtempSync("` is 4 on main and 4 now (the four calls of the five existing tests, unchanged); every directory of the new tests comes from `scratch()`, built on `tmpDir`, removed by a top-level `after` hook, or from a fixture of `fixture()`, removed by an `after` hook.
+- editing .aidlc state by hand: no `.aidlc` path in the diff; tests write only under temporary directories.
+- non-goal lock on the read-modify-write: no lock code added (grep for `.lock` in the src diff is empty).
+- non-goal key equals identity: no such check in the diff.
+- non-goal renaming old intents: none renamed; only `writeIncidentIntent` changed.
+- non-goal automatic recovery: a ledger that does not parse throws and is never written (bytes tests).
+- non-goal intent created then `attachIntent` failing: no handling added; `attachIntent` stays after `writeIncidentIntent` in main.ts.
+- non-goal Windows EPERM at the ledger rename: no retry; the failing-rename test shows the previous ledger stays.
+
+### Temporary directories (message of the coordinator)
+
+One run of the two DoD test files leaves 4 `aidlc-*` directories in the OS temp directory on this machine: `aidlc-incident-` x3 and `aidlc-intent-` x1, from the four `mkdtempSync` calls of the five tests of main (lines 35, 58, 75 and 83 of the test file), which acceptance 6 requires to pass unchanged. The new tests leave none (a run of only the new CLI tests changes no `aidlc-scn-` directory; the scratch root `aidlc-incident-t-` is gone after the run). Changing those four calls to `tmpDir` would make the count 0 and would edit tests the card names as unchanged: left for the coordinator to rule.
+
+### Doc-reading run
+
+78 test files read ARCHITECTURE.md, OPERATIONS.md or CHANGELOG.md: 1863 tests, 1850 pass, 1 fail, 12 skipped. The one failure is `T0-EXEC-TREE-KILL run on real processes` in tests/infra/exec.test.ts (a 6 s timing bound, machine load); `node --test tests/infra/exec.test.ts tests/infra/exec-sync-tree.test.ts` alone: 84 pass, 0 fail.
+
+Coordinator verification:

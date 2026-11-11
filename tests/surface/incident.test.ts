@@ -460,6 +460,16 @@ test('an intent directory that cannot be searched throws and writes nothing', { 
 const BANDS = ['metric: error_rate', 'direction: both', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n');
 const BASELINE = [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11];
 type Fx = ReturnType<typeof makeFixture>;
+/** A fixture the `after` hook below removes (each already lives under a directory `tmpDir` registered), so a failed assertion leaves none. */
+const fixtures: Fx[] = [];
+const fixture = (): Fx => {
+  const fx = makeFixture();
+  fixtures.push(fx);
+  return fx;
+};
+after(() => {
+  for (const fx of fixtures) fx.cleanup();
+});
 /** One `aidlc monitor check` over `recent` values (one point per minute of 2026-09-11); the cwd is the fixture. */
 function monitor(fx: Fx, recent: number[], extra: string[] = ['--file-intent']) {
   writeFileSync(path.join(fx.tmp, 'bands.yaml'), BANDS, 'utf8');
@@ -484,7 +494,7 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
     ['a ledger that is an array', ABOVE, 1, '[]', 'SCHEMA_VIOLATION'],
   ];
   for (const [label, recent, breachCount, content, code] of rows) {
-    const fx = makeFixture();
+    const fx = fixture();
     try {
       const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
       writeFileSync(ledgerFile, content, 'utf8');
@@ -506,7 +516,7 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
 });
 
 test('aidlc monitor check without --file-intent does not read the ledger', () => {
-  const fx = makeFixture();
+  const fx = fixture();
   try {
     const ledgerFile = path.join(fx.paths.incidents, 'incidents.json');
     writeFileSync(ledgerFile, '{', 'utf8');
@@ -519,7 +529,7 @@ test('aidlc monitor check without --file-intent does not read the ledger', () =>
 });
 
 test('aidlc monitor check files the two sides of a metric on one day to two different files and leaves the first unchanged', () => {
-  const fx = makeFixture();
+  const fx = fixture();
   try {
     const one = monitor(fx, ABOVE);
     assert.equal(one.status, 0, one.stderr);
@@ -541,7 +551,7 @@ test('aidlc monitor check files the two sides of a metric on one day to two diff
 });
 
 test('aidlc monitor check refiles one breach after its dedupe window to a second file and leaves the first unchanged', () => {
-  const fx = makeFixture();
+  const fx = fixture();
   try {
     const one = monitor(fx, ABOVE);
     assert.equal(one.status, 0, one.stderr);
@@ -563,7 +573,7 @@ test('aidlc monitor check refiles one breach after its dedupe window to a second
 });
 
 test('aidlc monitor check with an intent write that fails exits 1 with nothing attached and nothing journaled', () => {
-  const learn = makeFixture();
+  const learn = fixture();
   let slug: string;
   try {
     const result = monitor(learn, ABOVE);
@@ -572,7 +582,7 @@ test('aidlc monitor check with an intent write that fails exits 1 with nothing a
   } finally {
     learn.cleanup();
   }
-  const fx = makeFixture();
+  const fx = fixture();
   try {
     const intentDir = path.join(fx.tmp, 'intent');
     mkdirSync(path.join(intentDir, `${slug}.md`), { recursive: true });
