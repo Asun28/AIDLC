@@ -66,7 +66,7 @@ RED commit 5efcf942 (tests only). On main every test failed at its first asserti
 | 3 | "reading the packet writes nothing" | pass |
 | 4 | "an attempt at CHECKPOINT that is not a production step gets an empty packet" | pass; fails on main (non-empty packet) |
 | 5 | "run returns the release directive with the same packet and no provider call" | pass; fails on main |
-| 6 | release.test.ts, release-publication.test.ts, run-driver.test.ts unchanged | pass (DoD: 64 tests, 64 pass, 0 fail) |
+| 6 | release.test.ts, release-publication.test.ts, run-driver.test.ts unchanged | pass (DoD: 65 tests, 65 pass, 0 fail) |
 | 7 | docs and CHANGELOG, reviewer-verified | ARCHITECTURE.md release row, OPERATIONS.md Standalone release (paragraph after the production example), CHANGELOG entry above `- T0-PREPARE-WORKTREE (bugfix)` |
 
 Per-hunk revert (each hunk undone alone, checkpoint-packet.test.ts run, then restored):
@@ -78,7 +78,9 @@ Per-hunk revert (each hunk undone alone, checkpoint-packet.test.ts run, then res
 | injected runner ignored (`this.releaseRunner ??` removed) | tests 1 and 6, deep-equal of the packet (runner on `opsConfigured()` against an absent ops file: `recoveryPlan`) | red |
 | runner cached across reads | test 2, the second packet after the file changes (`live2`) | red |
 | packet fixed to `{}` | tests 1, 2, 3, 4, 6 | red |
-| CHECKPOINT state clause in the controller | removed from the controller: an equivalent mutation (`checkpointPacket` returns undefined outside CHECKPOINT, so the packet is `{}` either way); the clause was dropped so no hunk stays unobservable, and "reading the packet writes nothing" asserts `{}` in PREPARE | n/a |
+| `attempt.state === 'CHECKPOINT'` clause removed | test "the packet builder is consulted only for a production or migration attempt at CHECKPOINT, once per next": spy `checkpointPacket` called 4 times (PREPARE, STAGE, APPLY, OBSERVE), "no builder call outside CHECKPOINT", `4 !== 0` | red |
+
+The CHECKPOINT clause is proved through an injected spy runner (`checkpointPacket` called 0 times in PREPARE, STAGE, APPLY, OBSERVE and for a staging attempt at CHECKPOINT, packet `{}`; once per `next` at CHECKPOINT). Without an injected runner the non-CHECKPOINT case cannot be observed by a test (the packet is `{}` either way, and building the runner writes nothing), so that spy test is the proof of the condition both paths share.
 
 Input classes against tests (all in checkpoint-packet.test.ts, test 2 unless noted):
 
@@ -96,6 +98,6 @@ Input classes against tests (all in checkpoint-packet.test.ts, test 2 unless not
 
 Doc-reading run: 78 files, `node --test` in one call: 1863 tests, 1851 pass, 0 fail, 12 skipped, 0 cancelled. Linux run of the new file is the coordinator's.
 
-DoD: `npm run typecheck && node --test tests/scenarios/checkpoint-packet.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/run-driver.test.ts` exit 0, 64 tests, 64 pass, 0 fail. Each new test removes its temp directory through `fx.cleanup()` in a `finally`; the ops file lives inside it.
+DoD: `npm run typecheck && node --test tests/scenarios/checkpoint-packet.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/run-driver.test.ts` exit 0, 65 tests, 65 pass, 0 fail. Each new test (seven in the file) removes its temp directory through `fx.cleanup()` in a `finally`; the ops file lives inside it.
 
 Coordinator verification:

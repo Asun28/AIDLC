@@ -224,3 +224,44 @@ test('run returns the release directive with the same packet and no provider cal
     fx.cleanup();
   }
 });
+
+test('the packet builder is consulted only for a production or migration attempt at CHECKPOINT, once per next', () => {
+  const spied = (fx: Fx): { runner: ReleaseRunner; calls: () => number } => {
+    const runner = runnerOf(fx);
+    const original = runner.checkpointPacket.bind(runner);
+    let n = 0;
+    runner.checkpointPacket = (goal, attempt) => {
+      n += 1;
+      return original(goal, attempt);
+    };
+    return { runner, calls: () => n };
+  };
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'production');
+    const { runner, calls } = spied(fx);
+    const controller = controllerWith(fx, runner);
+    for (const state of ['PREPARE', 'STAGE', 'APPLY', 'OBSERVE'] as const) {
+      saveCheckpoint(fx, attemptId, { state });
+      assert.deepEqual(releasePacket(controller, goalId), {}, state);
+    }
+    assert.equal(calls(), 0, 'no builder call outside CHECKPOINT');
+    saveCheckpoint(fx, attemptId);
+    assert.equal(releasePacket(controller, goalId)['environment'], 'production');
+    assert.equal(calls(), 1);
+    releasePacket(controller, goalId);
+    assert.equal(calls(), 2);
+  } finally {
+    fx.cleanup();
+  }
+  const fy = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fy, 'staging');
+    const { runner, calls } = spied(fy);
+    fy.store.saveRelease(ReleaseAttempt.parse({ ...fy.store.getRelease(attemptId)!, state: 'CHECKPOINT', candidateDigest: 'c1', sourceSha: 'sha1', environment: 'staging' }));
+    assert.deepEqual(releasePacket(controllerWith(fy, runner), goalId), {});
+    assert.equal(calls(), 0, 'no builder call for a staging attempt');
+  } finally {
+    fy.cleanup();
+  }
+});

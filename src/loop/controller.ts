@@ -443,11 +443,11 @@ export class GoalController {
       this.store.saveRelease(attempt);
       this.journal(goal.id).append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, state: 'PREPARE', target: goal.target } });
     }
-    // The packet is the release runner's, so an authority recorded from it matches what `release next` checks; the runner gives
-    // none outside CHECKPOINT. Only a production or migration attempt has one: its builder throws for any other target, which a
-    // release-result patch can store. Without an injected runner one is built per read, so the ops configuration is read afresh
-    // (as `aidlc release packet` does).
-    const hasPacket = attempt.target === 'production' || attempt.target === 'migration';
+    // The packet is the release runner's, so an authority recorded from it matches what `release next` checks. The builder is
+    // consulted only at CHECKPOINT, and only for a production or migration attempt: it throws for any other target, which a
+    // release-result patch can store. Without an injected runner one is built per such read, so the ops configuration is read
+    // afresh (as `aidlc release packet` does).
+    const hasPacket = attempt.state === 'CHECKPOINT' && (attempt.target === 'production' || attempt.target === 'migration');
     const runner = hasPacket ? this.releaseRunner ?? new ReleaseRunner({ paths: this.paths, repo: this.repo, store: this.store, ops: this.ops, leases: this.leases, now: this.clock }) : undefined;
     const packet = runner?.checkpointPacket(goal, attempt)?.packet ?? {};
     return Directive.parse({ kind: 'release', ...base, attemptId: attempt.id, releaseState: attempt.state, target: goal.target, environment: attempt.environment, packet, narration: `Release attempt ${attempt.id} in ${attempt.state} (final state for ${goal.target}: ${finalStateForTarget(goal.target)}). Drive it with \`aidlc release next ${attempt.id}\`; never promote automatically.` });
