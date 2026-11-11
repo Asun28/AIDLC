@@ -246,13 +246,21 @@ function fixtureEnv(dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.
  * Times the fixture's exit mode from the spawn to the root's exit, with no kill. Undefined when the spawn
  * fails, the root does not exit 0 within CALIBRATION_LIMIT_MS or the sleeper never wrote its pid file.
  * The sleeper is ended and verified gone in every case; its pid goes to `ended`.
+ * `command` and `limitMs` replace the spawned command (given the pid file) and the time limit in tests of this function.
  */
-async function calibrate(t: TestContext, fixture = FIXTURE, ended: number[] = []): Promise<number | undefined> {
+async function calibrate(
+  t: TestContext,
+  fixture = FIXTURE,
+  ended: number[] = [],
+  command: (pidFile: string) => [string, string[]] = (pidFile) => [process.execPath, [fixture, 'exit', pidFile]],
+  limitMs = CALIBRATION_LIMIT_MS,
+): Promise<number | undefined> {
   const dir = tmpDir('aidlc-exec-calibrate-');
   t.after(() => cleanup(dir));
   const pidFile = join(dir, 'sleeper.pid');
   const startedAt = Date.now();
-  const child = spawn(process.execPath, [fixture, 'exit', pidFile], { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
+  const [file, args] = command(pidFile);
+  const child = spawn(file, args, { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
   let limit: NodeJS.Timeout | undefined;
   const measured = await new Promise<number | undefined>((resolve) => {
     child.once('error', () => resolve(undefined));
@@ -260,7 +268,7 @@ async function calibrate(t: TestContext, fixture = FIXTURE, ended: number[] = []
     limit = setTimeout(() => {
       end(child.pid);
       resolve(undefined);
-    }, CALIBRATION_LIMIT_MS);
+    }, limitMs);
   });
   clearTimeout(limit);
   const sleeper = readPid(pidFile);
@@ -351,6 +359,41 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     const missed = await calibrate(t, join(missingDir, 'missing.ts'));
     assert.equal(missed, undefined);
     assert.throws(() => scaleFor(missed), { message: 'calibration failed: undefined' });
+  });
+
+  describe('calibrate returns undefined on each failure of the spawned command', () => {
+    // An inline child that writes the pid file the calibration looks for (its own pid), then runs `then`.
+    const inline = (then: string) => (pidFile: string): [string, string[]] => [process.execPath, ['-e', `require('fs').writeFileSync(process.argv[1], String(process.pid)); ${then}`, pidFile]];
+    it('a child that writes the pid file and exits 3', async (t) => {
+      const ended: number[] = [];
+      assert.equal(await calibrate(t, FIXTURE, ended, inline('process.exit(3)')), undefined);
+      assert.equal(ended.length, 1);
+    });
+    it('a child that writes the pid file and kills itself', async (t) => {
+      const ended: number[] = [];
+      assert.equal(await calibrate(t, FIXTURE, ended, inline("process.kill(process.pid, 'SIGKILL')")), undefined);
+      assert.equal(ended.length, 1);
+    });
+    it('a child that exits 0 without writing the pid file', async (t) => {
+      const ended: number[] = [];
+      assert.equal(await calibrate(t, FIXTURE, ended, () => [process.execPath, ['-e', 'process.exit(0)']]), undefined);
+      assert.deepEqual(ended, []);
+    });
+    it('a command that does not exist, without waiting for the time limit', async (t) => {
+      const ended: number[] = [];
+      const started = Date.now();
+      assert.equal(await calibrate(t, FIXTURE, ended, () => ['aidlc-no-such-command-for-calibrate', []], 10_000), undefined);
+      assert.ok(Date.now() - started < 5000, 'the spawn error resolved the calibration, not the time limit');
+      assert.deepEqual(ended, []);
+    });
+    it('a child that writes the pid file and sleeps 5 s, with a limit of 200 ms: undefined at the limit, the child gone', async (t) => {
+      const ended: number[] = [];
+      const started = Date.now();
+      assert.equal(await calibrate(t, FIXTURE, ended, inline('setTimeout(() => {}, 5000)'), 200), undefined);
+      assert.ok(Date.now() - started < 4000, 'the calibration ended at its limit, not when the child exited');
+      assert.equal(ended.length, 1);
+      assert.equal(probe(ended[0]!), 'ESRCH');
+    });
   });
 });
 
