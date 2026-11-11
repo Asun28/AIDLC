@@ -164,3 +164,31 @@ Same class of the repair:
 - Text removed before the marker search: the fence removal and the closed-question removal are the only two; `stripped` is read by gate 3 alone.
 
 DoD (amended command) at the candidate: `npm run typecheck` exit 0; the `node --test` arm exit 0. Mutation sweep (`aidlc card mutants`): not run.
+
+Attempt 3 (effort medium), repair of R3 decision 3, the second pass on the candidate decision 2 passed (two findings). The card was amended on main (3270165e, wording corrected in the commit after it) and merged. RED receipt `9b851229` (tests only): at 7f21ae44 the reader test failed at a vertical tab between the colon of `"standards":` and the nested axis of a broken block cut short (the axis was read as pass), and the registry test failed in the layout where the card directory is `archive/tasks-active` beside the archive `archive/tasks` (no `[CARD-ID-DUPLICATE]`). Fix `3847f288`.
+
+| Finding of decision 3 | Repair | Proof |
+|---|---|---|
+| member-whitespace-bypass (src/review/pre-review.ts) | `followsMemberName` skips every character `/\s/` matches, on both sides of the colon: the class the scanner skips between an opener and its first key (`rest.search(/\S/)` in `topLevelDocuments`) | `tests/surface/pre-review.test.ts` "R3 decision 3: the member name before a document of a broken block cut short ..." (the 25 characters of the class, each before the colon, after it, on both sides and repeated; with and without a parseable draft before the block; a document behind no member name still decides after each of them) |
+| archive-prefix-exempts-duplicates (src/artifacts/card.ts) | `loadCardRegistry` records on each card whether it read it from the archive directory, and `validateRegistry` uses that record; for a registry without it the file must lie inside the archive directory as a path (`liesInside`); one file read as both an active and an archived card is one file (`sameFile`) | `tests/surface/card.test.ts` "R3 decision 3: a card is archived by the directory it was read from ..." (the card directory beside an archive whose name is its prefix, inside the archive, and around the archive: one duplicate block and the active card's own `[CARD-REF-DANGLING]` in each; one directory named as both: no duplicate) |
+
+Same class of this repair:
+- Whitespace sets in the reader: `readDocument` skips the four JSON whitespace characters inside a document, which is the JSON grammar and decides whether a document parses; `topLevelDocuments` and `followsMemberName` read the text outside a document with the `\s` class. No third set exists in the file.
+- Membership by string prefix: `validateRegistry` held the only `startsWith` on a directory in `src/artifacts/card.ts`; `isArchived` now also decides the other checks of that loop (dangling references, tier, parallel overlap) for a card directory whose name starts with the archive's, where main skipped them all. `loadCardRegistry` has six callers and each passes two directories joined from the config, so every card of a loaded registry carries the record.
+
+Revert check before decision 4: in a scratch copy of the candidate each source hunk of the diff was reverted or neutralised in turn (48 mutations) and the acceptance tests of its requirement run. Seven were not caught, and one of those is equivalent (dropping `unclosed < decisive.start`: an opener that never closes after the decisive document already makes the output malformed). The other six have a test now (`f64a92d0`; the tests pass at `3847f288` and each fails under its mutation, run one at a time and restored):
+
+| Hunk | Mutation | Test that fails under it |
+|---|---|---|
+| `readVerdict` of a reviewer output reads through `parseVerdictDocument` (R2) | the `malformed` status dropped again | `tests/surface/pre-review.test.ts` "T0-AUDIT-FIXES: the reviewer output reader keeps an unknown run_status, ..." |
+| `aidlc monitor check --file-intent` passes the time (R12) | `attachIntent` called without it | `tests/surface/incident.test.ts` "aidlc monitor check --file-intent records the filing time on the incident, ..." |
+| the member-name rule applies only after an opener that never closed (R1) | the guard dropped | the same pre-review test (`My answer "final": <verdict>` reads pass) |
+| a backslash escapes the character after it in the bracket balance (R1) | the escape ignored | the same pre-review test (an escaped closer closes nothing, the bare one does) |
+| the path fallback of the archive check (R9) | `liesInside` back to `startsWith` | `tests/surface/card.test.ts` "T0-AUDIT-FIXES: a registry without the archive record ..." |
+| `release next` at CHECKPOINT returns the directive of main (R5) | the refusal detail dropped from the narration; the journal event changed | `tests/scenarios/release.test.ts` "release next at CHECKPOINT without the authority ..." |
+
+The check also showed that the REVIEW_FIX reopen (R4) fires after a success recorded on the blocked candidate itself, with no dispute. That is the state R4 names (REVIEW_FIX with a succeeded episode): main opened no attempt there and `aidlc card attempt` threw. `tests/scenarios/dispute-running-attempt.test.ts` "a success recorded on the blocked candidate itself leaves the R3 block pending: ..." states it: one attempt per recorded attempt, none for a repeated `card next`, the repair on a new candidate recorded. It fails with the reopen reverted.
+
+Acceptance table after this repair: items 1 and 9 gain the decision 3 tests, and items 1, 4, 5, 9 and 12 the tests of the revert check, all pass; the other items as attempt 2.
+
+DoD at the candidate: `npm run typecheck` exit 0; the `node --test` arm exit 0. Mutation sweep (`aidlc card mutants`): not run.
