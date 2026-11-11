@@ -76,7 +76,7 @@ Host: Windows (win32). The POSIX rows of acceptance 1 are skipped here by `proce
 RED receipt: commit 370582aa (tests only), run on c738c646 sources, the failing line of each test: `operationCwd: one directory for every form of cwd` TypeError `operationCwd is not a function`; `a cwd that is not a usable string is refused when the ops file loads` `expected 'unreadable', actual 'configured'` (row empty); `the command and the status lookup of one binding run in one directory` `command, cwd undefined` (actual `[undefined]`, expected `[<root>]`); `the release runner and goal reconcile use the binding directory` deploy call `cwd` is the main checkout, expected `<main checkout>\ops`; `aidlc goal reconcile looks the status up ...` `ENOENT ... cwd.txt` (the lookup ran in `ops` read against the process directory and wrote nothing); `a binding directory that does not exist stops the release before any operation` `expected 'stop', actual 'stage'`. The order rows (`... changes no earlier return of the deploy step`) pass on main by design: they pin the existing order.
 
 ### Revert table (each hunk reverted alone on the candidate; failing tests of ops.test.ts, exec-sync-tree.test.ts, ops-cwd.test.ts, release.test.ts, release-reissue.test.ts)
-Rerun on commit 1faf739c (the type annotation added to the template test afterwards changes no source); the rows are the same as in the run on 042d8cb7 apart from the template row. `reconcile.test.ts` is not in the run (it calls neither function). `a status lookup whose directory does not exist fails to start and reads as UNKNOWN` pins a docs sentence and passes on main too, so no source revert fails it and it has no row.
+Rerun on commit 2efcbb72 (the later commit 0209b56d changes only how `ops-cwd.test.ts` removes its fixtures); every row of the earlier runs fails the same tests, and the rows added since are the NUL row and the four document rows. `reconcile.test.ts` is not in the run (it calls neither function). `a status lookup whose directory does not exist fails to start and reads as UNKNOWN` pins a docs sentence and passes on main too, so no source revert fails it and it has no row.
 
 | Hunk reverted | Tests that fail |
 |---|---|
@@ -99,6 +99,11 @@ Rerun on commit 1faf739c (the type annotation added to the template test afterwa
 | R5 new stop removed | `a binding directory that does not exist stops the release before any operation` |
 | R5 `isDirectory` answers by `existsSync` | same test (the file rows) |
 | R5 `isDirectory` without the `try`/`catch` | same test and the order test (absent directory throws) |
+| R2 schema: a NUL character allowed (the `refine` removed) | `a cwd that is not a usable string ...` (the `a NUL character` row) |
+| R6 `docs/OPERATIONS.md` reverted to its text at 6a95726b (without the NUL clause and the stop conditions) | `the template copy of DELIVERY-OPS.md is the repository's` (`docs/OPERATIONS.md holds: and one that holds a NUL character (U+0000)`) |
+| R6 `docs/DELIVERY-OPS.md` reverted to 6a95726b | same test (the equality with the template) |
+| R6 `templates/docs/DELIVERY-OPS.md` reverted to 6a95726b | same test (the equality with the repository copy) |
+| R6 `CHANGELOG.md` reverted to 6a95726b | same test (`CHANGELOG.md holds: and one that holds a NUL character (U+0000)`) |
 | R6 `templates/docs/DELIVERY-OPS.md` left as on c738c646 | `the template copy of DELIVERY-OPS.md is the repository's` (equality assertion; run alone: ops.test.ts pass 12, fail 1) |
 
 ### Clause table
@@ -109,6 +114,7 @@ Rerun on commit 1faf739c (the type annotation added to the template test afterwa
 | R1 `/srv/ops`, `C:\ops`, `\\server\share\ops` and the other Windows forms on POSIX | same test, posix rows (not run on this host) |
 | R2 null, 3, `{}` | `a cwd that is not a usable string is refused when the ops file loads`, rows null, a number, an object |
 | R2 empty, spaces, tab, and the other `\s` characters (line break, no-break space, byte order mark) | same test |
+| R2 a `cwd` holding a NUL character (`ops\u0000x`) refused, with the issue at `operations.1.cwd` | same test, the `a NUL character` row; RED at 5e12929c before the schema `refine` |
 | R2 `C:ops`, `c:ops`, `C:` refused; `C:\ops`, `c:/ops`, `ops`, `ops dir`, `/srv/ops` load; issue at `operations.1.cwd` | same test |
 | R3 both signatures; same directory for command and lookup | `the command and the status lookup of one binding run in one directory`; the 14 changed calls of ops.test.ts; `acceptance 4` of exec-sync-tree.test.ts with the root added |
 | R4 `issue` and the reconcile loop | `the release runner and goal reconcile use the binding directory` |
@@ -118,6 +124,7 @@ Rerun on commit 1faf739c (the type annotation added to the template test afterwa
 | R5 unbound-role row | an unbound role has no `cwd`, so the row binds the other roles to a missing directory and pins that no directory check runs without a binding (accepted by the coordinator) |
 | R5 a lookup whose directory does not exist reads as UNKNOWN | `a status lookup whose directory does not exist fails to start and reads as UNKNOWN` (real process start; true on main too, it pins the sentence) |
 | R6 | `docs/OPERATIONS.md` Rules paragraph, `docs/DELIVERY-OPS.md` Per-operation record, `CHANGELOG.md` entry above `T1-R3-SECOND-PASS`; reviewer-verified against the diff |
+| R6 the conditions of the `release-config` stop (the role is bound, the step has no ledger record yet, the publication check passes; a recorded step is settled, an unbound role stops NOT CONFIGURED, an unauthorized publication stops `release-auth`) in `docs/OPERATIONS.md`, `docs/DELIVERY-OPS.md`, the template and the CHANGELOG | `the template copy of DELIVERY-OPS.md is the repository's`; RED at 5e12929c with the documents as on 6a95726b; the behaviour itself: the three order rows of `... changes no earlier return of the deploy step` |
 | R6 template copy equal to `docs/DELIVERY-OPS.md` (line endings normalised) and both hold the `cwd` rule | `the template copy of DELIVERY-OPS.md is the repository's` (ops.test.ts); RED at 4480631d: `template` differs from `repository` by the `cwd` bullet, green at 1faf739c |
 
 ### Forbid and non_goals
@@ -133,15 +140,42 @@ Rerun on commit 1faf739c (the type annotation added to the template test afterwa
 | provider timeouts and status interpretation | unchanged |
 | a directory removed between the check and the command | not handled; no code or doc sentence about it |
 
-Child processes of the tests: `git init`, `git commit`, `git worktree add` and the CLI of `ops-cwd.test.ts` start with every `GIT_*` variable removed in any case, `AIDLC_STATE_DIR` removed, and `GIT_CEILING_DIRECTORIES` set to the parent of the fixture directory. `makeFixture` starts no child process in these tests (the runner is scripted).
+Child processes of the tests (`ops-cwd.test.ts`): `git init`, `git commit`, `git worktree add` and the CLI. The form chosen for the fixture git setup is the command line (`-c`) plus an environment, not the repository config. In code:
+
+```ts
+function childEnv(fixture: string, iso: GitIsolation): Record<string, string> {
+  const inherited = Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && !/^GIT_/i.test(entry[0]) && entry[0].toUpperCase() !== 'AIDLC_STATE_DIR');
+  return { ...Object.fromEntries(inherited), GIT_CEILING_DIRECTORIES: path.dirname(fixture), GIT_CONFIG_GLOBAL: iso.config, GIT_CONFIG_NOSYSTEM: '1' };
+}
+// iso.config: an empty file, iso.hooks: an empty directory, both in a tmpDir of the test removed by t.after(() => cleanup(dir))
+const config = ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', `core.hooksPath=${iso.hooks}`, '-c', 'commit.gpgsign=false', '-c', 'tag.gpgsign=false'];
+spawnSync('git', [...config, ...args], { cwd, env: childEnv(fixture, iso), encoding: 'utf8', windowsHide: true });
+```
+
+Every inherited `GIT_*` variable is removed in any case (so `git_dir` and `GIT_CONFIG_COUNT` go too), `AIDLC_STATE_DIR` is removed, the global configuration is the empty file, the system configuration is off, and the identity, hooks path and signing come from the arguments. The CLI children get the same environment. `makeFixture` starts no child process in these tests (the runner is scripted).
+
+Hostile-configuration check: with the parent environment `HOME` and `USERPROFILE` set to a directory whose `.gitconfig` sets `commit.gpgsign=true`, `core.hooksPath` to a directory with a `pre-commit` that exits 1 and `gpg.program` to a missing program, and `GIT_CONFIG_GLOBAL` naming the same file, `ops-cwd.test.ts` run on 5e12929c (before the change) failed at `git commit -q --allow-empty -m init: hostile hook ran`; on 7326c2d0 and later the same command gave `# pass 4`, `# fail 0`.
+
+### Temporary directories of the two test files (grep at 0209b56d)
+`grep -n "cleanup\|tmpDir(\|makeFixture(\|rmSync\|mkdtempSync\|finally" tests/scenarios/ops-cwd.test.ts tests/infra/ops.test.ts`, with `grep -c "fx.cleanup"` giving 0 for both files:
+
+| Directory | Created by | Removed by |
+|---|---|---|
+| `dir` of `ops.test.ts` | `tmpDir()` (line 10) | `after(() => cleanup(dir))` (line 11) |
+| fixture of `fixtureFor` in `ops-cwd.test.ts` | `makeFixture()` (line 22) | `t.after(() => cleanup(fx.tmp))` (line 23) |
+| git isolation directory | `tmpDir('aidlc-ops-cwd-git-')` (line 90) | `t.after(() => cleanup(dir))` (line 91) |
+| `repo`, the parent of `linked`, `out` of the CLI test | `tmpDir` (lines 120 to 122) | `t.after(() => [repo, path.dirname(linked), out].forEach(cleanup))` (line 124) |
+
+No `mkdtempSync`, no `rmSync`, no `finally`, no `fx.cleanup` in either file.
 
 ### Doc-reading tests (standing check G)
-Run on commit 1faf739c: the 75 test files of `tests/` that name `OPERATIONS.md`, `DELIVERY-OPS.md` or `CHANGELOG.md` and read files (`grep -rlE "(OPERATIONS|DELIVERY-OPS)\.md|CHANGELOG\.md|DELIVERY-OPS" tests`, then those with `readFileSync|readDoc|read(|cpSync|readdirSync`; it includes `tests/infra/init.test.ts`, which reads the template tree) in one `node --test` run gave tests 1819, pass 1806, fail 2, skipped 11 (the 2 failures are 3 `not ok` lines: two nested in one suite). The failing tests were `T0-EXEC-TREE-KILL run on real processes` (acceptance 4, a 6 s limit) in `tests/infra/exec.test.ts` and `T0-HOOK-GIT-PREFETCH acceptance 2` in `tests/surface/hook-git-prefetch.test.ts`. Rerun alone on the same commit: `exec.test.ts` tests 61, pass 61, fail 0; `hook-git-prefetch.test.ts` tests 9, pass 9, fail 0; both together tests 70, pass 70, fail 0. Both are load flakes: the failing tests run real processes and do not assert a doc sentence. The full-suite run on 042d8cb7 (tests 3179, pass 3161, fail 2, skipped 16) had the same `exec.test.ts` failures.
+Run on commit 0209b56d: the 75 test files of `tests/` that name `OPERATIONS.md`, `DELIVERY-OPS.md` or `CHANGELOG.md` and read files (`grep -rlE "(OPERATIONS|DELIVERY-OPS)\.md|CHANGELOG\.md|DELIVERY-OPS" tests`, then those with `readFileSync|readDoc|read(|cpSync|readdirSync`; it includes `tests/infra/init.test.ts`, which reads the template tree) in one `node --test` run gave tests 1819, pass 1807, fail 1, skipped 11. The failing test was `T0-EXEC-TREE-KILL run on real processes` (acceptance 4, a 6 s limit) in `tests/infra/exec.test.ts`; rerun alone on 0209b56d: tests 61, pass 61, fail 0. It is a load flake: the test runs real processes and asserts no doc sentence. The same run on 1faf739c had that failure and one in `tests/surface/hook-git-prefetch.test.ts` (9 of 9 alone). All four documents changed since that run; this run follows the change.
 
 ### DoD
-`npm run typecheck && node --test tests/infra/ops.test.ts tests/infra/exec-sync-tree.test.ts tests/scenarios/ops-cwd.test.ts tests/scenarios/release.test.ts tests/scenarios/release-reissue.test.ts tests/infra/reconcile.test.ts` ended `# tests 77`, `# suites 7`, `# pass 77`, `# fail 0`, `# cancelled 0`, `# skipped 0`, exit 0 (on the final tree, including the type annotation of the template test).
+`npm run typecheck && node --test tests/infra/ops.test.ts tests/infra/exec-sync-tree.test.ts tests/scenarios/ops-cwd.test.ts tests/scenarios/release.test.ts tests/scenarios/release-reissue.test.ts tests/infra/reconcile.test.ts` on 0209b56d ended `# tests 77`, `# suites 7`, `# pass 77`, `# fail 0`, `# cancelled 0`, `# skipped 0`, exit 0.
 
 ### Diff size
-Against c738c646, without this card file, on the final tree: 377 lines added and 31 removed in 10 files, within the budget of 460 (the budget of 320 at 042d8cb7 was exceeded by 44 added lines and was raised by the card). Source files: 45 added and 11 removed (`src/delivery/ops.ts` 24/5, `src/loop/release-runner.ts` 20/5, `src/cli/main.ts` 1/1). Tests: 327 added, 19 removed (`tests/infra/ops.test.ts` 123/16, `tests/scenarios/ops-cwd.test.ts` 201/0, `tests/infra/exec-sync-tree.test.ts` 3/3). Docs, CHANGELOG and the template: 5 added, 1 removed.
+Against origin/main (ebc55182 plus the merged cards), without this card file, on the final tree: 411 lines added and 31 removed in 10 files, within the budget of 460. Source files: 47 added and 11 removed (`src/delivery/ops.ts` 26/5, `src/loop/release-runner.ts` 20/5, `src/cli/main.ts` 1/1). Tests: 359 added, 19 removed (`tests/infra/ops.test.ts` 136/16, `tests/scenarios/ops-cwd.test.ts` 220/0, `tests/infra/exec-sync-tree.test.ts` 3/3). Docs, CHANGELOG and the template: 5 added, 1 removed.
+
 
 Coordinator verification:
