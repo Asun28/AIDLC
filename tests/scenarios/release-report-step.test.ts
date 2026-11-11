@@ -6,11 +6,12 @@ import { test, type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
 import { realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { makeFixture, writeCard, goalForCards, opsRunner, T0 } from './_harness.ts';
+import { makeFixture, writeCard, goalForCards, opsRunner, actorB, T0 } from './_harness.ts';
 import { ReleaseRunner } from '../../src/loop/release-runner.ts';
 import { ReleaseAttempt, HOUR_MS, addMs } from '../../src/core/types.ts';
 import { DeliveryOpsConfig, type OpsLoad } from '../../src/delivery/ops.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import { resourceKeys } from '../../src/coordination/lease.ts';
 import type { SyncRunner } from '../../src/probes/exec.ts';
 
 type Fx = ReturnType<typeof makeFixture>;
@@ -289,8 +290,9 @@ test('a failed verification stops the attempt as a failed operation of its state
   });
   assertFailedStop(fx, releaseRunner(fx, countingOps), counted.id, 'package-run-proof', false);
   assert.equal(opsReads, 0, 'the PREPARE needs were evaluated before the failed run proof stopped the attempt');
-  // The run proof stop is a package attempt's: a failed package-run-proof stored on a staging attempt (only the raw
-  // release-result patch writes one) leaves `next` as it is for the same attempt without that step.
+  // The run proof stop is a package attempt's: a failed package-run-proof stored on a staging attempt (the raw
+  // release-result patch writes one, and so did main's `release report` in any state) leaves `next` as it is for the
+  // same attempt without that step.
   const plain = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging' }));
   const carrying = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging', steps: [step('package-run-proof', 'failed')] }));
   assert.deepEqual([carrying.directive.kind, carrying.attempt.state, carrying.attempt.stop?.reason, carrying.attempt.stop?.detail], [plain.directive.kind, plain.attempt.state, plain.attempt.stop?.reason, plain.attempt.stop?.detail]);
@@ -313,6 +315,12 @@ test('a failed verification stored with any operation step stops before any oper
     const recovering = stored(fx, goalId, { target: 'production', environment: 'production', state: 'RECOVER', disposition: 'recovered', steps: [...(opStatus ? [step('recover', opStatus)] : []), step('recover-verify', 'failed')] });
     assertFailedStop(fx, runner, recovering.id, 'recover-verify', recoverGlobal);
   }
+  // The checks `next` makes before the case keep their precedence: an environment owned by another session is waited on.
+  fx.leases.claim(resourceKeys.environment('staging-held'), { actor: actorB, operation: 'another release', now: fx.now() });
+  const held = stored(fx, goalId, { environment: 'staging-held', state: 'STAGE', steps: [step('stage-deploy', 'succeeded'), step('stage-verify', 'failed')] });
+  const waited = runner.next(fx.goal(goalId), held);
+  assert.deepEqual([waited.directive.kind, waited.directive.kind === 'wait' ? waited.directive.on : ''], ['wait', 'environment:staging-held'], waited.directive.narration);
+  assert.equal(JSON.stringify(fx.store.getRelease(held.id)), JSON.stringify(held), 'the attempt is not stopped while the environment is owned elsewhere');
   assert.equal(runs, 0, 'no operation command ran');
   assert.deepEqual(fx.ops.list({ goalId }), [], 'no ledger record');
   assert.ok(!fx.events(goalId).some((e) => e.type === 'OPERATION_INTENT'), 'no OPERATION_INTENT');
