@@ -70,14 +70,16 @@ npm run typecheck && node --test tests/scenarios/release-report-step.test.ts tes
 
 Attempt 1 (effort high). RED commit `1d88c7a3` (the test file alone, sources of main at e4ec94af): 6 of 7 tests failed and acceptance 6 passed, as the card says. First failing assertion per test: acceptance 1 `Missing expected exception: PREPARE "stage-deploy" "succeeded"` (main stores an operation step name); acceptance 2 `Missing expected exception: PREPARE "package-run-proof" "pending"` (main stores `pending`); acceptance 3 `Missing expected exception: PREPARE "package-run-proof" "succeeded"` with the candidate digest absent; acceptance 4 `expected: 'stop'`, `actual: 'prepare'` (main asks for the failed run proof again); acceptance 5 `Missing expected exception: PREPARE "package-run-proof" "succeeded"` after a `failed` report; acceptance 7 `expected: 1`, `actual: 0` (the CLI stored `stage-deploy`). After the RED commit the test file gained two blocks and nothing else: the refusals after the state advances (acceptance 1) and the staging attempt that carries a stored failed `package-run-proof` (acceptance 4); no test file of main is changed.
 
-Source: `src/loop/release-runner.ts` gains `prepareNeeds` (the needs list `next` built inline, now read by `next` and by `expectedSteps`), `expectedSteps`, `isReportStatus`, the two refusals at the top of `reportStep` and three STOPs in `next` (PREPARE before the needs, STAGE and RECOVER inside the `succeeded` branch of the operation step). `src/cli/main.ts` changes the description of `release report` only. The returns of `next` keep their order; each STOP is a new early return.
+Source: `src/loop/release-runner.ts` gains `prepareNeeds` (the needs list `next` built inline, now read by `next` and by `expectedSteps`), `expectedSteps`, `isReportStatus`, the two refusals at the top of `reportStep` and three STOPs in `next`, each the first statement of its case: PREPARE before the needs, STAGE before the `stage-deploy` check, RECOVER before the `recover` check. `src/cli/main.ts` changes the description of `release report` only. The returns of `next` keep their order; each STOP is a new early return.
+
+Repair after the Codex pre-review of `d7081674` (card amended at 25efcd24: budget 600, the concurrent writer of the attempt a non-goal). (1) R4 and R5: main accepted a verification report in any state, so an attempt can be stored in STAGE with a `failed` `stage-verify` and no `stage-deploy` step, or in RECOVER with a `failed` `recover-verify` and no `recover` step; on `d7081674` `next` issued the operation for those. Each verification check now comes before its operation-step check, so a stored `failed` verification stops whatever the operation step is; no existing return moved. New test "a failed verification stored with any operation step stops before any operation is issued": attempts written to the store directly with the operation step absent or in each of the six step statuses, each giving the STOP of acceptance 4, with no runner call, no ledger record and no `OPERATION_INTENT`. (2) Order tests that could not fail: the R6 check of acceptance 4 now also asserts zero reads of the ops configuration (a counting `Proxy` around the `OpsLoad`, which `prepareNeeds` reads through `resolveRoles`), and every refusal checked by `assertRefused` asserts zero reads of the runner's clock (a counting clock). (3) The CLI child of the tests gets no variable whose upper-cased name is `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` or `GIT_CEILING_DIRECTORIES` from the caller, and `GIT_CEILING_DIRECTORIES` set to the fixture's parent directory, as given and as `realpathSync.native` returns it (a short 8.3 temporary path and its long form): git then stops discovery at the fixture, so a temporary directory inside a checkout does not resolve to that repository. The fixture is not made a repository because the CLI then takes its identity from git (`isGit` true, a canonical main root) and the scenario fixtures and release.test.ts run it as a plain directory. (4) The "Read once" sentence now names the non-goal. (5) docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md now say that the run proof is expected once the candidate and configuration prerequisites are met (which is when `release next` asks for the install/run proof, not when it lists no need) and say what main did with a status (stored any the step schema accepts; for any other, appended `EVIDENCE_RETAINED` and then failed the schema validation of the save).
 
 | Item | Proof | Result |
 |---|---|---|
 | 1 | `tests/scenarios/release-report-step.test.ts` "release report accepts only the step the attempt's state asks for" | pass; fails on main |
 | 2 | same file, "a status outside succeeded, failed and UNKNOWN is refused before any write" | pass; fails on main |
 | 3 | same file, "a package run proof is refused through aidlc release report until the PREPARE needs are met, so the attempt never reaches DONE without them" (the runner and the CLI for each of the seven needs) | pass; fails on main |
-| 4 | same file, "a failed verification stops the attempt as a failed operation of its state does" | pass; fails on main |
+| 4 | same file, "a failed verification stops the attempt as a failed operation of its state does", and "a failed verification stored with any operation step stops before any operation is issued" (repair) | pass; both fail on main |
 | 5 | same file, "a failed manual step is final" | pass; fails on main |
 | 6 | same file, "an UNKNOWN verification keeps the state and the step is asked for again" | pass; passes on main |
 | 7 | same file, "aidlc release report refuses an operation step by exit 1 and writes nothing" | pass; fails on main |
@@ -97,13 +99,13 @@ Clause table (A). "Revert" names the row of the revert table below that removes 
 | R1 a stored `failed` step is no longer expected | `expectedSteps`: `status(name) !== 'failed'` | acc 5 (revert "R1 failed is final") |
 | R1 every other name, and each of the three in another state or condition, is refused | as above | acc 1 table |
 | R2 status only `succeeded`, `failed`, `UNKNOWN`, exact | `isReportStatus`; the second refusal of `reportStep` | acc 2 (revert "R2 status check removed"); each literal: reverts "R2 succeeded/failed/UNKNOWN not accepted" |
-| R3 refusal before any journal append and any save | both refusals precede `this.clock()`, the append and `this.save` | every refusal in acc 1, 2, 3, 5, 7 asserts the stored attempt and the journal length unchanged (revert "R3 checks after the journal append") |
+| R3 refusal before any journal append and any save | both refusals precede `this.clock()`, the append and `this.save` | every refusal in acc 1, 2, 3, 5, 7 asserts the stored attempt and the journal length unchanged and zero clock reads (reverts "R3 checks after the journal append", "R3 clock read before the report validation") |
 | R3 message names the attempt id, the state, the refused name or status, the expected step or none | `refuse` in `reportStep` | acc 1, 2, 3, 5, 7 (reverts "R3 message names ...") |
 | R3 CLI writes `aidlc: <message>` to stderr and exits 1, after the unchanged `--goal` refusal | the existing catch of `main()` (the `invokedDirectly` block of src/cli/main.ts) and `releaseCtx`, both unchanged | acc 7 (message line, exit 1, `--goal` message first), acc 3 CLI rows; release.test.ts "a release command refuses a --goal that does not own the attempt, and writes nothing" |
 | R3 an accepted report appends `EVIDENCE_RETAINED` before the save; a failed save leaves the event and no step; the step stays expected and a repeat is accepted | `reportStep` body after the refusals, unchanged | acc 5 lost-save block for each of the three steps (revert "R3 accepted report journals before the save") |
-| R4 failed `stage-verify` stops STAGE: `release-health`, `staging verification failed`, the next action, `global` false, disposition `failed` | `next` STAGE, inside `done.status === 'succeeded'` | acc 4 (staging and production attempts), acc 5 (reverts "R4 ...") |
-| R5 failed `recover-verify` stops RECOVER: `release-health`, `recovery verification failed`, the next action, disposition `failed`, as the failed `recover` STOP | `next` RECOVER, with the `makeStop` options of the failed `recover` STOP (`{ at: now }`) | acc 4, acc 5; `global` is compared with the failed `recover` STOP of the same fixture (reverts "R5 ...") |
-| R6 failed `package-run-proof` stops PREPARE of a `package` attempt, read before the needs | `next` PREPARE, first statement of the case | acc 4 (ops unreadable after the report; a staging attempt carrying the step is not stopped), acc 5 (reverts "R6 package failed stop", "R6 stop read after the needs", "R6 stop only for a package attempt") |
+| R4 failed `stage-verify` stops STAGE: `release-health`, `staging verification failed`, the next action, `global` false, disposition `failed` | `next` STAGE, first statement, before the `stage-deploy` check | acc 4 (staging and production attempts; stored with `stage-deploy` absent or in any status), acc 5 (reverts "R4 ...", "R4 verification check after the operation-step check") |
+| R5 failed `recover-verify` stops RECOVER: `release-health`, `recovery verification failed`, the next action, disposition `failed`, as the failed `recover` STOP | `next` RECOVER, first statement, before the `recover` check, with the `makeStop` options of the failed `recover` STOP (`{ at: now }`) | acc 4 (also stored with `recover` absent or in any status), acc 5 (revert "R5 verification check after the operation-step check"); `global` is compared with the failed `recover` STOP of the same fixture (reverts "R5 ...") |
+| R6 failed `package-run-proof` stops PREPARE of a `package` attempt, read before the needs | `next` PREPARE, first statement of the case | acc 4 (ops unreadable after the report; zero reads of the ops configuration; a staging attempt carrying the step is not stopped), acc 5 (reverts "R6 package failed stop", "R6 stop read after the needs", "R6 prepareNeeds called before the failed-proof check", "R6 stop only for a package attempt") |
 | R6 `aidlc release candidate` does not clear the failed step | `setCandidate` unchanged | acc 5 (CLI `release candidate --digest c2`; the step stays `failed` and `next` stops) |
 | R7 the STOPs are saved and returned as the other STOPs of `next` | `this.save(...)` then `stopOut` | acc 4 and 5: the stored attempt equals the returned one and the `stop` directive carries the same record (reverts "R4/R5/R6 stop saved") |
 | R8 `UNKNOWN` keeps the state and `next` asks for the step | no change | acc 6 (passes on main, as the card says) |
@@ -122,11 +124,12 @@ Input classes (C).
 | other step names | `stage-deploy`, `apply-deploy`, `recover`, `anything`, `""`, `Stage-Verify`, `" stage-verify"`, and for each of the three names its upper case, capitalised form, leading space, trailing space, trailing tab and leading newline: refused in every row with each of the three statuses | acc 1 |
 | a report repeated before and after `next` | `succeeded` or `UNKNOWN` before `next`: accepted; `UNKNOWN` after `next` (state kept): accepted; after the state advanced (package DONE, staging DONE, RECOVER to CLOSE): refused; `failed` before `next` and after `next` (STOP): refused | acc 5, acc 6, acc 1 |
 | the operation step of the state absent, `UNKNOWN`, `running`, `failed`, `succeeded` | only `succeeded` makes the verification expected | acc 1 STAGE and RECOVER rows |
+| a `failed` `stage-verify` stored in STAGE, or `recover-verify` in RECOVER, with the operation step absent, `pending`, `running`, `succeeded`, `failed`, `UNKNOWN` or `skipped` (main accepted such reports) | STOP of R4 or R5 before any operation is issued | acc 4 (repair test) |
 | a failed run proof stored on an attempt that is not `package` (only the raw `release-result` patch writes one) | not read: `next` returns what it returns for the same attempt without that step | acc 4 |
 
-Read once (E). `reportStep` decides on the attempt it is given and writes that attempt plus the step: R1 names "the attempt it is given (the stored attempt `aidlc release report` reads)", and the CLI reads it from the store in `releaseCtx` right before the call. A second writer that saves the attempt between that read and the save (a concurrent `release report` or `release next` in another process) is not seen: `GoalStore.saveRelease` has no compare-and-swap, and `src/state/` is outside `allow_paths`. The card's `non_goals` do not name this window; no test covers it.
+Read once (E). `reportStep` decides on the attempt it is given and writes that attempt plus the step: R1 names "the attempt it is given (the stored attempt `aidlc release report` reads)", and the CLI reads it from the store in `releaseCtx` right before the call. A second writer that saves the attempt between that read and the save (a concurrent `release report` or `release next` in another process) is not seen: `GoalStore.saveRelease` has no compare-and-swap, and `src/state/` is outside `allow_paths`. The card's `non_goals` name this window (amended at 25efcd24); no test covers it.
 
-Revert table ("acc N" is the test of acceptance N in tests/scenarios/release-report-step.test.ts). Each row changes one source hunk on its own in the worktree, runs `tests/scenarios/release-report-step.test.ts` and `tests/scenarios/release.test.ts`, and restores the file. Run once more after the last source change.
+Revert table ("acc N" is the test of acceptance N in tests/scenarios/release-report-step.test.ts; "acc 4b" is the repair test "a failed verification stored with any operation step stops before any operation is issued"). Each row changes one source hunk on its own in the worktree, runs `tests/scenarios/release-report-step.test.ts` and `tests/scenarios/release.test.ts`, and restores the file. Run once more, all rows, after the last source change of the repair.
 
 | Hunk changed | Result |
 |---|---|
@@ -158,15 +161,19 @@ Revert table ("acc N" is the test of acceptance N in tests/scenarios/release-rep
 | R6 stop read after the needs | fails: acc 4 |
 | R6 stop global | fails: acc 4, acc 5 |
 | R6 stop saved | fails: acc 4, acc 5 |
-| R4 stage-verify failed stop | fails: acc 4, acc 5 |
-| R4 stop global | fails: acc 4, acc 5 |
-| R4 stop saved | fails: acc 4, acc 5 |
-| R5 recover-verify failed stop | fails: acc 4, acc 5 |
-| R5 stop global | fails: acc 4, acc 5 |
-| R5 stop saved | fails: acc 4, acc 5 |
+| R4 stage-verify failed stop | fails: acc 4, acc 4b, acc 5 |
+| R4 stop global | fails: acc 4, acc 4b, acc 5 |
+| R4 stop saved | fails: acc 4, acc 4b, acc 5 |
+| R5 recover-verify failed stop | fails: acc 4, acc 4b, acc 5 |
+| R5 stop global | fails: acc 4, acc 4b, acc 5 |
+| R5 stop saved | fails: acc 4, acc 4b, acc 5 |
+| R4 verification check after the operation-step check (as d7081674) | fails: acc 4b |
+| R5 verification check after the operation-step check (as d7081674) | fails: acc 4b |
+| R6 prepareNeeds called before the failed-proof check | fails: acc 4 |
+| R3 clock read before the report validation (moved to the top) | fails: acc 1, acc 2, acc 3, acc 5 |
 | R10 CLI description | fails: acc 7 |
 
-All 35 rows fail at least one test; no row stays green.
+All 39 rows fail at least one test; no row stays green.
 
 Forbid and non-goals:
 - weakening or skipping a test: no test file of main is changed (`git diff --stat origin/main...HEAD -- tests` lists only `tests/scenarios/release-report-step.test.ts`).
@@ -181,10 +188,12 @@ Forbid and non-goals:
 - non-goal, the narration of the stage and recover directives: unchanged strings.
 - non-goal, `.claude/skills/aidlc-loop/release.md`: not in the diff.
 
-Hygiene: no `mkdtempSync` in the new file (directories come from `makeFixture`, removed by `t.after(() => fx.cleanup())`); the CLI runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE` and `GIT_COMMON_DIR` removed and `AIDLC_STATE_DIR` set to the fixture; no test reads the wall clock or sleeps; no assertion reads an OS error message or a path separator.
+Hygiene: no `mkdtempSync` in the new file (directories come from `makeFixture`, removed by `t.after(() => fx.cleanup())`); the CLI runs with `GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_COMMON_DIR` and `GIT_CEILING_DIRECTORIES` removed in any letter case, `GIT_CEILING_DIRECTORIES` set to the fixture's parent (repair item 3) and `AIDLC_STATE_DIR` set to the fixture; no test reads the wall clock or sleeps; no assertion reads an OS error message or a path separator.
 
-Documents pinned by other tests: the 78 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md (`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md|release\.md" tests --include=*.test.ts`) were run in one `node --test` call after the doc edits: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0.
+Documents pinned by other tests: the 78 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md (`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md|release\.md" tests --include=*.test.ts`) were run in one `node --test` call after the doc edits: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0. After the repair (docs, tests and source changed), the same 78 files in one call: 1867 tests, 1855 pass, 0 fail, 12 skipped, exit 0; no file needed a rerun alone.
 
 DoD: `npm run typecheck && node --test tests/scenarios/release-report-step.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/release-reissue.test.ts`, run as the card gives it on the GREEN sources: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 37`, `# pass 37`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 7 tests of the new file are `ok 13` to `ok 19`).
+
+DoD after the repair, run as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
 
 Coordinator verification:

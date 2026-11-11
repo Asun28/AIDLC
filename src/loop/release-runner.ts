@@ -211,13 +211,13 @@ export class ReleaseRunner {
         return saved.state === 'STOP' ? stopOut(saved) : this.next(goal, saved);
       }
       case 'STAGE': {
+        if (attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'staging verification failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'stage-deploy');
         if (!done) return this.issue(goal, attempt, 'deploy', 'stage-deploy', attempt.environment!, 'stage');
         if (done.status === 'succeeded') {
-          if (attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'failed') {
-            const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'staging verification failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
-            return stopOut(stopped);
-          }
           const verified = attempt.steps.find((s) => s.name === 'stage-verify')?.status === 'succeeded';
           if (!verified) return { attempt, directive: { kind: 'stage', attemptId: attempt.id, environment: attempt.environment!, operations: ['smoke', 'health', 'recovery-readiness'], narration: `Staging deployed. Verify smoke, applicable health and recovery readiness on THIS candidate, then report stage-verify succeeded (aidlc release report ${attempt.id} --step stage-verify --status succeeded).` } };
           if (attempt.target === 'staging') {
@@ -278,13 +278,13 @@ export class ReleaseRunner {
         return stopOut(stopped);
       }
       case 'RECOVER': {
+        if (attempt.steps.find((s) => s.name === 'recover-verify')?.status === 'failed') {
+          const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'recovery verification failed', 'escalate to the named owner with environment and data state', { at: now }), disposition: 'failed' });
+          return stopOut(stopped);
+        }
         const done = attempt.steps.find((s) => s.name === 'recover');
         if (!done) return this.issue(goal, attempt, 'recover', 'recover', attempt.environment!, 'recover');
         if (done.status === 'succeeded') {
-          if (attempt.steps.find((s) => s.name === 'recover-verify')?.status === 'failed') {
-            const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'recovery verification failed', 'escalate to the named owner with environment and data state', { at: now }), disposition: 'failed' });
-            return stopOut(stopped);
-          }
           const verified = attempt.steps.find((s) => s.name === 'recover-verify')?.status === 'succeeded';
           if (!verified) return { attempt, directive: { kind: 'recover', attemptId: attempt.id, narration: 'Recovery issued and completed; verify recovered environment/data health and report recover-verify succeeded.' } };
           const closed = transitionRelease(attempt, 'CLOSE', now, this.guards(goal, attempt, { recoveryVerified: true }));

@@ -4,13 +4,14 @@
 import assert from 'node:assert/strict';
 import { test, type TestContext } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, opsRunner, T0 } from './_harness.ts';
 import { ReleaseRunner } from '../../src/loop/release-runner.ts';
 import { ReleaseAttempt, HOUR_MS, addMs } from '../../src/core/types.ts';
 import { DeliveryOpsConfig, type OpsLoad } from '../../src/delivery/ops.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
+import type { SyncRunner } from '../../src/probes/exec.ts';
 
 type Fx = ReturnType<typeof makeFixture>;
 type StepRecord = ReleaseAttempt['steps'][number];
@@ -47,8 +48,18 @@ function setup(t: TestContext): { fx: Fx; goalId: string } {
   return { fx, goalId: goalForCards(fx, ['T1-HELLO'], { target: 'production' }).id };
 }
 
-function releaseRunner(fx: Fx, ops: OpsLoad = opsLoad(), store: GoalStore = fx.store): ReleaseRunner {
-  return new ReleaseRunner({ paths: fx.paths, repo: fx.repo, store, ops: fx.ops, leases: fx.leases, runner: opsRunner, opsLoad: ops, now: fx.now, signals: () => [] });
+/** The number of clock reads of each runner `releaseRunner` built. */
+const clockReads = new WeakMap<ReleaseRunner, () => number>();
+
+function releaseRunner(fx: Fx, ops: OpsLoad = opsLoad(), store: GoalStore = fx.store, runner: SyncRunner = opsRunner): ReleaseRunner {
+  let reads = 0;
+  const now = () => {
+    reads += 1;
+    return fx.now();
+  };
+  const release = new ReleaseRunner({ paths: fx.paths, repo: fx.repo, store, ops: fx.ops, leases: fx.leases, runner, opsLoad: ops, now, signals: () => [] });
+  clockReads.set(release, () => reads);
+  return release;
 }
 
 let seq = 0;
@@ -82,6 +93,7 @@ function assertRefused(fx: Fx, runner: ReleaseRunner, attemptId: string, name: s
   const attempt = fx.store.getRelease(attemptId)!;
   const before = JSON.stringify(attempt);
   const events = fx.events(attempt.goalId).length;
+  const reads = clockReads.get(runner)!();
   const label = `${attempt.state} ${JSON.stringify(name)} ${JSON.stringify(status)}`;
   assert.throws(
     () => runner.reportStep(fx.goal(attempt.goalId), attempt, name, status as 'succeeded'),
@@ -93,6 +105,7 @@ function assertRefused(fx: Fx, runner: ReleaseRunner, attemptId: string, name: s
   );
   assert.equal(JSON.stringify(fx.store.getRelease(attemptId)), before, `${label}: stored attempt changed`);
   assert.equal(fx.events(attempt.goalId).length, events, `${label}: journal grew`);
+  assert.equal(clockReads.get(runner)!(), reads, `${label}: the clock was read before the refusal`);
 }
 
 /** The name forms that differ from a manual step name only in letter case or by whitespace. */
@@ -103,8 +116,13 @@ function nameVariants(name: string): string[] {
 const FOREIGN_NAMES = ['stage-deploy', 'apply-deploy', 'recover', 'anything', '', 'Stage-Verify', ' stage-verify', ...MANUAL.flatMap(nameVariants)];
 
 function cli(fx: Fx, ...args: string[]) {
-  const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: fx.paths.root };
-  for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR']) delete env[key];
+  // No git variable of the caller reaches the child (names compared without case, as Windows does), and git discovery stops
+  // at the fixture: a temporary directory inside a checkout would otherwise resolve to that repository.
+  const env: NodeJS.ProcessEnv = {};
+  const dropped = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES'];
+  for (const [key, value] of Object.entries(process.env)) if (!dropped.includes(key.toUpperCase())) env[key] = value;
+  env['AIDLC_STATE_DIR'] = fx.paths.root;
+  env['GIT_CEILING_DIRECTORIES'] = [...new Set([path.dirname(fx.tmp), path.dirname(realpathSync.native(fx.tmp))])].join(path.delimiter);
   return spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), ...args], { cwd: fx.tmp, env, encoding: 'utf8', timeout: 60_000 });
 }
 
@@ -259,12 +277,45 @@ test('a failed verification stops the attempt as a failed operation of its state
   const pkg = expecting(fx, goalId, 'package-run-proof');
   runner.reportStep(fx.goal(goalId), pkg, 'package-run-proof', 'failed');
   assertFailedStop(fx, releaseRunner(fx, UNREADABLE), pkg.id, 'package-run-proof', false);
+  // ... and without evaluating the needs at all: the ops configuration, which the needs read, is not read.
+  const counted = expecting(fx, goalId, 'package-run-proof');
+  runner.reportStep(fx.goal(goalId), counted, 'package-run-proof', 'failed');
+  let opsReads = 0;
+  const countingOps = new Proxy(opsLoad(), {
+    get(target, key, receiver) {
+      opsReads += 1;
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  assertFailedStop(fx, releaseRunner(fx, countingOps), counted.id, 'package-run-proof', false);
+  assert.equal(opsReads, 0, 'the PREPARE needs were evaluated before the failed run proof stopped the attempt');
   // The run proof stop is a package attempt's: a failed package-run-proof stored on a staging attempt (only the raw
   // release-result patch writes one) leaves `next` as it is for the same attempt without that step.
   const plain = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging' }));
   const carrying = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging', steps: [step('package-run-proof', 'failed')] }));
   assert.deepEqual([carrying.directive.kind, carrying.attempt.state, carrying.attempt.stop?.reason, carrying.attempt.stop?.detail], [plain.directive.kind, plain.attempt.state, plain.attempt.stop?.reason, plain.attempt.stop?.detail]);
   assert.notEqual(carrying.attempt.stop?.detail, FAILED_STOP['package-run-proof'].detail);
+});
+
+test('a failed verification stored with any operation step stops before any operation is issued', (t) => {
+  const { fx, goalId } = setup(t);
+  let runs = 0;
+  const counting: SyncRunner = (command, args, options) => {
+    runs += 1;
+    return opsRunner(command, args, options);
+  };
+  const runner = releaseRunner(fx, opsLoad(), fx.store, counting);
+  const recoverGlobal = failedRecoverGlobal(fx, goalId);
+  // Attempts as main could leave them: main stored a verification report in any state, with no operation step or any status of it.
+  for (const opStatus of [undefined, ...STEP_STATUSES]) {
+    const staged = stored(fx, goalId, { state: 'STAGE', steps: [...(opStatus ? [step('stage-deploy', opStatus)] : []), step('stage-verify', 'failed')] });
+    assertFailedStop(fx, runner, staged.id, 'stage-verify', false);
+    const recovering = stored(fx, goalId, { target: 'production', environment: 'production', state: 'RECOVER', disposition: 'recovered', steps: [...(opStatus ? [step('recover', opStatus)] : []), step('recover-verify', 'failed')] });
+    assertFailedStop(fx, runner, recovering.id, 'recover-verify', recoverGlobal);
+  }
+  assert.equal(runs, 0, 'no operation command ran');
+  assert.deepEqual(fx.ops.list({ goalId }), [], 'no ledger record');
+  assert.ok(!fx.events(goalId).some((e) => e.type === 'OPERATION_INTENT'), 'no OPERATION_INTENT');
 });
 
 test('a failed manual step is final', (t) => {
