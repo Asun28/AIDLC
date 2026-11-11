@@ -1156,7 +1156,24 @@ export const IncidentRecord = z.looseObject({
 });
 export type IncidentRecord = z.infer<typeof IncidentRecord>;
 
-export const IncidentLedgerFile = z.record(z.string(), IncidentRecord);
+/** The path of the first own `__proto__` key of parsed JSON, at any depth: the record parse and the store's serializer drop that key, so a value held under it would vanish. */
+function protoKeyPath(value: unknown, trail: string[]): string[] | undefined {
+  if (typeof value !== 'object' || value === null) return undefined;
+  if (Object.hasOwn(value, '__proto__')) return [...trail, '__proto__'];
+  for (const [key, child] of Object.entries(value)) {
+    const found = protoKeyPath(child, [...trail, key]);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+export const IncidentLedgerFile = z
+  .unknown()
+  .superRefine((value, ctx) => {
+    const at = protoKeyPath(value, []);
+    if (at) ctx.addIssue({ code: 'custom', path: at, message: 'an own "__proto__" key is not allowed' });
+  })
+  .pipe(z.record(z.string(), IncidentRecord));
 export type IncidentLedgerFile = z.infer<typeof IncidentLedgerFile>;
 
 // ---------------------------------------------------------------------------

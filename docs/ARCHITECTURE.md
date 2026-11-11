@@ -190,7 +190,7 @@ Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all link
 | `evidence/<goalId>/manifest.json` + artifacts | retained artifacts with sha256, models, host, seal | `audit/manifest.ts` |
 | `board/<goalId>.md` (mirrored to `_local/aidlc-board.md`) | regenerated view; `aidlc board --watch` neither writes nor reads it | `state/board.ts` |
 | `releases/<attemptId>.json` | ReleaseAttempt: target, environment, candidate, steps, operations, health window/result, disposition | `loop/release-runner.ts` |
-| `incidents/incidents.json` | breach identity ledger with disposition: `IncidentLedgerFile`, a map of `IncidentRecord` (`core/types.ts`); read with `readJson` (a file that does not parse is an error, not an empty ledger) and written with `atomicWriteJson` | `maintain/incident.ts` |
+| `incidents/incidents.json` | breach identity ledger with disposition: `IncidentLedgerFile`, a map of `IncidentRecord` (`core/types.ts`); read with `readJson` after a stat in which only no entry means absent (a file that does not parse or cannot be read is an error, not an empty ledger) and written with `atomicWriteJson` | `maintain/incident.ts` |
 | `fix-task` | active fix-task marker read by the protect-tests hook; written by CLI `card fix-task`, deleted by `card fix-task --clear` | CLI `card fix-task` |
 | `heartbeat/<hash>` | one marker per session holding the UTC minute window (floor(now / 60 000 ms)) of its last card lease scan; an event in that window or an earlier one does not scan (card T0-CARD-LEASE-HEARTBEAT-2) | `hooks/index.ts` |
 | `session-default` | default session token shared by processes that set no `AIDLC_SESSION` and run outside Claude Code (no `CLAUDE_CODE_SESSION_ID`) | `state/journal.ts` |

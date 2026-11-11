@@ -4,10 +4,11 @@
  * Findings are deduplicated by breach identity within the configured window; dismissals tune
  * the bands. No hidden watcher is installed after development DONE (plan LC10).
  */
+import { statSync } from 'node:fs';
 import path from 'node:path';
 import { renderIntent, slugify, type Intent } from '../artifacts/intent.ts';
 import { IncidentLedgerFile, type IncidentRecord } from '../core/types.ts';
-import { atomicWriteJson, createExclusive, readJson } from '../state/store.ts';
+import { StoreError, atomicWriteJson, createExclusive, readJson } from '../state/store.ts';
 import { breachIdentity, type BandBreach } from './bands.ts';
 
 export class IncidentLedger {
@@ -17,12 +18,23 @@ export class IncidentLedger {
     this.file = path.join(dir, 'incidents.json');
   }
 
-  /** The ledger as stored; an absent file is an empty ledger and a file that does not parse throws a `StoreError` naming it (never read as empty). */
-  read(): IncidentLedgerFile {
-    return readJson(this.file, IncidentLedgerFile) ?? {};
+  /** Whether the ledger file exists: only "no entry" (ENOENT) means absent, any other stat error (a path under a regular file on POSIX, an unreadable parent) is a `READ_FAILED` that names the file. */
+  private present(): boolean {
+    try {
+      statSync(this.file);
+      return true;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw new StoreError('READ_FAILED', this.file, (err as Error).message);
+    }
   }
 
-  /** Writes `data` whole through a temporary file renamed into place, and only in a form `read` accepts. */
+  /** The ledger as stored; an absent file is an empty ledger and a file that cannot be read or does not parse throws a `StoreError` naming it (never read as empty). */
+  read(): IncidentLedgerFile {
+    return this.present() ? (readJson(this.file, IncidentLedgerFile) ?? {}) : {};
+  }
+
+  /** Writes `data` to a temporary file renamed into place, and only in a form `read` accepts. */
   write(data: IncidentLedgerFile): void {
     atomicWriteJson(this.file, IncidentLedgerFile.parse(data));
   }

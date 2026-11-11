@@ -1,6 +1,6 @@
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import fs, { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
@@ -30,6 +30,13 @@ const breach: BandBreach = {
 const HOUR = 60 * 60 * 1000;
 const t0 = '2026-09-11T00:00:00.000Z';
 const later = (h: number) => new Date(Date.parse(t0) + h * HOUR).toISOString();
+/** The variables with which git selects a repository: a child process must not inherit them from the caller (a hook, a worktree command) and find another repository than its fixture. */
+const GIT_SELECTORS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_PREFIX'];
+function childEnv(stateDir: string): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, AIDLC_STATE_DIR: stateDir };
+  for (const key of GIT_SELECTORS) delete env[key];
+  return env;
+}
 
 test('shouldFile files once, dedupes within the window, respects dismissal and refiles after the window', () => {
   const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-incident-'));
@@ -104,7 +111,7 @@ test('aidlc monitor check --file-intent records the filing time on the incident,
   try {
     writeFileSync(path.join(fx.tmp, 'bands.yaml'), ['metric: error_rate', 'direction: above', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n'), 'utf8');
     writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11], recent: [{ at: '2026-09-11T00:00:00.000Z', value: 14 }] }), 'utf8');
-    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: childEnv(fx.paths.root), encoding: 'utf8', timeout: 60_000 });
     const first = check();
     assert.equal(first.status, 0, first.stderr);
     assert.equal((JSON.parse(first.stdout) as { filed: string[] }).filed.length, 1, first.stdout);
@@ -142,7 +149,7 @@ const posixOnly = process.platform === 'win32' || process.getuid?.() === 0 ? 'PO
 const errno = (code: string): Error => Object.assign(new Error(`${code}: injected`), { code });
 const fsRecord = fs as unknown as Record<string, unknown>;
 /** Route one `node:fs` function through `make(real)` for the length of `body` (the ESM binding of a builtin follows the CJS export after a sync). */
-function withFs<T>(name: 'readFileSync' | 'renameSync' | 'writeSync' | 'openSync', make: (real: (...a: unknown[]) => unknown) => (...a: unknown[]) => unknown, body: () => T): T {
+function withFs<T>(name: 'readFileSync' | 'renameSync' | 'writeSync' | 'openSync' | 'statSync', make: (real: (...a: unknown[]) => unknown) => (...a: unknown[]) => unknown, body: () => T): T {
   const real = fsRecord[name] as (...a: unknown[]) => unknown;
   fsRecord[name] = make(real);
   syncBuiltinESMExports();
@@ -212,6 +219,23 @@ test('the ledger schema: a table of the fields R1 names', () => {
   assert.deepEqual(IncidentLedgerFile.parse({ k: rec({ note: { nested: 1 } }) })['k'], rec({ note: { nested: 1 } }), 'an unnamed key is kept as read');
 });
 
+const ledgerMethods: Array<[string, (l: IncidentLedger) => unknown]> = [
+  ['read', (l) => l.read()],
+  ['shouldFile', (l) => l.shouldFile(breach, 6 * HOUR, t0)],
+  ['attachIntent', (l) => l.attachIntent(breachIdentity(breach), 'intent/x.md', t0)],
+  ['triage', (l) => l.triage(breachIdentity(breach), 'dismissed', 'r')],
+];
+/** Each of read, shouldFile, attachIntent and triage throws a `StoreError` with `code` whose message names the ledger file (and `issuePath` when given). */
+function refusesAll(ledger: IncidentLedger, code: string, issuePath: string | undefined, label: string): void {
+  for (const [method, run] of ledgerMethods) {
+    assert.throws(
+      () => run(ledger),
+      (err: unknown) => err instanceof StoreError && err.code === code && err.message.includes(ledger.file) && (issuePath === undefined || err.message.includes(issuePath)),
+      `${label}: ${method}`,
+    );
+  }
+}
+
 test('a ledger that does not parse is an error naming the file, and nothing is rewritten', () => {
   const cases: Array<[string, Buffer, string, string?]> = [
     ['empty', Buffer.from(''), 'MALFORMED_JSON'],
@@ -225,32 +249,16 @@ test('a ledger that does not parse is an error naming the file, and nothing is r
     ['a record without count', Buffer.from(JSON.stringify({ k: without('count') })), 'SCHEMA_VIOLATION', 'k.count'],
     ['a record with disposition closed', Buffer.from(JSON.stringify({ k: rec({ disposition: 'closed' }) })), 'SCHEMA_VIOLATION', 'k.disposition'],
   ];
-  const id = breachIdentity(breach);
-  const methods: Array<[string, (l: IncidentLedger) => unknown]> = [
-    ['read', (l) => l.read()],
-    ['shouldFile', (l) => l.shouldFile(breach, 6 * HOUR, t0)],
-    ['attachIntent', (l) => l.attachIntent(id, 'intent/x.md', t0)],
-    ['triage', (l) => l.triage(id, 'dismissed', 'r')],
-  ];
-  const refuses = (ledger: IncidentLedger, code: string, issuePath: string | undefined, label: string): void => {
-    for (const [method, run] of methods) {
-      assert.throws(
-        () => run(ledger),
-        (err: unknown) => err instanceof StoreError && err.code === code && err.message.includes(ledger.file) && (issuePath === undefined || err.message.includes(issuePath)),
-        `${label}: ${method}`,
-      );
-    }
-  };
   for (const [label, content, code, issuePath] of cases) {
     const ledger = new IncidentLedger(scratch());
     writeFileSync(ledger.file, content);
-    refuses(ledger, code, issuePath, label);
+    refusesAll(ledger, code, issuePath, label);
     assert.deepEqual(readFileSync(ledger.file), content, `${label}: the bytes are as they were`);
   }
   // A directory at the ledger path.
   const dirLedger = new IncidentLedger(scratch());
   mkdirSync(dirLedger.file);
-  refuses(dirLedger, 'READ_FAILED', undefined, 'a directory');
+  refusesAll(dirLedger, 'READ_FAILED', undefined, 'a directory');
   assert.equal(statSync(dirLedger.file).isDirectory(), true);
   // A read error of the file itself (EACCES), injected on fs.readFileSync of the ledger.
   const denied = new IncidentLedger(scratch());
@@ -258,7 +266,7 @@ test('a ledger that does not parse is an error naming the file, and nothing is r
   withFs('readFileSync', (real) => (p, ...rest) => {
     if (String(p) === denied.file) throw errno('EACCES');
     return real(p, ...rest);
-  }, () => refuses(denied, 'READ_FAILED', undefined, 'EACCES'));
+  }, () => refusesAll(denied, 'READ_FAILED', undefined, 'EACCES'));
   assert.equal(bytesOf(denied.file), '{}');
   // Absent is an empty ledger and a read creates nothing.
   const absent = new IncidentLedger(path.join(scratch(), 'not-yet'));
@@ -280,34 +288,83 @@ test('a ledger written by main (JSON.stringify with two spaces, ISO times from t
   assert.equal(lib.IncidentLedgerFile.safeParse(written).success, true);
 });
 
-test('a ledger under a regular file reads as absent and no write lands: the write throws and the file keeps its bytes', () => {
+test('a stat of the ledger that fails with anything but "no entry" is READ_FAILED naming the file, through all four methods; only ENOENT means absent', () => {
+  for (const code of ['ENOTDIR', 'EACCES', 'EPERM', 'ELOOP']) {
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, '{}');
+    withFs('statSync', (real) => (p, ...rest) => {
+      if (String(p) === ledger.file) throw errno(code);
+      return real(p, ...rest);
+    }, () => refusesAll(ledger, 'READ_FAILED', undefined, code));
+    assert.equal(bytesOf(ledger.file), '{}', code);
+  }
+  const absent = new IncidentLedger(scratch());
+  writeFileSync(absent.file, JSON.stringify({ k: rec() }));
+  withFs('statSync', (real) => (p, ...rest) => {
+    if (String(p) === absent.file) throw errno('ENOENT');
+    return real(p, ...rest);
+  }, () => assert.deepEqual(absent.read(), {}));
+});
+
+test('a ledger path under a regular file: POSIX stat says ENOTDIR and every method refuses with READ_FAILED; Windows stat says no entry, so the path is absent, nothing is read as a record and the write cannot land', () => {
   const file = path.join(scratch(), 'plain');
   writeFileSync(file, 'plain text');
   const ledger = new IncidentLedger(path.join(file, 'incidents'));
-  assert.deepEqual(ledger.read(), {});
-  assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0));
+  const id = breachIdentity(breach);
+  if (process.platform === 'win32') {
+    assert.deepEqual(ledger.read(), {});
+    assert.equal(ledger.triage(id, 'dismissed'), undefined);
+    ledger.attachIntent(id, 'intent/x.md', t0);
+    assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0), (err: unknown) => !(err instanceof StoreError));
+  } else {
+    refusesAll(ledger, 'READ_FAILED', undefined, 'under a regular file');
+  }
   assert.equal(bytesOf(file), 'plain text');
+  assert.equal(statSync(file).isFile(), true);
 });
 
-test('a ledger file with mode 0o000 is a read error, and one in a directory that cannot be searched reads as absent and is never rewritten', { skip: posixOnly }, () => {
+test('a ledger file with mode 0o000, and one in a directory that cannot be searched, are read errors and are never rewritten', { skip: posixOnly }, () => {
   const ledger = new IncidentLedger(path.join(scratch(), 'in'));
   ledger.write({ k: rec() });
   const before = bytesOf(ledger.file);
   try {
     chmodSync(ledger.file, 0o000);
-    assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0), (err: unknown) => err instanceof StoreError && err.code === 'READ_FAILED' && err.message.includes(ledger.file));
+    refusesAll(ledger, 'READ_FAILED', undefined, 'file mode 0o000');
   } finally {
     chmodSync(ledger.file, 0o644);
   }
   try {
     chmodSync(path.dirname(ledger.file), 0o000);
-    // The parent cannot be searched, so existsSync is false and the file reads as absent; the write cannot land either.
-    assert.deepEqual(ledger.read(), {});
-    assert.throws(() => ledger.shouldFile(breach, 6 * HOUR, t0));
+    refusesAll(ledger, 'READ_FAILED', undefined, 'directory mode 0o000');
   } finally {
     chmodSync(path.dirname(ledger.file), 0o755);
   }
   assert.equal(bytesOf(ledger.file), before);
+});
+
+/** Ledger texts with an own `__proto__` key at each depth (JSON.parse makes it an own key). */
+const PROTO_TEXTS: Array<[string, string, string]> = [
+  ['at the top level', '{"__proto__":null}', '__proto__'],
+  ['holding a valid record at the top level', `{"__proto__":${JSON.stringify(rec())}}`, '__proto__'],
+  ['in a record', JSON.stringify({ k: rec() }).replace('"count":1', '"__proto__":{"x":1},"count":1'), 'k.__proto__'],
+  ['deeper in a record', JSON.stringify({ k: rec({ note: { a: [{ b: 1 }] } }) }).replace('{"b":1}', '{"__proto__":1}'), 'k.note.a.0.__proto__'],
+];
+
+test('a ledger with an own __proto__ key at any depth is SCHEMA_VIOLATION naming the file and the key, through all four methods and write; a key that merely contains the text is kept', () => {
+  for (const [label, text, issuePath] of PROTO_TEXTS) {
+    assert.ok(text.includes('__proto__'), label);
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, text);
+    refusesAll(ledger, 'SCHEMA_VIOLATION', issuePath, label);
+    assert.equal(bytesOf(ledger.file), text, label);
+    assert.equal(IncidentLedgerFile.safeParse(JSON.parse(text)).success, false, label);
+    assert.throws(() => ledger.write(JSON.parse(text) as never), /__proto__/, `${label}: write`);
+    assert.equal(bytesOf(ledger.file), text, `${label}: write`);
+  }
+  const kept = { __proto__x: rec({ identity: '__proto__x' }), k: rec({ __proto__y: 1, note: { __proto__z: 2 } }) };
+  const ledger = new IncidentLedger(scratch());
+  writeFileSync(ledger.file, JSON.stringify(kept));
+  assert.deepEqual(ledger.read(), kept);
 });
 
 test('the ledger is written whole and only in a form a read accepts', () => {
@@ -459,6 +516,14 @@ test('an intent directory that cannot be searched throws and writes nothing', { 
 
 const BANDS = ['metric: error_rate', 'direction: both', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n');
 const BASELINE = [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11];
+/**
+ * The child process sees this instant for `new Date()` (no argument), so the date in an intent name is fixed and no run can cross UTC midnight;
+ * `Date.now()` and `Date.parse` stay real. Preloaded with `--import` as a data: URL, so no file is needed.
+ */
+const FIXED_NOW = '2026-09-11T12:00:00.000Z';
+const FIXED_DATE_SHIM = `data:text/javascript,${encodeURIComponent(`const Real = Date; globalThis.Date = class extends Real { constructor(...a) { if (a.length === 0) super('${FIXED_NOW}'); else super(...a); } };`)}`;
+/** The base slug of every intent these tests file: metric error_rate, rule WE1, the date of FIXED_NOW. */
+const SLUG = 'incident-error-rate-we1-2026-09-11';
 type Fx = ReturnType<typeof makeFixture>;
 /** A fixture the `after` hook below removes (each already lives under a directory `tmpDir` registered), so a failed assertion leaves none. */
 const fixtures: Fx[] = [];
@@ -470,11 +535,11 @@ const fixture = (): Fx => {
 after(() => {
   for (const fx of fixtures) fx.cleanup();
 });
-/** One `aidlc monitor check` over `recent` values (one point per minute of 2026-09-11); the cwd is the fixture. */
+/** One `aidlc monitor check` over `recent` values (one point per minute of 2026-09-11); the cwd is the fixture, the clock is FIXED_NOW. */
 function monitor(fx: Fx, recent: number[], extra: string[] = ['--file-intent']) {
   writeFileSync(path.join(fx.tmp, 'bands.yaml'), BANDS, 'utf8');
   writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: BASELINE, recent: recent.map((value, i) => ({ at: `2026-09-11T00:0${i}:00.000Z`, value })) }), 'utf8');
-  return spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...extra], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+  return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...extra], { cwd: fx.tmp, env: childEnv(fx.paths.root), encoding: 'utf8', timeout: 60_000 });
 }
 const ABOVE = [14];
 const BELOW = [6];
@@ -492,6 +557,7 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
     ['no breach', NONE, 0, '{', 'MALFORMED_JSON'],
     ['only a log-tier breach', LOG_ONLY, 1, '{', 'MALFORMED_JSON'],
     ['a ledger that is an array', ABOVE, 1, '[]', 'SCHEMA_VIOLATION'],
+    ...PROTO_TEXTS.map(([label, text]): [string, number[], number, string, string] => [`an own __proto__ key ${label}`, ABOVE, 1, text, 'SCHEMA_VIOLATION']),
   ];
   for (const [label, recent, breachCount, content, code] of rows) {
     const fx = fixture();
@@ -509,6 +575,60 @@ test('aidlc monitor check reads the ledger first: a ledger that does not parse s
       assert.equal(bytesOf(ledgerFile), content, label);
       assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent directory`);
       assert.equal(hostJournalText(fx), journalBefore, `${label}: the host journal is as it was`);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('aidlc monitor check with a ledger path under a regular file: POSIX refuses with READ_FAILED for every breach; Windows reports no entry, so only a filing breach fails (the write cannot land) and no intent is filed', () => {
+  const rows: Array<[string, number[]]> = [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]];
+  for (const [label, recent] of rows) {
+    const fx = fixture();
+    try {
+      rmSync(fx.paths.incidents, { recursive: true, force: true });
+      writeFileSync(fx.paths.incidents, 'plain text', 'utf8');
+      const journalBefore = hostJournalText(fx);
+      const result = monitor(fx, recent);
+      if (process.platform !== 'win32') {
+        assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+        assert.deepEqual(filedOf(result.stdout), [], label);
+        assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED') && result.stderr.includes('incidents.json'), `${label}: ${result.stderr}`);
+      } else if (recent === ABOVE) {
+        assert.equal(result.status, 1, `${label}: ${result.stdout}`);
+        assert.equal(result.stdout, '', label);
+      } else {
+        assert.equal(result.status, 0, `${label}: ${result.stderr}`);
+        assert.deepEqual(filedOf(result.stdout), [], label);
+      }
+      assert.equal(bytesOf(fx.paths.incidents), 'plain text', label);
+      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, `${label}: no intent file`);
+      assert.equal(hostJournalText(fx), journalBefore, label);
+    } finally {
+      fx.cleanup();
+    }
+  }
+});
+
+test('aidlc monitor check with an incidents directory that cannot be searched refuses with READ_FAILED for every breach', { skip: posixOnly }, () => {
+  for (const [label, recent] of [['no breach', NONE], ['only a log-tier breach', LOG_ONLY], ['a propose-tier breach', ABOVE]] as Array<[string, number[]]>) {
+    const fx = fixture();
+    try {
+      writeFileSync(path.join(fx.paths.incidents, 'incidents.json'), '{}', 'utf8');
+      const journalBefore = hostJournalText(fx);
+      let result;
+      try {
+        chmodSync(fx.paths.incidents, 0o000);
+        result = monitor(fx, recent);
+      } finally {
+        chmodSync(fx.paths.incidents, 0o755);
+      }
+      assert.equal(result.status, 1, `${label}: ${result.stderr}`);
+      assert.deepEqual(filedOf(result.stdout), [], label);
+      assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('READ_FAILED'), `${label}: ${result.stderr}`);
+      assert.equal(bytesOf(path.join(fx.paths.incidents, 'incidents.json')), '{}', label);
+      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+      assert.equal(hostJournalText(fx), journalBefore, label);
     } finally {
       fx.cleanup();
     }
@@ -535,15 +655,16 @@ test('aidlc monitor check files the two sides of a metric on one day to two diff
     assert.equal(one.status, 0, one.stderr);
     const [firstFile] = filedOf(one.stdout);
     assert.ok(firstFile);
+    assert.equal(path.basename(firstFile), `${SLUG}.md`);
     const firstBytes = bytesOf(firstFile);
     const two = monitor(fx, BELOW);
     assert.equal(two.status, 0, two.stderr);
     const [secondFile] = filedOf(two.stdout);
     assert.ok(secondFile);
-    assert.notEqual(secondFile, firstFile);
+    assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
     assert.equal(bytesOf(firstFile), firstBytes);
     assert.equal(parseIntent(bytesOf(secondFile)).ok, true);
-    assert.equal(parseIntent(bytesOf(secondFile)).intent?.slug, path.basename(secondFile, '.md'));
+    assert.equal(parseIntent(bytesOf(secondFile)).intent?.slug, `${SLUG}-2`);
     assert.equal(readdirSync(path.dirname(firstFile)).length, 2);
   } finally {
     fx.cleanup();
@@ -565,7 +686,8 @@ test('aidlc monitor check refiles one breach after its dedupe window to a second
     assert.equal(two.status, 0, two.stderr);
     const [secondFile] = filedOf(two.stdout);
     assert.ok(secondFile);
-    assert.notEqual(secondFile, firstFile);
+    assert.equal(path.basename(firstFile), `${SLUG}.md`);
+    assert.equal(path.basename(secondFile), `${SLUG}-2.md`);
     assert.equal(bytesOf(firstFile), firstBytes);
   } finally {
     fx.cleanup();
@@ -573,24 +695,15 @@ test('aidlc monitor check refiles one breach after its dedupe window to a second
 });
 
 test('aidlc monitor check with an intent write that fails exits 1 with nothing attached and nothing journaled', () => {
-  const learn = fixture();
-  let slug: string;
-  try {
-    const result = monitor(learn, ABOVE);
-    assert.equal(result.status, 0, result.stderr);
-    slug = path.basename(filedOf(result.stdout)[0]!, '.md');
-  } finally {
-    learn.cleanup();
-  }
   const fx = fixture();
   try {
     const intentDir = path.join(fx.tmp, 'intent');
-    mkdirSync(path.join(intentDir, `${slug}.md`), { recursive: true });
-    for (let n = 2; n <= 999; n++) mkdirSync(path.join(intentDir, `${slug}-${n}.md`));
+    mkdirSync(path.join(intentDir, `${SLUG}.md`), { recursive: true });
+    for (let n = 2; n <= 999; n++) mkdirSync(path.join(intentDir, `${SLUG}-${n}.md`));
     const journalBefore = hostJournalText(fx);
     const result = monitor(fx, ABOVE);
     assert.equal(result.status, 1, result.stdout);
-    assert.ok(result.stderr.includes(slug), result.stderr);
+    assert.ok(result.stderr.includes(SLUG), result.stderr);
     const records = Object.values(new IncidentLedger(fx.paths.incidents).read());
     assert.equal(records.length, 1);
     assert.equal(records[0]!.intentFile, undefined);
@@ -599,5 +712,28 @@ test('aidlc monitor check with an intent write that fails exits 1 with nothing a
     assert.equal(readdirSync(intentDir).length, 999);
   } finally {
     fx.cleanup();
+  }
+});
+
+test('a GIT_DIR and GIT_WORK_TREE in the caller environment do not move the intent out of the fixture', () => {
+  const other = scratch();
+  const init = spawnSync('git', ['init', '-q', other], { encoding: 'utf8' });
+  assert.equal(init.status, 0, init.stderr);
+  const fx = fixture();
+  const saved = { GIT_DIR: process.env['GIT_DIR'], GIT_WORK_TREE: process.env['GIT_WORK_TREE'] };
+  process.env['GIT_DIR'] = path.join(other, '.git');
+  process.env['GIT_WORK_TREE'] = other;
+  try {
+    const result = monitor(fx, ABOVE);
+    assert.equal(result.status, 0, result.stderr);
+    const [file] = filedOf(result.stdout);
+    assert.ok(file);
+    assert.equal(realpathSync.native(path.dirname(file)), realpathSync.native(path.join(fx.tmp, 'intent')));
+    assert.equal(existsSync(path.join(other, 'intent')), false);
+  } finally {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
   }
 });
