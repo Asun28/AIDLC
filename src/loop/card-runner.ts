@@ -1641,10 +1641,12 @@ export class CardRunner {
 
   /**
    * The one second pass of a card run is due (card T1-R3-SECOND-PASS): the last decision on the candidate is a pass, no second
-   * pass was decided in this run, and a decision is left for a block. A no-verdict or a quota hold decides nothing, so it stays due.
+   * pass was decided in this run, and a block from it leaves a decision for the repaired candidate. After a first pass at
+   * decision MAX_R3_DECISIONS - 1 or later none is due (card T0-R3-SECOND-PASS-ROOM): a block there would be the last decision,
+   * which can only stop the card. A no-verdict or a quota hold decides nothing, so it stays due.
    */
   private secondPassDue(run: CardRun): boolean {
-    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS) return false;
+    if (!this.config.formalReview.secondPass || run.review.substantiveDecisions >= MAX_R3_DECISIONS - 1) return false;
     const decided = run.review.invocations.filter((i) => i.outcome === 'pass' || i.outcome === 'block');
     if (decided.some((i) => i.secondPass)) return false;
     return [...decided].reverse().find((i) => i.candidateDigest === run.candidate?.digest)?.outcome === 'pass';

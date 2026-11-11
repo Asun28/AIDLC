@@ -47,3 +47,25 @@ npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scena
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/second-pass.test.ts`, "T0-R3-SECOND-PASS-ROOM acceptance 1: a first pass at decision 3 ships with no second pass [R1]" | pass (failed at RED) |
+| 2 | Same file, "T0-R3-SECOND-PASS-ROOM acceptance 2: a first pass at decision 2 gets its second pass, whose block is decision 3 and returns REVIEW_FIX, and a pass at decision 4 ships [R2]" | pass (passed at RED too: the rule it states is unchanged) |
+| 3 | Same file, the 16 T1-R3-SECOND-PASS tests, with no line of them changed (`git diff main -- tests/scenarios/second-pass.test.ts` only adds the two tests above) | pass; first pass at decision 1, at decision 2 and at decision 4 included |
+| 4 | `node --test tests/scenarios/fault-points.test.ts`, no pin added (the file is unchanged) | pass; the sync commit of `.claude/skills/verify-card-run-writes/SKILL.md` moves at CLOSE |
+| 5 | `docs/OPERATIONS.md` (Second pass), `docs/ARCHITECTURE.md` (`CardRunner.secondPassDue`), `CHANGELOG.md` (Unreleased): each states the rule, its reason and the figures (7 ran, 4 passed, 3 blocked and stopped their cards) | for the reviewer to verify against the diff |
+
+DoD: `npm run typecheck && node --test tests/scenarios/second-pass.test.ts tests/scenarios/fault-points.test.ts` exits 0: 46 tests, 46 pass, 0 fail, 0 skipped.
+
+RED: commit afb0ffad. The acceptance 1 test failed on its assertion "the candidate goes to the ship": expected `'close'`, actual `'review'` (`card next` directed the second pass). 17 of 18 tests passed, the acceptance 2 test among them.
+
+Mutants, each run in the working tree and restored, none committed:
+- `>= MAX_R3_DECISIONS` (the rule before this card): the acceptance 1 test of this card fails.
+- `>= MAX_R3_DECISIONS - 2`: three tests fail: "T1-R3-SECOND-PASS acceptance 4: a first pass at decision 2 gets its second pass and no STOP", "T1-R3-SECOND-PASS acceptance 2: the second pass sends no delta, though the pass before it did" and the acceptance 2 test of this card.
+
+Callers read again (`formalAllowance`, `formalReviewGate`, `formalAdmission`, the two reads in `formalReview`): none needed a change. After a first pass at decision 3 that is not due, each takes the branch it takes after a first pass at decision 4.
+
+No existing test was changed. The doc sentences changed are pinned by no test; 9 files under `tests/surface/` that read the documents pass (97 tests).
