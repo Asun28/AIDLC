@@ -178,7 +178,7 @@ test('arc-verified is decided by the merge predicate over the listed cards', () 
     // An empty card list passes as on main.
     const empty = verifyArcRecord(fx, []);
     fx.controller.report({ goalId: empty, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } });
-    assert.equal(fx.goal(empty).state, 'CLOSE');
+    assert.equal(fx.goal(empty).state, 'DONE', 'accepted, and with no card to close the next derives DONE');
 
     // A card the revision removed keeps its run, which is not merged, and does not block.
     const revised = verifyArcRecord(fx, ['T1-MERGED-NORUN', 'T1-TODO-RUNOPEN']);
@@ -215,7 +215,7 @@ test('a revision in VERIFY_ARC that adds a card returns the goal to PLAN, and th
     driveCardToDone(fx, goalId, 'T1-B');
     assert.equal(fx.controller.next(goalId).kind, 'verify-arc');
     fx.controller.report({ goalId, generation: 0, result: 'arc-verified', data: { evidence: ['dod:ok'] } });
-    assert.equal(fx.goal(goalId).state, 'CLOSE');
+    assert.equal(fx.goal(goalId).state, 'DONE', 'accepted, and with both cards closed the next derives DONE');
 
     // A revision in VERIFY_ARC that only drops a card stays in VERIFY_ARC.
     const pair = atVerifyArc(fx, ['T1-A', 'T1-C'], { size: 'T1' });
@@ -269,6 +269,15 @@ test('a revision in DELIVER or CLOSE that adds a card is refused before any writ
       assert.equal(fx.goal(goalId).state, state);
       assert.equal(fx.events(goalId).length, journal, `${state}: nothing is journaled`);
     }
+
+    // The same revision in PLAN or CARDS is accepted with the state unchanged, as on main (R8).
+    const planning = fx.controller.createGoal({ text: 'build the hello feature', source: 'natural-language', affectedSurfaces: [], explicitSize: 'T1' });
+    fx.controller.report({ goalId: planning.id, generation: 0, result: 'revision', data: { text: 'add b', cards: ['T1-B'] } });
+    assert.deepEqual([fx.goal(planning.id).state, fx.goal(planning.id).revision], ['PLAN', 1]);
+    const projecting = goalForCards(fx, ['T1-A'], { size: 'T2' });
+    assert.equal(projecting.state, 'CARDS', 'a T2 projection waits in CARDS for its checkpoint');
+    fx.controller.report({ goalId: projecting.id, generation: 0, result: 'revision', data: { text: 'add b', cards: ['T1-A', 'T1-B'] } });
+    assert.deepEqual([fx.goal(projecting.id).state, fx.goal(projecting.id).revision], ['CARDS', 1]);
 
     // A text-only revision in DELIVER lists merged cards only: accepted, the state unchanged.
     fx.controller.report({ goalId: delivering, generation: 0, result: 'revision', data: { text: 'ship a, reworded' } });

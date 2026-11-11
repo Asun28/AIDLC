@@ -13,7 +13,7 @@ export const GOAL_TRANSITIONS: Record<GoalState, GoalState[]> = {
   CARDS: ['RUN', 'STOP', 'PLAN'],
   RUN: ['RUN', 'WAIT', 'VERIFY_ARC', 'STOP'],
   WAIT: ['RUN', 'PLAN', 'DELIVER', 'STOP', 'CARDS'],
-  VERIFY_ARC: ['CARDS', 'CLOSE', 'DELIVER', 'STOP'],
+  VERIFY_ARC: ['CARDS', 'CLOSE', 'DELIVER', 'STOP', 'PLAN'],
   DELIVER: ['WAIT', 'CARDS', 'CLOSE', 'STOP'],
   CLOSE: ['DONE', 'STOP'],
   DONE: [],
@@ -41,7 +41,7 @@ export interface GoalGuards {
   closureComplete?: boolean;
   /** Bounded repair cycle available (VERIFY_ARC -> CARDS, DELIVER -> CARDS). */
   repairCycleAvailable?: boolean;
-  /** Accepted revision moving WAIT back to PLAN. */
+  /** Accepted revision moving WAIT, or VERIFY_ARC with a listed card not merged, back to PLAN. */
   revisionAccepted?: boolean;
 }
 
@@ -73,7 +73,7 @@ export function assertGoalTransition(goal: Goal, to: GoalState, guards: GoalGuar
       if (!guards.closureComplete) throw new GoalTransitionError(from, to, 'closure incomplete');
       break;
     case 'PLAN':
-      if (from === 'WAIT' && !guards.revisionAccepted) throw new GoalTransitionError(from, to, 'no accepted revision');
+      if ((from === 'WAIT' || from === 'VERIFY_ARC') && !guards.revisionAccepted) throw new GoalTransitionError(from, to, 'no accepted revision');
       break;
     default:
       break;
