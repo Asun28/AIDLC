@@ -1071,12 +1071,17 @@ export class CardRunner {
     let candidate = run.candidate;
     if (input.outcome === 'success') {
       if (this.config.shipPath !== 'dry-run' && run.worktree && existsSync(run.worktree)) {
+        let entries: string[] = [];
         try {
           const c = this.git.candidate(run.worktree);
           candidate = { sha: c.sha, dirty: c.dirty, untracked: c.untracked, digest: c.digest };
+          entries = c.entries;
         } catch {
           /* keep prior */
         }
+        // A probe that returned entries refuses the success before the write (card T0-DIRTY-SUCCESS): a dirty candidate can
+        // never be reviewed or shipped, and recording it would end the episode. A probe that threw keeps the prior candidate.
+        if (entries.length) throw new Error(`the worktree ${run.worktree} has uncommitted or untracked changes (${entries.slice(0, 5).join(', ')}${entries.length > 5 ? ', ...' : ''}); nothing was recorded: commit, remove or ignore (for example in .gitignore) each entry, then record the attempt again`);
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }

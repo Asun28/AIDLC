@@ -220,7 +220,10 @@ describe('T0-DIRTY-SUCCESS: a success on a dirty card worktree is refused before
         assert.equal(ofType(c, 'ATTEMPT_STARTED').length, started, 'no ATTEMPT_STARTED of this call');
         const after = c.run() as CardRun & { journalOwed?: unknown[] };
         assert.deepEqual({ ...after, journalOwed: undefined }, { ...before, journalOwed: undefined }, 'the run differs only in the owed entry');
-        assert.equal(after.journalOwed?.length ?? 0, 0, 'the owed entry is cleared');
+        // The delivery writes nothing to the run: the entry is cleared in that the journal now holds it, so no later command
+        // appends it again (card T0-JOURNAL-FAULT-EVENTS R2).
+        assert.throws(() => attempt(c), dirtyRefusal(c, ['scratch.txt'], false));
+        assert.equal(ofType(c, 'ATTEMPT_FINISHED').length, 1, 'the delivered entry is owed no more');
       },
     ));
 });
