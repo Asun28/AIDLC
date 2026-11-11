@@ -86,10 +86,15 @@ describe('probes/git (evidence probes with a scripted runner)', () => {
     assert.equal(clean.sha, 'abcdef');
     assert.equal(clean.dirty, false);
     assert.deepEqual(clean.untracked, []);
+    // T0-DIRTY-SUCCESS R6: the entries hashed into the digest are returned; the digests stay those of main at 92796d4f.
+    assert.deepEqual(clean.entries, []);
+    assert.equal(clean.digest, 'bef57ec7f53a6d40beb640a780a639c83bc29ac8a9816f1fc6c5c6dcd93c4721', 'sha256 of the HEAD sha alone');
     status = ' M src/a.ts\n?? tests/new.test.ts\n';
     const dirty = probe.candidate(`${D}/wt`);
     assert.equal(dirty.dirty, true);
     assert.deepEqual(dirty.untracked, ['tests/new.test.ts']);
+    assert.deepEqual(dirty.entries, ['M src/a.ts', '?? tests/new.test.ts'], 'the first entry without the blank the trim of the output removes');
+    assert.equal(dirty.digest, 'c62e86903469b45d4a7b990307055c966c5d90ca8efc0c4bcf4136e9f8faeedf', 'sha256 of "abcdef\\nM src/a.ts\\n?? tests/new.test.ts"');
     assert.notEqual(dirty.digest, clean.digest);
     status = '';
     assert.equal(probe.candidate(`${D}/wt`).digest, clean.digest);
