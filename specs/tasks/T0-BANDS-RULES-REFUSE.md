@@ -112,3 +112,8 @@ Changed lines: `git diff --shortstat 0274ca33...HEAD` before this section: 5 fil
 ### After the second pre-review of 03f73cc0 (coordinator edit, CHANGELOG only)
 
 A second Codex pre-review of 03f73cc0 found the three test gaps of the first one closed, the implementation and docs/OPERATIONS.md correct, and the two CHANGELOG sentences about main still too wide: "it exited 0 and ran the Western Electric rules" does not hold with data `{}` (the evaluation throws) or with a ledger directory that refuses the write. The planner changed R4 on main and the coordinator changed the entry to what always held: the value was accepted and `aidlc monitor check` went on as for `western_electric`. No source or test changes.
+
+Coordinator verification:
+- At 5fc4db39, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/bands.test.ts, tests/surface/incident.test.ts): tests 55, pass 55, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1871 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
