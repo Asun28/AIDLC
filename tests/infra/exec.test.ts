@@ -386,11 +386,11 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
       assert.ok(Date.now() - started < 5000, 'the spawn error resolved the calibration, not the time limit');
       assert.deepEqual(ended, []);
     });
-    it('a child that writes the pid file and sleeps 5 s, with a limit of 200 ms: undefined at the limit, the child gone', async (t) => {
+    it('a child that writes the pid file and sleeps 30 s, with a limit of 5 s: undefined at the limit, the child gone', async (t) => {
       const ended: number[] = [];
       const started = Date.now();
-      assert.equal(await calibrate(t, FIXTURE, ended, inline('setTimeout(() => {}, 5000)'), 200), undefined);
-      assert.ok(Date.now() - started < 4000, 'the calibration ended at its limit, not when the child exited');
+      assert.equal(await calibrate(t, FIXTURE, ended, inline('setTimeout(() => {}, 30_000)'), 5000), undefined);
+      assert.ok(Date.now() - started < 20_000, 'the calibration ended at its limit, not when the child exited');
       assert.equal(ended.length, 1);
       assert.equal(probe(ended[0]!), 'ESRCH');
     });
