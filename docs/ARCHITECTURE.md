@@ -127,7 +127,7 @@ stateDiagram-v2
 
 `finalStateForTarget` fixes where each target ends: package after PREPARE, staging after STAGE, production and migration after OBSERVE. A recovered attempt closes with disposition `recovered`, never `delivered`.
 
-`ReleaseRunner.next` runs the step logic, whose nested steps call the step logic again, and then one exit that every return passes: for an attempt in DONE or STOP the exit releases each environment lease the attempt claimed in that lease's own section, which reads the ledger again and leaves the lease held while a record of the attempt (`releaseOperationOf`) is `intended`, `issued`, `running` or `UNKNOWN`, the section in which `issue` records a step's intent only while the attempt holds that lease (card T0-STAGING-LEASE-RELEASE).
+`ReleaseRunner.next` runs the step logic, whose nested steps call the step logic again, and then one exit that every return passes: for an attempt in DONE or STOP, inside the attempt's section (`release-attempt:<attemptId>`, taken when the attempt names an environment) the exit releases each environment lease the attempt claimed in that lease's own section, one at a time, which reads the ledger again and leaves the lease held while a record of the attempt (`releaseOperationOf`) or a record targeting that environment is `intended`, `issued`, `running` or `UNKNOWN`, and `issue` of an attempt that names an environment records a step's intent under the same two sections only while the attempt holds that lease (card T0-STAGING-LEASE-RELEASE).
 
 ## Card state precedence
 

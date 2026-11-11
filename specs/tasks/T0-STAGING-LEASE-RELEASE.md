@@ -251,6 +251,155 @@ Doc-reading run (Windows), on the final documents: the 78 test files that read d
 
 DoD (`dod_command` exactly, Windows): exit 0; typecheck clean; `# tests 50`, `# pass 50`, `# fail 0`, `# skipped 0` (9 tests in tests/scenarios/release-lease.test.ts, 41 in the four existing files).
 
+### Attempt 3 (redesign: R11 to R14 after the pre-review of 78e403e7)
+
+Base: merge of origin/main `6069047e` (no change to src/loop/release-runner.ts or src/cli/main.ts from main). RED commit `b668608e` adds acceptance 12 to 15 alone (with the fixture hygiene below); the sources there are those of 78e403e7. First failing assertion per new test at `b668608e`, Windows:
+
+| Acceptance | Test | First failing assertion at b668608e (sources of 78e403e7) |
+|---|---|---|
+| 12 | "the admission and the cleanup of one attempt never interleave across two environments" | `nothing admitted while the cleanup holds the attempt section`: `{ runs: 1, rollbacks: 1 }` instead of `{ runs: 0, rollbacks: 0 }` |
+| 13 | "another attempt's unresolved operation on the environment keeps its lease" | `running with env:staging released` |
+| 14 | "a ledger entry that is listed and cannot be read keeps every lease" | narration `Release attempt delivered.` without the ledger note, at the entry whose link target is gone (the list drops it); the not-JSON and schema entries already failed the read there |
+| 15 | "an attempt without an environment is issued as on main, every time: next throws before any intent, a schema error on target for '' and a TypeError for an absent environment" | `Missing expected exception: empty, call 1` (78e403e7 returns the wait on `environment:`) |
+
+Acceptance 16 is not built: T0-RELEASE-REPORT-STEP is not on main (coordinator's instruction); it is added after that card merges.
+
+**Lock order (R11).** Cleanup (`releaseLeases`, release-runner.ts:201-260 at the GREEN commit): the strict first ledger read (:219), then, when the attempt names an environment, `attemptSection` (:156-161, `LeaseStore.update('release-attempt:<attemptId>')` whose change returns what it received) around `releaseEach` (:254); inside it one key at a time: `this.leases.update(key, …)` (:231), in which `ownLease` (:232) and the strict ledger read (:234) decide (:239); the section closes before the next key's opens. Admission (`issue`, :480-497): `attemptSection` (:489), inside it `this.leases.update(resourceKeys.environment(environment), …)` (:490), in which `ownLease` (:491) and, only when it holds, the step's ledger read and `recordIntent` run; the journal append and the command come after both sections. No lock is taken inside a key section (the ledger writes are atomic renames without a lock; no journal append happens inside). An attempt without an environment takes no attempt section (R14): the cleanup runs its key sections directly (:251), the admission runs the section as on main (:480-487).
+
+**R14, what main does** (probe on origin/main's release-runner.ts, an attempt stored at STAGE with the bound deploy of `opsConfigured()`): `environment: ''` throws a `ZodError` on `target` (too small) from `recordIntent` inside the `env:` section, no record, no command, each of three calls; `environment` absent throws `TypeError: Cannot read properties of undefined (reading 'toLowerCase')` from `resourceKeys.environment`, each call. The card keeps both (test 15, with a held `release-attempt:` lock that changes nothing). With an unbound deploy or a publication without authority an empty environment records no intent and reaches the same STOP as on main.
+
+**R12 and an earlier test of this card.** Test 4's case "an unresolved record of another attempt, without the key, releases" (attempt 1) contradicts R12 when the record targets the same environment; the case now gives the record the target `production` (another environment), where R12 still releases; the same-environment class is acceptance 13.
+
+**Errors of the reads the change relies on** (`strictLedger`, :168-191): operations directory ENOENT: empty ledger (test 14, last case); ENOTDIR (a regular file at the path; on POSIX also a path under a regular file) and EACCES (no read permission): `StoreError READ_FAILED`, every lease kept (test 14, regular-file case; POSIX case without read permission). An entry: ENOENT (a link whose target is gone), EACCES (no read permission, or a directory without search permission), EISDIR: `READ_FAILED`; not JSON: `MALFORMED_JSON`; schema: `SCHEMA_VIOLATION`; each keeps every lease (first read) or the remaining ones (read in a section), named in the narration. Nothing is thrown out of `next` for a terminal attempt; a held attempt section (`LOCKED`) is a failed section (R11). The admission's held attempt section throws the store's `LOCKED` error out of `next`, as a held environment section did before (T0-RELEASE-OP-REISSUE R4).
+
+**Test hygiene.** Every fixture is `makeFixture()` in `inFixture(t, …)`, removed by `t.after(() => cleanup(fx.tmp))` with `cleanup` from tests/infra/helpers.ts; no `fx.cleanup()`, no `mkdtempSync`, no `tmpDir` needed. The CLI child of acceptance 8 runs with `process.execPath`, without any inherited variable whose upper-cased name starts with `GIT_`, and with `GIT_CEILING_DIRECTORIES` the fixture's parent; it does not commit.
+
+| Temporary directory or path | Created | Removed |
+|---|---|---|
+| fixture root `fx.tmp` (every test) | `makeFixture()` (tests/scenarios/_harness.ts) in `inFixture` | `t.after(() => cleanup(fx.tmp))` |
+| `<operations>-moved` (test 14) | `renameSync` inside `fx.tmp` | with `fx.tmp` |
+| planted lock files `<lease file>.lock` (tests 7, 12, 15) | `writeFileSync` inside `fx.tmp` | test 7 removes its planted lock file with `rmSync(lock)` (a file the test wrote, to show the retry); the others with `fx.tmp` |
+| lease file `env:staging` (test 11 (b), `removed` case) | written by `claim` inside `fx.tmp` | `rmSync(fx.leases.file(STAGING))`: a file, the intervention under test |
+
+POSIX-only cases (test 14: operations directory mode `0o600` and `0o300`, an entry mode `0o000`) are skipped on Windows and for uid 0 and restore the mode in a `finally`. Linux run (WSL, Node v22.23.1, uid 1000) of tests/scenarios/release-lease.test.ts on the GREEN working tree: tests 13, pass 13, fail 0, skipped 0.
+
+Clause table (R1 to R14):
+
+| Clause | Code (GREEN commit) | Test that fails without it (revert row) |
+|---|---|---|
+| R1 one exit | :146 | 12 of 13 (M1) |
+| R1 nested calls to the step logic | `this.step(` calls in `step`, `recoverOrStop`, `settleStep`, `issue` | 7 nested STOP (M2) |
+| R1 exit on DONE or STOP only | :203 | 2 held at CHECKPOINT (M3) |
+| R2 no unresolved record of the attempt | :234, :239 | 4, 11, 13 (A1b) |
+| R3 keys from environment and record targets | :225 | 2, 3, 5, 7, 11, 12 (M7) |
+| R3 key built by `resourceKeys.environment` | :225 | 5 (M7b) |
+| R3 decide and write in the key section; no `LeaseStore.release` | :231-240 | 6, 11 (M12) |
+| R3 ownership conditions | :150-153, :232 | 3, 5, 6, 11, 13 (M6a-d, A8) |
+| R4 unresolved record keeps every lease | :239 | 4 (A1b) |
+| R5 failed key section: others go on, narration | :242, :211 | 5, 7, 11 (M8, M9) |
+| R5 unreadable ledger: first read keeps all; in-section read keeps the rest; narration | :219-222, :236, :244-247 | 7, 11, 14 (A3, A4, A5, A6) |
+| R6 CLOSE release removed | :407 | 5 (M10) |
+| R7 report only for a goal that is not terminal | main.ts:1137 | 8 (M11) |
+| R8 `reportStep` without a release | no code | release.test.ts unchanged |
+| R9 docs | docs/OPERATIONS.md, docs/ARCHITECTURE.md, CHANGELOG.md | doc table below; reviewer |
+| R10 in-section ledger read decides | :234 | 11 (A1) |
+| R10 admission only while the lease is the attempt's own; else wait | :491-497 | 11, 12 (A2, A2b) |
+| R11 cleanup inside the attempt section | :254 | 12 (B1) |
+| R11 ORDER: attempt section before the key sections (cleanup) | :254 around :231 | 12 (B1b: attempt section after the keys) |
+| R11 ORDER: one key section at a time | :229-249 | 12 (B1c: second key nested in the first) |
+| R11 admission inside the attempt section | :489 | 12 reverse order (B2) |
+| R11 ORDER: attempt section before the environment section (admission) | :489-490 | 12 admission-order case (B2b) |
+| R11 held attempt section is a failed section, nothing released | :255-257 | 12 reverse order (M8b) |
+| R12 record targeting the environment keeps the lease | :234 | 13 (B4) |
+| R12 names compared by `resourceKeys.environment` | :234 | 13 `STAGING` case (B4b) |
+| R12 kept lease named with the retry command | :212, :248 | 13 (B5) |
+| R13 strict read | :168-191 | 14 link case (B6) |
+| R13 missing directory is empty | :174 | 14 (B6b) |
+| R13 schema and parse errors fail the read | :185, :188 | 14 (B6c, B6d) |
+| R14 admission without environment as on main | :480-487 | 15 (B7) |
+| R14 cleanup without environment takes no attempt section | :251 | 12 environment-less case (B7b) |
+
+Revert check of attempt 3 (each hunk alone in the worktree, `node --test tests/scenarios/release-lease.test.ts`, restored; Windows; on the GREEN working tree): 38 rows, every row red.
+
+| Row | Reverted to | First failing test and assertion |
+|---|---|---|
+| B1 | cleanup without the attempt section | 12 `nothing admitted while the cleanup holds the attempt section` |
+| B1b | attempt section after the keys | 12 same |
+| B1c | second key's section nested in the first | 12 `the cleanup had released env:production when the admission came`; 7; 11 |
+| B2 | admission without the attempt section | 12 same as B1 |
+| B2b | admission: environment section first | 12 `the cleanup met no section of the admission` |
+| B4 | per-environment check removed | 13 `running with env:staging released` |
+| B4b | raw target compared | 13 `running, its target spelled STAGING with env:staging released` |
+| B5 | kept-lease narration removed | 13 narration `staging deployment failed` |
+| B6 | `OperationLedger.list` instead of the strict read | 14 `Release attempt delivered.` (link case) |
+| B6b | missing directory not empty | 14 `an operations directory that does not exist is an empty ledger` |
+| B6c | schema check removed | 14 schema case (code) |
+| B6d | parse error read as `READ_FAILED` | 7, 11, 14 (`MALFORMED_JSON`) |
+| B7 | admission without environment takes the sections | 15 `empty, call 1` |
+| B7b | cleanup without environment takes the attempt section | 12 environment-less case |
+| A1 | decided on the first read | 11 `intended with env:staging released`; 13 |
+| A1b | in-section check removed | 4, 11, 13 |
+| A2 | issue records without the lease | 11 `running with env:staging released`; 12 |
+| A2b | not-held wait removed | 11, 12 (`Cannot read properties of undefined (reading 'id')`) |
+| A3 | in-section ledger error rethrown | 11 |
+| A4 | loop goes on after a ledger error | 11 |
+| A5 | first read rethrown | 7, 14 (`MALFORMED_JSON` thrown) |
+| A6 | all keys named as kept | 11 |
+| A8 | cleanup ownership check removed | 3, 5, 6, 13 |
+| M1 | exit removed | 12 of 13 |
+| M2 | nested steps through `next` | 7 |
+| M3 | terminal check removed | 2 |
+| M6a | not-released condition removed | 5, 11, 12 |
+| M6b | operation condition removed | 5, 6, 11, 13 |
+| M6c | session condition removed | 5 |
+| M6d | host condition removed | 5 |
+| M7 | record targets removed | 2, 3, 5, 7, 11, 12 |
+| M7b | `` `env:${name}` `` | 5 |
+| M8 | key-section failure rethrown | 5, 7, 11 |
+| M8b | attempt-section failure rethrown | 12 (`LOCKED` thrown) |
+| M9 | failure narration removed | 5, 7, 11, 12 |
+| M10 | CLOSE release restored | 5 |
+| M11 | R7 condition removed | 8 |
+| M12 | read, then `LeaseStore.release` | 6, 11 |
+
+Forbid and non-goals:
+
+| Entry | Where it is kept | Proof |
+|---|---|---|
+| forbid: weakening or skipping a test | none weakened; test 4's other-attempt case moved to another environment because R12 supersedes it (above) | diff of the test file |
+| forbid: releasing while the ledger read in the section holds an unresolved record of the attempt or targeting the environment | :234, :239 | 4, 11, 13 |
+| forbid: releasing another session's, host's or attempt's lease | `ownLease` :150-153 | 5, 6 |
+| forbid: deciding a release outside the lease's section | :231-240 | 6, 11 (M12) |
+| forbid: change to src/coordination/lease.ts | `git diff origin/main -- src/coordination` empty | |
+| forbid: editing .aidlc state by hand | no command against the repository state | |
+| non-goal: a status write after the section's read | not handled; the section decides on its own read | stated |
+| non-goal: a takeover command | none added | |
+| non-goal: staging release when a production attempt leaves STAGE | staging stays held | 2 (held at CHECKPOINT and OBSERVE) |
+| non-goal: renewing leases at CHECKPOINT or OBSERVE | not done | |
+| non-goals: `release-result` by hand, the `pending` disposition, leases of attempts terminal before this card, `.claude/skills/aidlc-loop/release.md` | untouched | |
+
+Document sentences (docs/OPERATIONS.md, Standalone release; docs/ARCHITECTURE.md after the release diagram; CHANGELOG.md):
+
+| Sentence | Code | Test or clause |
+|---|---|---|
+| keys: environment and record targets; production releases `env:staging` too | :225 | 2, 5 |
+| attempt section (never written, taken when the attempt names an environment), one lease section at a time, conditions incl. records targeting the environment | :156-161, :229-251, :150-153, :234 | 12, 13, 4, 5 |
+| any other lease is left and not written | :232, :239 | 5 (modification time) |
+| unresolved record of the attempt or another attempt on the environment keeps the leases; narration names them and the retry | :239, :248, :212 | 4, 13 |
+| step records only inside both sections while holding the lease; else wait on `environment:<name>`; held attempt section: lock error, nothing recorded | :489-497 | 11, 12 |
+| no environment: neither section; error before any intent (always for absent, for empty whenever an intent would be recorded) | :480-487 | 15; R14 probe above |
+| failed lease section continues with the other keys; held attempt section releases nothing; narration | :242, :255-257, :211 | 7, 12 |
+| strict read; missing directory empty; unreadable ledger releases no further lease; narration | :168-191, :219-222, :236, :244-247 | 7, 11, 14 |
+| `release-result` only for a goal that is not terminal | main.ts:1137 | 8 |
+| no takeover; STOP/ownership; only the owner session releases, once nothing on the environment is unresolved | lease.ts:74 unchanged, `ownLease`, :234 | 3, 5, 13 |
+| CHANGELOG: CLOSE release removed (R6) | :407 | 5 (M10) |
+
+Doc-reading run (Windows, GREEN working tree): the 79 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md (main added one since attempt 2), one `node --test` call: 1870 tests, 1857 pass, 1 fail, 12 skipped. The failure is tests/infra/exec.test.ts "T0-EXEC-TREE-KILL run on real processes"; that file run alone: 61 tests, 61 pass, 0 fail (machine load, a file this card does not change or execute).
+
+DoD (`dod_command` exactly, Windows, GREEN working tree): exit 0; typecheck clean; tail: `# tests 54`, `# suites 1`, `# pass 54`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0` (13 tests in tests/scenarios/release-lease.test.ts, 41 in the four existing files).
+
+Diff against the merge base with main (8e101c4c) at the GREEN commit: 1294 changed lines (+1270 / -24), over the budget of 1100: tests/scenarios/release-lease.test.ts 772, the card 329 (attempt evidence of three attempts), src/loop/release-runner.ts 176, docs/OPERATIONS.md 10, src/cli/main.ts 3, docs/ARCHITECTURE.md 2, CHANGELOG.md 2.
+
 Coordinator verification:
 - At 5342036f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-lease.test.ts): tests 8, pass 8, fail 0, skipped 0.
 - Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load

@@ -6,17 +6,19 @@
  * first and is reconciled by provider status lookup; health is measured, never inferred; a
  * breach routes to RECOVER only with matching recovery authority and reports `recovered`.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import path from 'node:path';
 import { assertReleaseTransition, finalStateForTarget, nextAfterObserve, transitionRelease, type ReleaseGuards } from '../core/release-machine.ts';
 import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
-import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type Lease, type OperationRecord, type ReleaseState } from '../core/types.ts';
+import { OperationRecord, ReleaseAttempt, addMs, type Goal, type HealthSignal, type Lease, type ReleaseState } from '../core/types.ts';
 import { executeOperation, loadDeliveryOps, lookupOperation, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
+import { StoreError } from '../state/store.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { SyncRunner } from '../probes/exec.ts';
 import { runSync } from '../probes/exec.ts';
@@ -150,49 +152,109 @@ export class ReleaseRunner {
     return Boolean(lease && !lease.released && lease.operation === `release:${attempt.id}` && lease.owner.session === actor.session && lease.owner.host === actor.host);
   }
 
+  /** Runs `body` inside the section of the attempt (`release-attempt:<attemptId>`), whose record is never written. */
+  private attemptSection(attempt: ReleaseAttempt, body: () => void): void {
+    this.leases.update(`release-attempt:${attempt.id}`, (current) => {
+      body();
+      return current;
+    });
+  }
+
+  /**
+   * Every record of the operation ledger, read strictly: each listed `.json` entry is read and parsed, and one that cannot be
+   * fails the read with a store error (`OperationLedger.list` drops an entry `existsSync` cannot see). A directory that does not
+   * exist (ENOENT) is an empty ledger; any other listing error (ENOTDIR, EACCES) fails the read.
+   */
+  private strictLedger(): OperationRecord[] {
+    const dir = this.ops.dir;
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw new StoreError('READ_FAILED', dir, (err as Error).message);
+    }
+    const records = names
+      .filter((name) => name.endsWith('.json'))
+      .map((name) => {
+        const file = path.join(dir, name);
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(readFileSync(file, 'utf8'));
+        } catch (err) {
+          throw new StoreError(err instanceof SyntaxError ? 'MALFORMED_JSON' : 'READ_FAILED', file, (err as Error).message);
+        }
+        const result = OperationRecord.safeParse(parsed);
+        if (!result.success) throw new StoreError('SCHEMA_VIOLATION', file, result.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+        return result.data;
+      });
+    return records.sort((a, b) => a.intentRecordedAt.localeCompare(b.intentRecordedAt) || a.id.localeCompare(b.id));
+  }
+
   /**
    * The exit of `next`. A terminal attempt releases each environment lease it claimed (its environment and the target of each of
-   * its records): for each key, one lease section reads the ledger again and releases the lease only when it is the attempt's own
-   * (`ownLease`) and no record of the attempt is intended, issued, running or UNKNOWN. `issue` records an intent only inside the
-   * same section and only while it holds the lease, so an intent is either seen here or never recorded for a released lease. A
-   * key whose section throws is named with the command that retries; a ledger that cannot be read keeps the leases not yet released.
+   * its records). Inside the attempt section, for one key at a time, the key's lease section reads the ledger again and releases
+   * the lease only when it is the attempt's own (`ownLease`) and no record of the attempt, and no record targeting that
+   * environment, is intended, issued, running or UNKNOWN. `issue` admits a step under the same two sections. A section that throws
+   * is named with the command that retries; a ledger that cannot be read keeps the leases not yet released.
    */
   private releaseLeases(out: { attempt: ReleaseAttempt; directive: ReleaseDirective }): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
     const { attempt, directive } = out;
     if (attempt.state !== 'DONE' && attempt.state !== 'STOP') return out;
     const retry = `\`aidlc release next ${attempt.id}\``;
-    const recordsOf = () => this.ops.list({ goalId: attempt.goalId }).filter((o) => releaseOperationOf(o, attempt));
     const failed: string[] = [];
-    const finish = (ledger?: string) => {
-      const notes = [...(failed.length ? [`Environment lease release failed for ${failed.join(', ')}; ${retry} retries it.`] : []), ...(ledger ? [ledger] : [])];
+    const kept: string[] = [];
+    let ledgerNote: string | undefined;
+    const ledgerFailure = (err: unknown, leases: string) => `The operation ledger could not be read (${(err as Error).message}); ${leases} kept; ${retry} retries the release.`;
+    const finish = () => {
+      const notes = [
+        ...(failed.length ? [`Environment lease release failed for ${failed.join(', ')}; ${retry} retries it.`] : []),
+        ...(kept.length ? [`Environment leases kept while an operation of the attempt or on that environment is unresolved: ${kept.join('; ')}; ${retry} releases them once those operations are settled.`] : []),
+        ...(ledgerNote ? [ledgerNote] : []),
+      ];
       return notes.length ? { attempt, directive: { ...directive, narration: [directive.narration, ...notes].join(' ') } } : out;
     };
-    const ledgerFailure = (err: unknown, kept: string) => finish(`The operation ledger could not be read (${(err as Error).message}); ${kept} kept; ${retry} retries the release.`);
     let records: OperationRecord[];
     try {
-      records = recordsOf();
+      records = this.strictLedger().filter((o) => releaseOperationOf(o, attempt));
     } catch (err) {
-      return ledgerFailure(err, 'every environment lease of the attempt');
+      ledgerNote = ledgerFailure(err, 'every environment lease of the attempt');
+      return finish();
     }
     // The keys come from this read; a record recorded later carries the key of a lease its `issue` held, which this loop leaves alone.
     const keys = [...new Set([attempt.environment, ...records.map((o) => o.target)].filter((e): e is string => Boolean(e)).map((e) => resourceKeys.environment(e)))];
-    for (const [i, key] of keys.entries()) {
-      let ledgerError: unknown;
-      try {
-        this.leases.update(key, (lease) => {
-          if (!this.ownLease(lease, attempt)) return lease;
-          try {
-            if (recordsOf().some((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status))) return lease;
-          } catch (err) {
-            ledgerError = err;
-            return lease;
-          }
-          return { ...lease, released: true };
-        });
-      } catch (err) {
-        failed.push(`${key} (${(err as Error).message})`);
+    const releaseEach = (): void => {
+      for (const [i, key] of keys.entries()) {
+        let ledgerError: unknown;
+        let open: OperationRecord[] = [];
+        try {
+          this.leases.update(key, (lease) => {
+            if (!this.ownLease(lease, attempt)) return lease;
+            try {
+              open = this.strictLedger().filter((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status) && (releaseOperationOf(o, attempt) || resourceKeys.environment(o.target) === key));
+            } catch (err) {
+              ledgerError = err;
+              return lease;
+            }
+            return open.length ? lease : { ...lease, released: true };
+          });
+        } catch (err) {
+          failed.push(`${key} (${(err as Error).message})`);
+        }
+        if (ledgerError) {
+          ledgerNote = ledgerFailure(ledgerError, `environment leases ${keys.slice(i).join(', ')}`);
+          return;
+        }
+        if (open.length) kept.push(`${key} (${open.map((o) => `${o.id} ${o.status}`).join(', ')})`);
       }
-      if (ledgerError) return ledgerFailure(ledgerError, `environment leases ${keys.slice(i).join(', ')}`);
+    };
+    if (!attempt.environment) releaseEach();
+    else {
+      try {
+        this.attemptSection(attempt, releaseEach);
+      } catch (err) {
+        failed.push(`release-attempt:${attempt.id} (${(err as Error).message})`);
+      }
     }
     return finish();
   }
@@ -406,18 +468,32 @@ export class ReleaseRunner {
     const unauthorizedPublication = binding?.triggersPublication && !goal.authorizations.some((a) => a.kind === 'production' && a.environment === environment);
     const idempotencyKey = releaseStepKey(attempt, stepName);
     // Read the step's ledger records and, only when there is none, record the intent, in one section of the environment lease
-    // lock and only while the attempt holds that lease (the exit of `next` releases it in the same section); the section returns
-    // the lease unchanged, and the command runs only after it.
+    // lock taken inside the attempt section, and only while the attempt holds that lease (the exit of `next` releases it under
+    // the same two sections); the sections write nothing, and the command runs only after them.
     let matches: OperationRecord[] = [];
     let recorded: OperationRecord | undefined;
     let held = false;
-    this.leases.update(resourceKeys.environment(environment), (lease) => {
-      held = this.ownLease(lease, attempt);
-      if (!held) return lease;
+    const admit = (): void => {
       matches = this.ops.list().filter((o) => releaseOperationOf(o, attempt, stepName));
       if (!matches.length && binding && !unauthorizedPublication) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
-      return lease;
-    });
+    };
+    if (!environment) {
+      // No environment: the section and the intent as before this card (an absent name throws in `resourceKeys.environment`, an
+      // empty one fails the record's `target` schema), with no attempt section and no ownership check.
+      held = true;
+      this.leases.update(resourceKeys.environment(environment), (lease) => {
+        admit();
+        return lease;
+      });
+    } else {
+      this.attemptSection(attempt, () => {
+        this.leases.update(resourceKeys.environment(environment), (lease) => {
+          held = this.ownLease(lease, attempt);
+          if (held) admit();
+          return lease;
+        });
+      });
+    }
     if (!held) return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: `environment:${environment}`, narration: `The environment lease of attempt ${attempt.id} on ${environment} was released before ${stepName} was recorded, so nothing was issued; run \`aidlc release next ${attempt.id}\`.` } };
     if (matches.length) return this.settleStep(goal, attempt, stepName, matches, now);
     if (!binding) {
