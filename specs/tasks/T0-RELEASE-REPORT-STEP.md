@@ -230,7 +230,7 @@ Each added sentence and what pins it:
 | OPERATIONS: any other report is refused before anything is written and the command exits 1; once the attempt exists and any `--goal` names its goal, the message names the attempt, its state and the expected step or none | acc 1, 2, 3, 5 (unchanged attempt and journal, message), acc 3 and 7 (CLI exit 1, message, `--goal` message first), release.test.ts "a release command refuses a --goal that does not own the attempt, and writes nothing"; R3; through `bin/aidlc.js` the exit 1 and message come from Node's report of the rejected `main` (bin/aidlc.js:14-17) |
 | OPERATIONS: a step reported `succeeded` or `UNKNOWN` may be reported again while it is still the step the attempt expects | acc 5 (succeeded, succeeded, UNKNOWN, succeeded, failed before `next`), acc 6 (UNKNOWN again after `next`); R1 |
 | OPERATIONS: a step stored as `failed` is final, no longer expected, every later report refused | acc 5, including the lost-save block; R1, R3 |
-| OPERATIONS: after an `UNKNOWN` report the state does not change; once `next` reaches the case it asks for the step again while it is still expected | acc 6; R8 |
+| OPERATIONS and CHANGELOG: after an `UNKNOWN` report the state does not change; once `next` reaches the case it asks for the step again while the stored status is still `UNKNOWN` and the step is still expected | acc 6; R8 |
 | OPERATIONS: the three stops apply once `next` reaches the case of the state; reconciliation and ownership checks come first | acc 4b (environment owned by another session: `wait`, attempt unchanged; revert "R4 failed-verification STOP ahead of the reconcile and ownership checks"); R4, R5, R6 |
 | OPERATIONS: STAGE, stored failed `stage-verify`, `staging verification failed`, whatever the `stage-deploy` status | acc 4, acc 4b; R4, R7 |
 | OPERATIONS: RECOVER, stored failed `recover-verify`, `recovery verification failed`, whatever the `recover` status | acc 4, acc 4b; R5, R7 |
@@ -253,5 +253,9 @@ Final verification on ``f42d78f1`` (the last commit with code, tests or docs; th
 - Doc-pin files: the 79 test files that name docs/ARCHITECTURE.md, docs/OPERATIONS.md, CHANGELOG.md or release.md, in one `node --test` call: 1870 tests, 1857 pass, 1 fail, 12 skipped. The failure is `tests/infra/exec.test.ts` "T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node sleeper) [R1] [R2] [R3] [R4]", the machine-load case the brief names: run alone on the same commit it passes 61 of 61, and this card changes no file it executes.
 - DoD, run exactly as the card gives it: exit 0; `tsc -p tsconfig.test.json --noEmit` printed nothing; `# tests 38`, `# pass 38`, `# fail 0`, `# cancelled 0`, `# skipped 0` (the 8 tests of the new file are `ok 13` to `ok 20`).
 - No source or test file changed after `4d8b739e`, so the revert table above stands.
+
+### After the fourth pre-review of 9a2450e8 (coordinator edit)
+
+A fourth, wording-only Codex pre-review found the source correct, no contradiction between the three documents, and one sentence too wide, in docs/OPERATIONS.md and CHANGELOG.md: "it asks for the step again while that step is still the one the attempt expects". Sequence: STAGE with `stage-deploy` succeeded, report `stage-verify` `UNKNOWN`, then `succeeded`, then `release next`: the step is still expected before `next`, and `next` returns DONE, not another request (RECOVER closes in the same way). The coordinator added the condition "while the stored status of the step is still `UNKNOWN`" to both sentences and to the row of the sentence table above. No source, test or other sentence changes; acceptance 6 pins the request after a stored `UNKNOWN`.
 
 Coordinator verification:
