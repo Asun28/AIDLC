@@ -1,7 +1,7 @@
 import { after, describe, it, type TestContext } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, type SpawnSyncOptions } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -223,36 +223,99 @@ interface Bounds {
   syncBoundMs: number;
 }
 
-/** Seam: the fixture's exit mode is not timed yet. */
-async function calibrate(_t: TestContext, _fixture = FIXTURE, _ended: number[] = []): Promise<number | undefined> {
-  return 0;
+const CALIBRATION_BASE_MS = 750;
+const SCALE_MAX = 8;
+const CALIBRATION_LIMIT_MS = 30_000;
+/** How long the slow-kill case's tree kill blocks. */
+const SLOW_KILL_MS = 1500;
+
+/** `from` without the git and node variables that redirect a child, plus a git ceiling and a state directory under `dir`. */
+function fixtureEnv(dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [name, value] of Object.entries(from)) {
+    const upper = name.toUpperCase();
+    if (upper.startsWith('GIT_') || upper === 'NODE_OPTIONS' || upper === 'AIDLC_STATE_DIR') continue;
+    env[name] = value;
+  }
+  env.GIT_CEILING_DIRECTORIES = [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter);
+  env.AIDLC_STATE_DIR = join(dir, 'state');
+  return env;
 }
 
-/** Seam: every measurement gives scale 1. */
-function scaleFor(_measured: number | undefined): number {
-  return 1;
+/**
+ * Times the fixture's exit mode from the spawn to the root's exit, with no kill. Undefined when the spawn
+ * fails, the root does not exit 0 within CALIBRATION_LIMIT_MS or the sleeper never wrote its pid file.
+ * The sleeper is ended and verified gone in every case; its pid goes to `ended`.
+ */
+async function calibrate(t: TestContext, fixture = FIXTURE, ended: number[] = []): Promise<number | undefined> {
+  const dir = tmpDir('aidlc-exec-calibrate-');
+  t.after(() => cleanup(dir));
+  const pidFile = join(dir, 'sleeper.pid');
+  const startedAt = Date.now();
+  const child = spawn(process.execPath, [fixture, 'exit', pidFile], { stdio: 'ignore', windowsHide: true, env: fixtureEnv(dir) });
+  let limit: NodeJS.Timeout | undefined;
+  const measured = await new Promise<number | undefined>((resolve) => {
+    child.once('error', () => resolve(undefined));
+    child.once('exit', (code, signal) => resolve(code === 0 && signal === null && readPid(pidFile) !== undefined ? Date.now() - startedAt : undefined));
+    limit = setTimeout(() => {
+      end(child.pid);
+      resolve(undefined);
+    }, CALIBRATION_LIMIT_MS);
+  });
+  clearTimeout(limit);
+  const sleeper = readPid(pidFile);
+  if (sleeper !== undefined) {
+    end(sleeper);
+    await assertGoneWithin(sleeper, 3000);
+    ended.push(sleeper);
+  }
+  return measured;
 }
 
-/** Seam: main's literals at every scale. */
-function boundsAt(_scale: number): Bounds {
-  return { timeoutMs: 1500, stayBoundMs: 6000, exitCloseMs: 3500, noKillBoundMs: 4500, slowKillBoundMs: 6000, goneWithinMs: 3000, syncBoundMs: 6000 };
+/** The scale of a calibration: its time in units of CALIBRATION_BASE_MS, rounded up, from 1 to SCALE_MAX. A missing or invalid measurement throws. */
+function scaleFor(measured: number | undefined): number {
+  if (measured === undefined || !Number.isFinite(measured) || measured < 0) throw new Error(`calibration failed: ${String(measured)}`);
+  return Math.min(SCALE_MAX, Math.max(1, Math.ceil(measured / CALIBRATION_BASE_MS)));
 }
 
-/** Seam: the precondition always passes. */
-function assertSleeperExisted(_run: { sleeperWrittenMs: number | undefined; startedMs: number }, _timeoutMs: number, _scale: number): void {}
+/** Main's timeout and bounds times `scale`; TIMEOUT_GRACE_MS, the helper's backstop and the slow kill's duration are the product's and stay. */
+function boundsAt(scale: number): Bounds {
+  const timeoutMs = 1500 * scale;
+  return {
+    timeoutMs,
+    stayBoundMs: 6000 * scale,
+    exitCloseMs: timeoutMs + TIMEOUT_GRACE_MS,
+    noKillBoundMs: (1500 + 1000) * scale + TIMEOUT_GRACE_MS,
+    slowKillBoundMs: (1500 + 1000) * scale + SLOW_KILL_MS + TIMEOUT_GRACE_MS,
+    goneWithinMs: 3000 * scale,
+    syncBoundMs: Math.min(6000 * scale, timeoutMs + TIMEOUT_GRACE_MS + TREE_HELPER_BACKSTOP_MS),
+  };
+}
 
-/** Seam: the precondition always passes. */
-function assertRootGone(_aliveAtCall: boolean[], _scale: number): void {}
+async function calibratedBounds(t: TestContext): Promise<Bounds & { scale: number }> {
+  const measured = await calibrate(t);
+  const scale = scaleFor(measured);
+  t.diagnostic(`calibration ${String(measured)} ms, scale ${scale}`);
+  return { scale, ...boundsAt(scale) };
+}
 
-/** Seam: the environment unchanged. */
-function fixtureEnv(_dir: string, from: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  return { ...from };
+const notReady = (scale: number, detail: string): Error => new Error(`fixture not ready before the timeout at scale ${scale}: the machine got slower after calibration (${detail})`);
+
+/** The sleeper wrote its pid file, so existed, no later than the earliest time the timeout could fire. */
+function assertSleeperExisted(run: { sleeperWrittenMs: number | undefined; startedMs: number }, timeoutMs: number, scale: number): void {
+  if (run.sleeperWrittenMs === undefined) throw notReady(scale, 'no sleeper pid file');
+  if (run.sleeperWrittenMs > run.startedMs + timeoutMs) throw notReady(scale, `the sleeper's pid file was written ${Math.round(run.sleeperWrittenMs - run.startedMs)} ms after the call, the timeout was ${timeoutMs} ms`);
+}
+
+/** No tree kill call found the root alive: it had exited before the timeout. */
+function assertRootGone(aliveAtCall: boolean[], scale: number): void {
+  if (aliveAtCall.some((alive) => alive)) throw notReady(scale, 'the tree kill found the root still running');
 }
 
 describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
   const dir = tmpDir('aidlc-exec-env-');
   after(() => cleanup(dir));
-  const notReady = (scale: number, detail: string): { message: string } => ({ message: `fixture not ready before the timeout at scale ${scale}: the machine got slower after calibration (${detail})` });
+  const notReadyMessage = (scale: number, detail: string): { message: string } => ({ message: `fixture not ready before the timeout at scale ${scale}: the machine got slower after calibration (${detail})` });
 
   it('the calibrated scale and the scaled bounds on each input class', () => {
     for (const [measured, scale] of [[0, 1], [432, 1], [750, 1], [751, 2], [3969, 6], [4325, 6], [5250, 7], [5251, 8], [6000, 8], [6001, 8], [60_000, 8]] as const) {
@@ -266,12 +329,12 @@ describe('T0-EXEC-TEST-LOAD the calibrated scale [R2] [R3] [R4] [R6]', () => {
     assert.deepEqual(Object.values(boundsAt(8)), [12_000, 48_000, 14_000, 22_000, 23_500, 24_000, 29_000]);
     assert.ok(boundsAt(8).stayBoundMs < 60_000);
 
-    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: undefined, startedMs: 1000 }, 3000, 2), notReady(2, 'no sleeper pid file'));
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: undefined, startedMs: 1000 }, 3000, 2), notReadyMessage(2, 'no sleeper pid file'));
     assertSleeperExisted({ sleeperWrittenMs: 4000, startedMs: 1000 }, 3000, 2);
-    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4001, startedMs: 1000 }, 3000, 2), notReady(2, "the sleeper's pid file was written 3001 ms after the call, the timeout was 3000 ms"));
+    assert.throws(() => assertSleeperExisted({ sleeperWrittenMs: 4001, startedMs: 1000 }, 3000, 2), notReadyMessage(2, "the sleeper's pid file was written 3001 ms after the call, the timeout was 3000 ms"));
 
     for (const alive of [[], [false]]) assertRootGone(alive, 3);
-    for (const alive of [[true], [false, true]]) assert.throws(() => assertRootGone(alive, 3), notReady(3, 'the tree kill found the root still running'));
+    for (const alive of [[true], [false, true]]) assert.throws(() => assertRootGone(alive, 3), notReadyMessage(3, 'the tree kill found the root still running'));
 
     const from = { GIT_DIR: 'a', git_work_tree: 'b', Git_Config_Global: 'c', GIT_CEILING_DIRECTORIES: 'd', NODE_OPTIONS: 'e', node_options: 'f', AIDLC_STATE_DIR: 'g', aidlc_state_dir: 'h', PATH: 'p', KEEP: 'k' };
     assert.deepEqual(fixtureEnv(dir, from), { PATH: 'p', KEEP: 'k', GIT_CEILING_DIRECTORIES: [dirname(dir), dirname(realpathSync.native(dir))].join(delimiter), AIDLC_STATE_DIR: join(dir, 'state') });
@@ -296,27 +359,34 @@ interface FixtureRun {
   elapsedMs: number;
   sleeper: number | undefined;
   root: number | undefined;
+  startedMs: number;
+  sleeperWrittenMs: number | undefined;
+}
+
+/** The modification time of the pid file the sleeper wrote itself, undefined when it is missing. */
+function writtenMs(file: string): number | undefined {
+  return existsSync(file) ? statSync(file).mtimeMs : undefined;
 }
 
 /**
- * Runs the fixture in `mode` with `timeoutMs` 1500 and races the receipt against `boundMs` from the call.
+ * Runs the fixture in `mode` with `timeoutMs` (default 1500) and races the receipt against `boundMs` from the call.
  * Every fixture process is ended in a `finally`, so a red run neither waits 60 s nor leaves a sleeper.
  */
-async function raceFixture(runner: typeof run, mode: 'stay' | 'exit', boundMs: number, check: (r: FixtureRun) => void | Promise<void>): Promise<void> {
+async function raceFixture(runner: typeof run, mode: 'stay' | 'exit', boundMs: number, check: (r: FixtureRun) => void | Promise<void>, timeoutMs = TIMEOUT_MS): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-tree-'));
   const pidFile = join(dir, 'sleeper.pid');
   const started = Date.now();
   let bound: NodeJS.Timeout | undefined;
   try {
     const receipt = await Promise.race([
-      runner(process.execPath, [FIXTURE, mode, pidFile], { timeoutMs: TIMEOUT_MS }),
+      runner(process.execPath, [FIXTURE, mode, pidFile], { timeoutMs }),
       new Promise<undefined>((r) => (bound = setTimeout(() => r(undefined), boundMs))),
     ]);
     const elapsedMs = Date.now() - started;
     // A receipt that settles while synchronous work holds the bound timer back still wins the race:
     // the elapsed time decides, not which promise settled first.
     if (receipt) assert.ok(elapsedMs <= boundMs, `receipt after ${elapsedMs} ms, past the ${boundMs} ms bound`);
-    await check({ receipt, elapsedMs, sleeper: readPid(pidFile), root: readPid(`${pidFile}.root`) });
+    await check({ receipt, elapsedMs, sleeper: readPid(pidFile), root: readPid(`${pidFile}.root`), startedMs: started, sleeperWrittenMs: writtenMs(pidFile) });
   } finally {
     clearTimeout(bound);
     end(readPid(pidFile));
@@ -326,9 +396,10 @@ async function raceFixture(runner: typeof run, mode: 'stay' | 'exit', boundMs: n
 }
 
 /** A tree kill that records the pid it is given and delegates to the production killProcessTree. */
-function delegatingTreeKill(): { calls: number[]; treeKill: (pid: number) => void } {
+function delegatingTreeKill(): { calls: number[]; aliveAtCall: boolean[]; treeKill: (pid: number) => void } {
   const calls: number[] = [];
-  return { calls, treeKill: (pid) => (calls.push(pid), killProcessTree(pid, process.platform, runSync, (p, signal) => process.kill(p, signal))) };
+  const aliveAtCall: boolean[] = [];
+  return { calls, aliveAtCall, treeKill: (pid) => (calls.push(pid), aliveAtCall.push(probe(pid) === 'alive'), killProcessTree(pid, process.platform, runSync, (p, signal) => process.kill(p, signal))) };
 }
 
 describe('T0-EXEC-TREE-KILL the death check of acceptance 3', () => {
@@ -365,46 +436,53 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
     await assert.rejects(raceFixture(late, 'stay', 50, () => {}), /past the 50 ms bound/);
   });
 
-  it('acceptance 3: run on the stay fixture with timeoutMs 1500 resolves within 6 s, timed out and not ok, and the sleeper is gone', async () => {
-    await raceFixture(run, 'stay', 6000, async ({ receipt, elapsedMs, sleeper }) => {
-      assert.ok(receipt, `no receipt within 6000 ms of the call (${elapsedMs} ms)`);
+  it('acceptance 3: run on the stay fixture with timeoutMs 1500 times the calibrated scale resolves within 6 s times that scale, timed out and not ok, and the sleeper is gone', async (t) => {
+    const b = await calibratedBounds(t);
+    await raceFixture(run, 'stay', b.stayBoundMs, async ({ receipt, elapsedMs, sleeper, startedMs, sleeperWrittenMs }) => {
+      assertSleeperExisted({ sleeperWrittenMs, startedMs }, b.timeoutMs, b.scale);
+      assert.ok(receipt, `no receipt within ${b.stayBoundMs} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
-      await assertGoneWithin(sleeper, 3000);
-    });
+      await assertGoneWithin(sleeper, b.goneWithinMs);
+    }, b.timeoutMs);
   });
 
-  it('acceptance 4: createRun calls its tree kill once, with the root pid, in stay mode', async () => {
+  it('acceptance 4: createRun calls its tree kill once, with the root pid, in stay mode', async (t) => {
+    const b = await calibratedBounds(t);
     const { calls, treeKill } = delegatingTreeKill();
-    await raceFixture(createRun(treeKill), 'stay', 6000, ({ receipt, elapsedMs, root }) => {
-      assert.ok(receipt, `no receipt within 6000 ms of the call (${elapsedMs} ms)`);
+    await raceFixture(createRun(treeKill), 'stay', b.stayBoundMs, ({ receipt, elapsedMs, root }) => {
+      assert.ok(receipt, `no receipt within ${b.stayBoundMs} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       assert.ok(root !== undefined, 'the root wrote its pid');
       assert.deepEqual(calls, [root]);
-    });
+    }, b.timeoutMs);
   });
 
-  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6 s, timed out', async () => {
-    const { calls, treeKill } = delegatingTreeKill();
-    await raceFixture(createRun(treeKill), 'exit', 6000, ({ receipt, elapsedMs }) => {
-      assert.ok(receipt, `no receipt within 6000 ms of the call (${elapsedMs} ms)`);
+  it('acceptance 4: in exit mode (the root gone, the sleeper holding its output) the tree kill is never called and the receipt resolves within 6 s times the calibrated scale, timed out', async (t) => {
+    const b = await calibratedBounds(t);
+    const { calls, aliveAtCall, treeKill } = delegatingTreeKill();
+    await raceFixture(createRun(treeKill), 'exit', b.stayBoundMs, ({ receipt, elapsedMs }) => {
+      assert.ok(receipt, `no receipt within ${b.stayBoundMs} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
+      assertRootGone(aliveAtCall, b.scale);
       assert.deepEqual(calls, []);
       // [R3] stdout and stderr are destroyed at the timeout, so the close event of the exited root
       // resolves the receipt before the grace bound, with the exit the system reported for the root.
-      assert.ok(elapsedMs < TIMEOUT_MS + 2000, `resolved at ${elapsedMs} ms, not on the close event before the bound`);
+      assert.ok(elapsedMs < b.exitCloseMs, `resolved at ${elapsedMs} ms, not on the close event before the bound`);
       assert.equal(receipt.exitCode, 0);
       assert.equal(receipt.signal, null);
-    });
+    }, b.timeoutMs);
   });
 
-  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by 1500 + TIMEOUT_GRACE_MS (2000) + 1000 ms, timed out, exitCode and signal null, root and sleeper still alive', async () => {
+  it('acceptance 5: with a tree kill that kills nothing, the receipt resolves by (1500 + 1000) ms times the calibrated scale + TIMEOUT_GRACE_MS (2000), timed out, exitCode and signal null, root and sleeper still alive', async (t) => {
+    const b = await calibratedBounds(t);
     assert.equal(TIMEOUT_GRACE_MS, 2000);
     const calls: number[] = [];
-    const bound = TIMEOUT_MS + 2000 + 1000;
-    await raceFixture(createRun((pid) => void calls.push(pid)), 'stay', bound, ({ receipt, elapsedMs, sleeper, root }) => {
+    const bound = b.noKillBoundMs;
+    await raceFixture(createRun((pid) => void calls.push(pid)), 'stay', bound, ({ receipt, elapsedMs, sleeper, root, startedMs, sleeperWrittenMs }) => {
+      assertSleeperExisted({ sleeperWrittenMs, startedMs }, b.timeoutMs, b.scale);
       const rootState = calls.length === 1 ? probe(calls[0]!) : `tree kill called ${calls.length} times`;
       const sleeperState = sleeper !== undefined ? probe(sleeper) : 'no sleeper pid';
       assert.ok(receipt, `no receipt within ${bound} ms of the call (${elapsedMs} ms)`);
@@ -415,25 +493,25 @@ describe('T0-EXEC-TREE-KILL run on real processes (a node root, a shell, a node 
       assert.deepEqual(calls, [root], 'the tree kill was called once, with the root pid');
       assert.equal(rootState, 'alive', 'the root is still alive at the receipt');
       assert.equal(sleeperState, 'alive', 'the sleeper is still alive at the receipt');
-    });
+    }, b.timeoutMs);
   });
 
-  it('acceptance 5 [R3]: the bound counts from the return of a tree kill that takes 1500 ms and kills nothing, not from the timeout', async () => {
-    const slowMs = 1500;
+  it('acceptance 5 [R3]: the bound counts from the return of a tree kill that takes 1500 ms and kills nothing, not from the timeout', async (t) => {
+    const b = await calibratedBounds(t);
     let returnedAt = 0;
     const slowKill = (): void => {
-      const until = Date.now() + slowMs;
+      const until = Date.now() + SLOW_KILL_MS;
       while (Date.now() < until) {
         /* a tree kill that blocks, as a slow taskkill or ps does */
       }
       returnedAt = Date.now();
     };
-    await raceFixture(createRun(slowKill), 'stay', TIMEOUT_MS + slowMs + 2000 + 1000, ({ receipt, elapsedMs }) => {
-      assert.ok(receipt, `no receipt within ${TIMEOUT_MS + slowMs + 2000 + 1000} ms of the call (${elapsedMs} ms)`);
+    await raceFixture(createRun(slowKill), 'stay', b.slowKillBoundMs, ({ receipt, elapsedMs }) => {
+      assert.ok(receipt, `no receipt within ${b.slowKillBoundMs} ms of the call (${elapsedMs} ms)`);
       assert.equal(receipt.timedOut, true);
       const waited = Date.parse(receipt.finishedAt) - returnedAt;
       assert.ok(waited >= 2000 - 50, `resolved ${waited} ms after the tree kill returned, before TIMEOUT_GRACE_MS (2000)`);
-    });
+    }, b.timeoutMs);
   });
 });
 
@@ -515,16 +593,18 @@ describe('T0-EXEC-TREE-KILL docs [R5] [R6] [R7]', () => {
 // ---------------------------------------------------------------------------------------------
 
 describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R2]', () => {
-  it("acceptance 1: on the stay fixture with timeoutMs 1500 returns within 6 s, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async () => {
+  it("acceptance 1: on the stay fixture with timeoutMs 1500 times the calibrated scale returns within 6 s times that scale and before the helper's backstop, timed out and not ok, with the caller's command, args and cwd, and the sleeper is gone", async (t) => {
+    const b = await calibratedBounds(t);
     const dir = mkdtempSync(join(tmpdir(), 'aidlc-exec-sync-tree-'));
     const pidFile = join(dir, 'sleeper.pid');
     const args = [FIXTURE, 'stay', pidFile];
     try {
       const started = Date.now();
       // The caller's cwd is the system temp dir, not `dir`: a leaked process holding `dir` as its cwd would make the cleanup fail instead of the assertion.
-      const receipt = runSync(process.execPath, args, { cwd: tmpdir(), timeoutMs: TIMEOUT_MS, killTree: true });
+      const receipt = runSync(process.execPath, args, { cwd: tmpdir(), timeoutMs: b.timeoutMs, killTree: true });
       const elapsedMs = Date.now() - started;
-      assert.ok(elapsedMs <= 6000, `runSync returned after ${elapsedMs} ms, past the 6000 ms bound`);
+      assertSleeperExisted({ sleeperWrittenMs: writtenMs(pidFile), startedMs: started }, b.timeoutMs, b.scale);
+      assert.ok(elapsedMs <= b.syncBoundMs, `runSync returned after ${elapsedMs} ms, past the ${b.syncBoundMs} ms bound`);
       assert.equal(receipt.timedOut, true);
       assert.equal(ok(receipt), false);
       assert.equal(receipt.command, process.execPath);
@@ -532,7 +612,7 @@ describe('T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes [R1] [R
       assert.equal(receipt.cwd, tmpdir());
       const sleeper = readPid(pidFile);
       assert.ok(sleeper !== undefined, 'the sleeper wrote its pid before the timeout');
-      await assertGoneWithin(sleeper, 3000);
+      await assertGoneWithin(sleeper, b.goneWithinMs);
     } finally {
       end(readPid(pidFile));
       end(readPid(`${pidFile}.root`));
