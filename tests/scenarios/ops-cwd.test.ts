@@ -20,7 +20,7 @@ type Fx = ReturnType<typeof makeFixture>;
 /** A fixture removed after the test that asks for it. */
 function fixtureFor(t: TestContext): Fx {
   const fx = makeFixture();
-  t.after(() => fx.cleanup());
+  t.after(() => cleanup(fx.tmp));
   return fx;
 }
 
