@@ -153,3 +153,9 @@ RED commit bbaa2f07 (tests only), GREEN commit 54bec90f (source and documents). 
 
 ### Changed lines
 `git diff --shortstat main...HEAD` before this evidence commit: 8 files changed, 306 insertions, 10 deletions, against a budget of 450.
+
+### Repair round (pre-review of af6da473), measured on 11fb28e0
+- Merged origin/main (4d07c433 card amendment); no source change.
+- docs/OPERATIONS.md: the refusal sentence of the Claude Code effort paragraph and the Evals paragraph are the words of R5 (b) and (c); the config rows of acceptance 6 deep-equal the whole `claudeCode` object. CHANGELOG entry and ARCHITECTURE sentence checked against the amended R2 and R5: neither says a refused effort ends like any other non-zero exit, and the ARCHITECTURE sentence is R5 (d) as written.
+- Revert table rerun on 11fb28e0: 26 rows, 26 red (the 25 above plus "nested schema passes unknown keys through", `z.looseObject`, red in the acceptance 6 test). Tree clean after.
+- DoD, run without a pipe: `npm run typecheck && node --test` of the seven files, exit 0; 278 tests, 278 pass, 0 fail.
