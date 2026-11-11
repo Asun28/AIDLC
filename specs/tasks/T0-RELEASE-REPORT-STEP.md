@@ -1,7 +1,7 @@
 ---
 id: T0-RELEASE-REPORT-STEP
 title: aidlc release report records only the manual step the attempt's state asks for, with one of three statuses; a failed verification is final and stops the attempt as a failed operation of that state does
-status: todo
+status: merged
 branch: T0-RELEASE-REPORT-STEP
 worktree: D:\wt\AIDLC\T0-RELEASE-REPORT-STEP
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 240 to 400 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 60 source lines in two files, the rest the state table, finality, needs and CLI tests the rulings require, docs and attempt evidence; raised from 400 to 600 by the coordinator on the candidate d7081674, which is 556 changed lines: 60 source lines in two files, 377 lines of the seven acceptance tests, 8 lines of docs and 123 lines of attempt evidence (a revert table of 35 rows); raised from 600 to 700 by the coordinator on the repaired candidate d3d2ea65, which is 628 changed lines: 60 of source, 428 of tests, 132 of attempt evidence (a revert table of 39 rows), 8 of docs; raised from 700 to 760 by the coordinator on the candidate 9a2450e8, which is 707 changed lines after the docs were restated sentence by sentence (source 60 lines, unchanged since d3d2ea65)"
