@@ -1,7 +1,7 @@
 ---
 id: T0-DEAD-BRANCHES
 title: "Remove four unreachable or redundant branches found by the audit of 2026-11-11 (effort, controller, router, ci-policy) with no change of behaviour"
-status: todo
+status: merged
 branch: T0-DEAD-BRANCHES
 worktree: D:\wt\AIDLC\T0-DEAD-BRANCHES
 allow_paths:
@@ -52,3 +52,49 @@ npm run typecheck && node --test tests/core/effort.test.ts tests/core/router.tes
 ```
 - Expected exit code: 0
 - Assertion: the typecheck and every named test pass; the acceptance 4 test passes on main as well.
+
+## Attempt evidence
+
+Base f544c5df (origin/main with T0-CARDS-PROJECTED-REENTRY, T0-ASK-RECLASSIFY and T0-CHECKPOINT-PACKET-SHARED merged). Each site was found by the code the card quotes and re-proved on that code; every proof still holds. The controller sites moved to controller.ts:646 (R2) and :683-684 (R3).
+
+### Acceptance items
+
+| # | Result |
+|---|--------|
+| 1 | `npm run typecheck` exits 0 (first arm of the DoD). |
+| 2 | `tests/core/effort.test.ts` unchanged and passing in the DoD. |
+| 3 | `tests/scenarios/release.test.ts` unchanged and passing in the DoD. |
+| 4 | `tests/scenarios/deadline.test.ts` test "T0-DEAD-BRANCHES: a goal stopped for time and resumed without a revision is derived again from its runs, never read as terminal" added with both cases. It passes on the base source (src stashed, deadline.test.ts: pass 8, fail 0) and on the candidate (pass 8, fail 0), by design. It does not read the platform: it uses the fixture clock and store only. `amendment.test.ts` and the other tests of the file pass unchanged. |
+| 5 | `tests/core/router.test.ts` unchanged and passing in the DoD. |
+| 6 | `tests/core/ci-policy.test.ts` unchanged and passing in the DoD. |
+| 7 | The diff touches the five sites, the one test and this card (see `git diff --stat`). |
+
+### Per-site proof on the current code
+
+- R1, effort.ts `finishAttempt`: `updated` is built with `terminal: undefined` for a `fail`, and `finishAttempt` throws first for an episode that already has a terminal, so `nextEffortAction(updated, ...)` skips the stored-terminal return. It returns reason `exhausted` only after the `escalationUsed` return and the `!next` return (`nextSupportedEffort(episode)` undefined) have not fired, and `nextSupportedEffort(updated)` is the same call on the same baseline, so `updated.escalationUsed` is false and the result is defined: the removed condition is false. The block is removed; `nextSupportedEffort` stays exported and used in `nextEffortAction`.
+- R2, controller.ts `release-result`: `next.disposition === 'recovered' ? 'fail' : 'fail'` has equal arms, so it is `'fail'`. Replaced.
+- R3, controller.ts `resume`: see the equivalence table. `takeover` is not reassigned after the removed line (`git grep -n "takeover =" src/loop/controller.ts` has no hit), so it is `const`. The `time` disjunct is kept.
+- R4, router.ts `classifyRequest`: both spread parts are the array or `[]` (`input.affectedSurfaces ? [] : []`), so the value is `input.affectedSurfaces ?? []`; `surfaces` is read only by `surfaces.join(' ')` (`grep -n surfaces src/core/router.ts` gives the declaration and that read).
+- R5, ci-policy.ts `classifyCiFailure`: `transientHits` had three sites (declaration, increment, `void`) and no reader. The three are removed; the `evidence.push` of each transient match and its order stay; the comment moved above the `TRANSIENT_PATTERNS` loop. `canRerun` is untouched.
+
+### Equivalence table for R3
+
+Inputs the condition reads: goal state (9 values of `GoalState`) and stop reason (undefined or one of the 20 values of `StopReason`): 9 x 21 = 189 combinations. Old form: `state: stop?.reason === 'time' ? 'STOP' : state === 'STOP' ? 'WAIT' : state` with `stop: undefined`, then `if (stop === undefined && state === 'STOP') state = 'WAIT'`. New form: `stop?.reason === 'time' || state === 'STOP' ? 'WAIT' : state`. A scratch script (not committed) evaluated both on all 189 combinations: 0 differ. The reading: the old second line always runs with `stop` undefined, so it maps a `STOP` produced by the `time` arm to `WAIT` and does nothing else (the other arms never give `STOP`).
+
+### Tests that keep watching each area (scratch mutation, restored after each run; file left as edited)
+
+| Mutation of the code left | Test run | Result |
+|---|---|---|
+| M1: resume keeps the old first line without the removed second line (`time` gives STOP) | deadline.test.ts | fails: the new test, case 1 (pass 7, fail 1) |
+| M2: `time` disjunct dropped | deadline.test.ts | fails: the new test, case 2 (case 1 starts in STOP, so only case 2 can see it) (pass 7, fail 1) |
+| M3: `release-result` stage `'pending'` instead of `'fail'` | release.test.ts | fails: "Q16: a staging goal reaches DELIVER and stops with release-config ..." (pass 17, fail 1) |
+| M4: `surfaces = []` | router.test.ts | fails: "router (Q2)" (pass 25, fail 1) |
+| M5: transient `evidence.push` removed | ci-policy.test.ts | fails: "CI classification (Q7)" (pass 45, fail 1) |
+| M6: stop reasons other than `exhausted` no longer set `terminal` in `finishAttempt` | effort.test.ts | fails: "effort episodes (MA2 / Q25)" (pass 30, fail 5) |
+
+Tests that surround R1 and stay green: the two Q25 tests of acceptance 2 (terminals through `nextEffortAction` at the top of the ladder and after a failed escalated attempt).
+
+Coordinator verification:
+- At 56103c46, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/deadline.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: no document changed
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

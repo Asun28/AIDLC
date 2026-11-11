@@ -643,7 +643,7 @@ export class GoalController {
         this.store.saveRelease(next);
         j.append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: next.id, state: next.state, disposition: next.disposition, health: next.healthResult } });
         if (next.state === 'STOP') {
-          goal = { ...goal, stages: { ...goal.stages, [goal.target]: next.disposition === 'recovered' ? 'fail' : 'fail' } };
+          goal = { ...goal, stages: { ...goal.stages, [goal.target]: 'fail' } };
           goal = this.persistStopValue(goal, next.stop ?? makeStop('release-config', 'release attempt stopped', 'inspect the release attempt', { at: now, global: false }));
         } else if (next.state === 'DONE' && next.disposition === 'recovered') {
           goal = { ...goal, stages: { ...goal.stages, [goal.target]: 'fail' } };
@@ -680,8 +680,7 @@ export class GoalController {
           if (d['replacements'] !== undefined && (typeof d['replacements'] !== 'object' || d['replacements'] === null || !Object.values(d['replacements'] as Record<string, unknown>).every((v) => typeof v === 'string' && v.trim()))) throw new Error('resume replacements must map old card ids to new card ids');
         }
         const generation = goal.generation + 1;
-        let takeover: Goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' ? 'STOP' : goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
-        if (takeover.stop === undefined && takeover.state === 'STOP') takeover = { ...takeover, state: 'WAIT' };
+        const takeover: Goal = { ...goal, generation, terminal: false, state: goal.stop?.reason === 'time' || goal.state === 'STOP' ? 'WAIT' : goal.state, stop: undefined, linkedFrom: `${goal.id}@${goal.generation}` };
         // The carried revision (replacement cards that make the projection admissible again) is computed in full before anything
         // is journaled, so a refused resume leaves no takeover behind; it applies before the projection runs.
         const last = takeover.revisions[takeover.revisions.length - 1]!;

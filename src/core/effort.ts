@@ -221,9 +221,6 @@ export function finishAttempt(episode: EffortEpisode, input: FinishAttemptInput)
   if (input.outcome === 'fail') {
     const decision = nextEffortAction(updated, { harderProblem: true, limitsPermit: true });
     if (decision.action === 'stop' && decision.reason !== 'exhausted') updated.terminal = decision.reason;
-    if (decision.action === 'stop' && decision.reason === 'exhausted' && (updated.escalationUsed || !nextSupportedEffort(updated))) {
-      updated.terminal = updated.escalationUsed ? 'escalation-failed' : 'escalation-unavailable';
-    }
   }
   return updated;
 }

@@ -82,7 +82,7 @@ function detectTarget(text: string): TargetReading {
 export function classifyRequest(input: RouterInput): RoutingResult {
   const text = input.text.trim();
   const reasons: string[] = [];
-  const surfaces = [...(input.affectedSurfaces ?? []), ...(input.affectedSurfaces ? [] : [])];
+  const surfaces = input.affectedSurfaces ?? [];
   const surfaceText = surfaces.join(' ');
   let ambiguity: string | undefined;
 
