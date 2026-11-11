@@ -4,7 +4,7 @@ title: The process-tree tests of tests/infra/exec.test.ts calibrate a scale from
 status: todo
 branch: T0-EXEC-TEST-LOAD
 worktree: D:\wt\AIDLC\T0-EXEC-TEST-LOAD
-size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: the planner's redesign of 2026-11-12 (a calibrated scale in place of the retry design of the first draft, which reached about 1100 lines); about 225 changed lines in tests/infra/exec.test.ts (about 105 of the calibration, scale, bounds, preconditions and child environment, 70 of the six changed tests and their titles, 50 of the two new tests), 2 in CHANGELOG.md and about 60 of attempt evidence: about 290"
+size_exception: "approved by the coordinator as planner and approver of the audit changes under the owner's (asun28) instructions of 2026-11-11 and 2026-11-12: the planner's redesign of 2026-11-12 (a calibrated scale in place of the retry design of the first draft, which reached about 1100 lines); about 225 changed lines in tests/infra/exec.test.ts (about 105 of the calibration, scale, bounds, preconditions and child environment, 70 of the six changed tests and their titles, 50 of the two new tests), 2 in CHANGELOG.md and about 60 of attempt evidence: about 290; raised from 290 to 370 by the coordinator on 2026-11-12: the candidate cbf6c338 is 288 changed lines before the loaded-run evidence, the coordinator's verification block and the rows the planner asked for after the build report (calibrate's exit-code, signal, spawn-error and time-limit clauses each get a row through optional parameters of calibrate)"
 allow_paths:
   - tests/infra/exec.test.ts
   - CHANGELOG.md
@@ -27,7 +27,7 @@ acceptance:
   - 4. The attempt evidence holds the runs of the detail alone and under load, on main and on the candidate, with their counts and the reported scales (reviewer-verified). [R5] Detail: body section Acceptance detail, item 4.
   - 5. The CHANGELOG entry is the text of the detail (reviewer-verified against the diff). [R8]
 depends_on: []
-budget: 290
+budget: 370
 tdd: true
 diagnosis:
   root_cause: "The process-tree tests of tests/infra/exec.test.ts give the command a fixed `timeoutMs` of 1500 (:167), whose timer starts when the runner spawns the fixture's root, and fixed bounds counted from the call, and assume the fixture is ready before the timer fires: in stay mode the sleeper exists, in exit mode the root has exited. The T0-EXEC-TREE-KILL hygiene says the fixture polls for the pid file 'so the timeout never fires before the tree exists', which holds only while node, the shell and the sleeper start within 1.5 s. Under CPU load they do not: the exit-mode root exited 4.0 to 4.3 s after its spawn, so at 1500 ms `exited` was false and `createRun` called the tree kill with the root's pid, as R1 of T0-EXEC-TREE-KILL requires, and the exit test failed at `assert.deepEqual(calls, [])` (:311), the assertion of every recorded failure of that test. The runSync test's 6000 ms (:444) includes the start of the tree helper (2.0 s under load) and of the fixture, and the no-kill test's 4500 ms (:323) the spawn and the lateness of two timers. No product race: in every probe run the root was alive at the tree-kill call and each receipt resolved by the bound R3 of T0-EXEC-TREE-KILL states."
