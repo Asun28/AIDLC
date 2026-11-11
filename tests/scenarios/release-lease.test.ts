@@ -79,7 +79,7 @@ function stored(fx: Fx, state: ReleaseState, overrides: Partial<ReleaseAttempt> 
 function hold(fx: Fx, environment: string, operation: string | undefined, options: { actor?: ActorIdentity; at?: string } = {}): Lease {
   const claim = fx.leases.claim(`env:${environment}`, { actor: options.actor ?? actorA, operation, now: options.at ?? fx.now() });
   assert.equal(claim.status, 'acquired');
-  return claim.lease;
+  return fx.leases.read(`env:${environment}`)!;
 }
 
 const released = (fx: Fx, key: string) => fx.leases.read(key)?.released === true;
