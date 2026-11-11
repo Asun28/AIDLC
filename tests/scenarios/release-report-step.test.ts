@@ -147,6 +147,18 @@ test("release report accepts only the step the attempt's state asks for", (t) =>
       assert.equal(fx.events(goalId).length, events + 1, row.label);
     }
   }
+  // A succeeded step is expected until the state advances; after it, the same report is refused.
+  const pkg = runner.reportStep(fx.goal(goalId), expecting(fx, goalId, 'package-run-proof'), 'package-run-proof', 'succeeded');
+  assert.equal(pkg.state, 'DONE');
+  for (const status of STATUSES) assertRefused(fx, runner, pkg.id, 'package-run-proof', status, 'package-run-proof', undefined);
+  const staged = expecting(fx, goalId, 'stage-verify');
+  const staging = runner.next(fx.goal(goalId), runner.reportStep(fx.goal(goalId), staged, 'stage-verify', 'succeeded'));
+  assert.equal(staging.attempt.state, 'DONE', staging.directive.narration);
+  for (const status of STATUSES) assertRefused(fx, runner, staged.id, 'stage-verify', status, 'stage-verify', undefined);
+  const recovering = expecting(fx, goalId, 'recover-verify');
+  const closed = runner.next(fx.goal(goalId), runner.reportStep(fx.goal(goalId), recovering, 'recover-verify', 'succeeded'));
+  assert.equal(closed.attempt.state, 'CLOSE', closed.directive.narration);
+  for (const status of STATUSES) assertRefused(fx, runner, recovering.id, 'recover-verify', status, 'recover-verify', undefined);
 });
 
 test('a status outside succeeded, failed and UNKNOWN is refused before any write', (t) => {
@@ -247,6 +259,12 @@ test('a failed verification stops the attempt as a failed operation of its state
   const pkg = expecting(fx, goalId, 'package-run-proof');
   runner.reportStep(fx.goal(goalId), pkg, 'package-run-proof', 'failed');
   assertFailedStop(fx, releaseRunner(fx, UNREADABLE), pkg.id, 'package-run-proof', false);
+  // The run proof stop is a package attempt's: a failed package-run-proof stored on a staging attempt (only the raw
+  // release-result patch writes one) leaves `next` as it is for the same attempt without that step.
+  const plain = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging' }));
+  const carrying = runner.next(fx.goal(goalId), stored(fx, goalId, { target: 'staging', steps: [step('package-run-proof', 'failed')] }));
+  assert.deepEqual([carrying.directive.kind, carrying.attempt.state, carrying.attempt.stop?.reason, carrying.attempt.stop?.detail], [plain.directive.kind, plain.attempt.state, plain.attempt.stop?.reason, plain.attempt.stop?.detail]);
+  assert.notEqual(carrying.attempt.stop?.detail, FAILED_STOP['package-run-proof'].detail);
 });
 
 test('a failed manual step is final', (t) => {
