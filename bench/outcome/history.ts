@@ -24,7 +24,20 @@ const text = (value: unknown): string | null => (typeof value === 'string' ? val
 const sha = (value: unknown): string | null => (typeof value === 'string' && /^[0-9a-fA-F]{40}$/.test(value) ? value.toLowerCase() : text(value));
 /** R3: the first `@ <path>[:<line>]` of a reason, the path read and normalised as `findingLocation` of src/core/review-policy.ts does. */
 const CITED = /@\s*([^\s@:]+)(?::(\d+))?/u;
-const posix = (file: string): string => file.replace(/\\/g, '/').replace(/^\.\//, '');
+/**
+ * R3: a path as git names it, relative to the repository root: `/` for `\`, with `.`, empty and `..` segments resolved (the
+ * root itself is `.`). Null for a path that leaves the repository or is absolute; nothing is resolved against a directory.
+ */
+function repoPath(file: string): string | null {
+  const kept: string[] = [];
+  const segments = file.replace(/\\/g, '/').split('/');
+  if (segments[0] === '' || /^[A-Za-z]:/.test(file)) return null;
+  for (const segment of segments) {
+    if (segment === '..' && kept.pop() === undefined) return null;
+    if (segment !== '..' && segment !== '.' && segment !== '') kept.push(segment);
+  }
+  return kept.join('/') || '.';
+}
 const decided = (entry: Row): boolean => entry['outcome'] === 'pass' || entry['outcome'] === 'block';
 
 /** `exit` is the exit code when it is one of the answers the caller named, else undefined, with one `history_errors` row. */
@@ -37,7 +50,8 @@ function gitOn(runner: SyncRunner, errors: Row[]): Git {
     const key = JSON.stringify(args);
     const known = done.get(key);
     if (known) return known;
-    const r = runner('git', args, { timeoutMs: TIMEOUT_MS });
+    // R6: no git child fetches a missing object. The variable is set, not the option: a git that does not know it ignores it.
+    const r = runner('git', args, { timeoutMs: TIMEOUT_MS, env: { ...process.env, GIT_NO_LAZY_FETCH: '1' } });
     const answered = !r.timedOut && r.exitCode !== null && answers.includes(r.exitCode);
     if (!answered) errors.push({ command: ['git', ...args].join(' '), exit: r.exitCode, stderr: r.stderr.trim().split(/\r?\n/)[0] ?? '' });
     const result = answered ? { exit: r.exitCode ?? undefined, out: r.stdout } : { exit: undefined, out: '' };
@@ -157,10 +171,12 @@ function blocksOf(git: Git, tables: Tables): Row[] {
   const rows: Row[] = [];
   for (const f of tables.findings) {
     if (f['stage'] !== 'formal' || !(Number(f['round']) >= 2)) continue;
-    const [file, cited] = [text(f['file']), CITED.exec(text(f['reason']) ?? '')];
-    const line = file !== null && cited?.[2] !== undefined && posix(cited[1]!) === posix(file) ? Number(cited[2]) : null;
+    const [stored, cited] = [text(f['file']), CITED.exec(text(f['reason']) ?? '')];
+    // `stored` is written to the row; `file` is its repository path, which is compared and given to git.
+    const file = stored === null ? null : repoPath(stored);
+    const line = file !== null && cited?.[2] !== undefined && repoPath(cited[1]!) === file ? Number(cited[2]) : null;
     const first = sha(entriesOf(tables, f, 'formal').find(decided)?.['candidateSha']);
-    rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, line, outsideDelta: f['outsideDelta'] ?? null, predates: predates(git, file, first, sha(f['candidateSha']), line) });
+    rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file: stored, line, outsideDelta: f['outsideDelta'] ?? null, predates: predates(git, file, first, sha(f['candidateSha']), line) });
   }
   return rows;
 }
@@ -189,7 +205,8 @@ function fixesOf(git: Git, tables: Tables): Row[] {
     const blocks = entries.flatMap((d, index) => (d['outcome'] === 'block' && sha(d['candidateSha']) === at ? [index] : []));
     const own = recorded >= 0 ? recorded : blocks.length === 1 ? blocks[0]! : -1;
     const next = own < 0 ? null : sha(entries.slice(own + 1).find((d) => decided(d) && sha(d['candidateSha']) !== null && sha(d['candidateSha']) !== at)?.['candidateSha']);
-    const same = next !== null && SHA.test(at) && SHA.test(next) && holds(git, at) === true && holds(git, next) === true ? sameFile(git, at, next, file) : undefined;
+    const inRepo = repoPath(file);
+    const same = inRepo !== null && next !== null && SHA.test(at) && SHA.test(next) && holds(git, at) === true && holds(git, next) === true ? sameFile(git, at, next, inRepo) : undefined;
     rows.push({ goalId: f['goalId'], cardId: f['cardId'], id: f['id'], file, candidateSha: at, changedAfter: same === undefined ? 'unknown' : same ? 'false' : 'true' });
   }
   return rows;
