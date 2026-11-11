@@ -191,3 +191,8 @@ docs/ARCHITECTURE.md is not in the diff. CHANGELOG entry inserted directly above
 
 ### Changed lines
 `git diff --shortstat 6bb167bc...47ebf4d0`: 6 files changed, 240 insertions(+), 24 deletions(-) (store.ts +17 -5, update-json.test.ts +193 -5, journal-lock.test.ts +20 -6, journal-lock-refusal.test.ts +5 -5, OPERATIONS.md +2 -2, CHANGELOG.md +3 -1). After the repair round, `git diff --shortstat origin/main...HEAD` on the evidence commit: 7 files changed, 317 insertions(+), 24 deletions(-), 341 changed lines against the budget of 360 (update-json.test.ts +207 -5, CHANGELOG.md +3 -1, card file +63).
+
+Coordinator verification:
+- At d89e774d, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/infra/update-json.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 33, pass 33, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1870 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
