@@ -160,3 +160,6 @@ Doc-reading run (`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" test
 DoD receipt (`dod_command` as the card gives it, Windows, run on the final source and tests): exit 0; `npm run typecheck` clean; `# tests 304`, `# suites 19`, `# pass 304`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 92713.9043`.
 
 Coordinator verification:
+- At 949a52fb, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/github-ship.test.ts, tests/infra/ship.test.ts, tests/scenarios/ship-effect-unknown.test.ts): tests 94, pass 94, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1867 # pass 1854 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
