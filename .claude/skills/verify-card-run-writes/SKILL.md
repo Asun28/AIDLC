@@ -31,7 +31,7 @@ pass (ship to CLOSE) and `card next` at SHIP past the card deadline
 (STOP/time). Invariants I1 to I6 and the liveness comparison are in the
 test file and in docs/OPERATIONS.md, Fault-point check.
 
-Sync commit: `f1344090ac5436f69638d92b1f12975a9b8e3053`
+Sync commit: `eca57b46929f993bfbdc55be20845fabbb21b6e5`
 
 ## Run
 ```

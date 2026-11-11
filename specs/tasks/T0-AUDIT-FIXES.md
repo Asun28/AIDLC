@@ -1,7 +1,7 @@
 ---
 id: T0-AUDIT-FIXES
 title: "Fourteen defects found by the audit of 2026-11-11 are fixed, each with a test that fails before its fix: the verdict reader, the ship gate, the review-fix episode, the release packet, the secrets guard and nine smaller ones"
-status: todo
+status: merged
 branch: T0-AUDIT-FIXES
 worktree: D:\wt\AIDLC\T0-AUDIT-FIXES
 size_exception: "approved by the user (asun28) on 2026-11-11: the fourteen audit fixes go through one T0-bugfix card for R3 review; written at budget 500, about 130 source lines in 13 files with the rest tests and docs; raised to 950 by the coordinator on 2026-11-11 for the repair of R3 decision 1 (the reader rewrite and its tests); the fixes are independent, so a finding on one does not touch the others"
