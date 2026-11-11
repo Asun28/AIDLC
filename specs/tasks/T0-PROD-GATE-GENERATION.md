@@ -232,3 +232,5 @@ The `dod_command` as one Bash command line is denied by this repository's own `p
 
 ### Changed lines
 `git diff --shortstat origin/main...HEAD` on 3a046470: 12 files changed, 521 insertions(+), 12 deletions(-), with the evidence of a96e8ebe in it; this section replaces that evidence. The count after this commit is in the report, against the budget of 600.
+
+Third pre-review (2a6a72f6), test only: 150dec1f registers `setActorForTests(undefined)` in a `t.after` hook of the fixture helper before `makeFixture()`, so the harness actor it caches does not reach a later test; on 7680c2e8 (merge of origin/main) with that change: typecheck exit 0; the nine DoD files before `tests/scenarios/release.test.ts` exit 0, tests 481, pass 477, fail 0, skipped 4; the two `release*` files exit 0, tests 20, pass 20; `git diff --shortstat origin/main...HEAD` on 150dec1f: 12 files changed, 529 insertions(+), 12 deletions(-), against the budget of 600.
