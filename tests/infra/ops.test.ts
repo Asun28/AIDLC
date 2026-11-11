@@ -1,6 +1,6 @@
 import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { OPS_CONFIG_FILE, DeliveryOpsConfig, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles } from '../../src/delivery/ops.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
@@ -226,6 +226,16 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     assert.equal(looked.status, 'UNKNOWN');
     assert.equal(looked.detail, 'status lookup failed');
     assert.notEqual(looked.receipt?.exitCode, 0);
+  });
+
+  it("the template copy of DELIVERY-OPS.md is the repository's", () => {
+    // Card T0-OPS-CWD acceptance 7 [R6]: `aidlc init` installs the template, so a repository initialised after this card reads the same rule.
+    const read = (file: string) => readFileSync(path.resolve(file), 'utf8').replace(/\r\n/g, '\n');
+    const [repository, template] = [read('docs/DELIVERY-OPS.md'), read('templates/docs/DELIVERY-OPS.md')];
+    assert.equal(template, repository);
+    for (const [name, text] of [['docs/DELIVERY-OPS.md', repository], ['templates/docs/DELIVERY-OPS.md', template]]) {
+      for (const clause of ['- `cwd` (optional): the directory the command and its status lookup run in, both the same one.', 'refuses, on every platform, a `cwd` that is not a string', 'stops with `release-config` before the intent is recorded']) assert.ok(text.includes(clause), `${name} holds: ${clause}`);
+    }
   });
 
   it('the command and the status lookup of one binding run in one directory', () => {
