@@ -160,7 +160,7 @@ function countingRunner(): { runner: SyncRunner; runs: Record<string, number> } 
   return { runner, runs };
 }
 
-test('(c) a refused OPERATION_INTENT of the staging deploy step leaves the operation intended and the command not run; release next waits naming aidlc ops reconcile, and the reconcile settles the step from the outcome it records [R6]', (t) => {
+test('(c) a refused OPERATION_INTENT of the staging deploy step leaves the operation intended and the command not run; release next waits naming aidlc ops reconcile; the reconcile records the outcome and the next release next settles the step from it [R6]', (t) => {
   const fx = fixture(t);
   const { runner, runs } = countingRunner();
   const release = new ReleaseRunner({ paths: fx.paths, repo: fx.repo, store: fx.store, ops: fx.ops, leases: fx.leases, runner, opsLoad: opsConfigured(), now: fx.now, signals: () => [] });
@@ -190,12 +190,15 @@ test('(c) a refused OPERATION_INTENT of the staging deploy step leaves the opera
 
   const reconciled = cli(fx, 'ops', 'reconcile', opId, '--status', 'cancelled');
   assert.equal(reconciled.status, 0, reconciled.stderr);
+  const recorded = fx.store.getRelease(attemptId)!;
+  assert.deepEqual([fx.ops.get(opId)?.status, recorded.state, recorded.steps.find((s) => s.name === 'stage-deploy')], ['cancelled', 'STAGE', undefined], 'the reconcile records the outcome and settles no step');
   // The step's cancelled record becomes the step (T0-RELEASE-OP-REISSUE R7, ReleaseRunner.settleStep): failed, so release next
   // stops the attempt and issues nothing again.
   const after = release.next(fx.goal(goalId), fx.store.getRelease(attemptId)!);
   assert.equal(after.directive.kind, 'stop', after.directive.narration);
   assert.equal(after.attempt.stop?.reason, 'release-health');
   assert.equal(after.attempt.stop?.detail, 'staging deployment failed');
+  assert.deepEqual(after.attempt.steps.find((s) => s.name === 'stage-deploy'), { name: 'stage-deploy', status: 'failed', operationId: opId }, 'the next release next settles the step from the recorded outcome');
   assert.equal(runs['deploy-cmd'], undefined, 'after the reconcile the step is settled by its record and the command is not run');
   assert.deepEqual(fx.ops.list({ goalId, kind: 'deploy' }).map((o) => [o.id, o.status]), [[opId, 'cancelled']], 'no second operation');
   assert.equal(fx.journal(goalId).verify().ok, true);

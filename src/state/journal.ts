@@ -130,8 +130,10 @@ export class Journal {
    * resolved before the lock (it may write `session-default`); `ts` is the clock as read inside the section, recorded as
    * read even when the clock moved back, and an `input.ts` the caller passes is recorded as given. The journal lock is the
    * innermost lock: a caller takes any other lock first, and an append reached from inside another append waits and is
-   * refused with `LOCKED`. A held lock refuses after the 2 s deadline and nothing is appended; an error of the head read or
-   * the append is rethrown. A lock file left behind for any reason refuses later appends until an operator removes it.
+   * refused with `LOCKED`. A held lock refuses after the 2 s deadline with `LOCKED` (a lock file that cannot be read at that
+   * moment gives its read error instead) and nothing is appended; an error of the head read or the append is rethrown once
+   * `updateJson` has ended the section as it ends any section that throws. A lock file left behind for any reason refuses
+   * later appends until an operator removes it.
    */
   append(input: AppendInput): JournalEvent {
     mkdirSync(path.dirname(this.file), { recursive: true });
