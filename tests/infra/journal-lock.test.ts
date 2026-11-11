@@ -144,7 +144,7 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     assert.equal(v.events, 4);
   });
 
-  it('a held journal lock refuses with LOCKED after the deadline and is left in place [R2] [R5]', () => {
+  it('a held journal lock refuses with LOCKED after the deadline and is left in place [R2] [R5] [R7]', () => {
     const j = journalWith(2);
     const before = readFileSync(j.file, 'utf8');
     const live = `pid=${process.pid} at=${AT} nonce=0badc0de`;
@@ -159,6 +159,8 @@ describe('T0-JOURNAL-APPEND-LOCK: Journal.append under one per-journal lock', ()
     assert.ok(waited >= 1_900, `refused at the 2 s deadline, not before (${waited} ms)`);
     assert.equal(readFileSync(j.file, 'utf8'), before, 'the journal is byte for byte unchanged');
     assert.equal(textOf(lockOf(j)), live, 'the live lock keeps its text');
+    // R7: the readers take no lock, so they answer while it is held.
+    assert.deepEqual({ exists: j.exists(), events: j.readAll().length, head: j.head().seq, verified: j.verify().ok, filtered: j.filter(() => true).length }, { exists: true, events: 2, head: 1, verified: true, filtered: 2 });
 
     const dead = `pid=${DEAD_PID} at=${AT} nonce=dead`;
     writeFileSync(lockOf(j), dead, 'utf8');
