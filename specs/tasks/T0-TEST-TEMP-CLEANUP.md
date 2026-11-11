@@ -88,3 +88,9 @@ R3 decision 1 blocked on class `missing-fixture-leak-coverage`: F1 hooks.test.ts
 | pre-review.test.ts:494 | aidlc-panel-join- | "T1-REVIEW-FINDINGS-4 R3 decision 2" | test 4 fails, names aidlc-panel-join- |
 | pre-review.test.ts:1344 readAngle | aidlc-answer-marker- | "T0-R2-ANSWER-MARKER acceptance 1" | test 4 fails, names aidlc-answer-marker- |
 | verifier.test.ts:17 fixture | aidlc-audit- | "Q12: intact journal" | test 4 fails, names aidlc-audit- |
+
+Coordinator verification:
+- At 4d5fed2f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node ), the test files this branch adds or changes (tests/surface/hooks.test.ts, tests/surface/pre-review.test.ts, tests/surface/test-temp-cleanup.test.ts, tests/surface/verifier.test.ts): tests 150, pass 150, fail 0, skipped 0.
+- Windows, docpins: no document changed
+- Linux revert of the one site that runs on Linux only (tests/surface/hooks.test.ts, the aidlc-nl- directory of the line-break test), run by the coordinator under WSL: with the candidate tests/surface/test-temp-cleanup.test.ts gives 5 tests, 5 pass, 0 skipped; with that one migration restored to mkdtempSync test 5 (the line-break directory test leaves nothing in the temporary directory) fails, 4 of 5 pass; the file was restored afterwards.
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
