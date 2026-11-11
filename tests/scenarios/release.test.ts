@@ -437,3 +437,21 @@ test('a package attempt asks for its run proof by the command that records it', 
     fx.cleanup();
   }
 });
+
+test('a staged attempt asks for its verification by the command that records it', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'staging');
+    const runner = releaseRunner(fx, opsConfigured(), () => []);
+    const attempt = runner.setCandidate(fx.goal(goalId), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    stagingAuth(fx, goalId, 'c1');
+    const r = runner.next(fx.goal(goalId), attempt);
+    assert.equal(r.directive.kind, 'stage');
+    assert.ok(r.directive.narration.includes(`aidlc release report ${attemptId} --step stage-verify --status succeeded`), r.directive.narration);
+    // The step and status the narration names are the ones that verify the stage.
+    const verified = runner.reportStep(fx.goal(goalId), r.attempt, 'stage-verify', 'succeeded');
+    assert.equal(runner.next(fx.goal(goalId), verified).attempt.state, 'DONE');
+  } finally {
+    fx.cleanup();
+  }
+});
