@@ -1,7 +1,7 @@
 ---
 id: T0-JOURNAL-APPEND-LOCK
 title: Journal.append reads the head and appends under one per-journal lock, so concurrent appenders in separate processes keep one hash chain, and a refused append leaves state each command recovers
-status: todo
+status: merged
 branch: T0-JOURNAL-APPEND-LOCK
 worktree: D:\wt\AIDLC\T0-JOURNAL-APPEND-LOCK
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 15 source lines in src/state/journal.ts; the rest is the lock test file with its eleven input classes, the child script, the three refusal scenarios of acceptance 9, the docs that list each refused append and its recovery, and about 25 lines of attempt evidence; raised from 450 to 680 by the coordinator on the candidate 11017fd6, which is 650 changed lines: 48 source lines in src/state/journal.ts, 540 lines of the lock, child-process and refusal tests, 44 lines of attempt evidence, the rest docs; raised from 680 to 920 by the coordinator on the repaired candidate of attempt 3: about 660 changed lines of source, tests and docs and about 210 lines of attempt evidence in the card, which the reviews asked to be kept in the card"
