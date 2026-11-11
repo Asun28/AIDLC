@@ -10,7 +10,7 @@
   - `secrets-guard` reads every match of a pattern, so a placeholder that matches first does not excuse a credential after it, and reads `edits[].new_string` of a MultiEdit.
   - `aidlc.ops.json`: a `successPattern`, `failurePattern` or `operationIdPattern` that is no regular expression is refused when the file loads, before the command it reads runs.
   - Card registry: an id carried by two card files is a `[CARD-ID-DUPLICATE]` block on each card outside the archive, and a second card with an id adds to the findings of that id in place of replacing them.
-  - Plan readiness gate 3: a closed `[TBD: question]` exempts only itself, and `???` is an open marker wherever it stands. A closed question and a code fence are replaced by whitespace before the search, so a marker directly beside one still fails and no removal joins two words into a marker.
+  - Plan readiness gate 3: a closed `[TBD: question]` exempts only itself, and `???` is an open marker wherever it stands. A closed question and a code fence are replaced by a line break before the search, so a marker directly beside one still fails and no removal joins the text on its two sides into a marker, a phrase marker such as `not sure` included.
   - `decideWorktree`: a branch checked out in two worktrees is STOP/ownership, not a new start.
   - Incident dedupe (`aidlc monitor check --file-intent`): the window starts at the latest filing (`filedAt`), so a breach refiled after the window is deduplicated again.
   - `preReview.perspectives`: two names that differ only by case are a duplicate.
