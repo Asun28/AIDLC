@@ -420,3 +420,8 @@ Coordinator verification:
 - At 721d4cb9, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/incident.test.ts): tests 39, pass 39, fail 0, skipped 0.
 - Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
 - The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At d58f61d0, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/incident.test.ts): tests 39, pass 39, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
