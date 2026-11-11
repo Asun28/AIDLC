@@ -100,6 +100,16 @@ baseline and approved by the owner before Phase 1 starts.
 - Budget: 60 USD more at list price for the two successors and
   T1-OUTCOME-HISTORY. Phase 0 had spent about 80 USD against 50 by then.
   Stop and report when it is reached.
+- R3 decision 3 of T1-OUTCOME-HISTORY blocked on four findings. Two are
+  repaired (path normalisation, lazy fetching) and two are non-goals (a
+  `blame.ignoreRevsFile` that names a missing file, a signed-commit test).
+  Budget: 10 USD more, 70 in all since the ruling above.
+- R3 decision 4 of T1-OUTCOME-HISTORY blocked on the lazy-fetch repair
+  (the environment variable does nothing on git 2.38, which the README
+  allows). The card stays stopped and its candidate 4d3d691d stays on its
+  branch, unmerged. Measured spend at that point: 64.71 USD of the 70. A
+  successor runs as the first card of `plans/review-convergence.md`, step 3.
+- T1-OUTCOME-BASELINE is not started and has no ruling yet.
 
 ## Open questions
 - (none)
