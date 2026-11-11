@@ -87,3 +87,35 @@ The readers of ci.yml, unchanged and in the DoD: tests/surface/bench.test.ts:211
 The CHANGELOG entry, one line, directly above `- T0-CARDS-PROJECTED-REENTRY`:
 
 "- T0-CI-PERMISSIONS (CI, audit item H9): `.github/workflows/ci.yml` sets `permissions: contents: read` at the top level, as the other four workflows do; before, it had no `permissions` block, so the token of its `check` and `bench` jobs had the repository's default scopes. `tests/surface/workflow-permissions.test.ts` requires of every workflow under `.github/workflows` a top-level `contents: read` with no permission other than `read` or `none` at the top level or in any job, and of ci.yml exactly that block and no job override."
+
+## Attempt evidence
+
+Commits: RED c124def8 (test file alone), GREEN 7ea3da91 (ci.yml block, CHANGELOG entry).
+
+RED on c124def8: acceptance 1 and 2 pass; acceptance 3 fails with `ci.yml: top-level permissions is not a mapping of scopes` (assertion on the problems list).
+
+Revert table (checker clause mutated in a scratch copy of the test file, run on 7ea3da91; 14 rows, all red):
+
+| Clause | Result |
+|---|---|
+| top-level mapping check as truthiness | red |
+| contents must be the string read | red |
+| none accepted | red |
+| other top-level scope check | red |
+| jobs container check | red |
+| job container check | red |
+| read-all accepted at job level | red |
+| job scope check | red |
+| rendering JSON.stringify | red |
+| key order (other scopes before contents) | red |
+| parse error swallowed | red |
+| exact: contents alone instead of the whole mapping | red |
+| exact: job check removed | red |
+| exact: job check as truthiness of a non-empty permissions | red |
+
+
+DoD on 7ea3da91: `npm run typecheck` then the four test files, exit 0, 95 tests, 95 pass, 0 fail.
+
+Document sentence: the CHANGELOG entry is true by ci.yml lines 13-18 (block added) and the live test "every workflow under .github/workflows ..." (acceptance 3).
+
+Changed lines before this section: 154 insertions (`git diff --shortstat origin/main...HEAD`), budget 170.
