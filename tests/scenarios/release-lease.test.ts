@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { makeFixture, writeCard, goalForCards, driveCardToDone, opsConfigured, opsRunner, candidateShaFor, actorA, actorB, T0 } from './_harness.ts';
@@ -21,6 +21,7 @@ type Deps = ConstructorParameters<typeof ReleaseRunner>[0];
 const STAGING = 'env:staging';
 const PRODUCTION = 'env:production';
 const UNRESOLVED: OperationStatus[] = ['intended', 'issued', 'running', 'UNKNOWN'];
+const PAST = new Date('2020-01-01T00:00:00.000Z');
 
 function inFixture(body: (fx: Fx) => void): void {
   const fx = makeFixture();
@@ -121,9 +122,11 @@ test('a delivered production attempt releases the staging and the production lea
     const release = releaseRunner(fx);
     const { goalId, attemptId } = delivering(fx, 'production', release);
     toCheckpoint(fx, release, goalId, attemptId);
+    assert.equal(held(fx, STAGING), true, 'env:staging stays held while the attempt waits at CHECKPOINT');
     approveProduction(fx, goalId);
     let r = step(fx, release, goalId, attemptId);
     assert.equal(r.attempt.state, 'OBSERVE', r.directive.narration);
+    assert.deepEqual({ staging: held(fx, STAGING), production: held(fx, PRODUCTION) }, { staging: true, production: true }, 'both held while the attempt observes');
     fx.advance(Date.parse(r.attempt.healthWindow!.to) - Date.parse(fx.now()) + MINUTE_MS);
     r = step(fx, release, goalId, attemptId);
     assert.equal(r.attempt.state, 'CLOSE', r.directive.narration);
@@ -204,12 +207,29 @@ test('an attempt with an unresolved operation keeps its leases', () => {
     releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(released(fx, STAGING), true, 'a terminal attempt with no ledger record');
   });
+  for (const status of ['succeeded', 'failed', 'cancelled'] as const) {
+    inFixture((fx) => {
+      const attempt = stored(fx, 'STOP');
+      hold(fx, 'staging', `release:${attempt.id}`);
+      record(fx, 1, { goalId: attempt.goalId, releaseAttempt: attempt.id, status });
+      releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+      assert.equal(released(fx, STAGING), true, `a ${status} record of the attempt`);
+    });
+  }
+  inFixture((fx) => {
+    const attempt = stored(fx, 'STOP');
+    hold(fx, 'staging', `release:${attempt.id}`);
+    record(fx, 1, { goalId: attempt.goalId, releaseAttempt: 'rel-other', status: 'intended' });
+    releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(released(fx, STAGING), true, 'an unresolved record of another attempt, without the key');
+  });
 });
 
 test("only the attempt's own lease of this session and host is released", () => {
   const cases: { label: string; lease: (fx: Fx, attemptId: string) => Lease | undefined; released: boolean }[] = [
     { label: 'no operation', lease: (fx) => hold(fx, 'production', undefined), released: false },
     { label: 'another attempt', lease: (fx) => hold(fx, 'production', 'release:rel-other'), released: false },
+    { label: 'the attempt id with a suffix', lease: (fx, id) => hold(fx, 'production', `release:${id}-2`), released: false },
     { label: 'another session', lease: (fx, id) => hold(fx, 'production', `release:${id}`, { actor: actorB }), released: false },
     { label: 'this session on another host', lease: (fx, id) => hold(fx, 'production', `release:${id}`, { actor: { ...actorA, host: 'h2' } }), released: false },
     {
@@ -228,9 +248,13 @@ test("only the attempt's own lease of this session and host is released", () => 
     inFixture((fx) => {
       const attempt = stored(fx, 'CLOSE', { target: 'production' });
       const before = c.lease(fx, attempt.id);
+      // A lease left unchanged is not written either: its file keeps a modification time set in the past.
+      const file = fx.leases.file(PRODUCTION);
+      if (before) utimesSync(file, PAST, PAST);
       const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
       assert.equal(r.attempt.state, 'DONE', r.directive.narration);
       assert.deepEqual(fx.leases.read(PRODUCTION), before && (c.released ? { ...before, released: true } : before), c.label);
+      if (before && !c.released) assert.equal(statSync(file).mtimeMs, PAST.getTime(), `${c.label}: not written`);
     });
   }
   inFixture((fx) => {
@@ -240,11 +264,23 @@ test("only the attempt's own lease of this session and host is released", () => 
     assert.equal(released(fx, STAGING), true, 'environment Staging releases env:staging');
   });
   inFixture((fx) => {
+    const attempt = stored(fx, 'DONE', { environment: 'Staging' });
+    mkdirSync(fx.paths.leases, { recursive: true });
+    writeFileSync(fx.leases.file(STAGING), '{not json');
+    const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.ok(r.directive.narration.includes(`${STAGING} (`), `environment Staging is named by the key env:staging: ${r.directive.narration}`);
+  });
+  inFixture((fx) => {
     const attempt = stored(fx, 'DONE', { target: 'production' });
     hold(fx, 'staging', `release:${attempt.id}`);
     record(fx, 1, { goalId: attempt.goalId, idempotencyKey: `${attempt.id}:stage-deploy:c1`, target: 'staging', status: 'succeeded' });
     releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
     assert.equal(released(fx, STAGING), true, 'the target of a record that belongs by its key');
+  });
+  inFixture((fx) => {
+    const attempt = stored(fx, 'DONE', { environment: undefined });
+    const r = releaseRunner(fx).next(fx.goal(attempt.goalId), attempt);
+    assert.equal(r.directive.narration, 'Release attempt delivered.', 'no environment and no record: nothing to release');
   });
 });
 
@@ -302,6 +338,29 @@ test('a lease cleanup that fails leaves the attempt terminal, releases the other
     assert.equal(held(fx, STAGING), true);
     release.next(fx.goal(attempt.goalId), fx.store.getRelease(attempt.id)!);
     assert.equal(released(fx, STAGING), true, 'the retry releases env:staging');
+  });
+  inFixture((fx) => {
+    // A STOP reached through a nested step (the failed deploy `issue` hands back to the step logic) is cleaned up once, at the exit.
+    let attemptId = '';
+    let failures = 1;
+    const leases = new (class extends LeaseStore {
+      override update(key: string, change: (existing: Lease | undefined) => Lease | undefined): Lease | undefined {
+        const state = attemptId ? fx.store.getRelease(attemptId)?.state : undefined;
+        if (key === STAGING && failures > 0 && (state === 'DONE' || state === 'STOP')) {
+          failures--;
+          throw new Error('lease section unavailable');
+        }
+        return super.update(key, change);
+      }
+    })(fx.paths.leases);
+    const release = releaseRunner(fx, { leases, runner: scriptedRunner({ 'deploy-cmd': { stdout: 'FAILED', exitCode: 1 } }) });
+    const d = delivering(fx, 'staging', release);
+    attemptId = d.attemptId;
+    const r = step(fx, release, d.goalId, attemptId);
+    assert.equal(r.attempt.stop?.reason, 'release-health', r.directive.narration);
+    assertRetryNamed(r.directive, attemptId, STAGING, 'lease section unavailable');
+    assert.equal(r.directive.narration.split('lease section unavailable').length, 2, `named once: ${r.directive.narration}`);
+    assert.equal(held(fx, STAGING), true, 'a nested STOP is cleaned up at the exit alone');
   });
   for (const [label, content, error] of [
     ['malformed', '{not json', /MALFORMED_JSON/],

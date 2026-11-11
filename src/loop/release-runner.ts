@@ -11,11 +11,11 @@ import { assertReleaseTransition, finalStateForTarget, nextAfterObserve, transit
 import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
-import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type OperationRecord, type ReleaseState } from '../core/types.ts';
+import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type Lease, type OperationRecord, type ReleaseState } from '../core/types.ts';
 import { executeOperation, loadDeliveryOps, lookupOperation, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
-import { Journal } from '../state/journal.ts';
+import { Journal, currentActor } from '../state/journal.ts';
 import { GoalStore } from '../state/goal-store.ts';
 import type { StatePaths, RepoIdentity } from '../state/paths.ts';
 import type { SyncRunner } from '../probes/exec.ts';
@@ -139,8 +139,44 @@ export class ReleaseRunner {
     };
   }
 
-  /** One bounded step for the attempt. */
+  /** One bounded step for the attempt; every return passes the lease cleanup of a terminal attempt. */
   next(goal: Goal, attempt: ReleaseAttempt): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
+    return this.releaseLeases(this.step(goal, attempt));
+  }
+
+  /**
+   * The exit of `next`. A terminal attempt with no operation of its own (`releaseOperationOf`) intended, issued, running or
+   * UNKNOWN releases each environment lease it claimed: the lease of its environment and of the target of each of its records,
+   * decided and written in that lease's own section, and only when it is this session's and host's live or expired lease for
+   * this attempt. A key whose section throws, or a ledger that cannot be read, is named with the command that retries.
+   */
+  private releaseLeases(out: { attempt: ReleaseAttempt; directive: ReleaseDirective }): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
+    const { attempt, directive } = out;
+    if (attempt.state !== 'DONE' && attempt.state !== 'STOP') return out;
+    const retry = `\`aidlc release next ${attempt.id}\``;
+    let records: OperationRecord[];
+    try {
+      records = this.ops.list({ goalId: attempt.goalId }).filter((o) => releaseOperationOf(o, attempt));
+    } catch (err) {
+      return { attempt, directive: { ...directive, narration: `${directive.narration} Environment leases kept: the operation ledger could not be read (${(err as Error).message}); ${retry} retries the release.` } };
+    }
+    if (records.some((o) => ['intended', 'issued', 'running', 'UNKNOWN'].includes(o.status))) return out;
+    const actor = currentActor();
+    const mine = (lease: Lease) => !lease.released && lease.operation === `release:${attempt.id}` && lease.owner.session === actor.session && lease.owner.host === actor.host;
+    const keys = new Set([attempt.environment, ...records.map((o) => o.target)].filter((e): e is string => Boolean(e)).map((e) => resourceKeys.environment(e)));
+    const failed: string[] = [];
+    for (const key of keys) {
+      try {
+        this.leases.update(key, (lease) => (lease && mine(lease) ? { ...lease, released: true } : lease));
+      } catch (err) {
+        failed.push(`${key} (${(err as Error).message})`);
+      }
+    }
+    if (!failed.length) return out;
+    return { attempt, directive: { ...directive, narration: `${directive.narration} Environment lease release failed for ${failed.join(', ')}; ${retry} retries it.` } };
+  }
+
+  private step(goal: Goal, attempt: ReleaseAttempt): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
     const now = this.clock();
     const stopOut = (a: ReleaseAttempt): { attempt: ReleaseAttempt; directive: ReleaseDirective } => ({ attempt: a, directive: { kind: 'stop', attemptId: a.id, stop: a.stop!, narration: a.stop!.detail } });
     if (attempt.state === 'STOP') return stopOut(attempt);
@@ -205,7 +241,7 @@ export class ReleaseRunner {
         const stagedAttempt = transitionRelease({ ...attempt, environment: env }, 'STAGE', now, this.guards(goal, { ...attempt, environment: env }));
         const saved = this.save(stagedAttempt);
         this.journal(goal.id).append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: saved.id, state: saved.state } });
-        return saved.state === 'STOP' ? stopOut(saved) : this.next(goal, saved);
+        return saved.state === 'STOP' ? stopOut(saved) : this.step(goal, saved);
       }
       case 'STAGE': {
         const done = attempt.steps.find((s) => s.name === 'stage-deploy');
@@ -221,7 +257,7 @@ export class ReleaseRunner {
           }
           const cp = transitionRelease(attempt, 'CHECKPOINT', now, this.guards(goal, attempt, { stagingVerified: true }));
           const saved = this.save(cp);
-          return saved.state === 'STOP' ? stopOut(saved) : this.next(goal, saved);
+          return saved.state === 'STOP' ? stopOut(saved) : this.step(goal, saved);
         }
         if (done.status === 'failed') {
           const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-health', 'staging deployment failed', 'diagnose; a repair card re-enters candidate preparation', { at: now, global: false }), disposition: 'failed' });
@@ -235,7 +271,7 @@ export class ReleaseRunner {
           const applied = transitionRelease(prodAttempt, 'APPLY', now, guard);
           const saved = this.save(applied);
           this.journal(goal.id).append({ type: 'AUTHORIZATION_CHECKED', goalId: goal.id, generation: goal.generation, data: { attemptId: saved.id, kind: 'production', environment: prodEnv, matched: true } });
-          return this.next(goal, saved);
+          return this.step(goal, saved);
         }
         this.journal(goal.id).append({ type: 'AUTHORIZATION_CHECKED', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, kind: 'production', environment: prodEnv, matched: false, detail: stopRec.detail } });
         return { attempt, directive };
@@ -247,7 +283,7 @@ export class ReleaseRunner {
           const windowMs = this.healthWindowMs();
           const observing = transitionRelease({ ...attempt, healthWindow: { from: now, to: addMs(now, windowMs) } }, 'OBSERVE', now, this.guards(goal, attempt));
           const saved = this.save(observing);
-          return this.next(goal, saved);
+          return this.step(goal, saved);
         }
         if (done.status === 'failed') return this.recoverOrStop(goal, attempt, 'production apply failed');
         return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: 'apply-deploy', narration: 'Production deployment issued; awaiting provider status.' } };
@@ -289,14 +325,6 @@ export class ReleaseRunner {
         const finished = transitionRelease(attempt, 'DONE', now, this.guards(goal, attempt, { closureComplete: true }));
         const saved = this.save(finished);
         this.journal(goal.id).append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: saved.id, state: 'DONE', disposition: saved.disposition } });
-        if (attempt.environment) {
-          try {
-            const lease = this.leases.read(resourceKeys.environment(attempt.environment));
-            if (lease) this.leases.release(resourceKeys.environment(attempt.environment), lease.generation);
-          } catch {
-            /* not ours */
-          }
-        }
         return { attempt: saved, directive: { kind: 'done', attemptId: saved.id, disposition: saved.disposition, narration: saved.disposition === 'recovered' ? 'Release attempt closed as recovered; the failed candidate was not delivered.' : `Release delivered to ${attempt.environment}; final state for ${attempt.target} is ${finalStateForTarget(attempt.target)}.` } };
       }
       case 'WAIT':
@@ -313,7 +341,7 @@ export class ReleaseRunner {
     const saved = this.save(rec);
     this.journal(goal.id).append({ type: 'RELEASE_STATE', goalId: goal.id, generation: goal.generation, data: { attemptId: saved.id, state: saved.state, cause } });
     if (saved.state === 'STOP') return { attempt: saved, directive: { kind: 'stop', attemptId: saved.id, stop: saved.stop!, narration: `${cause}: ${saved.stop!.detail}` } };
-    return this.next(goal, saved);
+    return this.step(goal, saved);
   }
 
   /**
@@ -348,7 +376,7 @@ export class ReleaseRunner {
     const steps = [...attempt.steps.filter((s) => s.name !== stepName), { name: stepName, status: op.status === 'succeeded' ? ('succeeded' as const) : ('failed' as const), operationId: op.id }];
     const operations = attempt.operations.includes(op.id) ? attempt.operations : [...attempt.operations, op.id];
     const evidence = attempt.evidence.some((e) => e.id === `op-${op.id}`) ? attempt.evidence : [...attempt.evidence, { id: `op-${op.id}`, kind: op.kind === 'deploy' ? ('deploy' as const) : ('recovery' as const), createdAt: now, candidateDigest: attempt.candidateDigest, environment: op.target, note: op.error }];
-    return this.next(goal, this.save({ ...attempt, steps, operations, evidence }));
+    return this.step(goal, this.save({ ...attempt, steps, operations, evidence }));
   }
 
   private issue(goal: Goal, attempt: ReleaseAttempt, role: 'deploy' | 'recover', stepName: ReleaseStep, environment: string, phase: string): { attempt: ReleaseAttempt; directive: ReleaseDirective } {
@@ -389,7 +417,7 @@ export class ReleaseRunner {
     this.journal(goal.id).append({ type: 'OPERATION_RESULT', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, status } });
     const steps = [...attempt.steps.filter((s) => s.name !== stepName), { name: stepName, status, operationId: intent.id }];
     const saved = this.save({ ...attempt, steps, operations: [...attempt.operations, intent.id], evidence: [...attempt.evidence, { id: `op-${intent.id}`, kind: role === 'deploy' ? ('deploy' as const) : ('recovery' as const), createdAt: now, candidateDigest: attempt.candidateDigest, environment, note: exec.detail }] });
-    if (status === 'succeeded' || status === 'failed') return this.next(goal, saved);
+    if (status === 'succeeded' || status === 'failed') return this.step(goal, saved);
     return { attempt: saved, directive: { kind: 'wait', attemptId: saved.id, on: `${phase}:${intent.id}`, narration: `${role} issued (${exec.detail}); exit zero is not completion. Reconcile via provider status lookup.` } };
   }
 

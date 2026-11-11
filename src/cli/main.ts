@@ -1133,7 +1133,8 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const c = ctx(g());
       const { attempt, goalRec, runner } = releaseCtx(c, attemptId, o.goal);
       const r = runner.next(goalRec, attempt);
-      if (r.attempt.state === 'STOP' || r.attempt.state === 'DONE') {
+      // A terminal goal refuses every report; the run still applies the lease cleanup of `next` (the retry it names).
+      if ((r.attempt.state === 'STOP' || r.attempt.state === 'DONE') && !goalRec.terminal) {
         c.controller.report({ goalId: goalRec.id, generation: goalRec.generation, result: 'release-result', attemptId, data: { attempt: r.attempt } });
       }
       out(c, { attempt: { id: r.attempt.id, state: r.attempt.state, disposition: r.attempt.disposition, environment: r.attempt.environment, health: r.attempt.healthResult }, directive: r.directive }, () => `[${r.directive.kind}] ${attemptId} state=${r.attempt.state}\n${r.directive.narration}`);

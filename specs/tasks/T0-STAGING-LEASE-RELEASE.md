@@ -64,3 +64,88 @@ npm run typecheck && node --test tests/scenarios/release-lease.test.ts tests/sce
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the four existing files pass unchanged.
+
+## Attempt evidence
+
+Attempt 1 (effort high), base `6b506343`.
+
+RED commit `76133640` (the test file alone, sources of main): 8 tests, 0 pass, 8 fail. First failing assertion per test:
+
+| Test | First failing assertion on main |
+|---|---|
+| 1 staging DONE | `fx.leases.claim(env:staging, actorB)` after the TTL: `'expired' !== 'acquired'` (main leaves the lease unreleased) |
+| 2 production delivered | `{ staging: false, production: true }` vs `{ staging: true, production: true }` (main releases only `env:production` at CLOSE) |
+| 3 every terminal path | `failed staging deploy`: `false !== true` (STOP release-health leaves `env:staging` held) |
+| 4 unresolved keeps | `a terminal attempt with no ledger record`: `false !== true`; every unresolved case before it passes on main |
+| 5 own lease only | `no operation`: `released: true` vs `released: false` (main's CLOSE releases it) |
+| 6 renewal race | `the renewal for another attempt landed after the attempt was saved DONE` (no lease section runs after DONE on main) |
+| 7 cleanup fails | narration `Release delivered to production; final state for production is OBSERVE.` lacks `env:staging` |
+| 8 CLI twice | second run: `aidlc: goal ... is terminal (STOP); ...`, `1 !== 0` |
+
+Commit `5535c09d` corrects the test helper `hold` to return the lease as read from the store: `claim` returns `operation: undefined` as a key, which the stored record omits, so test 5 compared unequal for that reason too; after the correction test 5 still fails on main at `released: true` vs `released: false` (checked by running it against the sources of main). The GREEN commit adds the cases the revert check asked for (below) and the input-class cases.
+
+Two statements of the card that the tests cannot meet as written, reported, not worked around:
+- Acceptance 4 says "Passes" (on main), but it also requires "A terminal attempt with no ledger record at all releases", which main does not do; every other case of item 4 passes on main.
+- Acceptance 6 says it "passes on main only because main releases nothing at DONE". The renewal is made by the lease store wrapper inside the first `env:staging` section that runs after the attempt is saved terminal; main runs no lease section after DONE, so the renewal never happens and the assertion that it landed (and the `operation` assertion after it) fails on main. The test does fail against the read-then-`LeaseStore.release` variant (revert row M12).
+
+Reading of the card: R5 names a lease section that throws. A ledger that cannot be read (a malformed record under `operations/`) is read before any lease section; the exit then keeps every lease (R2 cannot show that no unresolved record exists, and `forbid` bars releasing while one may) and gives the narration of R5 with `operation ledger`, the store error and `aidlc release next <attemptId>`, instead of throwing out of `next` for an attempt that is already terminal. Test 7, last case.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/release-lease.test.ts` "a staging attempt that ends in DONE releases env:staging, and another session then acquires it" | pass; fails on main |
+| 2 | same file, "a delivered production attempt releases the staging and the production lease it claimed" (also: `env:staging` held at CHECKPOINT, both held at OBSERVE) | pass; fails on main |
+| 3 | same file, "every terminal path passes the one exit": failed staging deploy, publishing deploy without production authority, ownership STOP at APPLY (own `env:staging` released, other session's `env:production` deep-equal to before), stored STOP, stored DONE | pass; fails on main |
+| 4 | same file, "an attempt with an unresolved operation keeps its leases": 4 statuses x 3 associations (`releaseAttempt`, key only, key with another attempt's `releaseAttempt`) x stored STOP and DONE; UNKNOWN past the grace gives STOP `time` with the lease held, twice; no record releases | pass; the no-record case fails on main |
+| 5 | same file, "only the attempt's own lease of this session and host is released": stored CLOSE production attempt with each lease class; unchanged leases are not written (file modification time kept); `Staging`; key-only record target | pass; fails on main |
+| 6 | same file, "a renewal for another attempt that lands before the cleanup takes the lock keeps the lease" | pass; fails on main (see above) |
+| 7 | same file, "a lease cleanup that fails leaves the attempt terminal, releases the other leases and names the command that retries it": throw once for `env:staging`, then retry; a nested STOP named once; malformed file; file that is not a lease; held lock (`LOCKED`, `timeoutMs` 50) then retry; unreadable ledger | pass; fails on main |
+| 8 | same file, "aidlc release next run twice on a stopped attempt exits 0 both times" | pass; fails on main |
+| 9 | `tests/scenarios/release.test.ts`, `release-publication.test.ts`, `release-reissue.test.ts`, `tests/infra/lease.test.ts`, unchanged | pass (DoD) |
+| 10 | docs/OPERATIONS.md (Standalone release, paragraph after the `aidlc ops reconcile` paragraph), docs/ARCHITECTURE.md (paragraph after the `finalStateForTarget` paragraph below the release diagram), CHANGELOG.md (Unreleased, directly above `- T0-SCAN-SETUP-STEP-2`) | for the reviewer |
+
+Per-hunk revert check (each hunk reverted alone in the worktree, `node --test tests/scenarios/release-lease.test.ts`, restored):
+
+| Hunk (requirement) | Reverted to | Test and first failing assertion | Result |
+|---|---|---|---|
+| M1 exit in public `next` (R1) | `return this.step(goal, attempt)` | all 8 tests, e.g. test 1 `'expired' !== 'acquired'` | red, 8 of 8 |
+| M2 nested steps call the step logic (R1) | the seven nested calls go through `next` | test 7 `a nested STOP is cleaned up at the exit alone` (the inner exit's failure was retried by the outer one) | red |
+| M3 exit acts on DONE or STOP only (R1, R2) | the state check removed | test 2 `env:staging stays held while the attempt waits at CHECKPOINT` | red |
+| M4 unreadable ledger keeps the leases (R4 reading) | the error rethrown | test 7 `MALFORMED_JSON ... op-unreadable.json` thrown | red |
+| M5 unresolved record keeps the leases (R2, R4) | the check removed | test 4 `intended, releaseAttempt, STOP` | red |
+| M6a lease not released (R3) | condition removed | test 5 `released: not written` (modification time changed) | red |
+| M6b `operation` is `release:<attemptId>` (R3) | condition removed | test 5 `no operation`; test 6 deep-equal (lease released) | red |
+| M6c owner session (R3) | condition removed | test 5 `another session` | red |
+| M6d owner host (R3) | condition removed | test 5 `this session on another host` | red |
+| M7 keys from the records' `target` (R3) | attempt environment only | tests 2, 3 (`ownership stop at APPLY: own env:staging`), 5 (`the target of a record that belongs by its key`), 7 | red |
+| M7b key by `resourceKeys.environment` (R3) | `` `env:${name}` `` | test 5 `environment Staging is named by the key env:staging` (the lease file name is case-insensitive, so the key text is the observable) | red |
+| M8 a failed section does not stop the other keys (R5) | the error rethrown | tests 5 and 7 (`lease section unavailable` thrown) | red |
+| M9 failure named with the retry command (R5) | `return out` | tests 5 and 7 (narration without `env:staging`) | red |
+| M10 CLOSE release removed (R6) | the main CLOSE block restored | test 5 `no operation` (`released: true`) | red |
+| M11 report only for a goal that is not terminal (R7) | condition removed | test 8, second run `goal ... is terminal (STOP)`, `1 !== 0` | red |
+| M12 variant: read the lease, then `LeaseStore.release` (R3, acceptance 6) | the section replaced by `read` + `release(key, generation)` | test 6 deep-equal (the renewed lease was released) | red |
+
+Every row is red. The input-class cases added after this run (a `succeeded`, `failed` or `cancelled` record releases, an unresolved record that does not belong releases, an `operation` of the attempt id with a suffix is kept, no environment and no record names nothing) guard against a widened predicate (a terminal status in the unresolved list, an association without `releaseOperationOf`, a prefix match on `operation`), not against a removed hunk.
+
+Input classes of the new predicates:
+
+| Predicate | Class | Test |
+|---|---|---|
+| exit applies (state) | DONE, STOP | 3 (stored STOP and DONE, nested STOPs), 1, 2 |
+| | a non-terminal return (CHECKPOINT, OBSERVE) | 2 (leases held) |
+| unresolved record | `intended`, `issued`, `running`, `UNKNOWN` | 4 |
+| | `succeeded`, `failed`, `cancelled` | 4 (terminal statuses release) |
+| | belongs by `releaseAttempt`; by key with `releaseAttempt` absent; by key with another attempt's | 4 |
+| | an unresolved record that does not belong (another attempt, no key) | 4 (releases) |
+| | no record | 4 |
+| | ledger unreadable | 7 |
+| lease is the attempt's own (`mine`) | absent; released; no `operation`; `release:<other attempt>`; `release:<attemptId>` plus a suffix | 5 |
+| | another session; this session on another host; expired of this session | 5 |
+| keys | attempt environment; record target by `releaseAttempt`; record target by key only; `Staging` lower-cased; duplicate key once | 2, 3, 5, 7 |
+| | no environment and no record | 5 |
+| report to the goal (R7) | goal not terminal; goal terminal | 8 |
+
+Doc-reading run (Windows): the 78 test files that `grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" tests --include=*.test.ts` lists, in one `node --test` call on the final docs: 1863 tests, 1851 pass, 0 fail, 12 skipped, exit 0. The ARCHITECTURE.md sentence is a paragraph of its own after the `finalStateForTarget` paragraph, outside the `src/coordination/` paragraph that tests/scenarios/op-intent-dup.test.ts:355 pins.
+
+DoD (`npm run typecheck && node --test tests/scenarios/release-lease.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/release-reissue.test.ts tests/infra/lease.test.ts`, Windows): exit 0; `tsc -p tsconfig.test.json --noEmit` clean; `# tests 49`, `# pass 49`, `# fail 0`, `# skipped 0` (8 tests in the new file, 41 in the four existing files).
+
+Coordinator verification:
