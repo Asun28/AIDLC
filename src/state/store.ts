@@ -150,9 +150,12 @@ export function createExclusive(file: string, text: string): boolean {
 /**
  * The one read-modify-write of a record: `change` receives the record as stored, parsed by `schema`, under an exclusive
  * lock file (`<file>.lock`, created with `wx` and naming its process), and the record it returns is written atomically;
- * a change that throws, or returns the record it received or nothing, writes nothing. A waiter refuses with `LOCKED` at
- * the deadline (`timeoutMs`, default 2 s), which is checked before every retry, so a wait that overran it never runs
- * `change` on a lock freed meanwhile. No lock is ever removed but by the writer that created it: a lock whose owner process
+ * a change that throws, or returns the record it received or nothing, writes nothing. The deadline (`timeoutMs`, default
+ * 2 s) is checked after every wait and before the next create, so a wait that overran it never runs `change` on a lock
+ * freed meanwhile. After a create reports a held lock, the waiter refuses with `LOCKED` at the deadline, unless reading the
+ * lock owner fails. An exclusive create refused with EPERM while the lock path is absent is retried after the same wait at
+ * most twice; the third such refusal, or one after whose wait the deadline has passed, is thrown as that EPERM, and any
+ * other error of the create is thrown at once. No lock is ever removed but by the writer that created it: a lock whose owner process
  * is gone is refused like any other, naming the file and the process id for the operator. The write is ownership-checked
  * (a writer whose lock changed hands refuses with `LOCK_LOST`) and runs inside `within` when given, so a caller holds
  * another lock until the record is on disk. The release removes only this writer's lock, and neither it nor an unreadable
@@ -163,9 +166,18 @@ export function updateJson<T>(file: string, schema: ZodType<T>, change: (current
   const lock = `${file}.lock`;
   const owner = `pid=${process.pid} at=${new Date().toISOString()} nonce=${randomBytes(4).toString('hex')}`;
   const deadline = Date.now() + (opts.timeoutMs ?? 2_000);
-  while (!createExclusive(lock, owner)) {
+  let refusals = 0;
+  for (;;) {
+    let refusal: { error: unknown } | undefined;
+    try {
+      if (createExclusive(lock, owner)) break;
+    } catch (err) {
+      const { code, syscall } = err as NodeJS.ErrnoException;
+      if (code !== 'EPERM' || syscall !== 'open' || ++refusals > 2) throw err;
+      refusal = { error: err };
+    }
     sleepSync(10);
-    if (Date.now() >= deadline) throw locked(file, lock);
+    if (Date.now() >= deadline) throw refusal ? refusal.error : locked(file, lock);
   }
   try {
     const current = readJson(file, schema);
