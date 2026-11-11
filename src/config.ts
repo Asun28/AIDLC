@@ -6,7 +6,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { ReviewEffortPolicy } from './core/types.ts';
-import { DEFAULT_TRANSIENT_STEPS } from './core/ci-policy.ts';
+import { DEFAULT_SCAN_SETUP_STEPS, DEFAULT_TRANSIENT_STEPS } from './core/ci-policy.ts';
 
 const nonBlank = z.string().regex(/\S/, 'must not be blank');
 
@@ -146,8 +146,12 @@ export const ProjectConfig = z.object({
   preReview: PreReviewConfig.prefault({}),
   formalReview: FormalReviewConfig.prefault({}),
   github: GitHubShipConfig.prefault({}),
-  /** CI failure classes (card T0-CI-RERUN-STRUCTURED): the job steps whose failure is infrastructure, the structured evidence for the one rerun. */
-  ci: z.object({ transientSteps: z.array(nonBlank).default([...DEFAULT_TRANSIENT_STEPS]) }).prefault({}),
+  /**
+   * CI failure classes: the job steps whose failure is infrastructure, the structured evidence for the one rerun (card
+   * T0-CI-RERUN-STRUCTURED), and the steps of a scan job that install its scanner, a failure there being no security finding
+   * (card T0-SCAN-SETUP-STEP).
+   */
+  ci: z.object({ transientSteps: z.array(nonBlank).default([...DEFAULT_TRANSIENT_STEPS]), scanSetupSteps: z.array(nonBlank).default([...DEFAULT_SCAN_SETUP_STEPS]) }).prefault({}),
 })
   .superRefine((config, ctx) => {
     // A required review cannot be waived at the ship: the two settings would let a blocked candidate merge.

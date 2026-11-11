@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { canRerun, classifyCiFailure, hasUnreconciledRerun, reconcileRerun, recordRerunIntent, type CiJob } from '../../src/core/ci-policy.ts';
-import { classifyShipOutput } from '../../src/delivery/ship.ts';
+import { classifyShipOutput, encodeUntrusted } from '../../src/delivery/ship.ts';
 import { CiLedger } from '../../src/core/types.ts';
 import { T0 } from './_fixtures.ts';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -445,5 +445,180 @@ describe('security class (T1-LOOP-GATES R7)', () => {
     const d = canRerun(CiLedger.parse({}), 'run-1', 1, 'cand-1', 'security');
     assert.equal(d.allowed, false);
     assert.match(d.reason, /security gate/);
+  });
+});
+
+describe('scan setup steps (T0-SCAN-SETUP-STEP-2)', () => {
+  const SCAN = 'Gitleaks (committed history)';
+  const INSTALL = 'Install gitleaks (pinned version, checksum verified)';
+  /** A step line for a check, as the GitHub ship path prints it from the job record. */
+  const stepLine = (check: string, name: string | null, conclusion = 'failure', job = '128690143221') => `[CI-GATE-STEP] ${JSON.stringify({ check, job, step: name === null ? null : { number: 3, name, conclusion } })}`;
+  const redLine = (...names: string[]) => `[CI-GATE-RED] ${JSON.stringify(names.map((name) => ({ name, conclusion: 'failure' })))}`;
+  /** The gate output of run 42467444385 attempt 1 (PR 236): the install step failed on a 504 and the scan step was skipped. */
+  const RUN_42467444385 = [redLine(SCAN), stepLine(SCAN, INSTALL), 'curl: (22) The requested URL returned error: 504'].join('\n');
+  const ship = (text: string, options?: { transientSteps?: string[]; scanSetupSteps?: string[] }) => classifyCiFailure([{ name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: text }], undefined, options);
+
+  test('acceptance 1: a scan check red at its listed install step is no security finding and says why [R1] [R4]', () => {
+    const c = ship(RUN_42467444385);
+    assert.equal(c.class, 'unknown');
+    assert.ok(!c.evidence.some((e) => e.startsWith('security:')), c.evidence.join(' | '));
+    assert.equal(c.evidence.at(-1), 'scan-setup: "Gitleaks (committed history)" failed at "Install gitleaks (pinned version, checksum verified)" before its scan');
+    assert.equal(classifyCiFailure([{ name: SCAN, conclusion: 'failure', logExcerpt: stepLine(SCAN, INSTALL) }]).class, 'unknown', 'a failed job passed in directly with its step line');
+  });
+
+  test('acceptance 2: a scan check stays security unless every record of it places the failure in a listed setup step [R3]', () => {
+    const cases: Array<[string, string, { scanSetupSteps?: string[] }?]> = [
+      ['no step line', [redLine(SCAN), 'curl: (22) The requested URL returned error: 504'].join('\n')],
+      ['a null step', [redLine(SCAN), stepLine(SCAN, null)].join('\n')],
+      ['the scan step', [redLine(SCAN), stepLine(SCAN, 'Scan committed history')].join('\n')],
+      ['a listed step that did not fail', [redLine(SCAN), stepLine(SCAN, INSTALL, 'success')].join('\n')],
+      ['a step line of another check', [redLine(SCAN), stepLine('build', INSTALL)].join('\n')],
+      ['an empty list', RUN_42467444385, { scanSetupSteps: [] }],
+      ['a second step line naming the scan step', [RUN_42467444385, stepLine(SCAN, 'Scan committed history', 'failure', '2')].join('\n')],
+      ['a duplicate red check name', [redLine(SCAN, SCAN), stepLine(SCAN, INSTALL)].join('\n')],
+      ['the check red on two gate lines', [RUN_42467444385, redLine(SCAN)].join('\n')],
+      ['an unresolved red line', [RUN_42467444385, '[CI-GATE-RED] unreadable'].join('\n')],
+      ['raw gitleaks output', [RUN_42467444385, '1:23PM WRN leaks found: 2'].join('\n')],
+      ['a RuleID line', [RUN_42467444385, 'RuleID:      generic-api-key'].join('\n')],
+      ['an unparsed red line naming a scan', [RUN_42467444385, '[CI-GATE-RED] Gitleaks (committed history),linux=failure'].join('\n')],
+      ['a malformed step line naming the check', [RUN_42467444385, `[CI-GATE-STEP] ${JSON.stringify({ check: SCAN, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`].join('\n')],
+      ['a malformed step line naming the check, the setup step on transientSteps', [RUN_42467444385, `[CI-GATE-STEP] ${JSON.stringify({ check: SCAN, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`].join('\n'), { transientSteps: ['Set up job', 'Complete job', INSTALL] } as { scanSetupSteps?: string[] }],
+      ['a malformed step line naming no readable check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null'].join('\n')],
+      ['a step line of valid JSON naming no check', [RUN_42467444385, '[CI-GATE-STEP] {"job":"2","step":null}'].join('\n')],
+      ['a step line whose check is not a string', [RUN_42467444385, '[CI-GATE-STEP] {"check":7,"job":"2","step":null}'].join('\n')],
+      ['a red line with a raw bracket in another check name', [RUN_42467444385, redLine('build [x]')].join('\n')],
+      ['a lone percent sign in the step name of another check', [RUN_42467444385, stepLine('build', 'Run 100% tests')].join('\n')],
+      ['a red line whose element carries another key', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', extra: 1 }])}`].join('\n')],
+      ['a red line with other spacing', [RUN_42467444385, `[CI-GATE-RED]  ${JSON.stringify([{ name: 'build', conclusion: 'failure' }])}`].join('\n')],
+      ['a red line whose element carries status completed', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', status: 'completed' }])}`].join('\n')],
+      ...['', '  '].flatMap((blank): Array<[string, string, { scanSetupSteps?: string[] }?]> => {
+        const malformed = `[CI-GATE-STEP] ${JSON.stringify({ check: blank, job: '2', step: { number: 4, name: 'Scan committed history', conclusion: null } })}`;
+        const wellFormed = stepLine(blank, 'Scan committed history', 'failure', '2');
+        const allowlisted = { transientSteps: ['Set up job', 'Complete job', INSTALL] } as { scanSetupSteps?: string[] };
+        return [
+          [`a malformed step line with the blank check ${JSON.stringify(blank)}`, [RUN_42467444385, malformed].join('\n')],
+          [`a malformed step line with the blank check ${JSON.stringify(blank)}, the setup step on transientSteps`, [RUN_42467444385, malformed].join('\n'), allowlisted],
+          [`a step line with the blank check ${JSON.stringify(blank)}`, [RUN_42467444385, wellFormed].join('\n')],
+          [`a step line with the blank check ${JSON.stringify(blank)}, the setup step on transientSteps`, [RUN_42467444385, wellFormed].join('\n'), allowlisted],
+        ];
+      }),
+    ];
+    /** Raw gitleaks output is a hit of its own: the check itself is exempt and keeps its note. */
+    const ownHit = new Set(['raw gitleaks output', 'a RuleID line']);
+    for (const [label, text, options] of cases) {
+      const c = ship(text, options);
+      assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
+      assert.equal(c.evidence.some((e) => e.startsWith('scan-setup:')), ownHit.has(label), `${label}: scan-setup evidence only where the check itself is exempt`);
+    }
+    const gate: CiJob = { name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: RUN_42467444385 };
+    const direct: Array<[string, CiJob[]]> = [
+      ['two job records of the check', [{ name: SCAN, conclusion: 'failure' }, { name: SCAN, conclusion: 'failure' }, gate]],
+      ['a job record and a gate record that disagree', [{ name: SCAN, conclusion: 'success' }, gate]],
+      ['an aggregate wrapper named for a scan', [{ ...gate, name: SCAN }]],
+    ];
+    for (const [label, jobs] of direct) {
+      const c = classifyCiFailure(jobs);
+      assert.equal(c.class, 'security', `${label}: ${c.evidence.join(' | ')}`);
+    }
+    assert.equal(classifyCiFailure([{ name: SCAN, conclusion: 'failure' }, gate]).class, 'unknown', 'one job record corroborates one gate record');
+    // The only step line of the check names the install step, in a form the GitHub ship path never prints.
+    const install = { number: 3, name: INSTALL, conclusion: 'failure' };
+    const forms: Array<[string, string]> = [
+      ['no job and no number', JSON.stringify({ check: SCAN, step: { name: INSTALL, conclusion: 'failure' } })],
+      ['job null and number "bad"', JSON.stringify({ check: SCAN, job: null, step: { number: 'bad', name: INSTALL, conclusion: 'failure' } })],
+      ['a numeric job', JSON.stringify({ check: SCAN, job: 128690143221, step: install })],
+      ['a job that is not digits', JSON.stringify({ check: SCAN, job: 'abc', step: install })],
+      ['step number 0', JSON.stringify({ check: SCAN, job: '1', step: { ...install, number: 0 } })],
+      ['step number 3.5', JSON.stringify({ check: SCAN, job: '1', step: { ...install, number: 3.5 } })],
+      ['another top-level key', JSON.stringify({ check: SCAN, job: '1', step: install, extra: 1 })],
+      ['another step key', JSON.stringify({ check: SCAN, job: '1', step: { ...install, extra: 1 } })],
+      ['a repeated key', `{"check":${JSON.stringify(SCAN)},"check":${JSON.stringify(SCAN)},"job":"1","step":${JSON.stringify(install)}}`],
+      ['another key order', JSON.stringify({ job: '1', check: SCAN, step: install })],
+      ['other spacing', JSON.stringify({ check: SCAN, job: '1', step: install }).replace('"job":', '"job": ')],
+    ];
+    for (const [label, payload] of forms) {
+      for (const transientSteps of [undefined, ['Set up job', 'Complete job', INSTALL]]) {
+        for (const line of [`[CI-GATE-STEP] ${payload}`, ...(label === 'other spacing' ? [`[CI-GATE-STEP]  ${JSON.stringify({ check: SCAN, job: '1', step: install })}`] : [])]) {
+          const c = ship([redLine(SCAN), line].join('\n'), { ...(transientSteps ? { transientSteps } : {}) });
+          assert.equal(c.class, 'security', `${label}${transientSteps ? ', the setup step on transientSteps' : ''}: ${c.evidence.join(' | ')}`);
+          assert.ok(!c.evidence.some((e) => e.startsWith('scan-setup:')), `${label}: no scan-setup evidence`);
+        }
+      }
+    }
+    const slashed = { scanSetupSteps: ['Install a/b'] };
+    const escaped = `[CI-GATE-STEP] {"check":${JSON.stringify(SCAN)},"job":"1","step":{"number":3,"name":"Install a\\/b","conclusion":"failure"}}`;
+    assert.equal(ship([redLine(SCAN), escaped].join('\n'), slashed).class, 'unknown', 'a step name with / written as \\/, as the ship path prints it');
+    assert.equal(ship([redLine(SCAN), escaped.replace('a\\/b', 'a/b')].join('\n'), slashed).class, 'security', 'a / the ship path would have escaped');
+  });
+
+  test('acceptance 3: one gate line in another form than the ship path prints denies every exemption; names in the printed encoding are exempt [R1] [R2] [R3]', () => {
+    const scanStep = { number: 4, name: 'Scan committed history', conclusion: 'failure' };
+    const repeated = `[CI-GATE-STEP] {"check":${JSON.stringify(SCAN)},"check":"build","job":"2","step":${JSON.stringify(scanStep)}}`;
+    const bracket = 'Install [gitleaks]';
+    const allowlisted = { transientSteps: ['Set up job', 'Complete job', INSTALL] };
+    const cases: Array<[string, string, { transientSteps?: string[]; scanSetupSteps?: string[] }?]> = [
+      ['a step line naming build whose check key repeats, the scan check first', [RUN_42467444385, repeated].join('\n')],
+      ['the same line with its step conclusion null', [RUN_42467444385, repeated.replace('"conclusion":"failure"', '"conclusion":null')].join('\n')],
+      ['a raw [ in the step name, listed as written', [redLine(SCAN), stepLine(SCAN, bracket)].join('\n'), { scanSetupSteps: [bracket] }],
+      ['the check written with %5b in its step line', [redLine('Gitleaks %5Bx%5D'), stepLine('Gitleaks %5bx%5d', INSTALL)].join('\n')],
+      ['a red line whose first element repeats name, the scan check first, beside its own element', [`[CI-GATE-RED] [{"name":${JSON.stringify(SCAN)},"name":"build","conclusion":"failure"},${JSON.stringify({ name: SCAN, conclusion: 'failure' })}]`, stepLine(SCAN, INSTALL)].join('\n')],
+      ['a legacy red line for another check', [RUN_42467444385, '[CI-GATE-RED] build=failure'].join('\n')],
+      ['a timeout line', [RUN_42467444385, `[CI-GATE-TIMEOUT] 1 pending checks: ${JSON.stringify([{ name: 'build', conclusion: null, status: 'queued' }])}`].join('\n')],
+      ['a second step line of the check at the same listed step', [RUN_42467444385, stepLine(SCAN, INSTALL, 'failure', '2')].join('\n')],
+      // R3 decision 1: the gate prints a red line only for completed check runs, so no printed element has a status.
+      ['the red line of the check with status "" on its element', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: '' }])}`, stepLine(SCAN, INSTALL)].join('\n')],
+      ['the red line of the check with status "" on its element, the setup step on transientSteps', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: '' }])}`, stepLine(SCAN, INSTALL)].join('\n'), allowlisted],
+      ['the red line of the check with status queued on its element', [`[CI-GATE-RED] ${JSON.stringify([{ name: SCAN, conclusion: 'failure', status: 'queued' }])}`, stepLine(SCAN, INSTALL)].join('\n')],
+      ['beside them, a red line with status "" on the element of another check', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'failure', status: '' }])}`].join('\n')],
+      // The step a printed step line names is the first whose conclusion is `failure`.
+      ['the step line of the check with the conclusion FAILURE', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n')],
+      ['the step line of the check with the conclusion FAILURE, the setup step on transientSteps', [redLine(SCAN), stepLine(SCAN, INSTALL, 'FAILURE')].join('\n'), allowlisted],
+      // A sweep of both printers: a passing run is never on a red line, and the job id prints as the check run id does.
+      ['beside them, a red line whose element for another check has the conclusion success', [RUN_42467444385, `[CI-GATE-RED] ${JSON.stringify([{ name: 'build', conclusion: 'success' }])}`].join('\n')],
+      ['the step line of the check with the job 0128690143221', [redLine(SCAN), stepLine(SCAN, INSTALL, 'failure', '0128690143221')].join('\n')],
+      ['beside them, an empty red line', [RUN_42467444385, '[CI-GATE-RED] []'].join('\n')],
+    ];
+    const exempted = cases.flatMap(([label, text, options]) => {
+      const c = ship(text, options);
+      return c.class === 'security' && !c.evidence.some((e) => e.startsWith('scan-setup:')) ? [] : [`${label}: ${c.class}, ${c.evidence.join(' | ')}`];
+    });
+    assert.deepEqual(exempted, [], 'each form denies the exemption: security, with no scan-setup evidence');
+    // The lines as the GitHub ship path prints them: names through encodeUntrusted, `/` written `\/`.
+    const printedRed = (name: string) => `[CI-GATE-RED] ${JSON.stringify([{ name: encodeUntrusted(name), conclusion: 'failure' }]).replace(/\//g, '\\/')}`;
+    const printedStep = (check: string, name: string) => `[CI-GATE-STEP] ${JSON.stringify({ check: encodeUntrusted(check), job: '1', step: { number: 3, name: encodeUntrusted(name), conclusion: 'failure' } }).replace(/\//g, '\\/')}`;
+    const check = 'Gitleaks [x] 100% /runs';
+    const install = 'Install [gitleaks] 100% /tmp';
+    const printed = [printedRed(check), printedStep(check, install)].join('\n');
+    assert.ok(printed.includes('%5Bx%5D 100%25 \\/runs') && printed.includes('%5Bgitleaks%5D 100%25 \\/tmp'), printed);
+    const c = ship(printed, { scanSetupSteps: [install] });
+    assert.equal(c.class, 'unknown', c.evidence.join(' | '));
+    assert.equal(c.evidence.at(-1), `scan-setup: ${JSON.stringify(check)} failed at ${JSON.stringify(install)} before its scan`);
+  });
+
+  test('acceptance 4: the exempt check takes the class its other evidence gives, and ci classify reads the configured list [R1] [R4]', () => {
+    assert.equal(ship(RUN_42467444385, { transientSteps: ['Set up job', 'Complete job', INSTALL] }).class, 'transient', 'a setup step also on transientSteps earns the rerun any check earns');
+    const beside = [redLine('check (ubuntu-latest, 22)', SCAN), stepLine(SCAN, INSTALL), 'AssertionError: expected 1 to equal 2'].join('\n');
+    assert.equal(ship(beside).class, 'code-defect', 'a failing test beside the scan setup failure is a code defect');
+    const disagreeing = classifyCiFailure([{ name: 'check (ubuntu-latest, 22)', conclusion: 'cancelled' }, { name: 'ship-ci-gate', aggregate: true, conclusion: 'failure', logExcerpt: beside }]);
+    assert.equal(disagreeing.class, 'code-defect', `records of another check that disagree leave the scan exempt: ${disagreeing.evidence.join(' | ')}`);
+    const audit = ship([redLine(SCAN, 'security audit'), stepLine(SCAN, INSTALL)].join('\n'));
+    assert.equal(audit.class, 'security', 'a second red scan check is a finding');
+    assert.deepEqual([audit.evidence[0], audit.evidence.at(-1)], ['security: security audit', 'scan-setup: "Gitleaks (committed history)" failed at "Install gitleaks (pinned version, checksum verified)" before its scan']);
+    const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-ci-scan-'));
+    try {
+      const file = path.join(dir, 'ci.log');
+      writeFileSync(file, RUN_42467444385);
+      const cli = path.resolve(import.meta.dirname, '../../src/cli/main.ts');
+      const classify = (): string => {
+        const out = spawnSync(process.execPath, [cli, 'ci', 'classify', '--log', file, '--json'], { cwd: dir, encoding: 'utf8', env: { ...process.env, AIDLC_STATE_DIR: path.join(dir, '.aidlc') }, timeout: 60_000 });
+        assert.equal(out.status, 0, out.stderr);
+        return (JSON.parse(out.stdout) as { class: string }).class;
+      };
+      assert.equal(classify(), 'unknown', 'the default list');
+      writeFileSync(path.join(dir, 'aidlc.config.json'), JSON.stringify({ ci: { scanSetupSteps: [] } }));
+      assert.equal(classify(), 'security', 'an empty configured list');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -20,7 +20,8 @@
     "requireVerdict": true
   },
   "ci": {
-    "transientSteps": ["Set up job", "Complete job"]
+    "transientSteps": ["Set up job", "Complete job"],
+    "scanSetupSteps": ["Install gitleaks (pinned version, checksum verified)"]
   },
   "hooks": {
     "frozenPaths": [],
