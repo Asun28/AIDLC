@@ -1178,9 +1178,13 @@ function ledgerIssue(root: unknown): { path: string[]; message: string } | undef
     if (typeof value !== 'object' || value === null) continue;
     if (depth > MAX_LEDGER_DEPTH) return { path: pathOf(at), message: `nesting deeper than ${MAX_LEDGER_DEPTH} levels is not allowed` };
     if (Object.hasOwn(value, '__proto__')) return { path: [...pathOf(at), '__proto__'], message: 'an own "__proto__" key is not allowed' };
-    // Pushed in reverse so that the children are searched in key order, as a recursive search would.
-    const entries = Object.entries(value);
-    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at }, depth: depth + 1 });
+    // The children are the ones the store's serializer visits (`sortKeys` in src/state/store.ts): an array by index from 0 to its length (`Array.prototype.map`
+    // reaches an element that is not enumerable; a hole reads as undefined and is skipped), an object by its enumerable own keys. They are pushed in reverse so that they are searched in order.
+    const keys = Array.isArray(value) ? undefined : Object.keys(value);
+    for (let i = (keys ? keys.length : (value as unknown[]).length) - 1; i >= 0; i--) {
+      const key = keys ? keys[i]! : String(i);
+      stack.push({ value: (value as Record<string, unknown>)[key], at: { key, up: at }, depth: depth + 1 });
+    }
   }
   return undefined;
 }

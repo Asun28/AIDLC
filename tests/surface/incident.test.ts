@@ -30,16 +30,22 @@ const breach: BandBreach = {
 const HOUR = 60 * 60 * 1000;
 const t0 = '2026-09-11T00:00:00.000Z';
 const later = (h: number) => new Date(Date.parse(t0) + h * HOUR).toISOString();
-/** The variables with which git selects a repository: a child process must not inherit them from the caller (a hook, a worktree command) and find another repository than its fixture. */
-const GIT_SELECTORS = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_COMMON_DIR', 'GIT_CEILING_DIRECTORIES', 'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE', 'GIT_PREFIX'];
-/** The caller's environment without the selector variables, matched without regard to case (Windows names are case-insensitive: `git_dir` is `GIT_DIR`), on every platform. */
+/**
+ * The caller's environment without any name that starts with GIT_, matched without regard to case (Windows names are case-insensitive: `git_dir` is `GIT_DIR`), on every platform:
+ * a child process must not inherit the caller's repository selection (a hook, a worktree command) and find another repository than its fixture.
+ */
 function cleanEnv(): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
-  for (const [key, value] of Object.entries(process.env)) if (!GIT_SELECTORS.includes(key.toUpperCase())) env[key] = value;
+  for (const [key, value] of Object.entries(process.env)) if (!key.toUpperCase().startsWith('GIT_')) env[key] = value;
   return env;
 }
-function childEnv(stateDir: string): NodeJS.ProcessEnv {
-  return { ...cleanEnv(), AIDLC_STATE_DIR: stateDir };
+/**
+ * `cleanEnv()`, the state directory, and `GIT_CEILING_DIRECTORIES` set to the parent of `cwd` as given and as `realpathSync.native` returns it (a short 8.3 temporary path on Windows),
+ * so that git run in `cwd` never discovers a repository that encloses it: the fixtures are no git repository, and `AIDLC_STATE_DIR` isolates state, not the intent directory.
+ */
+function childEnv(stateDir: string, cwd: string): NodeJS.ProcessEnv {
+  const ceilings = [...new Set([path.dirname(cwd), path.dirname(realpathSync.native(cwd))])];
+  return { ...cleanEnv(), AIDLC_STATE_DIR: stateDir, GIT_CEILING_DIRECTORIES: ceilings.join(path.delimiter) };
 }
 
 test('shouldFile files once, dedupes within the window, respects dismissal and refiles after the window', () => {
@@ -115,7 +121,7 @@ test('aidlc monitor check --file-intent records the filing time on the incident,
   try {
     writeFileSync(path.join(fx.tmp, 'bands.yaml'), ['metric: error_rate', 'direction: above', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n'), 'utf8');
     writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11], recent: [{ at: '2026-09-11T00:00:00.000Z', value: 14 }] }), 'utf8');
-    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: childEnv(fx.paths.root), encoding: 'utf8', timeout: 60_000 });
+    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: childEnv(fx.paths.root, fx.tmp), encoding: 'utf8', timeout: 60_000 });
     const first = check();
     assert.equal(first.status, 0, first.stderr);
     assert.equal((JSON.parse(first.stdout) as { filed: string[] }).filed.length, 1, first.stdout);
@@ -544,10 +550,10 @@ after(() => {
   for (const fx of fixtures) fx.cleanup();
 });
 /** One `aidlc monitor check` over `recent` values (one point per minute of 2026-09-11); the cwd is the fixture, the clock is FIXED_NOW. */
-function monitor(fx: Fx, recent: number[], extra: string[] = ['--file-intent']) {
-  writeFileSync(path.join(fx.tmp, 'bands.yaml'), BANDS, 'utf8');
-  writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: BASELINE, recent: recent.map((value, i) => ({ at: `2026-09-11T00:0${i}:00.000Z`, value })) }), 'utf8');
-  return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...extra], { cwd: fx.tmp, env: childEnv(fx.paths.root), encoding: 'utf8', timeout: 60_000 });
+function monitor(fx: Fx, recent: number[], extra: string[] = ['--file-intent'], dir: string = fx.tmp) {
+  writeFileSync(path.join(dir, 'bands.yaml'), BANDS, 'utf8');
+  writeFileSync(path.join(dir, 'data.json'), JSON.stringify({ baseline: BASELINE, recent: recent.map((value, i) => ({ at: `2026-09-11T00:0${i}:00.000Z`, value })) }), 'utf8');
+  return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...extra], { cwd: dir, env: childEnv(fx.paths.root, dir), encoding: 'utf8', timeout: 60_000 });
 }
 const ABOVE = [14];
 const BELOW = [6];
@@ -845,19 +851,19 @@ test('aidlc monitor check reads a ledger nested 64 deep, and refuses one nested 
   }
 });
 
-test('the lowercase and mixed-case names of the git selector variables are removed from a child environment', () => {
+test('every GIT_ name, in any case, is removed from a child environment and only the ceiling is set', () => {
   const saved = ['git_dir', 'Git_Work_Tree', 'GIT_INDEX_FILE'].map((key) => [key, process.env[key]] as const);
   process.env['git_dir'] = 'x';
   process.env['Git_Work_Tree'] = 'y';
   process.env['GIT_INDEX_FILE'] = 'z';
   try {
-    const env = childEnv('state');
-    assert.deepEqual(Object.keys(env).filter((key) => GIT_SELECTORS.includes(key.toUpperCase())), []);
+    const env = childEnv('state', scratch());
+    assert.deepEqual(Object.keys(env).filter((key) => key.toUpperCase().startsWith('GIT_')), ['GIT_CEILING_DIRECTORIES']);
     assert.equal(env['AIDLC_STATE_DIR'], 'state');
     // The same holds in a real child: its environment holds no selector name in any case (on POSIX the lowercase names are different variables that git ignores, and they are removed all the same).
     const child = spawnSync(process.execPath, ['-e', 'console.log(JSON.stringify(Object.keys(process.env)))'], { env, encoding: 'utf8' });
     assert.equal(child.status, 0, child.stderr);
-    assert.deepEqual((JSON.parse(child.stdout) as string[]).filter((key) => GIT_SELECTORS.includes(key.toUpperCase())), []);
+    assert.deepEqual((JSON.parse(child.stdout) as string[]).filter((key) => key.toUpperCase().startsWith('GIT_')), ['GIT_CEILING_DIRECTORIES']);
   } finally {
     for (const [key, value] of saved) {
       if (value === undefined) delete process.env[key];
@@ -899,4 +905,57 @@ test('aidlc monitor check with a directory at the ledger path refuses with READ_
       fx.cleanup();
     }
   }
+});
+
+/** A value for `write`: a valid record whose `note` is an array holding `element` at index 0 as a property that is not enumerable (`Array.prototype.map`, which the store's serializer uses, still visits it). */
+const withHiddenElement = (element: unknown): Record<string, unknown> => {
+  const note: unknown[] = [];
+  Object.defineProperty(note, '0', { value: element, enumerable: false, writable: true, configurable: true });
+  return { k: rec({ note }) };
+};
+/** `m` nested objects around `bottom`, as a value (not text): the innermost container is at level 3 + m below a `note` array at level 3. */
+const nestedValue = (m: number, bottom: unknown): unknown => {
+  let value = bottom;
+  for (let i = 0; i < m; i++) value = { x: value };
+  return value;
+};
+
+test('write walks an array as the serializer does: a non-enumerable element counts toward the nesting limit and is searched for __proto__', () => {
+  // note is level 3, its element's first object level 4: m nested objects put the innermost at level 3 + m.
+  const ok = new IncidentLedger(scratch());
+  ok.write(withHiddenElement(nestedValue(61, 1)) as never);
+  const stored = ok.read()['k']!['note'] as unknown[];
+  assert.equal(Array.isArray(stored), true);
+  assert.deepEqual(stored, [nestedValue(61, 1)], '64 deep through a non-enumerable element is written and reads back');
+  for (const m of [62, 6000]) {
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, '{}');
+    assert.throws(
+      () => ledger.write(withHiddenElement(nestedValue(m, 1)) as never),
+      (err: unknown) => err instanceof StoreError && err.code === 'SCHEMA_VIOLATION' && err.message.includes(ledger.file) && err.message.includes(limitIssue(['k', 'note', '0', ...Array<string>(61).fill('x')])),
+      `${m} nested objects`,
+    );
+    assert.equal(bytesOf(ledger.file), '{}', `${m}: the previous ledger is as it was`);
+  }
+  const proto = new IncidentLedger(scratch());
+  assert.throws(
+    () => proto.write(withHiddenElement(JSON.parse('{"__proto__":1}')) as never),
+    (err: unknown) => err instanceof StoreError && err.code === 'SCHEMA_VIOLATION' && err.message.includes('k.note.0.__proto__: an own'),
+  );
+});
+
+test('a fixture beneath a git repository: the intent lands in the fixture and the enclosing repository gains no file', () => {
+  const outer = scratch();
+  const init = spawnSync('git', ['init', '-q', outer], { encoding: 'utf8', env: cleanEnv() });
+  assert.equal(init.status, 0, init.stderr);
+  const inner = path.join(outer, 'fixture');
+  mkdirSync(inner);
+  const fx = fixture();
+  const result = monitor(fx, ABOVE, ['--file-intent'], inner);
+  assert.equal(result.status, 0, result.stderr);
+  const [file] = filedOf(result.stdout);
+  assert.ok(file);
+  assert.equal(realpathSync.native(path.dirname(file)), realpathSync.native(path.join(inner, 'intent')));
+  assert.deepEqual(readdirSync(outer).sort(), ['.git', 'fixture'], 'the enclosing repository holds nothing new');
+  assert.deepEqual(readdirSync(inner).sort(), ['bands.yaml', 'data.json', 'intent']);
 });
