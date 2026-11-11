@@ -4,6 +4,7 @@ title: A success recorded on a worktree with uncommitted or untracked changes is
 status: todo
 branch: T0-DIRTY-SUCCESS
 worktree: D:\wt\AIDLC\T0-DIRTY-SUCCESS
+superseded_by: T0-DIRTY-SUCCESS-2
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 230 to 460 on the candidate f98e7e26, which is 434 changed lines; 21 source lines in two files, 400 lines of the acceptance tests for the status codes, ship paths, probe failures and earlier refusals the card lists, the rest docs and attempt evidence"
 allow_paths:
   - src/loop/card-runner.ts
