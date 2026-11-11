@@ -95,13 +95,8 @@ test('a removal that fails is reported and left, and the others are removed', ()
   });
 });
 
-test('the fixtures that leaked leave nothing in the temporary directory', () => {
-  const runs: Array<[string, string[]]> = [
-    ['tests/surface/hooks.test.ts', ['production-gate: non-production commands pass', 'T0-HOOK-CONFIG-DISCOVERY acceptance 1']],
-    ['tests/surface/verifier.test.ts', ['Q12: intact journal']],
-    ['tests/surface/pre-review.test.ts', ['buildPreReviewPrompt carries the policy', 'T1-REVIEW-FINDINGS-4 R3 decision 2', 'T0-R2-ANSWER-MARKER acceptance 1']],
-    ['tests/scenarios/op-intent-dup.test.ts', ['acceptance 1: a failed OPERATION_INTENT append']],
-  ];
+/** Runs `node --test` on each file with the patterns in a child with an empty temporary directory; every selected test must pass and no `aidlc-*` entry may be left. */
+function assertNoLeak(runs: Array<[string, string[]]>, passes: number[]): void {
   inScratch((scratch) => {
     const results = runs.map(([file, patterns]) => {
       const args = ['--test', '--test-reporter=tap', ...patterns.map((p) => `--test-name-pattern=${p}`), file];
@@ -112,7 +107,20 @@ test('the fixtures that leaked leave nothing in the temporary directory', () => 
     const leftover = readdirSync(scratch).filter((name) => name.startsWith('aidlc-'));
     const summary = results.map(({ file, exit, pass, fail }) => ({ file, exit, fail, selectedPassed: pass > 0 }));
     assert.deepEqual(summary, runs.map(([file]) => ({ file, exit: 0, fail: 0, selectedPassed: true })), results.map((r) => r.output).join('\n'));
-    assert.deepEqual(results.map((r) => r.pass), [2, 1, 3, 1]);
+    assert.deepEqual(results.map((r) => r.pass), passes);
     assert.deepEqual(leftover, [], `left: ${leftover.join(', ')}`);
   });
+}
+
+test('the fixtures that leaked leave nothing in the temporary directory', () => {
+  assertNoLeak([
+    ['tests/surface/hooks.test.ts', ['production-gate: non-production commands pass', 'T0-HOOK-CONFIG-DISCOVERY acceptance 1', 'protect-paths reads frozenPaths from aidlc.config.json via runHook', 'T0-HOOK-CONFIG-CLOSED-3 acceptance 1:']],
+    ['tests/surface/verifier.test.ts', ['Q12: intact journal']],
+    ['tests/surface/pre-review.test.ts', ['buildPreReviewPrompt carries the policy', 'T1-REVIEW-FINDINGS-4 R3 decision 2', 'T0-R2-ANSWER-MARKER acceptance 1']],
+    ['tests/scenarios/op-intent-dup.test.ts', ['acceptance 1: a failed OPERATION_INTENT append']],
+  ], [4, 1, 3, 1]);
+});
+
+test('the line-break directory test of hooks.test.ts leaves nothing in the temporary directory', { skip: process.platform === 'win32' && 'the selected test is skipped on Windows, which does not allow a line break in a file name' }, () => {
+  assertNoLeak([['tests/surface/hooks.test.ts', ['T0-HOOK-CONFIG-CLOSED-3 acceptance 4: a real directory whose name holds a line break']]], [1]);
 });

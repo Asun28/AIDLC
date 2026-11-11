@@ -70,3 +70,21 @@ npm run typecheck && node --test tests/surface/test-temp-cleanup.test.ts tests/s
 | 3 | same file, "a removal that fails is reported and left, and the others are removed" | pass (fails on main: no export removeTempDirs) |
 | 4 | same file, "the fixtures that leaked leave nothing in the temporary directory" | pass (fails on main: aidlc-hooks-, -discovery-, -audit-, -prereview-, -panel-join-, -answer-marker-, -scn- left) |
 | 5 | dod_command, exit 0: tests 196, pass 192, fail 0, skipped 4 (the skips exist on main) | pass |
+
+## Attempt evidence, attempt 2
+R3 decision 1 blocked on class `missing-fixture-leak-coverage`: F1 hooks.test.ts:127 and F2 :647 (`aidlc-nocfg-`) and F3 :856 (`aidlc-nl-`) had no test in the isolated leak check. Class sweep: every site the branch migrated, with the test that runs it. The leak check of acceptance 4 now selects the tests of all of them, and a new test of the same file covers the Linux-only site, skipped on Windows with its reason.
+
+| site | prefix | covering test | revert result (Windows) |
+|---|---|---|---|
+| helpers.ts tmpDir | any | tests 1 to 3 | see the revert hunks of attempt 1: all fail |
+| _harness.ts:52 makeFixture | aidlc-scn- | op-intent-dup "acceptance 1" | test 4 fails, names aidlc-scn- |
+| hooks.test.ts:20 envWithState | aidlc-hooks- | "production-gate: non-production commands pass" | test 4 fails, names aidlc-hooks- |
+| hooks.test.ts:127 | aidlc-nocfg- | "protect-paths reads frozenPaths from aidlc.config.json via runHook" (new pattern) | test 4 fails, names aidlc-nocfg- |
+| hooks.test.ts:647 | aidlc-nocfg- | "T0-HOOK-CONFIG-CLOSED-3 acceptance 1:" (new pattern) | test 4 fails, names aidlc-nocfg- |
+| hooks.test.ts:809 module scope | aidlc-link- | any run of the file | test 4 fails, names aidlc-link- |
+| hooks.test.ts:856 | aidlc-nl- | test 5 "the line-break directory test ...", skipped on Windows | not showable on Windows: the test is skipped there; Linux only |
+| hooks.test.ts:1313 repoWithWorktree | aidlc-discovery- | "T0-HOOK-CONFIG-DISCOVERY acceptance 1" | test 4 fails, names aidlc-discovery- |
+| pre-review.test.ts:23 fixtureCard | aidlc-prereview- | "buildPreReviewPrompt carries the policy" | test 4 fails, names aidlc-prereview- |
+| pre-review.test.ts:494 | aidlc-panel-join- | "T1-REVIEW-FINDINGS-4 R3 decision 2" | test 4 fails, names aidlc-panel-join- |
+| pre-review.test.ts:1344 readAngle | aidlc-answer-marker- | "T0-R2-ANSWER-MARKER acceptance 1" | test 4 fails, names aidlc-answer-marker- |
+| verifier.test.ts:17 fixture | aidlc-audit- | "Q12: intact journal" | test 4 fails, names aidlc-audit- |
