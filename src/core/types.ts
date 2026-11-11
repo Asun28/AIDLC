@@ -1156,25 +1156,31 @@ export const IncidentRecord = z.looseObject({
 });
 export type IncidentRecord = z.infer<typeof IncidentRecord>;
 
+/** Containers (objects and arrays) a ledger may nest, the ledger object itself counting as 1: a record is 2, an object-valued field of a record is 3. */
+const MAX_LEDGER_DEPTH = 64;
+
 /**
- * The path of the first own `__proto__` key of parsed JSON, at any depth, or undefined: the record parse and the store's serializer drop that key, so a value held under it would vanish.
- * An explicit stack, not recursion: a value nested thousands of levels deep (which `JSON.parse` reads) must not overflow the call stack.
+ * The first problem of parsed ledger JSON that the record parse would hide or the store's serializer could not survive, in the order a depth-first search
+ * meets them (a container is checked for the limit, then for an own `__proto__` key, and its children follow in key order):
+ * a container nested deeper than `MAX_LEDGER_DEPTH`, reported at its own path, or an own `__proto__` key, which the record parse and the serializer drop.
+ * An explicit stack, not recursion: a value nested thousands of levels deep (which `JSON.parse` reads) must not overflow the call stack, and the search stops at the first container past the limit.
  */
-function protoKeyPath(root: unknown): string[] | undefined {
+function ledgerIssue(root: unknown): { path: string[]; message: string } | undefined {
   type Step = { key: string; up: Step | undefined };
-  const stack: Array<{ value: unknown; at: Step | undefined }> = [{ value: root, at: undefined }];
+  const stack: Array<{ value: unknown; at: Step | undefined; depth: number }> = [{ value: root, at: undefined, depth: 1 }];
   const pathOf = (at: Step | undefined): string[] => {
     const keys: string[] = [];
     for (let step = at; step; step = step.up) keys.push(step.key);
     return keys.reverse();
   };
   while (stack.length > 0) {
-    const { value, at } = stack.pop()!;
+    const { value, at, depth } = stack.pop()!;
     if (typeof value !== 'object' || value === null) continue;
-    if (Object.hasOwn(value, '__proto__')) return [...pathOf(at), '__proto__'];
+    if (depth > MAX_LEDGER_DEPTH) return { path: pathOf(at), message: `nesting deeper than ${MAX_LEDGER_DEPTH} levels is not allowed` };
+    if (Object.hasOwn(value, '__proto__')) return { path: [...pathOf(at), '__proto__'], message: 'an own "__proto__" key is not allowed' };
     // Pushed in reverse so that the children are searched in key order, as a recursive search would.
     const entries = Object.entries(value);
-    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at } });
+    for (let i = entries.length - 1; i >= 0; i--) stack.push({ value: entries[i]![1], at: { key: entries[i]![0], up: at }, depth: depth + 1 });
   }
   return undefined;
 }
@@ -1182,8 +1188,8 @@ function protoKeyPath(root: unknown): string[] | undefined {
 export const IncidentLedgerFile = z
   .unknown()
   .superRefine((value, ctx) => {
-    const at = protoKeyPath(value);
-    if (at) ctx.addIssue({ code: 'custom', path: at, message: 'an own "__proto__" key is not allowed' });
+    const issue = ledgerIssue(value);
+    if (issue) ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message });
   })
   .pipe(z.record(z.string(), IncidentRecord));
 export type IncidentLedgerFile = z.infer<typeof IncidentLedgerFile>;

@@ -38,7 +38,9 @@ export class IncidentLedger {
 
   /** Validates `data` with the ledger schema before it is serialized, then writes it to a temporary file that is renamed into place. */
   write(data: IncidentLedgerFile): void {
-    atomicWriteJson(this.file, IncidentLedgerFile.parse(data));
+    const parsed = IncidentLedgerFile.safeParse(data);
+    if (!parsed.success) throw new StoreError('SCHEMA_VIOLATION', this.file, parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '));
+    atomicWriteJson(this.file, parsed.data);
   }
 
   /** Returns true when a new intent should be filed (not deduplicated / not dismissed). */

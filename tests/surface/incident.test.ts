@@ -747,58 +747,101 @@ test('a GIT_DIR and GIT_WORK_TREE in the caller environment do not move the inte
   }
 });
 
-test('a ledger whose note is nested 6,000 levels deep is read like a shallow one, and the search for __proto__ never overflows the stack', () => {
-  const deep = (bottom: string): string => JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(6000) + bottom + '}'.repeat(6000));
-  const plain = deep('1');
-  const ledger = new IncidentLedger(scratch());
-  writeFileSync(ledger.file, plain);
-  assert.deepEqual(Object.keys(ledger.read()), ['k']);
-  assert.equal(IncidentLedgerFile.safeParse(JSON.parse(plain)).success, true);
-  // The store's serializer recurses (sortKeys) and JSON.stringify has its own limit: a write of this value either lands and reads back, or throws and leaves the previous bytes; it never leaves a partial file.
-  const before = bytesOf(ledger.file);
-  try {
-    ledger.write(JSON.parse(plain) as never);
-    assert.deepEqual(Object.keys(ledger.read()), ['k']);
-  } catch {
-    assert.equal(bytesOf(ledger.file), before);
+/**
+ * A ledger text whose record `k` has a `note` that nests `n` containers (objects with the key x, or arrays) around `bottom`.
+ * The ledger object is level 1 and the record level 2, so the innermost container is at level 2 + n: n = 62 is exactly 64 deep, n = 63 is 65.
+ */
+const nested = (n: number, bottom: string, kind: 'object' | 'array' = 'object'): string =>
+  JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', () => (kind === 'object' ? '{"x":' : '[').repeat(n) + bottom + (kind === 'object' ? '}' : ']').repeat(n));
+/** The text of the issue at the container that passes the limit: its path from the ledger, then the message. */
+const limitIssue = (keys: string[]): string => `${keys.join('.')}: nesting deeper than 64 levels`;
+const pathOfLevel65 = (key: string): string[] => ['k', 'note', ...Array<string>(62).fill(key)];
+
+test('a ledger nested exactly 64 deep is read, written by write and read back equal, and rewritten by shouldFile; objects and arrays count alike', () => {
+  for (const kind of ['object', 'array'] as const) {
+    const text = nested(62, '1', kind);
+    const expected = JSON.parse(text) as Record<string, unknown>;
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, text);
+    assert.deepEqual(ledger.read(), expected, kind);
+    const copy = new IncidentLedger(scratch());
+    copy.write(JSON.parse(text) as never);
+    assert.deepEqual(copy.read(), expected, `${kind}: write`);
+    assert.equal(ledger.shouldFile(breach, 6 * HOUR, t0).file, true, kind);
+    assert.deepEqual(ledger.read()['k'], expected['k'], `${kind}: shouldFile keeps the deep record`);
+    assert.equal(Object.keys(ledger.read()).length, 2, kind);
+    assert.deepEqual(readdirSync(path.dirname(ledger.file)).filter((name) => name.includes('.tmp-')), []);
   }
-  assert.deepEqual(readdirSync(path.dirname(ledger.file)).filter((name) => name.includes('.tmp-')), []);
-  // A shallower value (500 levels, inside the serializer's limit) is written and read back.
-  const shallow = JSON.parse(JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(500) + '1' + '}'.repeat(500))) as never;
-  ledger.write(shallow);
-  assert.deepEqual(Object.keys(ledger.read()), ['k']);
-  // With an own __proto__ key at the bottom the ledger is refused with a StoreError naming the file and the path, not a RangeError.
-  const withProto = deep('{"__proto__":1}');
-  const refused = new IncidentLedger(scratch());
-  writeFileSync(refused.file, withProto);
-  refusesAll(refused, 'SCHEMA_VIOLATION', 'x.__proto__: an own', '6,000 levels deep');
-  const issue = IncidentLedgerFile.safeParse(JSON.parse(withProto));
-  assert.equal(issue.success, false);
-  if (!issue.success) {
-    assert.equal(issue.error.issues[0]!.path.length, 6003);
-    assert.equal(issue.error.issues[0]!.path.at(-1), '__proto__');
-  }
-  assert.throws(() => refused.write(JSON.parse(withProto) as never), (err: unknown) => !(err instanceof RangeError) && /__proto__/.test((err as Error).message));
-  assert.equal(bytesOf(refused.file), withProto);
 });
 
-test('aidlc monitor check reads a ledger nested 6,000 levels deep like a shallow one and refuses one with a __proto__ key at the bottom', () => {
-  const deep = (bottom: string): string => JSON.stringify({ k: rec({ note: '@@' }) }).replace('"@@"', '{"x":'.repeat(6000) + bottom + '}'.repeat(6000));
-  const fx = fixture();
-  try {
-    const file = path.join(fx.paths.incidents, 'incidents.json');
-    writeFileSync(file, deep('1'), 'utf8');
-    const ok = monitor(fx, NONE);
-    assert.equal(ok.status, 0, ok.stderr);
-    assert.deepEqual(filedOf(ok.stdout), []);
-    const withProto = deep('{"__proto__":1}');
-    writeFileSync(file, withProto, 'utf8');
-    const refused = monitor(fx, ABOVE);
-    assert.equal(refused.status, 1, refused.stderr);
-    assert.ok(refused.stderr.includes('SCHEMA_VIOLATION') && refused.stderr.includes('incidents.json') && !refused.stderr.includes('RangeError'), refused.stderr.slice(0, 300));
-    assert.equal(bytesOf(file), withProto);
-  } finally {
-    fx.cleanup();
+test('a ledger nested 65 deep, or 6,000 deep, is SCHEMA_VIOLATION naming the file and the container that passes the limit, through all four methods and write, never a RangeError', () => {
+  const rows: Array<[string, string, string[]]> = [
+    ['objects, 65 deep', nested(63, '1'), pathOfLevel65('x')],
+    ['arrays, 65 deep', nested(63, '1', 'array'), pathOfLevel65('0')],
+    ['objects, 6,000 deep', nested(6000, '1'), pathOfLevel65('x')],
+    ['arrays, 6,000 deep', nested(6000, '1', 'array'), pathOfLevel65('0')],
+  ];
+  for (const [label, text, keys] of rows) {
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, text);
+    refusesAll(ledger, 'SCHEMA_VIOLATION', limitIssue(keys), label);
+    assert.equal(bytesOf(ledger.file), text, label);
+    const issue = IncidentLedgerFile.safeParse(JSON.parse(text));
+    assert.equal(issue.success, false, label);
+    if (!issue.success) assert.deepEqual(issue.error.issues[0]!.path, keys, label);
+    assert.throws(
+      () => ledger.write(JSON.parse(text) as never),
+      (err: unknown) => err instanceof StoreError && err.code === 'SCHEMA_VIOLATION' && err.message.includes(ledger.file) && err.message.includes(limitIssue(keys)),
+      `${label}: write`,
+    );
+    assert.equal(bytesOf(ledger.file), text, `${label}: write`);
+    assert.deepEqual(readdirSync(path.dirname(ledger.file)).filter((name) => name.includes('.tmp-')), [], label);
+  }
+});
+
+test('a __proto__ key below the nesting limit keeps its issue, and with the limit the issue named is the one the search meets first', () => {
+  const deepObject = '{"x":'.repeat(64) + '1' + '}'.repeat(64);
+  const rows: Array<[string, string, string]> = [
+    ['__proto__ in a container at level 64', nested(61, '{"__proto__":1}'), `${[...pathOfLevel65('x').slice(0, 63), '__proto__'].join('.')}: an own`],
+    ['__proto__ in the container at level 65: the limit is met first, at that container', nested(62, '{"__proto__":1}'), limitIssue(pathOfLevel65('x'))],
+    ['__proto__ below level 65: the limit is met first', nested(70, '{"__proto__":1}'), limitIssue(pathOfLevel65('x'))],
+    ['__proto__ in key a, a 65-deep value in key b: the proto key is first', `{"a":{"__proto__":1},"b":${deepObject}}`, 'a.__proto__: an own'],
+    ['a 65-deep value in key a, __proto__ in key b: the limit is first', `{"a":${deepObject},"b":{"__proto__":1}}`, limitIssue(['a', ...Array<string>(63).fill('x')])],
+  ];
+  for (const [label, text, fragment] of rows) {
+    const ledger = new IncidentLedger(scratch());
+    writeFileSync(ledger.file, text);
+    refusesAll(ledger, 'SCHEMA_VIOLATION', fragment, label);
+    assert.equal(bytesOf(ledger.file), text, label);
+  }
+});
+
+test('aidlc monitor check reads a ledger nested 64 deep, and refuses one nested 65 or 6,000 deep with SCHEMA_VIOLATION and nothing written', () => {
+  const rows: Array<[string, string, number[], boolean]> = [
+    ['64 deep', nested(62, '1'), NONE, true],
+    ['65 deep, no breach', nested(63, '1'), NONE, false],
+    ['65 deep, a propose-tier breach', nested(63, '1'), ABOVE, false],
+    ['6,000 deep, only a log-tier breach', nested(6000, '1'), LOG_ONLY, false],
+  ];
+  for (const [label, text, recent, accepted] of rows) {
+    const fx = fixture();
+    try {
+      const file = path.join(fx.paths.incidents, 'incidents.json');
+      writeFileSync(file, text, 'utf8');
+      const journalBefore = hostJournalText(fx);
+      const result = monitor(fx, recent);
+      assert.equal(result.status, accepted ? 0 : 1, `${label}: ${result.stderr.slice(0, 300)}`);
+      assert.deepEqual(filedOf(result.stdout), [], label);
+      if (!accepted) {
+        assert.ok(result.stderr.startsWith('aidlc: ') && result.stderr.includes('SCHEMA_VIOLATION') && result.stderr.includes('incidents.json') && result.stderr.includes('nesting deeper than 64 levels'), `${label}: ${result.stderr.slice(0, 300)}`);
+        assert.ok(!result.stderr.includes('RangeError'), label);
+      }
+      assert.equal(bytesOf(file), text, label);
+      assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, label);
+      assert.equal(hostJournalText(fx), journalBefore, label);
+    } finally {
+      fx.cleanup();
+    }
   }
 });
 
