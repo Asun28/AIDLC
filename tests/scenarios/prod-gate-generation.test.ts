@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { test, type TestContext } from 'node:test';
-import { writeFileSync } from 'node:fs';
+import { after, test, type TestContext } from 'node:test';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { cleanup, makeGoal, tmpDir } from '../infra/helpers.ts';
 import { makeFixture, writeCard, type Fixture } from './_harness.ts';
@@ -19,6 +20,39 @@ const NOW = '2026-09-11T10:00:00.000Z';
 const PASS1 = 'deploy production';
 const PASS2 = 'cat notes & make deploy production';
 
+/**
+ * The hook's config discovery asks git with `process.env`, not with the hook's `env`: before each gate or hook call every
+ * `GIT_*` variable is removed (the caller's first value kept) and `GIT_CEILING_DIRECTORIES` is set to the parents of the
+ * fixture directory in both forms; the `after` hook restores the caller's values.
+ */
+const callerGit = new Map<string, string | undefined>();
+function remember(key: string): void {
+  if (!callerGit.has(key)) callerGit.set(key, process.env[key]);
+}
+function isolateGit(dir: string): void {
+  for (const key of Object.keys(process.env)) {
+    if (!key.toUpperCase().startsWith('GIT_')) continue;
+    remember(key);
+    delete process.env[key];
+  }
+  remember('GIT_CEILING_DIRECTORIES');
+  process.env['GIT_CEILING_DIRECTORIES'] = [...new Set([path.dirname(dir), path.dirname(realpathSync.native(dir))])].join(path.delimiter);
+}
+after(() => {
+  for (const [key, value] of callerGit) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
+const dispatch = (dir: string, ev: HookEvent, env: NodeJS.ProcessEnv): HookResult => {
+  isolateGit(dir);
+  return dispatchHook(ev, { cwd: dir, env, now: NOW });
+};
+const hook = (dir: string, ev: HookEvent, env: NodeJS.ProcessEnv, classic?: boolean): HookResult => {
+  isolateGit(dir);
+  return runHook('production-gate', ev, classic ? { cwd: dir, env, classic } : { cwd: dir, env });
+};
+
 /** A state directory under a `tmpDir` directory holding the goals, removed after the test. */
 function seed(t: TestContext, goals: Goal[], prefix = 'aidlc-pgg-'): { dir: string; env: NodeJS.ProcessEnv } {
   const dir = tmpDir(prefix);
@@ -31,6 +65,7 @@ function seed(t: TestContext, goals: Goal[], prefix = 'aidlc-pgg-'): { dir: stri
 
 const event = (command = PASS1, tool = 'Bash'): HookEvent => ({ hook_event_name: 'PreToolUse', tool_name: tool, tool_input: { command } });
 function gate(dir: string, env: NodeJS.ProcessEnv, ref: string, command = PASS1, tool = 'Bash'): HookResult {
+  isolateGit(dir);
   return productionGate(event(command, tool), { PATH: env['PATH'], AIDLC_STATE_DIR: env['AIDLC_STATE_DIR'], RELEASE_APPROVAL: ref }, DEFAULT_HOOK_CONFIG, dir);
 }
 function assertRefused(r: HookResult, ref: string, label: string): void {
@@ -69,7 +104,7 @@ test('production-gate reads no authorization of a goal that is terminal, DONE or
   assert.deepEqual(gate(dir, env, 'CHG-1'), { exitCode: 0 }, 'two goals');
 });
 
-test("production-gate counts only the goal's current generation and keeps the first-match rule", (t) => {
+test("production-gate keeps main's first match and counts it only in the goal's current generation", (t) => {
   const rows: Array<[number, number | undefined, number]> = [
     [0, undefined, 0],
     [0, 0, 0],
@@ -86,11 +121,19 @@ test("production-gate counts only the goal's current generation and keeps the fi
     assert.equal(r.exitCode, expected, `goal generation ${generation}, record ${String(recorded)}`);
     if (expected === 2) assert.ok(r.stderr?.includes(refText('rel-1')));
   }
-  // Generation selection: the filter comes before the id or ref match.
+  // Cross generation: the match is main's first record over all records; the generation only decides whether it counts.
   const sel = seed(t, [makeGoal('g1', { generation: 1, authorizations: [record({ id: 'rel-old', ref: 'CHG-1', goalGeneration: 0 }), record({ id: 'rel-new', ref: 'CHG-1', goalGeneration: 1 })] })]);
-  assert.deepEqual(gate(sel.dir, sel.env, 'CHG-1'), { exitCode: 0 }, 'CHG-1');
+  assertRefused(gate(sel.dir, sel.env, 'CHG-1'), 'CHG-1', 'CHG-1 matches rel-old first');
   assert.deepEqual(gate(sel.dir, sel.env, 'rel-new'), { exitCode: 0 }, 'rel-new');
   assertRefused(gate(sel.dir, sel.env, 'rel-old'), 'rel-old', 'rel-old');
+  const pins: Array<[string, AuthorizationRecord]> = [
+    ['development of generation 0 first', record({ id: 'dev-0', kind: 'development', ref: 'CHG-1', goalGeneration: 0 })],
+    ['expired production of generation 0 first', record({ id: 'old-0', ref: 'CHG-1', goalGeneration: 0, expiresAt: '2000-01-01T00:00:00.000Z' })],
+  ];
+  for (const [label, earlier] of pins) {
+    const { dir, env } = seed(t, [makeGoal('g1', { generation: 1, authorizations: [earlier, record({ id: 'live-1', ref: 'CHG-1', goalGeneration: 1 })] })]);
+    assertRefused(gate(dir, env, 'CHG-1'), 'CHG-1', label);
+  }
   // First match within one goal and one generation decides.
   const dev = record({ id: 'dev-1', kind: 'development', ref: 'CHG-2', goalGeneration: 0 });
   const prod = record({ id: 'prod-1', ref: 'CHG-2', goalGeneration: 0 });
@@ -117,6 +160,14 @@ const REFUSED_CASES = (): Array<[string, Goal, Goal]> => [
   ['superseded generation', makeGoal('g1', { generation: 1, authorizations: [record()] }), makeGoal('g1', { generation: 1, authorizations: [record({ goalGeneration: 1 })] })],
 ];
 
+function configDenial(r: HookResult, label: string): string {
+  const out = JSON.parse(r.stdout ?? '{}') as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
+  assert.equal(out.hookSpecificOutput?.permissionDecision, 'deny', label);
+  const reason = out.hookSpecificOutput?.permissionDecisionReason ?? '';
+  assert.ok(reason.startsWith('Bash is denied while '), `${label}: ${reason}`);
+  return reason;
+}
+
 test('both dispatch passes and the legacy decision deny a refused record alike', (t) => {
   for (const [label, refusedGoal, controlGoal] of REFUSED_CASES()) {
     for (const [kind, goal] of [['refused', refusedGoal], ['control', controlGoal]] as const) {
@@ -125,16 +176,17 @@ test('both dispatch passes and the legacy decision deny a refused record alike',
       for (const tool of ['Bash', 'PowerShell']) {
         for (const command of [PASS1, PASS2]) {
           const name = `${label} ${kind} ${tool} ${command}`;
-          const r = dispatchHook(event(command, tool), { cwd: dir, env: withRef, now: NOW });
+          const r = dispatch(dir, event(command, tool), withRef);
           if (kind === 'refused') {
             assertRefused(r, 'rel-1', name);
+            isolateGit(dir);
             assert.deepEqual(r, productionGate(event(command, tool), withRef, DEFAULT_HOOK_CONFIG, dir), name);
           } else assert.equal(r.exitCode, 0, name);
         }
-        const classic1 = runHook('production-gate', event(PASS1, tool), { cwd: dir, env: withRef, classic: true });
-        const classic2 = runHook('production-gate', event(PASS2, tool), { cwd: dir, env: withRef, classic: true });
-        const second1 = runHook('production-gate', event(PASS1, tool), { cwd: dir, env: withRef });
-        const second2 = runHook('production-gate', event(PASS2, tool), { cwd: dir, env: withRef });
+        const classic1 = hook(dir, event(PASS1, tool), withRef, true);
+        const classic2 = hook(dir, event(PASS2, tool), withRef, true);
+        const second1 = hook(dir, event(PASS1, tool), withRef);
+        const second2 = hook(dir, event(PASS2, tool), withRef);
         if (kind === 'refused') {
           assertRefused(classic1, 'rel-1', `${label} classic pass1 ${tool}`);
           assert.deepEqual(classic2, { exitCode: 0 }, `${label} classic pass2 ${tool}`);
@@ -145,32 +197,55 @@ test('both dispatch passes and the legacy decision deny a refused record alike',
         }
       }
       writeFileSync(path.join(dir, 'aidlc.config.json'), '{ not json');
-      const legacy = runHook('production-gate', event(PASS1, 'Bash'), { cwd: dir, env: withRef });
+      const legacy = hook(dir, event(PASS1, 'Bash'), withRef);
       if (kind === 'refused') assertRefused(legacy, 'rel-1', `${label} legacy`);
-      else {
-        const out = JSON.parse(legacy.stdout ?? '{}') as { hookSpecificOutput?: { permissionDecision?: string; permissionDecisionReason?: string } };
-        assert.equal(out.hookSpecificOutput?.permissionDecision, 'deny', `${label} control legacy`);
-        assert.ok(out.hookSpecificOutput?.permissionDecisionReason?.startsWith('Bash is denied while '), `${label} control legacy`);
-      }
+      else configDenial(legacy, `${label} control legacy`);
     }
   }
+  // Git context: a caller's GIT_DIR and GIT_WORK_TREE naming another repository do not redirect the config discovery.
+  const { dir, env } = seed(t, [REFUSED_CASES()[0]![2]], 'aidlc-pgg-git-');
+  writeFileSync(path.join(dir, 'aidlc.config.json'), '{ not json');
+  const other = path.join(dir, 'other');
+  mkdirSync(other);
+  isolateGit(dir);
+  const gitEnv: NodeJS.ProcessEnv = { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: path.join(dir, 'empty.gitconfig') };
+  for (const key of Object.keys(gitEnv)) if (key.toUpperCase() === 'NODE_OPTIONS') delete gitEnv[key];
+  writeFileSync(path.join(dir, 'empty.gitconfig'), '');
+  assert.equal(spawnSync('git', ['init', '-q', other], { env: gitEnv, encoding: 'utf8' }).status, 0, 'git init');
+  writeFileSync(path.join(other, 'aidlc.config.json'), '{}');
+  remember('GIT_DIR');
+  remember('GIT_WORK_TREE');
+  process.env['GIT_DIR'] = path.join(other, '.git');
+  process.env['GIT_WORK_TREE'] = other;
+  const reason = configDenial(hook(dir, event(PASS1, 'Bash'), { ...env, RELEASE_APPROVAL: 'rel-1' }), 'git context control');
+  assert.ok(reason.includes(`${path.basename(dir)}${JSON.stringify(path.sep).slice(1, -1)}aidlc.config.json`), reason);
+  assert.ok(!reason.includes(`other${JSON.stringify(path.sep).slice(1, -1)}aidlc.config.json`), reason);
 });
 
 test('a refused record is denied by the gate in the first pass ahead of a frozen-path denial; an admitted one leaves that denial', (t) => {
   const [finished, superseded] = REFUSED_CASES();
-  const cases: Array<[string, Goal, boolean]> = [
-    ['finished', finished![1], true],
-    ['superseded generation', superseded![1], true],
-    ['control', finished![2], false],
+  const control = finished![2];
+  const badGoal = (dir: string) => {
+    const bad = JSON.parse(JSON.stringify(makeGoal('g-bad', { authorizations: [record({ id: 'rel-bad', goalGeneration: 0 })] }))) as { authorizations: Array<Record<string, unknown>> };
+    bad.authorizations[0]!['goalGeneration'] = -1;
+    writeFileSync(path.join(dir, 'state', 'goals', 'g-bad.json'), JSON.stringify(bad));
+  };
+  const cases: Array<[string, Goal, boolean, boolean]> = [
+    ['finished', finished![1], true, true],
+    ['superseded generation', superseded![1], true, true],
+    ['control', control, false, true],
+    ['higher generation', makeGoal('g1', { authorizations: [record({ goalGeneration: 1 })] }), true, false],
+    ['goal file failing the schema', control, true, false],
   ];
-  for (const [label, goal, refused] of cases) {
+  for (const [label, goal, refused, secondPassRow] of cases) {
     const { dir, env } = seed(t, [goal]);
+    if (label === 'goal file failing the schema') badGoal(dir);
     writeFileSync(path.join(dir, 'aidlc.config.json'), JSON.stringify({ hooks: { frozenPaths: ['contracts/'] } }));
     const withRef = { ...env, RELEASE_APPROVAL: 'rel-1' };
-    const first = dispatchHook(event(`${PASS1} > contracts/log.txt`, 'Bash'), { cwd: dir, env: withRef, now: NOW });
+    const first = dispatch(dir, event(`${PASS1} > contracts/log.txt`, 'Bash'), withRef);
     if (refused) assertRefused(first, 'rel-1', label);
     else frozenDenial(first, label);
-    frozenDenial(dispatchHook(event(`${PASS2} > contracts/log.txt`, 'Bash'), { cwd: dir, env: withRef, now: NOW }), `${label} second-pass phrase`);
+    if (secondPassRow) frozenDenial(dispatch(dir, event(`${PASS2} > contracts/log.txt`, 'Bash'), withRef), `${label} second-pass phrase`);
   }
 });
 
@@ -235,9 +310,15 @@ test('every authorization the controller newly records stores the goal generatio
   assert.deepEqual(all.slice(3).map((s) => s[0]).slice(0, 5), ['development', 'plan-checkpoint', 'staging', 'production', 'recovery']);
 });
 
+/** The gate on a fixture's state directory, as acceptance 7 calls it. */
+const gateOn = (fx: Fixture) => (ref: string) => {
+  isolateGit(fx.tmp);
+  return productionGate(event(), { PATH: process.env['PATH'], AIDLC_STATE_DIR: fx.paths.root, RELEASE_APPROVAL: ref }, DEFAULT_HOOK_CONFIG, fx.tmp).exitCode;
+};
+
 test('the gate follows cancel, resume, authorize and extend', (t) => {
   const fx = fixture(t);
-  const at = (ref: string) => productionGate(event(), { PATH: process.env['PATH'], AIDLC_STATE_DIR: fx.paths.root, RELEASE_APPROVAL: ref }, DEFAULT_HOOK_CONFIG, fx.tmp).exitCode;
+  const at = gateOn(fx);
   const { id } = fx.controller.createGoal({ text: 'implement T1-A', source: 'card', ref: 'T1-A', affectedSurfaces: [], explicitTarget: 'staging' }, { cards: ['T1-A'] });
   const old = fx.controller.report({ goalId: id, generation: 0, result: 'approved', data: PROD_DATA }).goal.authorizations.at(-1)!.id;
   assert.equal(at(old), 0, 'approved');
@@ -252,7 +333,7 @@ test('the gate follows cancel, resume, authorize and extend', (t) => {
   assert.equal(at(old), 2, 'old record after new approval');
 
   const fx2 = fixture(t);
-  const at2 = (ref: string) => productionGate(event(), { PATH: process.env['PATH'], AIDLC_STATE_DIR: fx2.paths.root, RELEASE_APPROVAL: ref }, DEFAULT_HOOK_CONFIG, fx2.tmp).exitCode;
+  const at2 = gateOn(fx2);
   const g2 = fx2.controller.createGoal({ text: 'implement T1-A', source: 'card', ref: 'T1-A', affectedSurfaces: [] }, { cards: ['T1-A'] });
   const rel = fx2.controller.report({ goalId: g2.id, generation: 0, result: 'approved', data: PROD_DATA }).goal.authorizations.at(-1)!.id;
   fx2.advance(4 * 60 * 60 * 1000);
@@ -265,11 +346,29 @@ test('the gate follows cancel, resume, authorize and extend', (t) => {
   assert.equal(extended.terminal, false);
   assert.equal(extended.generation, 0);
   assert.equal(at2(rel), 0, 'extended');
+
+  // Re-authorization after a resume: a reference an earlier record uses keeps matching that record.
+  const fx3 = fixture(t);
+  const at3 = gateOn(fx3);
+  const g3 = fx3.controller.createGoal({ text: 'implement T1-A', source: 'card', ref: 'T1-A', affectedSurfaces: [], explicitTarget: 'staging' }, { cards: ['T1-A'] });
+  fx3.controller.report({ goalId: g3.id, generation: 0, result: 'approved', data: { ...PROD_DATA, ref: 'CHG-9' } });
+  assert.equal(at3('CHG-9'), 0, 'CHG-9 at generation 0');
+  fx3.controller.report({ goalId: g3.id, generation: 0, result: 'cancel', data: {} });
+  fx3.controller.report({ goalId: g3.id, generation: 0, result: 'resume', data: { reason: 'again' } });
+  const again = fx3.controller.report({ goalId: g3.id, generation: 1, result: 'approved', data: { ...PROD_DATA, ref: 'CHG-9' } }).goal.authorizations.at(-1)!.id;
+  assert.equal(at3('CHG-9'), 2, 'CHG-9 still matches the generation-0 record');
+  assert.ok(again.startsWith(`auth-production-${g3.id}-r0-`), again);
+  assert.equal(at3(again), 0, 'the new record by its id');
+  fx3.controller.report({ goalId: g3.id, generation: 1, result: 'approved', data: { ...PROD_DATA, ref: 'CHG-10' } });
+  assert.equal(at3('CHG-10'), 0, 'a new ref');
 });
 
 test('the approval precedence and the no-goals admission are unchanged', (t) => {
   const { dir, env } = seed(t, [makeGoal('g1', { authorizations: [record()] })]);
-  const run = (vars: Record<string, string>) => productionGate(event(), { PATH: env['PATH'], AIDLC_STATE_DIR: env['AIDLC_STATE_DIR'], ...vars }, DEFAULT_HOOK_CONFIG, dir);
+  const run = (vars: Record<string, string>) => {
+    isolateGit(dir);
+    return productionGate(event(), { PATH: env['PATH'], AIDLC_STATE_DIR: env['AIDLC_STATE_DIR'], ...vars }, DEFAULT_HOOK_CONFIG, dir);
+  };
   assert.deepEqual(run({ RELEASE_APPROVAL: 'rel-1', AIDLC_RELEASE_APPROVAL: 'other' }), { exitCode: 0 });
   assert.equal(run({ RELEASE_APPROVAL: 'other', AIDLC_RELEASE_APPROVAL: 'rel-1' }).exitCode, 2);
   const empty = seed(t, []);
