@@ -298,7 +298,6 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
     logs.push(gate.log);
   }
   let codeHits = 0;
-  let transientHits = 0;
   for (const text of logs) {
     for (const p of CODE_DEFECT_PATTERNS) {
       const m = text.match(p);
@@ -307,15 +306,14 @@ export function classifyCiFailure(jobs: CiJob[], extraLog?: string, options: { t
         evidence.push(`code: ${m[0].slice(0, 80)}`);
       }
     }
+    // The transient log matches stay in the evidence and grant nothing.
     for (const p of TRANSIENT_PATTERNS) {
       const m = text.match(p);
       if (m) {
-        transientHits += 1;
         evidence.push(`transient: ${m[0].slice(0, 80)}`);
       }
     }
   }
-  void transientHits; // the transient log matches stay in the evidence and grant nothing
   const independent = jobs.filter((j) => j.aggregate !== true);
   const independentFailed = independent.filter((j) => isFailure(j.conclusion));
   const conclusions = new Map<string, string | undefined>();
