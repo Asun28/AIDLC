@@ -1,7 +1,7 @@
 ---
 id: T0-JOURNAL-APPEND-LOCK
 title: Journal.append reads the head and appends under one per-journal lock, so concurrent appenders in separate processes keep one hash chain, and a refused append leaves state each command recovers
-status: todo
+status: merged
 branch: T0-JOURNAL-APPEND-LOCK
 worktree: D:\wt\AIDLC\T0-JOURNAL-APPEND-LOCK
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 15 source lines in src/state/journal.ts; the rest is the lock test file with its eleven input classes, the child script, the three refusal scenarios of acceptance 9, the docs that list each refused append and its recovery, and about 25 lines of attempt evidence; raised from 450 to 680 by the coordinator on the candidate 11017fd6, which is 650 changed lines: 48 source lines in src/state/journal.ts, 540 lines of the lock, child-process and refusal tests, 44 lines of attempt evidence, the rest docs; raised from 680 to 920 by the coordinator on the repaired candidate of attempt 3: about 660 changed lines of source, tests and docs and about 210 lines of attempt evidence in the card, which the reviews asked to be kept in the card"
@@ -44,7 +44,7 @@ diagnosis:
   root_cause: "`Journal.append` (src/state/journal.ts:126-144 at 6c1a6cfd, unchanged since 92796d4f) calls `head()`, which reads the whole file, builds the event from that head and then calls `appendFileSync`, with no lock between the read and the append. Two processes that read the same head append two events with the same `seq` and `prevHash`, and every later event chains to one of them, so `verify()` reports sequence gaps and previous-hash mismatches."
   repro: "On 92796d4f, four node processes running the audit probe (child.ts of the audit scratchpad directory jr, 150 appends each to one file): verify() ok false, 600 events, 348 problems, the first a sequence gap (expected 13, found 9) at line 14. The second review reproduced it on the same commit."
   same_class: "Other read-modify-writes of state outside `updateJson`: the evidence manifest (card T0-MANIFEST-LOCK) and the incident ledger (card T0-INCIDENT-INTENT-LEDGER). `Journal.append` is the only writer of journal files."
-sweep: "git grep -n '.append(' -- src at 6c1a6cfd: 91 sites in four files, all `Journal.append`. Locks held at each call (TypeScript AST of the call and its enclosing callbacks, then the callers of each method read by hand). Card-run lock: src/loop/card-runner.ts:590 (`deliverOwed`, inside the `updateCardRun` change) and src/loop/controller.ts:724 (`ensureCardRun`, inside the `within` of `saveCardRun` at 722, after the write). Card lease lock: card-runner.ts:861 (`takeover`, inside the `leases.update` change). Card-run lock, then the card lease lock: card-runner.ts:894 and 895 (`takeover`, the `holding` section inside the `within` of `updateCardRun`). Goal lease lock: controller.ts:493 (`completeTakeover`, called inside `leases.update` at 500 and 507) and 501. Review-queue lock: src/cli/main.ts:891 (`aidlc review release`, the `before` callback inside the queue section). Manifest lock after T0-MANIFEST-LOCK: main.ts:1296 and 1321. No lock: card-runner.ts:356, 482, 489, 614, 620, 634, 649, 710, 920, 1210, 1220, 1235, 1262, 1284, 1301, 1334, 1431, 1614, 1617, 1886, 2050, 2234, 2378, 2703, 2713, 2748, 2800, 2815, 2831, 2833, 2884, 2914, 2996, 3021, 3029, 3040, 3092, 3124; controller.ts:190, 191, 302, 357, 362, 439, 465, 526, 533, 538, 554, 577, 600, 609, 623, 633, 655, 678, 685, 772, 778, 838, 846, 870, 871; release-runner.ts:135, 189, 201, 219, 222, 241, 273, 296, 314, 317, 325, 337, 347; main.ts:381, 400, 1086, 1106. R6, the appends after an operation-ledger, review-queue, lease or manifest write, the state a refusal leaves and its recovery: card-runner.ts:590 (owed events; they stay owed; the next card next, card attempt, review pre or review r3 delivers them); :894-895 and :861 (takeover; the run update is not written; aidlc card takeover again completes it); :920 (PREPARE claim; lease held, run without the generation; card next again renews it); :1210 OPERATION_INTENT (operation intended; the next card next continues under it, T0-OP-INTENT-DUP); :1220 REVIEW_REQUESTED (request queued; next card next); :1235 REVIEW_ADMITTED (its catch cancels the request; next card next); :1301 OPERATION_ISSUED (operation issued, pool request running, no ship; card next waits on the running operation; recovery aidlc ops reconcile <opId> --status cancelled, then aidlc review release <key> --reason <text>); :2703 REVIEW_DECIDED and :2713 REVIEW_HOLD (after the ship ran: the decision or the hold is recorded, the operation stays issued; card next waits; recovery aidlc ops reconcile <opId> --status <the looked-up outcome> and aidlc review release <key>); :2815 and :2884 (after the operation is marked failed and before the outcome is applied: the run stays at SHIP and the next card next ships the same candidate again under a new operation, as an EIO append there does on main; named in non_goals); :3021 (close takeover; its catch saves STOP/ownership while the lease is taken; aidlc card takeover completes it); :3029 (close claim; card next again); controller.ts:493 and 501 (inside the lease change; nothing written; aidlc next again); release-runner.ts:135 (after ops.reconcile; aidlc release next again); :314 OPERATION_INTENT (operation intended, command not run; T0-RELEASE-OP-REISSUE waits on it; aidlc ops reconcile <id> --status cancelled, then aidlc release next <attemptId>); :317 OPERATION_ISSUED (the command ran, operation issued; aidlc release next reconciles it through the bound status lookup, else aidlc ops reconcile <id> --status <s>); :325 OPERATION_RESULT (operation settled, attempt not saved; aidlc release next takes the settled record as the step by its key, T0-RELEASE-OP-REISSUE R7); main.ts:381 and 1086 (after the ledger reconcile; run the same command again); :400 (after the goal lease takeover; aidlc goal takeover again); :891 (inside the queue section before the slot is freed; nothing freed; run aidlc review release again); :1106 (operation intended without a journaled intent; find it with aidlc ops list --goal <id>, aidlc ops reconcile <id> --status cancelled, then aidlc ops intent again); :1296 (appended before the seal write; nothing sealed; run aidlc audit seal again); :1321 (after the retain; T0-MANIFEST-LOCK moves it inside the manifest section). Every other append follows only a goal, card-run or release-attempt save or no write: a refusal leaves that record saved and the event absent from the journal, as an EIO append does on main. Tests that pin the behaviour touched: tests/infra/update-json.test.ts:192-205 and 296-304; tests/scenarios/two-windows.test.ts:1076-1119; tests/scenarios/fault-points.test.ts:579-593 (pin H9, the state of R6 at :1301); tests/surface/prose.test.ts:340-361 (the Sessions lock sentence, not edited); the append fault injections of the seven suites in the DoD."
+sweep: "git grep -n '.append(' -- src at 6c1a6cfd: 91 sites in four files, all `Journal.append`. Locks held at each call (TypeScript AST of the call and its enclosing callbacks, then the callers of each method read by hand). Card-run lock: src/loop/card-runner.ts:590 (`deliverOwed`, inside the `updateCardRun` change) and src/loop/controller.ts:724 (`ensureCardRun`, inside the `within` of `saveCardRun` at 722, after the write). Card lease lock: card-runner.ts:861 (`takeover`, inside the `leases.update` change). Card-run lock, then the card lease lock: card-runner.ts:894 and 895 (`takeover`, the `holding` section inside the `within` of `updateCardRun`). Goal lease lock: controller.ts:493 (`completeTakeover`, called inside `leases.update` at 500 and 507) and 501. Review-queue lock: src/cli/main.ts:891 (`aidlc review release`, the `before` callback inside the queue section). Manifest lock after T0-MANIFEST-LOCK: main.ts:1296 and 1321. No lock: card-runner.ts:356, 482, 489, 614, 620, 634, 649, 710, 920, 1210, 1220, 1235, 1262, 1284, 1301, 1334, 1431, 1614, 1617, 1886, 2050, 2234, 2378, 2703, 2713, 2748, 2800, 2815, 2831, 2833, 2884, 2914, 2996, 3021, 3029, 3040, 3092, 3124; controller.ts:190, 191, 302, 357, 362, 439, 465, 526, 533, 538, 554, 577, 600, 609, 623, 633, 655, 678, 685, 772, 778, 838, 846, 870, 871; release-runner.ts:135, 189, 201, 219, 222, 241, 273, 296, 314, 317, 325, 337, 347; main.ts:381, 400, 1086, 1106. R6 (amended 2026-11-11 after R3 decision 1): a refused append leaves what an append that throws EIO leaves at that site on main, and this card changes no caller's handling of a failed append; the three cases acceptance 9 tests are stated in R6 and in docs/OPERATIONS.md (Audit), and the per-site catalogue that stood here is a non-goal. Tests that pin the behaviour touched: tests/infra/update-json.test.ts:192-205 and 296-304; tests/scenarios/two-windows.test.ts:1076-1119; tests/scenarios/fault-points.test.ts:579-593 (pin H9, the state of R6 at :1301); tests/surface/prose.test.ts:340-361 (the Sessions lock sentence, not edited); the append fault injections of the seven suites in the DoD."
 forbid:
   - weakening or skipping a test to go green
   - a change to src/state/store.ts or to any file under src/state/ other than journal.ts, so `createExclusive` and `updateJson` stay as they are and the EPERM decision F3 stays open
@@ -75,3 +75,246 @@ npm run typecheck && node --test tests/infra/journal-lock.test.ts tests/scenario
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+
+The sections of attempts 1 to 3 are history; the current behaviour and its evidence are in the last section before `Coordinator verification:` (after the pre-review of attempt 3).
+
+Attempt 1 (effort high). RED commit `e0c5aaab` (tests only); fix commit `af92d983`. Source change: `src/state/journal.ts` only (`Journal.append`); `src/state/store.ts` is unchanged.
+
+| Acceptance | Test or command | Result |
+|---|---|---|
+| 1 | journal-lock.test.ts "four processes appending to one journal keep one hash chain" | pass; on main fails "the chain verifies" (sequence gaps from line 9) |
+| 2 | journal-lock.test.ts "an append started while another holds the lock between its head read and its append is refused" | pass; on main fails: the child returned 1 append, no `LOCKED` |
+| 3 | journal-lock.test.ts "a held journal lock refuses with LOCKED after the deadline and is left in place" | pass; on main fails "LOCKED: undefined" (the append returned) |
+| 4 | journal-lock.test.ts "an EPERM on the lock path is retried while the path exists and propagates at once while it is absent" | pass; on main fails "the create was retried after each EPERM" (2 !== -1) |
+| 5 | journal-lock.test.ts "a malformed head releases the journal lock"; regression control "a failed append releases the journal lock" | pass; both pass on main too (the card labels only the second a control; the first has no lock to leave on main) |
+| 6 | journal-lock.test.ts "an append reached from inside another append of the same process is refused" | pass; on main fails "the inner append is refused with LOCKED: undefined" |
+| 7 | journal-lock.test.ts "the actor is resolved before the lock and ts is read inside it" | pass; on main fails: order `['session-default']`, no lock created |
+| 8 | journal.test.ts, update-json.test.ts (17/17), two-windows, fault-points, op-intent-dup, ship-throw, review-admit-strand, candidate-pins, second-pass, side-write-faults, candidate-withdraw, journal-owed: unchanged | pass in the DoD run below |
+| 9 | journal-lock-refusal.test.ts (a), (b), (c) | pass; on main each fails "the journal lock was refused" (no lock to refuse). (c) deviates from the card, see below |
+| 10 | docs/OPERATIONS.md (Audit, two new paragraphs), docs/ARCHITECTURE.md (journal row, `journal.ts` sentence), CHANGELOG.md (above `- T1-BOUND-STATS:`) | reviewer |
+
+Acceptance 9 (c), deviation for a ruling: the card says that after the reconcile `release next` runs the command once. It cannot: after `aidlc ops reconcile <id> --status cancelled`, `ReleaseRunner.issue` finds the step's record by its key and `settleStep` (src/loop/release-runner.ts, T0-RELEASE-OP-REISSUE) takes the cancelled record as the step, `failed`, so `release next` stops the attempt with `release-health` "staging deployment failed" and runs no command; no other status makes the step run again (an open status waits, a terminal one settles it). Reporting the stopped attempt makes the goal terminal. The test asserts this observed outcome (stop, command not run, one operation, `cancelled`) and docs/OPERATIONS.md states it; the sweep's recovery text for release-runner.ts:314 ("then aidlc release next <attemptId>") is accurate as a command, not as a recovery of the step. A change to that behaviour is outside `allow_paths`.
+
+Seams: (a) to (c) arm the refusal for one event type by wrapping `Journal.prototype.append` (it calls the real method; it only arms the `wx` open of `<journal>.append.lock` to throw the absent-path `EPERM`). (b) runs the fixture under an actor whose pid is a process that has exited, on this host, so `aidlc review release` accepts the request as the operator's recovery after the shipping process ended. The interleave of acceptance 2 is deterministic: the child runs inside the patched head read, while the lock is held.
+
+Revert check (each hunk of `Journal.append` reverted on its own in the worktree, then restored; tests: journal-lock.test.ts and journal-lock-refusal.test.ts):
+
+| Hunk | Fails | Result |
+|---|---|---|
+| H1 actor resolved before the lock (moved into the section) | acc 7 "session-default is written before the lock file is created" | red (1 of 11) |
+| H2 the `updateJson` section (head read and append run with no lock) | acc 1 "the chain verifies", 2, 3, 4, 6, 7, 9 (a) (b) (c) "the journal lock was refused" | red (9 of 11) |
+| H3 `ts` read inside the section (moved before the lock) | acc 7 "the waiting append's ts ... is no earlier than ..." (case added after the RED commit for this row) | red (1 of 11) |
+| H4 the change returns the record it received (returning a new record writes `<journal>.append`) | acc 1 "the lock record is never written", acc 7 | red (2 of 11) |
+
+Platforms: every case of both new files runs on Windows and Linux; none is gated on `process.platform`. The absent-path `EPERM` (acceptance 4, 9) and the present-path `EPERM` (acceptance 4) are injected at `fs.openSync`, so they do not depend on the OS. Acceptance 1 accepts an unforced absent-path `EPERM` (`syscall` `open`, path the lock file) as a refusal; it arises only on Windows. No OS error message is asserted. Run here on Windows only; the coordinator runs Linux.
+
+Contention probe (the child of acceptance 1, four processes of 150 appends, three runs on Windows under the load of other agents): returned 600, 598 (2 absent-path `EPERM`) and 598 (1 `LOCKED`, 1 absent-path `EPERM`); the probe counts only, and each run of the test itself, which verifies the chain, passed. The test asserts the chain, the count of returned appends (at least 300) and the allowed codes, never the number of refusals.
+
+verify-card-run-writes: covered file changed since sync commit 34d741ef: `src/state/journal.ts` only. The change adds a lock file create and remove around each append; no card-run record write or journal append is added, removed or reordered. tests/scenarios/fault-points.test.ts passes in the DoD run with no pin added. Outcome: in sync; the sync commit and the Bounds line move at CLOSE as the hygiene says (SKILL.md not edited in this attempt). The skill's "Keeping in sync" command still names f1344090 while its Sync commit line names 34d741ef.
+
+DoD (`dod_command` exactly as above, Windows, on af92d983 plus the uncommitted docs): exit 0; tests 260, suites 18, pass 260, fail 0, cancelled 0, skipped 0; duration 215.5 s. tests/infra/update-json.test.ts on its own: 17 of 17 pass ("one lock primitive in src" included: no `wx`, `sleepSync` or `Atomics.wait` outside src/state/store.ts).
+
+Doc-reading run (every test file that names ARCHITECTURE.md, OPERATIONS.md, CHANGELOG.md or SKILL.md: 81 files, one `node --test` call, Windows): exit 0; tests 1905, suites 151, pass 1893, fail 0, skipped 12 (existing platform skips). One sentence of the new Audit paragraphs (the card takeover recovery) was corrected after that run started; the four files that slice the Audit section or pin docs prose (journal-owed, bench, verifier, prose) were run again after it: 84 of 84 pass.
+
+Budget: the diff exceeds `budget: 450` (see the line counts in the report); the source change is 31 added and 17 removed lines in src/state/journal.ts, the rest is the tests the card names, the docs and this evidence.
+
+### Attempt 2 (repair of R3 decision 1, card amended in 6dd1f094)
+
+History of attempt 2: the head-`ts` adjustment and the resume walk of acceptance 9 (c) described here were removed after the pre-review of attempt 3 and are not current behaviour.
+
+Commits: RED `81d89031` (the clock test and (c) through goal resume), fix `3c4b97a2` (src/state/journal.ts), then the docs, the R7 reader check and this evidence.
+
+Findings and what was done:
+
+| Finding | Done |
+|---|---|
+| F1 implicit `ts` can move back with the clock | Inside the section `append` reads the head event's `ts` (private `headEvent`; `head()` still returns `{ seq, hash }`) and uses it when `Date.parse(nowIso())` is earlier; `input.ts` is recorded as given (journal.ts:147-152). Test "an implicit ts never moves back with the clock, and an explicit ts is recorded as given": the clock is mocked with `mock.timers` (`apis: ['Date']`), which `nowIso` (`new Date()`) reads, so no source seam was added. Input classes: no head (first event takes the reading); head with `ts` and an earlier reading (the head's `ts`); a later reading (as read); equal readings (the same `ts`); an explicit earlier `input.ts` (kept as given); an implicit append after it (compared with the head event only, so 11:30 after an explicit 11:00). `verify()` checks `seq`, `prevHash` and the hashes, not `ts` order: the chain with the explicit earlier `ts` verifies, and the test asserts it (no problems, 6 events). |
+| F2 to F7 per-site recovery list incomplete and wrong in four places | Ruling applied: the list is removed from docs/OPERATIONS.md, CHANGELOG.md and the card's sweep. OPERATIONS.md (Audit) states R1 (with the `ts` rule), R2, R5, the rule of R6 and the three cases of acceptance 9 only; no sentence about takeover, goal creation, lease renewal, review admission, release results or `goal reconcile` remains. |
+| 9 (c) text and `aidlc goal resume` | The test now continues past the stop: the stopped attempt is reported to the goal (`release-result`, what `aidlc release next` does for a STOP or DONE attempt, src/cli/main.ts, release next action), which makes the goal `STOP` and terminal; `resume` requires a terminal goal (controller.ts, `case 'resume'`: "resume applies only to a terminal goal"). The `resume` report (`aidlc goal resume`, src/cli/main.ts, goal resume action) opens generation 1 and directs `verify-arc`; after `arc-verified` a new attempt opens, and with its candidate and approval recorded its `release next` runs the deploy once; the ledger then holds one deploy operation per attempt. The resume is called in process, not through the CLI: the CLI reads the real clock and the fixture's goal deadline is on the fixed clock, so a CLI resume today gives a time stop (seen while building the test). |
+
+Clause check against the amended card (code line in src/state/journal.ts; the test that fails without it):
+
+| Clause | Code | Test that fails without it |
+|---|---|---|
+| R1 actor before the lock | :144 | acc 7 "session-default is written before the lock file is created" (revert H1) |
+| R1 head read and append in one section on `<file>.append` | :146-163 | acc 1 "the chain verifies", acc 2 (revert H2) |
+| R1 `ts` read inside the section | :149 | acc 7 "the waiting append's ts ... is no earlier than ..." (revert H3) |
+| R1 the head's `ts` when the clock reads earlier | :152 | clock test "the clock reads earlier than the head" (revert H5) |
+| R1 `input.ts` recorded as given | :152 | clock test "an explicit ts is recorded as given" (revert H6) |
+| R1/R7 the record path is never written | :164 | acc 1 "the lock record is never written", acc 7 (revert H4) |
+| R2 wait, retry and refusal of `updateJson` | :146 (store.ts unchanged) | acc 3, acc 4 (revert H2) |
+| R3 release and rethrow | `updateJson`'s release (store.ts unchanged) | acc 5 "no lock file is left" (both cases and the EIO control) |
+| R4 innermost, not reentrant | :146 | acc 6 "the inner append is refused with LOCKED" (revert H2) |
+| R5 dead owner's lock stays | `updateJson` refusal (store.ts unchanged) | acc 3 second half (revert H2) |
+| R6 no caller changed; three cases | no caller edited | acc 9 (a) (b) (c) "the journal lock was refused" (revert H2) |
+| R7 readers take no lock | `readAll`, `head`, `verify`, `filter`, `exists` unchanged | acc 3 reader check, added in attempt 2: with `readAll` taking the lock (scratch variant), acc 3 fails with LOCKED |
+| R8 docs | OPERATIONS.md Audit, ARCHITECTURE.md (attempt 1, unchanged), CHANGELOG.md | reviewer; doc-reading run below |
+
+Revert check of the attempt 2 hunks (each alone, then restored; journal-lock.test.ts and journal-lock-refusal.test.ts):
+
+| Hunk | Fails | Result |
+|---|---|---|
+| H5 the head-`ts` floor (`ts: input.ts ?? read`) | clock test "the clock reads earlier than the head: the head's ts is used" | red (1 of 12) |
+| H6 the floor applied to `input.ts` as well | clock test "an explicit ts is recorded as given, earlier than the head included" | red |
+| R7 scratch variant: `readAll` takes the journal lock | acc 3 "LOCKED: locked by another writer ..." | red |
+
+Platforms: the clock test mocks `Date` only and runs on Windows and Linux; no new platform gate.
+
+DoD attempt 2 (`dod_command` exactly, Windows, on 3c4b97a2 plus the uncommitted docs, the R7 reader check and this evidence): exit 0; tests 261, suites 18, pass 261, fail 0, cancelled 0, skipped 0; 251.2 s. tests/scenarios/fault-points.test.ts alone: 28 of 28, no pin added (verify-card-run-writes: in sync, as in attempt 1). tests/surface/prose.test.ts (byte caps): 16 of 16.
+
+Doc-reading run attempt 2 (81 files that name ARCHITECTURE.md, OPERATIONS.md, CHANGELOG.md or SKILL.md, one `node --test` call, Windows, under load): tests 1905, suites 151, pass 1891, fail 2, skipped 12. The two failures are tests/infra/exec.test.ts ("T0-EXEC-TREE-KILL run on real processes") and tests/infra/exec-sync-tree.test.ts ("T0-EXEC-SYNC-TREE-KILL runSync with killTree on real processes"), which read no document this card changes; run alone right after, both files pass, 84 of 84 (machine load).
+
+### Attempt 3 (repair of R3 decision 2)
+
+History of attempt 3: the line numbers of the `finally` hits below are those of 750837bc.
+
+Finding [standards, required-temp-cleanup-hook] tests/scenarios/journal-lock-refusal.test.ts:72: the three scenarios removed their fixture in a `finally` of `inFixture`, not in an `after` hook. Done: `inFixture` is replaced by `fixture(t, actor?)`, which creates the fixture with `makeFixture` (tests/scenarios/_harness.ts, which after the merge of T0-TEST-TEMP-CLEANUP creates its directory with `tmpDir('aidlc-scn-')` of tests/infra/helpers.ts) and registers `t.after(() => fx.cleanup())` in the test that creates it. tests/infra/journal-lock.test.ts already created its one directory with `tmpDir()` and removed it with `cleanup(dir)` in the suite's `after` hook. tests/infra/journal-lock.child.ts creates no directory: it appends to a journal whose directory the parent created (`mkdirSync` of an existing directory, and the lock file inside it).
+
+Grep `mkdtempSync|mkdtemp(|finally` over the three files:
+
+| Hit | Disposition |
+|---|---|
+| mkdtempSync, mkdtemp( | none in the three files |
+| journal-lock.test.ts:34 `finally` | `throughFs` restores the patched `node:fs` export; no directory |
+| journal-lock.test.ts:268 `finally` | acceptance 7 restores `process.env` and the cached actor; no directory |
+| journal-lock.test.ts:322 `finally` | the clock test resets `mock.timers`; no directory |
+| journal-lock-refusal.test.ts:50 `finally` | the `Journal.prototype.append` wrapper disarms the refusal; no directory |
+| journal-lock-refusal.test.ts:58 `finally` | `refusedAt` restores `Journal.prototype.append` and `fs.openSync`; no directory |
+
+forbid, non_goals and the hygiene rules (card as on main at the merge 8d5bea2b):
+
+| Item | Evidence |
+|---|---|
+| forbid: weakening or skipping a test | `git diff origin/main...HEAD --name-only -- tests` lists only the three new files; no `.skip`, `.only`, `todo` or `skip:` in them (grep: 0) |
+| forbid: a change to src/state/store.ts or another file under src/state/ | `git diff origin/main...HEAD --name-only -- src` lists src/state/journal.ts only |
+| forbid: a lock primitive outside src/state/store.ts | grep `'wx'`, `sleepSync`, `Atomics.wait` in src/state/journal.ts: 0; update-json.test.ts "one lock primitive in src" passes. The test files compare `args[1] === 'wx'` to recognise the lock open they patch; they create no lock |
+| forbid: a change to the Sessions section or the README Multi-session paragraph | the Sessions section (heading to `## Watching a goal`) has the same sha256 on origin/main and HEAD (34554e0aca99...); README.md is not in the diff; prose.test.ts passes |
+| forbid: a new `mkdtempSync` in a test; `tmpDir` and `cleanup` in an `after` hook | grep above: no `mkdtempSync`; `tmpDir` + `after(cleanup)` in journal-lock.test.ts; `makeFixture` (`tmpDir`) + `t.after(fx.cleanup)` in journal-lock-refusal.test.ts (fixed in this attempt) |
+| forbid: editing .aidlc state by hand | no `.aidlc` path in the diff; no `aidlc` command was run against the repository state |
+| non_goal: a per-site catalogue | the new Audit paragraphs of docs/OPERATIONS.md name none of `card takeover`, `goal takeover`, `goal reconcile`, `REVIEW_ADMITTED`, `OPERATION_RESULT`, `evidence retain`, `audit seal`, `ops intent` (grep: 0); the CHANGELOG entry names the three cases only; the card's sweep holds no list (attempt 2) |
+| non_goal: a retry of the absent-path EPERM | store.ts unchanged; acceptance 4 asserts the EPERM propagates with one lock create and no wait (corrected after the second pre-review of a0321655: at 750837bc this row said acceptance 4 asserted under 1 s of elapsed time, an assertion replaced by the counts after the pre-review of attempt 3) |
+| non_goal: a configurable journal lock deadline | journal.ts passes no options to `updateJson` (grep `timeoutMs` in journal.ts: 0) |
+| non_goal: automatic removal of a lock left by an ended process | no `unlinkSync` in journal.ts (grep: 0); acceptance 3 asserts the dead owner's lock stays |
+| non_goal: a lock for the journal readers | readers unchanged; acceptance 3 checks they answer while the lock is held (R7) |
+| non_goal: the unapplied ship outcome at card-runner.ts:2815/2884 | src/loop/card-runner.ts is not in the diff |
+| non_goal: repair of a broken journal | no repair code; acceptance 5 asserts a malformed head throws and the next append succeeds only after the line is removed by the test |
+| hygiene: child processes on `process.execPath`, own `AIDLC_SESSION`, journal path as argument, no `NODE_TEST_CONTEXT` | journal-lock.test.ts `childEnv` sets `AIDLC_SESSION` and deletes `NODE_TEST_CONTEXT`; both spawns (acceptance 1 and 2) run `process.execPath` on journal-lock.child.ts with the journal path as the first argument |
+| hygiene: CHANGELOG anchor | the entry is the line directly above `- T1-BOUND-STATS:`, followed by one blank line (CHANGELOG.md:57-59) |
+| hygiene: verify-card-run-writes before SHIP; sync commit and Bounds line at CLOSE | fault-points.test.ts passes in the DoD; .claude/skills/verify-card-run-writes/SKILL.md is not in the diff (left for CLOSE) |
+| hygiene/R4: lock order, the journal lock innermost | inside the section `append` calls only `headEvent`, `nowIso`, `sha256`, `JournalEvent.parse` and `appendFileSync` (journal.ts:146-165), no other lock; acceptance 6 (a nested append is refused with `LOCKED`) |
+
+Leftover directories: the three files run with `TEMP`, `TMP` and `TMPDIR` set to an empty private directory (children inherit it) left 0 entries there (12 of 12 tests pass). A run against the shared OS temp directory (76,436 `aidlc-*` entries before) showed 9 new names during the run, all from other processes (prefixes `aidlc-base-sync-`, `aidlc-cli-` and 7 `aidlc-scn-`), and every one was gone when checked right after; none is left. tests/surface/test-temp-cleanup.test.ts: tests 5, pass 4, fail 0, skipped 1.
+
+DoD attempt 3 (`dod_command` exactly, Windows, on the merge 8d5bea2b plus the fixture change and this evidence): exit 0; tests 261, suites 18, pass 261, fail 0, cancelled 0, skipped 0; 97.3 s.
+
+### After the pre-review of attempt 3 (card amended in e7bea032)
+
+Current behaviour, tests and revert results are in this section; the sections of attempts 1 to 3 above are history.
+
+| Point | Done |
+|---|---|
+| 1 [block] the head-`ts` adjustment changes the audit decision (src/audit/verifier.ts:86-98) | Removed with `headEvent`; `head()` is as on main. The `ts` of an event without `input.ts` is `nowIso()` read inside the section, after the lock is taken, recorded as read; `input.ts` is recorded as given (journal.ts:144). |
+| 2 [block] H3 masked by the floor | Acceptance 7 now proves H3 directly: `Date` is mocked (`mock.timers`), the clock is set to 13:00:00 and moved to 13:00:05 when the lock file's `wx` create returns; the event's `ts` must equal 13:00:05 exactly. Revert (clock read before the section) gives 13:00:00 and fails. The six-row test is replaced by "an implicit ts is the clock as read, earlier than the head included, and an explicit ts is recorded as given": no head, clock later, clock earlier (recorded as read, earlier than the head), equal readings, explicit `input.ts` kept, and `verify()` accepting the chain whose `ts` decreases twice. The attempt 2 source (the floor) fails it at "recorded as read, with no adjustment". |
+| 3 [block] "a release step" where the test drives `stage-deploy` only | OPERATIONS.md and the CHANGELOG entry state the third case as the staging deploy step's `OPERATION_INTENT`, ending, since the second pre-review of a0321655, at "`aidlc ops reconcile <opId> --status cancelled` records that outcome, and the next `aidlc release next <attemptId>` settles the step from it"; the sentences about `release-health`, the reported stop, `aidlc goal resume`, `verify-arc`, a new attempt and the deploy running once are removed. The card's sweep has carried no case text since attempt 2 (it points to R6 and the docs). Test (c) keeps what acceptance 9 (c) states (wait, reconcile `cancelled`, step settled as failed, attempt stopped with `release-health`, no command, one `cancelled` operation), adds that the operation carries the `stage-deploy` key (`releaseOperationOf(op, attempt, 'stage-deploy')`), and drops the resume walk. |
+| 4 [risk] the prose promised the lock's release and a `LOCKED` refusal unconditionally | OPERATIONS.md, the CHANGELOG entry and the `append` doc comment say of the lock file only: it is created for the section and removed when the section ends, and a lock file that stays behind for any reason (its process died, its removal failed, the disk was full when it was written) refuses later appends on that journal until an operator removes it after checking that no process holds it. "releases the lock" is gone from all three; the `LOCKED` sentence of OPERATIONS.md says that a lock file that cannot be read at the deadline gives its read error instead. No test of the primitive's failure modes was added. The test names "a malformed head releases the journal lock" and "a failed append releases the journal lock" are the names acceptance 5 gives and stay. |
+| 5 [risk] wall-clock bounds and a busy-spin | Acceptance 4: lock creates and waits are counted (`Atomics.wait` wrapped): existing path 3 creates and 2 waits, absent path 1 create and 0 waits; no elapsed time. Acceptance 3: `Date` is mocked and each `wx` create moves it 100 ms, so the refusal comes after exactly 20 creates (the 2 s deadline) for the live and the dead owner; no elapsed time. The busy-spin of acceptance 7 is gone. |
+
+Wall-clock sweep of the three files (grep `Date.now|performance.now|setTimeout|sleep|timeout|while (`):
+
+| Hit | Disposition |
+|---|---|
+| journal-lock.test.ts `spawn(..., { timeout: 300_000 })` (acceptance 1) | hang guard for a child; asserts nothing about time |
+| journal-lock.test.ts `spawnSync(..., { timeout: 120_000 })` (acceptance 2) | hang guard; the child waits its own 2 s deadline in its own process, and the test asserts only its `LOCKED` |
+| journal-lock-refusal.test.ts `cli(...)` `timeout: 60_000` | hang guard for the CLI child |
+| journal-lock.test.ts `countingWaits` doc comment ("sleep") | text only |
+| acceptance 6 (the nested append waits its real 2 s deadline) | no time asserted; the inner append's `LOCKED` is asserted |
+| `Date.now`, `performance.now`, `setTimeout`, a sleep call, a `while` loop | none left in the three files |
+
+Revert check (each source hunk of `Journal.append` reverted alone, then restored; journal-lock.test.ts and journal-lock-refusal.test.ts, Windows):
+
+| Hunk | Fails | Result |
+|---|---|---|
+| H1 actor resolved before the lock (:138) | acc 7 "session-default is written before the lock file is created" | red (1 of 12) |
+| H2 the `updateJson` section (:140-157) | acc 1, 2, 3, 4, 6, 7 and 9 (a) (b) (c) | red (9 of 12) |
+| H3 `ts` read inside the section (:144) | acc 7 "the ts is the reading after the lock was taken" (13:00:00 instead of 13:00:05) | red (1 of 12) |
+| H4 the record path never written (:156) | acc 1 "the lock record is never written", acc 7 | red (2 of 12) |
+| the removed floor, put back (attempt 2 source) | clock test "recorded as read, with no adjustment" | red |
+
+How each test produces its refusal or its time (corrected after the second pre-review of a0321655): acceptance 1 real contention of four processes on the real clock; acceptance 2 real contention, a child process waiting its own real 2 s deadline, ordered by the patched `fs.readFileSync` of the head read; acceptance 3 a lock file the test writes and a controlled clock (mocked `Date`, moved 100 ms per lock create); acceptance 4 an injected `EPERM` at `fs.openSync`, with lock creates and waits counted; acceptance 5 an injected malformed last line and an injected `EIO` at `fs.appendFileSync`; acceptance 6 real contention inside one process (the nested append) and the real 2 s deadline; acceptance 7 and the clock test a controlled clock (mocked `Date`) and observed `fs.writeFileSync` and `fs.openSync`; acceptance 9 (a) to (c) an injected `EPERM` at `fs.openSync`, the fixture's fixed clock and real CLI child processes. No row of the revert table depends on a platform: the rows red on Windows use injected refusals, the mocked clock or real contention that every platform has. Only acceptance 1 can meet an unforced absent-path `EPERM`, which is Windows-only and accepted there.
+
+Clause check against the card as amended in e7bea032:
+
+| Clause | Code (src/state/journal.ts) | Test that fails without it |
+|---|---|---|
+| R1 actor before the lock | :138 | acc 7 (H1) |
+| R1 one section on `<file>.append`; `seq` and `prevHash` from the head read inside it | :140-141 | acc 1 "the chain verifies", acc 2 (H2) |
+| R1 `ts` read inside the section, after the lock | :144 | acc 7 "the ts is the reading after the lock was taken" (H3) |
+| R1 a clock that moves back recorded as read | :144 | clock test "recorded as read, with no adjustment" (the floor put back) |
+| R1 `input.ts` recorded as given | :144 | clock test "an explicit ts is recorded as given" |
+| R1/R7 the record path never written | :156 | acc 1, acc 7 (H4) |
+| R2 wait, retry, `LOCKED`, absent-path EPERM at once | :140 (store.ts unchanged) | acc 3 (20 creates), acc 4 (3 creates and 2 waits; 1 create and 0 waits) (H2) |
+| R3 rethrow, next append takes the lock | `updateJson` (store.ts unchanged) | acc 5 (both cases and the EIO control) |
+| R4 innermost, not reentrant | :140-157 call no other lock | acc 6 (H2) |
+| R5 a dead owner's lock stays | `updateJson` refusal | acc 3 second half (H2) |
+| R6 the rule and the three cases | no caller edited | acc 9 (a) (b) (c) (H2) |
+| R7 readers take no lock | readers as on main | acc 3 reader check (a scratch `readAll` that takes the lock fails it, attempt 2) |
+| R8 docs | OPERATIONS.md Audit, ARCHITECTURE.md, CHANGELOG.md | reviewer; doc-reading run below |
+
+forbid and non_goals (card at e7bea032): every row of the attempt 3 table holds at this commit, its non_goal row on the absent-path EPERM as corrected above (acceptance 4 counts one create and no wait; it asserts no elapsed time), re-checked: `git diff origin/main...HEAD --name-only -- src` lists src/state/journal.ts only; grep `'wx'|sleepSync|Atomics.wait|timeoutMs|unlinkSync` in journal.ts: 0 (the tests wrap `Atomics.wait` to count waits, which adds no primitive to src; "one lock primitive in src" passes); no `mkdtempSync` in the three files; the Sessions section is unchanged; README.md and card-runner.ts are not in the diff. Added for the amended text: R8 "no claim about another release step or what follows a settled step": the Audit paragraphs name none of `apply-deploy`, `recover`, `release-health`, `goal resume`, `verify-arc` (grep: 0).
+
+Leftover directories: the three files run with `TEMP`, `TMP` and `TMPDIR` set to an empty private directory left 0 entries (12 of 12 pass). tests/surface/test-temp-cleanup.test.ts and tests/surface/prose.test.ts: tests 21, pass 20, fail 0, skipped 1.
+
+Doc-reading run (81 files that name ARCHITECTURE.md, OPERATIONS.md, CHANGELOG.md or SKILL.md, one `node --test` call, Windows): exit 0; tests 1909, suites 153, pass 1897, fail 0, skipped 12.
+
+DoD (`dod_command` exactly, Windows, on 8d9b745f plus the docs and this evidence): exit 0; tests 261, suites 18, pass 261, fail 0, cancelled 0, skipped 0; 149.1 s. fault-points.test.ts alone: 28 of 28, no pin added.
+
+### After the second pre-review of a0321655 (card amended in 034469e5: R3, R6, budget 920)
+
+| Point | Done |
+|---|---|
+| 1 [block] OPERATIONS.md said `aidlc ops reconcile` settles the step | The third case now reads: "`aidlc ops reconcile <opId> --status cancelled` records that outcome, and the next `aidlc release next <attemptId>` settles the step from it." Test (c) asserts both halves: right after the reconcile the operation is `cancelled`, the attempt is still at `STAGE` and holds no `stage-deploy` step ("the reconcile records the outcome and settles no step"); after the next `release next` the step is `{ name: 'stage-deploy', status: 'failed', operationId }` ("the next release next settles the step from the recorded outcome"). The test name says the same. |
+| 2 [block] error sentences beyond unchanged `updateJson` | CHANGELOG.md: "throws `LOCKED` naming the owner (a lock file that cannot be read at that moment gives its read error instead)". The `Journal.append` doc comment: "A held lock refuses after the 2 s deadline with `LOCKED` (a lock file that cannot be read at that moment gives its read error instead) and nothing is appended; an error of the head read or the append is rethrown once `updateJson` has ended the section as it ends any section that throws. A lock file left behind for any reason refuses later appends until an operator removes it." OPERATIONS.md: "An error of the head read or of the append is rethrown once `updateJson` has ended the section as it ends any section that throws." A scan of the Audit paragraphs, the ARCHITECTURE.md journal sentence and row, and the CHANGELOG entry for `always`, `never`, `releas`, `is removed`, `removed when` finds only "which is never written" (the record path) and the sentence R8 prescribes, "The lock file is created for the section and removed when the section ends", which is followed by the sentence on a lock file that stays behind. No test of the two unchanged `updateJson` cases was added; src/state/store.ts is not in the diff. |
+| 3 [evidence] statements not true of the current tests | The "every refusal is injected and the clock mocked" line is replaced by a per-test list (above, in the section after the pre-review of attempt 3): acceptance 1, 2 and 6 use real contention, 2 and 6 the real 2 s deadline. The attempt 3 non_goal row that claimed an elapsed-time assertion for acceptance 4 is corrected in place, and so is the sentence that reaffirmed that table. |
+| 4 DoD | below |
+
+Revert table re-run on 663b330a (journal-lock.test.ts and journal-lock-refusal.test.ts, Windows): H1 red (1 of 12, acc 7); H2 red (9 of 12, acc 1, 2, 3, 4, 6, 7 and 9 (a) (b) (c)); H3 red (1 of 12, acc 7); H4 red (2 of 12, acc 1 and 7). Unchanged from the table above; the source change of this round is the doc comment only.
+
+Doc-reading run (the 79 test files that name docs/OPERATIONS.md, docs/ARCHITECTURE.md or CHANGELOG.md, one `node --test` call, Windows, under load): tests 1870, suites 152, pass 1857, fail 1, skipped 12. The one failure is tests/infra/exec.test.ts ("T0-EXEC-TREE-KILL run on real processes"), which reads no document this card changes; run alone right after, 61 of 61 pass (machine load). tests/surface/prose.test.ts: passes in that run and alone (with verifier.test.ts, 36 of 36).
+
+DoD (`dod_command` exactly, Windows, on 663b330a plus the docs and this evidence): exit 0; tests 261, suites 18, pass 261, fail 0, cancelled 0, skipped 0; 218.0 s. fault-points.test.ts alone: 28 of 28, no pin added.
+
+Coordinator verification:
+- At 41257b4f, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 11, pass 11, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1854 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At 128c6e47, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1866 # pass 1853 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+Coordinator verification:
+- At d24ec3d2, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
+
+### Attempt 4 (repair of R3 decision 3)
+
+Finding [standards, required-temp-cleanup-hook, re:F8] tests/scenarios/journal-lock-refusal.test.ts:73: the `after` hook of the three scenarios called `fx.cleanup()`, the fixture's own removal in tests/scenarios/_harness.ts, where the forbid entry names `cleanup` of tests/infra/helpers.ts. Done: the file imports `cleanup` from `../infra/helpers.ts` and `fixture(t, actor?)` registers `t.after(() => cleanup(fx.tmp))`; `fx.cleanup` is no longer called in the file. This replaces what the attempt 3 section and its forbid row say about `t.after(() => fx.cleanup())`. The directory is still created by `makeFixture`, which creates it with `tmpDir('aidlc-scn-')` of tests/infra/helpers.ts. No source file, document or other test changes in this attempt. The edit was made by the coordinator, as the finding states it; the checks below are the coordinator's.
+
+Temporary directories and cleanup in the three test files of this branch, by grep at this commit:
+
+| file | creates | removes |
+|---|---|---|
+| tests/infra/journal-lock.test.ts | `tmpDir()` of ./helpers.ts | `after(() => { cleanup(dir); })`, `cleanup` of ./helpers.ts |
+| tests/scenarios/journal-lock-refusal.test.ts | `makeFixture` (`tmpDir` of ../infra/helpers.ts) | `t.after(() => cleanup(fx.tmp))`, `cleanup` of ../infra/helpers.ts |
+| tests/infra/journal-lock.child.ts | none (it appends to the journal path its parent passes) | none |
+
+No `mkdtempSync` in the three files. The `finally` blocks of the two test files restore what a test replaced (a function of `node:fs`, `Journal.prototype.append`, `Atomics.wait`, the mocked timers, environment variables, the test actor); none removes a temporary directory.
+
+Coordinator verification:
+- At 44f73045, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/journal-lock.test.ts, tests/scenarios/journal-lock-refusal.test.ts): tests 12, pass 12, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1856 # fail 2 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
