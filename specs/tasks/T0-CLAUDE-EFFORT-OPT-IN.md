@@ -159,3 +159,8 @@ RED commit bbaa2f07 (tests only), GREEN commit 54bec90f (source and documents). 
 - docs/OPERATIONS.md: the refusal sentence of the Claude Code effort paragraph and the Evals paragraph are the words of R5 (b) and (c); the config rows of acceptance 6 deep-equal the whole `claudeCode` object. CHANGELOG entry and ARCHITECTURE sentence checked against the amended R2 and R5: neither says a refused effort ends like any other non-zero exit, and the ARCHITECTURE sentence is R5 (d) as written.
 - Revert table rerun on 11fb28e0: 26 rows, 26 red (the 25 above plus "nested schema passes unknown keys through", `z.looseObject`, red in the acceptance 6 test). Tree clean after.
 - DoD, run without a pipe: `npm run typecheck && node --test` of the seven files, exit 0; 278 tests, 278 pass, 0 fail.
+
+Coordinator verification:
+- At d8971fb3, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/config.test.ts, tests/surface/providers.test.ts): tests 99, pass 99, fail 0, skipped 0.
+- Windows, docpins: 81 test files reading 3 changed documents: # tests 1888 # pass 1873 # fail 3 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load docpins: tests/scenarios/mutants-review.test.ts failed in the parallel run and passes alone (# pass 17): load docpins: tests/surface/review-bench.test.ts failed in the parallel run and passes alone (# pass 27): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
