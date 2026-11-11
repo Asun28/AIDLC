@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { EvidenceStore, Manifest, type ManifestEntry } from '../../src/audit/manifest.ts';
 import { StoreError } from '../../src/state/store.ts';
 import { makeFixture, writeCard, goalForCards, type Fixture } from './_harness.ts';
@@ -87,11 +87,17 @@ test('a seal given an older copy seals what others retained', () => {
   later.seal(later.load('g1', 0, 0, NOW), { journalHead: HEAD_A, journalEvents: 2, now: NOW });
   const before = bytes(later.manifestFile());
   assert.throws(() => later.retain(stale, { id: 'd', kind: 'artifact', content: 'd' }), /sealed/);
-  const after = later.load('g1', 0, 0, NOW);
-  assert.equal(later.verifySeal(after), true);
-  assert.deepEqual(ids(after), ['a']);
+  const kept = later.load('g1', 0, 0, NOW);
+  assert.equal(later.verifySeal(kept), true);
+  assert.deepEqual(ids(kept), ['a']);
   assert.equal(bytes(later.manifestFile()), before);
   assert.equal(existsSync(path.join(later.dir, 'd')), false);
+
+  // With no manifest file the argument stands in, so a sealed argument is refused as well.
+  const none = store('g9');
+  assert.throws(() => none.retain(kept, { id: 'e', kind: 'artifact', content: 'e' }), /sealed/);
+  assert.equal(existsSync(none.manifestFile()), false);
+  assert.equal(existsSync(path.join(none.dir, 'e')), false);
 });
 
 test('seal keeps models and host as stated', () => {
@@ -133,6 +139,13 @@ test('seal keeps models and host as stated', () => {
   assert.equal(created.revision, 2);
   assert.deepEqual(created.models, m1);
   assert.equal(fresh.verifySeal(created), true);
+
+  // With no file and an argument without models, the sealed manifest has none and its seal verifies once read back.
+  const bare = store('g3');
+  bare.seal({ schemaVersion: 1, goalId: 'g3', generation: 0, revision: 0, createdAt: NOW, entries: [entry] }, { journalHead: HEAD_A, journalEvents: 1, now: NOW });
+  const read = bare.load('g3', 0, 0, NOW);
+  assert.deepEqual(read.models, []);
+  assert.equal(bare.verifySeal(read), true);
 });
 
 test('reserved file names are refused', () => {
@@ -277,7 +290,7 @@ for (const id of ids) {
     store.retain(store.load(goal, 0, 0, now), { id, kind: 'artifact', content: id });
     console.log('ok ' + id);
   } catch (err) {
-    console.log('err ' + id + ' ' + (err.code ?? err.message));
+    console.log('err ' + id + ' ' + (err.code ?? err.message) + ' ' + (err.syscall ?? '-') + ' ' + (err.path ? err.path.split(/[\\\\/]/).pop() : '-'));
   }
 }
 `;
@@ -316,10 +329,14 @@ test('concurrent retains lose no entry', async () => {
     assert.ok(entry && ev.intact(entry), `retained ${id} is in the manifest with an intact file`);
   }
   for (const line of lines.filter((l) => !l.startsWith('ok '))) {
-    const [, id, thrown] = line.split(' ');
-    assert.ok(thrown === 'LOCKED' || thrown === 'EPERM', line);
+    const [, id, thrown, syscall, file] = line.split(' ');
+    // Windows refuses the manifest rename with EPERM while a lockless reader (the load before the section) has the file
+    // open; the artifact was copied first and stays without an entry, as the card's non_goals keep it.
+    const renameRefused = thrown === 'EPERM' && syscall === 'rename' && file!.startsWith('manifest.json.tmp-');
+    const nothingWritten = thrown === 'LOCKED' || (thrown === 'EPERM' && syscall === 'open' && (file === 'manifest.json.lock' || file === 'manifest.json'));
+    assert.ok(renameRefused || nothingWritten, line);
     assert.equal(stored.entries.some((e) => e.id === id), false, line);
-    assert.equal(existsSync(path.join(ev.dir, id!)), false, line);
+    if (nothingWritten) assert.equal(existsSync(path.join(ev.dir, id!)), false, line);
   }
   assert.equal(stored.entries.length, ok.length);
 });

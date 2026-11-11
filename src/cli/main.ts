@@ -1292,11 +1292,12 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       const ev = new EvidenceStore(c.paths.evidence, id);
       const now = new Date().toISOString();
       const mf = ev.load(id, goalRec.generation, goalRec.revision, now);
-      // The seal event is journaled first so the manifest binds to a head that includes it.
-      Journal.forGoal(c.paths.journal, id).append({ type: 'MANIFEST_SEALED', goalId: id, generation: goalRec.generation, data: { entries: mf.entries.length, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest } });
-      const head = Journal.forGoal(c.paths.journal, id).head();
-      const sealed = ev.seal({ ...mf, models: goalRec.roleProfiles.map((p) => ({ role: p.role, provider: p.provider, model: p.model })) }, { journalHead: head.hash, journalEvents: head.seq + 1, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest, now, host: { node: process.version, platform: process.platform, aidlc: '0.1.0' } });
-      out(c, { seal: sealed.seal, entries: sealed.entries.length, journalHead: head.hash }, () => `sealed manifest for ${id} (${sealed.entries.length} entries)`);
+      // The seal event is journaled inside the seal's lock section, counting the manifest it seals, and the seal binds to that event.
+      const sealed = ev.seal({ ...mf, models: goalRec.roleProfiles.map((p) => ({ role: p.role, provider: p.provider, model: p.model })) }, (sealing) => {
+        const event = Journal.forGoal(c.paths.journal, id).append({ type: 'MANIFEST_SEALED', goalId: id, generation: goalRec.generation, data: { entries: sealing.entries.length, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest } });
+        return { journalHead: event.hash, journalEvents: event.seq + 1, finalSha: o.finalSha, finalCandidateDigest: o.finalDigest, now, host: { node: process.version, platform: process.platform, aidlc: '0.1.0' } };
+      });
+      out(c, { seal: sealed.seal, entries: sealed.entries.length, journalHead: sealed.journalHead }, () => `sealed manifest for ${id} (${sealed.entries.length} entries)`);
     });
   program
     .command('evidence')
