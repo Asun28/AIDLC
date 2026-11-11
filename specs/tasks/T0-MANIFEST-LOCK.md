@@ -1,7 +1,7 @@
 ---
 id: T0-MANIFEST-LOCK
 title: Evidence retain and audit seal change the goal manifest only under its lock file, so concurrent retains lose no entry, a retain or seal given an older copy keeps what others wrote, and no evidence id can overwrite the manifest, its lock or its temporary files
-status: todo
+status: merged
 branch: T0-MANIFEST-LOCK
 worktree: D:\wt\AIDLC\T0-MANIFEST-LOCK
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 60 source lines (src/audit/manifest.ts about 50, src/cli/main.ts about 10); the rest is about 210 lines of tests in one new file, about 10 lines of docs and about 25 lines of attempt evidence; raised from 305 to 500 by the coordinator on the candidate 1d6bc044, which is 478 changed lines: 110 source lines (99 in src/audit/manifest.ts, most of them the retain body moved into the locked section), 342 lines of the acceptance tests, the rest docs and attempt evidence"
@@ -65,3 +65,23 @@ npm run typecheck && node --test tests/scenarios/manifest-lock.test.ts tests/sur
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the existing manifest tests pass unchanged.
+
+## Attempt evidence
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/manifest-lock.test.ts` "a retain given a manifest read before another retain keeps both". RED on 56118b12: stored ids `['a', 'c']`, `b` lost | pass |
+| 2 | same file, "a seal given an older copy seals what others retained", plus a sealed argument with no manifest file. RED on 56118b12: sealed ids `['a']` | pass |
+| 3 | same file, "seal keeps models and host as stated", plus a no-file seal of an argument without `models`. RED on 56118b12: stored `host` undefined after a seal of the older copy | pass |
+| 4 | same file, "reserved file names are refused": the five card ids, `MANIFEST.JSON.TMP-9-00000000`, `manifest.json.tmp-1 2`; accepted `manifest/json`, `manifest.json.lock2`, `xmanifest.json`, `manifest.jsonx`. RED on 56118b12: `Missing expected exception: manifest.json` | pass |
+| 5 | same file, "a held lock refuses retain and seal". RED on 56118b12: `expected the call to throw` | pass |
+| 6 | same file, "the CLI refuses under a held lock and journals nothing". RED on 56118b12: `evidence retain` exited 0 | pass |
+| 7 | same file, "a manifest that does not parse or fails the schema". CLI part passes on main; direct calls RED on 56118b12: `expected the call to throw` | pass |
+| 8 | same file, "the seal event and the seal bind one manifest" (passes on main and after, as the card says) | pass |
+| 9 | same file, "concurrent retains lose no entry", 8 child processes x 3 ids; repeated 6 times after the change, all pass. See the note below | pass |
+| 10 | DoD files `tests/surface/manifest.test.ts`, `tests/surface/verifier.test.ts`, `tests/scenarios/audit.test.ts`, `tests/scenarios/card-close-cleanup.test.ts`, `tests/scenarios/worktree-reclaim.test.ts`, `tests/infra/update-json.test.ts`, `tests/surface/removed-surface.test.ts`, none changed | pass |
+| 11 | `docs/OPERATIONS.md` (Audit, the paragraph after "Seal after the last mutation."), `docs/ARCHITECTURE.md` (evidence and audit chain, item 2), `CHANGELOG.md` entry T0-MANIFEST-LOCK above T0-CARD-SIZE | reviewer reads the diff |
+
+Acceptance 9 note: on Windows the manifest rename of `atomicWriteJson` (`src/state/store.ts`, `renameSync(tmp, file)`) fails with `EPERM` while another process's lockless `load` has `manifest.json` open; it failed 3 of 8 runs before the test told the cases apart. The artifact was copied before that write and stays without an entry, which the card's non_goals keep ("an artifact copied before a manifest write that then fails"), while the item says a thrown id has no file. The test asserts no entry for every thrown id, and no file for `LOCKED` and for `EPERM` on `open` of `manifest.json.lock` or `manifest.json`; for `EPERM` on `rename` of `manifest.json.tmp-*` it asserts no entry only.
+
+Revert check (each hunk reverted alone, all nine tests run): retain lock removed: 5, 6, 7, 9 fail; retain decides on the argument: 1, 2 fail; reserved check removed, case-sensitive, or the tmp prefix dropped: 4 fails; seal lock removed: 5, 6, 7 fail; seal seals the argument: 2, 3 fail; argument `models` ignored, absent `models` clearing the stored ones, `host` from the argument, no-file seal without a `models` default: 3 fails; the CLI seal hunk as on main: 6 fails. Not caught: the CLI's `entries` taken from the earlier load, and the journal head read again after the append; neither differs without a write between the CLI's load and its lock, which a test can only arrange by timing.
