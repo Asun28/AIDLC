@@ -2,8 +2,9 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { OPS_CONFIG_FILE, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, resolveRoles } from '../../src/delivery/ops.ts';
-import { scriptedRunner } from '../../src/probes/exec.ts';
+import * as opsModule from '../../src/delivery/ops.ts';
+import { OPS_CONFIG_FILE, DeliveryOpsConfig, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, resolveRoles } from '../../src/delivery/ops.ts';
+import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { cleanup, tmpDir } from './helpers.ts';
 
 describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () => {
@@ -144,6 +145,92 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
         assert.ok(r.error?.issues.some((i) => i.path.join('.') === key && /regular expression/.test(i.message)), `${key}: the issue names the key and the cause`);
       }
       assert.equal(OperationBinding.safeParse({ ...binding, [key]: '^operation=(\\S+)$' }).success, true, key);
+    }
+  });
+
+  it('operationCwd: one directory for every form of cwd', () => {
+    // Card T0-OPS-CWD acceptance 1 [R1]. The rows of the other platform are skipped by process.platform, never deleted.
+    const root = path.resolve(dir, 'main-checkout');
+    const drive = path.parse(root).root;
+    const win = process.platform === 'win32';
+    const rows: { on: 'all' | 'win32' | 'posix'; cwd: string | undefined; expected: string }[] = [
+      { on: 'all', cwd: undefined, expected: root },
+      { on: 'all', cwd: 'ops', expected: path.join(root, 'ops') },
+      { on: 'all', cwd: 'ops/sub', expected: path.join(root, 'ops', 'sub') },
+      { on: 'all', cwd: '.', expected: root },
+      { on: 'all', cwd: '..', expected: path.dirname(root) },
+      { on: 'all', cwd: 'my ops', expected: path.join(root, 'my ops') },
+      { on: 'all', cwd: 'a\tb', expected: path.join(root, 'a\tb') },
+      { on: 'all', cwd: 'a\nb', expected: path.join(root, 'a\nb') },
+      { on: 'all', cwd: ' ops ', expected: `${root}${path.sep} ops ` },
+      { on: 'all', cwd: '~/ops', expected: path.join(root, '~', 'ops') },
+      { on: 'win32', cwd: 'ops\\sub', expected: path.join(root, 'ops', 'sub') },
+      { on: 'win32', cwd: '\\ops', expected: path.join(drive, 'ops') },
+      { on: 'win32', cwd: '/ops', expected: path.join(drive, 'ops') },
+      { on: 'win32', cwd: 'C:\\ops', expected: 'C:\\ops' },
+      { on: 'win32', cwd: 'c:\\ops', expected: 'c:\\ops' },
+      { on: 'win32', cwd: 'C:/ops', expected: 'C:\\ops' },
+      { on: 'win32', cwd: '\\\\server\\share\\ops', expected: '\\\\server\\share\\ops' },
+      { on: 'win32', cwd: '\\\\?\\C:\\ops', expected: '\\\\?\\C:\\ops' },
+      { on: 'posix', cwd: 'ops\\sub', expected: `${root}/ops\\sub` },
+      { on: 'posix', cwd: '/srv/ops', expected: '/srv/ops' },
+      { on: 'posix', cwd: 'C:\\ops', expected: `${root}/C:\\ops` },
+      { on: 'posix', cwd: 'c:\\ops', expected: `${root}/c:\\ops` },
+      { on: 'posix', cwd: 'C:/ops', expected: `${root}/C:/ops` },
+      { on: 'posix', cwd: '\\\\server\\share\\ops', expected: `${root}/\\\\server\\share\\ops` },
+      { on: 'posix', cwd: '\\\\?\\C:\\ops', expected: `${root}/\\\\?\\C:\\ops` },
+      { on: 'posix', cwd: '\\ops', expected: `${root}/\\ops` },
+    ];
+    for (const row of rows) {
+      if (row.on !== 'all' && row.on !== (win ? 'win32' : 'posix')) continue;
+      const binding = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool'], ...(row.cwd === undefined ? {} : { cwd: row.cwd }) });
+      assert.equal(opsModule.operationCwd(binding, root), row.expected, `cwd ${JSON.stringify(row.cwd)}`);
+    }
+  });
+
+  it('a cwd that is not a usable string is refused when the ops file loads', () => {
+    // Card T0-OPS-CWD acceptance 2 [R2]: refused on every platform, so a committed file means one thing everywhere.
+    const load = (cwd: unknown, name: string) => {
+      const file = path.join(dir, `ops-cwd-${name}.json`);
+      writeFileSync(file, JSON.stringify({ schemaVersion: 1, operations: [{ role: 'build', command: ['make'] }, { role: 'deploy', command: ['deploy-tool'], cwd }] }), 'utf8');
+      return loadDeliveryOps(dir, file);
+    };
+    const refused: [string, unknown][] = [
+      ['null', null],
+      ['a number', 3],
+      ['an object', {}],
+      ['empty', ''],
+      ['spaces', '  '],
+      ['a tab', '\t'],
+      ['a line break', '\n'],
+      ['a no-break space', '\u00a0'],
+      ['a byte order mark', '\ufeff'],
+      ['C:ops', 'C:ops'],
+      ['c:ops', 'c:ops'],
+      ['C:', 'C:'],
+    ];
+    for (const [name, cwd] of refused) {
+      const r = load(cwd, name.replace(/\W/g, '-'));
+      assert.equal(r.status, 'unreadable', name);
+      if (r.status === 'unreadable') assert.match(r.error, /cwd/, name);
+      const parsed = DeliveryOpsConfig.safeParse({ schemaVersion: 1, operations: [{ role: 'build', command: ['make'] }, { role: 'deploy', command: ['deploy-tool'], cwd }] });
+      assert.deepEqual(parsed.error?.issues.map((i) => i.path.join('.')), ['operations.1.cwd'], `${name}: the issue is at operations.1.cwd`);
+    }
+    for (const cwd of ['C:\\ops', 'c:/ops', 'ops', 'ops dir', '/srv/ops']) assert.equal(load(cwd, `ok-${cwd.replace(/\W/g, '-')}`).status, 'configured', cwd);
+  });
+
+  it('the command and the status lookup of one binding run in one directory', () => {
+    // Card T0-OPS-CWD acceptance 3 [R3].
+    const root = path.resolve(dir, 'main-checkout');
+    const cwds: (string | undefined)[] = [];
+    const runner: SyncRunner = (command, args, options) => (cwds.push(options?.cwd), scriptedRunner({ 'deploy-tool': { stdout: 'ok' } })(command, args, options));
+    for (const [cwd, expected] of [[undefined, root], ['ops', path.resolve(root, 'ops')]] as const) {
+      const binding = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'up'], statusLookup: ['deploy-tool', 'status', '{id}'], ...(cwd === undefined ? {} : { cwd }) });
+      cwds.length = 0;
+      executeOperation(binding, 'staging', { root, runner });
+      assert.deepEqual(cwds, [expected], `command, cwd ${cwd}`);
+      lookupOperation(binding, 'op-1', root, runner);
+      assert.deepEqual(cwds, [expected, expected], `lookup, cwd ${cwd}`);
     }
   });
 });
