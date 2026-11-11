@@ -179,3 +179,6 @@ Against origin/main, without this card file, on the final tree: 413 lines added 
 
 
 Coordinator verification:
+- At 3131610d, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/exec-sync-tree.test.ts, tests/infra/ops.test.ts, tests/scenarios/ops-cwd.test.ts): tests 40, pass 40, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 4 changed documents: # tests 1883 # pass 1871 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
