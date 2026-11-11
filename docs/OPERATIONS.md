@@ -140,6 +140,8 @@ aidlc authorize production --goal <goalId> --env production --candidate <digest>
 aidlc release next <attemptId>              # apply -> observe (health window) -> close -> done
 ```
 
+At CHECKPOINT `aidlc next --json` shows the same `packet` as `aidlc release packet <id>`, built from the ops configuration read on each call. Record the authority from the packet's `environment` and `operations`, not from the directive's `environment` field, which stays the attempt's recorded environment (`staging` at CHECKPOINT).
+
 A production goal requests the staging and production stages. A delivered attempt with a succeeded `stage-verify` step passes both. Without that step the goal keeps `stage staging=pending` as missing and stays in CLOSE.
 
 Without `--by`, `aidlc authorize`, `aidlc plan approve` and `aidlc report --result approved` record the git identity of the repository as the approver (`git config user.email`, else `user.name`), and `user` when neither is set; no other command reads the git identity.

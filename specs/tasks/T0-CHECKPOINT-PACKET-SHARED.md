@@ -55,3 +55,53 @@ npm run typecheck && node --test tests/scenarios/checkpoint-packet.test.ts tests
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; acceptance 1 and 2 fail on main.
+
+## Attempt evidence
+
+RED commit 5efcf942 (tests only). On main every test failed at its first assertion: tests 1, 2, 3 (migration), 4 (reading writes nothing, packet environment `staging` not `production`) and 6 (packet differs from the runner's) on a packet deep-equal or environment assertion; test 5 (staging attempt at CHECKPOINT) on a non-empty packet. One correction after RED, before GREEN: test 1 asserted directive kind `apply` after `runner.next`, but a synchronous bound deploy moves the attempt to OBSERVE; it now asserts `applied.attempt.state === 'OBSERVE'` (a wrong expectation in my own new test, not a weakening).
+
+| Acceptance | Test or command | Result |
+|---|---|---|
+| 1 | checkpoint-packet.test.ts "the goal's release directive at CHECKPOINT carries the runner's packet, and an authority recorded from it lets release next apply" | pass; fails on main (staging, record ids) |
+| 2 | "without an injected runner the controller packet equals the CLI's for every ops configuration" (plus "a migration attempt at CHECKPOINT carries the runner's packet") | pass; fails on main |
+| 3 | "reading the packet writes nothing" | pass |
+| 4 | "an attempt at CHECKPOINT that is not a production step gets an empty packet" | pass; fails on main (non-empty packet) |
+| 5 | "run returns the release directive with the same packet and no provider call" | pass; fails on main |
+| 6 | release.test.ts, release-publication.test.ts, run-driver.test.ts unchanged | pass (DoD: 65 tests, 65 pass, 0 fail) |
+| 7 | docs and CHANGELOG, reviewer-verified | ARCHITECTURE.md release row, OPERATIONS.md Standalone release (paragraph after the production example), CHANGELOG entry above `- T0-PREPARE-WORKTREE (bugfix)` |
+
+Per-hunk revert (each hunk undone alone, checkpoint-packet.test.ts run, then restored):
+
+| Hunk | Fails | Result |
+|---|---|---|
+| target condition `production` or `migration` replaced by true | test 5, "release transition CHECKPOINT -> APPLY refused: APPLY is a production step" thrown | red |
+| `migration` removed from the condition | test 3 (migration), packet `{}` not equal to the runner's | red |
+| injected runner ignored (`this.releaseRunner ??` removed) | tests 1 and 6, deep-equal of the packet (runner on `opsConfigured()` against an absent ops file: `recoveryPlan`) | red |
+| runner cached across reads | test 2, the second packet after the file changes (`live2`) | red |
+| packet fixed to `{}` | tests 1, 2, 3, 4, 6 | red |
+| `attempt.state === 'CHECKPOINT'` clause removed | test "the packet builder is consulted only for a production or migration attempt at CHECKPOINT, once per next": spy `checkpointPacket` called 4 times (PREPARE, STAGE, APPLY, OBSERVE), "no builder call outside CHECKPOINT", `4 !== 0` | red |
+
+The CHECKPOINT clause is proved through an injected spy runner (`checkpointPacket` called 0 times in PREPARE, STAGE, APPLY, OBSERVE and for a staging attempt at CHECKPOINT, packet `{}`; once per `next` at CHECKPOINT). Without an injected runner the non-CHECKPOINT case cannot be observed by a test (the packet is `{}` either way, and building the runner writes nothing), so that spy test is the proof of the condition both paths share.
+
+Input classes against tests (all in checkpoint-packet.test.ts, test 2 unless noted):
+
+| Class | Result asserted |
+|---|---|
+| production environment named `live` | packet environment `live`, operations `["deploy"]`, recoveryPlan matches `recover-cmd`, configDigest `cfg9`, evidence `["ev-1"]`, dataSteps from the steps |
+| file changed between two reads | second packet `live2` |
+| no environment marked production | environment `production` |
+| ops file unreadable (text `this is { not json`, same on every platform) | environment `production`, recoveryPlan `NOT CONFIGURED`, nothing throws |
+| ops file absent | environment `production`, recoveryPlan `NOT CONFIGURED` |
+| attempt with a database | operations `["deploy","migration-apply"]` |
+| migration target | packet equals the runner's (own test) |
+| non-production target at CHECKPOINT (staging, release-result patch) | packet `{}` from `report` and `next`, nothing throws (test 4) |
+| PREPARE | packet `{}` (test 3) |
+
+Doc-reading run: 78 files, `node --test` in one call: 1863 tests, 1851 pass, 0 fail, 12 skipped, 0 cancelled. Linux run of the new file is the coordinator's.
+
+DoD: `npm run typecheck && node --test tests/scenarios/checkpoint-packet.test.ts tests/scenarios/release.test.ts tests/scenarios/release-publication.test.ts tests/scenarios/run-driver.test.ts` exit 0, 65 tests, 65 pass, 0 fail. Each new test (seven in the file) removes its temp directory through `fx.cleanup()` in a `finally`; the ops file lives inside it.
+
+Coordinator verification:
+- At 0dad0b42, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/checkpoint-packet.test.ts): tests 7, pass 7, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1863 # pass 1850 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
