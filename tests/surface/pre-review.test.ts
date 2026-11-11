@@ -1,7 +1,8 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
 import { aggregateVerdicts, citedReason, enforceCitations, pathAllowed, buildReviewPrompt, classifyPreReview, collectCandidateDiff, expandCommand, materialiseVerdictSchema, runReviewPanel, type PriorFinding } from '../../src/review/pre-review.ts';
 import { buildPreReviewPrompt, extractVerdict, runPreReview } from './_review-once.ts';
@@ -19,7 +20,7 @@ import { DryRunShipPath } from '../../src/delivery/ship.ts';
 import { makeFixture, writeCard } from '../scenarios/_harness.ts';
 
 function fixtureCard() {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-prereview-'));
+  const dir = tmpDir('aidlc-prereview-');
   const cards = path.join(dir, 'specs', 'tasks');
   mkdirSync(cards, { recursive: true });
   writeFileSync(path.join(cards, 'T1-GATE.md'), renderCard({ id: 'T1-GATE', title: 'gate the ship', allowPaths: ['src/gate.ts'], dodCommand: 'node --test tests/gate.test.ts', acceptance: ['1. the gate holds. [dod arm 1]'], deliverable: 'gate', worktreeRoot: path.join(dir, 'wt') }));
@@ -490,7 +491,7 @@ test('the async runner survives a child that exits before reading its input, and
 });
 
 test('T1-REVIEW-FINDINGS-4 R3 decision 2 (finding 3): a panel whose one angle fails before its receipt waits for every other angle before it rejects, so a caller releases nothing while a reviewer is still running', async () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-panel-join-'));
+  const dir = tmpDir('aidlc-panel-join-');
   const reviewDir = path.join(dir, '.review');
   let finished = false;
   const runner = async (c: string, a: string[], o: Parameters<ReturnType<typeof scriptedRunner>>[2] = {}) => {
@@ -1340,7 +1341,7 @@ const REASONING_FENCED = [
 ].join('\n');
 
 function readAngle(stdout: string, answerMarker?: string) {
-  const dir = mkdtempSync(path.join(tmpdir(), 'aidlc-answer-marker-'));
+  const dir = tmpDir('aidlc-answer-marker-');
   const at = '2026-09-11T00:00:00.000Z';
   const receipt = { command: 'reviewer', args: [], cwd: dir, exitCode: 0, signal: null, timedOut: false, stdout, stderr: '', startedAt: at, finishedAt: at, durationMs: 0, outputSha256: createHash('sha256').update(stdout).digest('hex') };
   const fin = inputs.finalizeReview(receipt, { reviewDir: dir, fileStem: 'angle', head: 'sha-1', reviewer: 'deepseek', answerMarker });

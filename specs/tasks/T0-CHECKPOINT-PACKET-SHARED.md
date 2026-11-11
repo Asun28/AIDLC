@@ -4,6 +4,7 @@ title: "The goal's release directive at CHECKPOINT carries the release runner's 
 status: todo
 branch: T0-CHECKPOINT-PACKET-SHARED
 worktree: D:\wt\AIDLC\T0-CHECKPOINT-PACKET-SHARED
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 200 to 340 on the candidate 7d61ddbb, which is 290 changed lines; 13 source lines in src/loop/controller.ts, 226 lines of the acceptance tests, 45 lines of attempt evidence with its revert table, the rest docs; one more test follows for the CHECKPOINT condition"
 depends_on: [T0-ASK-RECLASSIFY]
 allow_paths:
   - src/loop/controller.ts
@@ -29,7 +30,7 @@ acceptance:
   - 5. Same file: `runGoal` with a `MockProvider` and the controller of acceptance 1 returns the `release` directive with the same packet and no provider call. [R5] [dod arm 1]
   - 6. `tests/scenarios/release.test.ts` (among them "Q17: a production goal presents the checkpoint packet for the production environment ...", "the approval packet is read without advancing the attempt ..."), `tests/scenarios/release-publication.test.ts` and `tests/scenarios/run-driver.test.ts` pass unchanged. [R1] [R4] [dod arm 1]
   - 7. The docs and the CHANGELOG state R6 (reviewer-verified against the diff). [R6]
-budget: 200
+budget: 340
 diagnosis:
   root_cause: "`nextInDeliver` (src/loop/controller.ts:436) builds its own packet with `approvalPacket('production', { ..., environment: attempt.environment, operations: attempt.operations })`: at CHECKPOINT the attempt's environment is still the staging one and `operations` holds operation record ids, while `ReleaseRunner.checkpoint` (src/loop/release-runner.ts:89-101) binds the production environment and the planned roles, which `assertReleaseTransition` matches the authority against. An authorization written from the goal directive never matches. Reproduced by audit probe `probe2.test.ts` P14 on main."
   same_class: "Every builder of a production approval packet: `nextInDeliver` (changed), `ReleaseRunner.checkpoint` with its two callers `next` and `checkpointPacket` (the shared builder, unchanged), `aidlc release packet` (src/cli/main.ts:1175, prints `checkpointPacket`, unchanged); the plan-checkpoint packet of `nextInCards` (:295) is another kind and is not affected."

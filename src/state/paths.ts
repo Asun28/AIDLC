@@ -44,8 +44,8 @@ function gitOut(args: string[], cwd: string): string | undefined {
 
 /**
  * Repository identity is asked for several times per CLI call (context, state paths, session id, hooks);
- * it costs one `git rev-parse` per process and cwd. The cache is per process, so a long-lived test can
- * reset it after creating a repository in a directory it already resolved.
+ * it costs one `git rev-parse` per process and cwd. The cache is per process and has no reset: an
+ * identity resolved before a repository was created in that directory stays until the process ends.
  */
 const identityCache = new Map<string, RepoIdentity>();
 

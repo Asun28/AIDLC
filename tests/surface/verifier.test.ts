@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { tmpDir } from '../infra/helpers.ts';
 import path from 'node:path';
 import { Journal } from '../../src/state/journal.ts';
 import { EvidenceStore } from '../../src/audit/manifest.ts';
@@ -14,7 +14,7 @@ import { GhProbe } from '../../src/probes/gh.ts';
 const now = '2026-09-11T00:00:00.000Z';
 
 function fixture(goalId = 'g1') {
-  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-audit-'));
+  const root = tmpDir('aidlc-audit-');
   const journal = Journal.forGoal(path.join(root, 'journal'), goalId);
   const evidence = new EvidenceStore(path.join(root, 'evidence'), goalId);
   const operations = new OperationLedger(path.join(root, 'operations'));
