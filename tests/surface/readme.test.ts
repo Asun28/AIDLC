@@ -39,7 +39,7 @@ function eventCell(name: HookName): string {
 }
 
 const GUARD_CELLS: Record<HookName, [reads: string, blocks: string]> = {
-  'production-gate': ['the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals', 'a command that writes matches a production pattern and the approval reference matches no recorded production authorization; with no `.aidlc/goals` directory any approval reference passes'],
+  'production-gate': ['the command, `hooks.productionPatterns`, `RELEASE_APPROVAL` or `AIDLC_RELEASE_APPROVAL`, the production authorizations on goals with each goal\'s state and generation', 'a command that writes matches a production pattern and no goal that is not terminal and not in `DONE` or `STOP` has, as its first record whose id or ref equals the approval reference, a production authorization of the goal\'s current generation that has not expired; with no `goals/` directory in the resolved state directory, any non-empty selected approval reference passes this lookup'],
   'protect-paths': ['the file path, the command, `hooks.frozenPaths`', 'a file path matches a frozen path, or a command that names one writes files'],
   'protect-tests': ['the file path, `AIDLC_FIX_TASK`, `.aidlc/fix-task`, `hooks.testPathPatterns`', 'a fix task is active and the file path matches a test pattern'],
   'secrets-guard': ['the file path, `content`, `new_string`, `command`', 'the file is a `.env`, `.pem`, `.key`, `id_rsa` or `.secrets/` file, or the text holds a credential pattern'],

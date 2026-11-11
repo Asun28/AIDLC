@@ -11,8 +11,13 @@
  *
  * Two passes (card T0-HOOK-CLASSIFIER-3): every guard first decides in order with the Bash command
  * classification before that card, so wherever that dispatch blocked, the same guard blocks with the
- * same result; only when none blocked do `production-gate` and `protect-paths` decide again with the
- * card's forms, which can add a block and never replace another guard's.
+ * same result, except for a command whose production phrase the first pass tests and whose approval
+ * `production-gate` admitted before card T0-PROD-GATE-GENERATION and now refuses (a goal that is
+ * terminal, DONE or STOP; a matched record of another generation than the goal's; a goal file that
+ * fails the schema on `goalGeneration`): `production-gate` denies it in the first pass, where another
+ * denial was returned before (a later guard's, or, under an unusable `aidlc.config.json`, the gate's
+ * own config denial), and both deny; only when none blocked do `production-gate` and `protect-paths`
+ * decide again with the card's forms, which can add a block and never replace another guard's.
  *
  * Every guard runs as the session of the event (`hookSession` in `./index.ts`): the Stop guard asks
  * only about the cards this session owns.
