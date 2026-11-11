@@ -4,7 +4,7 @@ title: A release step whose operation outcome is not recorded is never issued ag
 status: todo
 branch: T0-RELEASE-OP-REISSUE
 worktree: D:\wt\AIDLC\T0-RELEASE-OP-REISSUE
-size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 250 to 470 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 70 source lines in one file, the rest the status, exclusion and race tests the rulings require, docs and attempt evidence"
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 250 to 470 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 70 source lines in one file, the rest the status, exclusion and race tests the rulings require, docs and attempt evidence; raised from 470 to 600 by the coordinator on the candidate f7bd2894, which is 533 changed lines: 86 source lines, 417 lines of the acceptance tests, and one more table test asked for before the review"
 allow_paths:
   - src/loop/release-runner.ts
   - tests/scenarios/release-reissue.test.ts
@@ -37,7 +37,7 @@ acceptance:
   - 10. `tests/scenarios/release.test.ts` and `tests/scenarios/release-publication.test.ts` pass unchanged: `issue` with no matching record, the asynchronous deploy reconciled by status lookup (Q18), the publication stop before any intent, and the recovery (Q22) behave as on main. [R4] [R7] [R8] [dod arm 1]
   - 11. docs/OPERATIONS.md, docs/ARCHITECTURE.md and CHANGELOG.md state the facts R9 names (reviewer-verified against the diff). [R9]
 depends_on: []
-budget: 470
+budget: 600
 tdd: true
 diagnosis:
   root_cause: "`issue` (release-runner.ts:301-330 at 92796d4f) decides that a step was issued only from `attempt.steps`, which it writes in its last save, after the ledger intent, the command and the ledger result. It never reads the ledger record that identifies the step (its idempotency key), and the pre-switch reconcile filters (:129, :146, :148) read only `issued`, `running` and `UNKNOWN`. So a record left `intended` (the process ended while the command ran, or the command threw after it ran, as audit item C5 showed) and a terminal record whose attempt save was lost both leave the step absent, and the next `release next` records and runs a second operation. Two processes of one session can also both pass the step check before either records an intent, since the check and the intent are not in one lock section. Probes of 2026-11-11 on main: a deploy whose command threw ran twice; a deploy whose attempt save failed after its result ran twice; an intended record reconciled to `succeeded` by hand was still issued again."
