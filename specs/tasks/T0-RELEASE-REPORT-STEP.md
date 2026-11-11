@@ -259,3 +259,6 @@ Final verification on ``f42d78f1`` (the last commit with code, tests or docs; th
 A fourth, wording-only Codex pre-review found the source correct, no contradiction between the three documents, and one sentence too wide, in docs/OPERATIONS.md and CHANGELOG.md: "it asks for the step again while that step is still the one the attempt expects". Sequence: STAGE with `stage-deploy` succeeded, report `stage-verify` `UNKNOWN`, then `succeeded`, then `release next`: the step is still expected before `next`, and `next` returns DONE, not another request (RECOVER closes in the same way). The coordinator added the condition "while the stored status of the step is still `UNKNOWN`" to both sentences and to the row of the sentence table above. No source, test or other sentence changes; acceptance 6 pins the request after a stored `UNKNOWN`.
 
 Coordinator verification:
+- At 649e103b, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/scenarios/release-report-step.test.ts): tests 8, pass 8, fail 0, skipped 0.
+- Windows, docpins: 79 test files reading 3 changed documents: # tests 1870 # pass 1858 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
