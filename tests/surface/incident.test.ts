@@ -564,10 +564,12 @@ const filedOf = (stdout: string): string[] => (JSON.parse(stdout) as { filed: st
 
 test('aidlc monitor check refuses rules: threshold before any evaluation or write', () => {
   const MESSAGE = JSON.stringify('rules: the only supported value is western_electric');
-  const run = (fx: Fx, bandsText: string, dataText: string, flags: string[], stateDir: string) => {
+  const run = (fx: Fx, bandsText: string, dataText: string | null, flags: string[], stateDir: string) => {
     writeFileSync(path.join(fx.tmp, 'bands.yaml'), bandsText, 'utf8');
-    writeFileSync(path.join(fx.tmp, 'data.json'), dataText, 'utf8');
-    return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...flags], { cwd: fx.tmp, env: childEnv(stateDir, fx.tmp), encoding: 'utf8', timeout: 60_000 });
+    if (dataText !== null) writeFileSync(path.join(fx.tmp, 'data.json'), dataText, 'utf8');
+    const env = childEnv(stateDir, fx.tmp);
+    for (const key of Object.keys(env)) if (key.toUpperCase() === 'NODE_OPTIONS') delete env[key];
+    return spawnSync(process.execPath, ['--import', FIXED_DATE_SHIM, path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', ...flags], { cwd: fx.tmp, env, encoding: 'utf8', timeout: 60_000 });
   };
   const bandsText = `${BANDS}rules: threshold\n`;
   const dataText = JSON.stringify({ baseline: BASELINE, recent: ABOVE.map((value, i) => ({ at: `2026-09-11T00:0${i}:00.000Z`, value })) });
@@ -591,6 +593,10 @@ test('aidlc monitor check refuses rules: threshold before any evaluation or writ
     refused(run(fx, bandsText, dataText, flags, fx.paths.root), `flags: ${flags.join(' ')}`);
     assert.deepEqual(snapshot(fx.paths.root), before, 'the state root is as it was');
     assert.equal(existsSync(path.join(fx.tmp, 'intent')), false, 'no intent directory');
+  }
+  {
+    const fx = fixture();
+    refused(run(fx, bandsText, null, [], fx.paths.root), 'no data file');
   }
   {
     const fx = fixture();

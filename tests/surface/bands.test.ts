@@ -124,6 +124,9 @@ test('rules accepts only western_electric and refuses every other value at rules
     ['a self-referencing list', 'rules: &r [*r]'],
     ['a mapping', 'rules: { a: 1 }'],
     ['.nan', 'rules: .nan'],
+    ['the empty string', 'rules: ""'],
+    ['another letter case', 'rules: Western_Electric'],
+    ['a leading space', 'rules: " western_electric"'],
   ];
   for (const [label, line] of refused) {
     const issues = issuesOf(() => parseBandsYaml(withRules(line)));
