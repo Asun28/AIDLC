@@ -1,7 +1,7 @@
 ---
 id: T0-AUDIT-DOC-TRUTH
 title: Three statements the audit of 2026-11-11 found untrue of the code are corrected with no behaviour change, the config-file rule of CLAUDE.md, the reserved and provenance fields and unrecorded stop reasons of src/core/types.ts, and the source files the docs/ARCHITECTURE.md module map leaves out, each with a test that keeps it true
-status: todo
+status: merged
 branch: T0-AUDIT-DOC-TRUTH
 worktree: D:\wt\AIDLC\T0-AUDIT-DOC-TRUTH
 allow_paths:
