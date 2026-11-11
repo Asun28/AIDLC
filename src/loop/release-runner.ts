@@ -6,13 +6,13 @@
  * first and is reconciled by provider status lookup; health is measured, never inferred; a
  * breach routes to RECOVER only with matching recovery authority and reports `recovered`.
  */
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { assertReleaseTransition, finalStateForTarget, nextAfterObserve, transitionRelease, type ReleaseGuards } from '../core/release-machine.ts';
 import { evaluateHealth, windowElapsed } from '../core/health.ts';
 import { makeStop } from '../core/stop.ts';
 import { approvalPacket } from '../core/authorization.ts';
 import { ReleaseAttempt, addMs, type Goal, type HealthSignal, type OperationRecord, type ReleaseState } from '../core/types.ts';
-import { executeOperation, loadDeliveryOps, lookupOperation, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
+import { executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles, type OpsLoad, type OperationBinding } from '../delivery/ops.ts';
 import { OperationLedger } from '../coordination/reconcile.ts';
 import { LeaseStore, resourceKeys } from '../coordination/lease.ts';
 import { Journal } from '../state/journal.ts';
@@ -45,6 +45,15 @@ export type ReleaseDirective =
   | { kind: 'close'; attemptId: string; narration: string }
   | { kind: 'done'; attemptId: string; disposition: string; narration: string }
   | { kind: 'stop'; attemptId: string; stop: NonNullable<ReleaseAttempt['stop']>; narration: string };
+
+/** Whether `directory` is an existing directory; a path that is absent, a file or under a file (ENOTDIR on POSIX) is not, and none throws. */
+function isDirectory(directory: string): boolean {
+  try {
+    return statSync(directory).isDirectory();
+  } catch {
+    return false;
+  }
+}
 
 /** The release steps `issue` records an operation for, and the kind of that operation. */
 const RELEASE_STEP_KINDS = { 'stage-deploy': 'deploy', 'apply-deploy': 'deploy', recover: 'rollback' } as const;
@@ -151,7 +160,7 @@ export class ReleaseRunner {
     for (const op of unresolved) {
       const binding = this.binding(op.kind === 'deploy' ? 'deploy' : op.kind === 'rollback' ? 'recover' : op.kind === 'migrate' ? 'migration-apply' : 'status');
       if (!binding || !op.providerOperationId) continue;
-      const looked = lookupOperation(binding, op.providerOperationId, this.runner);
+      const looked = lookupOperation(binding, op.providerOperationId, this.repo.mainRoot, this.runner);
       this.ops.reconcile(op.id, () => (looked.status === 'UNKNOWN' ? { status: 'UNKNOWN', detail: looked.detail } : { status: looked.status, providerOperationId: op.providerOperationId }), now);
       this.journal(goal.id).append({ type: 'OPERATION_RECONCILED', goalId: goal.id, generation: goal.generation, data: { operationId: op.id, status: looked.status } });
     }
@@ -356,13 +365,15 @@ export class ReleaseRunner {
     const binding = this.binding(role);
     const unauthorizedPublication = binding?.triggersPublication && !goal.authorizations.some((a) => a.kind === 'production' && a.environment === environment);
     const idempotencyKey = releaseStepKey(attempt, stepName);
+    const directory = binding ? operationCwd(binding, this.repo.mainRoot) : undefined;
+    const directoryExists = directory !== undefined && isDirectory(directory);
     // Read the step's ledger records and, only when there is none, record the intent, in one section of the environment lease
     // lock; the section returns the lease unchanged, and the command runs only after it.
     let matches: OperationRecord[] = [];
     let recorded: OperationRecord | undefined;
     this.leases.update(resourceKeys.environment(environment), (lease) => {
       matches = this.ops.list().filter((o) => releaseOperationOf(o, attempt, stepName));
-      if (!matches.length && binding && !unauthorizedPublication) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
+      if (!matches.length && binding && !unauthorizedPublication && directoryExists) recorded = this.ops.recordIntent({ kind: RELEASE_STEP_KINDS[stepName], goalId: goal.id, releaseAttempt: attempt.id, target: environment, candidateDigest: attempt.candidateDigest, idempotencyKey, ownerGeneration: attempt.ownerGeneration ?? 0, timeoutMs: binding.timeoutMs, effects: binding.effects, externallyVisible: binding.externallyVisible });
       return lease;
     });
     if (matches.length) return this.settleStep(goal, attempt, stepName, matches, now);
@@ -374,9 +385,13 @@ export class ReleaseRunner {
       const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-auth', `${role} triggers external publication and no production authority names ${environment}`, 'authorize before any tag/release action that publishes', { at: now, global: false }) });
       return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
     }
+    if (!directoryExists) {
+      const stopped = this.save({ ...attempt, state: 'STOP', stop: makeStop('release-config', `operation ${role} runs in ${directory}, which is not an existing directory`, 'create the directory or correct cwd in aidlc.ops.json', { at: now, global: false }), disposition: 'failed' });
+      return { attempt: stopped, directive: { kind: 'stop', attemptId: stopped.id, stop: stopped.stop!, narration: stopped.stop!.detail } };
+    }
     const intent = recorded!;
     this.journal(goal.id).append({ type: 'OPERATION_INTENT', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, kind: intent.kind, target: environment, step: stepName } });
-    const exec = executeOperation(binding, environment, { runner: this.runner, idempotencyKey, cwd: this.repo.mainRoot });
+    const exec = executeOperation(binding, environment, { root: this.repo.mainRoot, runner: this.runner, idempotencyKey });
     this.ops.markIssued(intent.id, exec.providerOperationId, now);
     this.journal(goal.id).append({ type: 'OPERATION_ISSUED', goalId: goal.id, generation: goal.generation, data: { operationId: intent.id, providerOperationId: exec.providerOperationId, status: exec.status } });
     let status: 'succeeded' | 'failed' | 'UNKNOWN' | 'running';

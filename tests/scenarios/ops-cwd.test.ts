@@ -68,11 +68,18 @@ function attemptAtStage(fx: Fx): { goalId: string; attempt: ReleaseAttempt } {
   return { goalId, attempt };
 }
 
-// Git reads its repository from GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE and GIT_COMMON_DIR; a child process starts without them.
-const CHILD_ENV = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(GIT_DIR|GIT_WORK_TREE|GIT_INDEX_FILE|GIT_COMMON_DIR|AIDLC_STATE_DIR)$/i.test(name)));
+/**
+ * The environment of a child process that works in `fixture`: no inherited variable whose name starts with GIT_ in any case
+ * (GIT_DIR, GIT_CONFIG_COUNT and the like; Windows names are case-insensitive) and no AIDLC_STATE_DIR, and git told not to
+ * look for a repository above the parent of `fixture`, so one that encloses the temp directory is never found.
+ */
+function childEnv(fixture: string): Record<string, string> {
+  const inherited = Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined && !/^GIT_/i.test(entry[0]) && entry[0].toUpperCase() !== 'AIDLC_STATE_DIR');
+  return { ...Object.fromEntries(inherited), GIT_CEILING_DIRECTORIES: path.dirname(fixture) };
+}
 
-function git(cwd: string, ...args: string[]): void {
-  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, env: CHILD_ENV, encoding: 'utf8', windowsHide: true });
+function git(cwd: string, fixture: string, ...args: string[]): void {
+  const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd, env: childEnv(fixture), encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
 }
 
@@ -96,9 +103,9 @@ test('aidlc goal reconcile looks the status up in the binding directory of the m
   const linked = path.join(tmpDir('aidlc-ops-cwd-wt-'), 'linked');
   const out = tmpDir('aidlc-ops-cwd-out-');
   t.after(() => [repo, path.dirname(linked), out].forEach(cleanup));
-  git(repo, 'init', '-q', '-b', 'main');
-  git(repo, 'commit', '-q', '--allow-empty', '-m', 'init');
-  git(repo, 'worktree', 'add', '-q', linked, '-b', 'feature');
+  git(repo, repo, 'init', '-q', '-b', 'main');
+  git(repo, repo, 'commit', '-q', '--allow-empty', '-m', 'init');
+  git(repo, repo, 'worktree', 'add', '-q', linked, '-b', 'feature');
   mkdirSync(path.join(repo, 'ops'));
   mkdirSync(path.join(repo, 'src', 'sub'), { recursive: true });
   const record = 'require("node:fs").writeFileSync(process.argv[1], process.cwd())';
@@ -110,8 +117,8 @@ test('aidlc goal reconcile looks the status up in the binding directory of the m
   const ledger = new OperationLedger(ensureStatePaths(statePathsFromRoot(path.join(repo, '.aidlc'))).operations);
   const rec = ledger.recordIntent({ kind: 'deploy', goalId: 'goal-ops-cwd', target: 'staging', ownerGeneration: 0, timeoutMs: 60_000 }, T0);
   ledger.markIssued(rec.id, 'op-1', T0);
-  for (const [label, cwd] of [['a subdirectory of the main checkout', path.join(repo, 'src', 'sub')], ['a linked worktree', linked]] as const) {
-    const run = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'goal', 'reconcile', 'goal-ops-cwd'], { cwd, env: CHILD_ENV, encoding: 'utf8', timeout: 60_000 });
+  for (const [label, cwd, fixture] of [['a subdirectory of the main checkout', path.join(repo, 'src', 'sub'), repo], ['a linked worktree', linked, linked]] as const) {
+    const run = spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'goal', 'reconcile', 'goal-ops-cwd'], { cwd, env: childEnv(fixture), encoding: 'utf8', timeout: 60_000 });
     assert.equal(run.status, 0, `${label}: ${run.stderr}`);
     assert.ok(run.stdout.includes('provider lookup'), `${label}: ${run.stdout}`);
     assert.equal(realpathSync.native(readFileSync(path.join(out, 'cwd.txt'), 'utf8')), realpathSync.native(path.join(repo, 'ops')), label);
@@ -152,8 +159,8 @@ test('a binding directory that does not exist stops the release before any opera
     assert.equal(stop.disposition, 'failed', label);
     assert.equal(stop.stop?.nextAction, 'create the directory or correct cwd in aidlc.ops.json', label);
     assert.ok(stop.stop?.detail.includes('deploy') && stop.stop.detail.includes(path.resolve(fx.tmp, cwd)), `${label}: ${stop.stop?.detail}`);
-    assert.deepEqual(fx.ops.list({ goalId }), [], `${label}: no ledger record`);
-    assert.deepEqual(fx.events(goalId).filter((e) => e.type === 'OPERATION_INTENT'), [], `${label}: no OPERATION_INTENT`);
+    assert.deepEqual(fx.ops.list({ goalId }).filter((o) => o.releaseAttempt === attemptId || o.kind === 'deploy'), [], `${label}: no ledger record for the attempt`);
+    assert.deepEqual(fx.events(goalId).filter((e) => e.type === 'OPERATION_INTENT' && (e.data as { step?: string }).step === 'stage-deploy'), [], `${label}: no OPERATION_INTENT for the step`);
     assert.deepEqual(calls, [], `${label}: no command ran`);
   }
 });

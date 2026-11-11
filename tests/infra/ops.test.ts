@@ -2,8 +2,7 @@ import { after, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
-import * as opsModule from '../../src/delivery/ops.ts';
-import { OPS_CONFIG_FILE, DeliveryOpsConfig, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, resolveRoles } from '../../src/delivery/ops.ts';
+import { OPS_CONFIG_FILE, DeliveryOpsConfig, OperationBinding, REQUIRED_ROLES, executeOperation, loadDeliveryOps, lookupOperation, operationCwd, resolveRoles } from '../../src/delivery/ops.ts';
 import { scriptedRunner, type SyncRunner } from '../../src/probes/exec.ts';
 import { cleanup, tmpDir } from './helpers.ts';
 
@@ -68,13 +67,13 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
 
   it('executeOperation: sync exit 0 is succeeded only when success criteria are observed', () => {
     const plain = OperationBinding.parse({ role: 'build', command: ['make', 'build'] });
-    const ok = executeOperation(plain, undefined, { runner: scriptedRunner({ 'make build': { stdout: 'built' } }) });
+    const ok = executeOperation(plain, undefined, { root: dir, runner: scriptedRunner({ 'make build': { stdout: 'built' } }) });
     assert.equal(ok.status, 'succeeded');
     const withPattern = OperationBinding.parse({ role: 'build', command: ['make', 'build'], successPattern: 'Build succeeded' });
-    const noPattern = executeOperation(withPattern, undefined, { runner: scriptedRunner({ 'make build': { stdout: 'done' } }) });
+    const noPattern = executeOperation(withPattern, undefined, { root: dir, runner: scriptedRunner({ 'make build': { stdout: 'done' } }) });
     assert.equal(noPattern.status, 'UNKNOWN');
     assert.match(noPattern.detail, /success pattern not observed/);
-    const matched = executeOperation(withPattern, undefined, { runner: scriptedRunner({ 'make build': { stdout: 'Build succeeded\n' } }) });
+    const matched = executeOperation(withPattern, undefined, { root: dir, runner: scriptedRunner({ 'make build': { stdout: 'Build succeeded\n' } }) });
     assert.equal(matched.status, 'succeeded');
   });
 
@@ -82,6 +81,7 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     const deploy = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool', 'submit'], async: true, operationIdPattern: 'operation=(\\S+)', targetSelection: 'arg', targetArg: '--env', idempotencyKeyArg: '--key' });
     const seen: string[][] = [];
     const r = executeOperation(deploy, 'staging', {
+      root: dir,
       idempotencyKey: 'k-1',
       runner: (cmd, args) => {
         seen.push([cmd, ...args]);
@@ -92,36 +92,36 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     assert.equal(r.providerOperationId, 'op-77');
     assert.match(r.detail, /exit zero is not completion/);
     assert.deepEqual(seen[0], ['deploy-tool', 'submit', '--env', 'staging', '--key', 'k-1']);
-    const asyncFail = executeOperation(deploy, 'staging', { runner: scriptedRunner({ 'deploy-tool submit': { exitCode: 1, stderr: 'rejected' } }) });
+    const asyncFail = executeOperation(deploy, 'staging', { root: dir, runner: scriptedRunner({ 'deploy-tool submit': { exitCode: 1, stderr: 'rejected' } }) });
     assert.equal(asyncFail.status, 'UNKNOWN');
   });
 
   it('executeOperation: timeout is UNKNOWN, failure pattern is failed, non-zero sync exit is failed', () => {
     const b = OperationBinding.parse({ role: 'migration-apply', command: ['migrate', 'up'], failurePattern: 'ERROR' });
-    const timeout = executeOperation(b, undefined, { runner: scriptedRunner({ 'migrate up': { timedOut: true, exitCode: null } }) });
+    const timeout = executeOperation(b, undefined, { root: dir, runner: scriptedRunner({ 'migrate up': { timedOut: true, exitCode: null } }) });
     assert.equal(timeout.status, 'UNKNOWN');
     assert.match(timeout.detail, /timed out; outcome unknown until reconciled/);
-    const failed = executeOperation(b, undefined, { runner: scriptedRunner({ 'migrate up': { stdout: 'ERROR: lock held' } }) });
+    const failed = executeOperation(b, undefined, { root: dir, runner: scriptedRunner({ 'migrate up': { stdout: 'ERROR: lock held' } }) });
     assert.equal(failed.status, 'failed');
     assert.match(failed.detail, /failure pattern matched/);
-    const nonZero = executeOperation(b, undefined, { runner: scriptedRunner({ 'migrate up': { exitCode: 2 } }) });
+    const nonZero = executeOperation(b, undefined, { root: dir, runner: scriptedRunner({ 'migrate up': { exitCode: 2 } }) });
     assert.equal(nonZero.status, 'failed');
     assert.equal(nonZero.detail, 'exit 2');
   });
 
   it('lookupOperation: without a status lookup the outcome is UNKNOWN; with one, patterns decide', () => {
     const noLookup = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool'] });
-    assert.equal(lookupOperation(noLookup, 'op-1').status, 'UNKNOWN');
+    assert.equal(lookupOperation(noLookup, 'op-1', dir).status, 'UNKNOWN');
     const withLookup = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool'], statusLookup: ['deploy-tool', 'status', '{id}'], successPattern: 'SUCCEEDED', failurePattern: 'FAILED' });
     const runner = (stdout: string, exitCode = 0) =>
       scriptedRunner({
         'deploy-tool status op-1': { stdout, exitCode },
       });
-    assert.equal(lookupOperation(withLookup, 'op-1', runner('state: SUCCEEDED')).status, 'succeeded');
-    assert.equal(lookupOperation(withLookup, 'op-1', runner('state: FAILED')).status, 'failed');
-    assert.equal(lookupOperation(withLookup, 'op-1', runner('state: in_progress')).status, 'running');
-    assert.equal(lookupOperation(withLookup, 'op-1', runner('state: weird')).status, 'UNKNOWN');
-    assert.equal(lookupOperation(withLookup, 'op-1', runner('', 1)).status, 'UNKNOWN');
+    assert.equal(lookupOperation(withLookup, 'op-1', dir, runner('state: SUCCEEDED')).status, 'succeeded');
+    assert.equal(lookupOperation(withLookup, 'op-1', dir, runner('state: FAILED')).status, 'failed');
+    assert.equal(lookupOperation(withLookup, 'op-1', dir, runner('state: in_progress')).status, 'running');
+    assert.equal(lookupOperation(withLookup, 'op-1', dir, runner('state: weird')).status, 'UNKNOWN');
+    assert.equal(lookupOperation(withLookup, 'op-1', dir, runner('', 1)).status, 'UNKNOWN');
   });
 
   it('T1-PARSE-GUARD acceptance 1: a blank successPattern, failurePattern or operationIdPattern is refused at its path, never read as a pattern [R1]', () => {
@@ -184,7 +184,7 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
     for (const row of rows) {
       if (row.on !== 'all' && row.on !== (win ? 'win32' : 'posix')) continue;
       const binding = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool'], ...(row.cwd === undefined ? {} : { cwd: row.cwd }) });
-      assert.equal(opsModule.operationCwd(binding, root), row.expected, `cwd ${JSON.stringify(row.cwd)}`);
+      assert.equal(operationCwd(binding, root), row.expected, `cwd ${JSON.stringify(row.cwd)}`);
     }
   });
 
@@ -217,6 +217,15 @@ describe('delivery/ops (LC3 provider bindings, three-valued configuration)', () 
       assert.deepEqual(parsed.error?.issues.map((i) => i.path.join('.')), ['operations.1.cwd'], `${name}: the issue is at operations.1.cwd`);
     }
     for (const cwd of ['C:\\ops', 'c:/ops', 'ops', 'ops dir', '/srv/ops']) assert.equal(load(cwd, `ok-${cwd.replace(/\W/g, '-')}`).status, 'configured', cwd);
+  });
+
+  it('a status lookup whose directory does not exist fails to start and reads as UNKNOWN', () => {
+    // Card T0-OPS-CWD R5, last sentence: a real process start, no scripted runner.
+    const binding = OperationBinding.parse({ role: 'deploy', command: ['deploy-tool'], cwd: 'missing', statusLookup: [process.execPath, '-v'] });
+    const looked = lookupOperation(binding, 'op-1', dir);
+    assert.equal(looked.status, 'UNKNOWN');
+    assert.equal(looked.detail, 'status lookup failed');
+    assert.notEqual(looked.receipt?.exitCode, 0);
   });
 
   it('the command and the status lookup of one binding run in one directory', () => {

@@ -33,11 +33,22 @@ const pattern = z
     }
   }, 'must be a regular expression');
 
+/**
+ * The `cwd` of a binding: not blank, and not drive-relative (a drive letter and a colon not followed by a slash or a backslash).
+ * `aidlc.ops.json` is committed and read on every platform, so a value that is a relative name on POSIX and a path read against
+ * the current directory of a drive on Windows is refused on both.
+ */
+const cwdField = z
+  .string()
+  .regex(/\S/, 'must not be blank')
+  .regex(/^(?![A-Za-z]:(?![\\/]))/, 'must not be drive-relative (a drive letter and a colon need a slash or a backslash after them)');
+
 export const OperationBinding = z.object({
   role: OperationRole,
   /** argv array, never a shell string. */
   command: z.array(z.string()).min(1),
-  cwd: z.string().optional(),
+  /** The directory the command and its status lookup run in, resolved against the main checkout; see `operationCwd`. */
+  cwd: cwdField.optional(),
   /** How the target environment reaches the command: an argument (`targetArg`), the `AIDLC_TARGET_ENV` variable, or not at all. */
   targetSelection: z.enum(['arg', 'env', 'none']).default('none'),
   targetArg: z.string().optional(),
@@ -126,7 +137,15 @@ export interface OperationExecution {
   detail: string;
 }
 
-export function executeOperation(binding: OperationBinding, target: string | undefined, options: { runner?: SyncRunner; idempotencyKey?: string; cwd?: string } = {}): OperationExecution {
+/**
+ * The directory an operation command and its status lookup run in: `root`, the main checkout, or the `cwd` of the binding
+ * resolved against it with the host's `path.resolve`, the value as written.
+ */
+export function operationCwd(binding: OperationBinding, root: string): string {
+  return binding.cwd === undefined ? root : path.resolve(root, binding.cwd);
+}
+
+export function executeOperation(binding: OperationBinding, target: string | undefined, options: { root: string; runner?: SyncRunner; idempotencyKey?: string }): OperationExecution {
   const runner = options.runner ?? runSync;
   const [cmd, ...rest] = binding.command;
   const args = [...rest];
@@ -134,7 +153,7 @@ export function executeOperation(binding: OperationBinding, target: string | und
   if (binding.idempotencyKeyArg && options.idempotencyKey) args.push(binding.idempotencyKeyArg, options.idempotencyKey);
   const env = { ...process.env };
   if (binding.targetSelection === 'env' && target) env['AIDLC_TARGET_ENV'] = target;
-  const receipt = runner(cmd!, args, { cwd: options.cwd ?? binding.cwd, timeoutMs: binding.timeoutMs, env, killTree: true });
+  const receipt = runner(cmd!, args, { cwd: operationCwd(binding, options.root), timeoutMs: binding.timeoutMs, env, killTree: true });
   const text = `${receipt.stdout}\n${receipt.stderr}`;
   const id = binding.operationIdPattern ? text.match(new RegExp(binding.operationIdPattern, 'm'))?.[1] : undefined;
   if (receipt.timedOut) return { receipt, providerOperationId: id, status: 'UNKNOWN', detail: 'operation timed out; outcome unknown until reconciled' };
@@ -145,10 +164,10 @@ export function executeOperation(binding: OperationBinding, target: string | und
   return { receipt, providerOperationId: id, status: 'succeeded', detail: 'exit zero and success criteria observed' };
 }
 
-export function lookupOperation(binding: OperationBinding, providerOperationId: string, runner: SyncRunner = runSync): { status: 'succeeded' | 'failed' | 'running' | 'UNKNOWN'; receipt?: ExecReceipt; detail: string } {
+export function lookupOperation(binding: OperationBinding, providerOperationId: string, root: string, runner: SyncRunner = runSync): { status: 'succeeded' | 'failed' | 'running' | 'UNKNOWN'; receipt?: ExecReceipt; detail: string } {
   if (!binding.statusLookup) return { status: 'UNKNOWN', detail: 'no status lookup bound for this operation role' };
   const [cmd, ...rest] = binding.statusLookup.map((a) => a.replace('{id}', providerOperationId));
-  const receipt = runner(cmd!, rest, { cwd: binding.cwd, timeoutMs: 5 * 60 * 1000, killTree: true });
+  const receipt = runner(cmd!, rest, { cwd: operationCwd(binding, root), timeoutMs: 5 * 60 * 1000, killTree: true });
   if (receipt.exitCode !== 0 || receipt.timedOut) return { status: 'UNKNOWN', receipt, detail: 'status lookup failed' };
   const text = receipt.stdout;
   if (binding.failurePattern && new RegExp(binding.failurePattern, 'm').test(text)) return { status: 'failed', receipt, detail: 'failure pattern in status' };
