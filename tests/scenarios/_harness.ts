@@ -3,12 +3,11 @@
  * `.aidlc` state, a card registry, a controllable clock and an explicit acting session.
  */
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { ProjectConfig } from '../../src/config.ts';
 import { shortKey, statePathsFromRoot, type RepoIdentity, type StatePaths } from '../../src/state/paths.ts';
-import { ensureStatePaths } from '../infra/helpers.ts';
+import { ensureStatePaths, tmpDir } from '../infra/helpers.ts';
 import { GoalStore } from '../../src/state/goal-store.ts';
 import { Journal, setActorForTests } from '../../src/state/journal.ts';
 import { LeaseStore } from '../../src/coordination/lease.ts';
@@ -50,7 +49,7 @@ export interface Fixture {
 }
 
 export function makeFixture(options: { config?: Record<string, unknown>; actor?: ActorIdentity } = {}): Fixture {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'aidlc-scn-'));
+  const tmp = tmpDir('aidlc-scn-');
   const cardsDir = path.join(tmp, 'specs', 'tasks');
   mkdirSync(cardsDir, { recursive: true });
   const paths = ensureStatePaths(statePathsFromRoot(path.join(tmp, '.aidlc')));

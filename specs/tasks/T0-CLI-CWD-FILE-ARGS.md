@@ -4,7 +4,7 @@ title: With -C, every file argument the CLI opens resolves against the -C direct
 status: todo
 branch: T0-CLI-CWD-FILE-ARGS
 worktree: D:\wt\AIDLC\T0-CLI-CWD-FILE-ARGS
-size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 70 source lines, all in src/cli/main.ts (the path function about 35, the -C validation about 15, twelve call sites about 20); the rest is about 240 lines of tests in one new file, about 6 lines of docs and about 25 lines of attempt evidence; raised from 340 to 400 by the coordinator on the candidate 2bbd708c, which is 375 changed lines: 63 source lines in src/cli/main.ts, 293 lines of the acceptance tests for the path table of R3 and the twelve resolved values, the rest docs and attempt evidence"
+size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 70 source lines, all in src/cli/main.ts (the path function about 35, the -C validation about 15, twelve call sites about 20); the rest is about 240 lines of tests in one new file, about 6 lines of docs and about 25 lines of attempt evidence; raised from 340 to 400 by the coordinator on the candidate 2bbd708c, which is 375 changed lines: 63 source lines in src/cli/main.ts, 293 lines of the acceptance tests for the path table of R3 and the twelve resolved values, the rest docs and attempt evidence; raised from 400 to 570 by the coordinator on the repair candidate 6a3e5d15 of R3 decision 1, which adds 154 lines: 17 source lines, 90 lines of tests for a -C under a regular file and under an unreadable parent, and the revert tables the review asked for in the attempt evidence"
 allow_paths:
   - src/cli/main.ts
   - tests/surface/cli-cwd-paths.test.ts
@@ -34,7 +34,7 @@ acceptance:
   - 7. `tests/surface/incident.test.ts` (relative `--bands` and `--data` from the process directory), `tests/core/ci-policy.test.ts` (`ci classify --log`), `tests/surface/command-lines.test.ts` (usage lines), `tests/surface/approver.test.ts` (`-C` with `authorize`), `tests/surface/review-bench.test.ts` (`bench compare` with fully qualified paths, `bench run --dir`), `tests/infra/init.test.ts`, `tests/surface/init-base-ci.test.ts` and `tests/surface/init-no-package.test.ts` (init with a fully qualified target) pass unchanged. [R8] [R9] [dod arm 1]
   - 8. `docs/OPERATIONS.md` and the CHANGELOG state R1 to R5 and R8 (reviewer-verified against the diff). [R10]
 depends_on: []
-budget: 400
+budget: 570
 tdd: true
 diagnosis:
   root_cause: "`-C` only feeds `ctx()` and a few direct reads of `g().cwd` (src/cli/main.ts:73, :227, :1020, :1380 at 92796d4f); every file argument is passed to `readFileSync` or to a library call as given, and Node resolves a relative path against the process directory. `-C` itself is never validated, so an empty `-C` runs in the process directory. Under win32, `path.resolve` of a base and a drive-relative value `C:foo` gives the current directory of drive C joined with `foo`, and an incomplete UNC root (two separators and a name, no share) resolves against the base drive, so neither depends on the base as the caller means."
