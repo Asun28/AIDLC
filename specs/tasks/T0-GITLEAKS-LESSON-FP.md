@@ -102,3 +102,18 @@ gitleaks 8.30.1 for linux x64 (the version and the SHA-256 the workflow pins, 55
 | an empty ignore file | 1118 | 1 leak, fingerprint `7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153` |
 
 The same scan over main at 43a919f6 before this card gave the same single finding, and the Gitleaks check of PR 285 (run 43120762701) reported it. The candidate's own commits add no finding. The second row is the entry of R1 and nothing else.
+
+### Acceptance 3, rerun on the reviewed head (coordinator, 2026-11-11T23:54Z)
+
+The run above covers 54977cea; the commit that recorded it moved the head to c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2. Both scans were repeated over the history reachable from that head (1119 commits: the 1118 above and the evidence commit).
+
+Source setup. The scans run in WSL from the main checkout (`/mnt/d/Projects/AIDLC`, which shares the object store with the worktree; WSL git cannot open the Windows worktree). The main checkout is at 1c8a879d and has no `.gitleaksignore` (`ls .gitleaksignore` there fails before each scan), so the only ignore file gitleaks can load is the one `--gitleaks-ignore-path` names. `<cand>` is a directory holding a byte-identical copy of this branch's `.gitleaksignore` (`cmp` equal); `<empty>` is a directory holding a `.gitleaksignore` of 0 bytes. `gitleaks version` prints 8.30.1.
+
+| Command | Commits scanned | Result |
+|---|---|---|
+| `gitleaks git --redact --no-banner --log-opts=c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2 --gitleaks-ignore-path=<cand> .` | 1119 | no leaks found, exit 0 |
+| `gitleaks git --redact --no-banner --log-opts=c1bbbe71ef34dd6ba83c8d8eb9eb0a4a7ce604c2 --gitleaks-ignore-path=<empty> .` | 1119 | 1 leak, exit 1, fingerprint `7265d10642001a051fa36ac3f9c061a72a4540b3:docs/LESSONS.md:generic-api-key:153` |
+
+The first row shows the named directory is read (the source has no ignore file and the finding is suppressed); the second shows that without the entry the scan reports exactly the finding of R1. The four commits of the branch alone (`--log-opts=origin/main..c1bbbe71`) scan clean, and each file this card changes scans clean as file content (`gitleaks dir`).
+
+Commits after c1bbbe71 change this card file only (this section and the coordinator's Linux and document-reader runs below). The scan of the final head is the Gitleaks check of this card's pull request, which reads the branch's own `.gitleaksignore`; the coordinator also scans `origin/main..HEAD` at the final head before the push.
