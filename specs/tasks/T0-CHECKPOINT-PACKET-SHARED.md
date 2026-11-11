@@ -1,7 +1,7 @@
 ---
 id: T0-CHECKPOINT-PACKET-SHARED
 title: "The goal's release directive at CHECKPOINT carries the release runner's approval packet, so an authorization written from it matches what release next checks"
-status: todo
+status: merged
 branch: T0-CHECKPOINT-PACKET-SHARED
 worktree: D:\wt\AIDLC\T0-CHECKPOINT-PACKET-SHARED
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 200 to 340 on the candidate 7d61ddbb, which is 290 changed lines; 13 source lines in src/loop/controller.ts, 226 lines of the acceptance tests, 45 lines of attempt evidence with its revert table, the rest docs; one more test follows for the CHECKPOINT condition"
