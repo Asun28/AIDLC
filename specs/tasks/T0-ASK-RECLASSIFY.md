@@ -54,3 +54,19 @@ npm run typecheck && node --test tests/scenarios/ask-reclassify.test.ts tests/sc
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; acceptance 1, 2 and the stored question of 4 fail on main.
+
+## Attempt evidence
+
+Attempt 1, effort high. RED commit 92bbd5e6 (the test file alone; all five tests failed on main at their first assertion, tests 1 to 4 on the stored or removed question, test 5 on the first `runGoal`: `plan !== ask`). `dod_command` exit code 0: typecheck clean, 85 tests, 85 pass, 0 fail.
+
+| Item | Test or command | Result |
+| --- | --- | --- |
+| 1 | ask-reclassify.test.ts "the revision an ask asked for answers it: ..." | pass; fails on main: question kept |
+| 2 | ask-reclassify.test.ts "a revised text is classed by the router's bare-number rule, ..." (classes a, b, c, d, e; ref forms `#7a` and `owner/repo#7`; whitespace `\t7\n`) | pass; fails on main: `(a) #7` stores no question |
+| 3 | ask-reclassify.test.ts "the question gates only PLAN" (PLAN, RUN, WAIT, VERIFY_ARC with an added unmerged card, CARDS T2, VERIFY_ARC, DELIVER, CLOSE; refused revision) | pass |
+| 4 | ask-reclassify.test.ts "a resume stores the re-classified question and re-enters through CARDS" (`--text`, `--cards` only, `--replace` only, T2 checkpoint) | pass; fails on main: question not stored |
+| 5 | ask-reclassify.test.ts "aidlc run returns the ask of a still ambiguous revised goal ..." | pass |
+| 6 | arc-reentry, amendment, router, run-driver test files unchanged | pass (in the DoD run) |
+| 7 | docs/ARCHITECTURE.md `ask` row, docs/OPERATIONS.md Running a goal, CHANGELOG.md entry above T0-PREPARE-WORKTREE | written; reviewer verifies against the diff |
+
+Revert check (each source hunk reverted alone, `ask-reclassify.test.ts` run): routing line removed fails tests 1 to 5; no issue number fails 2; no card ids fails 2 to 5; ref regex without `^` fails 2; ref regex without `$` fails 2; text of the previous revision classified fails 1 to 5; whole routing re-derived by the router fails 1; a question never removed (`ambiguity ?? previous`) fails 1, 2, 5.
