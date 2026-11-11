@@ -248,3 +248,8 @@ Acceptances 13 to 15 run src/cli/main.ts in a child, where the parent cannot stu
 
 ### Not done (coordinator's step)
 The Linux run of the new test file and the run of the test files that read the changed documents.
+
+Coordinator verification:
+- At 8ceb9339, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/doctor-interrupted-writes.test.ts): tests 26, pass 26, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1869 # fail 2 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
