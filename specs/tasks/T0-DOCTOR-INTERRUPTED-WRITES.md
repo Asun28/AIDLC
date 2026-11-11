@@ -220,3 +220,31 @@ npm run typecheck clean; node --test of the 15 files: tests 335, suites 49, pass
 | CHANGELOG: exports interruptedWritesReport | export in store.ts | item 1 |
 
 Changed lines (git diff --shortstat main...HEAD, before this section): 5 files, 521 insertions, 3 deletions; with this section about 585 of the 620 budget. src/state/store.ts adds 82 lines against the card's about 57 (two helpers, formatting), src/cli/main.ts 3.
+
+## Attempt evidence, repair round (after the pre-review of e4727916)
+
+Test-only repair, no source change. Tests commit 12139612; merge of origin/main da29af15 (touches only spec cards). The figures of the section above stay as measured on their own SHAs; the figures below supersede them.
+
+### The three new tests, RED on main (12139612 tests against the main source of src/state/store.ts and src/cli/main.ts: 26 tests, 1 pass, 25 fail)
+- "a symbolic link named as a goal directory is not enumerated": fails on main (function missing). Also red against the mutant that treats a link as a goal directory.
+- "a FIFO or a socket with a lock or temp name is listed and never opened": fails on main. Red against the mutant that replaces `!entry.isFile()` by `entry.isDirectory() || entry.isSymbolicLink()`.
+- "evidence manifest names are matched exactly, letter case included": fails on main. Red against both case-insensitive mutants.
+- Also changed: the child environment filter compares `key.toUpperCase()` with `NODE_OPTIONS`; `process.kill` is stubbed (ESRCH for 999999999, restored in `afterEach`) in every test, so only `process.pid` relies on a real process.
+
+### Revert table on 12139612: 35 rows, 35 red (source restored after each row, git status clean)
+The 31 rows of the table above, rerun against the new tests, all red; plus four new rows, all red:
+| mutation | first failing test |
+|---|---|
+| R2 link treated as goal directory (`goal.isDirectory() \|\| goal.isSymbolicLink()`) | a symbolic link named as a goal directory is not enumerated |
+| R2 non-regular test excludes only directories and links (`entry.isDirectory() \|\| entry.isSymbolicLink()` for `!entry.isFile()`) | a FIFO or a socket with a lock or temp name is listed and never opened |
+| R2 evidence lock name case-insensitive (`name.toLowerCase() === 'manifest.json.lock'`) | evidence manifest names are matched exactly, letter case included |
+| R2 evidence temp name case-insensitive (`/i` on the manifest temp pattern) | evidence manifest names are matched exactly, letter case included |
+
+### DoD on 12139612: exit 0
+npm run typecheck clean; node --test of the 15 files: tests 338, suites 49, pass 337, fail 0, skipped 1 (not in this card's files).
+
+### Design note: the CLI child
+Acceptances 13 to 15 run src/cli/main.ts in a child, where the parent cannot stub `process.kill`. The child is started with `--import data:text/javascript,<encoded source>` (no extra file), a preload that makes pid 999999999 throw ESRCH and passes every other pid to the real `process.kill`. NODE_OPTIONS is not used (it is removed, in any letter case).
+
+### Not done (coordinator's step)
+The Linux run of the new test file and the run of the test files that read the changed documents.
