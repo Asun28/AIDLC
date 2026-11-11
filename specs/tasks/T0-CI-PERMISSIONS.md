@@ -95,3 +95,8 @@ The CHANGELOG entry, one line, directly above `- T0-CARDS-PROJECTED-REENTRY`:
 - Revert table on e10ebc2a, 17 of 17 red: the 14 above plus exact without the contents value check, plain-object test as an Array check, top-level other scope accepting only none. Exact job truthiness is `job.permissions`, red on the null row.
 - DoD on e10ebc2a, no pipe: typecheck exit 0, then the four files exit 0, 95 tests, 95 pass, 0 fail.
 - CHANGELOG sentence is true by the ci.yml block and the live test (acceptance 3). Changed lines against budget 200: see report.
+
+Coordinator verification:
+- At a9eb060e, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/workflow-permissions.test.ts): tests 3, pass 3, fail 0, skipped 0.
+- Windows, docpins: 73 test files reading 1 changed documents: # tests 1802 # pass 1791 # fail 0
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
