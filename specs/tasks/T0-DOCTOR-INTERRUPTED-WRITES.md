@@ -157,3 +157,99 @@ Pins that pass on main and with this card, unchanged: tests/infra/update-json.te
 
 ### 17
 docs/OPERATIONS.md and CHANGELOG.md state R9; CLAUDE.md, templates/CLAUDE.aidlc.md, both aidlc-loop SKILL.md copies, docs/REQUIREMENTS-TRACEABILITY.md, docs/ARCHITECTURE.md and README.md are not in the diff; .claude/skills/verify-card-run-writes/SKILL.md changes only at CLOSE, by its sync commit and the Bounds line of the hygiene (reviewer-verified against the diff). [R9]
+
+## Attempt evidence
+
+Commits: RED 5dbe2555 (tests only), GREEN e043225d (src), docs 3f9b8798, evidence commit (head). RED receipt: C:UsersAdminAppDataLocalTempclaudea6303180ca8049beb02f3fb-6d6a-4a44-870b-34d780644c33scratchpaded-doctor-iw.txt
+
+### RED on 5dbe2555 (main source), tests/surface/doctor-interrupted-writes.test.ts: 23 tests, 1 pass, 22 fail
+- Items 1-11 (and the 9 rows of item 8): each unit test fails with TypeError 'store.interruptedWritesReport is not a function', at its own call.
+- Items 13, 14, 15 (doctor runs): fail on the missing key (13 and 15 on the undefined value, 14: the line after stateDir is 'cards ...', not 'interruptedWrites ...').
+- Item 12 (LOCKED messages): passes on main, as the card says (a pin).
+- tsc fails on that commit (the namespace import has no such member), as the card expects for RED.
+
+### Revert table (one piece of source mutated, test file run, restored; 31 rows, all red)
+| mutation | result | first failing test |
+|---|---|---|
+| R7 key removed | RED | aidlc doctor --json carries interruptedWrites after stateDir, writes nothing and exits 0 |
+| R7 key order (after hookCommand) | RED | aidlc doctor --json carries interruptedWrites after stateDir, writes nothing and exits 0 |
+| R1 root ENOENT not none | RED | a state directory that is missing or empty gives none and creates nothing |
+| R1 root error does not stop scan | RED | the root stops the scan |
+| R2 absent dir adds an entry | RED | a goals entry that is a file (real file system) |
+| R2 evidence: any .lock name | RED | doctor reads nothing outside its directories and name patterns |
+| R2 evidence: generic temp name | RED | doctor reads nothing outside its directories and name patterns |
+| R2 goal dir need not be a directory | RED | doctor reads nothing outside its directories and name patterns |
+| R2 .lock case-insensitive | RED | doctor reads nothing outside its directories and name patterns |
+| R2 heartbeat not read | RED | a lock and a temp of a process that is not running are listed in every directory doctor reads |
+| R2 non-regular file not listed | RED | a matching path that is not a regular file is listed and never opened or entered |
+| R2 non-regular file read as file | RED | a matching path that is not a regular file is listed and never opened or entered |
+| R3/R4 pid 0 usable | RED | pid rows follow the regex of locked() |
+| R3 non-integer pid usable | RED | pid rows follow the regex of locked() |
+| R4 temp without usable pid not listed | RED | pid rows follow the regex of locked() |
+| R5 running lock listed | RED | a lock and a temp of a running process are not listed |
+| R5 running temp listed | RED | a lock and a temp of a running process are not listed |
+| R3 owner-unknown text | RED | pid rows follow the regex of locked() |
+| R3 lock instruction text (shared helper) | RED | a lock and a temp of a process that is not running are listed in every directory doctor reads |
+| R3 lock read error not caught | RED | a lock read that fails |
+| R6 code fallback | RED | an error without a code |
+| R6 sorted | RED | a lock and a temp of a process that is not running are listed in every directory doctor reads |
+| R6 locale sort | RED | entries are sorted by code-unit order of the relative path |
+| R6 path not JSON-quoted | RED | a lock and a temp of a process that is not running are listed in every directory doctor reads |
+| R6 temp opened (read) | RED | pid rows follow the regex of locked() |
+| R6 mutation (mkdir) | RED | the scan reads only what R2 names and mutates nothing |
+| R6 enumerates twice | RED | the scan reads only what R2 names and mutates nothing |
+| R2 enumerates beneath goal dir | RED | the scan reads only what R2 names and mutates nothing |
+| R6 relative path uses backslash joiner | RED | a lock and a temp of a process that is not running are listed in every directory doctor reads |
+| R2 temp hex upper case | RED | doctor reads nothing outside its directories and name patterns |
+| R3 pid regex without word boundary | RED | pid rows follow the regex of locked() |
+After the table git status is clean and git diff is empty. Items 12 and 16 are pins and have no revert row.
+
+### DoD on 3f9b8798 (before this evidence commit): exit 0
+npm run typecheck clean; node --test of the 15 files: tests 335, suites 49, pass 334, fail 0, skipped 1 (not in this card's files). tests/scenarios/fault-points.test.ts alone: 28 pass, 0 fail. The change adds, removes and reorders no write: interruptedWritesReport calls only readdirSync and readFileSync (item 7 records every write-class call and finds none), atomicWriteText, atomicWriteJson, createExclusive and updateJson are untouched, and locked() only calls two new helpers for the same strings (item 12).
+
+### Documents against code and test
+| sentence | code | test |
+|---|---|---|
+| doctor prints interruptedWrites, none or one entry per path or unreadable directory | main.ts checks object, interruptedWritesReport | items 1, 13, 14 |
+| lock listed with the LOCKED instruction, or owner unknown | staleLockAction, lockPid, report | items 1, 3, 6, 12 |
+| temp listed when its process is gone, or no usable pid | usablePid, report | items 1, 3 |
+| running or unsignalable process not listed | processAlive | items 2, 3 |
+| directories read, evidence only the two manifest names, nothing below | scan, STATE_DIRS | items 5, 7 |
+| not a regular file, unreadable with code, missing gives none | isFile branch, codeOf, root ENOENT | items 4, 8, 11, 15 |
+| deletes, writes, creates nothing, no lock text, exit code kept | no write call, no exit | items 7, 13 |
+| CHANGELOG: exports interruptedWritesReport | export in store.ts | item 1 |
+
+Changed lines (git diff --shortstat main...HEAD, before this section): 5 files, 521 insertions, 3 deletions; with this section about 585 of the 620 budget. src/state/store.ts adds 82 lines against the card's about 57 (two helpers, formatting), src/cli/main.ts 3.
+
+## Attempt evidence, repair round (after the pre-review of e4727916)
+
+Test-only repair, no source change. Tests commit 12139612; merge of origin/main da29af15 (touches only spec cards). The figures of the section above stay as measured on their own SHAs; the figures below supersede them.
+
+### The three new tests, RED on main (12139612 tests against the main source of src/state/store.ts and src/cli/main.ts: 26 tests, 1 pass, 25 fail)
+- "a symbolic link named as a goal directory is not enumerated": fails on main (function missing). Also red against the mutant that treats a link as a goal directory.
+- "a FIFO or a socket with a lock or temp name is listed and never opened": fails on main. Red against the mutant that replaces `!entry.isFile()` by `entry.isDirectory() || entry.isSymbolicLink()`.
+- "evidence manifest names are matched exactly, letter case included": fails on main. Red against both case-insensitive mutants.
+- Also changed: the child environment filter compares `key.toUpperCase()` with `NODE_OPTIONS`; `process.kill` is stubbed (ESRCH for 999999999, restored in `afterEach`) in every test, so only `process.pid` relies on a real process.
+
+### Revert table on 12139612: 35 rows, 35 red (source restored after each row, git status clean)
+The 31 rows of the table above, rerun against the new tests, all red; plus four new rows, all red:
+| mutation | first failing test |
+|---|---|
+| R2 link treated as goal directory (`goal.isDirectory() \|\| goal.isSymbolicLink()`) | a symbolic link named as a goal directory is not enumerated |
+| R2 non-regular test excludes only directories and links (`entry.isDirectory() \|\| entry.isSymbolicLink()` for `!entry.isFile()`) | a FIFO or a socket with a lock or temp name is listed and never opened |
+| R2 evidence lock name case-insensitive (`name.toLowerCase() === 'manifest.json.lock'`) | evidence manifest names are matched exactly, letter case included |
+| R2 evidence temp name case-insensitive (`/i` on the manifest temp pattern) | evidence manifest names are matched exactly, letter case included |
+
+### DoD on 12139612: exit 0
+npm run typecheck clean; node --test of the 15 files: tests 338, suites 49, pass 337, fail 0, skipped 1 (not in this card's files).
+
+### Design note: the CLI child
+Acceptances 13 to 15 run src/cli/main.ts in a child, where the parent cannot stub `process.kill`. The child is started with `--import data:text/javascript,<encoded source>` (no extra file), a preload that makes pid 999999999 throw ESRCH and passes every other pid to the real `process.kill`. NODE_OPTIONS is not used (it is removed, in any letter case).
+
+### Not done (coordinator's step)
+The Linux run of the new test file and the run of the test files that read the changed documents.
+
+Coordinator verification:
+- At 8ceb9339, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/surface/doctor-interrupted-writes.test.ts): tests 26, pass 26, fail 0, skipped 0.
+- Windows, docpins: 80 test files reading 2 changed documents: # tests 1883 # pass 1869 # fail 2 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.

@@ -10,6 +10,8 @@ import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readdirSync, rea
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { ZodType } from 'zod';
+import type { Dirent } from 'node:fs';
+import type { StatePaths } from './paths.ts';
 
 export class StoreError extends Error {
   readonly code: string;
@@ -212,9 +214,25 @@ export function updateJson<T>(file: string, schema: ZodType<T>, change: (current
  */
 function locked(file: string, lock: string): StoreError {
   const holder = readLockOwner(lock);
-  const pid = Number(/\bpid=(\d+)/.exec(holder ?? '')?.[1]);
-  if (Number.isInteger(pid) && pid > 0 && !processAlive(pid)) return new StoreError('LOCKED', file, `${lock} is locked by pid ${pid}, which is no longer running; delete ${lock} only once pid ${pid} is confirmed dead, then run the command again`);
+  const pid = lockPid(holder);
+  if (pid !== undefined && !processAlive(pid)) return new StoreError('LOCKED', file, `${lock} is locked by pid ${pid}, which is no longer running; ${staleLockAction(lock, pid)}`);
   return new StoreError('LOCKED', file, `locked by another writer (${holder ?? 'unknown owner'}); run the command again`);
+}
+
+/** A process id, kept only when it is a positive integer. */
+function usablePid(digits: string | undefined): number | undefined {
+  const pid = Number(digits);
+  return Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/** The usable process id in a lock's owner text: the first `pid=<digits>` at a word boundary. */
+function lockPid(holder: string | undefined): number | undefined {
+  return usablePid(/\bpid=(\d+)/.exec(holder ?? '')?.[1]);
+}
+
+/** What the operator does with a lock whose process is gone; `lock` is named as the caller quotes it. */
+function staleLockAction(lock: string, pid: number): string {
+  return `delete ${lock} only once pid ${pid} is confirmed dead, then run the command again`;
 }
 
 /** Block the thread for `ms` (a lock retry between two synchronous file operations). */
@@ -261,4 +279,66 @@ export function listJsonFiles(dir: string): string[] {
     .filter((name) => name.endsWith('.json'))
     .sort()
     .map((name) => path.join(dir, name));
+}
+
+const TEMP_NAME = /\.tmp-(\d+)-[a-f0-9]{8}$/;
+const MANIFEST_TEMP_NAME = /^manifest\.json\.tmp-(\d+)-[a-f0-9]{8}$/;
+const STATE_DIRS = ['goals', 'releases', 'leases', 'review-queue', 'operations', 'journal', 'incidents', 'heartbeat'] as const;
+
+/**
+ * Stale lock files, leftover atomic-write temporary files and unreadable entries of the state directory, as `none` or one
+ * entry per path (its relative path JSON-quoted, then the finding), sorted by relative path. Reads only: it takes no lock,
+ * opens no temporary file, enters nothing below a goal directory and never throws.
+ */
+export function interruptedWritesReport(paths: StatePaths): 'none' | string[] {
+  const found: Array<[string, string]> = [];
+  const codeOf = (err: unknown): string => {
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    return typeof code === 'string' ? code : 'UNREADABLE';
+  };
+  /** The entries of a directory, undefined (and an entry for any failure but ENOENT) when it cannot be listed. */
+  const list = (rel: string, dir: string): Dirent[] | undefined => {
+    try {
+      return readdirSync(dir, { withFileTypes: true });
+    } catch (err) {
+      if (codeOf(err) !== 'ENOENT') found.push([rel, 'unreadable, ' + codeOf(err)]);
+      return undefined;
+    }
+  };
+  const scan = (rel: string, dir: string, evidence: boolean): void => {
+    for (const entry of list(rel, dir) ?? []) {
+      const name = entry.name;
+      const lock = evidence ? name === 'manifest.json.lock' : name.endsWith('.lock');
+      const temp = lock ? null : (evidence ? MANIFEST_TEMP_NAME : TEMP_NAME).exec(name);
+      if (!lock && !temp) continue;
+      const own = `${rel}/${name}`;
+      if (!entry.isFile()) {
+        found.push([own, 'unreadable, not a regular file']);
+      } else if (temp) {
+        const pid = usablePid(temp[1]);
+        if (pid === undefined) found.push([own, 'temp, no usable pid']);
+        else if (!processAlive(pid)) found.push([own, `temp, pid ${pid} is no longer running`]);
+      } else {
+        try {
+          const pid = lockPid(readLockOwner(path.join(dir, name)));
+          if (pid === undefined) found.push([own, 'lock, owner unknown; delete it only once no aidlc command is running on this state directory']);
+          else if (!processAlive(pid)) found.push([own, `lock, pid ${pid} is no longer running; ${staleLockAction(JSON.stringify(own), pid)}`]);
+        } catch (err) {
+          found.push([own, 'unreadable, ' + codeOf(err)]);
+        }
+      }
+    }
+  };
+  try {
+    readdirSync(paths.root, { withFileTypes: true });
+  } catch (err) {
+    return codeOf(err) === 'ENOENT' ? 'none' : ['".": unreadable, ' + codeOf(err)];
+  }
+  const dirs: Record<(typeof STATE_DIRS)[number], string> = { goals: paths.goals, releases: paths.releases, leases: paths.leases, 'review-queue': paths.reviewQueue, operations: paths.operations, journal: paths.journal, incidents: paths.incidents, heartbeat: path.join(paths.root, 'heartbeat') };
+  for (const name of STATE_DIRS) scan(name, dirs[name], false);
+  for (const [parent, parentDir] of [['cards', paths.cards], ['evidence', paths.evidence]] as const) {
+    for (const goal of list(parent, parentDir) ?? []) if (goal.isDirectory()) scan(`${parent}/${goal.name}`, path.join(parentDir, goal.name), parent === 'evidence');
+  }
+  if (found.length === 0) return 'none';
+  return found.sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)).map(([rel, text]) => `${JSON.stringify(rel)}: ${text}`);
 }
