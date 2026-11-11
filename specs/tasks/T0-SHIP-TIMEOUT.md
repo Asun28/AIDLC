@@ -1,7 +1,7 @@
 ---
 id: T0-SHIP-TIMEOUT
 title: Every subprocess call of the GitHub ship path has a timeout, and a push, PR create or merge that timed out leaves its operation UNKNOWN to be reconciled, never repeated as a failure
-status: todo
+status: merged
 branch: T0-SHIP-TIMEOUT
 worktree: D:\wt\AIDLC\T0-SHIP-TIMEOUT
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: about 70 source lines in src/delivery/github-ship.ts, src/delivery/ship.ts and src/loop/card-runner.ts; the rest is the receipt matrix of the seven calls, the classifier precedence table, the reconcile rows for five statuses on the remote and local paths, the failed-step rows of the owed result on a current, a superseded and a stopped run, the reader rows, docs and about 25 lines of attempt evidence; raised from 560 to 700 by the coordinator on the candidate d01076dd, which is 673 changed lines: 67 source lines in three files, 508 lines of the acceptance tests, 88 lines of attempt evidence with its 42-row revert table, the rest docs"
@@ -72,3 +72,94 @@ npm run typecheck && node --test tests/infra/github-ship.test.ts tests/infra/git
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes and the fault-point check adds no pin.
+
+## Attempt evidence
+
+Attempt 1 (effort high). RED commit 21d4e25e (tests only, run against the c29c594a source). Files: `tests/infra/github-ship.test.ts` (GH), `tests/infra/ship.test.ts` (SHIP), `tests/scenarios/ship-effect-unknown.test.ts` (SCN).
+
+| Acceptance item | Test or command | Result |
+|---|---|---|
+| 1 [R1] | GH "every subprocess call of the ship carries a timeout [R1]" | pass; failed on c29c594a: the six remote direct calls carried no timeoutMs |
+| 2 [R2] [R4] | GH "a push, PR create or merge that timed out or ended without an exit code is an effect of unknown outcome [R2] [R4]" | pass; failed on c29c594a: `'push-failed' !== 'effect-unknown'`; the exit 1 and spawn-error controls held there |
+| 3 [R3] | GH "a staged-diff read that timed out or failed never commits [R3]" | pass; failed on c29c594a: `git add -A, timed out, no exit code` gave `[SHIP-COMMIT-FAIL]` with an empty detail (no command named) |
+| 4 [R4] | SHIP "effect-unknown precedence [R4]"; "captures the resume command and PR number; timeouts and unknown exits are unclassified" unchanged | pass; failed on c29c594a at the first row with the line (`unclassified`), after the 36 rows without it matched the frozen copy of main's rule |
+| 5 [R5] [R6] | SCN "a ship whose effect is unknown waits on its operation for aidlc ops reconcile [R5] [R6]" | pass; failed on c29c594a: `'stop' !== 'wait'` (unclassified, STOP/tool) |
+| 6 [R5] | SCN "each persistence step of the owed result can fail and the next step recovers with no further effect [R5]" | pass; failed on c29c594a: `finish: 'failed' !== 'issued'` |
+| 7 [R6] | SCN "after a reconcile the card ships again without a second effect [R6]" | pass; failed on c29c594a: `succeeded: 'stop' !== 'close'` |
+| 8 [R5] [R6] | SCN "readers of the waiting card [R5] [R6]" | pass; failed on c29c594a: the board did not show the card as WAIT |
+| 9 [R2] [R4] [R5] | the regression files of the DoD, unchanged; fault-points.test.ts with no pin added | pass (DoD below) |
+| 10 [R7] | docs/OPERATIONS.md (Ship gates, paragraph after the ship-that-throws sentence), docs/ARCHITECTURE.md (SENTINEL_MAP list, GitHub ship path bullet, outcome mapping), CHANGELOG.md (entry above T0-REMOVED-CARD-RUNS) | reviewer to verify |
+
+Readings of the card:
+- Acceptance 5 "journalOwed is empty": `deliverOwed` writes nothing (its lock section only appends), so a delivered entry stays on the record until the next write prunes it through `owedWith`, as for a merge. The test asserts that nothing is still owed: every `journalOwed` entry is a result the journal holds.
+- Acceptance 6 "appended once, marked completed: true, when the ledger shows UNKNOWN": holds for the append failure, where the runner's own `markResult` set UNKNOWN. When the `finish` write fails nothing is owed; when `markResult` fails the operation stays `issued` and only the operator's `aidlc ops reconcile` sets UNKNOWN, and its `OPERATION_RECONCILED` event then holds the owed result (`journalHolds`, as in ship-throw acceptance 8), so nothing more is appended. Both rows assert the wait on the running operation, then the wait on the unknown one, no second ship and no `failed` operation.
+- Acceptance 6 superseded and stopped rows run without a persistence fault: their result is journaled directly by `finish`, not owed.
+- The `.claude/skills/verify-card-run-writes/SKILL.md` record is unchanged: a Not-covered line for the new branch took the file to 8374 bytes, over the 8000-byte cap of tests/surface/templates.test.ts (T1-VERIFY-SKILL acceptance 1), so it was dropped.
+
+Verify skill (verify-card-run-writes): covered files changed since the sync commit: `src/loop/card-runner.ts` only. No covered command gained, lost or reordered a write: the new branch runs only for `effect-unknown`, which none of the five driven commands reaches (their ship is a dry-run merge). fault-points.test.ts: 28 of 28 pass, no pin added. Outcome: in sync; the sync commit may move at CLOSE.
+
+Error handling (lstatSync or statSync with throwIfNoEntry false): the change adds none and relies on none. GitHubShipPath keeps its `existsSync` worktree and verdict checks as on main.
+
+Per-hunk revert check (each mutation applied alone to the candidate source, its test file run, the source restored; no row green):
+
+| Hunk (file) | Mutation | Failing test: first failing assertion | Result |
+|---|---|---|---|
+| H1 github-ship `limit` | request value ignored | GH carries a timeout: `request 1: git add -A` | red |
+| H1a github-ship `limit` | whole-number check dropped | GH carries a timeout: `request 1.5: git add -A` | red |
+| H1b github-ship `limit` | lower bound dropped | GH carries a timeout: `request 0: git add -A` | red |
+| H2 github-ship `unfinished` | timedOut not read | GH effect unknown: push line reads `ended without an exit code` | red |
+| H2a github-ship `unfinished` | null exit not read | GH effect unknown: `git push, no exit code after a signal` outcome | red |
+| H3 github-ship `effectUnknown` | PR number dropped from the line | GH effect unknown: `the known PR` | red |
+| H3a github-ship push | prNumber not passed to `fail` | GH effect unknown: `git push, timed out, no exit code` prNumber | red |
+| H3b github-ship gh pr merge | prNumber not passed to `fail` | GH effect unknown: `gh pr merge, timed out, no exit code` prNumber | red |
+| H4 github-ship `commitFailure` | detail is stderr as on main | GH never commits: `git add -A, timed out, no exit code` names no command | red |
+| H5 github-ship git add | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H5a github-ship git add | timedOut not read | GH never commits: `git add -A, timed out, exit 0` | red |
+| H6 github-ship diff | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H6a github-ship diff guard | guard removed | GH never commits: `git diff --cached --quiet, timed out, no exit code` | red |
+| H6b github-ship diff guard | timedOut not read | GH never commits: `git diff --cached --quiet, timed out, exit 1` | red |
+| H6c github-ship diff guard | exit 1 not excluded | GH happy path: outcome not merged | red |
+| H7 github-ship git commit | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H7a github-ship git commit | timedOut not read | GH never commits: `git commit, timed out, exit 0` | red |
+| H8 github-ship local merge | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H8a github-ship local merge | no effect check | GH effect unknown: `git merge, timed out, no exit code` | red |
+| H9 github-ship push | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H9a github-ship push | no effect check | GH effect unknown: `git push, timed out, no exit code` | red |
+| H10 github-ship gh pr create | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H10a github-ship gh pr create | no effect check | GH effect unknown: `gh pr create, timed out, no exit code` | red |
+| H11 github-ship gh pr merge | no bound | GH carries a timeout: `no call without a positive timeoutMs` | red |
+| H11a github-ship gh pr merge | no effect check | GH effect unknown: `gh pr merge, timed out, no exit code` | red |
+| S1 ship.ts classifier | rule removed | SHIP precedence: row `{"exitCode":0,"timedOut":true,"beside":""}` | red |
+| S1a ship.ts classifier | stdout only | SHIP precedence: the stderr row | red |
+| S1b ship.ts classifier | fixed detail text | SHIP precedence: first row detail | red |
+| S1c ship.ts classifier | last line, not first | SHIP precedence: the two-line row detail | red |
+| S1d ship.ts classifier | no resume command | SHIP precedence: the two-line row resumeCommand | red |
+| S1e ship.ts classifier | no PR number | SHIP precedence: the two-line row prNumber | red |
+| C1 card-runner `finish` status | superseded or stopped marked failed | SCN persistence steps: `superseded` operation status | red |
+| C2 card-runner branch | removed | SCN waits on its operation: `'stop' !== 'wait'` | red |
+| C2a card-runner branch | owed detail dropped | SCN waits on its operation: OPERATION_RESULT data | red |
+| C2b card-runner branch | run not written as WAIT | SCN waits on its operation: stored state | red |
+| C2c card-runner branch | result not owed | SCN waits on its operation: OPERATION_RESULT list | red |
+| C2d card-runner branch | `markResult` without the injected clock | SCN waits on its operation: finishedAt | red |
+| C2e card-runner branch | no evidenceRef | SCN waits on its operation: evidenceRef | red |
+| C2f card-runner branch | owed result not delivered | SCN waits on its operation: OPERATION_RESULT list | red |
+| C2g card-runner branch | delivered as an earlier command's (`completed: true`) | SCN waits on its operation: `completed` | red |
+| C2h card-runner branch | wait on another resource | SCN waits on its operation: `on` | red |
+| C2i card-runner branch | narration without the reconcile command | SCN waits on its operation: narration | red |
+
+Not mutated: the header comment and the `GIT_MS`, `PUSH_MS` and `GH_MS` constants (no behaviour of their own; every bound is asserted through H5 to H11), the `effect-unknown` union member and `requested !== undefined` (a revert fails `npm run typecheck`, the first DoD arm). Two hunks of the first draft had no observable effect and were removed instead of tested: `staged.exitCode === 1` (after the guard only 0 and 1 remain, so main's `!== 0` is kept) and the upper cap `requested <= 2147483647` (every bound is below it). A first revert run found H10a green: `effectUnknown` wrote the line to the log through `fail` even when its caller ignored the result; it now returns the detail and each call site returns `fail`, and H8a to H11a are red.
+
+Classifier precedence (R4, SHIP "effect-unknown precedence [R4]"): 36 rows, exit 0, 1 and null by `timedOut` true and false by none, `[SAGA-DONE]`, `[SAGA-FAIL]`, `[SHIP-PUSH-FAIL]`, `[CI-GATE-RED]`, `[SHIP-MERGE-FAIL]`: every row with `[SHIP-EFFECT-UNKNOWN]` is `effect-unknown` with the line as detail; every row without it equals the frozen copy of main's rule. Extra rows: the line on stderr with CRLF ends, and two such lines (the first is the detail; PR number, resume command and sentinels asserted).
+
+Card state precedence for the waiting card (`selectCardState`): unknown operation -> WAIT `reconciling unknown operations` (SCN waits on its operation, second `card next`; persistence steps after the reconcile; reconcile `UNKNOWN`); running or issued operation -> WAIT `attached to running operation` (persistence steps `finish` and `markResult`; reconcile `running`); a settled operation admits SHIP again (reconcile `succeeded`, `failed`, `cancelled`).
+
+Reconcile statuses (SCN "after a reconcile the card ships again without a second effect [R6]"): `succeeded` -> new merge intent, one ship, close; `failed` -> same; `cancelled` -> same; `running` (provider id `gh-run-1`) -> wait, nothing shipped; `UNKNOWN` -> wait, nothing shipped. Remote re-ship: PR `MERGED` -> merged with no push, `gh pr create` or `gh pr merge`; PR `OPEN` -> reused, no `gh pr create`. Local re-ship with real git: `effect-unknown`, then `merged` with `git rev-list --count trunk` unchanged.
+
+Doc-reading run (`grep -rlE "ARCHITECTURE\.md|OPERATIONS\.md|CHANGELOG\.md" tests --include=*.test.ts`, one `node --test` call): 1833 tests, 1821 pass, 1 fail, 11 skipped. The failure was tests/surface/templates.test.ts T1-VERIFY-SKILL acceptance 1 (SKILL.md 8374 bytes > 8000), caused by this card's SKILL.md line, not by load; the line was removed and templates.test.ts passes alone (39 of 39). No file failed from machine load.
+
+DoD receipt (`dod_command` as the card gives it, Windows, run on the final source and tests): exit 0; `npm run typecheck` clean; `# tests 304`, `# suites 19`, `# pass 304`, `# fail 0`, `# cancelled 0`, `# skipped 0`, `# todo 0`, `# duration_ms 92713.9043`.
+
+Coordinator verification:
+- At 949a52fb, before the review, run by the coordinator. Linux (WSL Ubuntu, Node v22.23.4), the test files this branch adds or changes (tests/infra/github-ship.test.ts, tests/infra/ship.test.ts, tests/scenarios/ship-effect-unknown.test.ts): tests 94, pass 94, fail 0, skipped 0.
+- Windows, docpins: 78 test files reading 3 changed documents: # tests 1867 # pass 1854 # fail 1 docpins: tests/infra/exec.test.ts failed in the parallel run and passes alone (# pass 61): load
+- The `dod_command` is rerun by the coordinator on the commit that adds these lines; its receipt is recorded on the attempt.
