@@ -186,7 +186,7 @@ Run: the new test file (row L1 also tests/scenarios/arc-reentry.test.ts).
 ### Document sentences
 | Sentence | Code | Test |
 |---|---|---|
-| A (docs/ARCHITECTURE.md, after "STOP and DONE accept") | `inRegistryScope`, `cardRegistry` (controller.ts:787-803) | 1-7, 9 |
+| A (docs/ARCHITECTURE.md, after "STOP and DONE accept") | `inRegistryScope`, `cardRegistry` (controller.ts:787-808 on ad9d8bba) | 1-7, 9 |
 | B (docs/OPERATIONS.md, after "After VERIFY_ARC a new card enters only through that repair cycle") | as A; `aidlc goal new` runs two calls (main.ts, unchanged) | 1, 2, 4, 5, 6 |
 | CHANGELOG: one accessor, reuse, drop on return or throw | as A | 2, 4, 5 a-c |
 | CHANGELOG: a throwing load is not kept, error unchanged, boardError NOTE | `??=` assigns only a returned registry; `persistStopValue` unchanged | 5d, 6 |
@@ -198,3 +198,16 @@ Run: the new test file (row L1 also tests/scenarios/arc-reentry.test.ts).
 
 ### Changed lines
 `git diff --shortstat main...HEAD` before this section: 6 files, 383 insertions, 11 deletions (394) against the budget of 500; this section adds about 70.
+
+### Repair round after the pre-review of 1bfdd15e (card be05849f, budget 540)
+Commits: merge of origin/main `7f1af3fa`; RED `9cf0a67e` (acceptance 12 only); fix `ad9d8bba` (accessor, sentences A and B, CHANGELOG).
+- Accessor (controller.ts:802-808): `if (scope.registry) return scope.registry; const loaded = this.registryLoader(); return (scope.registry ??= loaded);`. The guard line is needed besides the two lines of the hygiene: without it every site loads (13 of 18 tests red when tried).
+- RED of acceptance 12: on 7f1af3fa + 9cf0a67e (accessor `scope.registry ??= this.registryLoader()`) and with the src of main, the outer `next` returns `stop` (expected `run-card`), exit 1 both.
+- Loader sites on ad9d8bba: :130, :299, :357, :573, :841, :856, :937.
+- Documents: sentences A and B replaced word for word by the amended Exact text. CHANGELOG: zero loads only for a `cards-projected` refused before the lookup (VERIFY_ARC, DELIVER, CLOSE, empty list), the unknown card loads once and is refused (acceptance 5a); the first completed load is kept (acceptance 12); a change after a call's successful load becomes visible to a later call that loads the registry (acceptance 4, 5).
+
+Revert table rerun on ad9d8bba: 20 rows, 20 red, `git status` clean after each restore and at the end. Rows S1-S7, F1-F4, K1, N1, L1, O1, O2, B1 red on the same tests as above, and S3, N1 and L1 also on 12; E1 and E2 on 6 and 12; new row R12 (the loader called inside the `??=`, `return (scope.registry ??= this.registryLoader());`) on 12 only.
+
+DoD on ad9d8bba (`dod_command`, no pipe): typecheck clean, exit 0, tests 68, pass 68, fail 0, skipped 0.
+
+Changed lines: `git diff --shortstat origin/main...HEAD` on ad9d8bba: 7 files, 476 insertions, 11 deletions (487) against the budget of 540; this subsection adds about 15.
