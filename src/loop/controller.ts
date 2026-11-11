@@ -815,9 +815,15 @@ export class GoalController {
     }
     const mapping = mapRevision(goal.cards, nextCards, replacements);
     const revision = goal.revision + 1;
+    // The revised text answers or repeats the intake ask, so the router decides the question again (card T0-ASK-RECLASSIFY).
+    // Only the question is taken from it: every other routing field stays the intake route. `aidlc goal new --issue <n>`
+    // records the issue as ref `#<n>`, so that ref is the one issue number a revision knows.
+    const issueRef = /^#(\d+)$/.exec(prev.request.ref ?? '');
+    const { ambiguity } = classifyRequest({ ...prev.request, text, knownCardIds: registry.cards.map((c) => c.card.id), knownIssueNumbers: issueRef ? [Number(issueRef[1])] : undefined });
     const revised: Goal = {
       ...goal,
       revision,
+      routing: { ...goal.routing, ambiguity },
       revisions: [...goal.revisions, { revision, at: now, reason: String(d['reason'] ?? 'user amendment'), request: { ...prev.request, text }, supersededCards: mapping.supersededCards, removedCards: mapping.removedCards }],
       cards: nextCards,
       // A retained card keeps its revision (a repair card added by arc-failed has none yet and starts at 0); a new or replacement card starts at 0.

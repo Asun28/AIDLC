@@ -1,7 +1,7 @@
 ---
 id: T0-RELEASE-OP-REISSUE
 title: A release step whose operation outcome is not recorded is never issued again; release next waits and names aidlc ops reconcile, a recorded outcome becomes the step, and two callers of one step dispatch once
-status: todo
+status: merged
 branch: T0-RELEASE-OP-REISSUE
 worktree: D:\wt\AIDLC\T0-RELEASE-OP-REISSUE
 size_exception: "approved by the coordinator as planner and approver of the 18 audit changes under the owner's (asun28) instruction of 2026-11-11: budget raised from 250 to 470 after two reviews of the card (Codex and Fable 5.2) against main at 92796d4f; about 70 source lines in one file, the rest the status, exclusion and race tests the rulings require, docs and attempt evidence; raised from 470 to 600 by the coordinator on the candidate f7bd2894, which is 533 changed lines: 86 source lines, 417 lines of the acceptance tests, and one more table test asked for before the review"
@@ -64,3 +64,24 @@ npm run typecheck && node --test tests/scenarios/release-reissue.test.ts tests/s
 ```
 - Expected exit code: 0
 - Assertion: every acceptance test above passes; the two existing release files pass unchanged.
+
+## Attempt evidence
+
+Attempt 1 (effort high). RED receipt `fad53d99` (the test file alone, sources of main): all 9 tests failed; acceptance 1, 2, 5, 6 and 7 at `'stage' !== 'wait'`, `'stage' !== 'stop'` or `'observe' !== 'wait'` (the step was issued again), 3 at the `stage-deploy` step carrying a second operation id, 4 and 9 at `2 !== 1` deploy runs, 8 at a deploy run where none is allowed. The GREEN commit corrects one assertion of acceptance 1 that read every ledger record of the goal (the card's merge operation included) to the attempt's records, and adds the cases the revert check asked for (an `intended` record of the attempt without the step's key; the `na` and empty digest keys; an attempt that already lists the adopted operation; the records read before the binding; evidence environment, digest and kind). Each source hunk was reverted on its own and the tests run: every revert fails a test except the `cancelled` to `failed` mapping of the adopted step, which the step sync at the top of `next` derives again from the record before any reader sees the step.
+
+Attempt 2 (counted failure): CI of PR 263 failed on both Ubuntu jobs in `tests/scenarios/op-intent-dup.test.ts:355` ("acceptance 7: docs/ARCHITECTURE.md carries the ARCHITECTURE sentence right after the reconcile.ts sentence [R6]"). Cause: that test requires the `src/coordination/` paragraph to end with the `reconcile.ts` sentence followed by the T0-OP-INTENT-DUP sentence (`endsWith`), and this card's ARCHITECTURE.md sentence had been added after them in the same paragraph; the DoD files do not read the document. Repair: the sentence, text unchanged, is now its own paragraph directly after the `src/coordination/` paragraph, since inside that paragraph a sentence after the T0-OP-INTENT-DUP one would still fail the `endsWith` pin; the 77 test files that read docs/ARCHITECTURE.md, docs/OPERATIONS.md or CHANGELOG.md were run in one invocation: 1814 pass, 11 skipped, 4 fail, all 4 in `tests/scenarios/review-release.test.ts`, where the CLI found the pid the test takes for dead running again (`is still running as pid <n>`) under the parallel load; that file run alone passes 32 of 32, and the repair changes no file it executes.
+
+| Item | Proof | Result |
+|---|---|---|
+| 1 | `tests/scenarios/release-reissue.test.ts` "a staging deploy interrupted while its command ran is not issued again; release next waits on the intended operation and names aidlc ops reconcile" | pass |
+| 2 | same file, "an intended release operation past the reconciliation grace stops the attempt for time and lists it" | pass |
+| 3 | same file, "each outcome aidlc ops reconcile records settles the step with no second deploy" | pass |
+| 4 | same file, "a deploy whose result was recorded but whose attempt save was lost becomes the step and is not issued again" | pass |
+| 5 | same file, "an interrupted production deploy and an interrupted recovery wait on their intended operation" | pass |
+| 6 | same file, "a record that matches the step only by its key is waited on before the grace and stops the attempt after it" | pass |
+| 7 | same file, "only the step's exact key matches, and every status has one outcome" | pass |
+| 8 | same file, "an adopted production deploy and an adopted recovery keep the effects of the transitions that follow" | pass |
+| 9 | same file, "two callers of one step record one intent and dispatch once" | pass |
+| 7 (R3, form without a step) | same file, "a ledger record belongs to the attempt by its releaseAttempt or by one of the attempt's three step keys, and only under its goal" (`releaseOperationOf` exported from `src/loop/release-runner.ts`); turns red when the form returns false, without its `releaseAttempt` clause and without its key clause | pass |
+| 10 | `tests/scenarios/release.test.ts` and `tests/scenarios/release-publication.test.ts`, unchanged | pass |
+| 11 | docs/OPERATIONS.md (Standalone release), docs/ARCHITECTURE.md (`reconcile.ts` sentence), CHANGELOG.md (Unreleased, above T0-SCAN-SETUP-STEP-2) | for the reviewer |

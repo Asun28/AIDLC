@@ -1048,7 +1048,15 @@ export class CardRunner {
     // A marker means a source file may hold a mutant (card T1-VERIFY-MUTANTS-PROMPT), so nothing is recorded, not even an owed event.
     // Only whether something is at the path counts: no marker is read, and a dangling link is still something there.
     const mutantMarker = mutantsMarkerPath(this.reviewCheckout(run), card.id);
-    if (lstatSync(mutantMarker, { throwIfNoEntry: false })) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
+    // ENOTDIR (the worktree path is a regular file; POSIX says so where Windows reports no entry) is no marker (card
+    // T0-DIRTY-SUCCESS-2 R9); every other error propagates.
+    let markerStat: ReturnType<typeof lstatSync> | undefined;
+    try {
+      markerStat = lstatSync(mutantMarker, { throwIfNoEntry: false });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOTDIR') throw err;
+    }
+    if (markerStat) throw new Error(`a mutant run is in progress or was interrupted: ${mutantMarker} exists, so a source file may hold a mutant; finish the sweep or run \`aidlc card mutants ${card.id} --restore\` first`);
     // R4: an owed event a lost append left is journaled before anything is recorded or refused (card T0-JOURNAL-FAULT-EVENTS).
     this.deliverOwed(goal, card, run);
     // A success that lost checks contradicts itself: lost checks are a failed check, recorded as one.
@@ -1071,12 +1079,17 @@ export class CardRunner {
     let candidate = run.candidate;
     if (input.outcome === 'success') {
       if (this.config.shipPath !== 'dry-run' && run.worktree && existsSync(run.worktree)) {
+        let entries: string[] = [];
         try {
           const c = this.git.candidate(run.worktree);
           candidate = { sha: c.sha, dirty: c.dirty, untracked: c.untracked, digest: c.digest };
+          entries = c.entries;
         } catch {
           /* keep prior */
         }
+        // A probe that returned entries refuses the success before the write (card T0-DIRTY-SUCCESS): a dirty candidate can
+        // never be reviewed or shipped, and recording it would end the episode. A probe that threw keeps the prior candidate.
+        if (entries.length) throw new Error(`the worktree ${run.worktree} has uncommitted or untracked changes (${entries.slice(0, 5).join(', ')}${entries.length > 5 ? ', ...' : ''}); nothing was recorded: commit, remove or ignore (for example in .gitignore) each entry, then record the attempt again`);
       } else if (input.candidateSha) {
         candidate = { sha: input.candidateSha, dirty: false, untracked: [], digest: input.candidateSha };
       }
@@ -1393,7 +1406,7 @@ export class CardRunner {
   }
 
   /**
-   * Pre-review gate inside SHIP (R2). Rounds are counted per R3 cycle (substantive R3 decisions so
+   * Pre-review gate inside SHIP (R2). Rounds are counted per R3 cycle (substantive R3 blocks so
    * far), so an R3 block restarts the cycle. A pass on the current candidate opens the ship; a block
    * was already handed back to BUILD by `preReview`; blocks beyond `rounds` apply `onExhausted`.
    */
@@ -3202,8 +3215,6 @@ export function quotedList(values: string[], separator = ' | '): string {
   return values.map((v) => JSON.stringify(v)).join(separator);
 }
 
-/** A merge-blocking verdict turns the last successful attempt into a counted failure (cause = the block). */
-/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
 /**
  * True only when a line of the ship output is git's or GitHub's own merge-conflict diagnostic, anchored at the start of
  * the line: `CONFLICT (...)`, `Automatic merge failed; fix conflicts and then commit the result.`, `Merge conflict in ...`,
@@ -3231,6 +3242,7 @@ export function clearsPendingRepair(pending: CardRun['pendingRepair'], input: { 
   return input.redReceipt !== undefined && input.redReceipt !== pending.rejectedReceipt;
 }
 
+/** A ship-side setback that is not the code's fault (a merge conflict, a rejected RED receipt) reopens a succeeded episode so the next attempt is admitted without counting a failure. */
 export function reopenEpisode(episode: NonNullable<CardRun['effort']> | undefined): NonNullable<CardRun['effort']> | undefined {
   if (!episode || episode.terminal !== 'succeeded') return episode;
   return { ...episode, terminal: undefined };

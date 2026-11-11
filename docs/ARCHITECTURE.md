@@ -15,6 +15,8 @@ Anthropic playbook. The CLI exposes one typed directive per call and commits res
 
 `src/coordination/` is package S of the plan. `lease.ts` provides atomic claims with generations, heartbeat, release, takeover-after-reconciliation (exposed as `aidlc goal takeover` and `aidlc card takeover`) and fencing. `review-queue.ts` is the shared provider/account admission queue. A card-run command whose `REVIEW_ADMITTED` append fails after the queue admitted its request cancels that request, freeing the slot (card T0-REVIEW-ADMIT-STRAND). `ReviewQueue.admit` with a request key admits only that request, and only once fewer requests are ahead of it than the pool has free slots, which is how the card runner asks (card T0-REVIEW-ADMIT-FOREIGN). `reconcile.ts` is the operation ledger: intent before issue, reconciliation by provider lookup, explicit UNKNOWN. The card runner's ship continues under an `intended` merge intent that an earlier failed ship of the same candidate left, instead of recording a second one (card T0-OP-INTENT-DUP).
 
+The release runner matches a release step's ledger records by goal and the exact idempotency key `<attemptId>:<step>:<candidateDigest>` alone, reads them and records the step's intent only when there is none in one section of the environment lease lock, and takes the last terminal match as the step instead of issuing it again (card T0-RELEASE-OP-REISSUE).
+
 `src/probes/` gathers evidence. `exec.ts` runs commands and returns receipts (exit, output digest, timing), the async runner ending a timed-out command's whole process tree and `runSync` with `killTree` running the command under `exec-tree-helper.ts`, which applies that tree kill, with a scripted runner for tests. `git.ts` reads worktrees, HEAD, status, base resolution, divergence and containment. `base-sync.ts` compares the local base branch with `origin/<base>` for `aidlc doctor`, reading refs only and never fetching. `gh.ts` resolves PR identity, run views and check runs with pagination.
 
 `src/delivery/` touches the project. `worktree.ts` decides start vs attach vs stop from branch, path, common directory and owner record. `ship.ts` defines the ship path interface, classifies `task.ps1` sentinels for the scaffold adapter and provides a dry-run path. `ops.ts` loads `aidlc.ops.json` (operation roles, bindings, environments, health signals) and executes or looks up bound operations.
@@ -147,7 +149,7 @@ stateDiagram-v2
 
 | Kind | Payload | Meaning |
 |---|---|---|
-| `ask` | question, options, responseRoute | one sizing/identity question the context cannot resolve |
+| `ask` | question, options, responseRoute | one sizing/identity question the context cannot resolve; the revision that answers it (`aidlc goal amend <id> --text "<answer>"`) re-classifies the revised text with the router and stores only the new question (none removes it), and every other routing field is the retained intake route (card T0-ASK-RECLASSIFY) |
 | `plan` | size, inputs, invocationAllowance, outputs | produce the plan at the routed depth |
 | `project-cards` | planRef, cardsDir, outputs | write/validate cards; human sign-off owns the registry |
 | `checkpoint` | approvalKind, packet, responseRoute | T2 plan+projection approval, or a production approval packet |
