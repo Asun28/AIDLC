@@ -1,4 +1,4 @@
-import { after, describe, it } from 'node:test';
+import { after, afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import fs, { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -146,7 +146,7 @@ function throughFs<T>(handle: (fn: string, args: unknown[], real: Fn) => unknown
 }
 const passThrough = (): unknown => NOT_HANDLED;
 
-type Kind = 'file' | 'dir' | 'link';
+type Kind = 'file' | 'dir' | 'link' | 'other';
 const dirent = (name: string, kind: Kind) => ({ name, isFile: () => kind === 'file', isDirectory: () => kind === 'dir', isSymbolicLink: () => kind === 'link' });
 
 /** `process.kill` stubbed for one call; restored in a finally. */
@@ -167,6 +167,19 @@ function withKill<T>(body: () => T): { value: T; pids: number[] } {
 }
 
 describe('doctor interruptedWrites (card T0-DOCTOR-INTERRUPTED-WRITES)', () => {
+  // No test relies on a real pid being absent: the dead-pid constant answers ESRCH, any other pid reaches the real process.kill.
+  let realKill: typeof process.kill;
+  beforeEach(() => {
+    realKill = process.kill;
+    process.kill = ((pid: number, signal?: string | number) => {
+      if (pid === DEAD) throw errno('ESRCH');
+      return realKill.call(process, pid, signal);
+    }) as typeof process.kill;
+  });
+  afterEach(() => {
+    process.kill = realKill;
+  });
+
   it('a lock and a temp of a process that is not running are listed in every directory doctor reads', () => {
     const root = stateRoot();
     plantStems(root, DEAD, true);
@@ -248,6 +261,39 @@ describe('doctor interruptedWrites (card T0-DOCTOR-INTERRUPTED-WRITES)', () => {
     const root = stateRoot();
     plantExcluded(root);
     assert.equal(store.interruptedWritesReport(statePathsFromRoot(root)), 'none');
+  });
+
+  /** The scan over a root whose listing of the given directories gains the given entries (no file on disk). */
+  const withListing = (root: string, extra: Record<string, ReturnType<typeof dirent>[]>) => {
+    const paths = statePathsFromRoot(root);
+    return throughFs((fn, args, real) => {
+      const added = fn === 'readdirSync' ? extra[path.relative(root, String(args[0])).split(path.sep).join('/')] : undefined;
+      return added ? [...(real(...args) as unknown[]), ...added] : NOT_HANDLED;
+    }, () => store.interruptedWritesReport(paths));
+  };
+
+  it('a symbolic link named as a goal directory is not enumerated', () => {
+    const root = stateRoot();
+    const { value, calls } = withListing(root, { cards: [dirent('g-link', 'link')], evidence: [dirent('g-link', 'link')] });
+    assert.equal(value, 'none');
+    assert.deepEqual(calls.filter((c) => c.fn === 'readdirSync' && c.file.includes('g-link')), []);
+  });
+
+  it('a FIFO or a socket with a lock or temp name is listed and never opened', () => {
+    const root = stateRoot();
+    const { value, calls } = withListing(root, { leases: ['fifo', 'sock'].flatMap((n) => [dirent(`${n}.json.lock`, 'other'), dirent(`${n}.json${DEAD_TMP}`, 'other')]) });
+    assert.deepEqual(value, ['fifo.json.lock', `fifo.json${DEAD_TMP}`, 'sock.json.lock', `sock.json${DEAD_TMP}`].map((n) => `"leases/${n}": unreadable, not a regular file`));
+    assert.deepEqual(calls.filter((c) => (c.fn === 'readFileSync' || c.fn === 'readdirSync') && (c.file.includes('fifo') || c.file.includes('sock'))), []);
+  });
+
+  it('evidence manifest names are matched exactly, letter case included', () => {
+    const root = stateRoot();
+    put(root, 'evidence/g-1/MANIFEST.json.lock', DEAD_LOCK);
+    put(root, 'evidence/g-1/manifest.json.tmp-4242-0123ABCD');
+    const { value: { value, calls }, pids } = withKill(() => throughFs(passThrough, () => store.interruptedWritesReport(statePathsFromRoot(root))));
+    assert.equal(value, 'none');
+    assert.deepEqual(calls.filter((c) => c.fn === 'readFileSync'), []);
+    assert.deepEqual(pids, []);
   });
 
   it('a retained file with a manifest name is classified by its name', () => {
@@ -367,16 +413,18 @@ describe('doctor interruptedWrites (card T0-DOCTOR-INTERRUPTED-WRITES)', () => {
 
   describe('aidlc doctor', () => {
     const entry = path.join(repo, 'src', 'cli', 'main.ts');
+    // The child cannot be stubbed from here: a preload makes the dead-pid constant answer ESRCH there too.
+    const preload = 'data:text/javascript,' + encodeURIComponent(`const kill = process.kill; process.kill = (pid, signal) => { if (pid === ${DEAD}) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' }); return kill.call(process, pid, signal); };`);
     function childEnv(dir: string, state: string): NodeJS.ProcessEnv {
       const env: NodeJS.ProcessEnv = {};
-      for (const [key, value] of Object.entries(process.env)) if (!key.toUpperCase().startsWith('GIT_') && key !== 'NODE_OPTIONS') env[key] = value;
+      for (const [key, value] of Object.entries(process.env)) if (!key.toUpperCase().startsWith('GIT_') && key.toUpperCase() !== 'NODE_OPTIONS') env[key] = value;
       env['GIT_CEILING_DIRECTORIES'] = [path.dirname(dir), path.dirname(realpathSync.native(dir))].join(path.delimiter);
       env['AIDLC_STATE_DIR'] = state;
       env['AIDLC_SESSION'] = 'doctor-test';
       return env;
     }
     function doctor(dir: string, state: string, flag: '--json' | '--no-json'): { status: number | null; stdout: string; stderr: string } {
-      const r = spawnSync(process.execPath, [entry, 'doctor', flag], { cwd: dir, env: childEnv(dir, state), encoding: 'utf8', timeout: 120_000, windowsHide: true });
+      const r = spawnSync(process.execPath, ['--import', preload, entry, 'doctor', flag], { cwd: dir, env: childEnv(dir, state), encoding: 'utf8', timeout: 120_000, windowsHide: true });
       return { status: r.status, stdout: r.stdout, stderr: r.stderr };
     }
     /** The fixture of acceptances 13 and 14: a dead lock, a dead temp, a live lock and an excluded temp. */
