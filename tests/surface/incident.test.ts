@@ -1,11 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { IncidentLedger, intentFromBreach, writeIncidentIntent } from '../../src/maintain/incident.ts';
 import { breachIdentity, type BandBreach } from '../../src/maintain/bands.ts';
 import { parseIntent } from '../../src/artifacts/intent.ts';
+import { makeFixture } from '../scenarios/_harness.ts';
 
 const breach: BandBreach = {
   metric: 'ci_test_failure_rate',
@@ -89,4 +91,30 @@ test('intentFromBreach + writeIncidentIntent produce a parseable incident intent
   assert.deepEqual(parsed.intent?.openQuestions, ['Was the deploy the cause?']);
   assert.ok(readFileSync(file, 'utf8').includes('source: incident'));
   assert.ok(readFileSync(file, 'utf8').includes('- gh run view 123'));
+});
+
+test('aidlc monitor check --file-intent records the filing time on the incident, so the same breach inside the window files nothing', () => {
+  const fx = makeFixture();
+  try {
+    writeFileSync(path.join(fx.tmp, 'bands.yaml'), ['metric: error_rate', 'direction: above', 'min_samples: 8', 'tiers:', '  1sigma: { action: log }', '  2sigma: { action: diagnose, tools: "Read" }', '  3sigma: { action: propose, routes: [pull_request] }', 'dedupe_window_ms: 21600000', ''].join('\n'), 'utf8');
+    writeFileSync(path.join(fx.tmp, 'data.json'), JSON.stringify({ baseline: [9, 10, 11, 9, 10, 11, 9, 10, 11, 9, 10, 11], recent: [{ at: '2026-09-11T00:00:00.000Z', value: 14 }] }), 'utf8');
+    const check = () => spawnSync(process.execPath, [path.resolve('src/cli/main.ts'), 'monitor', 'check', '--bands', 'bands.yaml', '--data', 'data.json', '--file-intent'], { cwd: fx.tmp, env: { ...process.env, AIDLC_STATE_DIR: fx.paths.root }, encoding: 'utf8', timeout: 60_000 });
+    const first = check();
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal((JSON.parse(first.stdout) as { filed: string[] }).filed.length, 1, first.stdout);
+    const records = () => Object.values(new IncidentLedger(fx.paths.incidents).read());
+    assert.equal(records().length, 1);
+    const filed = records()[0]!;
+    assert.ok(filed.intentFile);
+    // The command passes the time of the check to the ledger: the window of the next check starts there.
+    assert.equal(typeof filed.filedAt, 'string');
+    assert.equal(filed.filedAt, filed.lastSeen);
+    const second = check();
+    assert.equal(second.status, 0, second.stderr);
+    assert.deepEqual((JSON.parse(second.stdout) as { filed: string[] }).filed, []);
+    assert.equal(records()[0]!.filedAt, filed.filedAt, 'a deduplicated check leaves the filing time as it was');
+    assert.equal(records()[0]!.count, 2);
+  } finally {
+    fx.cleanup();
+  }
 });

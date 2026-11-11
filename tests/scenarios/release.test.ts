@@ -497,3 +497,44 @@ test('R3 decision 1: `aidlc release packet` fails outside CHECKPOINT and prints 
     fx.cleanup();
   }
 });
+
+test('release next at CHECKPOINT without the authority returns the packet with the refusal detail and journals each check; reading the packet journals none', () => {
+  const fx = makeFixture();
+  try {
+    const { goalId, attemptId } = toDeliver(fx, 'production');
+    const runner = releaseRunner(fx, opsConfigured(), () => []);
+    let attempt = runner.setCandidate(fx.goal(goalId), fx.store.getRelease(attemptId)!, { candidateDigest: 'c1', sourceSha: candidateShaFor('T1-HELLO') });
+    stagingAuth(fx, goalId, 'c1');
+    let r = runner.next(fx.goal(goalId), attempt);
+    attempt = runner.reportStep(fx.goal(goalId), r.attempt, 'stage-verify', 'succeeded');
+    const checks = () => fx.events(goalId).filter((e) => e.type === 'AUTHORIZATION_CHECKED' && (e.data as Record<string, unknown>)['kind'] === 'production').map((e) => e.data as Record<string, unknown>);
+    assert.equal(checks().length, 0);
+    r = runner.next(fx.goal(goalId), attempt);
+    assert.equal(r.attempt.state, 'CHECKPOINT');
+    assert.equal(r.directive.kind, 'checkpoint');
+    // The step that reached CHECKPOINT checked the authority once, found none and says why in its narration.
+    assert.equal(checks().length, 1);
+    const check = checks()[0]!;
+    assert.equal(check['attemptId'], attemptId);
+    assert.equal(check['environment'], 'production');
+    assert.equal(check['matched'], false);
+    const detail = String(check['detail']);
+    assert.ok(detail.length > 0 && detail !== 'undefined', JSON.stringify(check));
+    assert.ok(r.directive.narration.endsWith(detail), r.directive.narration);
+    assert.ok(r.directive.narration.includes('aidlc authorize production --env production --candidate <digest> --ops '), r.directive.narration);
+    if (r.directive.kind === 'checkpoint') {
+      assert.equal(r.directive.attemptId, attemptId);
+      assert.equal(r.directive.packet['candidateDigest'], 'c1');
+      assert.equal(r.directive.packet['environment'], 'production');
+    }
+    // Each further release next checks and journals again and leaves the attempt where it is; reading the packet does neither.
+    const again = runner.next(fx.goal(goalId), r.attempt);
+    assert.deepEqual(again.directive, r.directive);
+    assert.equal(again.attempt.state, 'CHECKPOINT');
+    assert.equal(checks().length, 2);
+    assert.deepEqual(runner.checkpointPacket(fx.goal(goalId), again.attempt), r.directive);
+    assert.equal(checks().length, 2);
+  } finally {
+    fx.cleanup();
+  }
+});

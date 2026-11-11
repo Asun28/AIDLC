@@ -1920,3 +1920,24 @@ test('R3 decision 3: the member name before a document of a broken block cut sho
     assert.equal(inputs.readVerdict('Use {"verdict" as the key.' + space + axis).verdict?.verdict, 'pass', JSON.stringify(space));
   }
 });
+
+test('T0-AUDIT-FIXES: the reviewer output reader keeps an unknown run_status, the member-name rule holds only after an opener that never closed, and an escaped closer closes nothing', () => {
+  const pass = '{"verdict":"pass","reasons":[]}';
+  // R2: a run_status outside the five values in a reviewer's own document is malformed, never a review that completed.
+  for (const status of ['"bogus"', 'null', '""', '0', '{}']) {
+    const read = inputs.readVerdict('{"verdict":"pass","reasons":[],"run_status":' + status + '}').verdict;
+    assert.equal(read?.run_status, 'malformed', status);
+    assert.equal(classifyVerdict(read, {}).outcome, 'no-verdict', status);
+  }
+  assert.equal(inputs.readVerdict(pass).verdict?.run_status, undefined);
+  assert.equal(inputs.readVerdict('{"verdict":"pass","reasons":[],"run_status":"timeout"}').verdict?.run_status, 'timeout');
+  // R1: with no opener that never closed before it, a document behind a member name is an ordinary top-level document.
+  for (const text of ['My answer "final": ' + pass, 'My answer "final":\n' + pass, 'The contract is {"verdict": pass or block}. So "final": ' + pass]) {
+    assert.equal(inputs.readVerdict(text).verdict?.verdict, 'pass', text);
+  }
+  // R1: a backslash escapes the character after it, so an escaped closer does not balance a prose opener; the bare one does.
+  assert.equal(inputs.readVerdict('["note" ' + pass + ' \\]').verdict?.verdict, 'pass');
+  assert.equal(inputs.readVerdict('["note" ' + pass + ' ]').verdict, undefined);
+  assert.equal(inputs.readVerdict('Use {"verdict" as the key. ' + pass + ' \\}').verdict?.verdict, 'pass');
+  assert.equal(inputs.readVerdict('Use {"verdict" as the key. ' + pass + ' }').verdict, undefined);
+});

@@ -475,3 +475,20 @@ test('R3 decision 3: a card is archived by the directory it was read from, never
   card(same);
   assert.equal(duplicates(same, same).length, 0);
 });
+
+test('T0-AUDIT-FIXES: a registry without the archive record reads a card as archived only when its file lies inside the archive directory', () => {
+  const root = mkdtempSync(path.join(tmpdir(), 'aidlc-cards-'));
+  const tasks = path.join(root, 'specs', 'tasks-active');
+  const archive = path.join(root, 'specs', 'tasks');
+  for (const [dir, extra] of [[tasks, { depends_on: '\n  - T1-MISSING' }], [archive, { status: 'merged' }]] as Array<[string, Record<string, string>]>) {
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'T1-B.md'), templateCard({ id: 'T1-B', branch: 'T1-B', worktree: 'C:\\wt\\T1-B', allow_paths: '\n  - src/b/', ...extra }), 'utf8');
+  }
+  // A registry built by hand carries no record of where each card was read.
+  const registry = loadCardRegistry(tasks, archive);
+  for (const parsed of registry.cards) delete parsed.archived;
+  const found = validateRegistry(registry).get('T1-B') ?? [];
+  assert.equal(found.filter((f) => f.sentinel === '[CARD-ID-DUPLICATE]' && f.severity === 'block').length, 1, JSON.stringify(found));
+  assert.equal(found.filter((f) => f.sentinel === '[CARD-REF-DANGLING]').length, 1, 'the card beside the archive keeps its own checks');
+  assert.ok(found.find((f) => f.sentinel === '[CARD-ID-DUPLICATE]')!.message.includes(path.join(archive, 'T1-B.md')));
+});
