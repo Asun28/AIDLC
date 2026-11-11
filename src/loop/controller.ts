@@ -96,6 +96,8 @@ export class GoalController {
   private readonly registryLoader: () => CardRegistry;
   private readonly boardMirror: string | undefined;
   private readonly releaseRunner: ReleaseRunner | undefined;
+  /** The registry of the outermost `next`, `report` or `createGoal` call, open only while it runs (card T0-REGISTRY-PER-CALL). */
+  private registryScope: { registry?: CardRegistry } | undefined;
 
   constructor(deps: ControllerDeps) {
     this.paths = deps.paths;
@@ -120,8 +122,12 @@ export class GoalController {
   // ---------------------------------------------------------------------------------------
 
   createGoal(request: GoalRequest, options: CreateGoalOptions = {}): Goal {
+    return this.inRegistryScope(() => this.createGoalInScope(request, options));
+  }
+
+  private createGoalInScope(request: GoalRequest, options: CreateGoalOptions): Goal {
     const now = this.clock();
-    const registry = this.registryLoader();
+    const registry = this.cardRegistry();
     const routing = classifyRequest({
       ...request,
       knownCardIds: registry.cards.map((c) => c.card.id),
@@ -204,6 +210,10 @@ export class GoalController {
   // ---------------------------------------------------------------------------------------
 
   next(goalId: string): Directive {
+    return this.inRegistryScope(() => this.nextInScope(goalId));
+  }
+
+  private nextInScope(goalId: string): Directive {
     let goal = this.mustGoal(goalId);
     const now = this.clock();
     const base = (g: Goal) => ({ goalId: g.id, generation: g.generation, revision: g.revision, goalState: g.state, deadline: effectiveGoalDeadline(g.deadlines), skills: g.routing.skills ?? [] });
@@ -286,7 +296,7 @@ export class GoalController {
 
   private nextInCards(goal: Goal, now: string): Directive {
     const base = this.baseOf(goal);
-    const registry = this.registryLoader();
+    const registry = this.cardRegistry();
     const validation = validateRegistry(registry, this.config.tierPaths);
     const missing = goal.cards.filter((id) => !registry.cards.some((c) => c.card.id === id));
     const blocking = goal.cards.flatMap((id) => (validation.get(id) ?? []).filter((f) => f.severity === 'block').map((f) => `${id}: ${f.sentinel} ${f.message}`));
@@ -344,7 +354,7 @@ export class GoalController {
 
   private nextInRun(goal: Goal, now: string): Directive {
     const base = this.baseOf(goal);
-    const registry = this.registryLoader();
+    const registry = this.cardRegistry();
     const { cards, runs, outcomes } = this.cardOutcomes(goal, registry);
     // A projected run stopped for ownership while its card lease is live is the lease owner's work in progress: the owner's
     // next `card next` clears that stop, so the goal waits on it instead of stopping (card T0-CARD-LEASE-HEARTBEAT).
@@ -526,6 +536,10 @@ export class GoalController {
   // ---------------------------------------------------------------------------------------
 
   report(input: ReportInput): { goal: Goal; directive: Directive } {
+    return this.inRegistryScope(() => this.reportInScope(input));
+  }
+
+  private reportInScope(input: ReportInput): { goal: Goal; directive: Directive } {
     let goal = this.mustGoal(input.goalId);
     const now = this.clock();
     if (input.generation !== goal.generation) throw new Error(`stale report: observed generation ${input.generation}, current ${goal.generation}; revalidate before further mutation`);
@@ -556,7 +570,7 @@ export class GoalController {
         if (goal.state === 'DELIVER' || goal.state === 'CLOSE') throw new Error(`cards-projected is refused in ${goal.state}: run aidlc goal cancel ${goal.id}, then aidlc goal resume ${goal.id} --text "<request>" --cards <ids> (the whole revised list)`);
         const cards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : [];
         if (!cards.length) throw new Error('cards-projected requires data.cards (ids)');
-        const registry = this.registryLoader();
+        const registry = this.cardRegistry();
         const unknown = cards.filter((id) => !registry.cards.some((c) => c.card.id === id));
         if (unknown.length) throw new Error(`cards not found in ${this.config.cardsDir}: ${unknown.join(',')} (human sign-off writes the card files first)`);
         const cardRevisions = { ...goal.cardRevisions };
@@ -770,6 +784,24 @@ export class GoalController {
     }
   }
 
+  /** Runs `fn` in the open registry scope, or opens one that loads nothing yet and is dropped when `fn` returns or throws. */
+  private inRegistryScope<T>(fn: () => T): T {
+    if (this.registryScope) return fn();
+    this.registryScope = {};
+    try {
+      return fn();
+    } finally {
+      this.registryScope = undefined;
+    }
+  }
+
+  /** The registry kept by the open scope, loaded on first use; a load that throws keeps nothing. Outside a scope every call loads. */
+  private cardRegistry(): CardRegistry {
+    const scope = this.registryScope;
+    if (!scope) return this.registryLoader();
+    return (scope.registry ??= this.registryLoader());
+  }
+
   private baseOf(goal: Goal) {
     return { goalId: goal.id, generation: goal.generation, revision: goal.revision, goalState: goal.state, deadline: effectiveGoalDeadline(goal.deadlines), skills: goal.routing.skills ?? [] };
   }
@@ -801,7 +833,7 @@ export class GoalController {
    * revision superseded or removed, and its kept run, take no part.
    */
   private unmergedCards(goal: Goal): string[] {
-    const registry = this.registryLoader();
+    const registry = this.cardRegistry();
     const runs = this.store.listCardRuns(goal.id);
     return goal.cards.filter((id) => registry.cards.find((c) => c.card.id === id)?.card.status !== 'merged' && !runs.find((r) => r.cardId === id)?.mergeVerified);
   }
@@ -816,7 +848,7 @@ export class GoalController {
     const nextCards = Array.isArray(d['cards']) ? (d['cards'] as unknown[]).map(String) : goal.cards.map((c) => replacements[c] ?? c);
     for (const old of Object.keys(replacements)) if (nextCards.includes(old)) throw new Error(`replacement of ${old}: the superseded card is still listed; drop it from the cards or drop the replacement`);
     for (const [old, fresh] of Object.entries(replacements)) if (!nextCards.includes(fresh)) throw new Error(`replacement ${old} -> ${fresh}: ${fresh} is not among the listed cards (${nextCards.join(', ')})`);
-    const registry = this.registryLoader();
+    const registry = this.cardRegistry();
     for (const id of nextCards) if (!registry.cards.some((c) => c.card.id === id)) throw new Error(`card ${id} is not in the registry; write its card before revising the projection`);
     // The revised projection must be coherent: a listed card keeps every prerequisite it names, listed or already merged.
     for (const id of nextCards) {
@@ -897,7 +929,7 @@ export class GoalController {
   writeBoard(goal: Goal, cards?: Card[], runs?: CardRun[], outcomes?: Record<string, CardOutcome>, owners?: ReadonlyMap<string, Lease>): string {
     // The view reports the arc the controller decided, so the outcomes travel with the cards; a caller without them
     // (every caller that also lets the registry supply the cards) resolves the prerequisites here instead.
-    const registry = cards && outcomes ? undefined : this.registryLoader();
+    const registry = cards && outcomes ? undefined : this.cardRegistry();
     const cs = cards ?? goal.cards.map((id) => registry!.cards.find((c) => c.card.id === id)?.card).filter((c): c is Card => Boolean(c));
     const rs = runs ?? this.store.listCardRuns(goal.id);
     const os = outcomes ?? prerequisitesClosedElsewhere(cs, (id) => registry!.cards.find((r) => r.card.id === id)?.card.status);

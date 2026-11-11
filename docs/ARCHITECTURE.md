@@ -179,6 +179,8 @@ Report results by goal state (card T0-CARDS-PROJECTED-REENTRY). A listed card is
 
 STOP and DONE accept `resume` only. A refusal throws before any journal entry or goal write. The `cards-projected` refusal comes before the registry is read and names the routes: in VERIFY_ARC `aidlc goal repair <goalId> --cards <new ids>` or `aidlc goal amend <goalId> --text "<request>" --cards <ids>`, in DELIVER and CLOSE `aidlc goal cancel <goalId>`, then `aidlc goal resume <goalId> --text "<request>" --cards <ids>`; the `revision` refusal names the same cancel and resume. While a listed card is not merged, the `verify-arc` narration names it. Before this card, `cards-projected` moved VERIFY_ARC and DELIVER to CARDS without spending the repair cycle, `arc-verified` read only the goal state, and a revision in VERIFY_ARC, DELIVER or CLOSE kept the state.
 
+Within one `next`, `report` or `createGoal` call of `GoalController`, the outermost one when they nest, the card registry is read at most once after a successful load; a load that throws is not kept, so a later step of the same call loads again, and a card file another process changes during the call is seen by the next call (card T0-REGISTRY-PER-CALL).
+
 ## Persisted state
 
 Everything lives under `<main checkout>/.aidlc/` (gitignored, shared by all linked worktrees):
