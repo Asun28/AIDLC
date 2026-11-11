@@ -61,6 +61,25 @@ function reservedName(name: string): string | undefined {
   return undefined;
 }
 
+const DEVICE_NAMES = new Set(['con', 'prn', 'aux', 'nul', ...Array.from({ length: 10 }, (_, i) => `com${i}`), ...Array.from({ length: 10 }, (_, i) => `lpt${i}`)]);
+
+/**
+ * Why a retained file name cannot be used, or undefined. The same on every platform: an empty name, a name ending with a dot or
+ * with a Windows device name before its first dot (other Windows tools cannot open, copy or delete such files), `review` (the
+ * directory of card close copies), or the file of another id of the stored manifest (ASCII case ignored, as on Windows and macOS).
+ */
+function unusableName(name: string, id: string, entries: ManifestEntry[]): string | undefined {
+  const lower = name.toLowerCase();
+  if (name === '') return 'empty';
+  if (name.endsWith('.')) return 'ends with a dot';
+  if (lower === 'review') return 'the reserved name review';
+  const stem = lower.split('.')[0]!;
+  if (DEVICE_NAMES.has(stem)) return `the device name ${stem}`;
+  const other = entries.find((e) => e.id !== id && e.path.toLowerCase() === lower);
+  if (other) return `the file of the id ${other.id}`;
+  return undefined;
+}
+
 export class EvidenceStore {
   readonly dir: string;
 
@@ -89,6 +108,8 @@ export class EvidenceStore {
       const name = `${input.id.replace(/[^A-Za-z0-9._-]+/g, '_')}`;
       const reserved = reservedName(name);
       if (reserved) throw new Error(`evidence id ${input.id} has the file name ${name}, which is reserved for ${reserved} beside the manifest; choose another id`);
+      const unusable = unusableName(name, input.id, current.entries);
+      if (unusable) throw new Error(`evidence id ${input.id} has the file name ${name}, refused: ${unusable}; choose another id`);
       const target = path.join(this.dir, name);
       if (input.sourcePath) {
         if (!existsSync(input.sourcePath)) throw new Error(`evidence source missing: ${input.sourcePath}`);
