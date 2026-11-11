@@ -87,7 +87,7 @@ Commits: RED `18c22766` (op-clock.test.ts only, on base 93ca9a7d), GREEN `a239a5
 | release-runner.ts:550 `markRunning` | `now` | unchanged |
 | release-runner.ts:551 `markResult` | `now` | unchanged |
 
-R2: no other line of src/loop changed (`git diff 93ca9a7d -- src/loop` is the 11 lines above).
+R2: this branch changes no other line of src/loop (`git diff origin/main...HEAD -- src/loop`, against the merge base, is the 11 lines above; a two-dot diff against 93ca9a7d also shows what main gained since, the three lines of T0-PROD-GATE-GENERATION in controller.ts).
 
 ### RED (on 18c22766: 13 tests, 0 pass, 13 fail)
 Each acceptance 1 test failed on its time assertion, the wall clock (2026-11-11T22:45Z) against the fixture time: merge intent (`intentRecordedAt` and `op-20261111224509-` against `op-20260911000100-`), joined, not admitted, arming read throws, drift, ship throws, in flight, merge-unconfirmed not merged, merged succeeded, merged UNKNOWN, dod-failed (each `finishedAt`), release deploy (`intentRecordedAt` and `op-20261111224511-` against `op-20260911001200-`). Acceptance 2 failed listing the 11 calls marked "none" above.
@@ -114,7 +114,7 @@ Each acceptance 1 test failed on its time assertion, the wall clock (2026-11-11T
 ship-effect-unknown "after a reconcile the card ships again" alone, 8 runs each: R1 without the line 6 fail (before the amendment), base source 0 fail, R1 with the line 0 fail.
 
 ### Full suite (`npm test` on 6cfc93e0)
-Exit 0: 3321 tests, 3299 pass, 0 fail, 22 skipped. No other test depends on ledger order. tests/infra/exec.test.ts passed in this run and alone (61/61); in an earlier full run (before the third line) its acceptance 4 failed once on load timing.
+Exit 0: 3321 tests, 3299 pass, 0 fail, 22 skipped. No other ordering-related failure was observed in this run (tests such as tests/scenarios/op-intent-dup.test.ts:204 and tests/scenarios/release-reissue.test.ts:283 read ledger order on purpose and pass). tests/infra/exec.test.ts passed in this run and alone (61/61); in an earlier full run (before the third line) its acceptance 4 failed once on load timing.
 
 ### DoD (on 6cfc93e0)
 `dod_command` exit 0: typecheck clean; 172 tests, 169 pass, 0 fail, 3 skipped; fault-points.test.ts unchanged and passing, no new pin.
@@ -124,7 +124,11 @@ Exit 0: 3321 tests, 3299 pass, 0 fail, 22 skipped. No other test depends on ledg
 |---|---|
 | every ledger write of the card runner and release runner passes the injected clock; times and id prefix come from `now` | the 11 lines above; op-clock.test.ts acceptance 1 and 2 |
 | before, eleven calls left the time out | the RED run listing 11 calls |
-| a fixture's fixed clock decides times, ids and ledger order; three tests advance 1 ms, no assertion changed | the three `advance(1)` lines; revert rows 13-15 |
+| a fixture's fixed clock decides the record times, the time prefix of the ids and the first sort key of the ledger, not the order of two records of one instant; three tests advance 1 ms, no assertion changed | the three `advance(1)` lines; revert rows 13-15 |
 
 ### Size
 `git diff --shortstat origin/main...HEAD` before this section: 7 files, 235 insertions, 11 deletions (246) against the budget of 400; this section adds about 70.
+
+### After the pre-review of c2599307 (coordinator edits, documents and evidence only)
+
+A Codex pre-review of c2599307 found all seventeen ledger calls passing the injected clock, no write added, removed or reordered, the three fixture lines honest (they establish the order their assertions need; the order of two records of one instant stays out of scope) and four sentences to correct; the planner changed R4 on main and the coordinator edited the rest. No source or test changes. (1) CHANGELOG.md and the sentence table: the clock decides the record times, the time prefix of the id and the first sort key of the ledger; two records of one instant keep a random id suffix and no fixed order. (2) The R2 evidence cites the three-dot diff against the merge base. (3) The full-suite sentence says what was observed. (4) The scan of acceptance 2 is a completeness check over calls written as a property access on an expression that ends in `ops`, as the card defines it; a call through an alias of the ledger or a computed member name is outside it, and acceptance 1 stays the behavioural proof. In production the clock is the wall clock read once at the entry of the method, so a record now carries that time where it carried a later read; no gate reads the difference.
