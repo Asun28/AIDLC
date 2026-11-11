@@ -32,10 +32,11 @@ export function decideWorktree(probe: GitProbe, input: WorktreeAttachInput): Wor
   } catch (err) {
     return { action: 'stop', reason: `worktree probe failed: ${(err as Error).message}`, stopReason: 'tool' };
   }
+  // A mismatch comes first: a branch checked out in two worktrees has a mismatch and no single entry, and is not a missing worktree.
+  if (found.mismatch) return { action: 'stop', reason: found.mismatch, stopReason: 'ownership' };
   if (!found.entry) {
     return { action: 'start', path: expected, reason: 'no worktree for this branch; start a new one' };
   }
-  if (found.mismatch) return { action: 'stop', reason: found.mismatch, stopReason: 'ownership' };
   // Common dir must be the main checkout's.
   try {
     const common = probe.commonDir(found.entry.path);

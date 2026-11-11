@@ -1112,7 +1112,9 @@ export async function main(argv: string[] = process.argv): Promise<void> {
   const releaseCtx = (c: Ctx, attemptId: string, goalId?: string) => {
     const attempt = c.store.getRelease(attemptId);
     if (!attempt) fail(`unknown release attempt ${attemptId}`);
-    const goalRec = c.controller.mustGoal(goalId ?? attempt.goalId);
+    // The attempt names its goal: another goal's authorizations and journal are never applied to it.
+    if (goalId !== undefined && goalId !== attempt.goalId) fail(`release attempt ${attemptId} belongs to goal ${attempt.goalId}, not ${goalId}`);
+    const goalRec = c.controller.mustGoal(attempt.goalId);
     return { attempt, goalRec, runner: new ReleaseRunner({ paths: c.paths, repo: c.repo, store: c.store }) };
   };
   release
@@ -1169,8 +1171,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     .action((attemptId: string) => {
       const c = ctx(g());
       const { attempt, goalRec, runner } = releaseCtx(c, attemptId);
-      const r = runner.next(goalRec, attempt);
-      out(c, r.directive, () => JSON.stringify(r.directive, null, 2));
+      // Read only: printing the packet never advances the attempt, so it never issues a deployment.
+      const directive = runner.checkpointPacket(goalRec, attempt);
+      if (!directive) fail(`release attempt ${attemptId} is at ${attempt.state}: the approval packet exists at CHECKPOINT only; \`aidlc release next ${attemptId}\` advances the attempt`);
+      out(c, directive, () => JSON.stringify(directive, null, 2));
     });
   release
     .command('ops')
@@ -1350,7 +1354,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
           const decision = ledger.shouldFile(b, cfg.dedupe_window_ms, now);
           if (!decision.file) continue;
           const file = writeIncidentIntent(path.join(c.root, c.config.intentDir), intentFromBreach(b, { summary: `Deterministic band breach on ${b.metric}`, affected: 'see metric owner', proposedOutcome: 'restore the metric to baseline; add a regression eval when fixed', openQuestions: ['Is this a real regression or a data problem?'], evidence: [b.detail] }, now));
-          ledger.attachIntent(decision.record.identity, file);
+          ledger.attachIntent(decision.record.identity, file, now);
           Journal.host(c.paths.journal).append({ type: 'INTENT_FILED', data: { file, breach: b.rule, metric: b.metric } });
           filed.push(file);
         }

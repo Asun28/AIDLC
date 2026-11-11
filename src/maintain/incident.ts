@@ -15,6 +15,8 @@ export interface IncidentRecord {
   lastSeen: string;
   count: number;
   intentFile?: string;
+  /** When the latest intent was attached: the start of the dedupe window. A record written before this field has none, and `firstSeen` stands in. */
+  filedAt?: string;
   disposition: 'open' | 'fix-now' | 'scheduled' | 'dismissed';
   dismissReason?: string;
 }
@@ -56,15 +58,18 @@ export class IncidentLedger {
     all[id] = existing;
     this.write(all);
     if (existing.disposition === 'dismissed') return { file: false, record: existing };
-    const withinWindow = Date.parse(now) - Date.parse(existing.firstSeen) < dedupeWindowMs;
+    // The window runs from the latest filing: measured from `firstSeen` alone, every check after the first window would file.
+    const withinWindow = Date.parse(now) - Date.parse(existing.filedAt ?? existing.firstSeen) < dedupeWindowMs;
     return { file: !withinWindow || !existing.intentFile, record: existing };
   }
 
-  attachIntent(identity: string, intentFile: string): void {
+  /** Records the filed intent; `now` is the filing time the next dedupe window starts at. */
+  attachIntent(identity: string, intentFile: string, now?: string): void {
     const all = this.read();
     const rec = all[identity];
     if (rec) {
       rec.intentFile = intentFile;
+      if (now) rec.filedAt = now;
       this.write(all);
     }
   }

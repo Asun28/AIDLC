@@ -527,13 +527,25 @@ export function secretsGuard(event: HookEvent): HookResult {
     const v = event.tool_input?.[k];
     if (typeof v === 'string') texts.push(v);
   }
+  // A MultiEdit carries its text in `edits`: each entry's `new_string` is what the edit writes.
+  const edits = event.tool_input?.['edits'];
+  if (Array.isArray(edits)) {
+    for (const edit of edits as unknown[]) {
+      const v = edit && typeof edit === 'object' ? (edit as Record<string, unknown>)['new_string'] : undefined;
+      if (typeof v === 'string') texts.push(v);
+    }
+  }
   const file = event.tool_input?.['file_path'];
   if (typeof file === 'string' && /(^|\/)\.env(\.(?!example$|sample$|template$)|$)|\.pem$|\.key$|id_rsa|\.secrets\//i.test(normalise(file))) {
     return deny('PreToolUse', `Writing to ${JSON.stringify(file)} is blocked: secret-bearing files are never edited by the agent. Use .env.example placeholders.`);
   }
   for (const t of texts) {
     for (const [re, name] of SECRET_PATTERNS) {
-      if (re.test(t) && !/example|placeholder|xxxx|<your|\$\{/i.test(t.match(re)?.[0] ?? '')) return deny('PreToolUse', `Blocked: content looks like a ${name}. Credentials never enter a diff; use environment variables or a placeholder.`);
+      // Every match is read: a placeholder that matches first does not excuse a credential that matches after it.
+      for (const m of t.matchAll(new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`))) {
+        if (/example|placeholder|xxxx|<your|\$\{/i.test(m[0])) continue;
+        return deny('PreToolUse', `Blocked: content looks like a ${name}. Credentials never enter a diff; use environment variables or a placeholder.`);
+      }
     }
   }
   return { exitCode: 0 };

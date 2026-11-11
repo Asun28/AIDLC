@@ -81,6 +81,30 @@ export class ReleaseRunner {
     return this.opsLoad.status === 'configured' ? this.opsLoad.config.operations.find((o) => o.role === role) : undefined;
   }
 
+  /**
+   * The production checkpoint of an attempt, computed and nothing else: no save, no journal event, no operation. It binds
+   * to the PRODUCTION environment, never to the staging one used so far. `stopRec` is absent once a recorded authority
+   * matches the packet; `next` is the one caller that then applies.
+   */
+  private checkpoint(goal: Goal, attempt: ReleaseAttempt) {
+    const prodEnv = this.defaultEnvironment('production');
+    const prodAttempt = { ...attempt, environment: prodEnv };
+    const guard = this.guards(goal, prodAttempt, { stagingVerified: true });
+    const stopRec = assertReleaseTransition(prodAttempt, 'APPLY', guard);
+    const recover = this.binding('recover');
+    const packet = approvalPacket('production', guard.effects ?? {}, { evidence: attempt.evidence.map((e) => e.id), dataSteps: attempt.steps.map((s) => `${s.name}:${s.status}`), recoveryPlan: recover ? `bound operation ${recover.command.join(' ')}` : 'NOT CONFIGURED' });
+    const narration = stopRec
+      ? `Present the exact candidate, environment (${prodEnv}), changes, evidence, data steps and recovery plan; wait for matching explicit production authority (aidlc authorize production --env ${prodEnv} --candidate <digest> --ops ${this.plannedRoles(prodAttempt).join(',')}). ${stopRec.detail}`
+      : `Matching production authority is recorded for this candidate, environment (${prodEnv}) and operations; \`aidlc release next ${attempt.id}\` applies it.`;
+    const directive: ReleaseDirective & { kind: 'checkpoint' } = { kind: 'checkpoint', attemptId: attempt.id, packet, narration };
+    return { prodEnv, prodAttempt, guard, stopRec, directive };
+  }
+
+  /** The approval packet of an attempt at CHECKPOINT, read only (`aidlc release packet`); undefined in every other state. */
+  checkpointPacket(goal: Goal, attempt: ReleaseAttempt): (ReleaseDirective & { kind: 'checkpoint' }) | undefined {
+    return attempt.state === 'CHECKPOINT' ? this.checkpoint(goal, attempt).directive : undefined;
+  }
+
   private guards(goal: Goal, attempt: ReleaseAttempt, extra: Partial<ReleaseGuards> = {}): ReleaseGuards {
     const target = attempt.target === 'development' || attempt.target === 'operations' ? 'package' : attempt.target;
     const roles = resolveRoles(this.opsLoad, target);
@@ -149,7 +173,7 @@ export class ReleaseRunner {
         if (roles.problem) needs.push(roles.problem);
         if (attempt.target === 'package') {
           if (needs.length) return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs, narration: 'Package target: build/package operations and an identified package are required; report with aidlc release report.' } };
-          return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs: ['install/run proof'], narration: 'Run the package install/run proof and report it (aidlc release report --package-run-proof).' } };
+          return { attempt, directive: { kind: 'prepare', attemptId: attempt.id, needs: ['install/run proof'], narration: `Run the package install/run proof and report it (aidlc release report ${attempt.id} --step package-run-proof --status succeeded).` } };
         }
         if (needs.length) {
           const cfgMissing = needs.some((n) => n.includes('NOT CONFIGURED') || n.includes('unreadable'));
@@ -188,20 +212,15 @@ export class ReleaseRunner {
         return { attempt, directive: { kind: 'wait', attemptId: attempt.id, on: 'stage-deploy', narration: 'Staging deployment issued; awaiting provider status.' } };
       }
       case 'CHECKPOINT': {
-        // The checkpoint binds to the PRODUCTION environment, never to the staging one used so far.
-        const prodEnv = this.defaultEnvironment('production');
-        const prodAttempt = { ...attempt, environment: prodEnv };
-        const guard = this.guards(goal, prodAttempt, { stagingVerified: true });
-        const stopRec = assertReleaseTransition(prodAttempt, 'APPLY', guard);
+        const { prodEnv, prodAttempt, guard, stopRec, directive } = this.checkpoint(goal, attempt);
         if (!stopRec) {
           const applied = transitionRelease(prodAttempt, 'APPLY', now, guard);
           const saved = this.save(applied);
           this.journal(goal.id).append({ type: 'AUTHORIZATION_CHECKED', goalId: goal.id, generation: goal.generation, data: { attemptId: saved.id, kind: 'production', environment: prodEnv, matched: true } });
           return this.next(goal, saved);
         }
-        const packet = approvalPacket('production', guard.effects ?? {}, { evidence: attempt.evidence.map((e) => e.id), dataSteps: attempt.steps.map((s) => `${s.name}:${s.status}`), recoveryPlan: this.binding('recover') ? `bound operation ${this.binding('recover')!.command.join(' ')}` : 'NOT CONFIGURED' });
         this.journal(goal.id).append({ type: 'AUTHORIZATION_CHECKED', goalId: goal.id, generation: goal.generation, data: { attemptId: attempt.id, kind: 'production', environment: prodEnv, matched: false, detail: stopRec.detail } });
-        return { attempt, directive: { kind: 'checkpoint', attemptId: attempt.id, packet, narration: `Present the exact candidate, environment (${prodEnv}), changes, evidence, data steps and recovery plan; wait for matching explicit production authority (aidlc authorize production --env ${prodEnv} --candidate <digest> --ops ${this.plannedRoles(prodAttempt).join(',')}). ${stopRec.detail}` } };
+        return { attempt, directive };
       }
       case 'APPLY': {
         const done = attempt.steps.find((s) => s.name === 'apply-deploy');

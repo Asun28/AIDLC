@@ -249,6 +249,9 @@ export function validateRegistry(registry: CardRegistry, tierPaths: { tierS?: st
     const findings = [...parsed.findings];
     const isArchived = registry.archiveDir !== undefined && parsed.file?.startsWith(registry.archiveDir);
     if (!isArchived) {
+      // One id, one card: a second file with the id (a copy left in the archive or beside the card) makes every lookup by id ambiguous.
+      const twins = registry.cards.filter((other) => other !== parsed && other.card.id === parsed.card.id);
+      if (twins.length) findings.push({ sentinel: '[CARD-ID-DUPLICATE]', severity: 'block', message: `id ${parsed.card.id} is also the id of ${twins.map((t) => t.file ?? 'another card').join(', ')}` });
       for (const dep of parsed.card.depends_on) if (!ids.has(dep)) findings.push({ sentinel: '[CARD-REF-DANGLING]', severity: 'block', message: `depends_on ${dep} does not resolve` });
       for (const p of parsed.card.parallelizable_with) if (!ids.has(p)) findings.push({ sentinel: '[CARD-REF-DANGLING]', severity: 'block', message: `parallelizable_with ${p} does not resolve` });
       const computed = computeTier(parsed.card.allow_paths, tierPaths);
@@ -262,7 +265,8 @@ export function validateRegistry(registry: CardRegistry, tierPaths: { tierS?: st
         }
       }
     }
-    out.set(parsed.card.id, findings);
+    // Findings are keyed by id, so two cards with one id share an entry: each adds to it and neither replaces the other's.
+    out.set(parsed.card.id, [...(out.get(parsed.card.id) ?? []), ...findings]);
   }
   return out;
 }

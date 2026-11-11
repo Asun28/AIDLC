@@ -491,10 +491,14 @@ export function readVerdict(output: string): { verdict?: Verdict; rejected: Reje
   // top-level documents are the candidates and the last decides (an array is a document that is not a verdict). The output
   // is malformed when a document after the decisive one closed without parsing, or when a document never closes (a block
   // cut short after a nested axis is never its last axis; an unfinished enclosing array never yields its nested object).
-  const { spans, unfinished } = topLevelDocuments(output);
+  const { spans, unfinished, refuted } = topLevelDocuments(output);
   const parseable = spans.filter((s) => s.parses);
   const decisive = parseable[parseable.length - 1];
   if (!decisive) return { rejected: NO_REJECTS };
+  // The scan resumes inside an opener it refuted, so an object nested after the break closes as a document of its own:
+  // the `standards` axis of a block whose `spec` axis carries a bad escape. One that sits in a container (a member name
+  // or a separator before it, a separator or a closer after it) is a member of the broken document, never the verdict.
+  if (refuted !== undefined && refuted < decisive.start && memberOfContainer(output, decisive.start, decisive.end)) return { rejected: NO_REJECTS };
   if (spans.some((s) => s.start > decisive.start && !s.parses)) return { rejected: NO_REJECTS };
   if (unfinished !== undefined) return { rejected: NO_REJECTS };
   if (inUnclosedFence(output, decisive.start, decisive.end)) return { rejected: NO_REJECTS };
@@ -592,9 +596,11 @@ function inUnclosedFence(text: string, start: number, end: number): boolean {
  * scan never re-reads it and the walk stays linear in the size of the output. A prose opener with no document after it
  * leaves the output malformed, so a final document corrupt in its interior is never answered by an earlier draft.
  */
-function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined } {
+function topLevelDocuments(text: string): { spans: Array<{ start: number; end: number; parses: boolean }>; unfinished: number | undefined; refuted: number | undefined } {
   const spans: Array<{ start: number; end: number; parses: boolean }> = [];
   let prose: number | undefined;
+  /** The first opener a character refuted: every document after it may be a member of that broken text. */
+  let refuted: number | undefined;
   let i = 0;
   while (i < text.length) {
     const c = text[i]!;
@@ -613,7 +619,7 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       continue;
     }
     const read = readDocument(text, i);
-    if (read.kind === 'truncated') return { spans, unfinished: i };
+    if (read.kind === 'truncated') return { spans, unfinished: i, refuted };
     if (read.kind === 'closed') {
       // The reader accepts exactly JSON, so a document it closed parses; the flag stays for the callers that read it.
       spans.push({ start: i, end: read.end, parses: true });
@@ -621,10 +627,18 @@ function topLevelDocuments(text: string): { spans: Array<{ start: number; end: n
       continue;
     }
     prose = i;
+    refuted ??= i;
     i = read.at;
   }
-  if (prose !== undefined && !spans.some((s) => s.start > prose!)) return { spans, unfinished: prose };
-  return { spans, unfinished: undefined };
+  if (prose !== undefined && !spans.some((s) => s.start > prose!)) return { spans, unfinished: prose, refuted };
+  return { spans, unfinished: undefined, refuted };
+}
+
+/** Whether the document at `start`..`end` reads as a member of an enclosing object or array: a member name or a separator before it, or a separator or a closer after it. */
+function memberOfContainer(text: string, start: number, end: number): boolean {
+  const before = text.slice(0, start).trimEnd();
+  const after = text.slice(end + 1).trimStart();
+  return /"\s*:$/.test(before) || before.endsWith(',') || /^[,}\]]/.test(after);
 }
 
 /** How a document that starts at `start` ends: closed at an index, stopped at a character JSON cannot carry there, or still open at the end of the text. */
@@ -996,8 +1010,9 @@ export function validatePerspectives(perspectives: string[]): void {
   const seen = new Set<string>();
   for (const p of perspectives) {
     if (!PERSPECTIVE_NAME.test(p) || p === '.' || p === '..' || p.includes('..')) throw new Error(`invalid perspective name "${p}": use letters, digits, dot, underscore or dash`);
-    if (seen.has(p)) throw new Error(`duplicate perspective name "${p}"`);
-    seen.add(p);
+    // Case is folded: two names that differ only by case write one log and one verdict file on a case-insensitive filesystem.
+    if (seen.has(p.toLowerCase())) throw new Error(`duplicate perspective name "${p}"`);
+    seen.add(p.toLowerCase());
   }
 }
 

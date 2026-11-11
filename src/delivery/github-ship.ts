@@ -276,6 +276,9 @@ export class GitHubShipPath implements ShipPath {
     if (this.options.requireVerdict !== false) {
       if (!v.verdict) return fail('[R3-NO-VERDICT-JSON]', `no verdict at ${v.file}`);
       if (v.verdict.sha && v.verdict.sha !== head) return fail('[R3-STALE-VERDICT-SHA]', `verdict sha ${v.verdict.sha} != HEAD ${head}`);
+      // A review that timed out, printed nothing, printed a malformed document or failed in a tool decided nothing, whatever
+      // its verdict field says: `classifyVerdict` reads it as no verdict, and so does the gate, before any remote effect.
+      if (v.verdict.run_status && v.verdict.run_status !== 'success') return fail('[R3-NO-VERDICT-JSON]', `verdict at ${v.file} has run_status ${v.verdict.run_status}: the review did not complete`);
     }
     // The base name, normalised exactly once: the branch the PR targets and the ref the sync fetches and tests.
     const base = req.base.replace(/^origin\//, '');
@@ -297,6 +300,9 @@ export class GitHubShipPath implements ShipPath {
         // it parses as a PR record, otherwise nothing is reused, synced or pushed on its account.
         const parsed = PrInfo.safeParse(resolved.pr);
         if (!parsed.success) return fail('[SHIP-PR-BASE-UNKNOWN]', `malformed PR listing entry: ${parsed.error.issues.map((i) => `${i.path.join('.') || 'entry'} ${i.message}`).join('; ')}`);
+        // A problem that comes with a PR (one closed without a merge) stops here too, with its number: a sync, a push
+        // and a CI wait on a PR that cannot merge would end in a CI or merge failure that names the wrong cause.
+        if (resolved.problem) return fail('[SHIP-PR-BASE-UNKNOWN]', resolved.problem, parsed.data.number);
       }
       prNumber = resolved.pr?.number;
       if (prNumber && resolved.pr?.state === 'MERGED') {

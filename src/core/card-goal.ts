@@ -31,7 +31,7 @@ export function resolveCardGoal(goals: readonly CardGoalCandidate[], cardId: str
   if (active.length > 1) return { ok: false, error: `card ${cardId} is projected by ${active.length} active goals (${active.map((g) => g.id).join(', ')}); pass --goal <id>` };
   if (projecting.length === 1) return { ok: true, goalId: projecting[0]!.id };
   if (projecting.length > 1) return { ok: false, error: `card ${cardId} is projected by no active goal and by ${projecting.length} terminal goals (${projecting.map((g) => g.id).join(', ')}); pass --goal <id>` };
-  return { ok: false, error: `no goal projects card ${cardId}; create one with \`aidlc goal new --card ${cardId}\`` };
+  return { ok: false, error: `no goal projects card ${cardId}; create one with \`aidlc goal new --card ${cardId} "<request>"\`` };
 }
 
 /** The goal fields the terminal-goal refusal reads (card T0-CARD-TERMINAL-GOAL). */
