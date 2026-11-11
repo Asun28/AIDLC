@@ -75,7 +75,7 @@ npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/upda
 
 Attempt 1, effort high. RED commit efdc00cd (tests only; at that commit the file fails to load because `IncidentLedgerFile` is not exported by src/core/types.ts, so the per-test RED receipt was taken with a throwaway stub export, not committed: 12 of 23 tests failed, first assertion lines below). GREEN commits follow it; tests added after RED are marked "added after RED".
 
-DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 54 tests, 51 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 37 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped; at f575000a 52 tests, 49 pass, 3 skipped.
+DoD at the current candidate (the commit that carries this evidence): `npm run typecheck && node --test tests/surface/incident.test.ts tests/infra/update-json.test.ts` exit 0; typecheck clean; 56 tests, 53 pass, 0 fail, 3 skipped (the three POSIX-only tests, skipped on Windows and for uid 0 with the reason in the skip; the test file holds 39 tests, update-json.test.ts the rest). Earlier candidates, for the record only: at 111aecf8 42 tests, 40 pass, 2 skipped; at a70ed789 47 tests, 44 pass, 3 skipped; at f575000a 52 tests, 49 pass, 3 skipped; at b841528e 54 tests, 51 pass, 3 skipped.
 
 RED receipt (stub export in types.ts, other code as main), first failing assertion per test:
 
@@ -125,6 +125,7 @@ Passing on main by design (controls, as the card allows): the five tests of main
 | R2 an own `__proto__` key at the top level, in a record or deeper is SCHEMA_VIOLATION naming the file | `ledgerIssue` in the `IncidentLedgerFile` schema | the `__proto__` test (four depths, four methods, `write`, issue path asserted), four CLI rows; keys that merely contain the text are kept |
 | R2 the `__proto__` search does not recurse on the call stack | explicit stack in `ledgerIssue` | no input tells it from a recursive form once the limit bounds the depth (last revert row of the third round); the 6,000-deep rows show no `RangeError` |
 | R2 a ledger nested more than 64 deep (ledger object = 1, record = 2) is SCHEMA_VIOLATION naming the file and the path at which the limit is passed, on read and by `write` before it serializes; the first issue met is named when `__proto__` also applies | `depth > MAX_LEDGER_DEPTH` in `ledgerIssue`; `write` validates with `safeParse` and throws `StoreError('SCHEMA_VIOLATION', ...)` | the 64-deep, 65-deep and 6,000-deep tests, the ordering rows, the CLI rows; revert rows of the third round |
+| R2 an array is walked by index and an object by its enumerable own keys, as the serializer visits them (a non-enumerable array element counts and is searched) | children loop of `ledgerIssue` (`Object.keys` for objects, indices 0 to length for arrays) | "write walks an array as the serializer does ..." (64 accepted and read back, 65 and 6,000 SCHEMA_VIOLATION, `__proto__` refused); revert row `Object.entries` |
 | R2 a path that exists and is not a regular file is READ_FAILED from the stat result, before any read | `if (!stats.isFile()) throw ...` in `present()` | injected stat with a read counter, real directory, CLI rows |
 | R3 the value handed to a write is validated before it is serialized | `IncidentLedgerFile.parse(data)` before `atomicWriteJson` | "written whole" (count 0, disposition closed), `__proto__` test (`write`) |
 | R3 shouldFile, attachIntent, triage read through R2 first | `this.read()` in each | each of the four methods in every row; per-method revert rows below |
@@ -242,6 +243,7 @@ A ledger path under a regular file is READ_FAILED on POSIX and absent on Windows
 - non-goal automatic recovery: a ledger that does not parse throws and is never written (bytes tests).
 - non-goal intent created then `attachIntent` failing: no handling added; `attachIntent` stays after `writeIncidentIntent` in main.ts.
 - non-goal Windows EPERM at the ledger rename: no retry; the failing-rename test shows the previous ledger stays.
+- non-goal a value handed to `write` that is not JSON data (bigint, function, symbol, `undefined`, accessors, own prototype): no code and no document sentence was added for it; `grep -ciE "bigint|symbol|accessor|not JSON data"` over the added lines of src, docs and the CHANGELOG is 0.
 
 ### Temporary directories (message of the coordinator)
 
@@ -274,7 +276,7 @@ Six points of the second pre-review of a70ed789, repaired in commit 3faa963e (co
 
 1. Search without recursion (R2). `protoKeyPath` searched with an explicit stack; the third round (below) replaces it by `ledgerIssue`, the same traversal with the nesting limit, and replaces the tests of this point. What was measured then, on Node 22.23.1: `JSON.parse` reads 20,000 levels and the zod parse accepts them, but the store's serializer (`stableStringify`, `sortKeys`, recursive, src/state/store.ts) throws `RangeError` from depth 1,739 (1,738 is the largest depth that serializes) and `JSON.stringify` throws at 6,000; that is the reason for the limit.
 2. Isolation, `git init`. The `git init` child of the isolation test gets `cleanEnv()`, and the test asserts that `other/.git` is a directory before the CLI runs. Check with `GIT_DIR` set in the environment of the test run: with the fix the test passes; with the inherited environment restored on that spawn it fails (pass 0, fail 1).
-3. Case-insensitive selectors. `cleanEnv()` drops every environment name whose upper case is in the selector list, on every platform; `childEnv` and the `git init` child use it. Test: "the lowercase and mixed-case names of the git selector variables are removed from a child environment" sets `git_dir`, `Git_Work_Tree` and `GIT_INDEX_FILE` in the parent, asserts that `childEnv` holds no selector in any case and that a real child process lists none. The assertion is the same on both platforms: on Windows the three names are the selectors themselves; on POSIX `git_dir` and `Git_Work_Tree` are other variables that git ignores and are removed all the same (the policy is a case-insensitive match, so that no platform keeps a name that another would treat as a selector).
+3. Case-insensitive selectors (the selector list was replaced in the fourth round by the `GIT_` prefix, below). `cleanEnv()` drops every environment name whose upper case is in the selector list, on every platform; `childEnv` and the `git init` child use it. Test: "the lowercase and mixed-case names of the git selector variables are removed from a child environment" sets `git_dir`, `Git_Work_Tree` and `GIT_INDEX_FILE` in the parent, asserts that `childEnv` holds no selector in any case and that a real child process lists none. The assertion is the same on both platforms: on Windows the three names are the selectors themselves; on POSIX `git_dir` and `Git_Work_Tree` are other variables that git ignores and are removed all the same (the policy is a case-insensitive match, so that no platform keeps a name that another would treat as a selector).
 4. Not a regular file (R2). `present()` keeps the stat result and throws `READ_FAILED` naming the file when `!stats.isFile()`, before any read. Tests: "a path that exists and is not a regular file is READ_FAILED from the stat result, before any read, through all four methods" (stat injected to say not a file over a ledger whose content is valid, the read counter stays 0; and a real directory) and "aidlc monitor check with a directory at the ledger path refuses with READ_FAILED for every breach" (no breach, log-only, propose-tier: exit 1, `filed` empty, no intent, journal unchanged).
 5. Wording (R3). docs/OPERATIONS.md and the CHANGELOG entry now say "The value handed to a ledger write is validated with the schema before it is serialized, and is then written to a temporary file that is renamed into place" (OPERATIONS adds: so a write that fails before the rename leaves the previous ledger); the `write` comment says the same. No sentence says anything about the bytes on disk afterwards. `grep -n "a read accepts\|a read would refuse\|never written"` over docs, the CHANGELOG and src finds none of the old phrases (the one hit, in src/coordination/review-queue.ts, is unrelated). The card's own test title of acceptance 3 keeps its words.
 6. Evidence. Every historical figure in this section carries its candidate SHA: RED (efdc00cd, 23 tests, 12 fail), the run against main code (43f3736d, 25 tests: 12 fail, 11 pass, 2 skipped; 3faa963e, 35 tests: 18 fail, 14 pass, 3 skipped), the DoD (111aecf8: 42 tests, 40 pass, 2 skipped; a70ed789: 47 tests, 44 pass, 3 skipped; current: below), the removed test lines (three at 3faa963e: the two import lines and the `env` option of the first CLI test's spawn, whose assertions are untouched), the skips (three POSIX-only tests at 3faa963e), the doc runs.
@@ -348,5 +350,48 @@ Revert rows of this round (one hunk reverted, `tests/surface/incident.test.ts` r
 | types: recursive search with the limit instead of the explicit stack | none | GREEN (survives) |
 
 The last row stays green and is not a defect of the tests: with the limit the search stops at 65 containers, so a recursive form cannot overflow the stack and no input tells it from the explicit stack. The card requires the form without recursion (R2), so the explicit stack stays; the requirement is met by the code, and what observably follows from it (no `RangeError` at 6,000 levels) is pinned by the tests above. The earlier row that did show recursion (the second round) is superseded by the limit.
+
+### After the fourth pre-review (array walk, git ceiling)
+
+Merged main up to 53b5bf88 (card amended in 4b7b569c: R2 walks an array by index as the serializer does, a new first non-goal, budget 1260). Repaired in commit 0c27fe35. No document was touched, so the doc-reading files were not rerun.
+
+1. Array walk (R2). The serializer (`sortKeys` in src/state/store.ts, read only) maps an array with `Array.prototype.map`, which visits an element defined as not enumerable, and an object by `Object.keys` (enumerable own keys) read with `value[key]`. `Object.entries` skips a non-enumerable index, so a ledger with such an element 65 deep passed `write` and `read` then refused it, and at 6,000 `write` threw a raw `RangeError`. The children loop of `ledgerIssue` (the rest of the function is as shown in the third round) is now:
+
+```ts
+    const keys = Array.isArray(value) ? undefined : Object.keys(value);
+    for (let i = (keys ? keys.length : (value as unknown[]).length) - 1; i >= 0; i--) {
+      const key = keys ? keys[i]! : String(i);
+      stack.push({ value: (value as Record<string, unknown>)[key], at: { key, up: at }, depth: depth + 1 });
+    }
+```
+
+   An array is walked by index from 0 to its length (a hole reads as `undefined`, which is skipped when popped); an object by its enumerable own keys. Test, through `write` directly: "write walks an array as the serializer does: a non-enumerable element counts toward the nesting limit and is searched for __proto__": a valid record with `note = []` and index 0 defined non-enumerable holding 61 nested objects (64 deep) is written and reads back equal; 62 (65 deep) and 6,000 are `StoreError` `SCHEMA_VIOLATION` naming the file and the path `k.note.0.x...x: nesting deeper than 64 levels`, never a `RangeError`, the previous ledger unchanged; a non-enumerable element `{"__proto__":1}` is refused with `k.note.0.__proto__`.
+2. Git ceiling (test isolation). The env helpers of the test file:
+
+```ts
+function cleanEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) if (!key.toUpperCase().startsWith('GIT_')) env[key] = value;
+  return env;
+}
+function childEnv(stateDir: string, cwd: string): NodeJS.ProcessEnv {
+  const ceilings = [...new Set([path.dirname(cwd), path.dirname(realpathSync.native(cwd))])];
+  return { ...cleanEnv(), AIDLC_STATE_DIR: stateDir, GIT_CEILING_DIRECTORIES: ceilings.join(path.delimiter) };
+}
+```
+
+   Every inherited name that starts with `GIT_` in any case is removed; `GIT_CEILING_DIRECTORIES` is set to the parent of the child's working directory as given and as `realpathSync.native` returns it (a short 8.3 path on a Windows runner), joined with `path.delimiter`. `monitor()` takes the working directory as a parameter (default the fixture). Test: "a fixture beneath a git repository: the intent lands in the fixture and the enclosing repository gains no file": `git init` in a scratch directory, the CLI run in a subdirectory of it, a propose-tier breach; the intent is under the subdirectory's `intent`, the repository directory holds only `.git` and the subdirectory, the subdirectory only `bands.yaml`, `data.json` and `intent`. The helper test "every GIT_ name, in any case, is removed from a child environment and only the ceiling is set" replaces the former selector-list test: it asserts the `childEnv` keys and a real child's keys that start with `GIT_` (any case) are exactly `GIT_CEILING_DIRECTORIES`.
+3. Non-JSON values handed to `write` are a non-goal (first non-goal): no code or docs were added for them.
+
+Revert rows of this round (one hunk reverted, file restored):
+
+| hunk | first failing line | result |
+|---|---|---|
+| types: arrays and objects walked with `Object.entries` again | "write walks an array as the serializer does ...": `Missing expected exception: 62 nested objects` | FAILS |
+| test: `GIT_CEILING_DIRECTORIES` not set | "a fixture beneath a git repository ...": `ENOENT: no such file or directory, realpath '...\fixture\intent'` (the intent went to the enclosing repository); also the helper test | FAILS |
+| test: `cleanEnv` removes only `GIT_DIR` and `GIT_WORK_TREE` | "every GIT_ name, in any case, is removed ..." | FAILS |
+| test: the ceiling without the `realpathSync.native` form | none | GREEN (survives) |
+
+The last row stays green on this machine and is the instruction of the coordinator kept as written: git normalises the entries of `GIT_CEILING_DIRECTORIES` itself (measured with a junction: both the linked and the real parent stopped the search with either entry alone), so no input here tells the two forms apart. The second form costs nothing and covers a path that a runner reports in its short form.
 
 Coordinator verification:
